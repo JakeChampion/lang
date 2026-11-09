@@ -53,6 +53,10 @@ The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, an
 
 `with_exe` names the path of the program in the root. `/proc/self/exe` is then a symbolic link to it. Thus a program can read its own image, as the compiler does for the key of its cache.
 
+## Randomness
+
+`with_random` gives the process a source of random bytes, for example a `std/virtio_rng` device. `getrandom` (278) then copies at most `WRITE_LIMIT` bytes from it for each call. A process with no source gets `ENOSYS`, because a kernel must not give bytes that are not random.
+
 ## Time
 
 `clock_gettime` (113) reads the generic timer's counter. The monotonic clocks give the counter time since the counter started. `with_clock` sets the wall clock, for example from a real-time clock, and `CLOCK_REALTIME` adds it to the counter time. Without `with_clock` the wall clock starts at 0, in 1970. The kernel gives no vDSO, so the runtime makes the system call.
@@ -157,7 +161,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64 }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]] }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
 
@@ -321,7 +325,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64 };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -546,10 +550,14 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   return (p, p.signal_call(n, a0, a1, a2));
 }
 
-// The signal calls, ioctl, clock_gettime, and ENOSYS for each other call.
+// The signal calls, ioctl, clock_gettime, getrandom, and ENOSYS for each
+// other call.
 function (p: Process) signal_call(n: u64, a0: u64, a1: u64, a2: u64): Option[Stop] {
   if (n == 113 as u64) {
     return p.clock_gettime(a0, a1 as usize);
+  }
+  if (n == 278 as u64) {
+    return p.getrandom(a0 as usize, a1 as usize, a2);
   }
   if (n == 132 as u64) {
     // An old stack_t: no stack, with ss_flags SS_DISABLE.
@@ -762,6 +770,30 @@ function (p: Process) clock_gettime(clock: u64, va: usize): Option[Stop] {
   }
   let ts = u64_bytes((now / 1000000000i64) as u64).concat(u64_bytes((now % 1000000000i64) as u64));
   return p.answer(p.copy_out(va, ts), 0i64);
+}
+
+// Gives the process a source of random bytes for getrandom: source(n) gives n
+// bytes, or None when it fails.
+pub function (p: Process) with_random(source: (i32) => Option[u8[]]): Process {
+  return Process { ...p, random: Some(source) };
+}
+
+const EIO: i64 = 5;
+
+// GRND_NONBLOCK, GRND_RANDOM and GRND_INSECURE are the flags. A source never
+// blocks, so each flag gives the same bytes.
+function (p: Process) getrandom(va: usize, len: usize, flags: u64): Option[Stop] {
+  if ((flags & ~(7 as u64)) != 0 as u64) {
+    return p.fail(EINVAL);
+  }
+  let Some(source) = p.random else {
+    return p.fail(ENOSYS);
+  };
+  let n = limit(len);
+  let Some(bytes) = source(n as i32) else {
+    return p.fail(EIO);
+  };
+  return p.answer(p.copy_out(va, bytes), bytes.len() as i64);
 }
 
 // Names the path of the program in the root, which /proc/self/exe links to.

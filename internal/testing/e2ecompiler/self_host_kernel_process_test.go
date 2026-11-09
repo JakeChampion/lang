@@ -27,8 +27,10 @@ import "std/frames";
 import "std/option";
 import "std/pagetable";
 import "std/user_process";
+import "std/virtio";
+import "std/virtio_rng";
 
-struct Boot { f: frames.Frames, ram: fdt.Region, a: cpio.Archive, kernel: pagetable.Tables }
+struct Boot { f: frames.Frames, ram: fdt.Region, a: cpio.Archive, kernel: pagetable.Tables, rng: Option[virtio_rng.Rng] }
 
 function initrd(t: fdt.Tree): Option[u8[]] {
   let Some(c) = t.find_name("chosen") else {
@@ -56,6 +58,28 @@ function rtc_ns(): i64 {
   unsafe {
     return (__mmio_load32(0x09010000 as usize) as i64 & 0xffffffffi64) * 1000000000i64;
   }
+}
+
+// The entropy device of the first virtio-mmio transport that has one.
+function find_rng(t: fdt.Tree, f: frames.Frames, tables: pagetable.Tables): Option[virtio_rng.Rng] {
+  for i in 0..t.nodes.len() {
+    for s in t.property_strings(i, "compatible") {
+      if (s == "virtio,mmio") {
+        let Some(r) = t.reg(i, 0) else {
+          continue;
+        };
+        match (virtio.probe(r.address as usize)) {
+          Some(d) => {
+            if (d.id == virtio.ID_ENTROPY) {
+              return virtio_rng.open(d, f, tables);
+            }
+          },
+          None => {}
+        }
+      }
+    }
+  }
+  return None;
 }
 
 // Tables that hold the kernel mapping: the RAM and the device window.
@@ -104,7 +128,7 @@ function boot(): Option[Boot] {
     return None;
   };
   kernel.activate();
-  return Some(Boot { f: f, ram: ram, a: a, kernel: kernel });
+  return Some(Boot { f: f, ram: ram, a: a, kernel: kernel, rng: find_rng(t, f, kernel) });
 }
 
 function load(b: Boot, path: string, argv: string[]): Option[user_process.Process] {
@@ -118,7 +142,15 @@ function load(b: Boot, path: string, argv: string[]): Option[user_process.Proces
   };
   match (user_process.load(b.f, tables, image, argv, ["HOME=/"])) {
     Ok(p) => {
-      return Some(p.with_root(b.a).with_exe(path).with_clock(rtc_ns()));
+      let q = p.with_root(b.a).with_exe(path).with_clock(rtc_ns());
+      match (b.rng) {
+        Some(r) => {
+          return Some(q.with_random((n: i32) => r.read(n)));
+        },
+        None => {
+          return Some(q);
+        }
+      }
     },
     Err(why) => {
       print(path + ": " + why);
@@ -263,7 +295,9 @@ function main(): i32 {
 
 // info reads the stats of a file and a directory, the image of the program
 // through /proc/self/exe, and both clocks.
-const processInfoSrc = `function main(): i32 {
+const processInfoSrc = `import "std/rand";
+
+function main(): i32 {
   let start = monotonic_ns();
   print("wall clock after 2024 " + (now_unix_ms() > 1704067200000i64).to_string());
   match (stat("/etc/motd")) {
@@ -301,6 +335,15 @@ const processInfoSrc = `function main(): i32 {
     }
   }
   print("monotonic advances " + (monotonic_ns() > start).to_string());
+  let a = rand.bytes(32);
+  let b = rand.bytes(32);
+  let same = true;
+  let zero = true;
+  for i in 0..32 {
+    same = same && a[i] == b[i];
+    zero = zero && a[i] == 0 as u8;
+  }
+  print("random " + a.len().to_string() + " bytes, two reads differ " + (!same).to_string() + ", not zero " + (!zero).to_string());
   return 0;
 }
 `
@@ -408,7 +451,8 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, msg)
 	}
 	console, err := bootQemu(t, qemu, "-M", "virt,gic-version=3", "-cpu", "cortex-a76", "-m", "256M",
-		"-nographic", "-monitor", "none", "-nic", "none", "-kernel", kernel, "-initrd", archive)
+		"-nographic", "-monitor", "none", "-nic", "none", "-kernel", kernel, "-initrd", archive,
+		"-global", "virtio-mmio.force-legacy=false", "-device", "virtio-rng-device")
 	if err != nil {
 		t.Fatalf("qemu: %v; console:\n%s", err, console)
 	}
@@ -438,6 +482,7 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/info fd 1: exe /bin/info\n",
 		"/bin/info fd 1: image is ELF true\n",
 		"/bin/info fd 1: monotonic advances true\n",
+		"/bin/info fd 1: random 32 bytes, two reads differ true, not zero true\n",
 		"/bin/info exit 0\n",
 	} {
 		if !strings.Contains(string(console), want) {

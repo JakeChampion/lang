@@ -928,9 +928,10 @@ and three `mmap` reservations at start.
    `with_exe` makes `/proc/self/exe` a link to the program, so the compiler
    can read its own image for the key of its cache. The monotonic clocks
    read the generic timer, and `with_clock` sets the wall clock, which the
-   test reads from the PL031 real-time clock of qemu-virt. `getrandom` waits
-   for a source of entropy: the arm64 baseline has no `RNDR`, so it needs a
-   virtio-rng driver.
+   test reads from the PL031 real-time clock of qemu-virt. The arm64
+   baseline has no `RNDR`, so `std/virtio_rng` reads random bytes from the
+   host, and `with_random` makes it the source of `getrandom`. A process
+   with no source gets `ENOSYS`, not bytes that are not random.
 22. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 

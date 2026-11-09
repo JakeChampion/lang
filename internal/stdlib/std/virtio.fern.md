@@ -111,6 +111,8 @@ pub const DESC_NEXT: u32 = 1;
 pub const ID_NET: u32 = 1;
 
 pub const ID_BLOCK: u32 = 2;
+
+pub const ID_ENTROPY: u32 = 4;
 ```
 
 ### `pub struct Device`
