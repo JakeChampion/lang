@@ -487,6 +487,11 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   if (small_below(g, b, x, base)) {
     return true;
   }
+  // Upper bounds also hold for negative sentinels. The access still needs
+  // its separate nonnegative proof, after any sentinel rejection.
+  if (is_const(g, x) && const_value(g, x) < 0) {
+    return true;
+  }
   if (binary(d, "+") && plus_fits(g, b, d, base)) {
     return true;
   }
