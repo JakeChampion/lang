@@ -5,14 +5,30 @@ sidebar:
   order: 1
 ---
 
+At the end of this page, `fern` is on your `PATH`, and one program runs
+three ways: in the interpreter, as a native binary, and as WebAssembly.
+
 There are two ways to get `fern`: download a prebuilt binary, or build
 it from source with `make`.
 
 ## Option A — prebuilt binary (fastest)
 
 A rolling [**nightly release**][nightly] is rebuilt from `main` once a
-day, at 06:00 UTC, with statically-linked binaries. Grab the one for
-your platform:
+day, at 06:00 UTC, with statically-linked binaries. The install script
+selects the one for your computer:
+
+```bash
+curl -fsSL https://fern-lang.netlify.app/install.sh | sh
+```
+
+The script checks the SHA-256 of the download. When the GitHub CLI is
+installed and logged in, it also checks the build provenance with
+`gh attestation verify`. It puts `fern` in `~/.local/bin`, and does not
+change your shell configuration. `FERN_INSTALL_DIR` selects a different
+directory. [Read the script](https://github.com/JakeChampion/lang/blob/main/site/public/install.sh)
+before you run it.
+
+To do the same steps by hand, get the asset for your platform:
 
 | Platform              | Asset                          |
 | --------------------- | ------------------------------ |
