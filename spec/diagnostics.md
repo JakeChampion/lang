@@ -177,6 +177,7 @@ language does not have. It is deleted.
 | `E102` | a `@norc` function that can allocate or change a reference count | `diag_e102` |
 | `E103` | an `@interrupt` handler of the wrong shape, or for a target without a vector table | — |
 | `E104` | an `@early` hook of the wrong shape, a second hook, or a target without a reset entry | — |
+| `E105` | a `@secondary` entry of the wrong shape, a second entry, or a target without a secondary entry | — |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

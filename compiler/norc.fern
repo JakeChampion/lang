@@ -13,12 +13,12 @@ import "std/string";
 
 struct Ctx { attr: string, fname: string, module: string, callable: string[] }
 
-// The marks that the `@norc` rule checks: each `@norc`, `@interrupt` and
-// `@early`.
+// The marks that the `@norc` rule checks: each `@norc`, `@interrupt`, `@early`
+// and `@secondary`.
 pub function marks(mod: parser.Module): parser.FuncMark[] {
   let out: parser.FuncMark[] = [];
   for m in mod.marks {
-    if (m.attr == "norc" || m.attr == "interrupt" || m.attr == "early") {
+    if (m.attr == "norc" || m.attr == "interrupt" || m.attr == "early" || m.attr == "secondary") {
       out = out.append(m);
     }
   }
@@ -144,6 +144,44 @@ pub function early_target_diags(mod: parser.Module, target: string): util.Diag[]
   return out;
 }
 
+// E105: the entry takes one usize, the context id of the start, and returns
+// void, and a program has at most one.
+pub function secondary_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let first = "";
+  for m in parser.marked(mod, "secondary") {
+    let module = util.mangled_module(m.func_name);
+    let what = secondary_text(m);
+    if (first.len() > 0) {
+      out = out.append(util.violation_diag("E105", what + "is a second entry: \"" + first + "\" is the first, and the secondary entry calls one", module, m.line, m.col));
+    } else {
+      first = util.mangled_name(m.func_name);
+    }
+    for fd in mod.funcs {
+      if (marks_function(fd, m) && (fd.params.len() != 1 || fd.params[0].type_name != "usize" || fd.ret_type != "void")) {
+        out = out.append(util.violation_diag("E105", what + "must take one usize, the context id, and return void", module, m.line, m.col));
+      }
+    }
+  }
+  return out;
+}
+
+// E105: only -target arm64-kernel starts a second core.
+pub function secondary_target_diags(mod: parser.Module, target: string): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (target == "arm64-kernel") {
+    return out;
+  }
+  for m in parser.marked(mod, "secondary") {
+    out = out.append(util.violation_diag("E105", secondary_text(m) + "needs the secondary entry of -target arm64-kernel", util.mangled_module(m.func_name), m.line, m.col));
+  }
+  return out;
+}
+
+function secondary_text(m: parser.FuncMark): string {
+  return "`@secondary` function \"" + util.mangled_name(m.func_name) + "\" ";
+}
+
 function early_text(m: parser.FuncMark): string {
   return "`@early` function \"" + util.mangled_name(m.func_name) + "\" ";
 }
@@ -175,7 +213,7 @@ pub function intrinsics(): string[] {
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr", "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
-    "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32", "__clz32", "__clz64", "__ctz32", "__ctz64", "__popcount32", "__popcount64",
+    "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32", "__clz32", "__clz64", "__ctz32", "__ctz64", "__popcount32", "__popcount64",
   ];
 }
 

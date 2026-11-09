@@ -3727,6 +3727,12 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
     s = s.write("    adrp x0, __fern_boot_info\n    ldr x0, [x0, :lo12:__fern_boot_info]\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
   }
+  if (ins.str == "dev_secondary_entry") {
+    // The core that the entry starts takes the translation that is active now.
+    s = s.need("secondary_start").write("    mrs x9, ttbr0_el1\n    adrp x10, __fern_secondary_ttbr0\n    str x9, [x10, :lo12:__fern_secondary_ttbr0]\n");
+    s = s.write("    adrp x0, __fern_secondary_start\n    add x0, x0, :lo12:__fern_secondary_start\n");
+    return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+  }
   if (ins.str == "dev_irq_pending") {
     s = s.write("    adrp x0, __fern_irq_pending\n    add x0, x0, :lo12:__fern_irq_pending\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
@@ -6879,6 +6885,9 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bl __fern_lc_report\n");
   }
   s = s.write(exit_provider_call(s, "x19") + ".Lreset_park:\n    wfe\n    b .Lreset_park\n");
+  if (s.secondary.len() > 0 || s.has_need("secondary_start")) {
+    s = emit_secondary_start(s);
+  }
   return emit_vectors(s);
 }
 
@@ -7071,14 +7080,37 @@ function emit_reset_mmu(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .data\n");
   s = emit_reset_table(s, 0, 0i64, 549755813888i64);
   s = s.write("    .text\n");
-  // MAIR: index 0 Device-nGnRnE, index 1 Normal-NC. TCR: 40-bit VA/PA,
-  // 4K granule, inner-shareable NC walks, TTBR1 disabled.
-  s = s.write("    mov x9, #17408\n    msr mair_el1, x9\n");
-  s = s.write(mov_imm64("x9", 0x280983018i64) + "    msr tcr_el1, x9\n");
   let root = reset_table_name(0, 0i64);
-  s = s.write("    adrp x9, " + root + "\n    add x9, x9, :lo12:" + root + "\n    msr ttbr0_el1, x9\n    dsb sy\n    tlbi vmalle1\n    dsb sy\n    isb\n");
-  s = s.write("    mrs x9, sctlr_el1\n    and x9, x9, #-3\n    and x9, x9, #-5\n    and x9, x9, #-524289\n    orr x9, x9, #1\n    msr sctlr_el1, x9\n    isb\n");
-  return s;
+  return s.write(mmu_on("    adrp x9, " + root + "\n    add x9, x9, :lo12:" + root + "\n"));
+}
+
+// Turns on the translation of the root table that load_root puts in x9.
+// MAIR: index 0 Device-nGnRnE, index 1 Normal-NC. TCR: 40-bit VA/PA, 4K
+// granule, inner-shareable NC walks, TTBR1 disabled.
+function mmu_on(load_root: string): string {
+  let out = "    mov x9, #17408\n    msr mair_el1, x9\n";
+  out += mov_imm64("x9", 0x280983018i64) + "    msr tcr_el1, x9\n";
+  out += load_root + "    msr ttbr0_el1, x9\n    dsb sy\n    tlbi vmalle1\n    dsb sy\n    isb\n";
+  return out + "    mrs x9, sctlr_el1\n    and x9, x9, #-3\n    and x9, x9, #-5\n    and x9, x9, #-524289\n    orr x9, x9, #1\n    msr sctlr_el1, x9\n    isb\n";
+}
+
+// The entry where PSCI CPU_ON starts another core, at EL1 with the MMU off and
+// the context id in x0. Each core takes a stack of 64 KiB by the Aff0 of its
+// MPIDR_EL1, of 1 to 7. It turns on the translation that __secondary_entry
+// recorded, and calls the `@secondary` entry with the context id.
+function emit_secondary_start(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .bss\n    .p2align 4\n__fern_secondary_stacks:\n    .skip 524288\n    .data\n    .p2align 3\n__fern_secondary_ttbr0:\n    .quad 0\n    .text\n");
+  s = s.write("__fern_secondary_start:\n    msr daifset, #15\n    mov x19, x0\n    mrs x9, mpidr_el1\n    and x9, x9, #7\n    lsl x9, x9, #16\n");
+  s = s.write("    adrp x10, __fern_secondary_stacks\n    add x10, x10, :lo12:__fern_secondary_stacks\n    add x10, x10, x9\n    mov sp, x10\n");
+  s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
+  if (s.interrupts.len() > 0 || s.user_mode) {
+    s = s.write("    adrp x9, __fern_vectors\n    add x9, x9, :lo12:__fern_vectors\n    msr vbar_el1, x9\n    isb\n");
+  }
+  s = s.write(mmu_on("    adrp x9, __fern_secondary_ttbr0\n    ldr x9, [x9, :lo12:__fern_secondary_ttbr0]\n"));
+  if (s.secondary.len() > 0) {
+    s = s.write("    sub sp, sp, #16\n    str x19, [sp]\n    bl " + s.secondary + "\n    add sp, sp, #16\n");
+  }
+  return s.write(".Lsecondary_park:\n    wfe\n    b .Lsecondary_park\n");
 }
 
 function rt_arm64_str_eq(): string {

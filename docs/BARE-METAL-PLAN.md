@@ -519,6 +519,25 @@ ops lift as device ops, so no pass removes, merges or moves them, or moves a
 plain access across them. Refcounts stay non-atomic (`docs/MULTICORE-RESEARCH.md`
 C1).
 
+**A second core** (arm64 only). `@secondary` marks the function that a second
+core runs. It implies `@norc`, so core 0 stays the only core that touches a
+refcount. The rules:
+
+- E105 refuses an entry that does not take one `usize` and return `void`, a
+  second entry, and an entry on a target that is not `arm64-kernel`.
+- `__secondary_entry()` gives the address of `__fern_secondary_start`. It also
+  stores the `TTBR0_EL1` of core 0, so the second core uses the same
+  translation.
+- The board starts the core with PSCI `CPU_ON` (`__hvc(0xc4000003, mpidr,
+  entry, context)`). The entry masks the interrupts, takes a stack of 64 KiB
+  for each core from `.bss`, sets `CPACR_EL1` and `VBAR_EL1`, and turns on the
+  MMU. Then it calls the `@secondary` function with the context, and parks the
+  core when the function returns.
+
+`TestSelfHostKernelSecondaryCountsOnQemu` is the first "done when" item of
+#14258. Two cores each add 1 to one word 200000 times with
+`__atomic_fetch_add`, and the total is exactly 400000.
+
 ### 6. Board packages: who supplies a capability
 
 A TamaGo board package supplies about ten functions and variables to the runtime:
