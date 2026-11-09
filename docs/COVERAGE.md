@@ -181,7 +181,8 @@ The twenty `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
 `tests/fuzz/stdparse.fern`, and Go's fuzzer steers them blind for the same
 reason. `TestSelfHostStdCoverageGuidedFuzz` runs the same loop on a `-cover`
 build of that program. The rows cover the stdlib modules that the program
-imports, about 55,000 of them, and one run costs about 30 ms.
+imports, about 55,000 of them. One run costs about 60 ms, and the report
+is half of that.
 
 ```sh
 FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m \
@@ -193,7 +194,7 @@ Each reader uses the seeds, the budgets and the check of its Go target, from
 of Go's fuzzer, so the Go target replays it on each pull request.
 `FERN_STD_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
 `TestSelfHostStdCoverageBeatsBlind` is the property that keeps this loop
-honest, on the JSON, DNS and DEFLATE readers.
+honest, on the DEFLATE, URL and protobuf readers.
 
 ## Known gaps
 

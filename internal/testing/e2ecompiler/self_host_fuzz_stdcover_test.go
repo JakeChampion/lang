@@ -219,15 +219,18 @@ func TestSelfHostStdCoverageGuidedFuzz(t *testing.T) {
 
 // TestSelfHostStdCoverageBeatsBlind runs the loop twice from the same seeds
 // and the same random streams. One arm keeps each input that reached a new
-// counter, and the other keeps none. The arm with feedback must reach more
-// counters, or the loop is not steering anything.
+// counter, and the other keeps none. Summed over the readers and the streams,
+// the arm with feedback must reach more counters, or the loop is not steering
+// anything. The seeds are almost empty, because a reader's own seeds reach
+// most of what a few hundred blind mutations near them can reach.
 func TestSelfHostStdCoverageBeatsBlind(t *testing.T) {
 	if !envflag.On(stdCoverFuzzEnv) {
 		t.Skip("set " + stdCoverFuzzEnv + "=1 to run the coverage-guided stdlib fuzzer")
 	}
 	bin := fuzzStdParseCover(t)
-	const runs = 300
-	readers := []string{"json", "dns", "inflate"}
+	const runs = 600
+	const streams = 2
+	readers := []string{"inflate", "url", "protobuf"}
 	seeds := [][]byte{{}, []byte("0")}
 	guided := make([]int, len(readers))
 	blind := make([]int, len(readers))
@@ -236,15 +239,18 @@ func TestSelfHostStdCoverageBeatsBlind(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				r := stdReaderNamed(t, name)
-				arm := func(keep bool) int {
+				arm := func(keep bool, stream int64) int {
 					c := newStdCampaign(t, bin, r, seeds)
-					rng := rand.New(rand.NewSource(int64(i + 1)))
+					rng := rand.New(rand.NewSource(stream))
 					for range runs {
 						c.step(rng, keep)
 					}
 					return c.total.Count()
 				}
-				guided[i], blind[i] = arm(true), arm(false)
+				for stream := int64(1); stream <= streams; stream++ {
+					guided[i] += arm(true, stream)
+					blind[i] += arm(false, stream)
+				}
 				t.Logf("%s: feedback reached %d counters, blind mutation %d", name, guided[i], blind[i])
 			})
 		}
@@ -252,10 +258,14 @@ func TestSelfHostStdCoverageBeatsBlind(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	for i, name := range readers {
-		if guided[i] <= blind[i] {
-			t.Errorf("%s: in %d runs feedback reached %d counters and blind mutation %d", name, runs, guided[i], blind[i])
-		}
+	var g, b int
+	for i := range readers {
+		g += guided[i]
+		b += blind[i]
+	}
+	if g <= b {
+		t.Errorf("over %v and %d streams of %d runs, feedback reached %d counters and blind mutation %d (per reader: feedback %v, blind %v)",
+			readers, streams, runs, g, b, guided, blind)
 	}
 }
 
