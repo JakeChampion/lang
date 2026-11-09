@@ -538,6 +538,14 @@ refcount. The rules:
 #14258. Two cores each add 1 to one word 200000 times with
 `__atomic_fetch_add`, and the total is exactly 400000.
 
+**User processes on the second core.** `__fern_user_ctx` has one slot for each
+core, so each core can run `__user_run`. `serve_core` of `std/user_process` is
+a `@norc` loop for the second core. It takes a process from a mailbox, runs
+its EL0 code, and gives back the event. Core 0 answers the events, because a
+system call and a page-in touch RC values. In
+`TestSelfHostKernelTwoCoreProcessesOnQemu`, two Fern workers run at the same
+time, one on each core, and both get the correct total.
+
 ### 6. Board packages: who supplies a capability
 
 A TamaGo board package supplies about ten functions and variables to the runtime:
@@ -1003,7 +1011,8 @@ and three `mmap` reservations at start.
 25. **Two cores run on arm64** (#14258). The four atomics are intrinsics, and
    a second core starts at the `@secondary` entry through PSCI `CPU_ON`
    ("5. Atomics" above). The two cores add to one word, and the total is
-   exact. The second core runs only `@norc` code.
+   exact. The second core runs only `@norc` code. It runs the EL0 code of a
+   user process from a mailbox, and core 0 answers the events.
 26. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 

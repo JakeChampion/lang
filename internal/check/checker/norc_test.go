@@ -28,6 +28,14 @@ function sum(n: i32): i32 {
   return t as i32;
 }
 @norc
+function run_user(frame: usize): i64 {
+  unsafe {
+    let kind = __user_run(frame);
+    __atomic_store_release(frame, kind);
+    return kind;
+  }
+}
+@norc
 function after_shadow(): i32 {
   if (true) { let sum = 1; }
   return sum(2);
