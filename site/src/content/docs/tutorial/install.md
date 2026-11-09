@@ -26,7 +26,8 @@ installed and logged in, it also checks the build provenance with
 `gh attestation verify`. It puts `fern` in `~/.local/bin`, and does not
 change your shell configuration. `FERN_INSTALL_DIR` selects a different
 directory. [Read the script](https://github.com/JakeChampion/lang/blob/main/site/public/install.sh)
-before you run it.
+before you run it. To update `fern` to the newest nightly, run the same
+command again.
 
 To do the same steps by hand, get the asset for your platform:
 
