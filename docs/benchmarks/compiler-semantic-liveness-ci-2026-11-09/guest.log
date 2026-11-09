@@ -1,0 +1,11 @@
+==13681== Callgrind, a call-graph generating cache profiler
+==13681== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==13681== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==13681== Command: /workspace/lang/build/semantic-liveness-ci-20261109/base-count-byte
+==13681== 
+==13681== For interactive control, run 'callgrind_control -h'.
+==13681== 
+==13681== Events    : Ir
+==13681== Collected : 41173368
+==13681== 
+==13681== I   refs:      41,173,368

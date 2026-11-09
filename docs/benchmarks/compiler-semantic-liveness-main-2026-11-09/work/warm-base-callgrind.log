@@ -1,0 +1,11 @@
+==16658== Callgrind, a call-graph generating cache profiler
+==16658== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==16658== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==16658== Command: /workspace/lang/build/semantic-liveness-main-20261109/base-native -target x86-64-linux -o /workspace/lang/build/semantic-liveness-main-20261109/checker /workspace/lang-semantic-base-20261109/compiler/checker.fern /workspace/lang-semantic-base-20261109/internal/stdlib
+==16658== 
+==16658== For interactive control, run 'callgrind_control -h'.
+==16658== 
+==16658== Events    : Ir
+==16658== Collected : 29687401462
+==16658== 
+==16658== I   refs:      29,687,401,462

@@ -1,0 +1,717 @@
+{
+  "baseline_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "candidate_source": "7dbc615c9c1d2dd53f63529ae9c2925aad4ace5b",
+  "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "samples": [
+    {
+      "name": "cold-1-base",
+      "compiler": "base",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:16:58.123185+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 15466219288,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 15.466219288,
+      "user_seconds": 15.011423,
+      "system_seconds": 0.446982,
+      "peak_rss_kib": 609652
+    },
+    {
+      "name": "cold-1-candidate",
+      "compiler": "candidate",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:17:13.595996+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10679615140,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.67961514,
+      "user_seconds": 10.285686,
+      "system_seconds": 0.38919299999999996,
+      "peak_rss_kib": 608372
+    },
+    {
+      "name": "cold-2-candidate",
+      "compiler": "candidate",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:17:24.285470+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10551676717,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.551676717,
+      "user_seconds": 10.182969,
+      "system_seconds": 0.36227499999999996,
+      "peak_rss_kib": 608372
+    },
+    {
+      "name": "cold-2-base",
+      "compiler": "base",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:17:34.844377+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10698482613,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.698482613,
+      "user_seconds": 10.342277,
+      "system_seconds": 0.355192,
+      "peak_rss_kib": 609652
+    },
+    {
+      "name": "cold-3-base",
+      "compiler": "base",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:17:45.551570+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 11484674563,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 11.484674563,
+      "user_seconds": 10.866355,
+      "system_seconds": 0.602328,
+      "peak_rss_kib": 609652
+    },
+    {
+      "name": "cold-3-candidate",
+      "compiler": "candidate",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:17:57.046270+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 11591786597,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 11.591786597,
+      "user_seconds": 11.022229,
+      "system_seconds": 0.54819,
+      "peak_rss_kib": 608372
+    },
+    {
+      "name": "cold-4-candidate",
+      "compiler": "candidate",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:18:08.648615+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10942611476,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.942611476,
+      "user_seconds": 10.476563,
+      "system_seconds": 0.44628799999999996,
+      "peak_rss_kib": 608372
+    },
+    {
+      "name": "cold-4-base",
+      "compiler": "base",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:18:19.601944+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10960526267,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.960526267,
+      "user_seconds": 10.425793,
+      "system_seconds": 0.532316,
+      "peak_rss_kib": 609652
+    },
+    {
+      "name": "cold-5-base",
+      "compiler": "base",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:18:30.571810+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10680444973,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.680444973,
+      "user_seconds": 10.400026,
+      "system_seconds": 0.278225,
+      "peak_rss_kib": 609652
+    },
+    {
+      "name": "cold-5-candidate",
+      "compiler": "candidate",
+      "mode": "cold",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:18:41.259345+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10943729981,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.943729981,
+      "user_seconds": 10.594139,
+      "system_seconds": 0.33210799999999996,
+      "peak_rss_kib": 608372
+    },
+    {
+      "name": "warm-1-candidate",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:18:52.215785+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8447045912,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.447045912,
+      "user_seconds": 8.176079,
+      "system_seconds": 0.25602199999999997,
+      "peak_rss_kib": 605684
+    },
+    {
+      "name": "warm-1-base",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:19:00.669711+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8378932827,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.378932827,
+      "user_seconds": 8.161399,
+      "system_seconds": 0.214255,
+      "peak_rss_kib": 606836
+    },
+    {
+      "name": "warm-2-base",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:19:09.055944+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8335330783,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.335330783,
+      "user_seconds": 8.048982,
+      "system_seconds": 0.257194,
+      "peak_rss_kib": 606836
+    },
+    {
+      "name": "warm-2-candidate",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:19:17.398095+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 7996005554,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 7.996005554,
+      "user_seconds": 7.6782509999999995,
+      "system_seconds": 0.316857,
+      "peak_rss_kib": 605684
+    },
+    {
+      "name": "warm-3-candidate",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:19:25.410637+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8386382732,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.386382732,
+      "user_seconds": 7.9901979999999995,
+      "system_seconds": 0.37800999999999996,
+      "peak_rss_kib": 605684
+    },
+    {
+      "name": "warm-3-base",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:19:33.807415+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8096300705,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.096300705,
+      "user_seconds": 7.769451,
+      "system_seconds": 0.323245,
+      "peak_rss_kib": 606836
+    },
+    {
+      "name": "warm-4-base",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:19:41.911239+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8564337174,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.564337174,
+      "user_seconds": 8.164242,
+      "system_seconds": 0.38761999999999996,
+      "peak_rss_kib": 606836
+    },
+    {
+      "name": "warm-4-candidate",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:19:50.483467+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8847812696,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.847812696,
+      "user_seconds": 8.139353,
+      "system_seconds": 0.686087,
+      "peak_rss_kib": 605684
+    },
+    {
+      "name": "warm-5-candidate",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:19:59.343125+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 10536233226,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 10.536233226,
+      "user_seconds": 9.63788,
+      "system_seconds": 0.895238,
+      "peak_rss_kib": 605684
+    },
+    {
+      "name": "warm-5-base",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:20:09.887722+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 8893985646,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "wall_seconds": 8.893985646,
+      "user_seconds": 8.307036,
+      "system_seconds": 0.581481,
+      "peak_rss_kib": 606836
+    }
+  ],
+  "controls": [
+    {
+      "name": "base-prime",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base"
+      },
+      "started": "2026-11-09T19:16:03.567733+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 15268121594,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    },
+    {
+      "name": "base-probe",
+      "compiler": "base",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-base",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-09T19:16:18.844297+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 13641980245,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "cache_hits": 2407,
+      "cache_misses": 0
+    },
+    {
+      "name": "candidate-prime",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand"
+      },
+      "started": "2026-11-09T19:16:32.491503+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 14134657222,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    },
+    {
+      "name": "candidate-probe",
+      "compiler": "candidate",
+      "mode": "warm",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-rusage-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-main-rusage-20261109/memo-cand",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-09T19:16:46.631806+00:00",
+      "exit_code": 0,
+      "elapsed_ns": 11481990499,
+      "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461",
+      "cache_hits": 2407,
+      "cache_misses": 0
+    }
+  ],
+  "compiler_binaries": {
+    "base": "741fcd84ac368694fede90eee5e13a9fe172784f90465654cb6f5200cfec202a",
+    "candidate": "bdf842674d210e4822feb21572e0e8822160aa97a3fd33ffce6b9facc52724de"
+  },
+  "concurrency": "The separate allocation and Callgrind comparison was active. The targeted tests finished before timing started. Shared-host samples do not establish a timing rank.",
+  "samples_per_compiler_per_mode": 5,
+  "measurement_method": "Python perf_counter_ns and Linux wait4 rusage for each completed compiler process. RSS units are KiB.",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "cgroup_cpu_max": "400000 100000",
+  "cgroup_memory_max": "17179869184",
+  "complete": true
+}

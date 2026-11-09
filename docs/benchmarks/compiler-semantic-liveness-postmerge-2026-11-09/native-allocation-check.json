@@ -1,0 +1,12 @@
+{
+  "base": {
+    "allocations": 51660258,
+    "frees": 51660258,
+    "live_bytes": 0
+  },
+  "candidate": {
+    "allocations": 51642981,
+    "frees": 51642981,
+    "live_bytes": 0
+  }
+}

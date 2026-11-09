@@ -1,3 +1,7 @@
+# 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
+# string_count_byte after main updates. Bank the reported size and work counts.
+# Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
+# Evidence: docs/benchmarks/compiler-semantic-liveness-ci-2026-11-09/. Keep all tolerances.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures eight
 # changed emitted sizes after the merge of main d04e79179f. Bank both directions.
 # Keep all tolerances. These are not isolated liveness gains.

@@ -385,6 +385,12 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   return compute_checked_kept(f, dependencies, []);
 }
 
+// The caller must check the graph and dependency table before this call.
+// The maps must describe the same unchanged graph.
+pub function compute_checked_with_sites(f: ssa.SFunc, dependencies: i32[][], at: i32[], def_b: i32[], def_k: i32[]): Flow {
+  return compute_prepared(f, dependencies, [], at, def_b, def_k);
+}
+
 // Block positions and definition sites must describe this unchanged graph.
 // Dependency and graph checks still apply.
 pub function compute_kept_with_sites(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], at: i32[], sites: ssa.DefSites): Flow {

@@ -1,0 +1,7 @@
+{
+  "first_timed_start": "2026-11-09T19:16:58.123185+00:00",
+  "ci_selftest_log_final_write": "2026-11-09T19:17:03.075277+00:00",
+  "overlap_seconds": 4.952092,
+  "vet_log_final_write": "2026-11-09T19:16:04.506213+00:00",
+  "note": "The first cold baseline sample overlaps the end of CI self-tests. All timing samples remain. No wall-time or CPU-time gain is established. Allocation and Callgrind controls were also active. Bootstrap starts after timing completes."
+}

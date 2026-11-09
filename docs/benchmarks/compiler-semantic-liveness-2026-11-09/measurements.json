@@ -1,0 +1,420 @@
+{
+  "baseline_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "candidate_source": "3a296b887ccb1c879743cce8a2a67351c548481f",
+  "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "compiler_binaries": {
+    "base-native": {
+      "sha256": "2837918ebeab3d89c67c45627f909394fa549ee5b5e3e651cc7486df4b9b5d8a"
+    },
+    "base-count": {
+      "sha256": "42f5e9258f20c860e1bca22de5d965f3ec5e7cb827dd172d6d2fb75f1cb10cb1"
+    },
+    "candidate-native": {
+      "sha256": "b50f7950f4940d4ddaa87e949530d9a52f979ace33b31ee4c638eed358130dcc"
+    },
+    "candidate-count": {
+      "sha256": "ee315ca16a569894b4af7b6ab63792cf52ecce0abb00e21152326659a270bc96"
+    }
+  },
+  "runs": [
+    {
+      "name": "build-base-native",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/base-native",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-base-20261109",
+      "started": "2026-11-09T17:21:57.771219+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:23:03.076915+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-base-count",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/base-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-base-20261109",
+      "started": "2026-11-09T17:23:03.115988+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "1"
+      },
+      "finished": "2026-11-09T17:24:03.252013+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-candidate-native",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:24:03.299943+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:25:04.479065+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-candidate-count",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:25:04.521581+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "1"
+      },
+      "finished": "2026-11-09T17:26:09.230624+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-alloc",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/base-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker.s",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:26:09.286881+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:26:21.603432+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-alloc",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker.s",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:26:21.661573+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:26:34.204247+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-prime",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:26:34.255515+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-base",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:26:46.495890+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-cache-probe",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:26:46.500830+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-base",
+        "FERN_LEAKCHECK": "0",
+        "FERN_IR_VERIFY": "1"
+      },
+      "finished": "2026-11-09T17:26:55.562895+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-prime",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:26:55.570210+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-cand",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:27:07.954587+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-cache-probe",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:27:07.962355+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-cand",
+        "FERN_LEAKCHECK": "0",
+        "FERN_IR_VERIFY": "1"
+      },
+      "finished": "2026-11-09T17:27:17.414493+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "cold-base-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/semantic-liveness-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:27:17.421434+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:37:49.219120+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "cold-candidate-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:37:49.243413+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:46:09.719142+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "warm-candidate-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:46:09.740614+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-cand",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:52:48.710101+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "warm-base-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/semantic-liveness-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-20261109/checker",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "started": "2026-11-09T17:52:48.735600+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang/build/semantic-liveness-20261109/memo-base",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T17:59:54.241262+00:00",
+      "exit_code": 0
+    }
+  ],
+  "allocations": {
+    "base": {
+      "allocs": 52792150,
+      "frees": 52792150,
+      "live_bytes": 0,
+      "assembly_sha256": "3e61e785c7df6e9db9187ddf459179ea19ea92f66c28a3c7b4fb53afbe094b22"
+    },
+    "candidate": {
+      "allocs": 52774873,
+      "frees": 52774873,
+      "live_bytes": 0,
+      "assembly_sha256": "3e61e785c7df6e9db9187ddf459179ea19ea92f66c28a3c7b4fb53afbe094b22"
+    }
+  },
+  "instructions": {
+    "cold": {
+      "base": {
+        "instructions": 41834404466,
+        "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+      },
+      "candidate": {
+        "instructions": 41805242401,
+        "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+      }
+    },
+    "warm": {
+      "candidate": {
+        "instructions": 29655628581,
+        "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+      },
+      "base": {
+        "instructions": 29684725848,
+        "native_sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+      }
+    }
+  },
+  "cache_probes": {
+    "base": {
+      "hits": 2407,
+      "misses": 0
+    },
+    "candidate": {
+      "hits": 2407,
+      "misses": 0
+    }
+  },
+  "claim": "Work counts on one fixed checker snapshot. No wall-time or external rank claim.",
+  "complete": true
+}
