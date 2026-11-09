@@ -25,6 +25,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
+import { stdlibItems } from "./src/lib/stdlib-sidebar.mjs";
+
 const base = process.env.SITE_BASE ?? "/lang";
 const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
 
@@ -64,7 +66,7 @@ const STDLIB_GROUPS = [
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
     "u64"]],
-  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "pagetable", "raw", "tcp", "tcp_conn", "tcp_serve", "virtio", "virtio_blk", "virtio_net",
+  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "pagetable", "raw", "tcp", "tcp_conn", "virtio", "virtio_blk", "virtio_net",
     "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz", "worker"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve", "tcp_serve",
     "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_tls12", "tls_verify", "tls_x509", "wasi_http"]],
@@ -93,11 +95,7 @@ function stdlibSidebar() {
     const found = slugs.filter((s) => present.has(s));
     found.forEach((s) => grouped.add(s));
     if (found.length === 0) continue;
-    items.push({
-      label,
-      collapsed: true,
-      items: found.map((s) => ({ label: s, link: `/stdlib/${s}/` })),
-    });
+    items.push({ label, collapsed: true, items: stdlibItems(found) });
   }
 
   const ungrouped = [...present].filter((s) => !grouped.has(s)).sort();
@@ -105,11 +103,20 @@ function stdlibSidebar() {
     items.push({
       label: "Other",
       collapsed: true,
-      items: ungrouped.map((s) => ({ label: s, link: `/stdlib/${s}/` })),
+      items: stdlibItems(ungrouped),
     });
   }
   return items;
 }
+
+// The token colours, shared with the playground editor so a snippet and a
+// code fence colour the same token the same way.
+const fernThemes = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../web/editor/fern-themes.json", import.meta.url)),
+    "utf8",
+  ),
+);
 
 const fernGrammar = JSON.parse(
   readFileSync(
@@ -186,6 +193,7 @@ export default defineConfig({
       // pipe operator all colour correctly instead of being approximated
       // by TypeScript's grammar.
       expressiveCode: {
+        themes: fernThemes,
         shiki: {
           langs: [fernGrammar],
         },
