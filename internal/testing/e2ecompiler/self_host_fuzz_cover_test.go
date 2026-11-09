@@ -153,11 +153,15 @@ func (c *coverCampaign) try(input []byte, keep bool) bool {
 	c.tb.Helper()
 	bits, run := runCover(c.tb, c.bin, c.path, c.r, input)
 	c.runs++
-	if fault := readerFault(c.r, input, run); fault != "" {
+	if fault := readerFault(c.r, input, c.path, run); fault != "" {
 		keepFailingInput(c.tb, c.r.target, input)
 		c.tb.Fatalf("%s\ninput: %x", fault, input)
 	}
 	if bits.Rows == 0 {
+		// An abort ends the program before it writes the report.
+		if run.code != 0 {
+			return false
+		}
 		c.tb.Fatalf("%s gave no coverage rows, so the build is not instrumented", c.r.reader)
 	}
 	if c.total.Rows == 0 {
@@ -217,6 +221,9 @@ func TestSelfHostReaderCoverageGuidedFuzz(t *testing.T) {
 					found++
 				}
 			}
+			if c.total.Rows == 0 {
+				t.Fatalf("no run of %s in %d wrote a coverage report", r.reader, c.runs)
+			}
 			t.Logf("%s: %d runs in %s (random seed %d), %d corpus entries (+%d found), %d of %d counters (the seeds and the saved corpus reached %d)",
 				r.reader, c.runs, budget, seed, len(c.corpus), found, c.total.Count(), c.total.Rows, fromSeeds)
 			e2eharness.SaveCoverCorpus(t, dir, c.corpus)
@@ -236,7 +243,7 @@ func TestSelfHostReaderCoverageBeatsBlind(t *testing.T) {
 	}
 	const runs = 600
 	const streams = 2
-	readers := []string{"inflate", "url", "protobuf", "tangle", "index"}
+	readers := []string{"inflate", "url", "protobuf", "tangle", "index", "verify", "x86"}
 	seeds := [][]byte{{}, []byte("0")}
 	guided := make([]int, len(readers))
 	blind := make([]int, len(readers))

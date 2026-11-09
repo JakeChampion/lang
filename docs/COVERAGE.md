@@ -178,13 +178,16 @@ after the steering stopped working.
 ## Coverage-guided fuzzing of the readers
 
 The `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
-`tests/fuzz/stdparse.fern`, and the package and literate targets to the
-readers of two drivers in `compiler/drivers/`. Go's fuzzer steers them blind
-for the same reason. `TestSelfHostReaderCoverageGuidedFuzz` runs the same loop
-on a `-cover` build of each program. The rows cover the modules that the
-program imports: 56,249 for `stdparse.fern`, and about 17,000 and 13,500 for
-the two drivers. A run of `stdparse.fern` costs about 45 ms, and most of that
-is the report.
+`tests/fuzz/stdparse.fern`. The package, literate, IR, assembler and image
+targets feed them to the readers of four drivers in `compiler/drivers/`. Go's
+fuzzer steers them blind for the same reason.
+`TestSelfHostReaderCoverageGuidedFuzz` runs the same loop on a `-cover` build
+of each program.
+
+The rows cover the modules that the program imports: 56,249 for
+`stdparse.fern`, and from 13,491 to 32,864 for the drivers. A run of
+`stdparse.fern` costs about 45 ms, and most of that is the report. An abort
+ends a program before it writes the report, so an aborted run adds no rows.
 
 ```sh
 FERN_READER_COVER_FUZZ=1 FERN_READER_COVER_FUZZ_TIME=5m \
@@ -196,7 +199,7 @@ target, from `readerTargets`. A failing input goes into `testdata/fuzz/<Target>/
 in the format of Go's fuzzer, so the Go target replays it on each pull request.
 `FERN_READER_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
 `TestSelfHostReaderCoverageBeatsBlind` is the property that keeps this loop
-honest, on the DEFLATE, URL, protobuf, index and tangle readers.
+honest, on seven readers across the five programs.
 
 ## Known gaps
 

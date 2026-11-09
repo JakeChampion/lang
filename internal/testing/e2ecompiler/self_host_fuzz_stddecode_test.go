@@ -203,8 +203,8 @@ func agreeWithGo(reader string, input []byte, summary string, g goDecoded) strin
 
 // agreesWithGo is the check that compares each summary with what decode gives.
 func agreesWithGo(decode func([]byte) goDecoded) readerCheck {
-	return func(reader string, input []byte, summary string) string {
-		return agreeWithGo(reader, input, summary, decode(input))
+	return func(r readerRun) string {
+		return agreeWithGo(r.reader, r.input, r.summary, decode(r.input))
 	}
 }
 
@@ -336,9 +336,9 @@ func zlibSeeds(f testing.TB) [][]byte {
 	return seeds
 }
 
-func roundTrips(reader string, input []byte, summary string) string {
-	if !strings.HasSuffix(summary, " roundtrip ok") {
-		return fmt.Sprintf("%s does not give back %d bytes it compressed: %q\ninput: %x", reader, len(input), summary, input)
+func roundTrips(r readerRun) string {
+	if !strings.HasSuffix(r.summary, " roundtrip ok") {
+		return fmt.Sprintf("%s does not give back %d bytes it compressed: %q\ninput: %x", r.reader, len(r.input), r.summary, r.input)
 	}
 	return ""
 }

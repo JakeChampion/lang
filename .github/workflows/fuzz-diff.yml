@@ -95,7 +95,7 @@ jobs:
             grep "execs:" "$log" | tail -n 1
           done
       # The same readers, steered by the coverage of the Fern process that a
-      # -cover build of stdparse.fern or of the package or literate driver
+      # -cover build of stdparse.fern or of a driver of compiler/drivers
       # reports. The first test fails when feedback stops reaching more
       # counters than blind mutation. The second gives each reader 5 seconds
       # from its seeds.

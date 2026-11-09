@@ -39,15 +39,28 @@ func fuzzStdParse(f testing.TB) string {
 	})
 }
 
-// readerCheck returns the fault that the summary of one input shows, or "".
-type readerCheck func(reader string, input []byte, summary string) string
+// readerRun is one run of a reader that exited 0 with a summary: the input,
+// the summary, the program's own stderr, and the path of the input, beside
+// which the program can write files.
+type readerRun struct {
+	reader  string
+	input   []byte
+	summary string
+	stderr  string
+	path    string
+}
+
+// readerCheck returns the fault that one run shows, or "".
+type readerCheck func(r readerRun) string
 
 // readerTarget is one reader of a program as a fuzz target: of
 // tests/fuzz/stdparse.fern, or of a driver in compiler/drivers. The program
 // reads a file with `PROGRAM READER FILE`, and refuses foreign bytes with a
-// message, so the one accepted outcome is exit 0 with a summary that opens
-// with the reader's name. Go's fuzzer runs it as target, and
-// TestSelfHostReaderCoverageGuidedFuzz runs it with the same seeds and the
+// message, so the accepted outcome is exit 0 with a summary that opens with
+// the reader's name. With aborts, an abort with a `fern:` cause is accepted
+// too: the assemblers read the compiler's own output, and a bounds abort on
+// foreign text is the language's defined trap. Go's fuzzer runs it as target,
+// and TestSelfHostReaderCoverageGuidedFuzz runs it with the same seeds and the
 // same check. check can be nil.
 type readerTarget struct {
 	target  string
@@ -55,37 +68,43 @@ type readerTarget struct {
 	reader  string
 	seeds   func(testing.TB) [][]byte
 	check   readerCheck
+	aborts  bool
 }
 
 const stdparse = "stdparse"
 
 var readerTargets = []readerTarget{
-	{"FuzzSelfHostStdHTTP", stdparse, "http", httpSeeds, nil},
-	{"FuzzSelfHostStdHPACK", stdparse, "hpack", hpackSeeds, nil},
-	{"FuzzSelfHostStdH2", stdparse, "h2", h2Seeds, nil},
-	{"FuzzSelfHostStdQPACK", stdparse, "qpack", qpackSeeds, nil},
-	{"FuzzSelfHostStdQUIC", stdparse, "quic", quicSeeds, nil},
-	{"FuzzSelfHostStdQUICFrames", stdparse, "frames", quicFrameSeeds, nil},
-	{"FuzzSelfHostStdJSON", stdparse, "json", jsonSeeds, nil},
-	{"FuzzSelfHostStdURL", stdparse, "url", urlSeeds, nil},
-	{"FuzzSelfHostStdTLS", stdparse, "tls", tlsSeeds, nil},
-	{"FuzzSelfHostStdTLSServer", stdparse, "tls-server", tlsServerSeeds, nil},
-	{"FuzzSelfHostStdTLSClient", stdparse, "tls-client", tlsClientSeeds, nil},
-	{"FuzzSelfHostStdX509", stdparse, "x509", x509Seeds, nil},
-	{"FuzzSelfHostStdInflate", stdparse, "inflate", inflateSeeds, agreesWithGo(goInflate)},
-	{"FuzzSelfHostStdGunzip", stdparse, "gunzip", gunzipSeeds, agreesWithGo(goGunzip)},
-	{"FuzzSelfHostStdZlib", stdparse, "zlib", zlibSeeds, agreesWithGo(goZlib)},
-	{"FuzzSelfHostStdZstd", stdparse, "zstd", zstdSeeds, roundTrips},
-	{"FuzzSelfHostStdBrotli", stdparse, "brotli", brotliSeeds, roundTrips},
-	{"FuzzSelfHostStdDNS", stdparse, "dns", dnsSeeds, dnsRoundTrips},
-	{"FuzzSelfHostStdProtobuf", stdparse, "protobuf", protobufSeeds, nil},
-	{"FuzzSelfHostStdJPEG", stdparse, "jpeg", jpegSeeds, jpegAgreesWithGo},
-	{"FuzzSelfHostToml", "pkg_fuzz_run", "toml", tomlSeeds, nil},
-	{"FuzzSelfHostLock", "pkg_fuzz_run", "lock", lockSeeds, nil},
-	{"FuzzSelfHostIndex", "pkg_fuzz_run", "index", indexSeeds, nil},
-	{"FuzzSelfHostArchive", "pkg_fuzz_run", "archive", archiveSeeds, nil},
-	{"FuzzSelfHostTangle", "literate_fuzz_run", "tangle", literateSeeds, nil},
-	{"FuzzSelfHostWeave", "literate_fuzz_run", "weave", literateSeeds, nil},
+	{"FuzzSelfHostStdHTTP", stdparse, "http", httpSeeds, nil, false},
+	{"FuzzSelfHostStdHPACK", stdparse, "hpack", hpackSeeds, nil, false},
+	{"FuzzSelfHostStdH2", stdparse, "h2", h2Seeds, nil, false},
+	{"FuzzSelfHostStdQPACK", stdparse, "qpack", qpackSeeds, nil, false},
+	{"FuzzSelfHostStdQUIC", stdparse, "quic", quicSeeds, nil, false},
+	{"FuzzSelfHostStdQUICFrames", stdparse, "frames", quicFrameSeeds, nil, false},
+	{"FuzzSelfHostStdJSON", stdparse, "json", jsonSeeds, nil, false},
+	{"FuzzSelfHostStdURL", stdparse, "url", urlSeeds, nil, false},
+	{"FuzzSelfHostStdTLS", stdparse, "tls", tlsSeeds, nil, false},
+	{"FuzzSelfHostStdTLSServer", stdparse, "tls-server", tlsServerSeeds, nil, false},
+	{"FuzzSelfHostStdTLSClient", stdparse, "tls-client", tlsClientSeeds, nil, false},
+	{"FuzzSelfHostStdX509", stdparse, "x509", x509Seeds, nil, false},
+	{"FuzzSelfHostStdInflate", stdparse, "inflate", inflateSeeds, agreesWithGo(goInflate), false},
+	{"FuzzSelfHostStdGunzip", stdparse, "gunzip", gunzipSeeds, agreesWithGo(goGunzip), false},
+	{"FuzzSelfHostStdZlib", stdparse, "zlib", zlibSeeds, agreesWithGo(goZlib), false},
+	{"FuzzSelfHostStdZstd", stdparse, "zstd", zstdSeeds, roundTrips, false},
+	{"FuzzSelfHostStdBrotli", stdparse, "brotli", brotliSeeds, roundTrips, false},
+	{"FuzzSelfHostStdDNS", stdparse, "dns", dnsSeeds, dnsRoundTrips, false},
+	{"FuzzSelfHostStdProtobuf", stdparse, "protobuf", protobufSeeds, nil, false},
+	{"FuzzSelfHostStdJPEG", stdparse, "jpeg", jpegSeeds, jpegAgreesWithGo, false},
+	{"FuzzSelfHostToml", "pkg_fuzz_run", "toml", tomlSeeds, nil, false},
+	{"FuzzSelfHostLock", "pkg_fuzz_run", "lock", lockSeeds, nil, false},
+	{"FuzzSelfHostIndex", "pkg_fuzz_run", "index", indexSeeds, nil, false},
+	{"FuzzSelfHostArchive", "pkg_fuzz_run", "archive", archiveSeeds, nil, false},
+	{"FuzzSelfHostTangle", "literate_fuzz_run", "tangle", literateSeeds, nil, false},
+	{"FuzzSelfHostWeave", "literate_fuzz_run", "weave", literateSeeds, nil, false},
+	{target: "FuzzSelfHostIRVerify", program: "irverify_fuzz_run", reader: "verify", seeds: irSeeds, check: irOpCount},
+	{target: "FuzzSelfHostX86Assembler", program: "asm_fuzz_run", reader: "x86", seeds: assemblerSeeds("x86-64-linux"), aborts: true},
+	{target: "FuzzSelfHostArm64Assembler", program: "asm_fuzz_run", reader: "arm64", seeds: assemblerSeeds("arm64-linux"), aborts: true},
+	{target: "FuzzSelfHostX86Image", program: "asm_fuzz_run", reader: "x86-image", seeds: assemblerSeeds("x86-64-linux"), check: imageCheck(x86Layout), aborts: true},
+	{target: "FuzzSelfHostArm64Image", program: "asm_fuzz_run", reader: "arm64-image", seeds: assemblerSeeds("arm64-linux"), check: imageCheck(arm64Layout), aborts: true},
 }
 
 // readerProgram builds the program of r.
@@ -111,7 +130,7 @@ func fuzzReaderTarget(f *testing.F) {
 		if err := os.WriteFile(path, input, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if fault := readerFault(r, input, runUnderBudget(exec.Command(bin, r.reader, path))); fault != "" {
+		if fault := readerFault(r, input, path, runUnderBudget(exec.Command(bin, r.reader, path))); fault != "" {
 			t.Error(fault)
 		}
 	})
@@ -127,17 +146,21 @@ func readerTargetOf(tb testing.TB, target string) readerTarget {
 	return readerTarget{}
 }
 
-// readerFault returns the fault of one run of a reader, or "". A run must stay
-// in its budgets and exit 0 with a summary that passes the reader's check.
-func readerFault(r readerTarget, input []byte, run fuzzRun) string {
+// readerFault returns the fault of one run of a reader on the input at path,
+// or "". A run must stay in its budgets and exit 0 with a summary that passes
+// the reader's check, or abort with a cause where the reader allows it.
+func readerFault(r readerTarget, input []byte, path string, run fuzzRun) string {
 	if fault := budgetFault(r.program+" "+r.reader, run, input); fault != "" {
 		return fault
+	}
+	if r.aborts && run.code == 134 && strings.HasPrefix(run.stderr, "fern: ") {
+		return ""
 	}
 	if run.code != 0 || !strings.HasPrefix(run.stdout, r.reader+" ") {
 		return fmt.Sprintf("exit %d on %d bytes, want 0 with a %s summary\nstdout: %q\nstderr: %q", run.code, len(input), r.reader, run.stdout, run.stderr)
 	}
 	if r.check != nil {
-		return r.check(r.reader, input, strings.TrimSpace(run.stdout))
+		return r.check(readerRun{reader: r.reader, input: input, summary: strings.TrimSpace(run.stdout), stderr: run.stderr, path: path})
 	}
 	return ""
 }

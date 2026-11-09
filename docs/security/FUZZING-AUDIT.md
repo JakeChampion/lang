@@ -16,7 +16,7 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | Target | Boundary | Driver | Accepted outcomes |
 |---|---|---|---|
 | `FuzzSelfHostManifest` | `fern -manifest` reads a native image | the CLI | the fields in printable ASCII with exit 0, or `fern: no build manifest in` with exit 1 |
-| `FuzzSelfHostIRVerify` | the structural, stack and reference-count verifiers read an op stream | `compiler/drivers/irverify_fuzz_run.fern` | a problem count from each verifier, exit 0 |
+| `FuzzSelfHostIRVerify` | the structural, stack and reference-count verifiers read an op stream | `compiler/drivers/irverify_fuzz_run.fern verify` | a problem count from each verifier, exit 0 |
 | `FuzzSelfHostX86Assembler` | the x86-64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern x86` | a summary with exit 0, or an abort with a `fern:` cause |
 | `FuzzSelfHostArm64Assembler` | the arm64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern arm64` | the same |
 | `FuzzSelfHostX86Image` | the x86-64 assembler, the linker and the ELF writer take assembly text to a static, a `-pie` and a `-g` image | `compiler/drivers/asm_fuzz_run.fern x86-image` | the sizes with exit 0 and a `fern:` cause for each refused image, or an abort with a cause. Each image must parse with Go's `debug/elf`, keep its segments inside the file, agree in address and offset modulo the page, have no segment both writable and executable, and enter in the code |
@@ -232,7 +232,9 @@ It cannot see into the Fern process that reads each input, so it mutates the rea
 It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-The loop takes twenty-six readers: the twenty of `tests/fuzz/stdparse.fern`, and the package and literate readers of `compiler/drivers/pkg_fuzz_run.fern` and `compiler/drivers/literate_fuzz_run.fern`.
+The loop takes thirty-one readers: the twenty of `tests/fuzz/stdparse.fern`, and the readers of four drivers in `compiler/drivers/`.
+The drivers read packages, literate documents, op streams and assembly text.
+The image modes of `asm_fuzz_run.fern` write their images beside the input, so the check can read them.
 The counters of a program cover the modules that it imports.
 
 | Program | Readers | Counters |
@@ -240,6 +242,8 @@ The counters of a program cover the modules that it imports.
 | `tests/fuzz/stdparse.fern` | 20 | 56,249 |
 | `compiler/drivers/pkg_fuzz_run.fern` | 4 | 16,899 |
 | `compiler/drivers/literate_fuzz_run.fern` | 2 | 13,491 |
+| `compiler/drivers/irverify_fuzz_run.fern` | 1 | 15,577 |
+| `compiler/drivers/asm_fuzz_run.fern` | 4 | 32,864 |
 
 `readerTargets` holds the program, the seeds and the check of each reader.
 The Go target and the loop use the same seeds, the same budgets and the same oracle.
@@ -262,10 +266,13 @@ From the readers' own seeds, 300 runs of each arm reached the same counters to w
 | protobuf | `stdparse.fern` | 536 | 509 |
 | index | `pkg_fuzz_run.fern` | 524 | 427 |
 | tangle | `literate_fuzz_run.fern` | 498 | 399 |
+| verify | `irverify_fuzz_run.fern` | 2373 | 2129 |
+| x86 | `asm_fuzz_run.fern` | 1789 | 1703 |
 
 A run of `stdparse.fern` costs about 45 ms, and most of that time is the report.
 A run of a driver costs about 15 ms.
-Each of the twenty-six readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
+An abort ends a program before it writes its report, so an aborted run of an assembler adds no counters.
+Each of the thirty-one readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
 
 ## Crash triage
 
@@ -280,11 +287,11 @@ A hang names the budget, and a budget breach names the resident size.
 The drivers run natively, so the arm64 runner does not run them.
 The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-two targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the twenty-six readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-one readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
 Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits
 
-- The manifest, IR, assembler and image targets have no coverage feedback: Go's instrumentation does not see into a Fern process, so their mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers. The twenty-six readers have feedback from a `-cover` build, as the section above says.
+- The manifest target has no coverage feedback, because it runs the whole compiler CLI. Its mutations are blind. The other thirty-one targets have feedback from a `-cover` build, as the section above says.
 - The memory budget is a resident-size ceiling on the child, not a per-allocation count.
 - The compiler reads no object file or archive from outside. So the image targets reach the linker and the ELF writer only through the assemblers. A fault that the assemblers refuse before the link stays out of reach.

@@ -110,9 +110,9 @@ func dnsSeeds(testing.TB) [][]byte {
 	return seeds
 }
 
-func dnsRoundTrips(reader string, input []byte, summary string) string {
-	if strings.Contains(summary, "roundtrip broken") {
-		return fmt.Sprintf("dns encodes a message it decoded into one that decodes differently: %q\ninput: %x", summary, input)
+func dnsRoundTrips(r readerRun) string {
+	if strings.Contains(r.summary, "roundtrip broken") {
+		return fmt.Sprintf("dns encodes a message it decoded into one that decodes differently: %q\ninput: %x", r.summary, r.input)
 	}
 	return ""
 }
@@ -249,8 +249,9 @@ func jpegSeeds(f testing.TB) [][]byte {
 	return seeds
 }
 
-func jpegAgreesWithGo(reader string, input []byte, summary string) string {
-	fields := strings.Fields(summary)
+func jpegAgreesWithGo(r readerRun) string {
+	reader, input := r.reader, r.input
+	fields := strings.Fields(r.summary)
 	if len(fields) < 4 || fields[1] != "ok" {
 		return ""
 	}

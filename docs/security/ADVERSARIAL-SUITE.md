@@ -134,5 +134,5 @@ QEMU establishes emulated behaviour only.
 
 - The fault tests did not run on a native host with PAC, BTI, MTE or the user shadow stack. The arm64 rows are QEMU rows.
 - The seccomp filter exists on Linux only. QEMU user mode does not emulate it, so the arm64 tests run on the native arm64 lane.
-- The manifest, IR, assembler and image fuzz targets get no coverage feedback. Go's instrumentation does not see into a Fern process. The stdlib, package and literate reader targets get feedback from a `-cover` build ([FUZZING-AUDIT.md](FUZZING-AUDIT.md)).
+- The manifest fuzz target gets no coverage feedback, because it runs the whole compiler CLI. The other fuzz targets get feedback from a `-cover` build ([FUZZING-AUDIT.md](FUZZING-AUDIT.md)).
 - Package archives carry a hash and no signature ([PACKAGE-INTEGRITY.md](PACKAGE-INTEGRITY.md)).
