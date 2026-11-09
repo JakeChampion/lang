@@ -101,3 +101,14 @@ bootstrap/arm64-linux/stage2.size_bytes	17359192
 bootstrap/arm64-linux/stage3.wall_s	48
 bootstrap/arm64-linux/stage3.peak_rss_mb	2110
 bootstrap/arm64-linux/stage3.size_bytes	17359192
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	35
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2479
+bootstrap/x86-64-linux/stage1.size_bytes	16074496
+bootstrap/x86-64-linux/stage2.wall_s	36
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2477
+bootstrap/x86-64-linux/stage2.size_bytes	16065312
+bootstrap/x86-64-linux/stage3.wall_s	36
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2390
+bootstrap/x86-64-linux/stage3.size_bytes	16065312
