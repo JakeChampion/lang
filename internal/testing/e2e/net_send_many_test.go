@@ -107,9 +107,9 @@ function main(): i32 {
   let Ok(b) = net.send_many(sock, to, [filled(10, 10u8), filled(20, 20u8), filled(20, 20u8), filled(5, 5u8), filled(5, 5u8)]) else { return 5; };
   let empty: u8[] = [];
   let Ok(c) = net.send_many(sock, to, [empty]) else { return 6; };
-  let first = net.batch().add(to, [filled(7, 7u8)]).send(sock);
+  let first = net.batch().add(to, [filled(7, 7u8)], 0).send(sock);
   let Ok(d) = first.1 else { return 7; };
-  let second = first.0.add(to, [filled(9, 9u8)]).send(sock);
+  let second = first.0.add(to, [filled(9, 9u8)], 0).send(sock);
   let Ok(e) = second.1 else { return 8; };
   print("messages " + a.to_string() + " " + b.to_string() + " " + c.to_string() + " " + d.to_string() + " " + e.to_string());
   return 0;
