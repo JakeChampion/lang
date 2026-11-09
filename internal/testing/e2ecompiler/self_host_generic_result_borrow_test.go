@@ -16,7 +16,13 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 		"diag_e051_generic_result_identity",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
+		"diag_e051_generic_callback_capture",
+		"diag_e051_generic_callback_owned",
+		"diag_e051_generic_callback_local",
+		"diag_e051_generic_callback_forward",
+		"diag_e051_generic_callback_capture_helper",
 		"generic_result_owned_and_handle_free",
+		"generic_callback_copies_and_shared_results",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := e2eharness.RepoPath("conformance", "cases", name, "main.fern")

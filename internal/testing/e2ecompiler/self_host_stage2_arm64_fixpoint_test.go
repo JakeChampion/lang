@@ -52,7 +52,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		stdlib  bool
 		selfEnv bool
 	}{
-		{name: "lexer", src: "compiler/lexer.fern", stdlib: true},
+		{name: "lexer", src: "compiler/drivers/lexer_check_run.fern", stdlib: true},
 		{name: "sort_wider", src: "tests/stdlib/sort_wider_test.fern", stdlib: true},
 		{name: "float_math", src: "tests/stdlib/float_math_test.fern", stdlib: true},
 		{name: "process_assertions", src: "tests/stdlib/process_assertions_test.fern", stdlib: true},

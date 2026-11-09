@@ -1,0 +1,36 @@
+// Emit native Annex B ranges and packet conversions for independent checks.
+import "std/video/nal";
+import "std/video/frame";
+import "std/hex";
+
+function emit(bytes: [u8]): i32 {
+  let limits = frame.default_limits();
+  let at = 0;
+  while (at < bytes.len()) {
+    let Ok(Some(unit)) = nal.next_annex_b(bytes, at, limits) else {
+      return 2;
+    };
+    print("U " + unit.offset.to_string() + " " + unit.size.to_string() + " " + hex.encode(bytes[unit.offset:unit.offset + unit.size]));
+    at = unit.next_offset;
+  }
+  let Ok(packet) = nal.to_length_prefixed(bytes, 4, limits) else {
+    return 3;
+  };
+  let Ok(restored) = nal.to_annex_b(packet, 4, limits) else {
+    return 4;
+  };
+  print("P " + hex.encode(packet));
+  print("B " + hex.encode(restored));
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 5;
+  };
+  return emit(bytes);
+}

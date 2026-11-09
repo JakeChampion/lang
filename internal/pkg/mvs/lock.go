@@ -59,7 +59,7 @@ func ReadLock(dir string) (*Lock, error) {
 		if cur == nil {
 			return nil
 		}
-		if cur.Name == "" || !haveVersion {
+		if cur.Name == "" || !haveVersion || cur.Source.URL != "" && cur.Source.Hash == "" {
 			return fmt.Errorf("%s: incomplete [[package]] entry", file)
 		}
 		out[cur.Name] = *cur

@@ -45,7 +45,7 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
-		if !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
+		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
 			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
 				b.values[p.Name] = true
@@ -157,9 +157,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case nil:
 		return false
 	case *ast.Lambda:
-		// A function value cannot consume its captures. Passing a read
-		// callback does not lend the captured reader to the call's result.
-		return false
+		return c.lambdaResultBorrows(x, b)
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
@@ -189,6 +187,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.Call:
 		if !c.calleeResultBorrows(x) {
 			return false
+		}
+		if c.exprBorrows(x.Callee, b) {
+			return true
 		}
 		// Dynamic methods keep the receiver on the callee, outside Args.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.Method != nil && c.exprBorrows(fa.Target, b) {
@@ -267,11 +268,45 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 	if sig == nil || i >= len(sig.Params) || sig.Params[i] == nil {
 		return true
 	}
-	if i < len(flags) && flags[i] {
+	if i < len(flags) && flags[i] && !c.callbackCanLend(sig.Params[i]) {
 		return false
 	}
 	pt := sig.Params[i]
-	return mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+	return c.callbackCanLend(pt) || mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+}
+
+// A callback can return a captured handle without consuming its capture.
+func (c *checker) callbackCanLend(t ast.Type) bool {
+	fn, ok := t.(*ast.FuncType)
+	return ok && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
+}
+
+func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
+	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
+		return false
+	}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values}
+	for name := range outer.borrowed {
+		b.borrowed[name] = true
+	}
+	for name := range outer.locals {
+		b.borrowed[name] = true
+	}
+	for _, p := range lm.Params {
+		delete(b.borrowed, p.Name)
+	}
+	b.locals = c.borrowedLocals(&ast.FuncDecl{Body: lm.Body}, b)
+	found := false
+	ast.Walk(lm.Body, func(n ast.Node) bool {
+		if _, nested := n.(*ast.Lambda); nested || found {
+			return false
+		}
+		if r, ok := n.(*ast.Return); ok && c.exprBorrows(r.Value, b) {
+			found = true
+		}
+		return true
+	})
+	return found
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
@@ -331,12 +366,8 @@ func (c *checker) signatureResultBorrows(name string) bool {
 		return true
 	}
 	flags := c.ownFuncs[name]
-	for i, pt := range sig.Params {
-		if pt == nil || !mayRetainBorrow(pt) {
-			continue
-		}
-		// A parameter that cannot hold a handle cannot lend one to the result.
-		if (i >= len(flags) || !flags[i]) && !c.holdsNoHandle(pt) {
+	for i := range sig.Params {
+		if c.paramCanLend(sig, flags, i) {
 			return true
 		}
 	}

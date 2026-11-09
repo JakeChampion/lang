@@ -19,6 +19,20 @@ They do not validate the coded parameter-set syntax or establish decoder support
 Length sizes one, two, and four are supported. Three is reserved.
 Limits apply to the complete input record and the combined output buffers.
 
+`next_annex_b` reads one NAL byte range from a complete Annex B byte view.
+Start at offset zero. Continue with the returned `next_offset` until the function returns `None`.
+The ranges exclude start codes, leading zeros, and trailing zeros.
+Both three-byte and four-byte start codes are supported, including extra zero bytes between units.
+The function preserves emulation-prevention bytes inside each NAL unit.
+
+`to_length_prefixed` converts those ranges to one MP4 packet.
+The prefix width must hold every unit length. Both the complete input and output must fit the packet limit.
+These functions inspect framing only. They do not assign access-unit boundaries, timestamps, or coded-picture semantics.
+The caller must provide packet boundaries and timing before container muxing.
+
+An end cursor returns `None`. An incomplete start code or missing payload returns `Truncated`.
+An invalid prefix or empty unit returns `Header`. A byte budget or prefix-capacity failure returns `Limit`.
+
 ```fern
 <<*>>=
 // This module converts AVC and HEVC configuration records and packets.
@@ -27,6 +41,8 @@ import "std/audio/wire";
 
 pub struct Config { length_size: i32, csd0: u8[], csd1: u8[] }
 
+pub struct AnnexUnit { offset: i32, size: i32, next_offset: i32 }
+
 struct Units { bytes: u8[], next_offset: i32 }
 
 function length_size(n: i32): Result[void, frame.VideoError] {
@@ -34,6 +50,89 @@ function length_size(n: i32): Result[void, frame.VideoError] {
     return Err(frame.Unsupported);
   }
   return Ok(());
+}
+
+function annex_prefix(input: [u8], at: i32): Result[i32, frame.VideoError] {
+  let start = at;
+  while (at < input.len() && input[at] == 0u8) {
+    at += 1;
+  }
+  if (at == input.len()) {
+    return Err(frame.Truncated);
+  }
+  if (at - start < 2 || input[at] != 1u8) {
+    return Err(frame.Header);
+  }
+  if (at + 1 == input.len()) {
+    return Err(frame.Truncated);
+  }
+  return Ok(at + 1);
+}
+
+function annex_unit(start: i32, end: i32, next: i32): Result[Option[AnnexUnit], frame.VideoError] {
+  if (start == end) {
+    return Err(frame.Header);
+  }
+  return Ok(Some(AnnexUnit { offset: start, size: end - start, next_offset: next }));
+}
+
+function annex_body(input: [u8], start: i32): Result[Option[AnnexUnit], frame.VideoError] {
+  let at = start;
+  let zeros = 0;
+  while (at < input.len()) {
+    let byte = input[at];
+    if (byte == 0u8) {
+      zeros += 1;
+    } else {
+      if (byte == 1u8 && zeros >= 2) {
+        return annex_unit(start, at - zeros, at - zeros);
+      }
+      zeros = 0;
+    }
+    at += 1;
+  }
+  return annex_unit(start, input.len() - zeros, input.len());
+}
+
+pub function next_annex_b(input: [u8], offset: i32, limits: frame.Limits): Result[Option[AnnexUnit], frame.VideoError] {
+  frame.check_packet(input, limits)?;
+  if (offset < 0 || offset > input.len()) {
+    return Err(frame.Header);
+  }
+  if (offset == input.len()) {
+    return Ok(None);
+  }
+  return annex_body(input, annex_prefix(input, offset)?);
+}
+
+function append_length_unit(own output: u8[], input: [u8], prefix_bytes: i32, budget: i32): Result[u8[], frame.VideoError] {
+  let maximum = (1u64 << (prefix_bytes * 8) as u64) - 1u64;
+  if (input.len() as u64 > maximum || budget - output.len() < prefix_bytes || input.len() > budget - output.len() - prefix_bytes) {
+    return Err(frame.Limit);
+  }
+  output = wire.put_be(output, input.len() as u64, prefix_bytes);
+  for byte in input {
+    output = output.append(byte);
+  }
+  return Ok(output);
+}
+
+pub function to_length_prefixed(input: [u8], prefix_bytes: i32, limits: frame.Limits): Result[u8[], frame.VideoError] {
+  frame.check_packet(input, limits)?;
+  length_size(prefix_bytes)?;
+  if (input.len() == 0) {
+    return Err(frame.Header);
+  }
+  let at = 0;
+  let output: u8[] = [];
+  while (at < input.len()) {
+    let Some(unit) = next_annex_b(input, at, limits)? else {
+      return Err(frame.State);
+    };
+    output = append_length_unit(output, input[unit.offset:unit.offset + unit.size], prefix_bytes, limits.max_packet_bytes)?;
+    at = unit.next_offset;
+  }
+  return Ok(output);
 }
 
 function append_unit(own output: u8[], input: [u8], at: i32, size: i32, budget: i32): Result[u8[], frame.VideoError] {

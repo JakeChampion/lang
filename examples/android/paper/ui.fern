@@ -507,6 +507,72 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
     y += row;
     i += 1;
   }
+  if (v.query.len() == 0) {
+    ns = cat(ns, letter_index(m, f, v.results, top, bottom));
+  }
+  return ns;
+}
+
+const ALPHABET: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+// The letter of an app name in the index: its first letter, A to Z, or "#".
+pub function letter_of(name: string): string {
+  if (name.len() == 0) {
+    return "#";
+  }
+  let b = name[0] as i32;
+  if (b >= 97 && b <= 122) {
+    b -= 32;
+  }
+  if (b < 65 || b > 90) {
+    return "#";
+  }
+  return ALPHABET.drop(b - 65).take(1).to_owned();
+}
+
+// The letters of the apps, in the order of the list, each once.
+pub function letters(apps: paper.Entry[]): string[] {
+  let out: string[] = [];
+  for a in apps {
+    let l = letter_of(a.label);
+    if (!paper.has(out, l)) {
+      out = out.append(l);
+    }
+  }
+  return out;
+}
+
+// The scroll of the app list that puts the first app of `letter` at the top.
+pub function letter_scroll(m: Metrics, f: face.Fonts, apps: paper.Entry[], letter: string): i32 {
+  for i in 0..apps.len() {
+    if (letter_of(apps[i].label) == letter) {
+      return (i * list_row(m, f)).min(list_scroll_limit(m, f, apps.len()));
+    }
+  }
+  return 0;
+}
+
+// A column of the letters of the apps on each edge of the app list. A tap
+// or a drag on a letter goes to its apps.
+function letter_index(m: Metrics, f: face.Fonts, apps: paper.Entry[], top: i32, bottom: i32): Node[] {
+  let ls = letters(apps);
+  if (ls.len() < 2) {
+    return [];
+  }
+  let px = dp(m, 13.0);
+  let col = dp(m, 28.0);
+  let slot = ((bottom - top) / ls.len()).min(dp(m, 26.0));
+  let y = top + (bottom - top - slot * ls.len()) / 2;
+  let lh = face.line(f, face.SEMIBOLD, px);
+  let ns: Node[] = [];
+  for l in ls {
+    let w = face.width(f, face.SEMIBOLD, px, l);
+    for x in [0, m.w - col] {
+      ns = ns.append(label(f, x + (col - w) / 2, y + (slot - lh) / 2, l, px, face.SEMIBOLD, m.pal.ink_soft));
+      ns = ns.append(Node { ...node(x, y, col, slot, Blank), act: "jump:" + l, group: "index" });
+    }
+    y += slot;
+  }
   return ns;
 }
 

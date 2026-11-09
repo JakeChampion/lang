@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Check native Annex B ranges and conversions against independent codec streams."""
+import os
+from pathlib import Path
+import re
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/annex-b-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
+                "scripts/video-reference/annex-b.fern", "internal/stdlib"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm),
+                "scripts/video-reference/annex-b.fern", "internal/stdlib"], check=True)
+
+
+def decode(path, pixel_format):
+    return subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
+                                    "-pix_fmt", pixel_format, "-f", "rawvideo", "-"])
+
+
+def check(path, directory, pixel_format):
+    data = path.read_bytes()
+    markers = list(re.finditer(b"\x00{2,}\x01", data))
+    assert markers and markers[0].start() == 0
+    units = []
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(data)
+        payload = data[marker.end():end].rstrip(b"\x00")
+        assert payload
+        units.append((marker.end(), payload))
+    lines = subprocess.check_output([str(binary), str(path)], text=True).splitlines()
+    wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                   cwd=directory, text=True).splitlines()
+    assert lines == wasi and len(lines) == len(units) + 2
+    for line, (offset, payload) in zip(lines[:-2], units, strict=True):
+        assert line.split() == ["U", str(offset), str(len(payload)), payload.hex()]
+    packet = b"".join(struct.pack(">I", len(payload)) + payload for _, payload in units)
+    canonical = b"".join(b"\x00\x00\x00\x01" + payload for _, payload in units)
+    assert lines[-2] == "P " + packet.hex()
+    assert lines[-1] == "B " + canonical.hex()
+    restored = directory / ("fern-" + path.name)
+    restored.write_bytes(canonical)
+    pixels = decode(path, pixel_format)
+    sample_bytes = 2 if pixel_format == "yuv420p10le" else 1
+    assert len(pixels) == 6 * 64 * 48 * 3 // 2 * sample_bytes
+    assert decode(restored, pixel_format) == pixels
+    print(f"{path.name}: {len(units)} native/WASI ranges and lengths match; FFmpeg planes match", flush=True)
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    cases = [
+        ("avc-baseline", "h264", "libx264", "baseline", "yuv420p"),
+        ("avc-high", "h264", "libx264", "high", "yuv420p"),
+        ("avc-high10", "h264", "libx264", "high10", "yuv420p10le"),
+        ("hevc-main", "hevc", "libx265", "main", "yuv420p"),
+        ("hevc-main10", "hevc", "libx265", "main10", "yuv420p10le"),
+    ]
+    for name, codec, encoder, profile, pixels in cases:
+        path = directory / f"{name}.{codec}"
+        options = ["-x264-params", "repeat-headers=1:aud=1:scenecut=0"] if codec == "h264" else [
+            "-x265-params", "repeat-headers=1:aud=1:scenecut=0:pools=none:frame-threads=1:log-level=error"]
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=6",
+                        "-frames:v", "6", "-c:v", encoder, "-profile:v", profile, "-threads", "1",
+                        "-g", "4", "-bf", "0" if profile == "baseline" else "2", "-pix_fmt", pixels,
+                        *options, "-f", codec, str(path)], check=True)
+        check(path, directory, pixels)
