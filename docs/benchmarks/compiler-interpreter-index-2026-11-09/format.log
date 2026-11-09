@@ -1,0 +1,11 @@
+--- compiler/interp.fern
++++ compiler/interp.fern
+@@ -6173,7 +6173,7 @@
+   if (traits.len() == 0) {
+     return name;
+   }
+-    return parser.dyn_provider_name(funcs.decls, dispatch_type_name(recv), traits, name);
++  return parser.dyn_provider_name(funcs.decls, dispatch_type_name(recv), traits, name);
+ }
+ 
+ function dispatch_type_name(v: Value): string {

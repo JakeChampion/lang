@@ -17,6 +17,11 @@ The shortcut does not repair that timeout.
 Complete cold and warm compilation controls produce identical native output, with variable timings that establish no performance change.
 The candidate diagnostic profile still attributes 49.43% of exclusive samples to `call_target`.
 
+The [function-name index experiment](benchmarks/compiler-interpreter-index-2026-11-09/README.md) shares an immutable declaration index across interpreter calls.
+Five pairs reduce CPU time by 16.83% to 25.60% on the first 32-record diagnostic subset, relative to the shortcut version.
+All eight targeted suites pass, including a same-count REPL replacement on three targets.
+The full-corpus and larger repeated controls remain active at this record revision.
+
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |
 | Tokenize and parse | Source bytes per second, allocations, peak memory | Real source corpus and malformed input |

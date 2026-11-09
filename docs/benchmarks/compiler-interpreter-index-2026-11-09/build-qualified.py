@@ -1,0 +1,7 @@
+from pathlib import Path
+import os,subprocess,json,hashlib,datetime
+root=Path.cwd();out=root/'build/interpreter-index-qualified-20261109';out.mkdir();producer=Path('/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux');binary=out/'fern-index';env={k:v for k,v in os.environ.items() if not k.startswith('FERN_')};env.update(FERN_PROFILE='0',FERN_LEAKCHECK='0',FERN_RC_CERTIFY='1',FERN_RC_CERTIFY_MEMO='0');args=[str(producer),'-target','x86-64-linux','-o',str(binary),'compiler/fern.fern','internal/stdlib'];d={'source':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'interp_sha256':hashlib.sha256((root/'compiler/interp.fern').read_bytes()).hexdigest(),'producer_sha256':hashlib.sha256(producer.read_bytes()).hexdigest(),'cwd':str(root),'args':args,'environment':{k:v for k,v in env.items() if k.startswith('FERN_')},'started':datetime.datetime.now(datetime.timezone.utc).isoformat()};path=out/'build.json';assert not path.exists();path.write_text(json.dumps(d,indent=2)+'\n')
+with (out/'build.stdout').open('wb') as stdout,(out/'build.stderr').open('wb') as stderr:r=subprocess.run(args,cwd=root,env=env,stdout=stdout,stderr=stderr)
+d.update(exit_code=r.returncode,finished=datetime.datetime.now(datetime.timezone.utc).isoformat())
+if r.returncode==0:d['binary_sha256']=hashlib.sha256(binary.read_bytes()).hexdigest()
+path.write_text(json.dumps(d,indent=2)+'\n');print(json.dumps(d))
