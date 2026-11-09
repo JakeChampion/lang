@@ -281,8 +281,8 @@ x86_64/sort_strings.text	3098
 x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1926
 x86_64/string_build.ir	42886116
-x86_64/string_count_byte.text	1271
-x86_64/string_count_byte.ir	68053368
+x86_64/string_count_byte.text	1321
+x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
@@ -622,3 +622,7 @@ x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6027
 aarch64/video_qtrle.ir 1662057925
+# 2026-11-09: PR #14917, CI job 129321185181. The merged byte-count kernel
+# from #14910 changes the string-count rows. Parent 97af82fc and IVF head
+# cbed65e0 produce identical assembly, binaries, and Callgrind counts.
+# Pin both measured rows. Keep the 1% tolerance.
