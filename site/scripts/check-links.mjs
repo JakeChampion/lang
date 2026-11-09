@@ -3,8 +3,8 @@
 //   node scripts/check-links.mjs --dist dist
 //   node scripts/check-links.mjs --site https://fern-lang.netlify.app
 //
-// --dist checks a build: each href and src that starts with / must name a
-// file in the build. --site checks a deployed site: it reads every
+// --dist checks a build: each href and src on the site, absolute or
+// relative to its page, must name a file in the build. --site checks a deployed site: it reads every
 // page in the sitemap and requests each link on that site's origin.
 // Links to other sites are not checked, because their status changes
 // for reasons that have no relation to this site.
@@ -14,8 +14,11 @@ import { join } from "node:path";
 
 const LINK = /\s(?:href|src)="([^"#?]*)/g;
 
+// The links of a page. Script bodies are left out: an href in JavaScript
+// source is text, not a link.
 export function linksIn(html) {
-  return [...html.matchAll(LINK)].map((m) => m[1]).filter((l) => l !== "");
+  const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  return [...markup.matchAll(LINK)].map((m) => m[1]).filter((l) => l !== "");
 }
 
 function htmlFiles(dir) {
@@ -36,12 +39,28 @@ export function fileFor(dist, path) {
   return null;
 }
 
+// The site path that a link on a page names, or null for a link to another
+// site or another scheme. `pagePath` is the page's own path, such as
+// /errors/e008/, which a relative link resolves against.
+export function sitePath(pagePath, link) {
+  if (link.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(link)) return null;
+  return new URL(link, `http://site${pagePath}`).pathname;
+}
+
+// The path of the page that a file of the build serves.
+export function pagePathOf(dist, file) {
+  const rel = file.slice(dist.length).split("\\").join("/");
+  return rel.endsWith("/index.html") ? rel.slice(0, -"index.html".length) : rel;
+}
+
 function checkDist(dist) {
   const broken = new Map();
   let checked = 0;
   for (const page of htmlFiles(dist)) {
-    for (const link of linksIn(readFileSync(page, "utf8"))) {
-      if (!link.startsWith("/") || link.startsWith("//")) continue;
+    const from = pagePathOf(dist, page);
+    for (const href of linksIn(readFileSync(page, "utf8"))) {
+      const link = sitePath(from, href);
+      if (link === null) continue;
       checked++;
       if (fileFor(dist, link) === null) {
         if (!broken.has(link)) broken.set(link, page.slice(dist.length + 1));

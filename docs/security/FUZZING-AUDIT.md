@@ -15,7 +15,7 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 
 | Target | Boundary | Driver | Accepted outcomes |
 |---|---|---|---|
-| `FuzzSelfHostManifest` | `fern -manifest` reads a native image | the CLI | the fields in printable ASCII with exit 0, or `fern: no build manifest in` with exit 1 |
+| `FuzzSelfHostManifest` | the reader of `fern -manifest` reads a native image | `compiler/drivers/manifest_fuzz_run.fern manifest` | `manifest N` and N fields in printable ASCII with exit 0, the first one the target |
 | `FuzzSelfHostIRVerify` | the structural, stack and reference-count verifiers read an op stream | `compiler/drivers/irverify_fuzz_run.fern verify` | a problem count from each verifier, exit 0 |
 | `FuzzSelfHostX86Assembler` | the x86-64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern x86` | a summary with exit 0, or an abort with a `fern:` cause |
 | `FuzzSelfHostArm64Assembler` | the arm64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern arm64` | the same |
@@ -232,18 +232,19 @@ It cannot see into the Fern process that reads each input, so it mutates the rea
 It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-The loop takes thirty-one readers: the twenty of `tests/fuzz/stdparse.fern`, and the readers of four drivers in `compiler/drivers/`.
-The drivers read packages, literate documents, op streams and assembly text.
+The loop takes thirty-two readers: the twenty of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
+The drivers read build manifests, packages, literate documents, op streams and assembly text.
 The image modes of `asm_fuzz_run.fern` write their images beside the input, so the check can read them.
 The counters of a program cover the modules that it imports.
 
 | Program | Readers | Counters |
 |---|---|---|
-| `tests/fuzz/stdparse.fern` | 20 | 56,249 |
-| `compiler/drivers/pkg_fuzz_run.fern` | 4 | 16,899 |
-| `compiler/drivers/literate_fuzz_run.fern` | 2 | 13,491 |
-| `compiler/drivers/irverify_fuzz_run.fern` | 1 | 15,577 |
-| `compiler/drivers/asm_fuzz_run.fern` | 4 | 32,864 |
+| `tests/fuzz/stdparse.fern` | 20 | 56,347 |
+| `compiler/drivers/manifest_fuzz_run.fern` | 1 | 10,080 |
+| `compiler/drivers/pkg_fuzz_run.fern` | 4 | 16,969 |
+| `compiler/drivers/literate_fuzz_run.fern` | 2 | 13,581 |
+| `compiler/drivers/irverify_fuzz_run.fern` | 1 | 15,646 |
+| `compiler/drivers/asm_fuzz_run.fern` | 4 | 32,837 |
 
 `readerTargets` holds the program, the seeds and the check of each reader.
 The Go target and the loop use the same seeds, the same budgets and the same oracle.
@@ -287,11 +288,11 @@ A hang names the budget, and a budget breach names the resident size.
 The drivers run natively, so the arm64 runner does not run them.
 The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-two targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-one readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-two readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
 Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits
 
-- The manifest target has no coverage feedback, because it runs the whole compiler CLI. Its mutations are blind. The other thirty-one targets have feedback from a `-cover` build, as the section above says.
+- The manifest target reads through `compiler/imagemanifest.fern`, which `fern -manifest` also calls. `TestSelfHostManifestRefusal` and `TestSelfHostProfiles` test the CLI around that reader.
 - The memory budget is a resident-size ceiling on the child, not a per-allocation count.
 - The compiler reads no object file or archive from outside. So the image targets reach the linker and the ELF writer only through the assemblers. A fault that the assemblers refuse before the link stays out of reach.

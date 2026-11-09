@@ -13,6 +13,18 @@ pub function descend_all(e: ast.Expr): boolean {
   return true;
 }
 
+pub function keep_names(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
+}
+
+pub function keep_lambdas(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  return acc;
+}
+
+pub function keep_flag(e: ast.Expr, own acc: boolean): boolean {
+  return acc;
+}
+
 pub function fold_expr_pruned[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   return fold_expr_nodes(e, acc, (st: ast.Stmt, own a: T) => a, visit, descend);
 }
@@ -459,10 +471,6 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // The expression visitor runs on the nodes `applies` admits. A pass that
 // touches one node kind names it, so the map does not call the visitor,
 // and box its answer, on every other node.
-pub function every_expr(e: ast.Expr): boolean {
-  return true;
-}
-
 pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr, T, boolean) {
   let a = acc;
   if (applies(e)) {
@@ -1450,7 +1458,7 @@ function cs_bind(c: ConstSubst, packed: string): ConstSubst {
 }
 
 function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
-  let (out, tail, handled) = map_expr_where(e, c, cs_stmt_at, cs_expr_at, every_expr);
+  let (out, tail, handled) = map_expr_where(e, c, cs_stmt_at, cs_expr_at, descend_all);
   return out;
 }
 
@@ -1458,7 +1466,7 @@ function cs_body(stmts: ast.Stmt[], c: ConstSubst): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur = c;
   for st in stmts {
-    let (next, tail, handled) = map_stmt_where(st, cur, cs_stmt_at, cs_expr_at, every_expr);
+    let (next, tail, handled) = map_stmt_where(st, cur, cs_stmt_at, cs_expr_at, descend_all);
     out = out.append(next);
     cur = tail;
   }
@@ -1573,7 +1581,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
       return (ast.StmtMatch { ...m, scrutinee: cs_expr(m.scrutinee, c), arms: arms }, c, true);
     },
     ast.StmtDefer(d) => {
-      let (action, tail, handled) = map_stmt_where(d.action, c, cs_stmt_at, cs_expr_at, every_expr);
+      let (action, tail, handled) = map_stmt_where(d.action, c, cs_stmt_at, cs_expr_at, descend_all);
       return (ast.StmtDefer { ...d, action: action }, c, true);
     },
     _ => {

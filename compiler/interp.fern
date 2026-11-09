@@ -1131,7 +1131,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
   let a = acc;
   for st in stmts {
-    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all);
+    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, astwalk.keep_names, astwalk.descend_all);
   }
   return a;
 }
@@ -1172,10 +1172,6 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-}
-
-function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
 }
 
 function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
@@ -7674,10 +7670,6 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
   return w;
 }
 
-function is_sha_hw_name(name: string): boolean {
-  return name == "__sha256_hw" || name == "__sha1_hw";
-}
-
 function is_sha_blocks_name(name: string): boolean {
   return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
@@ -7953,7 +7945,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
     return call_aes_gcm_into(heap, name, args);
   }
-  if (args.len() == 0 && is_sha_hw_name(name)) {
+  if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);
   }
   if (args.len() == 2 && is_sha_blocks_name(name)) {

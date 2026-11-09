@@ -25,13 +25,6 @@ function failure(message: string): Relation {
   return Relation { events: [], result: value(3, 0), words: 0, error: message };
 }
 
-function integer(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(n) = t {
-    return n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic;
-  }
-  return false;
-}
-
 function abi(row: ssaprepare.Emitted): boolean {
   if (row.context.rc_free_debug || row.context.sanitize || row.context.leak_check) {
     return false;
@@ -41,7 +34,7 @@ function abi(row: ssaprepare.Emitted): boolean {
     return false;
   }
   let c = cs[0];
-  return integer(c.result) && c.params.len() == row.body.formed.f.nparams && parameters(c);
+  return typeinfo.is_exact_i32(c.result) && c.params.len() == row.body.formed.f.nparams && parameters(c);
 }
 
 function parameters(c: ssasem.Contract): boolean {
@@ -50,7 +43,7 @@ function parameters(c: ssasem.Contract): boolean {
   }
   let i = 0;
   for p in c.params {
-    if (!integer(p) || c.modes[i] != 1) {
+    if (!typeinfo.is_exact_i32(p) || c.modes[i] != 1) {
       return false;
     }
     i += 1;

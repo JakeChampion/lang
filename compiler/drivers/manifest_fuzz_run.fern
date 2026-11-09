@@ -1,0 +1,30 @@
+import "../imagemanifest";
+import "../util";
+
+// `manifest_fuzz_run manifest FILE` reads the build manifest of the file as
+// `fern -manifest` does. It prints `manifest N` and then the N fields, one
+// per line, and N is 0 for a file with no manifest. Exit 2 is a usage error
+// or an unreadable file.
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3 || av[1] != "manifest") {
+    eprint("usage: manifest_fuzz_run manifest FILE");
+    return 2;
+  }
+  let image: u8[] = [];
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      image = b;
+    },
+    Err(_) => {
+      eprint("manifest_fuzz_run: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  let fields = imagemanifest.manifest_fields(image);
+  print("manifest " + util.i32_to_string(fields.len()));
+  for field in fields {
+    print(field);
+  }
+  return 0;
+}

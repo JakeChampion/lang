@@ -12,6 +12,15 @@ func CountByteBytesSource(allocations bool) string {
         repeat = repeat + 1;
     }
     if (__heap_alloc_count() != before) { return 12; }`
+		probe += `
+    let dense: u8[] = __alloc_u8(4096);
+    let batch_before: i64 = __heap_alloc_count();
+    repeat = 0;
+    while (repeat < 1000) {
+        if (count(dense, 0) != 4096) { return 13; }
+        repeat = repeat + 1;
+    }
+    if (__heap_alloc_count() != batch_before) { return 14; }`
 	}
 	return strings.Replace(countByteBytesProgram, "// Allocation probe", probe, 1)
 }
@@ -61,6 +70,22 @@ function main(): i32 {
             at = at + 1;
         }
         if (!check(bytes, 128) || !check(bytes, 129) || !check(bytes, 130)) { return 6; }
+    }
+    for n in [1023, 1024, 1025, 2047, 2048, 2049, 8191, 8192, 8193, 65535, 65536, 65537] {
+        let dense: u8[] = __alloc_u8(n);
+        let at: i32 = 0;
+        while (at < n) { dense = dense.with(at, 255 as u8); at = at + 1; }
+        if (count(dense, 255) != n || count(dense, 0) != 0) { return 15; }
+        for hit in [0, 1, 15, 16, 31, 32, 127, 128, 1023, 1024, n - 1] {
+            if (hit < n) {
+                dense = dense.with(hit, 128 as u8);
+                if (count(dense, 128) != 1 || count(dense, 255) != n - 1) { return 16; }
+                dense = dense.with(hit, 255 as u8);
+            }
+        }
+        at = 0;
+        while (at < n) { dense = dense.with(at, ((at % 3) + 128) as u8); at = at + 1; }
+        if (!check(dense, 128) || !check(dense, 129) || !check(dense, 130)) { return 17; }
     }
     all = all.with(128, 17 as u8);
     if (count(held, 128) != 1 || count(all, 128) != 0) { return 7; }

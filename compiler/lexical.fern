@@ -78,7 +78,7 @@ function leave(inner: Scope, outer: Scope): Scope {
 }
 
 function expr(e: ast.Expr, s: Scope): (ast.Expr, Scope) {
-  let (out, tail, handled) = astwalk.map_expr_where(e, s, stmt_at, expr_at, astwalk.every_expr);
+  let (out, tail, handled) = astwalk.map_expr_where(e, s, stmt_at, expr_at, astwalk.descend_all);
   return (out, tail);
 }
 
@@ -94,7 +94,7 @@ function body(stmts: ast.Stmt[], s: Scope): (ast.Stmt[], Scope) {
       cur = tail;
       continue;
     }
-    let (next, tail, handled) = astwalk.map_stmt_where(st, cur, stmt_at, expr_at, astwalk.every_expr);
+    let (next, tail, handled) = astwalk.map_stmt_where(st, cur, stmt_at, expr_at, astwalk.descend_all);
     out = out.append(next);
     cur = tail;
   }
@@ -240,7 +240,7 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       return (ast.StmtMatch { ...m, scrutinee: scrutinee, arms: arms }, cur, true);
     },
     ast.StmtDefer(d) => {
-      let (action, tail, handled) = astwalk.map_stmt_where(d.action, s, stmt_at, expr_at, astwalk.every_expr);
+      let (action, tail, handled) = astwalk.map_stmt_where(d.action, s, stmt_at, expr_at, astwalk.descend_all);
       return (ast.StmtDefer { ...d, action: action }, leave(tail, s), true);
     },
     _ => {

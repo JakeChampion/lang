@@ -35,12 +35,6 @@ pub function words_i32(words: u8[], at: i32): i32 {
   return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
 }
 
-pub function push_arr(b: usize, xs: i32[]): void {
-  for x in xs {
-    buf_push_byte(b, x);
-  }
-}
-
 pub function data_like(section: i32): boolean {
   return section == 1 || section == 3 || section == 4;
 }

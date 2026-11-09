@@ -52,7 +52,9 @@ def pages(args):
         return args
     found = []
     for d, _, files in os.walk(os.path.join(ROOT, "site/src/content/docs")):
-        if os.path.basename(d) == "stdlib":
+        # Generated pages: the stdlib reference, and the error-code pages,
+        # whose examples break a rule on purpose.
+        if os.path.basename(d) in ("stdlib", "errors"):
             continue
         found += [os.path.join(d, f) for f in files if f.endswith((".md", ".mdx"))]
     return sorted(found)

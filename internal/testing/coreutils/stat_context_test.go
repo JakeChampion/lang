@@ -30,7 +30,8 @@ func TestStatFileContext(t *testing.T) {
 		{[]string{"-c", "[%10C]", "f"}, "[" + strings.Repeat(" ", max(0, 10-len(label))) + label + "]"},
 		{[]string{"-L", "-c", "%n|%C|%s", "l"}, "l|" + label + "|3"},
 	} {
-		cmd := exec.Command(bin, c.args...)
+		argv := crossArgv(bin, c.args...)
+		cmd := exec.Command(argv[0], argv[1:]...)
 		cmd.Dir = dir
 		var stdout, stderr strings.Builder
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr

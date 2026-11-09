@@ -11,6 +11,9 @@ package-lock.json
 src/content/docs/stdlib/*.md
 !src/content/docs/stdlib/index.md
 
+# Generated from internal/syntax/diag/explanations/ by scripts/error-docs.mjs.
+src/content/docs/errors/
+
 # Embedded playground bundle (copied in from web/ at build time;
 # committing it would duplicate web/playground.wasm under version control).
 public/playground/
