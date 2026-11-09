@@ -104,6 +104,7 @@ which ones.
 | `ARRAY-PIPELINE-BASELINE-2026-09.md` | [record] | Pre-fusion measurements of the array pipeline programs (#9728), and what array fusion (#9731) changed in allocations and instructions. |
 | `CODEGEN-QUALITY-AUDIT-2026-09.md` | [record] | A September 2026 audit of emitted machine code: 42.6% wasted instructions; Tier A of its fixes landed. |
 | `COMPILER-ARCHITECTURE-2026.md` | [record] | A 2026 scorecard of the compiler against a modern-design checklist, written while both compilers were maintained. |
+| `FERNOS-LINUX-ABI.md` | [record] | The Linux system calls that the compiler makes, which FernOS must implement to run it (#14265), measured on 2026-11-08. |
 | `IMPROVEMENTS.md` | [record] | The compiler and test-infrastructure improvement list from the fernsmith work; most items landed. |
 | `INTERP-CLOSURE-BINDING-IDENTITY.md` | [record] | The interpreter fix (#8970) giving captured bindings shared cells. |
 | `INTERP-MAP-COW-PLAN.md` | [record] | Copy-on-write Maps in the interpreter (finding M1); implemented. |

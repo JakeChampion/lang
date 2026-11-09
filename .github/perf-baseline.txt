@@ -1,4 +1,5 @@
-# 2026-11-09: the tree-shake fix of #14766 (b1c71641) keeps a primitive's to_string only for a call that reaches it. The nine .text rows that #14756 pinned high fall back on both targets: x86_64 from scripts/perf-bench, aarch64 from the lines of -target arm64-linux assembly, which is what perf-bench counts. Each is pinned at its measured value.
+# 2026-11-09: the tree-shake fix of #14766 (b1c71641) keeps a primitive's to_string only for a call that reaches it. Eight .text rows on each target that #14756 pinned high fall back: x86_64 from scripts/perf-bench, aarch64 from the lines of -target arm64-linux assembly, which is what perf-bench counts. #14761 already pinned video_qtrle. Each row is pinned at its measured value.
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The same nine x86_64 .text rows rise as on aarch64. The growth is main's at 1c692d87.
 # 2026-11-08: PR #14756, perf-aarch64 job 128872144937 on f0a8de2f. Nine aarch64 .text rows rise: http_hello, map_string, sort_strings, string_build, string_scan, struct_drop, both utf8_ingest rows and video_qtrle. The growth is main's at 1c692d87: its compiler and this PR's emit the same asm for these benchmarks.
 # 2026-11-08: PR #14591, perf-aarch64 job 128688225606 on b6f70f98. aarch64/http_hello.text grows 1.10% with the HTTP/3 fields std/fetch gained in #14551, whose arm64 perf lane never reported before the merge; the x86_64 row was pinned there. Pinned at the measured value.
@@ -611,5 +612,5 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
-aarch64/video_qtrle.text 6027
+aarch64/video_qtrle.text 6080
 aarch64/video_qtrle.ir 1662057925
