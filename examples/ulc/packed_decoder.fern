@@ -383,12 +383,62 @@ unsafe function store_pcm_narrow[const CONFIG: i32](destination: usize, samples:
   return Ok(());
 }
 
+// Four PCM24 samples share three stores. Reconstruction retains double precision.
+unsafe function store_pcm24_tiled[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
+  let stereo = (CONFIG & 1) != 0;
+  let multiplier = __f64x2_splat(INVERSE_SCALE * 8388608.0);
+  let lower = __f64x2_splat(-8388608.0);
+  let upper = __f64x2_splat(8388607.0);
+  let bias = __f64x2_splat(6755399441055744.0);
+  let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+  let valid = 3;
+  unsafe {
+    let first = samples as usize + 8 as usize;
+    let second = first + (if (stereo) { samples.len() / 2 } else { 8 }) as usize;
+    let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
+    let out = destination;
+    while (first < end) {
+      let a = __f64x2_of(get(first, 0), get(first, 1));
+      let b = __f64x2_of(get(second, 0), get(second, 1));
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(a), infinity));
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(b), infinity));
+      let left = if (stereo) { a + b } else { a };
+      let right = if (stereo) { a - b } else { b };
+      let l = __f64x2_round(__f64x2_min(__f64x2_max(left * multiplier, lower), upper)) + bias;
+      let r = __f64x2_round(__f64x2_min(__f64x2_max(right * multiplier, lower), upper)) + bias;
+      let a0 = __f64x2_lane_bits(l, 0) as i32;
+      let a1 = __f64x2_lane_bits(l, 1) as i32;
+      let b0 = __f64x2_lane_bits(r, 0) as i32;
+      let b1 = __f64x2_lane_bits(r, 1) as i32;
+      let x0 = a0;
+      let x1 = if (stereo) { b0 } else { a1 };
+      let x2 = if (stereo) { a1 } else { b0 };
+      let x3 = b1;
+      __store_i32(out, x0 & 16777215 | x1 << 24);
+      __store_i32(out + 4 as usize, x1 >> 8 & 65535 | x2 << 16);
+      __store_i32(out + 8 as usize, x2 >> 16 & 255 | x3 << 8);
+      first += (if (stereo) { 8 } else { 16 }) as usize;
+      second += (if (stereo) { 8 } else { 16 }) as usize;
+      out += 12 as usize;
+    }
+  }
+  if (valid != 3) {
+    return Err("nonfinite output sample");
+  }
+  return Ok(());
+}
+
 unsafe function store_pcm[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
   let stereo = (CONFIG & 1) != 0;
   let bits = CONFIG & ~1;
   if (bits <= 16 && samples.len() % (if (stereo) { 32 } else { 16 }) == 0) {
     unsafe {
       return store_pcm_narrow[CONFIG](destination, samples);
+    }
+  }
+  if (bits == 24 && samples.len() % 16 == 0) {
+    unsafe {
+      return store_pcm24_tiled[CONFIG](destination, samples);
     }
   }
   let scale = 1 << bits - 1;

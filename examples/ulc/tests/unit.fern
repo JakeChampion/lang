@@ -899,9 +899,9 @@ function packed_file_tests(): void {
   }
 }
 
-function pcm_narrow_tests(): void {
+function pcm_random_tests(): void {
   let seed = 1234567u32;
-  for bits in [8, 16] {
+  for bits in [8, 16, 24] {
     let scale = (1 << bits - 1) as f64;
     for channels in [1, 2] {
       for mode in [0, 1, 2] {
@@ -917,7 +917,7 @@ function pcm_narrow_tests(): void {
               seed ^= seed << 5u32;
               let value = f32_from_bits(((seed & 2147483647u32) % 2139095040u32 | seed & 2147483648u32) as i32);
               if (mode != 0) {
-                let integer = i % (1 << bits - 1);
+                let integer = i * 251 % (1 << bits - 1);
                 let edge = (integer as f64 + 0.5) * (if (mode == 1) { 1.0 } else { -1.0 });
                 let sample = if (channel == 0) { edge } else if (i % 3 == 0) { -0.00000001 } else if (i % 3 == 1) { 0.0 } else { 0.00000001 };
                 value = (sample / scale * 79228162514264337593543950336.0) as f32;
@@ -942,7 +942,7 @@ function pcm_narrow_tests(): void {
           exit(1);
         };
         for i in 0..actual.len() {
-          require(actual[i] == expected[i], "narrow SIMD matches scalar PCM across random values and half-integer boundaries");
+          require(actual[i] == expected[i], "SIMD matches scalar PCM across random values and half-integer boundaries");
         }
       }
     }
@@ -1015,7 +1015,7 @@ pub function run_tests(): i32 {
   parser_properties();
   packed_file_tests();
   pcm_output_tests();
-  pcm_narrow_tests();
+  pcm_random_tests();
   print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");
