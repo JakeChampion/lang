@@ -286,11 +286,24 @@ func TestSelfHostWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
 		t.Fatalf("read weights: %v", err)
 	}
 
+	// A job of another workflow, such as a nightly, can run an own-job test.
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read workflow: %v", err)
+		}
+		all.Write(b)
+	}
 	for _, name := range strings.Split(m[1], "|") {
 		if name == "" {
 			continue
 		}
-		if !strings.Contains(src, "-test.run '^"+name+"$'") {
+		if !strings.Contains(all.String(), "-test.run '^"+name+"$'") {
 			t.Errorf("OWN_JOB_TESTS names %s but no job runs it with -test.run '^%s$' — "+
 				"it is excluded from the shards and run nowhere", name, name)
 		}
