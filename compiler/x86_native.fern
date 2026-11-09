@@ -6833,7 +6833,14 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
   return GasText { ops: ops, lines: out, named: named, nids: nids };
 }
 
+// X86_FILL_LIMIT bounds one zero fill in a data section. The compiler emits
+// none, so a larger one is hostile input.
+const X86_FILL_LIMIT: i32 = 16777216;
+
 function x86_rodata_zero(own a: X86Asm, n: i32): X86Asm {
+  if (n > X86_FILL_LIMIT) {
+    return x86_gas_bad(a, ".zero " + util.i32_to_string(n) + ": fill too large");
+  }
   let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
   let zi = 0;
