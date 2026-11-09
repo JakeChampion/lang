@@ -24,3 +24,17 @@ The semantic graph golden now records a folded constant and the existing unboxed
 A separate runtime control checks the constant value, option payloads, and retained array contents.
 
 Issues: #14790, #14791, and #14792. Main gate: #14566. Roadmap: #14508.
+
+The combined tree merges main at `ae23097387d6a3e7bea49e117e722637f7f8b0c5`.
+Its supported compiler build passes.
+The core SHA-256 is `883c0164c8858007288869b772eb05942b125bf782d27a5d09b334f2ba96cdaf`.
+The full Go checker and source-lint packages pass.
+The prior module-loader package also passes after the merge.
+
+All 40 native static performance measurements pass the strict gate.
+The branch includes the lower size limits from #14794.
+It raises no limit.
+
+All 120 emitted-size measurements complete.
+The two advisory deflate size warnings match a fresh main compiler exactly: 7,206 native instructions and 11,811 WASI body lines.
+Local dynamic instruction counts remain unmeasured because Valgrind is absent.
