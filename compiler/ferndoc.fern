@@ -497,7 +497,29 @@ function render_impls(impls: parser.ImplInfo[]): string {
   return out + "\n";
 }
 
-pub function render_page(src: string, mod_path: string): string {
+// Where -doc-source links each declaration: the template, in which {path}
+// and {line} name the source file and the line, the file, and the map from
+// a tangled line to a line of that file.
+pub struct SourceLinks { template: string, path: string, map: util.LineMap }
+
+pub function no_source_links(): SourceLinks {
+  return SourceLinks { template: "", path: "", map: util.no_line_map() };
+}
+
+function source_link(links: SourceLinks, line: i32): string {
+  if (links.template.len() == 0) {
+    return "";
+  }
+  // A derived method has no line in the source.
+  let (doc_line, _) = util.doc_pos([links.map], line, 1);
+  if (doc_line <= 0) {
+    return "";
+  }
+  let url = links.template.replace("{path}", links.path).replace("{line}", doc_line.to_string());
+  return "[Source](" + url + ")\n\n";
+}
+
+pub function render_page(src: string, mod_path: string, links: SourceLinks): string {
   let lr = lexer.tokenize_full(src);
   let mod = parser.parse_module_verbatim(lr.tokens).pmod;
   let decls = associate(lr.comments, public_decls(mod), src);
@@ -530,6 +552,7 @@ pub function render_page(src: string, mod_path: string): string {
     } else if (d.kind == "trait") {
       out += render_trait(mod.trait_decls[d.index], d.doc);
     }
+    out += source_link(links, d.line);
     i += 1;
   }
   return out + render_impls(mod.impls);
