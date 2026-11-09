@@ -57,6 +57,27 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 			check("self-host", driverDiags(runCheckerDriver(t, command, filepath.Base(name))))
 		})
 	}
+	for name, source := range map[string]string{"owned_callback_result": callbackOwnedResultSource, "diag_nested_callback_capture": callbackNestedCaptureSource, "diag_aggregate_callback_capture": callbackAggregateCaptureSource, "diag_array_callback_capture": callbackArrayCaptureSource} {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command(bin)
+			if len(runner) > 0 {
+				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			command.Stdin = strings.NewReader(source)
+			for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, source), "self-host": driverDiags(runCheckerDriver(t, command, name))} {
+				negative := strings.HasPrefix(name, "diag_")
+				if negative != (len(ds) > 0) {
+					t.Fatalf("%s: unexpected diagnostics: %v", label, ds)
+				}
+				for _, d := range ds {
+					if d.code != "E051" {
+						t.Fatalf("%s: expected E051: %v", label, ds)
+					}
+				}
+			}
+		})
+	}
+
 }
 
 func TestSelfHostGenericResultBorrowX86_64(t *testing.T) {
