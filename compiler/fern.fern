@@ -2404,6 +2404,7 @@ function flag_groups(): FlagGroup[] {
       mode_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
       mode_flag("-sign-index", "", "write INDEX.sig, the ed25519 signature over the package index INDEX, and print its index_key line"),
       sub_flag("-key", "FILE", ["-sign-index"], "with -sign-index: the ed25519 private key in PKCS#8 PEM, as `openssl genpkey -algorithm ed25519` writes it"),
+      mode_flag("-index-keygen", "", "write a new ed25519 private key to the new file KEY with mode 0600, and print its index_key line"),
       mode_flag("-vendor", "", "flatten the dependency graph into vendor/"),
       mode_flag("-fetch", "", "download the url dependencies into the package store"),
     ] },
@@ -6214,26 +6215,6 @@ function apk_lib_name(entry_path: string): string {
   return out;
 }
 
-function apk_write_key(path: string, pem: string): Result[void, IoError] {
-  match (open_exclusive(path)) {
-    Ok(writer) => {
-      let written = writer.write(pem);
-      let closed = writer.close();
-      match (written) {
-        Ok(_) => {
-          return closed;
-        },
-        Err(e) => {
-          return Err(e);
-        }
-      }
-    },
-    Err(e) => {
-      return Err(e);
-    }
-  }
-}
-
 // The signing scalar from `path`, or a new one, which it writes there.
 function apk_key(path: string): (u8[], string) {
   match (read_file(path)) {
@@ -6251,7 +6232,7 @@ function apk_key(path: string): (u8[], string) {
     }
   }
   let d = apk.new_scalar();
-  match (apk_write_key(path, apk.key_pem(d))) {
+  match (util.write_new_file(path, apk.key_pem(d))) {
     Ok(_) => {
       eprint("fern: wrote a new signing key to " + path + "; sign each update of the app with it");
       return (d, "");
@@ -6673,6 +6654,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let mode_caps = false;
   let mode_manifest = false;
   let mode_sign_index = false;
+  let mode_index_keygen = false;
   let sign_key = "";
   let profile_name = "";
   let mode_effects = false;
@@ -6803,6 +6785,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       mode_manifest = f.on;
     } else if (f.name == "-sign-index") {
       mode_sign_index = f.on;
+    } else if (f.name == "-index-keygen") {
+      mode_index_keygen = f.on;
     } else if (f.name == "-key") {
       sign_key = f.value;
     } else if (f.name == "-shared") {
@@ -6883,6 +6867,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
   if (mode_sign_index) {
     return indexsign.run(entry_path, sign_key);
+  }
+  if (mode_index_keygen) {
+    return indexsign.keygen(entry_path);
   }
   if (tf.version) {
     return print_version(root);

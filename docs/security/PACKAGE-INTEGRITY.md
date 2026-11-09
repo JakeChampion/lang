@@ -77,18 +77,23 @@ index_key = "ed25519:9f3c…"   # 64 lowercase hex digits of the public key
 
 The signature lives beside the index, in `index.toml.sig`, as 128 hex digits of the Ed25519 signature over the exact bytes of `index.toml`.
 Whitespace around the digits is ignored.
-`fern -sign-index` writes the signature.
-The key is a PKCS#8 PEM file of an Ed25519 private key, as OpenSSL writes it:
+`fern -index-keygen` makes a key, and `fern -sign-index` writes the signature:
 
 ```sh
-openssl genpkey -algorithm ed25519 -out publisher.pem
+fern -index-keygen publisher.pem
 fern -sign-index -key publisher.pem index.toml
 ```
+
+The key is a PKCS#8 PEM file of an Ed25519 private key, the form that `openssl genpkey -algorithm ed25519` also writes.
+`fern -index-keygen` takes the 32-byte seed from `getrandom`.
+It creates the file with mode 0600 and refuses a path that exists, a symbolic link included.
+It prints the `index_key` line of the new key.
 
 The command writes `index.toml.sig` and prints the `index_key` line for `fern.toml`.
 It refuses a file that does not hold exactly one PKCS#8 Ed25519 key, and then it writes no signature.
 It erases the seed of the key after it signs.
 `TestSelfHostSignIndex` compares the signature with the one that Go's `crypto/ed25519` gives, and resolves the signed tree with both loaders.
+It reads a new key back with Go's `x509.ParsePKCS8PrivateKey`, and it checks the mode, the refusal of a present file, and that two keys differ.
 
 Any other Ed25519 tool can sign the index too. With OpenSSL:
 
@@ -146,7 +151,7 @@ An index at the recorded serial or above it resolves, and the new lock records i
 ## Limits
 
 - The signature covers the index, not the archives. The hash alone pins an archive.
-- `fern -sign-index` reads the key from a file. The PEM text of the key is a string, and a string has no erase call. So the key text stays in memory until the process exits. No `fern` command makes a key.
+- `fern -sign-index` reads the key from a file. The PEM text of the key is a string, and a string has no erase call. So the key text stays in memory until the process exits.
 - The serial check starts at the first lock that records a serial. A first resolve, or a resolve after `fern.lock` is deleted, accepts any serial.
 - An index serial stops a rollback, not a freeze. A mirror can continue to supply the newest index that a lock saw, and hide a later release. An expiry date in the index can stop that, but it needs a clock at resolve time.
 - An index without a serial has no rollback check, signed or not.

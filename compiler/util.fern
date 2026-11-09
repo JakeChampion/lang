@@ -1690,3 +1690,25 @@ pub function split_char(s: string, c: u8): string[] {
   out = out.append(slice_unchecked(s, start, s.len()) + "");
   return out;
 }
+
+// Writes text to a new file at path with mode 0600, and refuses a path that
+// exists, a symbolic link included.
+pub function write_new_file(path: string, text: string): Result[void, IoError] {
+  match (open_exclusive(path)) {
+    Ok(writer) => {
+      let written = writer.write(text);
+      let closed = writer.close();
+      match (written) {
+        Ok(_) => {
+          return closed;
+        },
+        Err(e) => {
+          return Err(e);
+        }
+      }
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
