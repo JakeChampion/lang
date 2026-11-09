@@ -84,7 +84,62 @@ pub function query(p: Program, line: i32, col: i32): Option[Query] {
   let m = util.pos_file_index(line);
   let quals = quals_of(view, m);
   let site: Site = match (site_at(module_toks(p, m), quals, line, col)) { Some(value) => value, None => { return None; } };
-  return Some(Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) });
+  let found = locate(view.types, site);
+  if let None = found {
+    found = source_constant(p, view.types, quals, site);
+  }
+  return Some(Query { v: view.types, site: site, quals: quals, f: found });
+}
+
+function source_function(v: checker.QueryView, original: parser.FuncDecl): i32 {
+  for i in 0..v.mod.funcs.len() {
+    let fd = v.mod.funcs[i];
+    if (fd.line == original.line && fd.col == original.col && names(fd.name, original.name)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function constant_declaration(v: checker.QueryView, target: string): boolean {
+  for fd in v.mod.funcs {
+    if (fd.is_const && fd.name == target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Constant substitution removes reference nodes from the checked tree.
+// Recover only a real source reference, after ordinary local lookup fails.
+function source_constant(p: Program, v: checker.QueryView, quals: flatten.Qualifiers, site: Site): Option[Found] {
+  let target = if (quals.own.len() > 0) { quals.own + "__" + site.name } else { site.name };
+  if (site.qual.len() > 0) {
+    target = site.target;
+  }
+  if (!constant_declaration(v, target)) {
+    return None;
+  }
+  return constant_source_node(p, v, site, target);
+}
+
+function constant_source_node(p: Program, v: checker.QueryView, site: Site, target: string): Option[Found] {
+  let m = util.pos_file_index(site.line);
+  if (m < 0 || m >= p.srcs.len()) {
+    return None;
+  }
+  let source = parser.parse_module_verbatim(lexer.tokenize_from(p.srcs[m], util.line_base(m - 1) + 1));
+  let raw_site = Site { ...site, qual: "", target: "", col: site.name_col };
+  for fd in source.pmod.funcs {
+    if let Some(_) = probe_all(fd.body, raw_site).node {
+      let index = source_function(v, fd);
+      if (index >= 0) {
+        let expr: ast.Expr = ast.ExprIdent { name: target, line: site.line, col: site.col, ty: "", builtin: false };
+        return Some(Found { kind: if (site.qual.len() > 0) { K_QUALIFIED } else { K_IDENT }, expr: expr, fd: index });
+      }
+    }
+  }
+  return None;
 }
 
 pub struct Tok { text: string, ident: boolean, line: i32, col: i32 }

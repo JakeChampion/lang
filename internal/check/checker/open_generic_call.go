@@ -14,8 +14,9 @@ type openCall struct {
 }
 
 // openGenericResult gives the result of call with each unbound type
-// parameter left open. It is false when every parameter is bound.
-func (c *checker) openGenericResult(call *ast.Call, fn *ast.FuncDecl, ft *ast.FuncType, sub map[string]ast.Type) (ast.Type, bool) {
+// parameter left open: the bare enum of the unit variants that bound it in
+// opened, or else unbound. It is false when every parameter is bound.
+func (c *checker) openGenericResult(call *ast.Call, fn *ast.FuncDecl, ft *ast.FuncType, sub, opened map[string]ast.Type) (ast.Type, bool) {
 	open := map[string]ast.Type{}
 	for k, v := range sub {
 		open[k] = v
@@ -24,6 +25,9 @@ func (c *checker) openGenericResult(call *ast.Call, fn *ast.FuncDecl, ft *ast.Fu
 	for _, tp := range fn.TypeParams {
 		if _, ok := sub[tp]; !ok {
 			open[tp] = ast.UnboundType{}
+			if bare, ok := opened[tp]; ok {
+				open[tp] = bare
+			}
 			missing = true
 		}
 	}
@@ -36,6 +40,52 @@ func (c *checker) openGenericResult(call *ast.Call, fn *ast.FuncDecl, ft *ast.Fu
 	}
 	c.pendingOpenCall = &openCall{call: call, fn: fn, ft: ft, sub: sub}
 	return result, true
+}
+
+// unbindOpenVariantParams leaves unbound each type parameter that only unit
+// variants of a generic enum bind, such as the T of `id(No)`, and gives the
+// bare enum each one had. The variant names no type arguments, so only the
+// expected type of the call, or a use of the local it initialises, can give
+// them (#14410).
+func (c *checker) unbindOpenVariantParams(call *ast.Call, ft *ast.FuncType, fn *ast.FuncDecl, sub map[string]ast.Type) map[string]ast.Type {
+	var opened map[string]ast.Type
+	for _, tp := range fn.TypeParams {
+		et, ok := sub[tp].(ast.EnumType)
+		if !ok || len(et.Args) > 0 {
+			continue
+		}
+		open := false
+		for i, p := range ft.Params {
+			if pt, ok := p.(ast.ParamType); ok && pt.Name == tp && i < len(call.Args) {
+				if !c.openVariant(call.Args[i]) {
+					open = false
+					break
+				}
+				open = true
+			} else if typeMentionsParam(p, tp) {
+				open = false
+				break
+			}
+		}
+		if open {
+			if opened == nil {
+				opened = map[string]ast.Type{}
+			}
+			opened[tp] = et
+			delete(sub, tp)
+		}
+	}
+	return opened
+}
+
+// openVariant reports a unit variant of a generic enum, such as `No`.
+func (c *checker) openVariant(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok || id.Local || id.EnumName == "" {
+		return false
+	}
+	ed := c.info.Enums[id.EnumName]
+	return ed != nil && len(ed.TypeParams) > 0
 }
 
 func (c *checker) errUninferredParam(call *ast.Call, fn *ast.FuncDecl, tp string) {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -84,7 +85,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 329, arg: 2, good: 3, bad: []uint64{7, 4}},
 			{nr: 16, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 41, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
-			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 18, 1<<32 | 1}},
 			{nr: 54, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
 			{nr: 56, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
 			{nr: 72, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
@@ -107,7 +108,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 288, arg: 2, good: 3, bad: []uint64{7, 4}},
 			{nr: 29, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 198, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
-			{nr: 208, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 208, arg: 1, good: 1, bad: []uint64{270, 18, 1<<32 | 1}},
 			{nr: 208, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
 			{nr: 25, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 167, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
@@ -337,6 +338,56 @@ func checkSandboxFilterShape(t *testing.T, tgt sandboxTarget) {
 				t.Errorf("syscall %d with argument %d = %#x: filter gave %#x, want KILL", r.nr, r.arg, bad, got)
 			}
 		}
+	}
+	for _, pair := range [][2]uint64{{17, 104}, {0, 13}, {41, 66}} {
+		nr := uint32(54)
+		if tgt.name == e2eharness.TargetArm64Linux {
+			nr = 208
+		}
+		args := sandboxGoodArgs(tgt.rules, nr)
+		args[1], args[2] = pair[0], pair[1]
+		if got := run(nr, args); got != sandboxAllow {
+			t.Errorf("socket option %v: got %#x, want ALLOW", pair, got)
+		}
+		for _, arg := range []int{1, 2} {
+			wide := args
+			wide[arg] |= 1 << 32
+			if got := run(nr, wide); got != sandboxKill {
+				t.Errorf("socket option %v with wide argument %d: got %#x, want KILL", pair, arg, got)
+			}
+		}
+	}
+}
+
+func TestSelfHostSandboxUDPOptions(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("seccomp execution requires Linux")
+	}
+	target := e2eharness.TargetX86_64Linux
+	if runtime.GOARCH == "arm64" {
+		target = e2eharness.TargetArm64Linux
+	} else if runtime.GOARCH != "amd64" {
+		t.Skip("native Linux sandbox execution requires amd64 or arm64")
+	}
+	const source = `function main(): i32 {
+  let socket = udp_bind([127u8, 0u8, 0u8, 1u8], 0);
+  if (socket.fd < 0) { return 1; }
+  let gro = tcp_socket_ctl(socket, 10, 1);
+  let tos = tcp_socket_ctl(socket, 11, 1);
+  tcp_close(socket);
+  if (gro != 0 || tos != 0) { return 2; }
+  let ipv6 = udp_bind([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8], 0);
+  if (ipv6.fd < 0) { return 3; }
+  let traffic = tcp_socket_ctl(ipv6, 12, 1);
+  tcp_close(ipv6);
+  return if (traffic == 0) { 0 } else { 4 };
+}`
+	bin := filepath.Join(t.TempDir(), "udp-options")
+	if out, ok := sandboxCompile(t, target, source, true, "-o", bin); !ok {
+		t.Fatalf("compile sandbox UDP controls: %s", out)
+	}
+	if out, err := exec.Command(bin).CombinedOutput(); err != nil {
+		t.Fatalf("sandbox UDP options: %v\n%s", err, out)
 	}
 }
 

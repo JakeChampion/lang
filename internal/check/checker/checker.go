@@ -11380,8 +11380,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 	walkStmts = func(stmts []ast.Stmt, moved movedSet) {
+		var locals []*ownedBindingScope
 		for _, st := range stmts {
 			walkStmt(st, moved)
+			if local, ok := st.(*ast.Var); ok && (owned[local.Name] || borrowedParam[local.Name]) {
+				scope := shadowOwnedBindings([]string{local.Name}, owned, borrowedParam, moved, deferMoved)
+				locals = append(locals, scope)
+				scopes = append(scopes, scope)
+			}
+		}
+		for i := len(locals) - 1; i >= 0; i-- {
+			locals[i].restore()
+			scopes = scopes[:len(scopes)-1]
 		}
 	}
 
@@ -15374,6 +15384,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if genericFn != nil {
+			var opened map[string]ast.Type
+			if sub != nil && !recvIsArg0 {
+				opened = c.unbindOpenVariantParams(n, ft, genericFn, sub)
+			}
 			if callExpected != nil && sub != nil {
 				c.unifyType(ft.Result, callExpected, sub)
 			}
@@ -15432,7 +15446,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if c.openCallLet == n {
-				if result, open := c.openGenericResult(n, genericFn, ft, sub); open {
+				if result, open := c.openGenericResult(n, genericFn, ft, sub, opened); open {
 					return result
 				}
 			}

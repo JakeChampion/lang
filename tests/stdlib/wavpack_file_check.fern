@@ -1,0 +1,132 @@
+import "std/audio/wavpack";
+import "std/audio/wavpack/file";
+import "std/audio/source";
+import "std/audio/pcm";
+import "std/test";
+import "wavpack_check";
+import "wavpack_input_check";
+import "aac_kernel_check" as ref;
+
+pub function seeker(position: Cell[i32], calls: Cell[i32], bytes: i32): (i64) => Result[i64, IoError] {
+  return (offset: i64): Result[i64, IoError] => {
+    calls.set(calls.get() + 1);
+    if (offset < 0i64 || offset > bytes as i64) {
+      return Err(IoError.Interrupted);
+    }
+    position.set(offset as i32);
+    return Ok(offset);
+  };
+}
+
+pub function limits(): file.Limits {
+  let value = file.default_limits();
+  return file.Limits { ...value, input: value.input, max_entries: 1024 };
+}
+
+pub function inspect(bytes: u8[], configured: file.Limits): Result[file.Index, string] {
+  let position = cell_new(17);
+  let calls = cell_new(0);
+  let seek = seeker(position, calls, bytes.len());
+  let read = wavpack_input_check.bytes_reader(bytes, position, calls, true);
+  let builder = match (file.create(configured)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  while (true) {
+    let before = calls.get();
+    let (next, event) = match (builder.step_with(seek, read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    builder = next;
+    if (calls.get() - before > 1) {
+      return Err("multiple source operations in build step");
+    }
+    if let file.BuildReady(index) = event {
+      let before = calls.get();
+      let (_, again) = match (builder.step_with(seek, read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      if (calls.get() != before || index.input_bytes() != bytes.len() as i64) {
+        return Err("index completion or byte extent");
+      }
+      if let file.BuildFinished = again {
+        return Ok(index);
+      }
+      return Err("unstable index completion");
+    }
+  }
+}
+
+function decode(index: file.Index, bytes: u8[], expected: [u8], first: i64): Result[void, string] {
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let seek = seeker(position, calls, bytes.len());
+  let read = wavpack_input_check.bytes_reader(bytes, position, calls, true);
+  let cursor = match (file.reader(index).seek(first)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let channels = index.information().format.channels;
+  let at = first * (channels as i64);
+  let output: i32[] = [];
+  for _ in 0..expected.len() / 4 + 3 {
+    output = output.append(123456789);
+  }
+  while (true) {
+    let before = calls.get();
+    let file.Progress { state, event, samples } = match (cursor.step_into_with(seek, read, output)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let operations = calls.get() - before;
+    if (operations > 1) {
+      return Err("multiple source operations in playback step");
+    }
+    for i in samples.len() - 3..samples.len() {
+      if (samples[i] != 123456789) {
+        return Err("caller output suffix");
+      }
+    }
+    match (event) {
+      file.Output(audio) => {
+        if (operations != 0 || audio.position * (channels as i64) != at || audio.frames < 1) {
+          return Err("decode operation or sample position");
+        }
+        let count = audio.frames * channels;
+        if (at + count as i64 > (expected.len() / 4) as i64) {
+          return Err("extra samples");
+        }
+        for i in 0..count {
+          if (samples[i] != ref.word(expected, (at as i32 + i) * 4)) {
+            return Err("seek PCM sample " + (at + i as i64).to_string());
+          }
+        }
+        at += count as i64;
+      },
+      file.Finished => {
+        if (operations != 0 || at * 4i64 != expected.len() as i64) {
+          return Err("completion or PCM extent");
+        }
+        if (first == index.information().total_frames && calls.get() != 0) {
+          return Err("source operation for EOF seek");
+        }
+        return Ok(());
+      },
+      file.Pending => {}
+    }
+    cursor = state;
+    output = samples;
+  }
+}
+
+pub function run(vector: wavpack_check.Vector, positions: i64[]): Result[void, string] {
+  let bytes = ref.unpack(vector.encoded)?;
+  let expected = ref.unpack(vector.pcm)?;
+  let index = inspect(bytes, limits())?;
+  let info = index.information();
+  if (info.format.channels != vector.channels || info.format.sample_rate != vector.rate || info.format.bits_per_sample != vector.depth || info.floating != vector.floating || info.total_frames != vector.frames as i64 || info.channel_mask != vector.mask) {
+    return Err("index information");
+  }
+  for first in positions {
+    decode(index, bytes, expected, first)?;
+  }
+  if let Ok(_) = file.reader(index).seek(-1i64) {
+    return Err("negative seek");
+  }
+  if let Ok(_) = file.reader(index).seek(vector.frames as i64 + 1i64) {
+    return Err("seek past EOF");
+  }
+  return Ok(());
+}
+
+pub function reference(vector: wavpack_check.Vector): test.TestOutcome {
+  let positions = [0i64, (vector.frames / 2) as i64, vector.frames as i64 - 1i64, vector.frames as i64];
+  return match (run(vector, positions)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}

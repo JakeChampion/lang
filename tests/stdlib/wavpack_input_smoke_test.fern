@@ -1,0 +1,13 @@
+import "std/test";
+import "wavpack_smoke_vectors";
+import "wavpack_input_check";
+
+function main(): i32 {
+  let runner = test.new("WavPack bounded source small controls");
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == "short-16-1-7" || vector.name == "seek-24-2-35" || vector.name == "short-float-2-6" || vector.name == "metadata-tail-zero-total") {
+      runner = runner.it(vector.name, (): test.TestOutcome => match (wavpack_input_check.run(vector, 17, true)) { Ok(_) => test.pass(), Err(message) => test.fail(message) });
+    }
+  }
+  return runner.finish();
+}

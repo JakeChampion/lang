@@ -111,6 +111,8 @@ func TestSelfHostTreeshakeImportedReceiverKeepsNoBareName(t *testing.T) {
 	const lib = `pub struct S { n: i32 }
 pub function make(): S { return S { n: 1 }; }
 pub function (s: S) run(): i32 { return s.n; }
+pub function run(): i32 { return 7; }
+pub function spawn(): i32 { return subprocess("true", [], "").exit_code; }
 `
 	const head = `import "./lib";
 function run(): i32 { return subprocess("true", [], "").exit_code; }
@@ -122,6 +124,8 @@ function run(): i32 { return subprocess("true", [], "").exit_code; }
 		{"call", "function main(): i32 { return lib.make().run(); }\n", false},
 		{"inferred", "function main(): i32 { let s = lib.make(); return s.run(); }\n", false},
 		{"element", "function main(): i32 { let xs: lib.S[] = [lib.make()]; return xs[0].run(); }\n", false},
+		{"module-free", "function main(): i32 { return lib.run(); }\n", false},
+		{"module-capability", "function main(): i32 { return lib.spawn(); }\n", true},
 		{"free", "function main(): i32 { return run(); }\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
