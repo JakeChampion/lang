@@ -5964,6 +5964,15 @@ function __h3_burst(): i32 {
   return 64;
 }
 
+// __h3_marked turns ECN on where the batch sends TOS bytes and the inbox
+// reads them.
+function __h3_marked(c: quic.Config): quic.Config {
+  if (target_os() == "linux" || target_os() == "android") {
+    return c.with_ecn();
+  }
+  return c;
+}
+
 // __h3_slots is the messages one receive may bring. Each slot holds the
 // largest datagram, or the largest run the kernel coalesces under UDP_GRO.
 function __h3_slots(): i32 {
@@ -6038,11 +6047,12 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
   }
   let nb = net.set_nonblocking(sock, true);
   let gro = net.set_udp_gro(sock, true);
+  let marks = net.set_recv_tos(sock, true);
   if (drv.watch(sock.fd, LISTENER_INTEREST) < 0) {
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity))), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {
@@ -6174,7 +6184,7 @@ function __h3_message[D: async.Driver](drv: D, c: __Conns, fls: __Flights, i: i3
   let k = 0;
   while (k < cur.quic.inbox.segments(i)) {
     let (at, len) = cur.quic.inbox.segment(i, k);
-    let r = __h3_datagram(drv, cur, fs, cur.quic.inbox.buf[at:at + len], cur.quic.inbox.froms[from:from + net.SENDER_BYTES], b, opts, stop, host_for);
+    let r = __h3_datagram(drv, cur, fs, cur.quic.inbox.buf[at:at + len], cur.quic.inbox.froms[from:from + net.SENDER_BYTES], cur.quic.inbox.tos_of(i), b, opts, stop, host_for);
     cur = r.0;
     fs = r.1;
     b = r.2;
@@ -6183,7 +6193,7 @@ function __h3_message[D: async.Driver](drv: D, c: __Conns, fls: __Flights, i: i3
   return (cur, fs, b);
 }
 
-function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flights, d: [u8], from: [u8], burst: __H3Burst, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flights, __H3Burst) {
+function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flights, d: [u8], from: [u8], tos: i32, burst: __H3Burst, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flights, __H3Burst) {
   let found = __h3_route(c, d, from, opts, stop, host_for);
   let cur = found.0;
   let i = found.1;
@@ -6192,7 +6202,7 @@ function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flights, d: [
   }
   let q = cur.quic;
   let serial = q.serials[i];
-  cur = __h3_repathed(__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive_from(d, from, clock.instant())) } }, i);
+  cur = __h3_repathed(__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive_from(d, from, tos, clock.instant())) } }, i);
   let taken = __h3_events(cur, i, burst);
   let more = __h3_more(drv, taken.0, fls, serial);
   return (more.0, more.1, __h3_touched(taken.1, serial));
@@ -6667,7 +6677,8 @@ function __h3_flush(own c: __Conns, serial: i32): __Conns {
   let built = __Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].transmit(clock.instant())) } };
   let b = built.quic;
   let flight = b.conns[i].datagrams();
-  return __Conns { ...built, quic: __Quic { ...b, conns: b.conns.with(i, b.conns[i].sent()), out: b.out.add(b.paths[i], flight) } };
+  let mark = b.conns[i].ecn_codepoint();
+  return __Conns { ...built, quic: __Quic { ...b, conns: b.conns.with(i, b.conns[i].sent()), out: b.out.add(b.paths[i], flight, mark) } };
 }
 
 // __h3_drain sends every flight the pass gathered, in one call, before the

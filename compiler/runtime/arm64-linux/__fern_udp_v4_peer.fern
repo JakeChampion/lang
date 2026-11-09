@@ -1,0 +1,45 @@
+// __fern_udp_v4_peer is 1 when a message goes to an IPv4 or a v4-mapped
+// peer, so its TOS byte rides IP_TOS, and 0 when it rides IPV6_TCLASS. A
+// message with no address goes to the connected peer, which getpeername
+// names; `sa` is scratch room for the answer.
+function __fern_udp_v4_peer(fd: i32, named: boolean, a: usize, sa: usize): i32 {
+  if (named) {
+    if (__raw_load8(a, 0) == 4) {
+      return 1;
+    }
+    let k = 1;
+    while (k <= 10) {
+      if (__raw_load8(a, k) != 0) {
+        return 0;
+      }
+      k += 1;
+    }
+    if (__raw_load8(a, 11) == 255 && __raw_load8(a, 12) == 255) {
+      return 1;
+    }
+    return 0;
+  }
+  let lp = sa + 28;
+  __raw_store8(lp, 0, 28);
+  __raw_store8(lp, 1, 0);
+  __raw_store8(lp, 2, 0);
+  __raw_store8(lp, 3, 0);
+  if (__syscall3(205, fd as i64, sa as i64, lp as i64) < 0) {
+    return 0;
+  }
+  let fam = __raw_load8(sa, 0) | __raw_load8(sa, 1) << 8;
+  if (fam == 2) {
+    return 1;
+  }
+  let j = 8;
+  while (j < 18) {
+    if (__raw_load8(sa, j) != 0) {
+      return 0;
+    }
+    j += 1;
+  }
+  if (__raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) {
+    return 1;
+  }
+  return 0;
+}

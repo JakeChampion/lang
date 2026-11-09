@@ -77,8 +77,11 @@ function create(own s: App, window: android.Window): App {
   if (player.open(s.ctx, p, "") || player.seek(s.ctx, p, -1i64)) {
     return fail(s, "invalid argument accepted");
   }
-  if (!player.show(s.ctx, p, window) || !player.open(s.ctx, p, s.uri)) {
-    return fail(s, "source or surface");
+  if (!player.show(s.ctx, p, window)) {
+    return fail(s, "surface");
+  }
+  if (!player.open(s.ctx, p, s.uri)) {
+    return fail(s, "source");
   }
   log.warn("playertest: opened");
   return s;

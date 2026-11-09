@@ -84,6 +84,24 @@
     "value": 10
   },
   {
+    "name": "shadow-initializer-break",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { while (choose) { let state = take(state); consume(state); break; } return consume(state); }\n",
+    "want": "E050",
+    "value": 0
+  },
+  {
+    "name": "shadow-initializer-continue",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let count = 0; while (count < 1) { let state = take(state); consume(state); count += 1; continue; } return 0; }\n",
+    "want": "E050",
+    "value": 0
+  },
+  {
+    "name": "shadow-restored-continue",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let count = 0; while (count < 1) { { let state = take(state); consume(state); } state = State { n: 7, data: [1, 2, 3] }; count += 1; continue; } return consume(state); }\n",
+    "want": "",
+    "value": 10
+  },
+  {
     "name": "loop-continue-shadow",
     "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let total = 0; for i in 0..2 { let state = State { n: i, data: [1] }; total += consume(state); if (choose) { continue; } } return total + consume(state); }\n",
     "want": "",

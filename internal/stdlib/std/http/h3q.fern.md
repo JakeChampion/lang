@@ -146,14 +146,19 @@ pub function (c: Conn) sent(): Conn {
   return Conn { ...c, quic: c.quic.sent() };
 }
 
+// ecn_codepoint is the ECN codepoint to send the datagrams with.
+pub function (c: Conn) ecn_codepoint(): i32 {
+  return c.quic.ecn_codepoint();
+}
+
 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
   return Conn { ...c, quic: c.quic.receive(datagram, now) }.__stepped(now);
 }
 
 // receive_from is receive with the address the datagram came from, for a
 // server that follows a client to a new address (conn.Conn.receive_from).
-pub function (c: Conn) receive_from(datagram: [u8], path: [u8], now: Instant): Conn {
-  return Conn { ...c, quic: c.quic.receive_from(datagram, path, now) }.__stepped(now);
+pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Conn {
+  return Conn { ...c, quic: c.quic.receive_from(datagram, path, ecn, now) }.__stepped(now);
 }
 
 pub function (c: Conn) tick(now: Instant): Conn {

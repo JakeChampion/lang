@@ -132,7 +132,7 @@ function (b: Block) request(kind: u32, sector: u64, len: usize): boolean {
   } else {
     let flags = virtio.DESC_NEXT;
     if (kind == T_IN) {
-      flags = flags | virtio.DESC_WRITE;
+      flags |= virtio.DESC_WRITE;
     }
     b.q.set(1, p + HEADER_PAGE, len as i32, flags, 2);
     b.q.set(2, p + 16 as usize, 1, virtio.DESC_WRITE, 0);

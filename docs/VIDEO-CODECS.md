@@ -282,7 +282,7 @@ The Android workflow builds `tests/android/video/app.fern` and runs it on the AP
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
-The workflow also copies the byte-buffer export into MediaStore and grants the video APK access to that item.
+The workflow also copies the byte-buffer export into MediaStore and grants the video APK video read permission.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
 
@@ -298,7 +298,7 @@ Run the same qualification on a connected API 29 or later phone.
 The check reads the clips with `adb run-as`, so build the APK with `-apk-debuggable`:
 
 ```sh
-bin/fern -apk build/video/fern-videotest.apk -apk-package dev.fern.videotest -apk-min-sdk 29 -apk-debuggable tests/android/video/app.fern
+bin/fern -apk build/video/fern-videotest.apk -apk-package dev.fern.videotest -apk-min-sdk 29 -apk-permission READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-debuggable tests/android/video/app.fern
 ANDROID_SERIAL=DEVICE python3 tests/android/video/emulator_check.py build/video/fern-videotest.apk build/video/device
 ```
 
@@ -307,7 +307,7 @@ A hardware codec can reject a particular format or fail under resource pressure.
 Record the selected codec attributes and the exact media request with each result.
 
 The Android lane also runs `tests/android/player/app.fern` with an AVC and stereo AAC clip.
-It checks both an HTTP source and the same clip in MediaStore through a granted content URI.
+It checks both an HTTP source and the same clip through a MediaStore content URI.
 It requires video output, stable pause position, accurate seek, timeline anchors, completion, repeated playback, and error callbacks.
 
 The error callback for a missing HTTP source comes after the retries of the platform, about 30 seconds after the request.
@@ -318,9 +318,15 @@ It removes only the temporary MediaStore entry that it creates.
 Artifacts include the fixture, independent FFprobe metadata, and separate HTTP and content playback diagnostics.
 The test delegates A/V synchronization to Android. It does not measure acoustic lip-sync error or physical device power.
 
+The test APKs declare `READ_MEDIA_VIDEO` and `READ_EXTERNAL_STORAGE` for the shell-owned MediaStore fixtures.
+The runners grant `READ_MEDIA_VIDEO` on API 33 and later, or `READ_EXTERNAL_STORAGE` on earlier releases.
+The shell cannot grant these fixtures through an activity intent.
+These tests use broad video read permission. They do not verify document-picker grants for individual items.
+The player API still requires the caller to hold read access when it opens a content URI.
+
 ```sh
 scripts/test-android-player
-bin/fern -apk build/android-player/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET -apk-cleartext tests/android/player/app.fern
+bin/fern -apk build/android-player/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-cleartext tests/android/player/app.fern
 ANDROID_SERIAL=DEVICE python3 tests/android/player/emulator_check.py build/android-player/fern-playertest.apk build/android-player/device
 ```
 
