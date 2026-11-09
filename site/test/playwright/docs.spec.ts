@@ -353,3 +353,11 @@ test("the stdlib sidebar nests a module family under its parent", async ({ page 
   });
   expect(groups.slice(0, 2)).toEqual(["opus_silk", "opus"]);
 });
+
+test("the favicon link resolves", async ({ page }) => {
+  await page.goto("./");
+  const href = await page.locator('link[rel="shortcut icon"]').getAttribute("href");
+  const res = await page.request.get(new URL(href!, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toContain("<svg");
+});
