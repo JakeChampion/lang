@@ -166,6 +166,11 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		return false
 	case *ast.Ident:
 		return b.borrowed[x.Name] || b.locals[x.Name]
+	case *ast.BlockExpr:
+		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
+			return c.exprBorrows(x.Tail, b)
+		}
+		return true
 	case *ast.FieldAccess:
 		return c.exprBorrows(x.Target, b)
 	case *ast.Index:
@@ -271,6 +276,11 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
 	switch x := e.(type) {
+	case *ast.BlockExpr:
+		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
+			return c.argMayBorrow(x.Tail)
+		}
+		return true
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
@@ -300,10 +310,11 @@ func (c *checker) freshMethodResult(x *ast.Call) bool {
 
 var freshBuiltinMethods = map[string]bool{"open_dir": true, "open_reader": true, "open_writer": true, "open_reader_with": true, "open_writer_with": true}
 
-// A handle an open builtin returns is a kernel descriptor: it borrows nothing
-// from the path it was opened with.
+// These builtins promise an accepted owned result. share_unchecked makes
+// this promise explicit for a shared value inside an unsafe block.
 var freshResultBuiltins = map[string]bool{
-	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
+	"share_unchecked": true,
+	"__bytes_owned":   true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,

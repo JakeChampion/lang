@@ -19421,6 +19421,11 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let Some(tail) = ow_unsafe_value(c) {
+      return lu_fresh_value(fx, tail);
+    }
+  }
   if let ast.ExprStructLit(sl) = e {
     if (sl.has_base) {
       return lu_fresh_value(fx, sl.base);
@@ -23920,6 +23925,9 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 }
 
 function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  if let Some(tail) = ow_unsafe_value(c) {
+    return ow_expr_borrows(tail, ofuncs, borrowed, locals, values, borrows, builtins);
+  }
   if let ast.ExprLambda(lm) = c.callee {
     if (ow_value_block_call(c, lm)) {
       return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
@@ -23993,7 +24001,7 @@ function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
+    "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
@@ -24103,7 +24111,7 @@ function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
 function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   let out = builtins.names;
   for fn in mod.funcs {
-    if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
+    if (fn.receiver_name.len() > 0 || !ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
       continue;
     }
     if (borrows.has(fn.name)) {

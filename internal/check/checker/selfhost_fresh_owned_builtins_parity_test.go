@@ -75,7 +75,7 @@ func nativeFreshOwnedBuiltins(t *testing.T) map[string]bool {
 		if declared[name] || strings.HasPrefix(name, "__method_") {
 			continue
 		}
-		if sig == nil || sig.Result == nil || !ast.IsPointerType(sig.Result) {
+		if sig == nil || sig.Result == nil || !ast.IsPointerType(sig.Result) && !(mayRetainBorrow(sig.Result) && freshResultBuiltins[name]) {
 			continue
 		}
 		anyPtrParam := false
