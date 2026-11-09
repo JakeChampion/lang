@@ -11,6 +11,7 @@ site/
 ├── astro.config.mjs            Starlight + sidebar + meta config
 ├── package.json
 ├── scripts/
+│   ├── capture.mjs             Record compiler output for the home page
 │   ├── fetch-fonts.mjs         Refresh the self-hosted webfonts
 │   └── render-og.mjs           Render the social card to public/og.png
 ├── src/
@@ -87,11 +88,7 @@ npm install
 # build.sh needs bin/fern-selfhost and runs `make selfhost-cli` when it
 # is missing (or set FERN_SELFHOST to a compiler you already have).
 ( cd .. && ./web/build.sh )
-mkdir -p public/playground
-# Copy every .html/.js/.wasm, as pages.yml does: index.html statically
-# imports both wasi shims, so a missing one breaks the whole ES module
-# and the playground hangs on "loading runtime…".
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && web/stage.sh site/public/playground )
 
 # Generate the stdlib reference pages.
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
@@ -114,6 +111,18 @@ configured `base`).
 npm run build    # → site/dist/
 ```
 
+`npm run build` runs `scripts/capture.mjs` first. The script runs the
+compiler (`$FERN_SELFHOST`, else `../bin/fern-selfhost`) and records its
+output in `src/generated/captures.json`, which is not in git. The home
+page shows that output: the assembly for `src/captures/area.fern`, the
+size of the executable, the `fern -help` usage text, and the
+capabilities of `fern -lsp`. The script stops the build when `main` no
+longer loads the folded constant that the home page names.
+
+`public/install.sh` is the install script that the home page and the
+install tutorial give. `test/install.test.mjs` runs it against a fake
+release.
+
 The GitHub Actions `Pages` workflow runs this on every push to
 main that touches the site, the playground, the compiler, anything
 under `internal/` (the stdlib included), the syntax grammar, or the
@@ -122,11 +131,37 @@ build and then the Playwright suite in `test/playwright/`.
 
 The same bundle also deploys to Netlify, via `netlify.toml` at the
 repo root and `scripts/netlify-build` (which mirrors the `Pages`
-workflow's steps). The one host-specific wrinkle is `base`: Astro
-bakes the `/lang` prefix into every internal link but does *not*
-nest `dist/` to match, so Pages lines the two up by serving `dist/`
-at `/lang/`, while Netlify serves `dist/` at the domain root and
-rewrites `/lang/*` back down. Keep the two build recipes in step.
+workflow's steps). The two hosts use a different `base`. GitHub
+Pages serves the project from the repository subpath, so `base` is
+`/lang` there, the default in `astro.config.mjs`. The Netlify site is
+at the domain root: `scripts/netlify-build` sets `SITE_BASE=/`, and
+`netlify.toml` redirects old `/lang/...` links to the root. Write a
+hero link or a sidebar link as a site path such as `/tutorial/install/`,
+and the build adds the base. Keep the two build recipes in step.
+
+fern-lang.netlify.app is the main site. The Pages build sets
+`CANONICAL_SITE`, so each Pages page names its Netlify page as
+canonical, and search engines list one copy.
+
+`scripts/check-links.mjs --dist dist --base /lang` finds each internal
+link in a build that names no file. The Docs build lane runs it. With
+`--site URL`, it reads the sitemap of a deployed site and requests each
+internal link. `.github/workflows/site-links.yml` runs that against both
+hosts every 6 hours, and opens an issue when a link is broken.
+
+## Social cards and llms.txt
+
+Each docs page except the home page has a social card at
+`/og/PAGE.png`, which `src/pages/og/[...slug].png.ts` renders during
+the build. `src/lib/og-card.mjs` draws the text as SVG paths from the
+static TTFs in `src/assets/fonts/card/`, so a card does not depend on
+the fonts of the build machine. The home page keeps `public/og.png`.
+
+`/llms.txt` is an index of the docs in the llmstxt.org format.
+`/llms-full.txt` holds the text of every guide and reference page, and
+`/llms-stdlib.txt` holds every standard-library module.
+`src/lib/llms.mjs` makes them from the Markdown sources, and changes
+MDX components to plain Markdown.
 
 ## Embed a live snippet
 
@@ -147,7 +182,13 @@ import FernPlayground from "../../components/FernPlayground.astro";
 
 The component base64-URL-encodes the snippet into the iframe's
 hash — same codec the standalone playground's Share button uses,
-so URLs are interchangeable.
+so URLs are interchangeable. Give `args="…"` and `stdin={`…`}` to
+run the snippet with arguments and standard input. The embed then
+shows its program-input panel, so the reader can change both.
+
+Code fences and the playground editor take their token colours from
+`web/editor/fern-themes.json`, so a snippet and a fence colour the same
+token the same way.
 
 ## Add a new tutorial / reference page
 

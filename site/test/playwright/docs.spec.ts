@@ -70,9 +70,79 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
   const iframe = figure.locator("iframe");
   // Embed-mode flag + hash payload — both have to be present.
   await expect(iframe).toHaveAttribute(
-    "src",
+    "data-src",
     /\/lang\/playground\/\?[^#]*embed=1[^#]*#src=/,
   );
+});
+
+test("an embed loads once, with the theme, when it nears the viewport", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const docs: import("@playwright/test").Frame[] = [];
+  page.on("request", (r) => {
+    if (r.resourceType() === "document" && r.url().includes("/playground/?")) docs.push(r.frame());
+  });
+  await page.goto("./");
+  const grep = page.locator("figure.fern-playground iframe[data-src*='&args=']");
+  // Far below the first screen, so not loaded yet.
+  await expect(grep).not.toHaveAttribute("src", /./);
+  await grep.scrollIntoViewIfNeeded();
+  await expect(grep).toHaveAttribute("src", /[?&]theme=dark/);
+  const grepFrame = await (await grep.elementHandle())!.contentFrame();
+  await page.waitForTimeout(1500);
+  expect(docs.filter((f) => f === grepFrame).length).toBe(1);
+});
+
+test("the home page grep embed runs with its arguments and stdin", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const iframe = page.locator("figure.fern-playground iframe[data-src*='&args=']");
+  await expect(iframe).toHaveAttribute("data-src", /#src=[^&]+&args=[^&]+&stdin=/);
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&args=']");
+  await expect(frame.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", {
+    timeout: 60_000,
+  });
+});
+
+test("a fern code fence uses the shared token colours", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("./");
+  // web/editor/fern-themes.json gives keywords #24603f in the light theme.
+  const kw = page
+    .locator(".expressive-code span", { hasText: /^function$/ })
+    .first();
+  await expect(kw).toHaveCSS("color", "rgb(36, 96, 63)");
+});
+
+test("the home page install card points at this site's install script", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const card = page.locator(".fern-install");
+  await expect(card.locator(".fern-cmd__text").first()).toHaveText(/^curl -fsSL \S+\/lang\/install\.sh \| sh$/);
+  const res = await page.request.get("install.sh");
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toMatch(/^#!\/bin\/sh\n/);
+});
+
+test("the home page shows the captured assembly for both targets", async ({ page }) => {
+  await page.goto("./");
+  const compiled = page.locator(".fern-compiled");
+  await expect(compiled).toContainText("area.fern");
+  await expect(compiled.getByRole("tab", { name: "arm64-linux" })).toBeVisible();
+  await expect(compiled.getByRole("tab", { name: "x86-64-linux" })).toBeVisible();
+  // The folded constant is marked.
+  await expect(compiled.locator("mark").first()).toContainText("75");
+  await expect(compiled).toContainText(/static executable: [\d,]+ bytes/);
+});
+
+test("the home page shows the bench ratios, the usage text and the editor features", async ({ page }) => {
+  await page.goto("./");
+  await expect(page.locator(".fern-bench-head__value").first()).toHaveText(/^\d+\.\d\d×$/);
+  await expect(page.locator(".fern-captured")).toContainText("usage: fern");
+  await expect(page.locator(".fern-editor li")).not.toHaveCount(0);
+  await expect(page.locator(".fern-editor")).toContainText("Go to definition");
 });
 
 test("minimal playground embed is wired read-only + autorun on the home page", async ({
@@ -91,11 +161,11 @@ test("minimal playground embed is wired read-only + autorun on the home page", a
   // Both the minimal flag and the forced autorun must reach the embed
   // URL — minimal snippets have no Run button, so autorun is mandatory.
   await expect(iframe).toHaveAttribute(
-    "src",
+    "data-src",
     /\/lang\/playground\/\?[^#]*minimal=1[^#]*#src=/,
   );
   await expect(iframe).toHaveAttribute(
-    "src",
+    "data-src",
     /\/lang\/playground\/\?[^#]*autorun=1[^#]*#src=/,
   );
 });
@@ -111,6 +181,8 @@ test("embedded playground actually boots — the staged bundle is complete", asy
   // and the status hangs forever on "loading runtime…". The other
   // embed tests only inspect the iframe's src attribute and would miss
   // that — this one loads the iframe.
+  // An embed loads when it nears the viewport.
+  await page.locator("figure.fern-playground[data-fern-minimal='1'] iframe").first().scrollIntoViewIfNeeded();
   const frame = page.frameLocator(
     "figure.fern-playground[data-fern-minimal='1'] iframe",
   );
@@ -257,4 +329,56 @@ test("coreutils page sorts, filters and opens a utility's workloads", async ({
   const details = page.locator("details#bench-sha256sum");
   await expect(details).toHaveAttribute("open", "");
   await expect(details.locator("tbody tr").first()).toBeVisible();
+});
+
+test("the sidebar numbers the tutorial steps without renaming the links", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  const install = page.getByRole("link", { name: "Install", exact: true }).first();
+  await expect(install).toBeVisible();
+  const before = await install.evaluate((el) => getComputedStyle(el, "::before").content);
+  expect(before).toContain("counter(fern-step");
+});
+
+test("the stdlib sidebar nests a module family under its parent", async ({ page }) => {
+  await page.goto("stdlib/opus_silk_tables/");
+  const current = page.locator('a[aria-current="page"]');
+  await expect(current).toHaveText("opus_silk_tables");
+  // The page sits in the opus_silk group, inside the opus group.
+  const groups = await current.evaluate((el) => {
+    const out = [];
+    for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+      out.push(d.querySelector(":scope > summary")?.textContent?.trim());
+    }
+    return out;
+  });
+  expect(groups.slice(0, 2)).toEqual(["opus_silk", "opus"]);
+});
+
+test("the favicon link resolves", async ({ page }) => {
+  await page.goto("./");
+  const href = await page.locator('link[rel="shortcut icon"]').getAttribute("href");
+  const res = await page.request.get(new URL(href!, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toContain("<svg");
+});
+
+test("a docs page has its own social card", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  const image = await page.locator('meta[property="og:image"]').getAttribute("content");
+  expect(image).toMatch(/\/og\/tutorial\/install\.png$/);
+  // The card is served from this build, whatever host the meta tag names.
+  const res = await page.request.get(new URL(new URL(image!).pathname, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("image/png");
+});
+
+test("llms.txt indexes the docs, and llms-full.txt has their text", async ({ page }) => {
+  const index = await page.request.get("llms.txt");
+  expect(index.status()).toBe(200);
+  const text = await index.text();
+  expect(text).toMatch(/^# Fern\n\n> /);
+  expect(text).toContain("## Tutorial");
+  const full = await (await page.request.get("llms-full.txt")).text();
+  expect(full).toContain("# Install");
+  expect(full).not.toContain("<FernPlayground");
 });

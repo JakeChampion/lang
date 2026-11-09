@@ -11,9 +11,7 @@ search trigger working.
 ```bash
 # Build everything the docs depend on first, as pages.yml does.
 cd ../..            # back to site/
-( cd .. && ./web/build.sh )
-mkdir -p public/playground
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && ./web/build.sh && web/stage.sh site/public/playground )
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
 npm install
