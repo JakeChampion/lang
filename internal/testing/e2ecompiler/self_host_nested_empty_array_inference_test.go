@@ -20,6 +20,8 @@ func TestSelfHostNestedEmptyArrayInference(t *testing.T) {
 		{"owned-string", "", `let n = 0; for xs in [[], [seed]] { for text in xs { if (text != seed) { return 2; } n = n + 1; } } return n - 1;`},
 		{"generic-record", `struct Box[T] { value: T }`, `let n = 0; for xs in [[], [Box { value: seed }]] { for item in xs { if (item.value != seed) { return 2; } n = n + 1; } } return n - 1;`},
 		{"generic-numeric-literal", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[], [Box { value: 1 }], [Box { value: 7i64 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
+		{"generic-numeric-literal-wide-first", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[Box { value: 7i64 }], [], [Box { value: 1 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
+		{"generic-numeric-literal-no-empty", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[Box { value: 1 }], [Box { value: 7i64 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
 		{"typed-tail", "", `let sum = 0i64; for xs in [[], [7i64]] { for x in xs { sum = sum + x; } } return (sum - 7i64) as i32;`},
 		{"explicit-control", "", `let arrays: i32[][] = [[], [1]]; let n = 0; for xs in arrays { n = n + xs.len(); } return n - 1;`},
 		{"argument-control", `function count(arrays: [i32[]]): i32 { let n = 0; for xs in arrays { n = n + xs.len(); } return n; }`, `return count([[], [1]]) - 1;`},
