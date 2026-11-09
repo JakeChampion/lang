@@ -25,14 +25,8 @@ func TestSelfHostWasmComponent(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(componentWrapDriver)
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
@@ -127,14 +121,8 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(componentFullDriver)
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
@@ -254,14 +242,8 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	p2Bin := buildSelfHostBin(t, gcc, dir, "wasm_run_p2.fern", "wasm_run_p2")
 
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(componentCompileDriver)
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
@@ -410,14 +392,8 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(componentFullIODriver)
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {

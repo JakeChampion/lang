@@ -17,11 +17,8 @@ func TestSelfHostLEB128(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	source := string(leb) + "\n" + leb128SelfTestMain
+	leb := assemblerSource(t, "watbin.fern")
+	source := leb + "\n" + leb128SelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
