@@ -1,3 +1,6 @@
+# 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures eight
+# changed emitted sizes after the merge of main d04e79179f. Bank both directions.
+# Keep all tolerances. These are not isolated liveness gains.
 # 2026-11-09: PR #14829. The counted append capacity check adds control flow. Six emitted-size rows grow 1.0% through 2.4%, measured locally on all three targets.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The nine emitted sizes that #14756 pinned high fall back on every target, by scripts/perf-bench-selfhost. Each is pinned at its measured value.
 # 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The emitted size of the nine benchmarks that #14756 raised falls back on every target with the tree-shaker fix that merged with #14757. Pinned at the measured values.
@@ -358,6 +361,3 @@ selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 selfhost/x86-64-linux/video_qtrle.emit 5680
 selfhost/arm64-linux/video_qtrle.emit 6027
 selfhost/wasm32-wasi/video_qtrle.emit 6814
-# 2026-11-09: PR #14904, perf-x86_64 job 129289189295 on a main base of 180c8416.
-# array_with and record_update are smaller on the three targets, wasm32-wasi deflate_decode is 1.0% larger,
-# and x86-64 string_count_byte is 4.3% larger. This PR touches no code that they run. Pin the measured values.

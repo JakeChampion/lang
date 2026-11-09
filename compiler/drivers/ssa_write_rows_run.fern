@@ -4,6 +4,7 @@ import "../ssaunits";
 import "../semrecords";
 import "../typeinfo";
 import "../util";
+import "../sourcepos";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -29,7 +30,7 @@ function fixture(name: string, callee: string, slot: i32): ssasem.Func {
     ] },
     values: [array, array, size], params: [array, array], result: size,
     records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [],
-    map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false,
+    map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), schema_checked: false,
   };
 }
 

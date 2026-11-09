@@ -18,13 +18,6 @@ function failure(message: string): Boundary {
   return Boundary { shape: "", symbol: "", fields: [], words: 0, error: message };
 }
 
-function integer(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(n) = t {
-    return n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic;
-  }
-  return false;
-}
-
 function schema(m: physicalbody.Metadata, c: ssasem.Contract): semrecords.Record[] {
   if (!selected.compatible(m, m, c.result, 0)) {
     return [];
@@ -39,7 +32,7 @@ function schema(m: physicalbody.Metadata, c: ssasem.Contract): semrecords.Record
 }
 
 function field_matches(field: semrecords.Field, parameter: typeinfo.Type, mode: i32): boolean {
-  return field.name != "" && integer(field.ty) && semtypes.equal(field.ty, parameter) && mode == 1;
+  return field.name != "" && typeinfo.is_exact_i32(field.ty) && semtypes.equal(field.ty, parameter) && mode == 1;
 }
 
 function fields(record: semrecords.Record, c: ssasem.Contract): string[] {

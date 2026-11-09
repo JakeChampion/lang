@@ -5386,7 +5386,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_avx_done = clo6.name;
     let clo7 = asmcore.fresh_label(clo6.state);
     let c_wide = clo7.name;
-    s = clo7.state;
+    let clo8 = asmcore.fresh_label(clo7.state);
+    let c_small_wide = clo8.name;
+    let clo9 = asmcore.fresh_label(clo8.state);
+    let c_batch_loop = clo9.name;
+    s = clo9.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     if (o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
@@ -5405,9 +5409,21 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
-    s = s.write(c_wide + ":\n");
-    s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+    s = s.write(c_wide + ":\n    movq %r8, %r9\n    subq %rdx, %r9\n");
     s = s.write("    cmpq $128, %r9\n    jl " + c_avx + "\n");
+    s = s.write("    cmpq $1024, %r9\n    jl " + c_small_wide + "\n");
+    s = s.write("    leaq 1024(%rdx), %r11\n    vpxor %ymm2, %ymm2, %ymm2\n");
+    // Each byte lane accumulates at most 32 matches before the horizontal sum.
+    s = s.write(c_batch_loop + ":\n");
+    for off in ["", "32", "64", "96"] {
+      s = s.write("    vpcmpeqb " + off + "(%rax,%rdx), %ymm1, %ymm0\n    vpsubb %ymm0, %ymm2, %ymm2\n");
+    }
+    s = s.write("    addq $128, %rdx\n    cmpq %r11, %rdx\n    jl " + c_batch_loop + "\n");
+    s = s.write("    vpxor %ymm3, %ymm3, %ymm3\n    vpsadbw %ymm3, %ymm2, %ymm2\n");
+    s = s.write("    subq $32, %rsp\n    vmovdqu %ymm2, (%rsp)\n");
+    s = s.write("    addq (%rsp), %r10\n    addq 8(%rsp), %r10\n    addq 16(%rsp), %r10\n    addq 24(%rsp), %r10\n");
+    s = s.write("    addq $32, %rsp\n    jmp " + c_wide + "\n");
+    s = s.write(c_small_wide + ":\n");
     s = s.write("    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpcmpeqb 32(%rax,%rdx), %ymm1, %ymm2\n");
     s = s.write("    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm2, %r11d\n");
     s = s.write("    popcntl %r9d, %r9d\n    popcntl %r11d, %r11d\n    addq %r9, %r10\n    addq %r11, %r10\n");

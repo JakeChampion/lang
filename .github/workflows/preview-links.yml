@@ -1,0 +1,63 @@
+name: Preview links
+
+# Checks each internal link on a Netlify deploy preview of a pull request,
+# when the preview is live, so a broken link is found before the merge. The
+# Docs build lane checks the build, and site-links.yml checks production on
+# a schedule. Netlify posts a deploy/netlify commit status with the preview
+# URL when a deploy is ready. This workflow then reports a
+# site-links/preview status on the same commit.
+
+on: status
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: preview-links-${{ github.event.sha }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Only a ready deploy preview of this site: the fern-fun site posts the
+    # same context.
+    if: >-
+      github.event.context == 'deploy/netlify' &&
+      github.event.state == 'success' &&
+      startsWith(github.event.target_url, 'https://deploy-preview-') &&
+      endsWith(github.event.target_url, '--fern-lang.netlify.app')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Check the links of the preview
+        id: check
+        env:
+          SITE: ${{ github.event.target_url }}
+        run: |
+          set -o pipefail
+          node site/scripts/check-links.mjs --site "$SITE" | tee report.txt
+
+      - name: Report the result on the commit
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.sha }}
+          OUTCOME: ${{ steps.check.outcome }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = success ]; then
+            state=success
+            description="No broken internal link on the deploy preview"
+          else
+            state=failure
+            description="$(grep -m1 '^check-links:' report.txt 2>/dev/null || echo 'The link check did not run')"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$state" -f context=site-links/preview \
+            -f description="${description:0:140}" -f target_url="$RUN"

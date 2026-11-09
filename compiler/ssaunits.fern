@@ -629,10 +629,6 @@ function construction(kind: i32): boolean {
     || kind == ssasem.map_cleared();
 }
 
-function taken(t: typeinfo.Type): boolean {
-  return ssasem.reference(t);
-}
-
 function fresh_unit(kind: i32): boolean {
   return kind == ssa.PHI || kind == ssa.BINARY || kind == ssasem.append_range() || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
@@ -814,7 +810,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {
     for arg in ins.args {
-      counted = counted.append(taken(f.values[arg]));
+      counted = counted.append(ssasem.reference(f.values[arg]));
     }
   }
   let i = 0;

@@ -259,6 +259,7 @@ function main(): i32 {
 
 const inlineOpaqueReturnProgram = `import "./ssa";
 import "./ssasem";
+import "./sourcepos";
 import "./seminline";
 import "./semrecords";
 import "./typeinfo";
@@ -268,7 +269,7 @@ function word_type(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.
 function byte_type(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }; }
 function op(k: i32, r: i32, args: i32[], imm: i32, name: string): ssa.SInst { return ssa.SInst { kind_tag: k, result: r, args: args, imm: imm, str: name }; }
 function func(name: string, params: typeinfo.Type[], types: typeinfo.Type[], blocks: ssa.SBlock[], result: typeinfo.Type, calls: ssasem.Contract[]): ssasem.Func {
- return ssasem.Func { graph: ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: false, blocks: blocks }, values: types, params: params, result: result, records: semrecords.no_records(), enums: [], calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false };
+ return ssasem.Func { graph: ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: false, blocks: blocks }, values: types, params: params, result: result, records: semrecords.no_records(), enums: [], calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), schema_checked: false };
 }
 function block(ops: ssa.SInst[], r: i32): ssa.SBlock { return ssa.SBlock { id: 0, preds: [], insts: ops, term: ssa.STerm { kind_tag: 1, value: r, cond: 0, target: 0, t: 0, f: 0 } }; }
 function main(): i32 {
@@ -486,7 +487,7 @@ function word_flow_probe_func(blocks: ssa.SBlock[]): ssasem.Func {
   let word: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
   let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
   let bytes: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false };
-  return ssasem.Func { graph: ssa.SFunc { name: "word_flow", nparams: 1, nvals: 10, entry: 0, takes_env: false, blocks: blocks }, values: [bytes, word, word, word, word, word, word, word, word, word], params: [bytes], result: word, records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false };
+  return ssasem.Func { graph: ssa.SFunc { name: "word_flow", nparams: 1, nvals: 10, entry: 0, takes_env: false, blocks: blocks }, values: [bytes, word, word, word, word, word, word, word, word, word], params: [bytes], result: word, records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), schema_checked: false };
 }
 pub function test_word_flow_checks(): i32 {
   let param = word_flow_probe_op(ssasem.param(), 0, [], "");
