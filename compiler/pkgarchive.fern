@@ -73,7 +73,7 @@ function write_entries(tmp: string, t: u8[]): string {
   let off = 0;
   while (off + 512 <= t.len() && t[off] != 0) {
     let e = header(t, off);
-    if (e.size < 0 || e.at + e.size > t.len()) {
+    if (e.size < 0 || e.size > t.len() - e.at) {
       return "reading tar: truncated archive";
     }
     off = e.at + (e.size + 511) / 512 * 512;
@@ -204,7 +204,7 @@ function pax_path(t: u8[], at: i32, size: i32): string {
       sp += 1;
     }
     let len = decimal(t, i, sp);
-    if (len <= 0 || i + len > at + size) {
+    if (len <= 0 || len > at + size - i) {
       return "";
     }
     let rec = "";
