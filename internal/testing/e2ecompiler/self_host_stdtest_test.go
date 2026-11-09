@@ -97,6 +97,7 @@ var interpSlowStdTests = map[string]bool{
 	"caf": true, "caf_shard1": true, "caf_shard2": true, "caf_shard3": true,
 	// The CAF boundary campaign takes 89 seconds. Exact trim smoke stays here.
 	"caf_boundary": true,
+	"caf_file":     true, "caf_file_shard1": true, "caf_file_shard2": true, "caf_file_shard3": true,
 	// The full lossless reference corpus uses compiled gates. Exact ALAC smoke stays here.
 	"alac": true,
 	// The WavPack corpus completes four cases in 75 seconds. Small exact PCM controls stay here.
@@ -392,6 +393,12 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"caf_shard3", langSrcAbs(t, "tests/stdlib/caf_shard3_test.fern"), ""},
 		{"caf_boundary", langSrcAbs(t, "tests/stdlib/caf_boundary_test.fern"), ""},
 		{"caf_smoke", langSrcAbs(t, "tests/stdlib/caf_smoke_test.fern"), ""},
+		{"caf_file", langSrcAbs(t, "tests/stdlib/caf_file_test.fern"), ""},
+		{"caf_file_shard1", langSrcAbs(t, "tests/stdlib/caf_file_shard1_test.fern"), ""},
+		{"caf_file_shard2", langSrcAbs(t, "tests/stdlib/caf_file_shard2_test.fern"), ""},
+		{"caf_file_shard3", langSrcAbs(t, "tests/stdlib/caf_file_shard3_test.fern"), ""},
+		{"caf_file_smoke", langSrcAbs(t, "tests/stdlib/caf_file_smoke_test.fern"), ""},
+		{"caf_file_boundary", langSrcAbs(t, "tests/stdlib/caf_file_boundary_test.fern"), ""},
 		{"wavpack", langSrcAbs(t, "tests/stdlib/wavpack_test.fern"), ""},
 		{"wavpack_boundary", langSrcAbs(t, "tests/stdlib/wavpack_boundary_test.fern"), ""},
 		{"wavpack_smoke", langSrcAbs(t, "tests/stdlib/wavpack_smoke_test.fern"), ""},
