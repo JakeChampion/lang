@@ -99,6 +99,37 @@ function test_memmap_refuses_a_huge_count(): test.TestOutcome {
   return test.assert_eq(pvh.parse_memmap([], 4294967295 as u32).is_err(), true);
 }
 
+function module_entry(own b: u8[], address: i64, size: i64, cmdline: i64): u8[] {
+  b = binary.append_u64_le(b, address as u64);
+  b = binary.append_u64_le(b, size as u64);
+  b = binary.append_u64_le(b, cmdline as u64);
+  return binary.append_u64_le(b, 0 as u64);
+}
+
+function test_modules(): test.TestOutcome {
+  let b = module_entry(module_entry([], 0x7ffe000, 5011, 0), 0x100000000, 0x2000, 0x3000);
+  let Ok(mods) = pvh.parse_modules(b, 2 as u32) else {
+    return test.fail("parse_modules refused two entries");
+  };
+  let ok = mods.len() == 2 && mods[0].address == 0x7ffe000 as u64 && mods[0].size == 5011 as u64 && mods[0].cmdline_address == 0 as u64
+    && mods[1].address == 0x100000000 as u64 && mods[1].size == 0x2000 as u64 && mods[1].cmdline_address == 0x3000 as u64;
+  return test.assert_eq(ok, true);
+}
+
+function test_modules_refuse_short_bytes(): test.TestOutcome {
+  let b = module_entry([], 0x1000, 16, 0);
+  let r = "";
+  match (pvh.parse_modules(b.take(31), 1 as u32)) {
+    Ok(_) => {
+      r = "accepted";
+    },
+    Err(e) => {
+      r = e.message();
+    }
+  }
+  return test.assert_eq(r + "; " + pvh.parse_modules([], 4294967295 as u32).is_err().to_string(), "PVH start info: the bytes end before the last module at byte 31; true");
+}
+
 function line(b: u8[]): string {
   match (pvh.command_line(b)) {
     Ok(s) => {
@@ -138,6 +169,8 @@ function main(): i32 {
   r = r.it("parse_memmap reads each entry", test_memmap);
   r = r.it("parse_memmap refuses bytes that end early", test_memmap_refuses_short_bytes);
   r = r.it("parse_memmap refuses a count past the bytes", test_memmap_refuses_a_huge_count);
+  r = r.it("parse_modules reads each entry", test_modules);
+  r = r.it("parse_modules refuses bytes that end early", test_modules_refuse_short_bytes);
   r = r.it("command_line reads the text before the NUL", test_command_line);
   r = r.it("errors support Display and Error", test_error_traits);
   return r.finish();
