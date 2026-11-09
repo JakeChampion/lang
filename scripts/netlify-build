@@ -64,6 +64,11 @@ cd site
 # branch URL, so it applies only outside CONTEXT=production. Only set it when
 # non-empty: the config falls back on a nullish value, and an empty string is
 # not nullish — it would fail the build.
+# The Netlify site is at the domain root. The /lang base is for GitHub Pages
+# alone, which serves the project from the repository subpath.
+export SITE_BASE="${SITE_BASE:-/}"
+echo "==> SITE_BASE=$SITE_BASE"
+
 if [ -z "${SITE_URL:-}" ]; then
   if [ "${CONTEXT:-}" = production ]; then
     deploy_url="${URL:-}"

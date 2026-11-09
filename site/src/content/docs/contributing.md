@@ -6,7 +6,7 @@ description: How this documentation site is built, and how to add or edit a page
 This site is an [Astro](https://astro.build) +
 [Starlight](https://starlight.astro.build) project living under `site/`
 in the [repository][repo]. It publishes to GitHub Pages, with the
-interactive [playground](/lang/playground/) bundled alongside it. This
+interactive [playground](../playground/) bundled alongside it. This
 page is for anyone improving the docs themselves.
 
 ## Run the site locally

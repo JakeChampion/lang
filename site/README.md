@@ -131,11 +131,13 @@ build and then the Playwright suite in `test/playwright/`.
 
 The same bundle also deploys to Netlify, via `netlify.toml` at the
 repo root and `scripts/netlify-build` (which mirrors the `Pages`
-workflow's steps). The one host-specific wrinkle is `base`: Astro
-bakes the `/lang` prefix into every internal link but does *not*
-nest `dist/` to match, so Pages lines the two up by serving `dist/`
-at `/lang/`, while Netlify serves `dist/` at the domain root and
-rewrites `/lang/*` back down. Keep the two build recipes in step.
+workflow's steps). The two hosts use a different `base`. GitHub
+Pages serves the project from the repository subpath, so `base` is
+`/lang` there, the default in `astro.config.mjs`. The Netlify site is
+at the domain root: `scripts/netlify-build` sets `SITE_BASE=/`, and
+`netlify.toml` redirects old `/lang/...` links to the root. Write a
+hero link or a sidebar link as a site path such as `/tutorial/install/`,
+and the build adds the base. Keep the two build recipes in step.
 
 ## Embed a live snippet
 

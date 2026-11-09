@@ -9,20 +9,16 @@ template: splash
 head:
   - tag: title
     content: "Fern — a small statically typed language"
-# Hero `link:` values are passed verbatim to `<a href>` by
-# Starlight's Hero / LinkButton — base path is NOT auto-prepended
-# (unlike the sidebar). Bake the `/lang/` base in so the buttons
-# resolve to `/lang/tutorial/install/` etc. instead of 404-ing
-# at the apex `/tutorial/install/`.
+# Hero links are site paths. src/routeData.ts adds the base.
 hero:
   tagline: A small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.
   actions:
     - text: Get started
-      link: /lang/tutorial/install/
+      link: /tutorial/install/
       icon: right-arrow
       variant: primary
     - text: Try in browser
-      link: /lang/playground/
+      link: /playground/
       icon: external
     - text: Source on GitHub
       link: https://github.com/JakeChampion/lang
