@@ -77,7 +77,72 @@ func goInflate(input []byte) goDecoded {
 }
 
 func goGunzip(input []byte) goDecoded {
-	return goDecode(func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }, input)
+	// RFC 1952 section 2.3.1.2 requires zero reserved bits. Go ignores them.
+	cursor := bytes.NewReader(input)
+	var out []byte
+	for cursor.Len() > 0 {
+		at := len(input) - cursor.Len()
+		if cursor.Len() >= 4 && input[at+3]&0xe0 != 0 {
+			return goDecoded{}
+		}
+		r, err := gzip.NewReader(cursor)
+		if err != nil {
+			return goDecoded{}
+		}
+		// bytes.Reader preserves the next member boundary in this mode.
+		r.Multistream(false)
+		part, readErr := io.ReadAll(io.LimitReader(r, int64(stdDecodeLimit-len(out)+1)))
+		r.Close()
+		if len(out)+len(part) > stdDecodeLimit {
+			return goDecoded{over: true}
+		}
+		if readErr != nil {
+			return goDecoded{}
+		}
+		out = append(out, part...)
+	}
+	return goDecoded{out: out, ok: len(input) > 0}
+}
+
+func TestGzipOracleHeaderPolicy(t *testing.T) {
+	var encoded bytes.Buffer
+	plain := []byte("gzip member with optional header fields")
+	if err := writeGzip(&encoded, flate.BestSpeed, plain); err != nil {
+		t.Fatal(err)
+	}
+	valid := encoded.Bytes()
+	for _, flag := range []byte{0, 1, 0x20, 0x40, 0x80, 0xe0} {
+		for _, second := range []bool{false, true} {
+			t.Run(fmt.Sprintf("flags-%02x/second-%v", flag, second), func(t *testing.T) {
+				input := append([]byte(nil), valid...)
+				input[3] |= flag
+				want := plain
+				if second {
+					input = append(append([]byte(nil), valid...), input...)
+					want = bytes.Repeat(plain, 2)
+				}
+				got := goGunzip(input)
+				ok := flag&0xe0 == 0
+				if got.ok != ok || got.over || ok && !bytes.Equal(got.out, want) {
+					t.Fatalf("gzip oracle: ok=%v over=%v output=%q, want ok=%v output=%q", got.ok, got.over, got.out, ok, want)
+				}
+			})
+		}
+	}
+	badCRC := append([]byte(nil), valid...)
+	badCRC[len(badCRC)-8] ^= 1
+	for _, input := range [][]byte{nil, valid[:len(valid)-1], badCRC, append(append([]byte(nil), valid...), 0)} {
+		if got := goGunzip(input); got.ok || got.over {
+			t.Errorf("gzip oracle accepts malformed input %x", input)
+		}
+	}
+	var large bytes.Buffer
+	if err := writeGzip(&large, flate.BestSpeed, bytes.Repeat([]byte{'a'}, stdDecodeLimit/2+1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := goGunzip(bytes.Repeat(large.Bytes(), 2)); !got.over || got.ok {
+		t.Fatal("gzip oracle does not limit the total output across members")
+	}
 }
 
 func goZlib(input []byte) goDecoded {
@@ -201,6 +266,11 @@ func FuzzSelfHostStdGunzip(f *testing.F) {
 	seeds := withDamage(compressedSeeds(writeGzip))
 	two := append(append([]byte(nil), seeds[1]...), seeds[1]...)
 	seeds = append(seeds, two, []byte{0x1f, 0x8b}, []byte{0x1f, 0x8b, 8, 0xff, 0, 0, 0, 0, 0, 0}, []byte{0x1f, 0x8b, 7})
+	for _, flags := range []byte{0x20, 0x40, 0x80, 0xe0} {
+		reserved := append([]byte(nil), seeds[1]...)
+		reserved[3] |= flags
+		seeds = append(seeds, reserved, append(append([]byte(nil), seeds[1]...), reserved...))
+	}
 	fuzzStdOracle(f, "gunzip", seeds, func(t *testing.T, input []byte, summary string) {
 		agreeWithGo(t, "gunzip", input, summary, goGunzip(input))
 	})
