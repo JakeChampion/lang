@@ -106,7 +106,7 @@ function test_home_layout(): test.TestOutcome {
   let v = home_view();
   let f = draw_view(v, "home");
   let ns = ui.nodes(fonts(), v);
-  let clock = node_of(ns, "alarms");
+  let clock = node_of(ns, "clock");
   let date = node_of(ns, "calendar");
   let fav = node_of(ns, "open:com.android.chrome/Main");
   // The clock is centred under the date, the home apps are in the sky,

@@ -241,6 +241,39 @@ function start_intent(ctx: usize, intent: usize, options: usize): boolean {
   return ok;
 }
 
+// PackageManager.MATCH_DEFAULT_ONLY.
+const MATCH_DEFAULT_ONLY: i32 = 65536;
+
+// The launch intent of the clock app: the app that shows the alarms. When
+// no app gives one, or the system must choose among several, it is the
+// intent that shows the alarms.
+function clock_intent(ctx: usize, e: usize): usize {
+  let alarms = action_intent(e, "android.intent.action.SHOW_ALARMS");
+  let pm = object_method(e, android.activity_object(ctx), "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
+  let ri = object_method(e, pm, "resolveActivity", "(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;", [alarms, MATCH_DEFAULT_ONLY as usize]);
+  let pkg = "";
+  if (ri != 0 as usize) {
+    let ai = object_field(e, ri, "activityInfo", "Landroid/content/pm/ActivityInfo;");
+    pkg = string_field(e, ai, "packageName");
+    drop(e, ai);
+    drop(e, ri);
+  }
+  let launch = 0 as usize;
+  if (pkg.len() > 0 && pkg != "android") {
+    let p = jni.new_string(e, pkg);
+    launch = object_method(e, pm, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;", [p]);
+    drop(e, p);
+  }
+  drop(e, pm);
+  if (launch == 0 as usize) {
+    log.info("paper: open clock by its alarms");
+    return alarms;
+  }
+  log.info("paper: open clock " + pkg);
+  drop(e, alarms);
+  return launch;
+}
+
 function action_intent(e: usize, action: string): usize {
   let a = jni.new_string(e, action);
   let intent = new_object(e, "android/content/Intent", "(Ljava/lang/String;)V", [a]);
@@ -295,8 +328,8 @@ function launch(ctx: usize, key: string, x: i32, y: i32, w: i32, h: i32): boolea
 function open(ctx: usize, what: string, arg: string): boolean {
   let e = android.env(ctx);
   let intent = 0 as usize;
-  if (what == "alarms") {
-    intent = action_intent(e, "android.intent.action.SHOW_ALARMS");
+  if (what == "clock") {
+    intent = clock_intent(ctx, e);
   } else if (what == "calendar") {
     intent = uri_intent(e, "android.intent.action.VIEW", "content://com.android.calendar/time/" + now_unix_ms().to_string());
   } else if (what == "search") {
@@ -784,6 +817,16 @@ function attach_gpu(p: gpu.Painter, window: usize): gpu.Painter {
   return q;
 }
 
+// The middle of the clock among `ns`, for the emulator check to tap, or "".
+function clock_place(ns: ui.Node[]): string {
+  for n in ns {
+    if (n.act == "clock") {
+      return ", clock at " + (n.x + n.w / 2).to_string() + " " + (n.y + n.h / 2).to_string();
+    }
+  }
+  return "";
+}
+
 // One step of the app, with a log line for each change that the emulator
 // check waits for.
 function step(own s: control.App, e: android.Event): control.App {
@@ -792,7 +835,7 @@ function step(own s: control.App, e: android.Event): control.App {
   let drawn = s.nodes.len() > 0;
   let t = control.step(s, e);
   if (!drawn && t.nodes.len() > 0) {
-    log.info("paper: drawn " + t.w.to_string() + "x" + t.h.to_string());
+    log.info("paper: drawn " + t.w.to_string() + "x" + t.h.to_string() + clock_place(t.nodes));
   }
   if (t.layer != layer) {
     log.info("paper: layer " + t.layer.to_string());
