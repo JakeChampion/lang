@@ -34244,18 +34244,9 @@ function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_
 
 function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprArray(_) = e {
-    return (vaguer_than(from, to) || element_args_clash(from, to, s)) && array_mix_settles(e, from, to, s);
+    return (vaguer_than(from, to) || !type_eq(from, to)) && array_mix_settles(e, from, to, s);
   }
   return false;
-}
-
-function element_args_clash(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
-  if let typeinfo.TypeArray(fa) = from {
-    if let typeinfo.TypeArray(ta) = to {
-      return element_args_clash(fa.elem, ta.elem, s);
-    }
-  }
-  return nominal_args_clash(from, to, s.unions.unions);
 }
 
 function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
