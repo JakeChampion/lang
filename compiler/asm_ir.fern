@@ -7705,19 +7705,15 @@ function ssa_vround(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   let x = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift("vneg", ins.imm, "%xmm2"));
-  s = s.write("    and" + sfx + " " + x + ", %xmm2\n    or" + sfx + " .Lv_one" + w + "(%rip), %xmm2\n");
   if (x != "%xmm1") {
     s = s.write("    movapd " + x + ", %xmm1\n");
   }
-  s = s.write("    round" + sfx + " $3, %xmm1, " + d + "\n");
-  let sh = "q";
-  if (ins.imm == 32) {
-    sh = "d";
-  }
-  s = s.write("    sub" + sfx + " " + d + ", %xmm1\n    psll" + sh + " $1, %xmm1\n    psrl" + sh + " $1, %xmm1\n");
-  s = s.write("    cmp" + sfx + " $5, .Lv_half" + w + "(%rip), %xmm1\n");
-  s = s.write("    and" + sfx + " %xmm1, %xmm2\n    add" + sfx + " %xmm2, " + d + "\n");
+  // RNE addition with the predecessor of 0.5 preserves both half-boundaries.
+  // The sign mask stays separate from the rounded magnitude.
+  s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift("vabs", ins.imm, "%xmm2"));
+  s = s.write("    andn" + sfx + " %xmm1, %xmm2\n    xor" + sfx + " %xmm2, %xmm1\n");
+  s = s.write("    add" + sfx + " .Lv_round_half" + w + "(%rip), %xmm1\n");
+  s = s.write("    round" + sfx + " $1, %xmm1, " + d + "\n    or" + sfx + " %xmm2, " + d + "\n");
   s = asmcore.EmitState { ...s, lane_consts: true };
   return ssa_fput(reg_of, ins.result, d, s);
 }
@@ -7829,10 +7825,8 @@ function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   s = s.write("    .section .rodata\n    .align 16\n");
-  s = s.write(".Lv_one64:\n    .quad 4607182418800017408\n    .quad 4607182418800017408\n");
-  s = s.write(".Lv_half64:\n    .quad 4602678819172646912\n    .quad 4602678819172646912\n");
-  s = s.write(".Lv_one32:\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n");
-  s = s.write(".Lv_half32:\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n");
+  s = s.write(".Lv_round_half64:\n    .quad 4602678819172646911\n    .quad 4602678819172646911\n");
+  s = s.write(".Lv_round_half32:\n    .long 1056964607\n    .long 1056964607\n    .long 1056964607\n    .long 1056964607\n");
   return s;
 }
 
