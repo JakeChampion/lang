@@ -253,8 +253,10 @@ With `index_key`, `fern -resolve` verifies the detached Ed25519
 signature in `index.toml.sig` (128 hex digits over the index bytes)
 before it reads the index, and refuses a missing, malformed or
 non-matching signature. The key is `ed25519:` and 64 lowercase hex
-digits of the public key. `docs/security/PACKAGE-INTEGRITY.md` has
-the refusals and the signing command.
+digits of the public key. `fern -sign-index -key KEY index.toml`
+writes the signature and prints the `index_key` line.
+`docs/security/PACKAGE-INTEGRITY.md` has the refusals and the key
+format.
 
 The **version source** is a plain **index file** (no registry service —
 consistent with the shipped hash-addressing), mapping each package's
