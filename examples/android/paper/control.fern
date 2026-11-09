@@ -43,7 +43,7 @@ const WEATHER_MAX_AGE_MS: i64 = 1800000;
 // off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
-// `open` starts a screen of the system: "alarms", "calendar", "search" (with
+// `open` starts a screen of the system: "clock", "calendar", "search" (with
 // the text), "info" and "uninstall" (with a package), "music",
 // "home-settings" and "listener-settings".
 pub struct Device {
@@ -740,7 +740,7 @@ function act(own s: App, a: string, n: ui.Node): App {
     s.dev.keyboard(true);
     return App { ...s, typing: true, dirty: true };
   }
-  if (a == "calendar" || a == "alarms") {
+  if (a == "calendar" || a == "clock") {
     let opened = s.dev.open(a, "");
     return s;
   }

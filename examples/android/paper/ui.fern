@@ -301,7 +301,7 @@ function home_base(m: Metrics, f: face.Fonts, v: View): Node[] {
   ns = ns.append(tap(node((m.w - dw) / 2, date_y(m), dw, face.line(f, face.BOLD, date_px), Label(v.date, date_px, face.BOLD, -10, m.pal.ink)), "calendar"));
   let cpx = clock_px(m);
   let cw = face.spaced_width(f, face.EXTRABOLD, cpx, -35, v.time);
-  ns = ns.append(tap(node((m.w - cw) / 2, clock_y(m, f), cw, face.line(f, face.EXTRABOLD, cpx), Label(v.time, cpx, face.EXTRABOLD, -35, m.pal.ink)), "alarms"));
+  ns = ns.append(tap(node((m.w - cw) / 2, clock_y(m, f), cw, face.line(f, face.EXTRABOLD, cpx), Label(v.time, cpx, face.EXTRABOLD, -35, m.pal.ink)), "clock"));
   ns = cat(ns, widgets(m, f, v, row_y(m, f)));
   return cat(ns, hint(m, f, v));
 }
