@@ -67,7 +67,6 @@ function image_manifest_line(image: u8[]): string {
     }
     from = at + 1;
   }
-  return "";
 }
 
 // A candidate ends in a newline, names its target, and holds printable ASCII

@@ -369,7 +369,6 @@ function run(f: ssa.SFunc, g: Graph, unique: boolean): i32 {
     pred = current;
     current = successor(b.term, values, g.slots);
   }
-  return 0;
 }
 
 pub function check(f: ssa.SFunc): Meaning {

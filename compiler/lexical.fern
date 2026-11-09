@@ -175,7 +175,6 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
       return p;
     }
   }
-  return p;
 }
 
 function var_at(v: ast.StmtVar, s: Scope): (ast.Stmt, Scope) {

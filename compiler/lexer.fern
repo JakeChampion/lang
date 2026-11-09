@@ -1429,7 +1429,6 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     out = out.append(error_tok(bad_char_message(src, l.i, l.n), start_line, start_col));
     return LexResult { tokens: out, comments: l.comments };
   }
-  return LexResult { tokens: out, comments: l.comments };
 }
 
 function test_mixed(): i32 {
@@ -2033,7 +2032,6 @@ function check_quoted(src: string, want_text: string, want_suffix: string): bool
       return false;
     }
   }
-  return false;
 }
 
 function test_quoted_literals(): i32 {

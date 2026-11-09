@@ -757,7 +757,6 @@ function is_builder_mutation(c: ast.ExprCall, b: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function rewrite_builder_stmt(s: ast.Stmt, b: string): ast.Stmt {
@@ -798,7 +797,6 @@ function rewrite_builder_stmt(s: ast.Stmt, b: string): ast.Stmt {
       return s;
     }
   }
-  return s;
 }
 
 function rewrite_builder_stmts(stmts: ast.Stmt[], b: string): ast.Stmt[] {
@@ -869,7 +867,6 @@ function maybe_desugar_array_build(base: ast.Expr): ast.Expr {
       return base;
     }
   }
-  return base;
 }
 
 function map_builder_inner(t: string): string {
@@ -951,7 +948,6 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
       return base;
     }
   }
-  return base;
 }
 
 function s_match_origin(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
@@ -2892,7 +2888,6 @@ function parse_binary_nested(p: Par, min_prec: i32): (ast.Expr, Par) {
     p = rhs_p;
     lhs_expr = e_binary_at(op, lhs_expr, rhs_expr, opline, opcol);
   }
-  return (lhs_expr, p);
 }
 
 function parse_expr(p: Par): (ast.Expr, Par) {
@@ -3990,7 +3985,6 @@ function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
       return e_number("0", "", false);
     }
   }
-  return e_number("0", "", false);
 }
 
 function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par) {
@@ -13690,7 +13684,6 @@ function fwd_scan_expr(e: ast.Expr, own acc: FwdScan): FwdScan {
       return acc;
     }
   }
-  return acc;
 }
 
 function carries_erased_var(pd: ast.ParamDecl, evars: string[]): boolean {
@@ -20137,7 +20130,6 @@ function fda_marker_name(e: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function fda_marker_value(e: ast.Expr): ast.Expr {
@@ -21017,7 +21009,6 @@ function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function irt_method_ret(funcs: FuncDecl[], recv_type: string, name: string): string {
@@ -22667,7 +22658,6 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 struct TvScope { vars: string[], cts: string[], values: string[], lits: boolean }
@@ -25404,7 +25394,6 @@ function value_branches_float_settleable(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function settle_branch_body(body: ast.Stmt[]): ast.Stmt[] {

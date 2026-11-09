@@ -4748,7 +4748,6 @@ pub function eliminate_dead_stores(ops: Op[]): Op[] {
       return cur;
     }
   }
-  return cur;
 }
 
 function drop_dead_stores(ops: Op[], loads: i32[]): Op[] {

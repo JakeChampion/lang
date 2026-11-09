@@ -4701,7 +4701,6 @@ function run_lsp(s: Server): i32 {
       None => {}
     }
   }
-  return 0;
 }
 
 function lsp_handle(s: Server, m: lsp.Message): Server {

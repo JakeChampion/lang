@@ -24,7 +24,6 @@ function fill(inp: Input): (Input, boolean) {
       return (inp, false);
     }
   }
-  return (inp, false);
 }
 
 pub function read_frame(inp: Input): Frame {

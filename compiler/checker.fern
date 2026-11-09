@@ -1525,7 +1525,6 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // The type arguments of two uses of one generic name agree unless both are
@@ -2966,7 +2965,6 @@ function mlit_is_desugared(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function literal_insert(c: ast.ExprCall): boolean {
@@ -4639,7 +4637,6 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return false;
     }
   }
-  return false;
 }
 
 function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, unions: UnionSig[]): boolean {
@@ -10585,7 +10582,6 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
       return false;
     }
   }
-  return false;
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
@@ -11503,7 +11499,6 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, no
       return false;
     }
   }
-  return false;
 }
 
 function if_leaves(f: ast.StmtIf, jumps: boolean, bound: boolean, noret: util.NameIndex): boolean {
@@ -12549,7 +12544,6 @@ function mlit_is_base(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_map_new_name(name: string): boolean {
@@ -12586,7 +12580,6 @@ function unsettled_int_literal(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // A number, or a number under one or more unary minuses: `5`, `-5`, `-(-5)`.
@@ -12751,7 +12744,6 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
       return out;
     }
   }
-  return out;
 }
 
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -15711,7 +15703,6 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
       return none;
     }
   }
-  return none;
 }
 
 function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
@@ -19370,7 +19361,6 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
       return f;
     }
   }
-  return f;
 }
 
 function lu_occ_count(fx: LuFn, name: string): i32 {
@@ -30835,7 +30825,6 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
@@ -30882,7 +30871,6 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       return (x, s, false);
     }
   }
-  return (x, s, false);
 }
 
 function pretype_value_block_args(c: ast.ExprCall, s: Scope): ast.Expr {

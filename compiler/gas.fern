@@ -281,7 +281,6 @@ pub function cfi_uleb(b: i32[], v: i32): i32[] {
       return b.append(c);
     }
   }
-  return b;
 }
 
 pub function cfi_sleb(b: i32[], v: i32): i32[] {
@@ -294,7 +293,6 @@ pub function cfi_sleb(b: i32[], v: i32): i32[] {
     }
     b = b.append(c | 128);
   }
-  return b;
 }
 
 function cfi_le32_i64(own b: i32[], v: i64): i32[] {
