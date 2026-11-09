@@ -130,9 +130,9 @@ var BuiltinCaps = map[string]string{
 
 	"__wfi": "privileged", "__hvc": "privileged", "__smc": "privileged",
 	"__boot_info": "privileged", "__sysreg_read": "privileged", "__sysreg_write": "privileged",
-	"__cache_clean": "privileged", "__cache_flush": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
+	"__cache_clean": "privileged", "__cache_flush": "privileged", "__cache_sync_code": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
 	"__breakpoint": "privileged",
-	"__irq_mask":   "privileged", "__irq_unmask": "privileged", "__irq_wait": "privileged", "__irq_pending": "privileged",
+	"__irq_mask":   "privileged", "__irq_unmask": "privileged", "__irq_wait": "privileged", "__irq_pending": "privileged", "__user_run": "privileged",
 	"__port_in8": "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
 	"__mem_load8": "privileged", "__mem_load16": "privileged", "__mem_load32": "privileged", "__mem_load64": "privileged",

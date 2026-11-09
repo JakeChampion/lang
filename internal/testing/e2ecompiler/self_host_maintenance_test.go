@@ -12,6 +12,7 @@ const maintenanceSrc = `function main(): i32 {
     let p = __alloc(64);
     __cache_clean(p);
     __cache_flush(p);
+    __cache_sync_code(p);
     __tlb_flush(p);
     __tlb_flush_all();
   }
@@ -24,10 +25,17 @@ func TestSelfHostMaintenanceOps(t *testing.T) {
 	wantInOrder(t, "arm64-kernel", emitKernelAsm(t, cli, "arm64-kernel", kernelRAM, maintenanceSrc), []string{
 		"    dc cvac, x9\n",
 		"    dc civac, x9\n",
+		"    dc cvau, x9\n    dsb ish\n    ic ivau, x9\n    dsb ish\n    isb\n",
 		"    dsb ishst\n    lsr x9, x9, #12\n    tlbi vaae1is, x9\n    dsb ish\n    isb\n",
 		"    dsb ishst\n    tlbi vmalle1is\n    dsb ish\n    isb\n",
 	})
-	wantInOrder(t, "x86-64-kernel", emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, maintenanceSrc), []string{
+	// Instruction fetch sees each store on x86-64, so __cache_sync_code
+	// adds no clflush.
+	x86 := emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, maintenanceSrc)
+	if n := strings.Count(x86, "clflush"); n != 2 {
+		t.Errorf("x86-64-kernel: %d clflush, want 2", n)
+	}
+	wantInOrder(t, "x86-64-kernel", x86, []string{
 		"    clflush (%rax)\n",
 		"    clflush (%rax)\n",
 		"    invlpg (%rax)\n",
@@ -44,7 +52,7 @@ func TestSelfHostMaintenanceNeedsAKernel(t *testing.T) {
 	}
 	for _, target := range []string{"arm64-linux", "x86-64-linux"} {
 		msg, err := cli.compileCmd(target, filepath.Join(dir, "out-"+target), src).CombinedOutput()
-		for _, op := range []string{"__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all"} {
+		for _, op := range []string{"__cache_clean", "__cache_flush", "__cache_sync_code", "__tlb_flush", "__tlb_flush_all"} {
 			if err == nil || !strings.Contains(string(msg), "E066") || !strings.Contains(string(msg), op) {
 				t.Errorf("%s: err %v; want E066 naming %s in:\n%s", target, err, op, msg)
 			}
