@@ -70,8 +70,7 @@ jobs:
 
       - name: Generate stdlib reference
         run: |
-          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
-          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
+          site/scripts/stdlib-docs.sh
 
       - name: Install + build
         working-directory: site

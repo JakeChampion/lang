@@ -379,3 +379,25 @@ test("the home page shows captured diagnostics with the suggested fix", async ({
   await diag.getByRole("tab", { name: "A typo" }).click();
   await expect(diag).toContainText("help: replace `totl` with `total`");
 });
+
+test("the function search finds a declaration and links to its entry", async ({ page }) => {
+  await page.goto("stdlib/functions/");
+  await expect(page.locator("#fn-status")).toContainText("declarations in the index");
+  await page.locator("#fn-query").fill("parse_i32");
+  const first = page.locator("#fn-results a").first();
+  await expect(first).toHaveText("parse_i32");
+  const href = (await first.getAttribute("href"))!;
+  expect(href).toMatch(/\/stdlib\/i32\/#parse_i32$/);
+  await first.click();
+  await expect(page.locator("#parse_i32")).toBeVisible();
+});
+
+test("a stdlib page links each declaration and its edit link to the source", async ({ page }) => {
+  await page.goto("stdlib/json/");
+  const source = page.locator('a:text("Source")').first();
+  await expect(source).toHaveAttribute("href", /\/blob\/main\/internal\/stdlib\/std\/json\.fern\.md\?plain=1#L\d+$/);
+  await expect(page.getByRole("link", { name: /Edit page/ })).toHaveAttribute(
+    "href",
+    "https://github.com/JakeChampion/lang/edit/main/internal/stdlib/std/json.fern.md",
+  );
+});

@@ -91,8 +91,7 @@ npm install
 ( cd .. && web/stage.sh site/public/playground )
 
 # Generate the stdlib reference pages.
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
+scripts/stdlib-docs.sh
 
 # Run the dev server (live-reload on .md changes).
 npm run dev
@@ -212,6 +211,13 @@ would put generated content under review with no source-of-truth.
 If you want to expand or correct the reference, edit the doc
 comments in the source `.fern` files. The next build will pick
 them up.
+
+`scripts/stdlib-docs.sh` runs `fern -doc` with `-doc-source`, so each
+declaration links to its line in the source on GitHub. For a literate
+`.fern.md` module, the link names the line in the document, not in the
+tangled source. The "Edit page" link of a module page names the
+module's source too. `/stdlib/functions/` searches every declaration,
+from the `/stdlib-index.json` that the build makes.
 
 The stdlib sidebar is grouped by purpose through `STDLIB_GROUPS` in
 `astro.config.mjs`. A module missing from that table still gets a

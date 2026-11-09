@@ -80,7 +80,10 @@ function stdlibSidebar() {
       .map((f) => f.slice(0, -3)),
   );
 
-  const items = [{ label: "Overview", link: "/stdlib/" }];
+  const items = [
+    { label: "Overview", link: "/stdlib/" },
+    { label: "All functions", link: "/stdlib/functions/" },
+  ];
   const grouped = new Set();
 
   for (const [label, slugs] of STDLIB_GROUPS) {
