@@ -15,7 +15,7 @@ function failure(message: string): Binding {
 function normalized(fragment: string): string {
   let lines: string[] = [];
   for raw in fragment.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "" && !line.starts_with("#")) {
       lines = lines.append(line);
     }

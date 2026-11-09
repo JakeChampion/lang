@@ -37,7 +37,7 @@ function fragment(text: string): string {
   let out = "";
   let inside = false;
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line == "__fn___fern_rc_is_unique:") {
       inside = true;
     }

@@ -36,7 +36,7 @@ function text_unit(output: string, architecture: string): Unit {
   let lines: string[] = [];
   let labels: string[] = [];
   for raw in output.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "") {
       if (line.ends_with(":")) {
         labels = labels.append(line);

@@ -120,7 +120,7 @@ function decode(line: string, labels: names.Names): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (name == "incl" && rest == "__fern_rc_underflow(%rip)") {
     return Op { ...empty(12), width: 32 };
   }
@@ -131,8 +131,8 @@ function decode(line: string, labels: names.Names): Op {
   if (args.len() != 2) {
     return empty(0);
   }
-  let a = util.trim(args[0]);
-  let b = util.trim(args[1]);
+  let a = args[0].trim();
+  let b = args[1].trim();
   let moved = move(name, a, b);
   return if (moved.kind > 0) { moved } else { flags(name, a, b) };
 }
