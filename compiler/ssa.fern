@@ -1842,7 +1842,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         free = remove_reg(free, reg);
       } else {
         reg = free_s[free_s.len() - 1];
-        free_s = drop_last_i(free_s);
+        free_s = util.drop_last_i32(free_s);
       }
       reg_of = reg_of.with(v, reg);
       act_val = act_val.append(v);
@@ -2008,16 +2008,6 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
   return w >= 0 && w != v && reg_of[w] == -1;
 }
 
-function drop_last_i(a: i32[]): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 1) {
-    out = out.append(a[i]);
-    i += 1;
-  }
-  return out;
-}
-
 pub function spill_code(slot: i32): i32 {
   return -2 - slot;
 }
@@ -2121,7 +2111,7 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
             if (dying < 0 && hi[a] < pos) {
               dying = a;
             }
-            if (hi[a] < pos && ai - 1 < blk.preds.len() && pred_index(at, blk.preds[ai - 1]) == bi - 1) {
+            if (hi[a] < pos && ai - 1 < blk.preds.len() && position_of(at, blk.preds[ai - 1]) == bi - 1) {
               through = a;
             }
             if (outliving < 0 && hi[a] >= pos) {
@@ -2150,13 +2140,6 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
     bi += 1;
   }
   return Mates { hint: hint, carried: carried, alt: alt, through: fell };
-}
-
-function pred_index(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id];
 }
 
 // live_masks gives, for each position of `at` in ascending order, the
@@ -2273,7 +2256,7 @@ function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   return position_of(at, id);
 }
 
-function position_of(at: i32[], id: i32): i32 {
+pub function position_of(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return -1;
   }
@@ -5267,7 +5250,7 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
@@ -5344,6 +5327,27 @@ pub function next_block_id(g: SFunc): i32 {
   return hi;
 }
 
+pub function t_unreachable(): STerm {
+  return STerm { kind_tag: TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}
+
+// branches_to is true when t can branch to block id.
+pub function branches_to(t: STerm, id: i32): boolean {
+  return t.kind_tag == TERM_BR && t.target == id || t.kind_tag == TERM_BRIF && (t.t == id || t.f == id);
+}
+
+// block_with_id is the index of the block whose id is id, or -1.
+pub function block_with_id(f: SFunc, id: i32): i32 {
+  let i = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
 // A load or a store through base + constant takes the constant as its offset.
 pub function fold_offsets(f: SFunc): SFunc {
   return rewrite_insts(f, inst_defs(f), offset_access).f;
@@ -5394,7 +5398,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
   return m;
 }
 
-function no_inst(): SInst {
+pub function no_inst(): SInst {
   return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
@@ -5758,7 +5762,7 @@ function zero_extends_u32(ins: SInst): boolean {
 
 function def_of(defs: SInst[], v: i32): SInst {
   if (v < 0 || v >= defs.len()) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return defs[v];
 }

@@ -101,11 +101,7 @@ pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
   return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 
-pub function op_fbin(kind: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
-}
-
-pub function op_funary(kind: string): Op {
+pub function op_float(kind: string): Op {
   return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
@@ -1886,18 +1882,11 @@ pub function const_str_word(text: string): string {
 function hex_text(text: string): string {
   let out: u8[] = [];
   for c in text {
-    out = out.append(hex_digit(c as i32 >> 4)).append(hex_digit(c as i32 & 15));
+    out = out.append(util.hex_digit(c as i32 >> 4)).append(util.hex_digit(c as i32 & 15));
   }
   unsafe {
     return string_from_bytes_unchecked(out);
   }
-}
-
-function hex_digit(d: i32): u8 {
-  if (d < 10) {
-    return (48 + d) as u8;
-  }
-  return (87 + d) as u8;
 }
 
 pub function const_struct_is_str(packed: string): boolean {

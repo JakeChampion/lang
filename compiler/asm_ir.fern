@@ -5384,7 +5384,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_avx = clo5.name;
     let clo6 = asmcore.fresh_label(clo5.state);
     let c_avx_done = clo6.name;
-    s = clo6.state;
+    let clo7 = asmcore.fresh_label(clo6.state);
+    let c_wide = clo7.name;
+    s = clo7.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     if (o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
@@ -5403,6 +5405,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
+    s = s.write(c_wide + ":\n");
+    s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+    s = s.write("    cmpq $128, %r9\n    jl " + c_avx + "\n");
+    s = s.write("    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpcmpeqb 32(%rax,%rdx), %ymm1, %ymm2\n");
+    s = s.write("    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm2, %r11d\n");
+    s = s.write("    popcntl %r9d, %r9d\n    popcntl %r11d, %r11d\n    addq %r9, %r10\n    addq %r11, %r10\n");
+    s = s.write("    vpcmpeqb 64(%rax,%rdx), %ymm1, %ymm0\n    vpcmpeqb 96(%rax,%rdx), %ymm1, %ymm2\n");
+    s = s.write("    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm2, %r11d\n");
+    s = s.write("    popcntl %r9d, %r9d\n    popcntl %r11d, %r11d\n    addq %r9, %r10\n    addq %r11, %r10\n");
+    s = s.write("    addq $128, %rdx\n    jmp " + c_wide + "\n");
     s = s.write(c_avx + ":\n");
     s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
     s = s.write("    cmpq $32, %r9\n    jl " + c_avx_done + "\n");
@@ -12216,13 +12228,9 @@ function emit_idt_trampoline(s: asmcore.EmitState, slot: string, handler: string
   return s.write("    iretq\n");
 }
 
-function le32_bytes(b: i32[], v: i32): i32[] {
-  return b.append(v & 255).append(v >> 8 & 255).append(v >> 16 & 255).append(v >> 24 & 255);
-}
-
 // movl $value, address
 function movl_abs(b: i32[], address: i32, value: i32): i32[] {
-  return le32_bytes(le32_bytes(b.append(199).append(5), address), value);
+  return util.le32(util.le32(b.append(199).append(5), address), value);
 }
 
 // The 32-bit code of the reset entry, padded with nop to whole words. Its
@@ -12230,45 +12238,45 @@ function movl_abs(b: i32[], address: i32, value: i32): i32[] {
 function reset_trampoline(t: i32, top: i32): i32[] {
   // PVH leaves %esp unspecified. Set it before call or push uses the stack.
   // cli; mov $top, %esp. Set the stack segment before the first call too.
-  let b = le32_bytes([250, 188], top);
+  let b = util.le32([250, 188], top);
   // Zero the seven pages: mov $t, %edi; xor %eax, %eax; mov $7168, %ecx; cld; rep stosl.
-  b = le32_bytes(b.append(191), t).append(49).append(192);
-  b = le32_bytes(b.append(185), 7168).append(252).append(243).append(171);
+  b = util.le32(b.append(191), t).append(49).append(192);
+  b = util.le32(b.append(185), 7168).append(252).append(243).append(171);
   b = movl_abs(b, t, t + 4096 + 3);
   for i in 0..4 {
     b = movl_abs(b, t + 4096 + i * 8, t + 8192 + i * 4096 + 3);
   }
   // Each PD entry maps 2 MiB: mov $t+8192, %edi; mov $0x83, %eax; mov $2048, %ecx;
   // 1: mov %eax, (%edi); add $0x200000, %eax; add $8, %edi; loop 1b.
-  b = le32_bytes(b.append(191), t + 8192);
-  b = le32_bytes(b.append(184), 131);
-  b = le32_bytes(b.append(185), 2048);
-  b = le32_bytes(b.append(137).append(7).append(5), 2097152).append(131).append(199).append(8).append(226).append(244);
+  b = util.le32(b.append(191), t + 8192);
+  b = util.le32(b.append(184), 131);
+  b = util.le32(b.append(185), 2048);
+  b = util.le32(b.append(137).append(7).append(5), 2097152).append(131).append(199).append(8).append(226).append(244);
   // The GDT: a 64-bit code segment at 8 and a data segment at 16, and its
   // pointer at gdt + 48.
   let gdt = t + 24576;
   b = movl_abs(movl_abs(b, gdt + 8, 65535), gdt + 12, 11508224);
   b = movl_abs(movl_abs(b, gdt + 16, 65535), gdt + 20, 13603328);
-  b = le32_bytes(b.append(102).append(199).append(5), gdt + 48).append(23).append(0);
+  b = util.le32(b.append(102).append(199).append(5), gdt + 48).append(23).append(0);
   b = movl_abs(b, gdt + 50, gdt);
-  b = le32_bytes(b.append(15).append(1).append(21), gdt + 48);
+  b = util.le32(b.append(15).append(1).append(21), gdt + 48);
   // mov $16, %eax; mov %eax to %ds, %es, %ss.
-  b = le32_bytes(b.append(184), 16).append(142).append(216).append(142).append(192).append(142).append(208);
+  b = util.le32(b.append(184), 16).append(142).append(216).append(142).append(192).append(142).append(208);
   // call 1f; 1: pop %ebp. The anchor uses the configured 32-bit stack.
   let anchor = b.len() + 5;
   b = b.append(232).append(0).append(0).append(0).append(0).append(93);
   // CR4: PAE, OSFXSR, OSXMMEXCPT, OSXSAVE. Then XCR0 = x87 | SSE | AVX.
-  b = le32_bytes(b.append(15).append(32).append(224).append(13), 263712).append(15).append(34).append(224);
-  b = le32_bytes(b.append(49).append(201).append(184), 7).append(49).append(210).append(15).append(1).append(209);
+  b = util.le32(b.append(15).append(32).append(224).append(13), 263712).append(15).append(34).append(224);
+  b = util.le32(b.append(49).append(201).append(184), 7).append(49).append(210).append(15).append(1).append(209);
   // CR3 = PML4; EFER.LME; CR0 = PG | MP | PE with EM clear.
-  b = le32_bytes(b.append(184), t).append(15).append(34).append(216);
-  b = le32_bytes(b.append(185), -1073741696).append(15).append(50);
-  b = le32_bytes(b.append(13), 256).append(15).append(48);
+  b = util.le32(b.append(184), t).append(15).append(34).append(216);
+  b = util.le32(b.append(185), -1073741696).append(15).append(50);
+  b = util.le32(b.append(13), 256).append(15).append(48);
   b = b.append(15).append(32).append(192).append(131).append(224).append(251);
-  b = le32_bytes(b.append(13), -2147483645).append(15).append(34).append(192);
+  b = util.le32(b.append(13), -2147483645).append(15).append(34).append(192);
   // lea start64-anchor(%ebp), %eax; push $8; push %eax; lret.
   let lea_at = b.len();
-  b = le32_bytes(b.append(141).append(133), 0).append(106).append(8).append(80).append(203);
+  b = util.le32(b.append(141).append(133), 0).append(106).append(8).append(80).append(203);
   while (b.len() % 4 != 0) {
     b = b.append(144);
   }

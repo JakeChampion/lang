@@ -1,0 +1,160 @@
+---
+title: Coming from Go, Rust or TypeScript
+description: The same program in four languages, and how each part of Fern maps to what you know.
+---
+
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
+This page is for a reader who knows Go, Rust or TypeScript. It shows
+one program in each language, then puts the common constructs side by
+side. [Why Fern](../why/) has the trade-offs, and when one of the other
+three is the better choice.
+
+## One program, four languages
+
+Each version reads standard input, counts each word, and prints the
+counts in the order that the words first appear. Each one prints the
+same output.
+
+<Tabs syncKey="lang">
+<TabItem label="Fern">
+
+```fern
+import "core/map";
+import "std/io";
+import "std/string";
+
+function main(): i32 {
+    let text = match (io.read_all_stdin()) {
+        Ok(t) => t,
+        Err(_) => { eprint("cannot read stdin"); return 1; }
+    };
+    let counts: Map[string, i32] = Map {};
+    for word in text.fields() {
+        counts = counts.insert(word, counts.get_or(word, 0) + 1);
+    }
+    for (word, n) in counts {
+        print(f"{word} {n}");
+    }
+    return 0;
+}
+```
+
+A Fern `Map` keeps insertion order, so no second list is necessary.
+`match` is an expression, and the error arm returns from `main`.
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	counts := map[string]int{}
+	var order []string
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		for _, word := range strings.Fields(scanner.Text()) {
+			if counts[word] == 0 {
+				order = append(order, word)
+			}
+			counts[word]++
+		}
+	}
+	for _, word := range order {
+		fmt.Println(word, counts[word])
+	}
+}
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use std::collections::HashMap;
+use std::io::{self, Read};
+
+fn main() {
+    let mut text = String::new();
+    if io::stdin().read_to_string(&mut text).is_err() {
+        eprintln!("cannot read stdin");
+        std::process::exit(1);
+    }
+    let mut counts: HashMap<&str, i32> = HashMap::new();
+    let mut order = Vec::new();
+    for word in text.split_whitespace() {
+        let n = counts.entry(word).or_insert(0);
+        if *n == 0 {
+            order.push(word);
+        }
+        *n += 1;
+    }
+    for word in order {
+        println!("{} {}", word, counts[word]);
+    }
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { readFileSync } from "node:fs";
+
+const text = readFileSync(0, "utf8");
+const counts = new Map<string, number>();
+for (const word of text.split(/\s+/).filter(Boolean)) {
+  counts.set(word, (counts.get(word) ?? 0) + 1);
+}
+for (const [word, n] of counts) {
+  console.log(`${word} ${n}`);
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Side by side
+
+| | Go | Rust | TypeScript | Fern |
+|---|---|---|---|---|
+| Variable | `x := 1` | `let mut x = 1;` | `let x = 1;` | `let x: i32 = 1;` (can be assigned again) |
+| Constant | `const N = 1` | `const N: i32 = 1;` | `const N = 1;` | `const N: i32 = 1;` (top level) |
+| Function | `func add(a, b int) int` | `fn add(a: i32, b: i32) -> i32` | `function add(a: number, b: number): number` | `function add(a: i32, b: i32): i32` |
+| Closure | `func(x int) int { return x * 2 }` | `\|x: i32\| x * 2` | `(x: number) => x * 2` | `(x: i32) => x * 2` |
+| Struct update | `p.X = 3` | `Point { x: 3, ..p }` | `{ ...p, x: 3 }` | `Point { ...p, x: 3 }` |
+| Sum type | an interface and a type switch | `enum Shape { Circle(i32) }` | a union of object types | `enum Shape { Circle(i32) }` |
+| Every case handled | not checked | checked by `match` | checked with `never` | checked by `match` (error E030) |
+| No value | `nil` | `Option<T>` | `null`, `undefined` | `Option[T]` |
+| Errors | `(T, error)` and `if err != nil` | `Result<T, E>` and `?` | exceptions | `Result[T, E]` and `?` |
+| Generics | `func F[T any](x T)` | `fn f<T>(x: T)` | `function f<T>(x: T)` | `function f[T](x: T)` |
+| Interfaces | implicit interfaces | traits and `impl` | structural types | traits and `impl` |
+| Formatting | `fmt.Sprintf("%v", x)` | `format!("{x}")` | `` `${x}` `` | `f"{x}"` |
+| Modules | a package for each directory | crates and modules | ES modules | a module for each file, `import "./x"`, `pub` |
+| Memory | garbage collector | ownership and borrows | garbage collector | reference counts, most removed at compile time |
+| Concurrency | goroutines and channels | threads, or `async` and `.await` | `async` and `await` on one event loop | tasks on one event loop, with no `async` on functions and no threads |
+| Output | one static binary | one binary | JavaScript that needs a runtime | one static binary, or a WebAssembly component |
+
+## Where Fern differs from all three
+
+- **A value does not change after it is made.** A struct field or an
+  array element cannot be assigned. `xs.append(v)` and
+  `Point { ...p, x: 3 }` give a new value, and the compiler reuses the
+  old memory in place when nothing else holds it. Thus a reference cycle
+  cannot occur, and reference counts free all memory.
+- **Numbers do not convert silently.** An `i32` and an `i64` do not mix.
+  Write the conversion with `as`.
+- **No exceptions and no null.** A failure is a `Result` and an absent
+  value is an `Option`. The type tells you which functions can fail.
+- **One thread.** Code that waits on I/O parks, and other tasks run. A
+  server gets its parallel work from one process for each CPU.
+- **Errors at build time for the target.** A program that uses a feature
+  the target does not have, such as processes on WebAssembly, does not
+  build. `fern -targets` lists what each target provides.

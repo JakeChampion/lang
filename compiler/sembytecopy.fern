@@ -15,12 +15,8 @@ struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 // branches to the header itself.
 struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
 
-function none(): ssa.SInst {
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-}
-
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
+  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: ssa.no_inst(), counter: ssa.no_inst(), update: ssa.no_inst(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -48,7 +44,7 @@ function index(f: ssasem.Func): Index {
   let homes: i32[] = [];
   let i = 0;
   while (i < f.values.len()) {
-    defs = defs.append(none());
+    defs = defs.append(ssa.no_inst());
     homes = homes.append(-1);
     i += 1;
   }
@@ -118,8 +114,8 @@ function latch(f: ssasem.Func, ix: Index, h: ssa.SBlock, body: ssa.SBlock): i32 
 }
 
 function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
-  let array = none();
-  let counter = none();
+  let array = ssa.no_inst();
+  let counter = ssa.no_inst();
   for ins in h.insts {
     if (ins.kind_tag == ssa.PHI && ins.args.len() == 2) {
       if (bytes(f.values[ins.result]) && array.result < 0) {
@@ -223,10 +219,10 @@ function copy_update(ins: ssa.SInst, receiver: i32): boolean {
 function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa.SInst {
   let read = ix.defs[update.args[update.args.len() - 1]];
   if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2) {
-    return none();
+    return ssa.no_inst();
   }
   if (!invariant(ix, read.args[0], l) || !bytes(f.values[read.args[0]])) {
-    return none();
+    return ssa.no_inst();
   }
   return read;
 }

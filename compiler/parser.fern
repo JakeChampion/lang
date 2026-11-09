@@ -9277,7 +9277,15 @@ function type_ends_arr(s: string): boolean {
   return slice_unchecked(s, s.len() - 2, s.len()) == "[]";
 }
 
-function first_bracket(s: string): i32 {
+pub function import_paths(mod: Module): string[] {
+  let out: string[] = [];
+  for im in mod.imports {
+    out = out.append(im.path);
+  }
+  return out;
+}
+
+pub function first_bracket(s: string): i32 {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
@@ -18796,16 +18804,6 @@ function dl_param_names(params: ast.ParamDecl[]): string[] {
   return out;
 }
 
-function dl_count_str(xs: string[], name: string): i32 {
-  let n = 0;
-  for x in xs {
-    if (x == name) {
-      n += 1;
-    }
-  }
-  return n;
-}
-
 function dl_name_keep(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
@@ -18820,7 +18818,7 @@ function dl_hoistable(want: string[], src: ast.Stmt[], params: string[]): string
   }
   let out: string[] = [];
   for w in want {
-    if (dl_count_str(bound, w) < 2) {
+    if (util.count_str(bound, w) < 2) {
       out = out.append(w);
     }
   }

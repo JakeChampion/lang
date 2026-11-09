@@ -3648,7 +3648,7 @@ function declared(st: ast.Stmt, own site: CaptureSite): CaptureSite {
   }
   if let ast.StmtVar(v) = st {
     if (v.name == site.name) {
-      return CaptureSite { ...site, key: irtables.reclaim_site_key_of(v.name, v.line, v.col) };
+      return CaptureSite { ...site, key: capturebox.site_key(v.name, v.line, v.col) };
     }
   }
   return site;

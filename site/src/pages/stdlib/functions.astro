@@ -1,0 +1,64 @@
+---
+// A search over every public declaration of the standard library. The
+// list loads from /stdlib-index.json when the page opens.
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<StarlightPage frontmatter={{ title: "All functions", description: "Search every public function, type and constant of the standard library by name or signature." }}>
+  <p>
+    Type part of a name or a signature, such as <code>parse_i32</code>,
+    <code>Option[T]</code> or <code>u8[]</code>. Each result links to
+    its entry in the module reference.
+  </p>
+  <label class="fern-fn-search not-content">
+    <span class="fern-label">Search</span>
+    <input id="fn-query" type="search" autocomplete="off" spellcheck="false" placeholder="name or signature" />
+  </label>
+  <p id="fn-status" class="fern-fn-status not-content" aria-live="polite">Loading the index…</p>
+  <ol id="fn-results" class="fern-fn-results not-content"></ol>
+</StarlightPage>
+
+<script is:inline define:vars={{ base }}>
+  (async function () {
+    const status = document.getElementById("fn-status");
+    const list = document.getElementById("fn-results");
+    const input = document.getElementById("fn-query");
+    let entries = [];
+    try {
+      entries = await (await fetch(base + "/stdlib-index.json")).json();
+    } catch (e) {
+      status.textContent = "The index did not load.";
+      return;
+    }
+    const LIMIT = 200;
+    function render() {
+      const q = input.value.trim().toLowerCase();
+      const hits = q === "" ? [] : entries.filter(([name, , , , sig]) =>
+        name.toLowerCase().includes(q) || sig.toLowerCase().includes(q));
+      hits.sort((a, b) => (a[0].toLowerCase() === q ? 0 : 1) - (b[0].toLowerCase() === q ? 0 : 1) || a[0].length - b[0].length);
+      list.replaceChildren(...hits.slice(0, LIMIT).map(([name, mod, page, id, sig]) => {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = base + "/stdlib/" + page + "/#" + id;
+        a.textContent = name;
+        const m = document.createElement("span");
+        m.className = "fern-fn-module";
+        m.textContent = mod;
+        const code = document.createElement("code");
+        code.textContent = sig;
+        li.append(a, " ", m, code);
+        return li;
+      }));
+      status.textContent = q === ""
+        ? entries.length.toLocaleString("en-US") + " declarations in the index."
+        : hits.length.toLocaleString("en-US") + " match" + (hits.length === 1 ? "" : "es") +
+          (hits.length > LIMIT ? ", the first " + LIMIT + " shown." : ".");
+    }
+    input.addEventListener("input", render);
+    const q = new URLSearchParams(location.search).get("q");
+    if (q) input.value = q;
+    render();
+  })();
+</script>

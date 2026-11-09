@@ -1,10 +1,10 @@
 // Find broken internal links in the docs site.
 //
-//   node scripts/check-links.mjs --dist dist --base /lang
+//   node scripts/check-links.mjs --dist dist
 //   node scripts/check-links.mjs --site https://fern-lang.netlify.app
 //
-// --dist checks a build: each href and src that starts with the base must
-// name a file in the build. --site checks a deployed site: it reads every
+// --dist checks a build: each href and src that starts with / must name a
+// file in the build. --site checks a deployed site: it reads every
 // page in the sitemap and requests each link on that site's origin.
 // Links to other sites are not checked, because their status changes
 // for reasons that have no relation to this site.
@@ -27,9 +27,8 @@ function htmlFiles(dir) {
 }
 
 // The file in `dist` that a site path names, or null.
-export function fileFor(dist, base, path) {
-  if (!path.startsWith(`${base}/`) && path !== base) return undefined;
-  const rel = decodeURIComponent(path.slice(base.length)).replace(/^\//, "");
+export function fileFor(dist, path) {
+  const rel = decodeURIComponent(path).replace(/^\//, "");
   for (const candidate of [rel, join(rel, "index.html"), `${rel.replace(/\/$/, "")}.html`]) {
     const p = join(dist, candidate);
     if (existsSync(p) && statSync(p).isFile()) return p;
@@ -37,15 +36,14 @@ export function fileFor(dist, base, path) {
   return null;
 }
 
-function checkDist(dist, base) {
+function checkDist(dist) {
   const broken = new Map();
   let checked = 0;
   for (const page of htmlFiles(dist)) {
     for (const link of linksIn(readFileSync(page, "utf8"))) {
       if (!link.startsWith("/") || link.startsWith("//")) continue;
       checked++;
-      const file = fileFor(dist, base, link);
-      if (file === null || file === undefined) {
+      if (fileFor(dist, link) === null) {
         if (!broken.has(link)) broken.set(link, page.slice(dist.length + 1));
       }
     }
@@ -105,7 +103,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const site = opt("--site")?.replace(/\/$/, "");
   const result = site
     ? await checkSite(site)
-    : checkDist(opt("--dist") ?? "dist", (opt("--base") ?? "/lang").replace(/\/$/, ""));
+    : checkDist(opt("--dist") ?? "dist");
   const what = site ? `${result.checked} links from ${result.pages} pages of ${site}` : `${result.checked} links`;
   console.log(`check-links: checked ${what}, ${result.broken.size} broken`);
   for (const [link, page] of result.broken) console.log(`  ${link}  (first on ${page})`);

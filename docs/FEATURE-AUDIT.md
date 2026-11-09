@@ -183,7 +183,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `now_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | wall-clock nanoseconds (i64); native interp + x86-64 + arm64 runtimes added (previously wasm-only); self-host x86-64/arm64 now emit it on both the AST and IR paths (wasm routes via the AST path) |
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value; `random_bytes(n): u8[]` (#5714) |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
-| float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/f64; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode) as `t = trunc(x)` plus `t += copysign(1,x)` when `|x-t| >= 0.5`. The shorter `trunc(x+copysign(0.5,x))` identity is NOT equivalent — its addition rounds first, so it answered 1 for `0.5-2^-54` and shifted every integral double at or above 2^52 by one ([#7880](https://github.com/JakeChampion/lang/issues/7880)). The transcendentals are std/f64's own Fern (#5541) |
+| float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/f64; self-host IR path (`op_float`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode) as `t = trunc(x)` plus `t += copysign(1,x)` when `|x-t| >= 0.5`. The shorter `trunc(x+copysign(0.5,x))` identity is NOT equivalent — its addition rounds first, so it answered 1 for `0.5-2^-54` and shifted every integral double at or above 2^52 by one ([#7880](https://github.com/JakeChampion/lang/issues/7880)). The transcendentals are std/f64's own Fern (#5541) |
 | `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc), **i64** on every target — the natives return the full 64-bit register, wasm zero-extends its i32 cursor difference. self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | `__arr_push_shared_count` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | the rc==1 cliff counter: appends that copied a buffer which still had SPARE CAPACITY, so the copy was bought by an extra reference rather than a full buffer. `__fern_arr_push_grow` mutates in place only at rc == 1, making that threshold a performance-correctness boundary with no diagnostic of its own — a stray retain upstream turns a threaded accumulator from O(n) into O(n²) while the program stays correct. Bumped on the copy path (zero cost on the fast path) and read back over a BSS global on the natives / a low-memory slot on wasm (`arrPushSharedAddr`). interp returns 0: it has no refcounts and copies nothing, which is also the healthy value everywhere. Guarded by `Test{X86_64,Arm64,WASM}ArrPushCliffCounter` (healthy = 0 AND shared = 1, so a counter that never fires cannot pass) and asserted by `Test{X86_64,WASM}ThreadedArrayParamBounded`. Self-host lowering knows it too: `ir.op_arr_push_shared_count` (tag 216), an `irlower.lower_expr` arm, and a per-backend reader over the same store the self-host `__fern_arr_push` bumps on its un-share path — a `.bss` word on x86-64 / arm64, `arr_push_shared_addr` (low scratch, 16) on wasm. Both halves matter: a reader with no bump site reports 0 forever, which reads as healthy |
@@ -207,7 +207,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 ## D. Standard library — `std/`
 
 The original function lists came from the former `docs/STDLIB.md` catalog.
-Use the [generated reference](https://jakechampion.github.io/lang/stdlib/) for current APIs.
+Use the [generated reference](https://fern-lang.netlify.app/stdlib/) for current APIs.
 Each module gets a row. The audit checks individual functions as needed and
 records their bugs in the audit log.
 
@@ -217,7 +217,7 @@ records their bugs in the audit log.
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
 | `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | max/min — `audit_std_path_numeric`; self-host unsigned min/max on the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) and the wasm IR path — the `#2917` wasm unsigned-compare gap is **closed** (`irlower` flags an ordering compare `unsigned` when an operand is u32, `wasm_ir` emits `i32.*_u`; `TestSelfHostUnsignedCompareWasmIR` incl. the `u32_max(big,one)` repro with `big > 2^31`) |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | clamp — `audit_std_path_numeric`; self-host via the IR path: u64 unsigned compare / `>>` / `/` / `%` ([#2904](https://github.com/JakeChampion/lang/issues/2904); `u64_*` parity-corpus fixtures, `TestSelfHostParityCorpus*`) + the `min`/`max`/`clamp` methods incl. high-bit-set bounds (`TestSelfHostU64IR`, oracle-checked) — the i64-domain analog of the u32 wrapping fix; `to_string` routes via the AST path (core/int `__int_to_string_u64`'s `u8[]`/`usize`/`__memcpy`) |
-| `std/f64` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host IR path: the `sqrt`/`floor`/`ceil`/`trunc`/`abs`/`round` intrinsics lower via `op_funary` (routing-pinned `TestSelfHostFloatMathIR`; `round` is `frinta` on arm64, trunc plus an exact fractional-part test on x86/wasm); `min`/`max`/`clamp`/`is_nan`/`is_finite`/`is_inf` are ordinary f64 compares that already lower. Only the transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) still route AST |
+| `std/f64` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host IR path: the `sqrt`/`floor`/`ceil`/`trunc`/`abs`/`round` intrinsics lower via `op_float` (routing-pinned `TestSelfHostFloatMathIR`; `round` is `frinta` on arm64, trunc plus an exact fractional-part test on x86/wasm); `min`/`max`/`clamp`/`is_nan`/`is_finite`/`is_inf` are ordinary f64 compares that already lower. Only the transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) still route AST |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product — `audit_std_numeric` + `self_host_audit_stdarray_test`; generic verbs `reverse`/`take`/`drop`/`concat`/`zip`/`flat_map`/`reduce` + Eq-bound `contains`/`index_of`/`distinct`/`count`; sorting lives in `core/cmp` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/PI/TAU — `audit_std_numeric` + `self_host_math_test` |
@@ -4083,7 +4083,7 @@ to the f32-scalar-signature fix.
 
 Follow-up to the f64-math-intrinsics work: `__round_f64` (round-half-away-from-
 zero, Go's `math.Round`) now lowers through the IR path too, via the same
-`op_funary` op (kind `fround`). arm64 gets it in one instruction (`frinta` =
+`op_float` op (kind `fround`). arm64 gets it in one instruction (`frinta` =
 round-to-nearest ties-away); x86 and wasm emulate `trunc(x + copysign(0.5, x))`
 because `roundsd` has no ties-away mode and wasm's `f64.nearest` is ties-to-EVEN
 (the wasm path reuses the existing `f64tmp` scratch local to duplicate `x`).
@@ -4096,7 +4096,7 @@ transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) remain on the AST path now.
 ### 2026-06-14 — std/f64 f64 math intrinsics via the self-host IR path (all 3 backends)
 
 Closed the self-host gap for std/f64's single-instruction f64 math builtins.
-A new IR op (`op_funary`) carries `__sqrt_f64` / `__floor_f64` / `__ceil_f64` /
+A new IR op (`op_float`) carries `__sqrt_f64` / `__floor_f64` / `__ceil_f64` /
 `__trunc_f64` / `__abs_f64`; `irlower` recognises the calls (1 f64 arg → the
 intrinsic, and `expr_is_f64` now classifies them as f64-returning so they nest +
 feed f64 arithmetic), and each IR backend selects the single hardware

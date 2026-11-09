@@ -97,7 +97,6 @@ var filterCoverage = []struct {
 }{
 	{"macos.yml", "./cmd/fern"},
 	{"docs-build.yml", "./cmd/fern"},
-	{"pages.yml", "./cmd/fern"},
 	{"playground-e2e.yml", "./cmd/fern"},
 }
 

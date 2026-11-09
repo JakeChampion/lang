@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fern playground</title>
+<meta name="description" content="Write, run and compile Fern in the browser: the interpreter, the WebAssembly backend, and the assembly for each target.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <style>
   /* ---- theme tokens ----
    *
@@ -354,7 +356,14 @@
   .status {
     font-size: 0.85em;
     color: var(--fg-secondary);
+    min-width: 17ch;
   }
+  /* A run and the end of the load change these labels. A label of a new
+   * width would move the wrapped toolbar and everything below it, so each
+   * keeps room for its longest text, and the status has its own row on
+   * the full page. */
+  #run, #runWasm { min-width: 7.5em; }
+  body:not(.embed) .status { flex-basis: 100%; }
   @media (max-width: 800px) {
     .grid { grid-template-columns: 1fr; }
     textarea, pre, #srcMount { height: 320px; }
@@ -687,6 +696,18 @@
 </style>
 </head>
 <body>
+<script>
+  // The layout classes go on before the first paint: a module script runs
+  // after it, so an embed would first draw the full page and then jump.
+  // `?minimal=1` implies `?embed=1`.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var on = function (name) { return ["1", "true", "yes"].indexOf((q.get(name) || "").toLowerCase()) >= 0; };
+    var minimal = on("minimal");
+    if (on("embed") || minimal) document.body.classList.add("embed");
+    if (minimal) document.body.classList.add("minimal");
+  })();
+</script>
 <header class="pg-header">
 <h1><svg class="leaf" viewBox="0 0 120 120" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M62 116 Q54 78 60 44 Q64 22 76 6"/><path d="M61 104 Q48 100 42 88"/><path d="M59 92 Q46 89 40 78"/><path d="M58 80 Q46 77 41 67"/><path d="M58 68 Q47 65 43 56"/><path d="M59 56 Q49 53 46 45"/><path d="M61 44 Q52 41 50 34"/><path d="M61 104 Q74 98 82 88"/><path d="M59 92 Q72 87 79 77"/><path d="M58 80 Q71 75 77 66"/><path d="M58 68 Q70 63 75 55"/><path d="M59 56 Q70 51 74 44"/><path d="M61 44 Q70 40 73 34"/></svg>Fern playground</h1>
 <!-- A new tab keeps the program in the editor. -->
@@ -712,18 +733,18 @@
           title="Compile to a WebAssembly core module and run it in-browser (the compiled backend, not the interpreter)">Run (wasm)</button>
   <button id="share" class="secondary">Share</button>
   <button id="viewAsm" class="secondary btn-asm" disabled>View assembly</button>
-  <select id="targetSelect" title="Backend for the assembly view">
+  <select id="targetSelect" title="Backend for the assembly view" aria-label="Backend for the assembly view">
     <option value="arm64-linux">arm64-linux</option>
     <option value="arm64-darwin">arm64-darwin</option>
     <option value="x86-64-linux">x86-64-linux</option>
   </select>
   <button id="buildComponent" class="secondary" disabled
           title="Compile to a WebAssembly Component and run it in-browser via jco">Build component</button>
-  <select id="worldSelect" title="WIT world to compose">
+  <select id="worldSelect" title="WIT world to compose" aria-label="WIT world to compose">
     <option value="wasm32-wasi">wasi:cli/run</option>
     <option value="wasm32-wasi-http">wasi:http/incoming-handler</option>
   </select>
-  <select id="example">
+  <select id="example" title="Load an example program" aria-label="Load an example program">
     <option value="">— pick an example —</option>
     <option value="hello">hello, world</option>
     <option value="fact">factorial</option>
@@ -757,7 +778,7 @@
 <div class="http-req" id="httpReq" hidden>
   <h2>request</h2>
   <div class="http-req-line">
-    <select id="httpMethod" title="HTTP method">
+    <select id="httpMethod" title="HTTP method" aria-label="HTTP method">
       <option>GET</option>
       <option>POST</option>
       <option>PUT</option>
@@ -829,11 +850,9 @@
   window.__fernDriverReady.then(function () {
     var el = document.getElementById("status");
     if (!el) return;
-    // Mirror the editor module's embed detection (urlFlag "embed"/"minimal")
-    // so the ready text matches; the module refines it with the key hint once
-    // CodeMirror loads. Either way #status now contains "ready".
-    var q = new URLSearchParams(location.search);
-    var embed = q.has("embed") || q.has("minimal");
+    // The module refines the text with the key hint once CodeMirror loads.
+    // Either way #status now contains "ready".
+    var embed = document.body.classList.contains("embed");
     el.textContent = embed ? "ready" : "ready · Ctrl/Cmd+Enter to run · hover for types";
   }).catch(function (err) {
     var el = document.getElementById("status");
@@ -1182,16 +1201,11 @@ function urlFlag(name) {
 // without interaction. It implies embed mode (the chrome-stripped
 // layout) and reports its content height to the embedding page so the
 // iframe can grow to fit.
-const minimalMode = urlFlag("minimal");
-const embedMode = urlFlag("embed") || minimalMode;
+// The inline script after <body> sets both classes from the URL.
+const minimalMode = document.body.classList.contains("minimal");
+const embedMode = document.body.classList.contains("embed");
 // Minimal snippets must autorun — there's no Run button to click.
 const autoRun = urlFlag("autorun") || minimalMode;
-if (embedMode) {
-  document.body.classList.add("embed");
-}
-if (minimalMode) {
-  document.body.classList.add("minimal");
-}
 
 // ---- Theme (dark / light) ----
 //
@@ -2089,6 +2103,7 @@ function makeEditorState(initial) {
       // snippet is a faithful, un-break-able rendering of the docs code.
       EditorState.readOnly.of(minimalMode),
       EditorView.editable.of(!minimalMode),
+      EditorView.contentAttributes.of({ "aria-label": "Fern source" }),
       lineNumbers(),
       drawSelection(),
       dropCursor(),

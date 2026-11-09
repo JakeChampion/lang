@@ -1,0 +1,9 @@
+{
+  "compiler_sha256": "a9a739de6bd908526e0820db913c028812ba5da58e4fb54ac9f65d5724814144",
+  "measured_source_commit": "1dd46621e4",
+  "final_source_commit": "6168514fcc443ec0ef54314b92ba3ef3d8fc2326",
+  "mp2_measured_sha256": "d7597f1e8e62533bbe06dc82b4931787800495f46ddab8b9feaf63de9beebe54",
+  "mp2_final_sha256": "d7597f1e8e62533bbe06dc82b4931787800495f46ddab8b9feaf63de9beebe54",
+  "mp3_baseline_sha256": "fd259a0cb494d5a76f9da42a245a45fb6b9fd23167df7bf54a551c80a204e5ff",
+  "mp3_final_sha256": "fd259a0cb494d5a76f9da42a245a45fb6b9fd23167df7bf54a551c80a204e5ff"
+}

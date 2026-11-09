@@ -202,6 +202,77 @@ pub function array_elem(t: Type): Type {
   return unchecked();
 }
 
+pub function is_array_view(t: Type): boolean {
+  if let TypeArray(a) = t {
+    return a.view;
+  }
+  return false;
+}
+
+pub function is_lanes(t: Type): boolean {
+  if let TypeLanes(_) = t {
+    return true;
+  }
+  return false;
+}
+
+pub function is_dyn(t: Type): boolean {
+  if let TypeDyn(_) = t {
+    return true;
+  }
+  return false;
+}
+
+pub function is_record(t: Type): boolean {
+  if let TypeStruct(_) = t {
+    return true;
+  }
+  return false;
+}
+
+pub function is_cell(t: Type): boolean {
+  if let TypeStruct(s) = t {
+    return s.name == "Cell";
+  }
+  return false;
+}
+
+pub function is_tuple(t: Type): boolean {
+  if let TypeTuple(_) = t {
+    return true;
+  }
+  return false;
+}
+
+pub function tuple_elements(t: Type): Type[] {
+  if let TypeTuple(tup) = t {
+    return tup.elements;
+  }
+  return [];
+}
+
+pub function is_owned_array(t: Type): boolean {
+  if let TypeArray(a) = t {
+    return !a.view;
+  }
+  return false;
+}
+
+pub function is_void(t: Type): boolean {
+  if let TypeVoid(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// union_name is the name of a union type, or "" for any other type.
+pub function union_name(t: Type): string {
+  if let TypeUnion(u) = t {
+    return u.name;
+  }
+  return "";
+}
+
 function char_spelling(i: TypeI32): string {
   if (i.width == 32 && !i.unsigned) {
     return "char";

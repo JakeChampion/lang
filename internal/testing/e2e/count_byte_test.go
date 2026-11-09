@@ -51,7 +51,7 @@ func countByteCases() []struct {
 		out = append(out, c{aab.String(), 'a'}, c{aab.String(), 'b'})
 	}
 
-	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
+	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81, 127, 128, 129, 255, 256, 257} {
 		base := strings.Repeat("a", n)
 		out = append(out, c{base, 'z'})
 		out = append(out, c{base, 'a'})

@@ -204,7 +204,7 @@ of them.
 | `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
 | `RH-25` | `docs/security/HANDLE-AUDIT.md` | A write to a built-in `Writer` after its close is refused (`E051`) | `diag_e051_builtin_writer_written_after_close` |
 | `RH-26` | `docs/security/HANDLE-AUDIT.md` | A variant constructor carries its payload, so a result that wraps a borrowed value cannot pass to an `own` parameter (`E051`) | `diag_e051_variant_result_borrows_its_payload` |
-| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`) | `diag_e051_local_from_borrowing_call` |
+| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters and elements retain this borrow | `diag_e051_local_from_borrowing_call` |
 | `RH-28` | `docs/security/HANDLE-AUDIT.md` | A call to a function that never returns ends the path, so an own parameter it consumes in a loop is not used again | `handle_consumed_before_a_call_that_never_returns` |
 | `RH-29` | `docs/security/HANDLE-AUDIT.md` | A name a match arm binds is declared afresh each round, so a payload taken in a loop closes once each round | `handle_payload_closes_in_loop_from_unpack` |
 | `RH-30` | `docs/security/HANDLE-AUDIT.md` | A field moves to a consuming call while the same call reads other fields of its owner | `handle_field_closes_beside_other_field_reads` |

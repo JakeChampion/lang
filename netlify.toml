@@ -4,9 +4,7 @@
 # repository root as static files, so every docs URL 404'd (the raw
 # README.md was served, but no index.html existed anywhere).
 #
-# The canonical build recipe lives in .github/workflows/pages.yml, for
-# GitHub Pages; scripts/netlify-build mirrors its four steps so the two
-# hosts publish the same bundle from the same inputs.
+# scripts/netlify-build is the build recipe.
 #
 # This deploy gates the site build only. scripts/netlify-build does not call
 # scripts/netlify-smoke-test, so a green deploy provides no unit, conformance,
@@ -18,7 +16,7 @@
   publish = "site/dist"
 
 [build.environment]
-  # Astro 6 requires Node >=22.12; the pin matches what pages.yml is tested on.
+  # Astro 6 requires Node >=22.12; the pin matches what docs-build.yml tests on.
   # Netlify provisions Go through gimme BEFORE the build command runs, so it
   # cannot read mise.toml the way every other host does — the version is
   # restated here as a concrete release (gimme wants one) and TestNetlifyGoPin
@@ -36,12 +34,7 @@
   # of scripts/netlify-smoke-test. Setting them here or in the Netlify UI does
   # not activate that script; scripts/netlify-build does not call it.
 
-# GitHub Pages serves this project from the repository subpath
-# (jakechampion.github.io/lang/), so site/astro.config.mjs defaults `base` to
-# "/lang". The Netlify site is at the domain root: scripts/netlify-build sets
-# SITE_BASE=/, so no URL here has the prefix.
-#
-# Links from the time when the Netlify site also used the /lang prefix go to
+# The site once had a /lang prefix on every URL. Links from that time go to
 # the same page at the root, with a permanent redirect. Static files take
 # precedence over non-forced rules, so nothing that resolves is intercepted.
 [[redirects]]

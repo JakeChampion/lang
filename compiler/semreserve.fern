@@ -31,7 +31,7 @@ pub function candidate(f: ssasem.Func): boolean {
   let append = false;
   for b in f.graph.blocks {
     for ins in b.insts {
-      header = header || b.preds.len() == 2 && ins.kind_tag == ssa.PHI && is_array(f.values[ins.result]);
+      header = header || b.preds.len() == 2 && ins.kind_tag == ssa.PHI && typeinfo.is_owned_array(f.values[ins.result]);
       append = append || ins.kind_tag == ssasem.append();
     }
   }
@@ -70,13 +70,6 @@ function site(name: string, p: Plan, reason: i32): semarrayreport.Site {
   return semarrayreport.Site { owner: name, stage: "append phi v" + p.phi.to_string(), plan: "counted append capacity", reason: reason, storage: if (reason == RESERVED) { "reserved" } else { "append" } };
 }
 
-function is_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
-}
-
 function scalar_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return !a.view && (ssasem.is_integer(a.elem) || ssasem.is_float(a.elem) || ssasem.is_bool(a.elem) || ssasem.is_char(a.elem));
@@ -105,7 +98,7 @@ function empty(f: ssasem.Func, d: ssa.DefSites, value: i32, depth: i32): boolean
 }
 
 function array_phi(f: ssasem.Func, d: ssa.DefSites, ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.PHI && ins.args.len() == 2 && is_array(f.values[ins.result]) && (empty(f, d, ins.args[0], 0) || empty(f, d, ins.args[1], 0));
+  return ins.kind_tag == ssa.PHI && ins.args.len() == 2 && typeinfo.is_owned_array(f.values[ins.result]) && (empty(f, d, ins.args[0], 0) || empty(f, d, ins.args[1], 0));
 }
 
 function first(f: ssasem.Func, index: util.NameIndex, bad: boolean[]): Option[Plan] {

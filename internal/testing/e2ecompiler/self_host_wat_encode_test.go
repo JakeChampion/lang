@@ -46,8 +46,6 @@ function main(): i32 {
     let v: i32[] = wvec(2, [127, 124]);
     if (v.len() != 3 || v[0] != 2 || v[1] != 127 || v[2] != 124) { return 4; }
     if (valtype_byte("i32") != 127 || valtype_byte("f64") != 124 || valtype_byte("i64") != 126) { return 5; }
-    let c: i32[] = wcat([1, 2], [3, 4, 5]);
-    if (c.len() != 5 || c[2] != 3 || c[4] != 5) { return 6; }
     return 0;
 }
 `

@@ -44,10 +44,10 @@ function ts_op_overloads(op: string): boolean {
 }
 
 function ts_qualified_root(tag: string, method: string): string {
-  return ts_canonical_tag(tag) + "|" + method;
+  return canonical_tag(tag) + "|" + method;
 }
 
-function ts_canonical_tag(tag: string): string {
+pub function canonical_tag(tag: string): string {
   if (tag == "str") {
     return "string";
   }

@@ -48,14 +48,6 @@ function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
   return v;
 }
 
-function x86_le32(own buf: i32[], v: i32): i32[] {
-  buf = buf.append(v & 255);
-  buf = buf.append(v >> 8 & 255);
-  buf = buf.append(v >> 16 & 255);
-  buf = buf.append(v >> 24 & 255);
-  return buf;
-}
-
 function x86_modrm(md: i32, reg: i32, rm: i32): i32 {
   return (md & 3) << 6 | (reg & 7) << 3 | rm & 7;
 }
@@ -65,14 +57,14 @@ function x86_mov_r32_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
     buf = buf.append(x86_rex(0, 0, 0, reg));
   }
   buf = buf.append(184 + (reg & 7));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_mov_r64_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
   buf = buf.append(x86_rex(1, 0, 0, reg));
   buf = buf.append(199);
   buf = buf.append(x86_modrm(3, 0, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_mov_r64_r64(own buf: i32[], dst: i32, src: i32): i32[] {
@@ -105,7 +97,7 @@ function x86_push_r64(own buf: i32[], reg: i32): i32[] {
 
 function x86_push_imm32(own buf: i32[], imm: i32): i32[] {
   buf = buf.append(104);
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_pop_r64(own buf: i32[], reg: i32): i32[] {
@@ -190,14 +182,14 @@ function x86_imm_wide(own buf: i32[], size: i32, imm: i32): i32[] {
     buf = buf.append(imm & 255);
     return buf.append(imm >> 8 & 255);
   }
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_grp1_imm32_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
   buf = x86_rex_r(buf, size, reg);
   buf = buf.append(129);
   buf = buf.append(x86_modrm(3, ext, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_grp1_imm_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
@@ -306,7 +298,7 @@ function x86_emit_mem(own buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
     buf = buf.append(disp & 255);
   } else {
     if (md == 2) {
-      buf = x86_le32(buf, disp);
+      buf = util.le32(buf, disp);
     }
   }
   return buf;
@@ -347,7 +339,7 @@ function x86_lea_idx_nobase(own buf: i32[], dst: i32, index: i32, scale: i32, di
   buf = buf.append(141);
   buf = buf.append(x86_modrm(0, dst, 4));
   buf = buf.append(x86_sib(x86_scale_bits(scale), index, 5));
-  return x86_le32(buf, disp);
+  return util.le32(buf, disp);
 }
 
 function x86_scale_bits(scale: i32): i32 {
@@ -382,7 +374,7 @@ function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale
     buf = buf.append(disp & 255);
   } else {
     if (md == 2) {
-      buf = x86_le32(buf, disp);
+      buf = util.le32(buf, disp);
     }
   }
   return buf;
@@ -641,7 +633,7 @@ function x86_alu_r64_imm32(own buf: i32[], slash: i32, reg: i32, imm: i32): i32[
   buf = buf.append(x86_rex(1, 0, 0, reg));
   buf = buf.append(129);
   buf = buf.append(x86_modrm(3, slash, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_add_r64_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
@@ -697,7 +689,7 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -707,7 +699,7 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
   gas.push_arr(a.code, x86_rex_opt([], dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -719,7 +711,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   }
   buf_push_byte(a.code, opcode);
   buf_push_byte(a.code, x86_modrm(0, 0, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name + "");
   a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
@@ -728,7 +720,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  gas.push_arr(a.code, x86_le32([], imm));
+  gas.push_arr(a.code, util.le32([], imm));
   return a;
 }
 
@@ -747,7 +739,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   buf_push_byte(a.code, x86_rex(1, src, 0, 0));
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -759,7 +751,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   }
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   return x86_queue_fixup(a, patch_off, 4, name);
 }
@@ -874,7 +866,7 @@ function x86_nop_pad(own buf: i32[], n: i32): i32[] {
 function x86_jcc_rel32(own buf: i32[], cc: i32, rel: i32): i32[] {
   buf = buf.append(15);
   buf = buf.append(128 + (cc & 15));
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_je_rel32(own buf: i32[], rel: i32): i32[] {
@@ -887,7 +879,7 @@ function x86_jne_rel32(own buf: i32[], rel: i32): i32[] {
 
 function x86_jmp_rel32(own buf: i32[], rel: i32): i32[] {
   buf = buf.append(233);
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
@@ -896,7 +888,7 @@ function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 
 
 function x86_call_rel32(own buf: i32[], rel: i32): i32[] {
   buf = buf.append(232);
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_patch_rel32(own buf: i32[], at: i32, rel: i32): i32[] {
@@ -979,15 +971,7 @@ function x86_asm_new(): X86Asm {
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
-}
-
-function x86_filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  while (out.len() < n) {
-    out = out.append(v);
-  }
-  return out;
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: util.filled_i32(n, -1), lab_offs: util.filled_i32(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 pub function x86_eh_frame(a: X86Asm, text_vaddr: i64, eh_vaddr: i64): i32[] {
@@ -1381,7 +1365,7 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 141);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  gas.push_arr(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -1539,10 +1523,6 @@ function x86_fold_relro(own a: X86Asm): X86Asm {
   return X86Asm { ...a, rodata: data, relro: [], relro_pad: pad, dfix_offs: dfix_offs, dfix_names: dfix_names, dfix_idx: dfix_idx, rfix_offs: [], rfix_names: [], rfix_idx: [], lab_offs: offs };
 }
 
-function x86_unwind_hdr_len(a: X86Asm): i32 {
-  return gas.cfi_eh_frame_hdr_len(a.cfi);
-}
-
 function x86_unwind_eh_len(a: X86Asm): i32 {
   if (gas.cfi_empty(a.cfi)) {
     return 0;
@@ -1555,7 +1535,7 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
     return a.data_offset;
   }
   let end = text_len;
-  let hdr_len = x86_unwind_hdr_len(a);
+  let hdr_len = x86_eh_frame_hdr_len(a);
   let eh_len = x86_unwind_eh_len(a);
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;
@@ -2886,7 +2866,7 @@ function x86_gas_mem_rex(own buf: i32[], size: i32, reg: i32, m: GasMem, force8:
 function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm {
   if (m.is_rip) {
     buf_push_byte(a.code, x86_modrm(0, reg, 5));
-    gas.push_arr(a.code, x86_le32([], 0));
+    gas.push_arr(a.code, util.le32([], 0));
     let patch_off = buf_len(a.code) - 4;
     if (tail > 0) {
       a = x86_queue_fixup(a, patch_off, 4, m.label);
@@ -2952,7 +2932,7 @@ pub function x86_rec_alu_ia(ext: i32, size: i32, dst: i32): i32[] {
 }
 
 pub function x86_rec_alu_ima(ext: i32, size: i32, base: i32, disp: i32): i32[] {
-  return x86_le32(x86_mem_op_bytes([], size, false, 129, ext, x86_mem_at(base, disp), false), 0);
+  return util.le32(x86_mem_op_bytes([], size, false, 129, ext, x86_mem_at(base, disp), false), 0);
 }
 
 pub function x86_rec_alu_im(ext: i32, size: i32, imm: i32, base: i32, disp: i32): i32[] {
@@ -3011,7 +2991,7 @@ pub function x86_rec_call(): i32[] {
 }
 
 pub function x86_rec_lea_rip(dst: i32): i32[] {
-  return x86_le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
+  return util.le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
 }
 
 pub function x86_rec_movslq_rr(dst: i32, src: i32): i32[] {
@@ -4076,7 +4056,7 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
       if (!x86_gas_mem_ok(mi) || mi.is_rip) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
-      gas.push_arr(a.code, x86_le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
+      gas.push_arr(a.code, util.le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
       return x86_queue_abs32_at(a, name, -1);
     }
     let rd = x86_gas_reg_w(dst, size);
@@ -6893,7 +6873,7 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
 function x86_gas_longs(own a: X86Asm, section: i32, vals: string[]): X86Asm {
   if (section != 0) {
     for v in vals {
-      a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(v)) };
+      a = X86Asm { ...a, rodata: util.le32(a.rodata, x86_gas_atoi(v)) };
     }
     return a;
   }

@@ -1,0 +1,42 @@
+import "std/audio/mp2";
+import "std/bench";
+import "std/i32";
+import "std/string";
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.replace("\t", " ").split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let count = i32.parse_i32_radix(args()[1], 10).unwrap_or(0);
+  if (count < 1) {
+    return 1;
+  }
+  let mark_allocs = bench.alloc_count();
+  let mark_bytes = bench.bump_bytes();
+  let states: mp2.Decoder[] = [];
+  for _ in 0..count {
+    states = states.append(mp2.decoder());
+  }
+  let allocations = bench.allocs_after(mark_allocs);
+  let bytes = bench.fresh_bytes_after(mark_bytes);
+  let peak = peak_rss();
+  print("allocs=" + allocations.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("native_peak_rss_kb=" + peak.to_string());
+  print("decoders=" + states.len().to_string());
+  return if (states.len() == count) { 0 } else { 2 };
+}

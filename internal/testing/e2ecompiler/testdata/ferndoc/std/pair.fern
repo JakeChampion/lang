@@ -1,0 +1,5 @@
+import "std/ffi";
+
+// Two numbers side by side.
+@derive(ffi.CLayout)
+pub struct Pair { a: i32, b: i32 }
