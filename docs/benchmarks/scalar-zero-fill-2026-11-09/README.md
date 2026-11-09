@@ -122,9 +122,27 @@ The report retains qualification results and producer hashes in `qualification.j
 Native ARM64 CI and the full integrated PR verdict remain incomplete at publication.
 Android device playback, latency, power, and thermal measurements remain separate work.
 
+## Main integration
+
+The branch integrates main at `502e0efb38bd4554fa44587f42db154e7cf4eb67`.
+The integrated source snapshot is `c545b44f55d61204388cf281a4452ff224da9bd7`.
+Its self-built stage-2 and stage-3 cores match with SHA-256 `2bd2a8a8d68551bcdaed8b08a8409e5795223d634a9dbd9e4b5c3d56062c04ad`.
+The integrated producer emits a byte-identical copy of the measured MP3 benchmark executable.
+Its SHA-256 is `0ad0d736ff14e6fd564b1141a2dade58bcb7f89a895f48f07885387248fe5d3d`.
+This comparison preserves the measured result for that program without a second time campaign.
+
+All 19 codec suites pass again with that integrated producer, for 57 builds and 38 executions.
+Native executions pass sanitizers and balanced leak checks with zero live bytes.
+WASI executions and Android ARM64 shared-library builds pass.
+Scalar controls, admission, reports, semantic registry, counted-append regressions, complexity limits, and source lint also pass after integration.
+
+An extra control checks element loops whose length calculation occurs in the loop header.
+`integrated-qualification.json` and `integrated-distcheck.log` retain this evidence.
+The full CI verdict and native ARM64 execution remain incomplete.
+
 ## Reproduction
 
-The measurement directories contain the matching self-built stage-2 core as both `fern` and `fern-selfhost`.
+The measurement directories contain the self-built stage-2 core as both `fern` and `fern-selfhost`.
 Both source trees pass `make distcheck` before the measurements.
 The frozen codec checkout uses the revision above.
 
