@@ -23,6 +23,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "astro/config";
+import mdx from "@astrojs/mdx";
 import starlight from "@astrojs/starlight";
 
 import { stdlibItems } from "./src/lib/stdlib-sidebar.mjs";
@@ -266,5 +267,10 @@ export default defineConfig({
           "https://github.com/JakeChampion/lang/edit/main/site/",
       },
     }),
+    // Starlight adds MDX itself unless the config has it. In Astro 6 the
+    // MDX integration takes `gfm` from `markdown.gfm`, which is now unset,
+    // so without this an .mdx page renders no tables. After Starlight, as
+    // its docs require.
+    mdx({ gfm: true, optimize: true }),
   ],
 });
