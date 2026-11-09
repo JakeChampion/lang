@@ -11,25 +11,6 @@ import "./capturebox";
 import "./captureflow";
 import "./irtables";
 
-function split_type_list(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
-      start = i + 1;
-    } else if (csv[i] == b'(' || csv[i] == b'[') {
-      depth += 1;
-    } else if (csv[i] == b')' || csv[i] == b']') {
-      depth -= 1;
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
   return decltypes.fn_param_decl(name, tys, ret);
 }
@@ -1704,7 +1685,7 @@ function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, vars: VarDecls, id
 }
 
 function spelled_param_is_fn(csv: string, idx: i32): boolean {
-  let parts = split_type_list(csv);
+  let parts = parser.split_type_list(csv);
   return idx < parts.len() && fn_param_from_spelling("", parts[idx]).type_name == "fn";
 }
 

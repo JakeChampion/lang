@@ -95,18 +95,6 @@ pub function dirname(path: string): string {
   return slice_unchecked(path, 0, cut) + "";
 }
 
-pub function base_name(path: string): string {
-  let start = 0;
-  let i = 0;
-  while (i < path.len()) {
-    if (path[i] == b'/') {
-      start = i + 1;
-    }
-    i += 1;
-  }
-  return slice_unchecked(path, start, path.len()) + "";
-}
-
 function rel_path(path: string): string {
   if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
     return util.without_fern_ext(slice_unchecked(path, 2, path.len()) + "");
@@ -748,7 +736,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
       mdir = dirname(util.clean_path(r.shown));
     }
     files = files.append(r.shown);
-    loaded = loaded.append(flatten.LoadedModule { name: base_name(path), ident: ident, mod: m });
+    loaded = loaded.append(flatten.LoadedModule { name: util.path_base(path), ident: ident, mod: m });
     loaded_ids = loaded_ids.append(ident);
     mod_dirs = mod_dirs.append(mdir);
     queue = graph_queue_module(queue, m, mdir);
@@ -894,7 +882,7 @@ function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string 
       if (parts[k].ident == imp.resolved) {
         return parts[k].ns;
       }
-    } else if (!parts[k].is_entry && parts[k].ns == util.mangle_prefix(base_name(imp.path))) {
+    } else if (!parts[k].is_entry && parts[k].ns == util.mangle_prefix(util.path_base(imp.path))) {
       return parts[k].ns;
     }
     k += 1;

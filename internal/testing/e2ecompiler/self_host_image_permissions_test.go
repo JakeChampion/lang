@@ -203,6 +203,15 @@ func TestSelfHostImagePermissions(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer f.Close()
+					info, err := os.Stat(bin)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, p := range f.Progs {
+						if p.Off+p.Filesz > uint64(info.Size()) {
+							t.Errorf("a %v segment ends at %#x in the file, past its %#x bytes", p.Type, p.Off+p.Filesz, info.Size())
+						}
+					}
 					if tc.target == "arm64-android" && f.Type != elf.ET_DYN {
 						t.Fatalf("Android image type %v, want ET_DYN", f.Type)
 					}

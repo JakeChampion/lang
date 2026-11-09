@@ -1,0 +1,133 @@
+import "std/audio/mp3";
+import "std/audio/mp3/header";
+import "std/audio/mp3/spectral";
+import "std/audio/mp3/seek";
+import "std/audio/mp3/file";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/hash/crc32";
+import "std/hex";
+import "mp3_freeformat_vectors";
+import "mp3_input_check";
+import "mp3_file_check";
+import "flac_file_check" as io;
+
+pub function checksum(samples: [f32]): u32 {
+  let bytes: u8[] = [];
+  for value in samples {
+    bytes = wire.put_le(bytes, f32_bits(value) as u64, 4);
+  }
+  return crc32.new().update(bytes).finish();
+}
+
+pub function whole(v: mp3_freeformat_vectors.Case): Result[mp3.Decoded, string] {
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err("fixture bytes"); } };
+  let raw = match (mp3.decode_raw(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err("raw: " + e.message()); } };
+  if (raw.sample_rate != v.rate || raw.channels != v.channels || raw.samples.len() != v.raw_samples || checksum(raw.samples) != v.raw_crc) {
+    return Err("independent raw PCM");
+  }
+  let playable = match (mp3.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err("gapless: " + e.message()); } };
+  if (playable.sample_rate != v.rate || playable.channels != v.channels || playable.samples.len() != v.samples || checksum(playable.samples) != v.crc) {
+    return Err("independent gapless PCM");
+  }
+  return Ok(playable);
+}
+
+pub function packets(v: mp3_freeformat_vectors.Case): Result[void, string] {
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err("fixture bytes"); } };
+  let codec = mp3.decoder();
+  let output = spectral.zeros(2305).with(2304, 123.0f32);
+  let samples: f32[] = [];
+  let at = 0;
+  while (at < bytes.len()) {
+    let h = match (header.parse(bytes, at)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let count = if (v.free) { v.base + h.padding } else { h.bytes };
+    let packet = if (at == 0) { bytes[:] } else { bytes[at:at + count] };
+    let (next, result) = codec.decode_frame_into(packet, 0, output, pcm.default_limits());
+    codec = next;
+    let frame = match (result) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if (frame.needs_history || frame.frames != h.frames || frame.bytes_read != count || frame.samples[2304] != 123.0f32 || codec.reservoir.len() > 511) {
+      return Err("packet extent, history, or output tail");
+    }
+    for i in 0..frame.frames * frame.channels {
+      samples = samples.append(frame.samples[i]);
+    }
+    output = frame.samples;
+    at += count;
+  }
+  if (samples.len() != v.raw_samples || checksum(samples) != v.raw_crc || codec.reset().free_bytes != 0) {
+    return Err("independent packet PCM or reset");
+  }
+  return Ok(());
+}
+
+pub function stream(v: mp3_freeformat_vectors.Case, chunk: i32, partial: boolean): Result[void, string] {
+  let expected = whole(v)?;
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err("fixture bytes"); } };
+  let ref = mp3_input_check.Reference { sample_rate: v.rate, channels: v.channels, frames: (v.samples / v.channels) as i64, start: 0i64, samples: expected.samples };
+  return mp3_input_check.run(bytes, ref, chunk, partial);
+}
+
+function memory_tail(own cursor: seek.Cursor, bytes: [u8], expected: mp3.Decoded, start: i64): Result[seek.Cursor, string] {
+  let at = start;
+  while (true) {
+    let (next, value) = match (cursor.next(bytes)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    match (value) {
+      Some(audio) => {
+        if (!mp3_file_check.same(audio, expected, at)) {
+          return Err("memory seek PCM");
+        }
+        at += audio.frames as i64;
+      },
+      None => {
+        if (at != cursor.index.frames) {
+          return Err("memory seek tail length");
+        }
+        return Ok(cursor);
+      }
+    }
+  }
+}
+
+pub function memory(v: mp3_freeformat_vectors.Case, complete: boolean): Result[void, string] {
+  let expected = whole(v)?;
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err("fixture bytes"); } };
+  let index = match (seek.inspect(bytes, seek.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (index.frames * (v.channels as i64) != v.samples as i64) {
+    return Err("memory index frame total");
+  }
+  let positions: i64[] = [index.frames / 2i64];
+  if (complete) {
+    positions = [index.frames, 0i64, 1i64, index.frames - 1i64, index.frames / 2i64, 0i64];
+    for entry in 0..index.offsets.len() {
+      let raw = entry as i64 * (index.frame_size as i64) - index.track.skip_frames as i64;
+      if (raw >= 0i64 && raw < index.frames) {
+        positions = positions.append(raw);
+      }
+      if (raw > 0i64 && raw <= index.frames) {
+        positions = positions.append(raw - 1i64);
+      }
+    }
+  }
+  let cursor = seek.reader(index);
+  for position in positions {
+    cursor = match (cursor.seek(bytes, position)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = memory_tail(cursor, bytes, expected, position)?;
+  }
+  return Ok(());
+}
+
+pub function files(v: mp3_freeformat_vectors.Case, complete: boolean): Result[void, string] {
+  let expected = whole(v)?;
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err("fixture bytes"); } };
+  if (complete) {
+    return mp3_file_check.run(bytes, expected);
+  }
+  let src = io.mock(bytes);
+  let index = mp3_file_check.index(src, file.default_limits())?;
+  let position = index.frames / 2i64;
+  let cursor = match (file.reader(index).seek(position)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  mp3_file_check.tail(cursor, src, expected, position)?;
+  return Ok(());
+}

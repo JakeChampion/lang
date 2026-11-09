@@ -1,0 +1,924 @@
+{
+  "schema": 1,
+  "qualification": true,
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "tools": {
+    "target": "x86-64-linux",
+    "fern_compiler_sha256": "f179c94c5ca9d6164c569c747ad2f2cd2318936e7e439d5edb8344ed3b906d14",
+    "fern_binary_sha256": "52f9fa876b4583dce3f5adde778628abe42fa1f02483d3bf670c6a793a16dbca",
+    "allocation_probe_binary_sha256": "cb5af76e8bcf48627d15043871cb532c2ca2fa34824cde82daf5b5c7e4d5ca67",
+    "timing_allocation_instrumented": false,
+    "reference_binary_sha256": "f2311f7b3692443b5fa19533ed851bdf633f6c9bdb35e99c009f32e5387d6f44",
+    "sampler_binary_sha256": "b41f8a4f6599187b462045b41ba46161c7438e50cc95732659486eb9c4166aa2",
+    "cc": "cc (Debian 14.2.0-19) 14.2.0",
+    "cflags": [
+      "-O3",
+      "-DNDEBUG",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-I/workspace/video-toolchain/ffmpeg-dev/root/usr/include/x86_64-linux-gnu"
+    ],
+    "libs": [
+      "-l:libavcodec.so.61",
+      "-l:libavutil.so.59"
+    ],
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tracked_source_tree": "21147b8ce822606cff53acb5dcc5ddd91f81bbdc",
+    "sources": {
+      "scripts/video-compare/qtrle.fern": "1c5e109c4752f68614050a12807685ba79803ff2c67ec37932e341555acbade0",
+      "scripts/video-compare/ffmpeg-qtrle.c": "4fafe80c5e2569997c2911ad514e3117b95114c23ddbd15552da4c3e69f56b05",
+      "scripts/video-compare/sample.c": "4c252f5b48e6bd4a66964b7b374cbb994e714598d541ceb15c84554432eb805b",
+      "scripts/video-compare/qtrle-count.fern": "0287245fe37af4dba7935605763980a11a4a1857d5c09bc54547009a16534ef5",
+      "scripts/video-compare/corpus.fern": "372bfd3e336ad275483b5ca1a6ef918a59829d97bab4ce439a8c2ccd2793e4d3",
+      "scripts/compare-video-qtrle": "6bbfe208839101df8109cdeb9e74d3c0e9f409b7e53458d5abe9c482f4b4dab8",
+      "internal/stdlib/std/video/qtrle.fern.md": "65a7d08ed4f79229ec52390bcca512a726b836fd5f866d5139f99b58b30db440",
+      "internal/stdlib/std/video/frame.fern.md": "1a7c60bb7cee2cb6ce011565977c64e2235be8e4f0c05b7bafc5c269bd215bc0"
+    }
+  },
+  "timing": "CLOCK_MONOTONIC public decode calls and one sampled ARGB pixel per frame, after one complete corpus warmup; setup, verification, and stdout are excluded",
+  "settings": {
+    "threads": 1,
+    "warmup_cycles": 1,
+    "caller_retention": "current frame only",
+    "input": "identical immutable preloaded packets, with 64 zero padding bytes"
+  },
+  "memory": "Linux native sampler wait4 peak process RSS; includes runtime, loaded libraries, packets, and frame storage; excludes separate verification processes",
+  "process_cpu": "wait4 user and system CPU time for the complete measurement process, including setup and warmup",
+  "allocation_counts": "Separate instrumented Fern executable; excluded from timing and RSS comparisons; FFmpeg allocations are not instrumented",
+  "cases": [
+    {
+      "name": "rgb24-runs",
+      "width": 512,
+      "height": 288,
+      "depth": 24,
+      "pattern": "runs",
+      "packet_bytes": [
+        6343,
+        27,
+        7,
+        27
+      ],
+      "corpus_sha256": "2f4589f88e249fd95234e1637d4b1505783ece18ddfd7ae88ac067f17b91a93c",
+      "argb_sha256": "644560f329bae4907259f84ed5dffdd4701c7ddf5d4b853d62ed900d41d036c5",
+      "frames_per_trial": 3392,
+      "full_argb_comparison": true,
+      "wasi_verified": true,
+      "sanitizer_verified": true,
+      "trial_order": [
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ]
+      ],
+      "allocation_probe": {
+        "frames": 3392,
+        "checksum": 14527671059392,
+        "allocations": 1480608
+      },
+      "trials": {
+        "fern": [
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 186085065,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 183202000,
+            "process_system_ns": 4242000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 182533916,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 183866000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 196287121,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 197648000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 186520915,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 187543000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 183097493,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 184367000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 190157981,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 190511000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 206060480,
+            "allocations": null,
+            "peak_rss_bytes": 1179648,
+            "process_user_ns": 207441000,
+            "process_system_ns": 0
+          }
+        ],
+        "ffmpeg": [
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 81487259,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 93916000,
+            "process_system_ns": 8195000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 82487473,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 98645000,
+            "process_system_ns": 3258000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 113160782,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 128087000,
+            "process_system_ns": 5257000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 82082730,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 94098000,
+            "process_system_ns": 8181000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 80999642,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 101147000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 88817111,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 102043000,
+            "process_system_ns": 8300000
+          },
+          {
+            "frames": 3392,
+            "checksum": 14527671059392,
+            "elapsed_ns": 82607100,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11010048,
+            "process_user_ns": 97536000,
+            "process_system_ns": 7685000
+          }
+        ]
+      },
+      "summary": {
+        "fern": {
+          "median_elapsed_ns": 186520915,
+          "min_elapsed_ns": 182533916,
+          "max_elapsed_ns": 206060480,
+          "median_peak_rss_bytes": 1179648
+        },
+        "ffmpeg": {
+          "median_elapsed_ns": 82487473,
+          "min_elapsed_ns": 80999642,
+          "max_elapsed_ns": 113160782,
+          "median_peak_rss_bytes": 11010048
+        }
+      },
+      "fern_over_ffmpeg_elapsed": 2.2612029222910004,
+      "fern_over_ffmpeg_peak_rss": 0.10714285714285714
+    },
+    {
+      "name": "argb32-literals",
+      "width": 512,
+      "height": 288,
+      "depth": 32,
+      "pattern": "sparse",
+      "packet_bytes": [
+        591847,
+        28,
+        7,
+        28
+      ],
+      "corpus_sha256": "6aaf40367a52b216733fe42c8f298bb1fd7984f48e324e1c26570f9d0c249b49",
+      "argb_sha256": "c9eeacae42d38ae85ac528156ddc4366098d65c18770d5d4e3e38726f543a483",
+      "frames_per_trial": 3392,
+      "full_argb_comparison": true,
+      "wasi_verified": true,
+      "sanitizer_verified": true,
+      "trial_order": [
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ]
+      ],
+      "allocation_probe": {
+        "frames": 3392,
+        "checksum": 7278067558205,
+        "allocations": 1480608
+      },
+      "trials": {
+        "fern": [
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 681491704,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 683604000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 666498978,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 668746000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 727817427,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 730194000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 740359130,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 742791000,
+            "process_system_ns": 0
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 688532797,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 686149000,
+            "process_system_ns": 4262000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 732471428,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 730339000,
+            "process_system_ns": 4467000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 705871026,
+            "allocations": null,
+            "peak_rss_bytes": 2359296,
+            "process_user_ns": 700486000,
+            "process_system_ns": 8209000
+          }
+        ],
+        "ffmpeg": [
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 107977316,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 117670000,
+            "process_system_ns": 18231000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 93439825,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 104438000,
+            "process_system_ns": 8249000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 99636958,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 116163000,
+            "process_system_ns": 4183000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 104279458,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 139841000,
+            "process_system_ns": 519000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 95477585,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 104146000,
+            "process_system_ns": 12220000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 91917046,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 104107000,
+            "process_system_ns": 8072000
+          },
+          {
+            "frames": 3392,
+            "checksum": 7278067558205,
+            "elapsed_ns": 94352095,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 11796480,
+            "process_user_ns": 98596000,
+            "process_system_ns": 19094000
+          }
+        ]
+      },
+      "summary": {
+        "fern": {
+          "median_elapsed_ns": 705871026,
+          "min_elapsed_ns": 666498978,
+          "max_elapsed_ns": 740359130,
+          "median_peak_rss_bytes": 2359296
+        },
+        "ffmpeg": {
+          "median_elapsed_ns": 95477585,
+          "min_elapsed_ns": 91917046,
+          "max_elapsed_ns": 107977316,
+          "median_peak_rss_bytes": 11796480
+        }
+      },
+      "fern_over_ffmpeg_elapsed": 7.39305488298641,
+      "fern_over_ffmpeg_peak_rss": 0.2
+    },
+    {
+      "name": "argb32-hd-sparse",
+      "width": 1920,
+      "height": 1080,
+      "depth": 32,
+      "pattern": "sparse",
+      "packet_bytes": [
+        8313847,
+        36,
+        7,
+        38
+      ],
+      "corpus_sha256": "6b8de85037d1212bd37cd4a72e1c599d0efba2fe3aa4337dde24783db73713b4",
+      "argb_sha256": "db669a43b726bc7ce0b74ae7916b532bb744a4a876fa280b322a4fd6e1a86f56",
+      "frames_per_trial": 244,
+      "full_argb_comparison": true,
+      "wasi_verified": true,
+      "sanitizer_verified": true,
+      "trial_order": [
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ]
+      ],
+      "allocation_probe": {
+        "frames": 244,
+        "checksum": 515208655613,
+        "allocations": 1121607
+      },
+      "trials": {
+        "fern": [
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 653243206,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 663279000,
+            "process_system_ns": 16451000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 690824716,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 709618000,
+            "process_system_ns": 12238000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 654326523,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 664993000,
+            "process_system_ns": 16451000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 677269171,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 690335000,
+            "process_system_ns": 16274000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 689745509,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 710067000,
+            "process_system_ns": 11716000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 653829105,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 662659000,
+            "process_system_ns": 19735000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 660936391,
+            "allocations": null,
+            "peak_rss_bytes": 33161216,
+            "process_user_ns": 678072000,
+            "process_system_ns": 12005000
+          }
+        ],
+        "ffmpeg": [
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 140283736,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 160230000,
+            "process_system_ns": 12223000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 137079582,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 155365000,
+            "process_system_ns": 12205000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 142404505,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 153203000,
+            "process_system_ns": 23883000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 140999046,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 155503000,
+            "process_system_ns": 11834000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 134498316,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 157405000,
+            "process_system_ns": 11879000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 142765610,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 151724000,
+            "process_system_ns": 20302000
+          },
+          {
+            "frames": 244,
+            "checksum": 515208655613,
+            "elapsed_ns": 133896464,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 27131904,
+            "process_user_ns": 144076000,
+            "process_system_ns": 19932000
+          }
+        ]
+      },
+      "summary": {
+        "fern": {
+          "median_elapsed_ns": 660936391,
+          "min_elapsed_ns": 653243206,
+          "max_elapsed_ns": 690824716,
+          "median_peak_rss_bytes": 33161216
+        },
+        "ffmpeg": {
+          "median_elapsed_ns": 140283736,
+          "min_elapsed_ns": 133896464,
+          "max_elapsed_ns": 142765610,
+          "median_peak_rss_bytes": 27131904
+        }
+      },
+      "fern_over_ffmpeg_elapsed": 4.71142564238523,
+      "fern_over_ffmpeg_peak_rss": 1.2222222222222223
+    },
+    {
+      "name": "rgb24-hd-dense",
+      "width": 1920,
+      "height": 1080,
+      "depth": 24,
+      "pattern": "dense",
+      "packet_bytes": [
+        6240247,
+        6240247,
+        7,
+        6240247
+      ],
+      "corpus_sha256": "f7a3b611c42b2a82f447b38d58df85a420f01d3fdf02c3f3798c79da8e83a82a",
+      "argb_sha256": "bf4bbe3d972179e91a38dd6f571f3f56a4d0d09f99cfb2ea19337682e68260c0",
+      "frames_per_trial": 244,
+      "full_argb_comparison": true,
+      "wasi_verified": true,
+      "sanitizer_verified": true,
+      "trial_order": [
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ],
+        [
+          "ffmpeg",
+          "fern"
+        ],
+        [
+          "fern",
+          "ffmpeg"
+        ]
+      ],
+      "allocation_probe": {
+        "frames": 244,
+        "checksum": 1045996534891,
+        "allocations": 3360368
+      },
+      "trials": {
+        "fern": [
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1736689303,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1766294000,
+            "process_system_ns": 24500000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1746829389,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1783697000,
+            "process_system_ns": 24413000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1714182787,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1751934000,
+            "process_system_ns": 21013000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1724448380,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1755469000,
+            "process_system_ns": 24311000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1811136150,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1851105000,
+            "process_system_ns": 23062000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1818406981,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1858369000,
+            "process_system_ns": 28751000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 1752733993,
+            "allocations": null,
+            "peak_rss_bytes": 54001664,
+            "process_user_ns": 1783079000,
+            "process_system_ns": 29341000
+          }
+        ],
+        "ffmpeg": [
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 405076152,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 430818000,
+            "process_system_ns": 24540000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 380922297,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 409619000,
+            "process_system_ns": 16600000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 366885239,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 390692000,
+            "process_system_ns": 15836000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 456786166,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 474051000,
+            "process_system_ns": 24578000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 382630194,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 405891000,
+            "process_system_ns": 23543000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 436779647,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 456332000,
+            "process_system_ns": 28006000
+          },
+          {
+            "frames": 244,
+            "checksum": 1045996534891,
+            "elapsed_ns": 395729772,
+            "allocations": null,
+            "avcodec_version": 4002661,
+            "avcodec_header_version": 4002661,
+            "peak_rss_bytes": 35520512,
+            "process_user_ns": 414694000,
+            "process_system_ns": 23591000
+          }
+        ]
+      },
+      "summary": {
+        "fern": {
+          "median_elapsed_ns": 1746829389,
+          "min_elapsed_ns": 1714182787,
+          "max_elapsed_ns": 1818406981,
+          "median_peak_rss_bytes": 54001664
+        },
+        "ffmpeg": {
+          "median_elapsed_ns": 395729772,
+          "min_elapsed_ns": 366885239,
+          "max_elapsed_ns": 456786166,
+          "median_peak_rss_bytes": 35520512
+        }
+      },
+      "fern_over_ffmpeg_elapsed": 4.4141975474112165,
+      "fern_over_ffmpeg_peak_rss": 1.5202952029520296
+    }
+  ]
+}

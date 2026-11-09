@@ -245,7 +245,7 @@ function uses_of(f: Func): Uses {
         }
       }
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < n) {
       count = count.with(t + 1, count[t + 1] + 1);
     }
@@ -278,7 +278,7 @@ function uses_of(f: Func): Uses {
       }
       ii += 1;
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < n) {
       let k = next[t];
       kinds = kinds.with(k, term_use());
@@ -289,16 +289,6 @@ function uses_of(f: Func): Uses {
     bi += 1;
   }
   return Uses { start: count, kinds: kinds, block: block, at: at, slot: slot };
-}
-
-function term_operand(t: ssa.STerm): i32 {
-  if (t.kind_tag == ssa.TERM_RET) {
-    return t.value;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return t.cond;
-  }
-  return -1;
 }
 
 pub function param(): i32 {
@@ -1092,7 +1082,7 @@ pub function closure_env(c: Contract): boolean {
     return false;
   }
   if let typeinfo.TypeArray(a) = c.params[0] {
-    return semtypes.equal(a.elem, env_word());
+    return semtypes.equal(a.elem, typeinfo.t_i32());
   }
   return semtypes.is_env(c.params[0]);
 }
@@ -1106,10 +1096,6 @@ pub function closure_captures(c: Contract): typeinfo.Type[] {
     return [];
   }
   return semtypes.env_captures(c.params[0]);
-}
-
-function env_word(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 pub function closure_type(c: Contract): typeinfo.Type {
@@ -4225,7 +4211,7 @@ function quiet_cell_read(g: ssa.SFunc, ri: i32, rpos: i32, v: i32): boolean {
         }
       }
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < off.len() && off[t] && limit[xi] != b.insts.len()) {
       return false;
     }
@@ -4371,7 +4357,7 @@ pub function view_copy_types(): typeinfo.Type[] {
 pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: i32 }
 
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
-  let s = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph), unfold: false, helpers: [] };
+  let s = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: ssa.next_block_id(f.graph), unfold: false, helpers: [] };
   let made: i32[] = [];
   for _ in copies {
     made = made.append(-1);
@@ -4394,7 +4380,7 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     pi += 1;
   }
   let blocks: ssa.SBlock[] = [];
-  let first_new = next_block_id(f.graph);
+  let first_new = ssa.next_block_id(f.graph);
   for blk in s.done {
     let insts: ssa.SInst[] = [];
     for ins in blk.insts {
@@ -4427,16 +4413,6 @@ function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
     }
   }
   return out;
-}
-
-function next_block_id(g: ssa.SFunc): i32 {
-  let n = 0;
-  for b in g.blocks {
-    if (b.id >= n) {
-      n = b.id + 1;
-    }
-  }
-  return n;
 }
 
 struct Made { s: CopySplice, made: i32[] }
@@ -4488,14 +4464,6 @@ function sp_open(s: CopySplice, id: i32, preds: i32[]): CopySplice {
 
 function sp_blocks(s: CopySplice, n: i32): CopySplice {
   return CopySplice { ...s, next_block: s.next_block + n };
-}
-
-function t_br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
-}
-
-function t_brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
 function boolean_type(): typeinfo.Type {
@@ -4765,7 +4733,7 @@ function loop_enter(s: CopySplice, n: i32, acc0: i32, t: typeinfo.Type): CopyLoo
   let pre = s.id;
   let i = s.values.len();
   s = CopySplice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
-  s = sp_close(s, t_br(head));
+  s = sp_close(s, ssa.t_br(head));
   let head_at = s.done.len();
   s = sp_open(s, head + 1, [head]);
   return CopyLoop { s: s, pre: pre, head: head, exit: head + 2, head_at: head_at, i: i, acc: i + 1, cond: i + 2, zero: zero.value, one: one.value, n: n, acc0: acc0 };
@@ -4775,8 +4743,8 @@ function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
   let i1 = sp_emit(s, 9, i32_type(), [l.i, l.one], 0, "+");
   s = i1.s;
   let latch = s.id;
-  s = sp_close(s, t_br(l.head));
-  let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: t_brif(l.cond, l.head + 1, l.exit), insts: [
+  s = sp_close(s, ssa.t_br(l.head));
+  let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: ssa.t_brif(l.cond, l.head + 1, l.exit), insts: [
     ssa.SInst { kind_tag: ssa.PHI, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssa.PHI, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssa.BINARY, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
@@ -4816,16 +4784,16 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
       let arm = s.next_block;
       let next = arm + 1;
       let at = s.id;
-      s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, next));
+      s = sp_close(sp_blocks(s, 2), ssa.t_brif(test.value, arm, next));
       let r = rebuilt_variant(f, sp_open(s, arm, [at]), v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
-      s = sp_open(sp_close(r.s, t_br(join)), next, [at]);
+      s = sp_open(sp_close(r.s, ssa.t_br(join)), next, [at]);
     } else {
       let r = rebuilt_variant(f, s, v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
-      s = sp_close(r.s, t_br(join));
+      s = sp_close(r.s, ssa.t_br(join));
     }
     k += 1;
   }
@@ -4859,18 +4827,18 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
     s = test.s;
     let arm = s.next_block;
     let at = s.id;
-    s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, arm + 1));
+    s = sp_close(sp_blocks(s, 2), ssa.t_brif(test.value, arm, arm + 1));
     let n = sp_emit(sp_open(s, arm, [at]), dyn_as(), c, [v], 0, name);
     let cc = deep_copy(f, n.s, n.value);
     let up = sp_emit(cc.s, dyn_up(), t, [cc.value], 0, "");
     froms = froms.append(up.s.id);
     built = built.append(up.value);
-    s = sp_open(sp_close(up.s, t_br(join)), arm + 1, [at]);
+    s = sp_open(sp_close(up.s, ssa.t_br(join)), arm + 1, [at]);
   }
   let kept = sp_emit(s, dyn_as(), t, [v], 0, "");
   froms = froms.append(kept.s.id);
   built = built.append(kept.value);
-  s = sp_open(sp_close(kept.s, t_br(join)), join, froms);
+  s = sp_open(sp_close(kept.s, ssa.t_br(join)), join, froms);
   let out = s.values.len();
   let phi = ssa.SInst { kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };

@@ -310,7 +310,7 @@ struct Cross { live: boolean[], out: boolean[] }
 function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[]): Cross {
   let live = w.live;
   let out = w.out;
-  let seen = live_out.append(term_use(b.term));
+  let seen = live_out.append(ssa.term_operand(b.term));
   for v in seen {
     live = mark_live(live, v);
   }
@@ -347,16 +347,6 @@ function marked_live(own out: boolean[], live: boolean[], seen: i32[]): boolean[
 }
 
 // The value a terminator reads, or -1.
-function term_use(t: ssa.STerm): i32 {
-  if (t.kind_tag == ssa.TERM_RET) {
-    return t.value;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return t.cond;
-  }
-  return -1;
-}
-
 function mark_live(own live: boolean[], v: i32): boolean[] {
   if (v < 0) {
     return live;
