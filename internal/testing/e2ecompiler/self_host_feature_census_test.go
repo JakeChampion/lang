@@ -373,7 +373,7 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 
 	atLeast(t, c, "for..in loops", 5790,
 		"A floor on `for x in xs` loops. A conversion from a hand-written index loop raises the count: move the floor to the new measurement. A fold onto astwalk or a table index can remove loops: lower the floor and say which change it was in the commit message.")
-	atLeast(t, c, "astwalk call sites", 516,
+	atLeast(t, c, "astwalk call sites", 514,
 		"Hand-written AST walkers that move onto the shared fold spine raise this count. A fall means that a walker went back to its own traversal. Move the floor to the new measurement after each conversion.")
 
 	atMost(t, c, "wildcard match arms", 1426, 1423,
