@@ -58,11 +58,22 @@ function test_rejections(): test.TestOutcome {
   return test.assert_eq(got, "\"\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"5\" is not a duration such as \"1h 30m\": stopped at byte 1 | \"1h 5x\" is not a duration such as \"1h 30m\": stopped at byte 4 | \"h\" is not a duration such as \"1h 30m\": stopped at byte 0");
 }
 
+function test_overflow_is_refused(): test.TestOutcome {
+  let got = refusal("9223372036854775808s") + " | " + refusal("9223372036854775807s") + " | " + refusal("2562047788015216h") + " | " + refusal("1s 9223372036854775807ms");
+  return test.assert_eq(got, "\"9223372036854775808s\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"9223372036854775807s\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"2562047788015216h\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"1s 9223372036854775807ms\" is not a duration such as \"1h 30m\": stopped at byte 3");
+}
+
+function test_the_largest_duration(): test.TestOutcome {
+  return test.assert_eq(ms_of("9223372036854775807ms"), 9223372036854775807);
+}
+
 function main(): i32 {
   let r = test.new("std/format parse_duration");
   r = r.it("single units", test_single_units);
   r = r.it("multi part", test_multi_part);
   r = r.it("beyond i32", test_beyond_i32);
   r = r.it("rejections", test_rejections);
+  r = r.it("overflow is refused", test_overflow_is_refused);
+  r = r.it("the largest duration", test_the_largest_duration);
   return r.finish();
 }
