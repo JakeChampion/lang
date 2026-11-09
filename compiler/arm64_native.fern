@@ -9463,14 +9463,6 @@ function arm64_gas_assemble(src: string): Arm64Asm {
   return arm64_gas_program(src).asm;
 }
 
-function macho_le32(buf: i32[], v: i32): i32[] {
-  buf = buf.append(v & 255);
-  buf = buf.append(v >> 8 & 255);
-  buf = buf.append(v >> 16 & 255);
-  buf = buf.append(v >> 24 & 255);
-  return buf;
-}
-
 function macho_le64(buf: i32[], v: i64): i32[] {
   let b: i32 = 0;
   while (b < 8) {
@@ -9522,15 +9514,6 @@ function macho_zeros(buf: i32[], n: i32): i32[] {
   let i = 0;
   while (i < n) {
     buf = buf.append(0);
-    i += 1;
-  }
-  return buf;
-}
-
-function macho_cat(buf: i32[], src: i32[]): i32[] {
-  let i = 0;
-  while (i < src.len()) {
-    buf = buf.append(src[i]);
     i += 1;
   }
   return buf;
@@ -9655,17 +9638,17 @@ pub function macho_data_vaddr_dw(text_len: i32, eh_len: i32, data_len: i32, bss:
 }
 
 function macho_seg(buf: i32[], name: string, vmaddr: i64, vmsize: i64, fileoff: i64, filesize: i64, maxprot: i32, initprot: i32, nsects: i32): i32[] {
-  buf = macho_le32(buf, 25);
-  buf = macho_le32(buf, 72 + nsects * 80);
+  buf = util.le32(buf, 25);
+  buf = util.le32(buf, 72 + nsects * 80);
   buf = macho_name16(buf, name);
   buf = macho_le64(buf, vmaddr);
   buf = macho_le64(buf, vmsize);
   buf = macho_le64(buf, fileoff);
   buf = macho_le64(buf, filesize);
-  buf = macho_le32(buf, maxprot);
-  buf = macho_le32(buf, initprot);
-  buf = macho_le32(buf, nsects);
-  buf = macho_le32(buf, 0);
+  buf = util.le32(buf, maxprot);
+  buf = util.le32(buf, initprot);
+  buf = util.le32(buf, nsects);
+  buf = util.le32(buf, 0);
   return buf;
 }
 
@@ -9674,27 +9657,27 @@ function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32,
   buf = macho_name16(buf, seg);
   buf = macho_le64(buf, addr);
   buf = macho_le64(buf, size as i64);
-  buf = macho_le32(buf, offset);
-  buf = macho_le32(buf, align);
-  buf = macho_le32(buf, 0);
-  buf = macho_le32(buf, 0);
+  buf = util.le32(buf, offset);
+  buf = util.le32(buf, align);
+  buf = util.le32(buf, 0);
+  buf = util.le32(buf, 0);
   buf = arm64_le32(buf, flags);
-  buf = macho_le32(buf, 0);
-  buf = macho_le32(buf, 0);
-  buf = macho_le32(buf, 0);
+  buf = util.le32(buf, 0);
+  buf = util.le32(buf, 0);
+  buf = util.le32(buf, 0);
   return buf;
 }
 
 function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
   let size = macho_lcstr_cmd_len(cmd, path);
   let fixed = macho_lcstr_fixed_len(cmd);
-  buf = macho_le32(buf, cmd);
-  buf = macho_le32(buf, size);
-  buf = macho_le32(buf, fixed);
+  buf = util.le32(buf, cmd);
+  buf = util.le32(buf, size);
+  buf = util.le32(buf, fixed);
   if (cmd == 12) {
-    buf = macho_le32(buf, 0);
-    buf = macho_le32(buf, 0);
-    buf = macho_le32(buf, 0);
+    buf = util.le32(buf, 0);
+    buf = util.le32(buf, 0);
+    buf = util.le32(buf, 0);
   }
   let i = 0;
   while (i < path.len()) {
@@ -9706,14 +9689,14 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
 
 function macho_dyld_info(buf: i32[], rebase_off: i32, rebase_size: i32, bind_off: i32, bind_size: i32): i32[] {
   buf = arm64_le32(buf, 0x80000022);
-  buf = macho_le32(buf, 48);
-  buf = macho_le32(buf, rebase_off);
-  buf = macho_le32(buf, rebase_size);
+  buf = util.le32(buf, 48);
+  buf = util.le32(buf, rebase_off);
+  buf = util.le32(buf, rebase_size);
   if (bind_size == 0) {
     bind_off = 0;
   }
-  buf = macho_le32(buf, bind_off);
-  buf = macho_le32(buf, bind_size);
+  buf = util.le32(buf, bind_off);
+  buf = util.le32(buf, bind_size);
   return macho_zeros(buf, 24);
 }
 
@@ -9772,31 +9755,20 @@ function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
 }
 
 function macho_symtab(buf: i32[], symoff: i32, nsyms: i32, stroff: i32, strsize: i32): i32[] {
-  buf = macho_le32(buf, 2);
-  buf = macho_le32(buf, 24);
-  buf = macho_le32(buf, symoff);
-  buf = macho_le32(buf, nsyms);
-  buf = macho_le32(buf, stroff);
-  return macho_le32(buf, strsize);
+  buf = util.le32(buf, 2);
+  buf = util.le32(buf, 24);
+  buf = util.le32(buf, symoff);
+  buf = util.le32(buf, nsyms);
+  buf = util.le32(buf, stroff);
+  return util.le32(buf, strsize);
 }
 
 function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
-  buf = macho_le32(buf, 11);
-  buf = macho_le32(buf, 80);
-  buf = macho_le32(buf, 0);
-  buf = macho_le32(buf, nlocal);
+  buf = util.le32(buf, 11);
+  buf = util.le32(buf, 80);
+  buf = util.le32(buf, 0);
+  buf = util.le32(buf, nlocal);
   return macho_zeros(buf, 64);
-}
-
-function macho_inner_label(s: string): boolean {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'.' || s[i] == b'#') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
 }
 
 function macho_sym_order(names: string[], offs: i32[]): i32[] {
@@ -9804,7 +9776,7 @@ function macho_sym_order(names: string[], offs: i32[]): i32[] {
   let i = 0;
   while (i < names.len() && i < offs.len()) {
     let n = names[i];
-    if (n.len() > 0 && n[0] != b'L' && !macho_inner_label(n)) {
+    if (n.len() > 0 && n[0] != b'L' && !util.is_inner_label(n)) {
       idx = idx.append(i);
     }
     i += 1;
@@ -9857,7 +9829,7 @@ function macho_strtab_len(names: string[], idx: i32[]): i32 {
 function macho_nlists(buf: i32[], names: string[], offs: i32[], idx: i32[], text_vaddr: i64): i32[] {
   let strx = 1;
   for i in idx {
-    buf = macho_le32(buf, strx);
+    buf = util.le32(buf, strx);
     buf = buf.append(0x0f);
     buf = buf.append(1);
     buf = buf.append(0);
@@ -9883,17 +9855,17 @@ function macho_strtab(buf: i32[], names: string[], idx: i32[]): i32[] {
 }
 
 function macho_build_version(buf: i32[]): i32[] {
-  buf = macho_le32(buf, 50);
-  buf = macho_le32(buf, 24);
-  buf = macho_le32(buf, 1);
-  buf = macho_le32(buf, 0x000b0000);
-  buf = macho_le32(buf, 0x000b0000);
-  return macho_le32(buf, 0);
+  buf = util.le32(buf, 50);
+  buf = util.le32(buf, 24);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, 0x000b0000);
+  buf = util.le32(buf, 0x000b0000);
+  return util.le32(buf, 0);
 }
 
 function macho_main(buf: i32[], entryoff: i32): i32[] {
   buf = arm64_le32(buf, 0x80000028);
-  buf = macho_le32(buf, 24);
+  buf = util.le32(buf, 24);
   buf = macho_le64(buf, entryoff as i64);
   return macho_le64(buf, 0);
 }
@@ -10057,17 +10029,17 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   let buf: i32[] = [];
 
   buf = arm64_le32(buf, 0xfeedfacf);
-  buf = macho_le32(buf, 0x0100000c);
-  buf = macho_le32(buf, 0);
-  buf = macho_le32(buf, 2);
-  buf = macho_le32(buf, ncmds);
-  buf = macho_le32(buf, sizeofcmds);
+  buf = util.le32(buf, 0x0100000c);
+  buf = util.le32(buf, 0);
+  buf = util.le32(buf, 2);
+  buf = util.le32(buf, ncmds);
+  buf = util.le32(buf, sizeofcmds);
   if (bind.len() > 0) {
-    buf = macho_le32(buf, 0x00200084);
+    buf = util.le32(buf, 0x00200084);
   } else {
-    buf = macho_le32(buf, 0x00200085);
+    buf = util.le32(buf, 0x00200085);
   }
-  buf = macho_le32(buf, 0);
+  buf = util.le32(buf, 0);
 
   buf = macho_seg(buf, "__PAGEZERO", 0, base, 0, 0, 0, 0, 0);
 
@@ -10102,10 +10074,10 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   buf = macho_lcstr(buf, 12, macho_libsystem_path());
   buf = macho_main(buf, text_off + entry_off);
 
-  buf = macho_le32(buf, 29);
-  buf = macho_le32(buf, 16);
-  buf = macho_le32(buf, code_limit);
-  buf = macho_le32(buf, sig_len);
+  buf = util.le32(buf, 29);
+  buf = util.le32(buf, 16);
+  buf = util.le32(buf, code_limit);
+  buf = util.le32(buf, sig_len);
 
   buf = macho_pad_to(buf, text_off);
   for b in text {
@@ -10113,22 +10085,22 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   }
   if (has_eh) {
     buf = macho_pad_to(buf, eh_off);
-    buf = macho_cat(buf, eh);
+    buf = util.append_all(buf, eh);
   }
   buf = macho_pad_to(buf, text_vmsize);
   if (has_data) {
-    buf = macho_cat(buf, data);
+    buf = util.append_all(buf, data);
     buf = macho_pad_to(buf, dwarf_off);
   }
   let k = 0;
   while (k < dwarf.len()) {
     buf = macho_pad_to(buf, dwarf_off + dwarf_at[k]);
-    buf = macho_cat(buf, dwarf[k]);
+    buf = util.append_all(buf, dwarf[k]);
     k += 1;
   }
   buf = macho_pad_to(buf, linkedit_off);
-  buf = macho_cat(buf, rebase);
-  buf = macho_cat(buf, bind);
+  buf = util.append_all(buf, rebase);
+  buf = util.append_all(buf, bind);
   if (sym_idx.len() > 0) {
     buf = macho_pad_to(buf, sym_off);
     buf = macho_nlists(buf, sym_names, sym_offs, sym_idx, text_vaddr);
@@ -10136,7 +10108,7 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   }
   buf = macho_pad_to(buf, code_limit);
   let sig = macho_code_signature(buf, code_limit, text_vmsize, ident);
-  buf = macho_cat(buf, sig);
+  buf = util.append_all(buf, sig);
   return buf;
 }
 

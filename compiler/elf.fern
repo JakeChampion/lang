@@ -34,14 +34,6 @@ function elf_le16(buf: i32[], v: i32): i32[] {
   return buf;
 }
 
-function elf_le32(buf: i32[], v: i32): i32[] {
-  buf = buf.append(v & 255);
-  buf = buf.append(v >> 8 & 255);
-  buf = buf.append(v >> 16 & 255);
-  buf = buf.append(v >> 24 & 255);
-  return buf;
-}
-
 function elf_le64(buf: i32[], v: i64): i32[] {
   buf = buf.append((v & 255) as i32);
   buf = buf.append((v >> 8 & 255) as i32);
@@ -51,15 +43,6 @@ function elf_le64(buf: i32[], v: i64): i32[] {
   buf = buf.append((v >> 40 & 255) as i32);
   buf = buf.append((v >> 48 & 255) as i32);
   buf = buf.append((v >> 56 & 255) as i32);
-  return buf;
-}
-
-pub function elf_cat(buf: i32[], src: i32[]): i32[] {
-  let i = 0;
-  while (i < src.len()) {
-    buf = buf.append(src[i]);
-    i += 1;
-  }
   return buf;
 }
 
@@ -109,11 +92,11 @@ pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_of
   }
   buf = elf_le16(buf, 2);
   buf = elf_le16(buf, machine);
-  buf = elf_le32(buf, 1);
+  buf = util.le32(buf, 1);
   buf = elf_le64(buf, entry);
   buf = elf_le64(buf, elf_eh_size() as i64);
   buf = elf_le64(buf, zero64);
-  buf = elf_le32(buf, 0);
+  buf = util.le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
   buf = elf_le16(buf, 1);
@@ -121,8 +104,8 @@ pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_of
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
 
-  buf = elf_le32(buf, 1);
-  buf = elf_le32(buf, flags);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, flags);
   buf = elf_le64(buf, zero64);
   buf = elf_le64(buf, elf_base_vaddr() as i64);
   buf = elf_le64(buf, elf_base_vaddr() as i64);
@@ -130,7 +113,7 @@ pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_of
   buf = elf_le64(buf, memsz);
   buf = elf_le64(buf, elf_page_align() as i64);
 
-  return elf_cat(buf, body);
+  return util.append_all(buf, body);
 }
 
 function elf_static_executable(text: i32[]): i32[] {
@@ -144,7 +127,7 @@ function elf_static_executable_x86(text: i32[]): i32[] {
 function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
   let body = elf_cat_u8([], text);
   body = elf_pad_to(body, elf_align16(body.len()));
-  body = elf_cat(body, data);
+  body = util.append_all(body, data);
   return elf_image(body, 7, elf_em_x86_64());
 }
 
@@ -199,11 +182,11 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
   }
   buf = elf_le16(buf, 2);
   buf = elf_le16(buf, elf_em_x86_64());
-  buf = elf_le32(buf, 1);
+  buf = util.le32(buf, 1);
   buf = elf_le64(buf, entry);
   buf = elf_le64(buf, elf_eh_size() as i64);
   buf = elf_le64(buf, zero64);
-  buf = elf_le32(buf, 0);
+  buf = util.le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
   buf = elf_le16(buf, 2);
@@ -211,8 +194,8 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
 
-  buf = elf_le32(buf, 1);
-  buf = elf_le32(buf, 7);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, 7);
   buf = elf_le64(buf, zero64);
   buf = elf_le64(buf, elf_base_vaddr() as i64);
   buf = elf_le64(buf, elf_base_vaddr() as i64);
@@ -221,8 +204,8 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
   buf = elf_le64(buf, elf_page_align() as i64);
 
   if (has_unwind) {
-    buf = elf_le32(buf, 1685382480);
-    buf = elf_le32(buf, 4);
+    buf = util.le32(buf, 1685382480);
+    buf = util.le32(buf, 4);
     buf = elf_le64(buf, hdr_off as i64);
     buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
     buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
@@ -290,8 +273,8 @@ pub function elf_data_off_so(text_len: i32, hdr_len: i32, eh_len: i32, note: boo
 }
 
 function elf_phdr(buf: i32[], p_type: i32, flags: i32, off: i32, vaddr: i64, filesz: i32, memsz: i32, align: i32): i32[] {
-  buf = elf_le32(buf, p_type);
-  buf = elf_le32(buf, flags);
+  buf = util.le32(buf, p_type);
+  buf = util.le32(buf, flags);
   buf = elf_le64(buf, off as i64);
   buf = elf_le64(buf, vaddr);
   buf = elf_le64(buf, vaddr);
@@ -371,7 +354,7 @@ function so_import_syms(buf: i32[], offs: i32[], data: boolean[], weak: boolean[
     if (weak[i]) {
       kind += 16;
     }
-    buf = elf_le32(buf, offs[i]);
+    buf = util.le32(buf, offs[i]);
     buf = buf.append(kind);
     buf = buf.append(0);
     buf = elf_le16(buf, 0);
@@ -470,11 +453,11 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   let buf: i32[] = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   buf = elf_le16(buf, 3);
   buf = elf_le16(buf, machine);
-  buf = elf_le32(buf, 1);
+  buf = util.le32(buf, 1);
   buf = elf_le64(buf, 0 as i64);
   buf = elf_le64(buf, elf_eh_size() as i64);
   buf = elf_le64(buf, sh_off as i64);
-  buf = elf_le32(buf, 0);
+  buf = util.le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
   buf = elf_le16(buf, elf_so_phnum(note));
@@ -497,18 +480,18 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   } else {
     buf = elf_pad_to(buf, buf.len() + elf_ph_size());
   }
-  buf = elf_le32(buf, 1685382481);
-  buf = elf_le32(buf, 6);
+  buf = util.le32(buf, 1685382481);
+  buf = util.le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
   buf = elf_note_ph(buf, elf_bti(note), 0i64, elf_align8(unwind_end));
 
-  buf = elf_cat(elf_pad_to(buf, text_off), text);
+  buf = util.append_all(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
-    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(text.len(), note)), hdr);
-    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(text.len(), hdr.len(), note)), eh);
+    buf = util.append_all(elf_pad_to(buf, elf_eh_hdr_off_so(text.len(), note)), hdr);
+    buf = util.append_all(elf_pad_to(buf, elf_eh_frame_off_so(text.len(), hdr.len(), note)), eh);
   }
   buf = elf_so_note(buf, note, elf_align8(unwind_end));
-  buf = elf_cat(elf_pad_to(buf, data_off), data);
+  buf = util.append_all(elf_pad_to(buf, data_off), data);
   buf = elf_pad_to(buf, rela_off);
   let r = 0;
   while (r < rel_offs.len()) {
@@ -521,7 +504,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_pad_to(buf, sym_off + 24);
   let k = 0;
   while (k < names.len()) {
-    buf = elf_le32(buf, name_offs[k]);
+    buf = util.le32(buf, name_offs[k]);
     buf = buf.append(18);
     buf = buf.append(0);
     buf = elf_le16(buf, 1);
@@ -530,21 +513,21 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     k += 1;
   }
   buf = so_import_syms(buf, imp_offs, imp.data, imp.weak);
-  buf = elf_cat(buf, dynstr);
+  buf = util.append_all(buf, dynstr);
   buf = elf_pad_to(buf, hash_off);
-  buf = elf_le32(buf, 1);
-  buf = elf_le32(buf, nsym);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, nsym);
   if (nsym > 1) {
-    buf = elf_le32(buf, 1);
+    buf = util.le32(buf, 1);
   } else {
-    buf = elf_le32(buf, 0);
+    buf = util.le32(buf, 0);
   }
   let c = 0;
   while (c < nsym) {
     if (c == 0 || c + 1 >= nsym) {
-      buf = elf_le32(buf, 0);
+      buf = util.le32(buf, 0);
     } else {
-      buf = elf_le32(buf, c + 1);
+      buf = util.le32(buf, c + 1);
     }
     c += 1;
   }
@@ -555,7 +538,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le64(buf, vals_d[d]);
     d += 1;
   }
-  buf = elf_pad_to(elf_cat(buf, shstrtab), sh_off + 64);
+  buf = elf_pad_to(util.append_all(buf, shstrtab), sh_off + 64);
   let bss_off = (data_off + data.len()) as i64;
   buf = elf_shdr(buf, elf_so_shname(1), 1, 6, text_off as i64, text_off as i64, text.len() as i64, 0, 0, 16, 0);
   buf = elf_shdr(buf, elf_so_shname(2), 1, 3, data_off as i64, data_off as i64, data.len() as i64, 0, 0, 16, 0);
@@ -640,11 +623,11 @@ pub function elf_bti(on: boolean): ElfNote {
 
 // The Xen PVH note: a VMM enters the image at `entry` in 32-bit protected mode.
 pub function elf_pvh_note(entry: i32): ElfNote {
-  let b = elf_le32([], 4);
-  b = elf_le32(b, 4);
-  b = elf_le32(b, 18);
+  let b = util.le32([], 4);
+  b = util.le32(b, 4);
+  b = util.le32(b, 18);
   b = b.append(88).append(101).append(110).append(0);
-  return ElfNote { p_type: 4, align: 4, bytes: elf_le32(b, entry) };
+  return ElfNote { p_type: 4, align: 4, bytes: util.le32(b, entry) };
 }
 
 function elf_note_end(end: i32, note: ElfNote): i32 {
@@ -655,14 +638,14 @@ function elf_note_end(end: i32, note: ElfNote): i32 {
 }
 
 pub function elf_bti_note(): i32[] {
-  let b = elf_le32([], 4);
-  b = elf_le32(b, 16);
-  b = elf_le32(b, 5);
+  let b = util.le32([], 4);
+  b = util.le32(b, 16);
+  b = util.le32(b, 5);
   b = b.append(71).append(78).append(85).append(0);
-  b = elf_le32(b, -1073741824);
-  b = elf_le32(b, 4);
-  b = elf_le32(b, 1);
-  return elf_le32(b, 0);
+  b = util.le32(b, -1073741824);
+  b = util.le32(b, 4);
+  b = util.le32(b, 1);
+  return util.le32(b, 0);
 }
 
 pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
@@ -796,11 +779,11 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   }
   buf = elf_le16(buf, e_type);
   buf = elf_le16(buf, machine);
-  buf = elf_le32(buf, 1);
+  buf = util.le32(buf, 1);
   buf = elf_le64(buf, entry);
   buf = elf_le64(buf, elf_eh_size() as i64);
   buf = elf_le64(buf, zero64);
-  buf = elf_le32(buf, 0);
+  buf = util.le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
   buf = elf_le16(buf, nph);
@@ -808,8 +791,8 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
 
-  buf = elf_le32(buf, 1);
-  buf = elf_le32(buf, 5);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, 5);
   buf = elf_le64(buf, zero64);
   buf = elf_le64(buf, code_vaddr);
   buf = elf_le64(buf, code_vaddr);
@@ -827,8 +810,8 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
     buf = elf_phdr(buf, 1, flags, data_off, data_vaddr, readonly, mapped, page_align);
   }
 
-  buf = elf_le32(buf, 1);
-  buf = elf_le32(buf, 6);
+  buf = util.le32(buf, 1);
+  buf = util.le32(buf, 6);
   buf = elf_le64(buf, (data_off + readonly) as i64);
   buf = elf_le64(buf, data_vaddr + mutable as i64);
   buf = elf_le64(buf, data_vaddr + mutable as i64);
@@ -850,8 +833,8 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   if (protected_file > readonly) {
     protected_file = readonly;
   }
-  buf = elf_le32(buf, 1685382482);
-  buf = elf_le32(buf, 4);
+  buf = util.le32(buf, 1685382482);
+  buf = util.le32(buf, 4);
   buf = elf_le64(buf, data_off as i64);
   buf = elf_le64(buf, data_vaddr);
   buf = elf_le64(buf, data_vaddr);
@@ -861,8 +844,8 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
 
   if (unwind_ph) {
     if (has_unwind) {
-      buf = elf_le32(buf, 1685382480);
-      buf = elf_le32(buf, 4);
+      buf = util.le32(buf, 1685382480);
+      buf = util.le32(buf, 4);
       buf = elf_le64(buf, hdr_off as i64);
       buf = elf_le64(buf, base + hdr_off as i64);
       buf = elf_le64(buf, base + hdr_off as i64);
@@ -959,8 +942,8 @@ function elf_stack_ph(own buf: i32[], enabled: boolean): i32[] {
   if (!enabled) {
     return buf;
   }
-  buf = elf_le32(buf, 1685382481);
-  buf = elf_le32(buf, 6);
+  buf = util.le32(buf, 1685382481);
+  buf = util.le32(buf, 6);
   let z = 0;
   while (z < 5) {
     buf = elf_le64(buf, 0i64);
@@ -987,7 +970,7 @@ function elf_so_note(own buf: i32[], note: boolean, off: i32): i32[] {
   if (!note) {
     return buf;
   }
-  return elf_cat(elf_pad_to(buf, off), elf_bti_note());
+  return util.append_all(elf_pad_to(buf, off), elf_bti_note());
 }
 
 function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] {
@@ -995,8 +978,8 @@ function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] 
     return buf;
   }
   let len = note.bytes.len() as i64;
-  buf = elf_le32(buf, note.p_type);
-  buf = elf_le32(buf, 4);
+  buf = util.le32(buf, note.p_type);
+  buf = util.le32(buf, 4);
   buf = elf_le64(buf, off as i64);
   buf = elf_le64(buf, base + off as i64);
   buf = elf_le64(buf, base + off as i64);
@@ -1077,16 +1060,16 @@ pub function elf_arm64_linux_image(image: [u8], base: i64, size: i64): u8[] {
   // code0 is a branch to the entry, the flags give little-endian 4 KiB pages,
   // and the magic is "ARM\x64".
   let h: i32[] = [];
-  h = elf_le32(h, 0x14000000 | entry / 4);
-  h = elf_le32(h, 0);
+  h = util.le32(h, 0x14000000 | entry / 4);
+  h = util.le32(h, 0);
   h = elf_le64(h, 2097152i64);
   h = elf_le64(h, size);
   h = elf_le64(h, 2i64);
   h = elf_le64(h, 0i64);
   h = elf_le64(h, 0i64);
   h = elf_le64(h, 0i64);
-  h = elf_le32(h, 0x644d5241);
-  h = elf_le32(h, 0);
+  h = util.le32(h, 0x644d5241);
+  h = util.le32(h, 0);
   let out: u8[] = [];
   for x in h {
     out = out.append(x as u8);
@@ -1176,14 +1159,14 @@ function elf_patch_le32(b: i32[], off: i32, v: i32): i32[] {
 
 function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, off: i64, size: i64, link: i32, info: i32, align: i64, entsize: i64): i32[] {
   let out = b;
-  out = elf_le32(out, name_off);
-  out = elf_le32(out, sh_type);
+  out = util.le32(out, name_off);
+  out = util.le32(out, sh_type);
   out = elf_le64(out, flags);
   out = elf_le64(out, addr);
   out = elf_le64(out, off);
   out = elf_le64(out, size);
-  out = elf_le32(out, link);
-  out = elf_le32(out, info);
+  out = util.le32(out, link);
+  out = util.le32(out, info);
   out = elf_le64(out, align);
   out = elf_le64(out, entsize);
   return out;
@@ -1434,7 +1417,7 @@ function dw_enum_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
 }
 
 function dw_type_ref(e: DwEmit, key: string): DwEmit {
-  return DwEmit { die: elf_le32(e.die, 0), offs: e.offs, p_at: e.p_at.append(e.die.len()), p_key: e.p_key.append(key) };
+  return DwEmit { die: util.le32(e.die, 0), offs: e.offs, p_at: e.p_at.append(e.die.len()), p_key: e.p_key.append(key) };
 }
 
 function dw_has_members(t: DwTypes, k: i32): boolean {
@@ -1499,7 +1482,7 @@ function dw_vars(r: VarRanges): DwVars {
     while (j >= 0) {
       let expr = dw_unhex(r.locs[j]);
       loc = elf_le64(elf_le64(loc, r.lo[j] as i64), r.hi[j] as i64);
-      loc = elf_cat(elf_le16(loc, expr.len()), expr);
+      loc = util.append_all(elf_le16(loc, expr.len()), expr);
       j = next[j];
     }
     loc = elf_le64(elf_le64(loc, 0 as i64), 0 as i64);
@@ -1590,7 +1573,7 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
   die = elf_le64(die, text_vaddr);
   die = elf_le64(die, text_vaddr + text_len as i64);
   if (lines) {
-    die = elf_le32(die, 0);
+    die = util.le32(die, 0);
   }
   let tys = dw_types_new();
   let var_keys: string[] = [];
@@ -1622,8 +1605,8 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
             die = dw_uleb(die, 6);
           }
           die = elf_str_bytes(die, vars.names[v]);
-          die = elf_le32(die, emitted.offs[util.index_of_str(tys.keys, var_keys[v])]);
-          die = elf_le32(die, vars.loc_at[v]);
+          die = util.le32(die, emitted.offs[util.index_of_str(tys.keys, var_keys[v])]);
+          die = util.le32(die, vars.loc_at[v]);
         }
         v += 1;
       }
@@ -1634,11 +1617,11 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
   die = dw_uleb(die, 0);
   let body: i32[] = [];
   body = elf_le16(body, 4);
-  body = elf_le32(body, 0);
+  body = util.le32(body, 0);
   body = body.append(8);
-  body = elf_cat(body, die);
-  let out = elf_le32([], body.len());
-  return elf_cat(out, body);
+  body = util.append_all(body, die);
+  let out = util.le32([], body.len());
+  return util.append_all(out, body);
 }
 
 function dw_last_slash(path: string): i32 {
@@ -1757,11 +1740,11 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
 
   let body: i32[] = [];
   body = elf_le16(body, 4);
-  body = elf_le32(body, hdr.len());
-  body = elf_cat(body, hdr);
-  body = elf_cat(body, prog);
-  let out = elf_le32([], body.len());
-  return elf_cat(out, body);
+  body = util.le32(body, hdr.len());
+  body = util.append_all(body, hdr);
+  body = util.append_all(body, prog);
+  let out = util.le32([], body.len());
+  return util.append_all(out, body);
 }
 
 pub struct DwSections { abbrev: i32[], info: i32[], line: i32[], loc: i32[] }
@@ -1833,7 +1816,7 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
 
   let k = 0;
   while (k < nsym) {
-    out = elf_le32(out, name_offs[k]);
+    out = util.le32(out, name_offs[k]);
     out = out.append(18);
     out = out.append(0);
     out = elf_le16(out, 1);
@@ -1843,20 +1826,20 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   }
 
   let strtab_off = out.len();
-  out = elf_cat(out, strtab);
+  out = util.append_all(out, strtab);
   let shstrtab_off = out.len();
-  out = elf_cat(out, shstrtab);
+  out = util.append_all(out, shstrtab);
   let abbrev_off = out.len();
-  out = elf_cat(out, dw.abbrev);
+  out = util.append_all(out, dw.abbrev);
   let info_off = out.len();
-  out = elf_cat(out, dw.info);
+  out = util.append_all(out, dw.info);
   let dline_off = out.len();
-  out = elf_cat(out, dw.line);
+  out = util.append_all(out, dw.line);
   out = elf_align8_buf(out);
   let frame_off = out.len();
-  out = elf_cat(out, frame);
+  out = util.append_all(out, frame);
   let loc_off = out.len();
-  out = elf_cat(out, dw.loc);
+  out = util.append_all(out, dw.loc);
 
   out = elf_align8_buf(out);
   let sh_off = out.len();
@@ -1941,22 +1924,11 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
   return out;
 }
 
-function elf_inner_label(s: string): boolean {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'.' || s[i] == b'#') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
-}
-
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
   let i = 0;
   while (i < lab_names.len()) {
-    let keep = lab_names[i].len() > 0 && !elf_inner_label(lab_names[i]);
+    let keep = lab_names[i].len() > 0 && !util.is_inner_label(lab_names[i]);
     if (keep && sec_filter >= 0) {
       if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
         keep = false;

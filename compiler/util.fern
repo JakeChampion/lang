@@ -1595,6 +1595,25 @@ pub function append_all[T](into: T[], more: T[]): T[] {
   return into;
 }
 
+pub function le32(buf: i32[], v: i32): i32[] {
+  buf = buf.append(v & 255);
+  buf = buf.append(v >> 8 & 255);
+  buf = buf.append(v >> 16 & 255);
+  return buf.append(v >> 24 & 255);
+}
+
+// is_inner_label is true for an assembler label that stays out of the symbol table.
+pub function is_inner_label(s: string): boolean {
+  let i = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.' || s[i] == b'#') {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
 pub function to_u8(b: i32[]): u8[] {
   let o: u8[] = [];
   let i = 0;
