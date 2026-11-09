@@ -103,7 +103,7 @@ function asked_on(leg: Leg, peer: net.SocketAddr): Leg {
     while (reading) {
       match (net.recv_from(cur.sock, buf)) {
         Ok(d) => {
-          cur = Leg { ...cur, c: cur.c.receive_from(buf[0:d.0], [1u8], clock.instant()) };
+          cur = Leg { ...cur, c: cur.c.receive_from(buf[0:d.0], [1u8], 0, clock.instant()) };
         },
         Err(_) => {
           reading = false;

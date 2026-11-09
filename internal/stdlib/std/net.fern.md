@@ -1697,16 +1697,17 @@ pub function send(sock: Socket, data: u8[]): Result[i32, NetError] {
 // the SENDER_BYTES form recv_into wrote, in as few system calls as the host
 // offers: a Batch of one flight. Ok carries the messages the host took.
 pub function send_many(sock: Socket, to: [u8], datagrams: u8[][]): Result[i32, NetError] {
-  return batch().add(to, datagrams).send(sock).1;
+  return batch().add(to, datagrams, 0).send(sock).1;
 }
 
 // A Batch gathers datagrams for several peers so that one call sends them
-// all: one 19-byte address per message, each message's byte count and
-// segment size (0 for a single datagram), and every message's bytes in
-// order. On Linux and Android the call is one `sendmmsg`, and a message
-// whose segment size is set is one `UDP_SEGMENT` message the kernel splits.
-// A sent batch keeps the room of its arrays, so a batch that is sent once
-// per wake allocates nothing once it has reached its size.
+// all: one 19-byte address per message, each message's byte count, segment
+// size (0 for a single datagram) and TOS byte, and every message's bytes in
+// order. On Linux and Android the call is one `sendmmsg`: a message whose
+// segment size is set is one `UDP_SEGMENT` message the kernel splits, and a
+// message whose TOS byte is set carries it in its IP header. Elsewhere the
+// TOS byte is dropped. A sent batch keeps the room of its arrays, so a batch
+// that is sent once per wake allocates nothing once it has reached its size.
 pub struct Batch { addrs: u8[], lens: i32[], bytes: u8[], messages: i32 }
 
 pub function batch(): Batch {
@@ -1724,11 +1725,12 @@ const GSO_SEGMENTS: i32 = 64;
 
 const GSO_BYTES: i32 = 65535;
 
-// add puts a flight to the peer at `to` into the batch. A run of datagrams
-// of one size rides one message with that segment size, a shorter datagram
-// closes the run as its last segment, and a lone datagram is a message of
-// its own.
-pub function (b: Batch) add(to: [u8], datagrams: u8[][]): Batch {
+// add puts a flight to the peer at `to` into the batch, every datagram
+// with the TOS byte `tos`, whose low two bits are the ECN mark. A run of
+// datagrams of one size rides one message with that segment size, a
+// shorter datagram closes the run as its last segment, and a lone datagram
+// is a message of its own.
+pub function (b: Batch) add(to: [u8], datagrams: u8[][], tos: i32): Batch {
   let out = b;
   let i = 0;
   while (i < datagrams.len()) {
@@ -1752,7 +1754,7 @@ pub function (b: Batch) add(to: [u8], datagrams: u8[][]): Batch {
     if (j - i > 1) {
       segment = size;
     }
-    out = Batch { addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), bytes: bytes, messages: out.messages + 1 };
+    out = Batch { addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment).append(tos), bytes: bytes, messages: out.messages + 1 };
     i = j;
   }
   return out;
@@ -1778,12 +1780,12 @@ function __batch_sent(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Resul
 }
 
 function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
-  let n = lens.len() / 2;
+  let n = lens.len() / 3;
   let off = 0;
   let m = 0;
   while (m < n) {
-    let size = lens[2 * m];
-    let seg = lens[2 * m + 1];
+    let size = lens[3 * m];
+    let seg = lens[3 * m + 1];
     let to = sender(addrs[19 * m:19 * m + 19]);
     let step = size;
     if (seg > 0 && seg < size) {

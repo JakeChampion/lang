@@ -1430,8 +1430,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// udp_sendmmsg(sock, addrs, data, lens): sendmmsg. addrs holds one 19-byte
 	// address per message as udp_recvfrom writes it, or nothing for a
 	// connected socket; data holds every message's bytes in order; lens holds
-	// each message's byte count and its UDP_SEGMENT size, 0 for one datagram.
-	// Messages sent, or -errno.
+	// three words per message: its byte count, its UDP_SEGMENT size (0 for one
+	// datagram) and its TOS byte (0 for none). Messages sent, or -errno.
 	c.info.FuncSigs["udp_sendmmsg"] = &ast.FuncType{
 		Params: []ast.Type{sock, u8s, u8s, ast.ArrayType{Elem: ast.NumberType{}}},
 		Result: ast.NumberType{},
