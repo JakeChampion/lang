@@ -78,7 +78,10 @@ The [completion record](full-baseline-procfs-control.json) retains the timeout a
 The full candidate control remains active at this archive revision.
 The different concurrent workloads prevent a paired full-corpus time comparison.
 The detached full-corpus monitor retains the original deadlines after the parent-session loss.
-The test corpus, exclusions, and 33-minute budget stay unchanged.
+
+The direct full-corpus controls use a 33-minute diagnostic limit.
+The test corpus, exclusions, and CI package budget stay unchanged.
+Exact-head CI must still validate the package budget with its other work.
 Later records must state each completed outcome explicitly.
 
 ## Identities and reproduction
