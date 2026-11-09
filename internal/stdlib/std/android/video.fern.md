@@ -214,9 +214,7 @@ function c_string(value: string): usize {
   let bytes = value.as_bytes();
   unsafe {
     let data = __alloc(bytes.len() + 1);
-    for i in 0..bytes.len() {
-      __store_u8(data + i as usize, bytes[i] as i32);
-    }
+    __memcpy(data, __bytes_data(bytes), bytes.len());
     __store_u8(data + bytes.len() as usize, 0);
     return data;
   }
@@ -252,12 +250,8 @@ function set_buffer(format: usize, name: string, bytes: [u8]): void {
   }
   let key = c_string(name);
   unsafe {
-    let data = __alloc(bytes.len());
-    for i in 0..bytes.len() {
-      __store_u8(data + i as usize, bytes[i] as i32);
-    }
-    c_set_buffer(format, key, data, bytes.len() as usize);
-    __free(data, bytes.len());
+    // AMediaFormat_setBuffer copies the bytes.
+    c_set_buffer(format, key, __bytes_data(bytes), bytes.len() as usize);
   }
   free_string(key, name);
 }
@@ -441,9 +435,7 @@ function submit_handle(handle: usize, max_packet_bytes: i32, slot: InputBuffer, 
     return Err(frame.Header);
   }
   unsafe {
-    for i in 0..bytes.len() {
-      __store_u8(slot.data + i as usize, bytes[i] as i32);
-    }
+    __memcpy(slot.data, __bytes_data(bytes), bytes.len());
   }
   if (c_queue(handle, slot.index as usize, 0 as usize, bytes.len() as usize, presentation_time_us as u64, flags) != 0) {
     return Err(frame.Platform);

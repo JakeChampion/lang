@@ -642,3 +642,63 @@ function main(): i32 {
 func TestSharedCImportsCLayout(t *testing.T) {
 	runImportLoader(t, clayoutSrc, clayoutLib)
 }
+
+const bytesDataLib = `#include <stddef.h>
+#include <stdint.h>
+int64_t sum_bytes(const uint8_t* p, size_t n) {
+  int64_t t = 0;
+  for (size_t i = 0; i < n; i++) t += p[i];
+  return t;
+}
+`
+
+const bytesDataSrc = `@import("libmix.so", "sum_bytes")
+function c_sum_bytes(p: usize, n: usize): i64;
+
+function sum(b: [u8]): i64 {
+  unsafe {
+    return c_sum_bytes(__bytes_data(b), b.len() as usize);
+  }
+}
+
+// Each check is a digit of the result: an owned array, a slice of it, the
+// bytes of a string, an empty array, and a large array.
+pub function check(): i32 {
+  let xs: u8[] = [];
+  for i in 0..10 {
+    xs = xs.append((i + 1) as u8);
+  }
+  let big: u8[] = [];
+  for i in 0..100000 {
+    big = big.append((i % 251) as u8);
+  }
+  let n = 0;
+  if (sum(xs) == 55i64) {
+    n += 1;
+  }
+  if (sum(xs[2:5]) == 12i64) {
+    n += 10;
+  }
+  if (sum("hello, world".as_bytes()) == 1160i64) {
+    n += 100;
+  }
+  let none: u8[] = [];
+  if (sum(none) == 0i64) {
+    n += 1000;
+  }
+  if (sum(big) == 12492401i64) {
+    n += 10000;
+  }
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+// A C function reads the bytes of each form of a byte view where
+// __bytes_data points, with no copy.
+func TestSharedCImportsBytesData(t *testing.T) {
+	runImportLoader(t, bytesDataSrc, bytesDataLib)
+}

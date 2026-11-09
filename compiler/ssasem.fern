@@ -369,7 +369,7 @@ pub function fresh_result_builtin(name: string): boolean {
 // A builtin that reads or writes its borrowed arguments in place and keeps no
 // reference to them, so the call adds no holder.
 pub function holds_no_argument(name: string): boolean {
-  return name == "__arr_set_len" || name == "__str_bytes" || name == "__ct_secret" || name == "__ct_public" || name == "string_from_bytes_unchecked"
+  return name == "__arr_set_len" || name == "__str_bytes" || name == "__bytes_data" || name == "__ct_secret" || name == "__ct_public" || name == "string_from_bytes_unchecked"
     || name == "string_from_bytes_range_unchecked";
 }
 

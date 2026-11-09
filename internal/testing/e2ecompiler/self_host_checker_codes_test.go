@@ -440,6 +440,8 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"clayout-generic", "trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) struct S[T] { a: T } function main(): i32 { return 0; }", []string{"E021"}},
 		{"clayout-enum", "trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) enum S { A(i32) } function main(): i32 { return 0; }", []string{"E021"}},
 		{"clayout-load-outside-block", "trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) struct S { a: i32 } function main(): i32 { return S.c_load_a(0 as usize); }", []string{"E095"}},
+		{"bytes-data-outside-block", "function main(): i32 { let b: u8[] = [1u8]; let p: usize = __bytes_data(b); return 0; }", []string{"E095"}},
+		{"bytes-data-inside-block", "function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }", nil},
 		{"stdlib-only-builtin-call", "function main(): i32 { return random_i32(); }", []string{"E097"}},
 		{"stdlib-only-builtin-value", "function main(): i32 { let f: (i32) => u8[] = random_bytes; return f(2).len(); }", []string{"E097"}},
 		{"stdlib-only-builtin-shadowed-by-local", "function main(): i32 { let random_i32: () => i32 = (): i32 => 3; return random_i32(); }", nil},
@@ -2938,6 +2940,8 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"bytes-data-outside-block", `function main(): i32 { let b: u8[] = [1u8]; let p: usize = __bytes_data(b); return 0; }`},
+		{"bytes-data-inside-block", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }`},
 		{"clayout-ok", `trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) struct M { a: u8, b: i32, d: f64, e: u32, f: usize, g: f32, h: i64, k: u64 } function main(): i32 { let p: usize = M.c_size(); unsafe { let m: M = M.c_load(p); m.c_store(p); M.c_store_b(p, M.c_load_b(p)); } return 0; }`},
 		{"clayout-string-field", `trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) struct S { a: string } function main(): i32 { return 0; }`},
 		{"clayout-generic", `trait CLayout { function c_size(): usize; unsafe function c_load(p: usize): Self; unsafe function c_store(self: Self, p: usize): void; } @derive(CLayout) struct S[T] { a: T } function main(): i32 { return 0; }`},

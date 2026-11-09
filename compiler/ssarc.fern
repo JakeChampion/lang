@@ -6370,6 +6370,9 @@ function word_bytes(name: string): i32 {
 }
 
 function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
+  if (ins.str == "__bytes_data") {
+    return Lowered { found: true, r: emit(r, ssabytes.read_data(ins.args[0])) };
+  }
   if (ins.str == ssabytes.word_name(4) || ins.str == ssabytes.word_name(8)) {
     return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], word_bytes(ins.str))) };
   }

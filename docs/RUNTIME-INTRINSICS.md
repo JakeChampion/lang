@@ -396,14 +396,18 @@ symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
 `x as usize` on a string or an array is an identity cast: it answers the
 value's own pointer and nothing more. What that pointer points at is the
 representation's business (#8799): an array is a box whose word 0 is the
-length, with one word per element after it, even for `u8[]`. So code that
-does arithmetic on the cast and reads or writes through the result is
-layout code, tied to that representation.
+length, with the elements after it. A `u8[]` holds one byte for each element,
+and the other arrays hold one word for each element. So code that does
+arithmetic on the cast and reads or writes through the result is layout code,
+tied to that representation.
 
 The address of a string's bytes has its own spelling,
 `__str_bytes(s, scratch)`; `TestSelfHostBytesFloorX86_64`,
-`TestSelfHostBytesFloorArm64` and `TestSelfHostStrBytesEveryTarget` gate it. A `u8[]` has no
-byte address, because the runtime does not pack it.
+`TestSelfHostBytesFloorArm64` and `TestSelfHostStrBytesEveryTarget` gate it.
+The address of the bytes of a byte view has the spelling `__bytes_data(b)`.
+It reads each form of a `[u8]`: an owned array, a slice, and the bytes of a
+string. `TestSelfHostBytesDataEveryTarget` and `TestSharedCImportsBytesData`
+gate it.
 
 ## Worked example — `str_concat`
 
