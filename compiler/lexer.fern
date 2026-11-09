@@ -1421,18 +1421,14 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     }
     let mp = match_multipunct(l.src, l.i, l.n);
     if (mp.len() > 0) {
-      let i = 0;
-      while (i < mp.len()) {
-        l = l.advance();
-        i += 1;
-      }
+      l = l.skip(mp.len());
       out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
       after_dot = false;
       continue;
     }
     let text = single_punct(b);
     if (text.len() > 0) {
-      l = l.advance();
+      l = l.skip(1);
       out = out.append(TokPunct { text: text, line: start_line, col: start_col });
       after_dot = b == 46;
       continue;
