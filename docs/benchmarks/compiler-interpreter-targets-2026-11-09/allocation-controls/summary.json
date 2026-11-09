@@ -1,0 +1,16 @@
+{
+  "base": {
+    "allocs": 29232928,
+    "frees": 29232928,
+    "live_bytes": 0,
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+  },
+  "candidate": {
+    "allocs": 28676955,
+    "frees": 28676955,
+    "live_bytes": 0,
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+  },
+  "saved_allocations": 555973,
+  "reduction_percent": 1.9018724364524826
+}

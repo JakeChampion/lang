@@ -1,0 +1,24 @@
+{
+  "name": "full-normal",
+  "source_revision": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "args": [
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+    "-stdlib",
+    "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+    "-interp",
+    "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "compiler_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+  "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+  "fern_env": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "started": "2026-11-09T21:45:58.765364+00:00",
+  "diagnostic_subset": false,
+  "budget_seconds": 1980,
+  "note": "Baseline diagnosis, not an optimization comparison. Full input remains the validation control. A concurrent diagnostic interpreter may be active."
+}

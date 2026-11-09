@@ -63,9 +63,20 @@ The tool lost that parent session before the last two Go suites finished.
 The [session record](session-loss.json) retains this interruption without an overall suite verdict.
 Both normal binaries also pass those two generic fixtures through direct CLI commands in [the generic controls](generic-controls.json).
 
-A detached retry of all five Go suites remains in progress at this archive revision.
-Full-corpus controls and separate allocation controls also remain in progress.
+The detached retry completes all five Go suites with exit zero in 371.039 seconds.
+It reports 325 passing test and subtest results with zero skips.
+Go vet and the CI self-tests also pass.
+
+Separate allocation-counter builds reduce allocation events from 29,232,928 to 28,676,955 on the same subset.
+The reduction is 555,973 events, or 1.90%.
+Both runs free every allocation, report zero live bytes, and produce identical TAP output.
+The [allocation controls](allocation-controls/count-controls.json) retain both build identities and complete commands.
 The original allocation collector stopped without a build outcome, and its incomplete records remain in this archive.
+
+The unchanged normal baseline reaches the full-corpus deadline without completion.
+The [completion record](full-baseline-procfs-control.json) retains the timeout and exit status after the parent-session loss.
+The full candidate control remains active at this archive revision.
+The different concurrent workloads prevent a paired full-corpus time comparison.
 The detached full-corpus monitor retains the original deadlines after the parent-session loss.
 The test corpus, exclusions, and 33-minute budget stay unchanged.
 Later records must state each completed outcome explicitly.
