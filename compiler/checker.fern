@@ -19150,7 +19150,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
+          return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           if (ow_array_update_owned(c, mfa, ctx)) {
@@ -20149,12 +20149,43 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   return false;
 }
 
+// Direct own calls accept actual callbacks that cannot lend a capture.
+// Other borrowed parameters keep their conservative result contract.
+function ow_callback_args_owned(c: ast.ExprCall, lu: LastUses): boolean {
+  let row = lu.lenders.names.find(ow_ident_name(c.callee));
+  if (row < 0) {
+    return false;
+  }
+  let params = lu.lenders.rows[row];
+  let found = false;
+  for i in 0..c.args.len() {
+    if (!lu_lends(params, i)) {
+      continue;
+    }
+    if (i >= params.callbacks.len() || !params.callbacks[i]) {
+      return false;
+    }
+    if let ast.ExprLambda(lm) = c.args[i] {
+      if (ow_lambda_result_borrows(lm, lu.ofuncs, astwalk.collect_lambda_idents(lm, []), [], [], lu.borrows, lu.builtins, lu.lenders)) {
+        return false;
+      }
+      found = true;
+    } else {
+      return false;
+    }
+  }
+  return found;
+}
+
 function lu_lends(row: OwnLend, i: i32): boolean {
   return i < row.lend.len() && row.lend[i];
 }
 
 function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
   match (e) {
+    ast.ExprLambda(lm) => {
+      return ow_lambda_result_borrows(lm, fx.ofuncs, astwalk.collect_lambda_idents(lm, []), [], [], fx.borrows, fx.builtins, fx.lenders);
+    },
     ast.ExprNumber(_) => {
       return false;
     },
@@ -23849,9 +23880,9 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // The parameters of each declared function that can lend a handle to its
 // result: a borrowed pointer type that can hold a handle. A function the
 // module does not declare has no row, and every argument of it can lend.
-struct OwnLend { name: string, lend: boolean[] }
+struct OwnLend { name: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], constructors: util.NameIndex }
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], constructors: util.NameIndex, decls: OwnDecls }
 
 function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLenders {
   let rows: OwnLend[] = [];
@@ -23860,18 +23891,22 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0) {
       let lend: boolean[] = [!fn.receiver_own && !ow_holds_no_handle(fn.receiver_type, dx)];
+      let callbacks: boolean[] = [false];
       for param in fn.params {
         lend = lend.append((!param.own || param.type_name == "fn") && ow_param_can_lend(fn, param, ofuncs, dx));
+        callbacks = callbacks.append(param.type_name == "fn");
       }
-      methods = methods.append(OwnLend { name: fn.name, lend: lend });
+      methods = methods.append(OwnLend { name: fn.name, lend: lend, callbacks: callbacks });
       continue;
     }
     let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
     let lend: boolean[] = [];
+    let callbacks: boolean[] = [];
     for i in 0..fn.params.len() {
       lend = lend.append((i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") && ow_param_can_lend(fn, fn.params[i], ofuncs, dx));
+      callbacks = callbacks.append(fn.params[i].type_name == "fn");
     }
-    rows = rows.append(OwnLend { name: fn.name, lend: lend });
+    rows = rows.append(OwnLend { name: fn.name, lend: lend, callbacks: callbacks });
     names = names.append(fn.name);
   }
   let constructors: string[] = [];
@@ -23889,7 +23924,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       }
     }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, constructors: util.name_index(constructors) };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, constructors: util.name_index(constructors), decls: dx };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -23979,26 +24014,26 @@ function ow_value_if_origin(origin: string): boolean {
   return origin == parser.ORIGIN_IF_EXPR || origin == parser.ORIGIN_IF_DEAD_THEN || origin == parser.ORIGIN_IF_DEAD_ELSE || origin == parser.ORIGIN_IF_DEAD_BOTH;
 }
 
-function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
   if (lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 1) {
     return true;
   }
-  return ow_value_arm_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins);
+  return ow_value_arm_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
 }
 
-function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
   if (arm.len() != 1) {
     return true;
   }
   match (arm[0]) {
     ast.StmtReturn(r) => {
-      return ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     },
     ast.StmtIf(f) => {
       if (!ow_value_if_origin(f.origin) || f.sugar.origin.len() > 0) {
         return true;
       }
-      return ow_value_arm_borrows(f.then_body, ofuncs, borrowed, locals, values, borrows, builtins) || ow_value_arm_borrows(f.else_body, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_value_arm_borrows(f.then_body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only) || ow_value_arm_borrows(f.else_body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     },
     _ => {
       return true;
@@ -24006,7 +24041,7 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
   }
 }
 
-function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
   match (e) {
     ast.ExprBytes(_) => {
       return false;
@@ -24030,7 +24065,7 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
       return false;
     },
     ast.ExprLambda(lm) => {
-      return ow_lambda_result_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_lambda_result_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins, lenders);
     },
     ast.ExprStructLit(_) => {
       return false;
@@ -24054,7 +24089,7 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
       return util.has_str(borrowed, id.name) || util.has_str(locals, id.name);
     },
     ast.ExprFieldAccess(fa) => {
-      return ow_expr_borrows(fa.obj, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_expr_borrows(fa.obj, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     },
     ast.ExprIndex(ix) => {
       if let ast.ExprIdent(aid) = ix.array {
@@ -24062,41 +24097,82 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
           return false;
         }
       }
-      return ow_expr_borrows(ix.array, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_expr_borrows(ix.array, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     },
     ast.ExprSlice(sl) => {
-      return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     },
     ast.ExprCall(c) => {
-      return ow_call_borrows(c, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_call_borrows(c, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     }
   }
 }
 
-function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
   if let Some(tail) = ow_unsafe_value(c) {
-    return ow_expr_borrows(tail, ofuncs, borrowed, locals, values, borrows, builtins);
+    return ow_expr_borrows(tail, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
   }
   if let ast.ExprLambda(lm) = c.callee {
     if (ow_value_block_call(c, lm)) {
-      return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
+      return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
     }
   }
   if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
     return false;
   }
-  if (ow_expr_borrows(c.callee, ofuncs, borrowed, locals, values, borrows, builtins)) {
+  if (ow_expr_borrows(c.callee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
     return true;
   }
-  for a in c.args {
-    if (ow_expr_borrows(a, ofuncs, borrowed, locals, values, borrows, builtins)) {
+  let row = lenders.names.find(ow_ident_name(c.callee));
+  for i in 0..c.args.len() {
+    if ((!handles_only || row < 0 || lu_lends(lenders.rows[row], i)) && ow_expr_borrows(c.args[i], ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
       return true;
     }
   }
   return false;
 }
 
-function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+// A fresh aggregate can still retain a captured value or its local alias.
+function ow_lambda_retains_capture(lm: ast.ExprLambda, captured: string[], locals: string[]): boolean {
+  function retained(e: ast.Expr, own found: boolean): boolean {
+    if (found) {
+      return true;
+    }
+    let aggregate = false;
+    match (e) {
+      ast.ExprStructLit(_) => {
+        aggregate = true;
+      },
+      ast.ExprArray(_) => {
+        aggregate = true;
+      },
+      ast.ExprTuple(_) => {
+        aggregate = true;
+      },
+      ast.ExprMapLit(_) => {
+        aggregate = true;
+      },
+      _ => {}
+    }
+    if (aggregate) {
+      for name in astwalk.collect_idents_expr(e, []) {
+        if (util.has_str(captured, name) || util.has_str(locals, name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  for st in lm.body {
+    if (astwalk.fold_stmt(st, false, retained)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders): boolean {
+  let handles_only = lm.ret_type.len() > 0 && !ow_holds_no_handle(lm.ret_type, lenders.decls);
   let captured: string[] = [];
   for name in util.append_all(borrowed, locals) {
     let shadowed = false;
@@ -24110,10 +24186,13 @@ function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed
     }
   }
   let spine = ow_spine_stmts(lm.body);
-  let bound = ow_borrowed_locals(spine, ofuncs, captured, values, borrows, builtins);
+  let bound = ow_borrowed_locals(spine, ofuncs, captured, values, borrows, builtins, lenders, handles_only);
+  if (ow_lambda_retains_capture(lm, captured, bound)) {
+    return true;
+  }
   for st in spine {
     if let ast.StmtReturn(r) = st {
-      if (ow_expr_borrows(r.value, ofuncs, captured, bound, values, borrows, builtins)) {
+      if (ow_expr_borrows(r.value, ofuncs, captured, bound, values, borrows, builtins, lenders, handles_only)) {
         return true;
       }
     }
@@ -24121,7 +24200,7 @@ function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed
   return false;
 }
 
-function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
+function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): string[] {
   let locals: string[] = [];
   let changed = true;
   while (changed) {
@@ -24147,7 +24226,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
-      if (ow_expr_borrows(init, ofuncs, borrowed, locals, values, borrows, builtins)) {
+      if (ow_expr_borrows(init, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
         locals = locals.append(name);
         changed = true;
       }
@@ -24156,17 +24235,18 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
   return locals;
 }
 
-function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders): boolean {
+  let handles_only = fn.ret_type.len() > 0 && !ow_holds_no_handle(fn.ret_type, lenders.decls);
   let borrowed = ow_borrowed_params(fn, mod, ofuncs);
   if (borrowed.len() == 0) {
     return false;
   }
   let values = ow_value_elem_params(fn, borrowed, ofuncs);
   let spine = ow_spine_stmts(fn.body);
-  let locals = ow_borrowed_locals(spine, ofuncs, borrowed, values, borrows, builtins);
+  let locals = ow_borrowed_locals(spine, ofuncs, borrowed, values, borrows, builtins, lenders, handles_only);
   for st in spine {
     if let ast.StmtReturn(r) = st {
-      if (ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins)) {
+      if (ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
         return true;
       }
     }
@@ -24219,7 +24299,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
   return out;
 }
 
-function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): util.NameIndex {
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, lenders: OwnLenders): util.NameIndex {
   let none: string[] = [];
   let borrows = util.name_index(none);
   let pending: parser.FuncDecl[] = [];
@@ -24247,7 +24327,7 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.
     let i = 0;
     while (i < pending.len()) {
       let fn = pending[i];
-      if ((first || ow_calls_any(calls[i], marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+      if ((first || ow_calls_any(calls[i], marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins, lenders)) {
         borrows = borrows.added(fn.name);
         now_marked = now_marked.append(fn.name);
       } else {
@@ -24434,7 +24514,9 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let snames = util.name_index(ow_struct_names(mod.structs));
   let decls = ow_decls(mod, snames);
   let result_mod = ow_result_module(mod, env, decls);
-  let borrows = ow_result_borrows(result_mod, collect_own_funcs(result_mod), builtins);
+  let result_funcs = collect_own_funcs(result_mod);
+  let result_lenders = ow_lenders(result_mod, result_funcs, decls);
+  let borrows = ow_result_borrows(result_mod, result_funcs, builtins, result_lenders);
   let fresh = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let noret = lu_no_return_funcs(mod);
