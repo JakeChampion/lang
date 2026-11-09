@@ -1,0 +1,29 @@
+{
+  ".github/perf-baseline.txt": {
+    "aarch64/array_with.text": 1216,
+    "aarch64/deflate_decode.ir": 34895281,
+    "aarch64/record_update.text": 1216,
+    "x86_64/array_with.text": 981,
+    "x86_64/deflate_decode.ir": 32877120,
+    "x86_64/record_update.text": 981,
+    "x86_64/string_count_byte.text": 1271,
+    "x86_64/string_count_byte.ir": 68053368
+  },
+  ".github/perf-baseline-selfhost.txt": {
+    "selfhost/x86-64-linux/array_with.emit": 981,
+    "selfhost/arm64-linux/array_with.emit": 1216,
+    "selfhost/wasm32-wasi/array_with.emit": 487,
+    "selfhost/wasm32-wasi/deflate_decode.emit": 20140,
+    "selfhost/x86-64-linux/record_update.emit": 981,
+    "selfhost/arm64-linux/record_update.emit": 1216,
+    "selfhost/wasm32-wasi/record_update.emit": 487,
+    "selfhost/x86-64-linux/string_count_byte.emit": 1271
+  },
+  ".github/profile-costs-baseline.txt": {
+    "profile/x86-64-linux/deflate_decode.diagnostic.emit": 12887
+  },
+  ".github/alloc-baseline.txt": {
+    "x86_64/checker.allocs": 40405424,
+    "x86_64/checker.frees": 40405424
+  }
+}

@@ -81,6 +81,26 @@ The reductions are 0.0317% and 0.3003%, respectively.
 Warm guest instructions decrease by 11,966,410, or 0.0406%.
 Both comparisons retain ownership certification and produce identical output.
 
+The [updated liveness comparison](benchmarks/compiler-liveness-main-2026-11-09/README.md) checks the same change after the merge of main `d04e79179f`.
+The candidate code source is `2d7d444e94`.
+It removes 16,652 cold allocation events, 125,074,176 cold guest instructions, and 11,855,020 warm guest instructions.
+The reductions are 0.0317%, 0.3004%, and 0.0402%, respectively.
+
+Allocation runs emit assembly, and instruction runs emit native executables.
+The output hashes match within each comparison.
+The allocation runs free all allocations and report zero live bytes.
+
+These work counts do not establish a wall-time speedup or an external rank.
+The earlier archives retain their original source identities.
+Do not add reductions from different snapshots.
+
+A [fresh warm profile](benchmarks/compiler-main-profile-2026-11-09/README.md) uses compiler source `6bca1d48f3` and the same fixed input `d04e79179f`.
+It contains 1,095 CPU samples and no dropped samples.
+Semantic substitution accounts for 46.67% of inclusive samples.
+Its separate cache probe confirms 2,391 hits and zero misses.
+The profile and metadata audit identify possible reuse of checked graph facts in semantic liveness.
+No further optimization follows from this diagnostic profile alone.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.

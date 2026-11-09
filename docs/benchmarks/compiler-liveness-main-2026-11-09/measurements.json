@@ -1,0 +1,334 @@
+{
+  "baseline_source": "d04e79179fda465d5897d25a00f9a2f34c4694ab",
+  "candidate_source": "2d7d444e94032710fad63ccb6d290d02475c72d7",
+  "fixed_input_source": "d04e79179fda465d5897d25a00f9a2f34c4694ab",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "compiler_binaries": {
+    "base-native": {
+      "sha256": "eb5f672880abf9e65aad61edbab650424cb0e697d75b2a530987e9708583a62d"
+    },
+    "base-count": {
+      "sha256": "e04381d8e2019d7c7fc4ee272d39b0d9d8f4ecf18122f8d67a62633ae1ec5cf7"
+    },
+    "candidate-native": {
+      "sha256": "9dc12ddc6c59eb0ff132362cfb33e23a024b15ae9c1fc63880b947e968b726b7"
+    },
+    "candidate-count": {
+      "sha256": "942018bc8809557778a9674328b10e6f163caa90547b03a722111e53120d3603"
+    }
+  },
+  "runs": [
+    {
+      "name": "build-base-native",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/base-native",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-liveness-main-base-20261109",
+      "started": "2026-11-09T16:37:47.921285+00:00",
+      "finished": "2026-11-09T16:39:00.366000+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-base-count",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/base-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-liveness-main-base-20261109",
+      "started": "2026-11-09T16:39:00.402790+00:00",
+      "finished": "2026-11-09T16:39:57.122598+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-candidate-native",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/candidate-native",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:39:57.169803+00:00",
+      "finished": "2026-11-09T16:40:49.479159+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-candidate-count",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:40:49.500693+00:00",
+      "finished": "2026-11-09T16:41:47.170985+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-alloc",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/base-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker.s",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:41:47.188817+00:00",
+      "finished": "2026-11-09T16:41:58.857990+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-alloc",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker.s",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:41:58.902177+00:00",
+      "finished": "2026-11-09T16:42:14.126846+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-prime",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:42:14.166646+00:00",
+      "finished": "2026-11-09T16:42:28.995525+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-cache-probe",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:42:29.000467+00:00",
+      "finished": "2026-11-09T16:42:37.537058+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-prime",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:42:37.542657+00:00",
+      "finished": "2026-11-09T16:42:48.243741+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-cache-probe",
+      "args": [
+        "/workspace/lang/build/liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:42:48.248077+00:00",
+      "finished": "2026-11-09T16:42:56.710749+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "cold-base-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:42:56.716354+00:00",
+      "finished": "2026-11-09T16:50:47.013490+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "cold-candidate-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:50:47.034603+00:00",
+      "finished": "2026-11-09T16:59:05.807656+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "warm-candidate-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T16:59:05.828074+00:00",
+      "finished": "2026-11-09T17:05:49.126681+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "warm-base-callgrind",
+      "args": [
+        "/workspace/scratch/valgrind/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--trace-children=no",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--callgrind-out-file=/dev/null",
+        "/workspace/lang/build/liveness-main-20261109/base-native",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/liveness-main-20261109/checker",
+        "/workspace/lang-liveness-main-base-20261109/compiler/checker.fern",
+        "/workspace/lang-liveness-main-base-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang",
+      "started": "2026-11-09T17:05:49.148031+00:00",
+      "finished": "2026-11-09T17:13:33.267157+00:00",
+      "exit_code": 0
+    }
+  ],
+  "allocations": {
+    "base": {
+      "allocs": 52466130,
+      "frees": 52466130,
+      "live_bytes": 0,
+      "assembly_sha256": "10f431907ca2cd87d78c8995955c247d4577b618019089592cc44b8a3a0e3742"
+    },
+    "candidate": {
+      "allocs": 52449478,
+      "frees": 52449478,
+      "live_bytes": 0,
+      "assembly_sha256": "10f431907ca2cd87d78c8995955c247d4577b618019089592cc44b8a3a0e3742"
+    }
+  },
+  "instructions": {
+    "cold": {
+      "base": {
+        "instructions": 41633295021,
+        "native_sha256": "2b30d314e9d7d186c24c6d69367d0a8688c8e56dff945af0e8e0942190364e44"
+      },
+      "candidate": {
+        "instructions": 41508220845,
+        "native_sha256": "2b30d314e9d7d186c24c6d69367d0a8688c8e56dff945af0e8e0942190364e44"
+      }
+    },
+    "warm": {
+      "candidate": {
+        "instructions": 29458590386,
+        "native_sha256": "2b30d314e9d7d186c24c6d69367d0a8688c8e56dff945af0e8e0942190364e44"
+      },
+      "base": {
+        "instructions": 29470445406,
+        "native_sha256": "2b30d314e9d7d186c24c6d69367d0a8688c8e56dff945af0e8e0942190364e44"
+      }
+    }
+  },
+  "cache_probes": {
+    "base": {
+      "hits": 2391,
+      "misses": 0
+    },
+    "candidate": {
+      "hits": 2391,
+      "misses": 0
+    }
+  },
+  "claim": "Work counts on one fixed checker snapshot. No wall-time or external rank claim.",
+  "complete": true
+}
