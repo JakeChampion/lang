@@ -17,6 +17,16 @@ function f(h: Handle): i32 {
   return read_owned(borrowed(h));
 }
 
+struct Box[T] { value: T }
+
+function (box: Box[T]) borrowed(): T {
+  return box.value;
+}
+
+function through_method(box: Box[Handle]): i32 {
+  return read_owned(box.borrowed());
+}
+
 function main(): i32 {
   return 0;
 }

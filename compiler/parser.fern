@@ -14845,6 +14845,10 @@ function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, env: MEnv, gstr
   match (init) {
     ast.ExprStructLit(sl) => {
       if (gstruct_index(gstructs, sl.type_name) < 0) {
+        let t = mono_infer(ninit, env, funcs);
+        if (ms_concrete_ty(t, gstructs, funcs)) {
+          return t;
+        }
         return "";
       }
       match (ninit) {

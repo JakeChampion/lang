@@ -16,6 +16,9 @@ function f(h: Handle): i32 { return read_owned(shared(h)); }`},
 function f(h: Handle): i32 { let value = shared(h); return read_owned(value); }`},
 		{"generic direct", `function shared[T](value: T): T { return unsafe { share_unchecked(value) }; }
 function f(h: Handle): i32 { return read_owned(shared(h)); }`},
+		{"generic method", `struct Box[T] { value: T }
+function (box: Box[T]) shared(): T { return unsafe { share_unchecked(box.value) }; }
+function f(box: Box[Handle]): i32 { return read_owned(box.shared()); }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) { wantOK(t, tc.name, sharedHandlePrelude+tc.source) })
 	}

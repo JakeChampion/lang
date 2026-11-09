@@ -24191,7 +24191,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
     if (fn.receiver_name.len() == 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
+    if (!ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs) && !util.has_str(func_scope_tparams(fn), fn.ret_type)) {
       continue;
     }
     let key = ow_receiver_ns(fn.receiver_type) + "." + fn.name;
