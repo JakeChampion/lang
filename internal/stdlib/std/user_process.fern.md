@@ -33,6 +33,10 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 `write` gives at most `WRITE_LIMIT` bytes for each call, which the Linux ABI allows. A program then writes the rest in a second call.
 
+## Scheduling
+
+An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, because the exception entry masks it. `__user_run` then gives back the DAIF of the kernel, and the top half takes the IRQ at EL1 before `run` returns. A scheduler thus calls `run` of the next process at each `Interrupted`. The top half touches no RC value, so the kernel heap is never preempted.
+
 ## Module assembly
 
 ```fern

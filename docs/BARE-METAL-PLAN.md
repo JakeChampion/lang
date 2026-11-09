@@ -897,7 +897,21 @@ and three `mmap` reservations at start.
    Fern program that prints its argument, uses its heap and its stack, and
    exits with 3, a hand-made ELF that gets `EFAULT`, and a Fern program that
    is killed for a load of a kernel address.
-20. Beside those: the panic scope is decided (#14257, see the north-star
+20. **Processes are preempted on arm64** (#14263, the third slice of
+   milestone 4). Each process has its own tables and its own Fern heap. A
+   timer tick during EL0 returns to the kernel loop as `Interrupted`. The
+   top half then runs at EL1 and acknowledges the line, and the loop runs
+   the next process. The top half touches no RC value, so the kernel heap is
+   never preempted, and RC stays non-atomic.
+
+   `TestSelfHostKernelSchedulerOnQemu` checks the three "done when" items of
+   #14263 on arm64:
+   - Two Fern workers allocate and free strings under a timer of 1 ms. Both
+     are preempted, and both get the correct total.
+   - A process with a bad syscall argument ends, and the workers continue.
+   - A process that loads from the code address of a worker takes a fault,
+     because that address is not in its tables, and the kernel ends it.
+21. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
