@@ -259,6 +259,7 @@ export default defineConfig({
       // one request rather than the three (two preconnects + a
       // cross-origin stylesheet) the Google Fonts link used to cost.
       customCss: ["./src/styles/fonts.css", "./src/styles/fern.css"],
+      routeMiddleware: "./src/routeData.ts",
       lastUpdated: true,
       editLink: {
         baseUrl:
