@@ -394,11 +394,13 @@ type errSummary string
 
 func (e errSummary) Error() string { return string(e) }
 
+// grow_local appends on even i only, so the counted-append reserve pass does
+// not size it up front and both functions still push through __fern_arr_push.
 const hevTwoAppendSrc = `@noinline
 function grow_local(n: i32): i32[] {
     let xs: i32[] = [];
     let i: i32 = 0;
-    while (i < n) { xs = xs.append(i); i = i + 1; }
+    while (i < n) { if (i % 2 == 0) { xs = xs.append(i); } i = i + 1; }
     return xs;
 }
 @noinline
