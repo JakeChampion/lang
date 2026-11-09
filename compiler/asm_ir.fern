@@ -7876,15 +7876,17 @@ function ssa_shift(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitS
   if (fr.imm.is_imm[ins.args[1]]) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
   }
-  return ssa_shiftx(ins, reg_of, s);
+  let mode = if (ins.result < fr.shift32.len()) { fr.shift32[ins.result] } else { 0 };
+  return ssa_shiftx(ins, reg_of, mode, s);
 }
 
 // A shift by a register count is one BMI2 shlx, shrx or sarx, which reads
 // the count from any register and the source from a register or a slot. A
-// 32-bit shift masks its count to 31 in r11, as the 64-bit shift needs.
-function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// 32-bit count uses a mask unless a proven narrow right shift can use the
+// hardware's 32-bit count masking directly.
+function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], mode: i32, s: asmcore.EmitState): asmcore.EmitState {
   let count = ssa_src(reg_of, ins.args[1], "%r11");
-  if (ins.imm != 64) {
+  if (ins.imm != 64 && mode == 0) {
     s = ssa_load(reg_of, ins.args[1], "%r11", s).write("    andl $31, %r11d\n");
     count = "%r11";
   } else {
@@ -7896,7 +7898,15 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
   }
   let d = ssa_dst(reg_of, ins.result);
-  s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+  if (mode != 0) {
+    let mnem = if (ins.str == "shr_s") { "sarxl" } else { "shrxl" };
+    s = s.write("    " + mnem + " " + ssa_r32(count) + ", " + ssa_rhs32(src) + ", " + ssa_r32(d) + "\n");
+    if (mode == 1) {
+      s = s.write("    movslq " + ssa_r32(d) + ", " + d + "\n");
+    }
+  } else {
+    s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+  }
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -9099,7 +9109,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, test: boolean }
@@ -10309,7 +10319,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame = ssa_frame_words(fr.nspill, views, cold) * 8;
