@@ -169,7 +169,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[] }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[], next_inode: u32 }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
 
@@ -200,7 +200,7 @@ function zero(frame: usize): void {
 
 ### `memory`
 
-`region` gives the newest region that holds an address. `page_in` gives the page of an address a zeroed frame with the access of its region. `resolve` gives the physical address of a user byte for an access, and pages it in when the region allows. `copy_in` and `copy_out` move the bytes of a user range through `resolve`. Thus they check each page of the range.
+`region` gives the newest region that holds an address. `page_in` gives the page of an address a zeroed frame with the access of its region. The entry of the page was invalid, so `publish` makes it visible with a barrier and no TLB flush. `resolve` gives the physical address of a user byte for an access, and pages it in when the region allows. `copy_in` and `copy_out` move the bytes of a user range through `resolve`. Thus they check each page of the range.
 
 ```fern
 <<memory>>=
@@ -234,7 +234,7 @@ function (p: Process) page_in(va: usize): boolean {
   if (!p.tables.map_user(page, frame, PAGE, r.write, r.exec)) {
     return false;
   }
-  p.tables.flush();
+  p.tables.publish();
   return true;
 }
 
@@ -333,7 +333,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [] };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [], next_inode: NODE_INODE };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -1002,7 +1002,7 @@ pub function resolve(base: string, path: string): string {
 }
 
 function root_entry(): cpio.Entry {
-  return cpio.Entry { name: "", inode: 1 as u32, mode: 0x41ed as u32, uid: 0 as u32, gid: 0 as u32, links: 2 as u32, mtime: 0 as u32, start: 0, size: 0 };
+  return cpio.Entry { name: "", inode: ROOT_INODE, mode: 0x41ed as u32, uid: 0 as u32, gid: 0 as u32, links: 2 as u32, mtime: 0 as u32, start: 0, size: 0 };
 }
 
 // The entry at path, through at most 8 symbolic links, and the path of the
@@ -1341,8 +1341,11 @@ const S_IFDIR: u32 = 0x4000;
 
 const S_IFREG: u32 = 0x8000;
 
-// The inodes of the nodes start here, above those of an archive.
+// The inodes of the nodes start here, above those of an archive, and the root
+// has the last inode.
 const NODE_INODE: u32 = 0x40000000;
+
+const ROOT_INODE: u32 = 0xffffffff;
 
 // The bytes of the file in memory at path, for the kernel to read after the
 // process ends.
@@ -1411,9 +1414,11 @@ function (p: Process) set_node(path: string, chunks: u8[][], size: i32): Process
   return Process { ...p, nodes: p.nodes.with(i, Node { ...n, entry: entry, chunks: chunks }) };
 }
 
+// Each node gets an inode that no other node had, because a program can tell
+// two directories apart by their inodes.
 function (p: Process) add_node(path: string, mode: u32, links: u32): Process {
-  let entry = cpio.Entry { name: path, inode: NODE_INODE + p.nodes.len() as u32, mode: mode, uid: 0 as u32, gid: 0 as u32, links: links, mtime: 0 as u32, start: 0, size: 0 };
-  return Process { ...p, nodes: p.nodes.append(Node { path: path, entry: entry, chunks: [] }) };
+  let entry = cpio.Entry { name: path, inode: p.next_inode, mode: mode, uid: 0 as u32, gid: 0 as u32, links: links, mtime: 0 as u32, start: 0, size: 0 };
+  return Process { ...p, nodes: p.nodes.append(Node { path: path, entry: entry, chunks: [] }), next_inode: p.next_inode + 1 as u32 };
 }
 
 // The path at va from dirfd, and whether its parent is a directory.
