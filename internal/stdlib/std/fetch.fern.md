@@ -2672,10 +2672,7 @@ function __h3_due(h: h3q.Conn, now: Instant): boolean {
 // dead address gives no handshake to fall back from.
 function __connect_h3[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots], port: i32, ticket: Option[quic.Ticket]): Result[__Conn, FetchError] {
   let deadline = time.instant_nanos(tr.now()) + __connect_bound(req.timeouts).as_nanos();
-  let answered: Option[net.IpAddr] = None;
-  if let Some(a) = __alternative(tr.idle(), t.origin, t.port) {
-    answered = a.answered;
-  }
+  let answered = __answered_addr(tr.idle(), t.origin, t.port);
   let addrs = __answered_first(__resolve(tr, t.host, guard)?, answered);
   let cfg = __h3_config(t, roots, ticket)?;
   let last = Timeout(Connecting);
@@ -2722,6 +2719,13 @@ function __h3_dialled[T: Transport](tr: T, addr: net.IpAddr, port: i32, cfg: qui
     }
   }
   return Err(Timeout(Connecting));
+}
+
+function __answered_addr(p: Idle, host: string, port: i32): Option[net.IpAddr] {
+  let Some(a) = __alternative(p, host, port) else {
+    return None;
+  };
+  return a.answered;
 }
 
 function __answered_first(addrs: net.IpAddr[], answered: Option[net.IpAddr]): net.IpAddr[] {
