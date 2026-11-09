@@ -22,6 +22,81 @@ var constExprFoldCases = []struct {
 	{"u64-extend-refused", `function main(): i32 { let a: u64 = (1 + 2 * 3) as u64; return (a as i32) + 2; }`},
 	{"i64-narrow-refused", `function main(): i32 { let a: i64 = 9 as i64; let b: i32 = a as i32; return b + 3; }`},
 	{"shl-folds", `function main(): i32 { return (1 << 3) + (2 << 2); }`},
+	{"and-negative-mask", `function main(): i32 { let a: i32 = -2147483647; let b: i32 = -2; if ((a & b) == -2147483648) { return 7; } return 1; }`},
+	{"or-high-bit", `function main(): i32 { let a: i32 = -2147483648; let b: i32 = 1; if ((a | b) == -2147483647) { return 7; } return 1; }`},
+	{"xor-high-bit", `function main(): i32 { let a: i32 = -2147483647; let b: i32 = -2147483648; return (a ^ b) + 6; }`},
+	{"not-boundaries", `function main(): i32 { let a: i32 = -2147483648; let b: i32 = 2147483647; if (~a == b && ~b == a && ~0 == -1 && ~-1 == 0) { return 7; } return 1; }`},
+}
+
+// A mask decides several branches across a join and a loop (#14926).
+const constMaskBranches = `
+@noinline function kernel[const MODE: i32](n: i32): i32 {
+  let positive = (MODE & 1) != 0;
+  let end = if (positive) { n / 2 } else { n };
+  let sum = 0;
+  let i = 0;
+  while (i < end) {
+    if (positive) { sum += i; } else { sum -= i; }
+    sum += if (positive) { 1 } else { 2 };
+    i += 1;
+  }
+  return sum;
+}
+@noinline function dynamic(n: i32, positive: boolean): i32 {
+  let end = if (positive) { n / 2 } else { n };
+  let sum = 0;
+  let i = 0;
+  while (i < end) {
+    if (positive) { sum += i; } else { sum -= i; }
+    sum += if (positive) { 1 } else { 2 };
+    i += 1;
+  }
+  return sum;
+}
+function main(): i32 {
+  let n = -3;
+  while (n < 48) {
+    if (kernel[1](n) != dynamic(n, true) || kernel[0](n) != dynamic(n, false)) { return 1; }
+    n += 1;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostConstantMaskBranches(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			if stderr, code := cli.exitOf(t, constMaskBranches, target); code != 0 {
+				t.Fatalf("constant and dynamic branches differ: exit %d\n%s", code, stderr)
+			}
+		})
+	}
+}
+
+func TestSelfHostConstantMaskBranchShape(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			asm := string(runCaptureStrictIR(t, gcc, runner, driver, []byte(constMaskBranches), "-target", target))
+			conditional := "cmoveq"
+			if target == "arm64-linux" {
+				conditional = "csel"
+			}
+			for _, name := range []string{"__fn_kernel__0", "__fn_kernel__1"} {
+				body := asmFuncBody(t, asm, name)
+				if strings.Contains(body, conditional) {
+					t.Errorf("%s retains a conditional selection for a constant mask:\n%s", name, body)
+				}
+			}
+			if !strings.Contains(asmFuncBody(t, asm, "__fn_dynamic"), conditional) {
+				t.Errorf("dynamic control has no %s, so the shape check proves nothing", conditional)
+			}
+		})
+	}
 }
 
 func TestSelfHostConstExprFoldX86_64(t *testing.T) {
