@@ -2250,7 +2250,7 @@ function __path_byte(buf: u8[], at: i32, end: i32): i32 {
   let b = buf[at] as i32;
   if (b == 37) {
     b = __pct_byte(buf, at, end);
-    if (b <= 0 || b == 47) {
+    if (b <= 0 || b == 47 || b == 63 || b == 35) {
       return -1;
     }
     return b;
