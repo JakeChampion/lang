@@ -156,6 +156,18 @@ graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+const semanticProjectedViewPhi = `
+let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+let stored: typeinfo.Type = typeinfo.TypeTuple { elements: [ia, ia] };
+params = [stored, bt]; types = [stored, bt, i32t, ia, i32t, av, ia, i32t, av, av, i32t]; result = i32t;
+graph = ssa.SFunc { name: "projected_view_phi", nparams: 2, nvals: 11, entry: 7, takes_env: false, blocks: [
+  ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssa.CONST_INT, 2, [], 0)], term: branch_on(1) },
+  ssa.SBlock { id: 17, preds: [7], insts: [inst(ssasem.tuple_get(), 3, [0], 0), inst(ssasem.length(), 4, [3], 0), inst(ssasem.arr_slice(), 5, [3, 2, 4], 0)], term: br(37) },
+  ssa.SBlock { id: 27, preds: [7], insts: [inst(ssasem.tuple_get(), 6, [0], 1), inst(ssasem.length(), 7, [6], 0), inst(ssasem.arr_slice(), 8, [6, 2, 7], 0)], term: br(37) },
+  ssa.SBlock { id: 37, preds: [17, 27], insts: [inst(ssa.PHI, 9, [5, 8], 0), inst(ssasem.length(), 10, [9], 0)], term: ret(10) }
+] };
+`
+
 const semanticAppendRange = `
 params = [st, view, i32t, i32t]; types = [st, view, i32t, i32t, st]; result = st;
 graph = ssa.SFunc { name: "append_range", nparams: 4, nvals: 5, entry: 7, takes_env: false, blocks: [
@@ -177,6 +189,18 @@ func semanticCases() []struct{ name, change, want string } {
 	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
 		{"array-lend", semanticArrayLend, ""},
+		{"projected-view-phi", semanticProjectedViewPhi, ""},
+		{"branch-local-view-phi", semanticProjectedViewPhi + `
+let blocks: ssa.SBlock[] = [];
+for block in graph.blocks {
+  let code: ssa.SInst[] = [];
+  for op in block.insts {
+    code = code.append(if (op.result == 3 || op.result == 6) { inst(ssasem.array_new(), op.result, [], 0) } else { op });
+  }
+  blocks = blocks.append(ssa.SBlock { ...block, insts: code });
+}
+graph = ssa.SFunc { ...graph, blocks: blocks };
+`, "dependency unavailable at use"},
 		{"array-view-cannot-append", semanticViewMutation, "append receiver must own storage"},
 		{"array-view-cannot-update", semanticViewMutation + "graph = change(graph, 3, inst(ssasem.with(), 3, [0, 1, 2], 0));", "with receiver must own storage"},
 		{"array-view-needs-owned-construction", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_new(), 1, [], 0));", "array construction must own storage"},
@@ -271,6 +295,12 @@ while (at < expected.len()) {
     }
     at = at + 1;
 }
+`)
+		}
+		if tc.name == "projected-view-phi" {
+			source.WriteString(`
+if (!checked.ok || checked.parents[9].len() != 1 || checked.parents[9][0] != 0) { return 18; }
+if (checked.dependencies[9].len() != 1 || checked.dependencies[9][0] != 0) { return 19; }
 `)
 		}
 		if tc.name == "record-replacement" {

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "baseline",
+    "stdout": "83889328\n65644\n",
+    "stderr": "leakcheck: allocs=198 frees=198 live_bytes=0\n"
+  },
+  {
+    "name": "candidate",
+    "stdout": "167775528\n131208\n",
+    "stderr": "leakcheck: allocs=181 frees=181 live_bytes=0\n"
+  }
+]
