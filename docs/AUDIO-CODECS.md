@@ -438,6 +438,8 @@ WASI executes the same corpus and boundary tests.
 Android ARM64 shared libraries compile successfully.
 Native ARM64 CI and device measurements remain necessary.
 These checks do not establish a speed or quality lead over other codecs.
+The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
+Fern takes 3.40 to 3.87 times the decode time of SIMD minimp3 on the measured Linux host.
 
 ## MP3
 
