@@ -29,8 +29,8 @@ Full CI remains required.
 
 Issue: #14781. Parent: #14509.
 
-The merge with the later loop checks adds three shared controls.
-The fixture now has eight valid cases and nine invalid cases.
+The merge with the later loop checks adds five shared controls.
+The fixture now has nine valid cases and ten invalid cases.
 Local scope records now settle hidden outer moves on both break and continue paths.
 The Go checker also places local shadow scopes on the jump scope stack.
 The controls reject initializer moves that a jump previously hid and accept restoration before a continue.

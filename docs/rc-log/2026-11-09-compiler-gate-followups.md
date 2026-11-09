@@ -38,3 +38,11 @@ It raises no limit.
 All 120 emitted-size measurements complete.
 The two advisory deflate size warnings match a fresh main compiler exactly: 7,206 native instructions and 11,811 WASI body lines.
 Local dynamic instruction counts remain unmeasured because Valgrind is absent.
+
+The driver now places document, REPL, and interpreter modes in separate helpers.
+The branch and diagnostic order remain unchanged.
+This reduces `run_with_gate` from complexity 233 to its prior ceiling of 221.
+The exact repository complexity gate passes without a ceiling change.
+The supported build passes with core SHA-256 `65ead4d702d1ee8a3f96985c7cb8277847a7d50d4db37b32eff2ec4d51f83ba8`.
+
+Issue: #14800.
