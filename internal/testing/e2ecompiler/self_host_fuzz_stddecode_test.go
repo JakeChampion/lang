@@ -76,7 +76,13 @@ func goInflate(input []byte) goDecoded {
 	return goDecode(func(r io.Reader) (io.Reader, error) { return flate.NewReader(r), nil }, input)
 }
 
+// goGunzip decodes with compress/gzip, and refuses a first member whose
+// header sets a reserved flag bit, as RFC 1952 requires and compress/gzip
+// does not.
 func goGunzip(input []byte) goDecoded {
+	if len(input) > 3 && input[3]&0xe0 != 0 {
+		return goDecoded{}
+	}
 	return goDecode(func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }, input)
 }
 
@@ -200,7 +206,9 @@ func FuzzSelfHostStdInflate(f *testing.F) {
 func FuzzSelfHostStdGunzip(f *testing.F) {
 	seeds := withDamage(compressedSeeds(writeGzip))
 	two := append(append([]byte(nil), seeds[1]...), seeds[1]...)
-	seeds = append(seeds, two, []byte{0x1f, 0x8b}, []byte{0x1f, 0x8b, 8, 0xff, 0, 0, 0, 0, 0, 0}, []byte{0x1f, 0x8b, 7})
+	reserved := append([]byte(nil), seeds[1]...)
+	reserved[3] |= 0x80
+	seeds = append(seeds, two, reserved, []byte{0x1f, 0x8b}, []byte{0x1f, 0x8b, 8, 0xff, 0, 0, 0, 0, 0, 0}, []byte{0x1f, 0x8b, 7})
 	fuzzStdOracle(f, "gunzip", seeds, func(t *testing.T, input []byte, summary string) {
 		agreeWithGo(t, "gunzip", input, summary, goGunzip(input))
 	})

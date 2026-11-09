@@ -83,6 +83,76 @@ function test_errors(): test.TestOutcome {
   return test.assert_eq(got, "jpeg: not a JPEG file | jpeg: the data ends early | jpeg: unsupported: lossless or arithmetic coding");
 }
 
+// A limit one below the pixels of an image refuses it, and a limit equal to
+// them decodes it.
+function test_pixel_limit(): test.TestOutcome {
+  let refused = match (jpeg.decode_image_limit(image_vectors.jpeg_base444(), 255i64)) {
+    Err(jpeg.Unsupported(_)) => true,
+    _ => false,
+  };
+  let decoded = match (jpeg.decode_image_limit(image_vectors.jpeg_base444(), 256i64)) {
+    Ok(img) => img.width == 16,
+    Err(_) => false,
+  };
+  return test.assert_eq(refused && decoded, true);
+}
+
+// A frame of 65535 by 65535 pixels is refused before the decoder allocates
+// for it. Its block counts do not fit in an i32.
+function test_huge_frame(): test.TestOutcome {
+  let data = image_vectors.jpeg_base444();
+  let i = 0;
+  while (i + 8 < data.len()) {
+    if (data[i] == 255u8 && (data[i + 1] == 192u8 || data[i + 1] == 194u8)) {
+      data = data.with(i + 5, 255u8).with(i + 6, 255u8).with(i + 7, 255u8).with(i + 8, 255u8);
+      break;
+    }
+    i += 1;
+  }
+  let refused = match (jpeg.decode_image(data)) {
+    Err(jpeg.Unsupported(_)) => true,
+    _ => false,
+  };
+  return test.assert_eq(refused, true);
+}
+
+// A segment whose fields need more bytes than its length gives an error, not
+// a read past the segment. The first file is the one that the fuzzer found.
+function test_segment_bounds(): test.TestOutcome {
+  let soi: u8[] = [255 as u8, 216 as u8];
+  let frame: u8[] = [255 as u8, 192 as u8, 0 as u8, 11 as u8, 8 as u8, 0 as u8, 16 as u8, 0 as u8, 16 as u8, 1 as u8, 1 as u8, 17 as u8, 0 as u8];
+  let files: u8[][] = [
+    [255 as u8, 216 as u8, 255 as u8, 192 as u8, 0 as u8, 0 as u8],
+    soi.concat([255 as u8, 192 as u8, 0 as u8, 8 as u8, 8 as u8, 0 as u8, 16 as u8, 0 as u8, 16 as u8, 3 as u8, 0 as u8, 0 as u8]),
+    soi.concat(frame).concat(frame),
+    soi.concat([255 as u8, 219 as u8, 0 as u8, 4 as u8, 0 as u8, 1 as u8, 0 as u8, 0 as u8]),
+    soi.concat([255 as u8, 221 as u8, 0 as u8, 2 as u8, 0 as u8, 0 as u8]),
+    soi.concat(frame).concat([255 as u8, 218 as u8, 0 as u8, 3 as u8, 1 as u8, 0 as u8, 0 as u8]),
+    soi.concat(frame).concat([255 as u8, 218 as u8, 0 as u8, 8 as u8, 1 as u8, 1 as u8, 255 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8]),
+  ];
+  let errors = 0;
+  for f in files {
+    match (jpeg.decode_image(f)) {
+      Ok(_) => {},
+      Err(_) => {
+        errors += 1;
+      }
+    }
+  }
+  return test.assert_eq(errors, files.len());
+}
+
+// A scan that uses a Huffman table that the file does not define decodes as
+// corrupt data: an image, not an error and not a read of the missing table.
+function test_undefined_table(): test.TestOutcome {
+  let f: u8[] = [255 as u8, 216 as u8, 255 as u8, 192 as u8, 0 as u8, 11 as u8, 8 as u8, 0 as u8, 16 as u8, 0 as u8, 16 as u8, 1 as u8, 1 as u8, 17 as u8, 0 as u8, 255 as u8, 218 as u8, 0 as u8, 8 as u8, 1 as u8, 1 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8];
+  let decoded = match (jpeg.decode_image(f)) {
+    Ok(img) => img.width == 16 && img.height == 16,
+    Err(_) => false,
+  };
+  return test.assert_eq(decoded, true);
+}
+
 function main(): i32 {
   let r = test.new("std/jpeg");
   r = r.it("baseline 4:4:4", test_baseline_444);
@@ -92,5 +162,9 @@ function main(): i32 {
   r = r.it("restart intervals", test_restart_interval);
   r = r.it("grayscale", test_grayscale);
   r = r.it("errors", test_errors);
+  r = r.it("pixel limit", test_pixel_limit);
+  r = r.it("huge frame", test_huge_frame);
+  r = r.it("segment bounds", test_segment_bounds);
+  r = r.it("undefined table", test_undefined_table);
   return r.finish();
 }
