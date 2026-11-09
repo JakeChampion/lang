@@ -1,0 +1,47 @@
+import "std/audio/flac";
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "flac_lpc_vectors";
+
+// Compare the complete independently qualified stream and every decoded sample.
+// fern-lint: allow cyclomatic-complexity
+pub function reference(vector: flac_lpc_vectors.Vector): test.TestOutcome {
+  let Ok(raw) = ref.unpack(vector.pcm) else {
+    return test.fail("source reference");
+  };
+  let Ok(expected) = ref.unpack(vector.encoded) else {
+    return test.fail("encoded reference");
+  };
+  let input: i32[] = [];
+  for at in 0..raw.len() / 4 {
+    input = input.append(ref.word(raw, at * 4));
+  }
+  let held = input;
+  let format = pcm.Format { sample_rate: vector.rate, channels: vector.channels, bits_per_sample: vector.depth };
+  let options = encoder.Options { ...encoder.default_options(), block_frames: vector.block, max_lpc_order: vector.order };
+  let Ok(encoded) = encoder.encode(input, format, options, pcm.default_limits()) else {
+    return test.fail("LPC encode");
+  };
+  if (encoded.len() != expected.len()) {
+    return test.fail("encoded extent");
+  }
+  for at in 0..expected.len() {
+    if (encoded[at] != expected[at]) {
+      return test.fail("independently qualified stream");
+    }
+  }
+  let Ok(decoded) = flac.decode(encoded, pcm.default_limits()) else {
+    return test.fail("decode or MD5");
+  };
+  if (decoded.samples.len() != input.len() || decoded.format != format) {
+    return test.fail("format or extent");
+  }
+  for at in 0..input.len() {
+    if (decoded.samples[at] != ref.word(raw, at * 4) || held[at] != ref.word(raw, at * 4)) {
+      return test.fail("exact PCM or retained input");
+    }
+  }
+  return test.pass();
+}

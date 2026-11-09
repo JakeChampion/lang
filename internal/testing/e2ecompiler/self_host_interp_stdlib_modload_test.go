@@ -166,7 +166,7 @@ func TestSelfHostInterpStdlibModload(t *testing.T) {
 			if want != 7 {
 				t.Fatalf("native interp oracle exited %d, want 7 — the case itself is wrong, not the self-host engine\n%s", want, wantErr)
 			}
-			out, errOut, code := runInterpCLI(t, exec.Command(fernBin, "-interp", mainPath, stdlibRoot), "")
+			out, errOut, code := runInterpCLI(t, exec.Command(fernBin, "-stdlib", stdlibRoot, "-interp", mainPath), "")
 			if code != want {
 				t.Errorf("self-host -interp exited %d, want %d (native interp oracle)\n%s", code, want, errOut)
 			}

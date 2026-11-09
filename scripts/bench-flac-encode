@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native Fern and libFLAC fixed-predictor encoding on identical PCM."""
+"""Compare native Fern and libFLAC encoding on identical PCM."""
 import argparse
 import ctypes
 import ctypes.util
@@ -56,7 +56,7 @@ def signal(name, bits, channels):
             if name.startswith('music'):
                 value = int((math.sin(at * (0.021 + 0.003 * ch)) + 0.2 * math.sin(at * 0.073)) * ((1 << (bits - 2)) - 1))
             elif name.startswith('noise'):
-                value = rng.randint(-32768, 32767)
+                value = rng.randint(-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
             else:
                 value = 0
             values.append(value)
@@ -68,6 +68,9 @@ def main():
     parser.add_argument('--compiler', required=True, type=Path)
     parser.add_argument('--baseline-compiler', type=Path)
     parser.add_argument('--baseline-stdlib', type=Path)
+    parser.add_argument('--lpc-order', type=int, default=0)
+    parser.add_argument('--baseline-lpc-order', type=int, default=0)
+    parser.add_argument('--wide', action='store_true')
     parser.add_argument('--rounds', type=int, default=16)
     parser.add_argument('--trials', type=int, default=7)
     parser.add_argument('--headers', type=Path, default=ROOT / 'build/audio/flac-headers')
@@ -75,6 +78,10 @@ def main():
     args = parser.parse_args()
     if args.rounds < 1 or args.trials < 3:
         parser.error('use positive rounds and at least three trials')
+    if args.lpc_order < 0 or args.lpc_order > 32:
+        parser.error('LPC order must be zero through 32')
+    if args.baseline_lpc_order and (args.baseline_lpc_order != args.lpc_order or not (args.baseline_stdlib or args.baseline_compiler)):
+        parser.error('a nonzero baseline LPC order requires a baseline and the same candidate order')
     if platform.system() != 'Linux' or platform.machine() not in ['x86_64', 'aarch64']:
         parser.error('this comparison requires native x86-64 or ARM64 Linux')
     library_name = ctypes.util.find_library('FLAC')
@@ -100,6 +107,8 @@ def main():
     sources = [ROOT / 'compiler/semscalarreturn.fern', ROOT / 'bench/audio/flac_encode.fern',
                ROOT / 'scripts/audio-reference/flac_bench.c', ROOT / 'scripts/bench-flac-encode']
     sources += sorted((ROOT / 'internal/stdlib/std/audio/flac').glob('*.fern.md'))
+    if args.lpc_order:
+        sources.append(ROOT / 'bench/audio/flac_lpc_encode.fern')
     result = {'schema': 1, 'platform': platform.platform(), 'target': target,
               'cpu': allowed[0], 'allowed_affinity': allowed, 'libFLAC': version,
               'cpu_model': next((x.split(':', 1)[1].strip() for x in Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name')), platform.machine()),
@@ -108,7 +117,7 @@ def main():
               'libFLAC_sha256': sha(Path(next(line.split()[-1] for line in Path('/proc/self/maps').read_text().splitlines() if library_name in line))),
               'rounds': args.rounds, 'trials': args.trials,
               'measurement': 'whole-stream encode, PCM MD5, frame CRCs, and checksum of every output byte; input loading and two warmups excluded',
-              'settings': {'bits': [16, 24], 'channels': [2, 8], 'rate': 48000, 'block': 4096, 'fixed_order': '0 through 4', 'max_lpc_order': 0, 'max_residual_partition': 6, 'stereo': 'full search'},
+              'settings': {'bits': [16, 24, 32] if args.wide else [16, 24], 'channels': [2, 8], 'rate': 48000, 'block': 4096, 'fixed_order': '0 through 4', 'max_lpc_order': args.lpc_order, 'baseline_lpc_order': args.baseline_lpc_order, 'max_residual_partition': 6, 'stereo': 'full search', 'lpc_window': 'Welch', 'lpc_precision': 15},
               'rss': 'native Linux VmHWM including input loading and warmup; excludes the Python launcher',
               'fresh_bytes': 'new runtime heap storage, not total allocation traffic',
               'source_sha256': {str(p.relative_to(ROOT)): sha(p) for p in sources},
@@ -117,6 +126,8 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         temp = Path(directory)
         modes = {'fern': (args.compiler.resolve(), ROOT / 'internal/stdlib')}
+        if args.lpc_order:
+            modes['fixed'] = (args.compiler.resolve(), ROOT / 'internal/stdlib')
         if args.baseline_compiler or args.baseline_stdlib:
             modes['baseline'] = ((args.baseline_compiler or args.compiler).resolve(),
                                  args.baseline_stdlib.resolve() if args.baseline_stdlib else ROOT / 'internal/stdlib')
@@ -126,8 +137,10 @@ def main():
             result.setdefault('codec_sha256', {})[mode] = {str(p.relative_to(stdlib)): sha(p) for p in sorted((stdlib / 'std/audio/flac').glob('*.fern.md'))}
             result.setdefault('core_sha256', {})[mode] = sha(compiler.parent / 'fern-selfhost')
             binary = temp / mode
+            use_lpc = mode == 'fern' and args.lpc_order or mode == 'baseline' and args.baseline_lpc_order
+            driver = 'flac_lpc_encode.fern' if use_lpc else 'flac_encode.fern'
             subprocess.run([str(compiler), '-stdlib', str(stdlib), '-target', target, '-O',
-                            '-o', str(binary), str(ROOT / 'bench/audio/flac_encode.fern')], cwd=ROOT, env=env, check=True)
+                            '-o', str(binary), str(ROOT / 'bench/audio' / driver)], cwd=ROOT, env=env, check=True)
             binaries[mode] = binary
         reference = temp / 'libflac'
         cc = shutil.which('cc')
@@ -138,7 +151,10 @@ def main():
         result['cc'] = subprocess.check_output([cc, '--version'], text=True).splitlines()[0]
         result['reference_binary_sha256'] = sha(reference)
         binaries['libflac'] = reference
-        for name, bits, channels in [('music-2ch', 24, 2), ('music-8ch', 24, 8), ('noise-2ch', 16, 2), ('silence-2ch', 24, 2)]:
+        cases = [('music-2ch', 24, 2), ('music-8ch', 24, 8), ('noise-2ch', 16, 2), ('silence-2ch', 24, 2)]
+        if args.wide:
+            cases += [('music-32bit-2ch', 32, 2), ('noise-32bit-2ch', 32, 2)]
+        for name, bits, channels in cases:
             values = signal(name, bits, channels)
             raw = struct.pack('<' + 'i' * len(values), *values)
             path = temp / 'input.s32le'
@@ -150,7 +166,10 @@ def main():
                     order.reverse()
                 for mode in order:
                     encoded_path = temp / (mode + '.flac')
-                    run = subprocess.run([str(binaries[mode]), str(path), str(encoded_path), str(bits), str(channels), str(args.rounds), 'fixed'],
+                    order_arg = str(args.lpc_order) if args.lpc_order and mode in ['fern', 'libflac'] else 'fixed'
+                    if mode == 'baseline' and args.baseline_lpc_order:
+                        order_arg = str(args.baseline_lpc_order)
+                    run = subprocess.run([str(binaries[mode]), str(path), str(encoded_path), str(bits), str(channels), str(args.rounds), order_arg],
                                          env=env, check=True, capture_output=True, text=True, timeout=300)
                     sample = fields(run.stdout)
                     record = row['modes'].setdefault(mode, {'trials': []})
@@ -166,8 +185,18 @@ def main():
                     assert sample['checksum'] == record['trials'][0]['checksum']
             for mode, record in row['modes'].items():
                 record['median'] = {key: statistics.median(s[key] for s in record['trials']) for key in record['trials'][0]}
-            if 'baseline' in row['modes']:
+            for other in ['fixed', 'baseline', 'libflac']:
+                if other in row['modes']:
+                    ratios = [candidate['wall_ns'] / reference['wall_ns'] for candidate, reference in
+                              zip(row['modes']['fern']['trials'], row['modes'][other]['trials'])]
+                    row.setdefault('paired_wall_ratios', {})[other] = {'trials': ratios, 'median': statistics.median(ratios)}
+            if 'baseline' in row['modes'] and not args.lpc_order:
                 assert row['modes']['baseline']['encoded_sha256'] == row['modes']['fern']['encoded_sha256'], (name, 'compiler changed bitstream')
+            if args.lpc_order:
+                assert row['modes']['fern']['encoded_bytes'] <= row['modes']['fixed']['encoded_bytes'], (name, 'LPC enlarged the stream')
+            if 'baseline' in row['modes']:
+                matched_mode = 'fern' if args.baseline_lpc_order or not args.lpc_order else 'fixed'
+                assert row['modes']['baseline']['encoded_sha256'] == row['modes'][matched_mode]['encoded_sha256'], (name, 'matched bitstream changed')
             result['cases'][name] = row
             print(name + ': ' + ', '.join(mode + '=' + str(record['median']['wall_ns']) + ' ns' for mode, record in row['modes'].items()), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
