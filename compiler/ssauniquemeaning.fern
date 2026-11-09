@@ -95,16 +95,6 @@ function block_positions(f: ssa.SFunc): Graph {
   return Graph { values: [], slots: id_index([]), blocks: blocks, preds: preds, ok: ok && blocks.ok };
 }
 
-function targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == ssa.TERM_BR) {
-    return [t.target];
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return [t.t, t.f];
-  }
-  return [];
-}
-
 function constant(op: ssa.SInst): boolean {
   return op.args.len() == 0 && op.str == "" && (op.imm == 0 || op.imm == 1 || op.kind_tag == ssa.CONST_INT && (op.imm == 7 || op.imm == 9));
 }
@@ -138,11 +128,11 @@ function edges(f: ssa.SFunc, b: ssa.SBlock, g: Graph): boolean {
     if (at < 0) {
       return false;
     }
-    if (util.index_of_i32(targets(f.blocks[at].term), b.id) < 0) {
+    if (util.index_of_i32(ssa.term_targets(f.blocks[at].term), b.id) < 0) {
       return false;
     }
   }
-  for dest in targets(b.term) {
+  for dest in ssa.term_targets(b.term) {
     let at = position(g.blocks, dest);
     if (at < 0) {
       return false;
@@ -227,7 +217,7 @@ function block_order(f: ssa.SFunc, blocks: IdIndex): i32[] {
   }
   i = 0;
   while (i < order.len()) {
-    for dest in targets(f.blocks[order[i]].term) {
+    for dest in ssa.term_targets(f.blocks[order[i]].term) {
       let at = position(blocks, dest);
       if (at < 0 || remaining[at] <= 0) {
         return [];

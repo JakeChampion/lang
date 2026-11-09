@@ -247,9 +247,11 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Thirty targets feed hostile bytes to the boundaries after the front end,
+Thirty-two targets feed hostile bytes to the boundaries after the front end,
 through the CLI, four drivers and one program the shipped CLI builds. They
-are the build manifest reader, the IR verifiers, both in-process assemblers,
+are the build manifest reader, the IR verifiers, both in-process assemblers
+and, through them, the linker and the ELF writer, whose images Go's
+`debug/elf` must read,
 the package layer's manifest, lock, index and archive readers, the literate
 tangle and weave that read a `.fern.md` module a package can ship, and the
 stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
@@ -377,6 +379,13 @@ regression test where the bug lived:
   read past the file. A scan with an undefined Huffman table read the empty
   table. `std/jpeg` now refuses a frame over its pixel limit, checks each
   segment length, and decodes such a scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
+- **Four faults in the image writer** (`FuzzSelfHostX86Image`,
+  `FuzzSelfHostArm64Image`, November 2026). The relro step stopped the
+  compiler with exit 3 on text that was not compiled with `-pie`. An arm64
+  image with no `_start` entered past its code, and on both ISAs a `_start`
+  with no code after it did the same. The `PT_GNU_RELRO` header of a `-pie`
+  image and of a shared object gave a file range past the end of the file.
+  Each is now a refusal with a cause, or a header inside the file.
 
 Earlier: the closure-dispatch cluster (#5001, #5007, #5009, #5026), the
 `i64[]` narrowing (#5729), the u32 shift that miscompiled SHA-256, the float

@@ -352,8 +352,8 @@ pub function is_resource_handle(t: typeinfo.Type): boolean {
 
 // The built-in types that own a descriptor. Only the call that opens one
 // makes it, and its close consumes it.
-pub function fd_handle_names(): string[] {
-  return ["Reader", "Writer", "Dir", "Socket"];
+pub function is_fd_handle_name(name: string): boolean {
+  return name == "Reader" || name == "Writer" || name == "Dir" || name == "Socket";
 }
 
 pub function is_socket(t: typeinfo.Type): boolean {
@@ -365,11 +365,7 @@ pub function is_socket(t: typeinfo.Type): boolean {
 
 pub function is_fd_handle(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
-    for name in fd_handle_names() {
-      if (name == s.name) {
-        return true;
-      }
-    }
+    return is_fd_handle_name(s.name);
   }
   return false;
 }

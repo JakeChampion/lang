@@ -1351,6 +1351,30 @@ function no_type_names(): TypeNames {
   return TypeNames { index: util.name_index(none), params: none };
 }
 
+struct NameHit { names: util.NameIndex, found: boolean }
+
+// Some identifier in stmts spells one of names.
+pub function names_any(stmts: ast.Stmt[], names: util.NameIndex): boolean {
+  for st in stmts {
+    if (fold_stmt(st, NameHit { names: names, found: false }, spells_name).found) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function spells_name(e: ast.Expr, own hit: NameHit): NameHit {
+  if (hit.found) {
+    return hit;
+  }
+  if let ast.ExprIdent(i) = e {
+    if (hit.names.has(i.name)) {
+      return NameHit { ...hit, found: true };
+    }
+  }
+  return hit;
+}
+
 pub function substitute_consts(stmts: ast.Stmt[], bound: string[], names: string[], values: ast.Expr[]): ast.Stmt[] {
   if (names.len() == 0) {
     return stmts;

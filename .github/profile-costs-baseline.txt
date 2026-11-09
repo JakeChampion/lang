@@ -1,4 +1,4 @@
-# 2026-11-09: PR #14855, perf-x86_64 job 129090724051 on c119e179. profile/x86-64-linux/map_string.hardened.ir rises 1.27%. It is pinned at its measured value.
+# 2026-11-09: PR #14847, perf-x86_64 job 129087018092. profile/x86-64-linux/map_string.hardened.ir rises 1.11%. The PR's compiler emits byte-identical code, so the row moved on main's tree. Pinned at the measured value.
 # 2026-11-09: PR #14829. Local Valgrind 3.24.0 measurements reduce scalar append and deflate instruction counts. The scalar append counts repeat exactly.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
 # 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The http_hello and map_string profile rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
@@ -248,7 +248,7 @@ profile/x86-64-linux/map_string.diagnostic.emit	10858
 profile/x86-64-linux/map_string.diagnostic.ir	59644087
 profile/x86-64-linux/map_string.hardened.bytes	42528
 profile/x86-64-linux/map_string.hardened.emit	10022
-profile/x86-64-linux/map_string.hardened.ir	54794118
+profile/x86-64-linux/map_string.hardened.ir	54709670
 profile/x86-64-linux/map_string.minimal.bytes	36176
 profile/x86-64-linux/map_string.minimal.emit	9007
 profile/x86-64-linux/map_string.minimal.ir	54757303

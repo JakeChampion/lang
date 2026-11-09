@@ -1,4 +1,5 @@
-# 2026-11-09: PR #14855, perf-x86_64 job 129090724051 on c119e179. checker.cliff_bytes rises 1.02% and checker.cliff_count 1.45% with the replaced-read and array-update rules of both checkers. Each is pinned at its measured value.
+# 2026-11-09: PR #14855, a local scripts/cliff-bench run on its merge with main 502e0efb. checker.cliff_bytes rises 1.07% and checker.cliff_count 1.52% with the replaced-read and array-update rules of both checkers. Each is pinned at its measured value.
+# 2026-11-09: PR #14847, perf-x86_64 job 129087018092. The checker rows fall with the four slices of that PR: cliff_bytes -3.19%, cliff_count -5.25%. Pinned at the measured values.
 # 2026-11-09: PR #14829. The unchanged compiler copies 40,124,160 bytes on identical checker input. The repaired candidate copies 40,126,728 bytes. Bank the measured bytes without a larger tolerance.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The checker rows grow with the counted call roots of the tree shaker (#14747), which each body keeps for each method call, and with the drift of main since the last bank. Both are pinned at their measured values.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f, the merge with main 1c692d87. checker.cliff_bytes +26.5% and checker.cliff_count +6.5%.
@@ -154,5 +155,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	40536056
-x86_64/checker.cliff_count	401297
+x86_64/checker.cliff_bytes	39262456
+x86_64/checker.cliff_count	380506

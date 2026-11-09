@@ -126,15 +126,15 @@ pub const TERM_BRIF: i32 = 3;
 
 pub const TERM_UNREACHABLE: i32 = 4;
 
-function t_ret(value: i32): STerm {
+pub function t_ret(value: i32): STerm {
   return STerm { kind_tag: TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
 }
 
-function t_br(target: i32): STerm {
+pub function t_br(target: i32): STerm {
   return STerm { kind_tag: TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
-function t_brif(cond: i32, t: i32, f: i32): STerm {
+pub function t_brif(cond: i32, t: i32, f: i32): STerm {
   return STerm { kind_tag: TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
@@ -3649,7 +3649,7 @@ pub function refreshed_preds(f: SFunc): SBlock[] {
         nb = trim_phi_edges(b, preds[i]);
         fresh = true;
       }
-    } else if (!same_preds(b.preds, preds[i])) {
+    } else if (!util.same_i32s(b.preds, preds[i])) {
       nb = SBlock { ...b, preds: preds[i] };
       fresh = true;
     }
@@ -3675,20 +3675,6 @@ function every_pred(ps: i32[], edges: i32[]): boolean {
     if (!has_pred(edges, p)) {
       return false;
     }
-  }
-  return true;
-}
-
-function same_preds(a: i32[], b: i32[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < a.len()) {
-    if (a[i] != b[i]) {
-      return false;
-    }
-    i += 1;
   }
   return true;
 }
@@ -5326,7 +5312,7 @@ function high_operands(d: SInst): i32 {
   return 0;
 }
 
-function term_operand(t: STerm): i32 {
+pub function term_operand(t: STerm): i32 {
   if (t.kind_tag == TERM_RET) {
     return t.value;
   }
@@ -5334,6 +5320,28 @@ function term_operand(t: STerm): i32 {
     return t.cond;
   }
   return -1;
+}
+
+// term_targets lists the blocks a terminator can branch to.
+pub function term_targets(t: STerm): i32[] {
+  if (t.kind_tag == TERM_BR) {
+    return [t.target];
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
+// next_block_id is one more than the largest block id in g.
+pub function next_block_id(g: SFunc): i32 {
+  let hi = 0;
+  for b in g.blocks {
+    if (b.id >= hi) {
+      hi = b.id + 1;
+    }
+  }
+  return hi;
 }
 
 // A load or a store through base + constant takes the constant as its offset.

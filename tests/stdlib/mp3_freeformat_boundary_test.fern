@@ -1,0 +1,278 @@
+import "std/audio/mp3";
+import "std/audio/mp3/header";
+import "std/audio/mp3/framing";
+import "std/audio/mp3/input";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "mp3_freeformat_vectors";
+import "mp3_input_check";
+import "mp3_file_check";
+import "mp3_input_data" as data;
+import "flac_file_check" as io;
+
+function crc16(input: [u8], initial: i32): i32 {
+  let crc = initial;
+  for byte in input {
+    crc ^= byte as i32 << 8;
+    for _ in 0..8 {
+      crc = (crc << 1 ^ (if ((crc & 32768) != 0) { 32773 } else { 0 })) & 65535;
+    }
+  }
+  return crc;
+}
+
+function repair(own bytes: u8[], side: i32): u8[] {
+  let crc = crc16(bytes[6:6 + side], crc16(bytes[2:4], 65535));
+  return bytes.with(4, (crc >> 8) as u8).with(5, crc as u8);
+}
+
+function frame(): u8[] {
+  let bytes: u8[] = [255u8, 250u8, 0u8, 0u8, 0u8, 0u8];
+  for _ in 6..417 {
+    bytes = bytes.append(0u8);
+  }
+  return repair(bytes, 32);
+}
+
+function coded(count: i32): u8[] {
+  let one = frame();
+  let bytes: u8[] = [];
+  for _ in 0..count {
+    bytes = data.concat(bytes, one);
+  }
+  return bytes;
+}
+
+function zeros(count: i32): f32[] {
+  let values: f32[] = [];
+  for _ in 0..count {
+    values = values.append(0.0f32);
+  }
+  return values;
+}
+
+function silent(bytes: [u8], frames: i32): boolean {
+  let Ok(value) = mp3.decode(bytes, pcm.default_limits()) else {
+    return false;
+  };
+  if (value.sample_rate != 44100 || value.channels != 2 || value.samples.len() != frames * 2304) {
+    return false;
+  }
+  for sample in value.samples {
+    if (sample != 0.0f32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function false_sync(): test.TestOutcome {
+  let bytes = coded(3);
+  for at in [64, 193] {
+    bytes = bytes.with(at, 255u8).with(at + 1, 250u8).with(at + 2, 0u8).with(at + 3, 0u8);
+  }
+  let Ok(h) = mp3.inspect(bytes, 0, pcm.default_limits()) else {
+    return test.fail("frame discovery");
+  };
+  if (h.bytes != 417 || h.bitrate != 0 || !silent(bytes, 3)) {
+    return test.fail("false sync selected as a frame boundary");
+  }
+  let ref = mp3_input_check.Reference { sample_rate: 44100, channels: 2, frames: 3456i64, start: 0i64, samples: zeros(6912) };
+  if let Err(e) = mp3_input_check.run(bytes, ref, 1, false) {
+    return test.fail(e);
+  }
+  let Ok(raw) = header.parse(bytes, 0) else {
+    return test.fail("raw header");
+  };
+  let state = framing.begin(raw);
+  let Ok(framing.Pending(next)) = framing.probe(bytes, state, 417, false) else {
+    return test.fail("bounded first probe");
+  };
+  if (next.next - state.next > 256) {
+    return test.fail("probe work bound");
+  }
+  return test.pass();
+}
+
+function adjacent_context(): test.TestOutcome {
+  let one = frame();
+  let (_, fresh) = mp3.decoder().decode_frame(one, 0, pcm.default_limits());
+  match (fresh) {
+    Err(pcm.Truncated) => {},
+    _ => {
+      return test.fail("one frame cannot establish a free-format extent");
+    }
+  }
+  let known = mp3.Decoder { ...mp3.decoder(), free_bytes: 417 };
+  let (_, value) = known.decode_frame(one, 0, pcm.default_limits());
+  let Ok(value) = value else {
+    return test.fail("known isolated extent");
+  };
+  if (value.bytes_read != 417 || value.frames != 1152) {
+    return test.fail("isolated frame count");
+  }
+  let two = coded(2);
+  if (!silent(two, 2)) {
+    return test.fail("two frames at physical EOF");
+  }
+  let ref = mp3_input_check.Reference { sample_rate: 44100, channels: 2, frames: 2304i64, start: 0i64, samples: zeros(4608) };
+  if let Err(e) = mp3_input_check.run(two, ref, 1, false) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function metadata(): test.TestOutcome {
+  let two = data.concat(coded(2), data.id3v1());
+  if (!silent(two, 2)) {
+    return test.fail("two-frame track with a trailing tag");
+  }
+  let Ok(raw) = mp3.decode_raw(two, pcm.default_limits()) else {
+    return test.fail("raw audio end before trailing metadata");
+  };
+  if (raw.samples.len() != 4608) {
+    return test.fail("raw metadata boundary");
+  }
+  let ref = mp3_input_check.Reference { sample_rate: 44100, channels: 2, frames: 2304i64, start: 0i64, samples: zeros(4608) };
+  if let Err(e) = mp3_input_check.run(two, ref, 1, false) {
+    return test.fail(e);
+  }
+  let tagged = data.concat(data.concat(data.id3(9000, true), coded(3)), data.concat(data.ape(data.pattern(12000), true), data.id3v1()));
+  let large_ref = mp3_input_check.Reference { sample_rate: 44100, channels: 2, frames: 3456i64, start: 0i64, samples: zeros(6912) };
+  if let Err(e) = mp3_input_check.run(tagged, large_ref, 17, true) {
+    return test.fail(e);
+  }
+  let expected = mp3.Decoded { sample_rate: 44100, channels: 2, samples: zeros(6912) };
+  if let Err(e) = mp3_file_check.run(tagged, expected) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function stream_limit(bytes: u8[], window: i32, budget: i32): boolean {
+  let limits = input.default_limits();
+  let Ok(state) = input.create(input.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_input_bytes: budget }, input: source.Limits { chunk_size: 17, max_buffer_bytes: window } }) else {
+    return false;
+  };
+  let src = io.mock(bytes);
+  for _ in 0..10000 {
+    let before = src.operations.get();
+    match (state.step_with(io.source_read(src, 17))) {
+      Ok((next, event)) => {
+        state = next;
+        if (src.operations.get() - before > 1 || state.buffer.bytes.len() > window) {
+          return false;
+        }
+        if let input.Output(_) = event {
+          return false;
+        }
+      },
+      Err(source.ReadAudio(pcm.Limit)) => {
+        return true;
+      },
+      Err(_) => {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+function limits(): test.TestOutcome {
+  let bytes = coded(3);
+  if (!stream_limit(bytes, 800, 4096) || !stream_limit(bytes, 4096, 416)) {
+    return test.fail("discovery resource limits");
+  }
+  let Ok(h) = header.parse(bytes, 0) else {
+    return test.fail("header");
+  };
+  match (framing.resolve(bytes, 0, h, 0, 416)) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("complete-input discovery limit");
+    }
+  }
+  let invalid = mp3.Decoder { ...mp3.decoder(), free_bytes: -1 };
+  let (reset, value) = invalid.decode_frame(bytes, 0, pcm.default_limits());
+  match (value) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("invalid cached state");
+    }
+  }
+  if (reset.free_bytes != 0 || reset.sample_rate != 0) {
+    return test.fail("error resets the frame cache");
+  }
+  return test.pass();
+}
+
+function interrupted(): test.TestOutcome {
+  let src = io.mock(coded(3));
+  let read = (requested: i32): Result[u8[], IoError] => {
+    if (src.position.get() >= 4i64) {
+      return Err(IoError.Interrupted);
+    }
+    return io.source_read(src, 4)(requested);
+  };
+  let Ok(state) = input.create(input.default_limits()) else {
+    return test.fail("input");
+  };
+  for _ in 0..20 {
+    match (state.step_with(read)) {
+      Ok((next, event)) => {
+        state = next;
+        if let input.Output(_) = event {
+          return test.fail("PCM before frame discovery");
+        }
+      },
+      Err(source.ReadIo(IoError.Interrupted)) => {
+        return test.pass();
+      },
+      Err(_) => {
+        return test.fail("discovery changed the I/O error");
+      }
+    }
+  }
+  return test.fail("discovery did not request input");
+}
+
+function protected_metadata(): test.TestOutcome {
+  let cases = mp3_freeformat_vectors.cases();
+  let v = cases[cases.len() - 1];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("protected indexed fixture");
+  };
+  match (mp3.decode(bytes.with(4, bytes[4] ^ 1u8), pcm.default_limits())) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("metadata CRC");
+    }
+  }
+  let changed = repair(bytes.with(6, 1u8), 32);
+  match (mp3.decode(changed, pcm.default_limits())) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("non-silent protected metadata prefix");
+    }
+  }
+  match (mp3.decode(bytes.with(43, bytes[43] | 16u8), pcm.default_limits())) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("protected metadata flags");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Free-format MP3 boundaries and protected metadata");
+  runner = runner.it("false sync patterns and bounded probe work", false_sync);
+  runner = runner.it("isolated extents and two-frame EOF", adjacent_context);
+  runner = runner.it("metadata boundaries and bounded large tags", metadata);
+  runner = runner.it("frame, lookahead, and invalid-state budgets", limits);
+  runner = runner.it("I/O failure during discovery", interrupted);
+  runner = runner.it("protected metadata keeps CRC and silence checks", protected_metadata);
+  return runner.finish();
+}

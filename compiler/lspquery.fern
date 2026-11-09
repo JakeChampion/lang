@@ -771,7 +771,7 @@ function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
 }
 
 function struct_text(st: checker.StructSig): string {
-  let out = "struct " + st.name + type_params(st.type_params) + " {";
+  let out = "struct " + st.name + ferndoc.join_type_params(st.type_params) + " {";
   let i = 0;
   while (i < st.field_names.len()) {
     if (i > 0) {
@@ -784,7 +784,7 @@ function struct_text(st: checker.StructSig): string {
 }
 
 function enum_text(s: checker.Scope, u: checker.UnionSig): string {
-  let out = "enum " + u.name + type_params(u.type_params) + " {";
+  let out = "enum " + u.name + ferndoc.join_type_params(u.type_params) + " {";
   let i = 0;
   while (i < u.variants.len()) {
     if (i > 0) {
@@ -801,22 +801,6 @@ function closed(out: string, members: i32): string {
     return out + " }";
   }
   return out + "}";
-}
-
-pub function type_params(tps: string[]): string {
-  if (tps.len() == 0) {
-    return "";
-  }
-  let out = "[";
-  let i = 0;
-  while (i < tps.len()) {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += tps[i];
-    i += 1;
-  }
-  return out + "]";
 }
 
 pub function label(t: typeinfo.Type, spelling: string): string {

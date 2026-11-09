@@ -5759,21 +5759,6 @@ function name_ends_with(nm: string, suffix: string): boolean {
   return slice_unchecked(nm, nm.len() - suffix.len(), nm.len()) == suffix;
 }
 
-function variant_simple_name(name: string): string {
-  let last_dot: i32 = -1;
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b'.') {
-      last_dot = i;
-    }
-    i += 1;
-  }
-  if (last_dot >= 0) {
-    return slice_unchecked(name, last_dot + 1, name.len()) + "";
-  }
-  return name;
-}
-
 function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
   for ed in enums {
     if (ed.name == name) {
@@ -8680,7 +8665,7 @@ function eval_match_stmt(m: ast.StmtMatch, own env: Env): StepResult {
 function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scrutinee: ast.Expr): string {
   let r = parser.parse_type_ref(bound_type_spelling(env.static_type_of(scrutinee), env));
   let owner = r.base;
-  let simple = variant_simple_name(pattern);
+  let simple = parser.derive_simple_name(pattern);
   if (simple.len() < pattern.len()) {
     owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
   }
@@ -8775,7 +8760,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         }
         match (sv) {
           VStruct(vs) => {
-            if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
+            if (vs.type_name == pv.type_name || vs.type_name == parser.derive_simple_name(pv.type_name)) {
               matched = true;
               let is_payload = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
               if (pv.at_binding.len() > 0) {
