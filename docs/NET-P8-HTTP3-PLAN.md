@@ -342,5 +342,12 @@ configured `with_tickets` issues a NewSessionTicket in 1-RTT once the
 handshake is done. The ticket has the sealed format of `std/tls/server`
 (`issue_ticket`, `lookup_ticket`). A TCP and a QUIC server with one secret
 can take each other's tickets, which no test checks yet. A client keeps each
-ticket (`Conn.tickets`) and offers it with `with_ticket`. Early data comes
-next: `std/tls/handshake` does not derive an early traffic secret yet.
+ticket (`Conn.tickets`) with the server's transport parameters, and
+offers it with `with_ticket`. With `with_early_data` on both ends, the
+ticket allows early data. The client then writes its first streams in
+0-RTT under the limits it remembered. The server reads them before its own
+handshake completes, and it can answer in 1-RTT at once. A server that
+refuses the early data drops the 0-RTT packets, and the client sends their
+frames again in 1-RTT. What remains is the HTTP/3 half. `std/serve` and
+`std/fetch` do not turn tickets on yet. A server must refuse a request that
+is not safe to replay with 425 (RFC 8470).

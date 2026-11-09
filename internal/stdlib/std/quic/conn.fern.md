@@ -148,8 +148,16 @@ pub struct Config {
   // none and resumes none. resume is the ticket a client offers.
   ticket_key: u8[],
   ticket_lifetime: Duration,
-  resume: Option[tlsclient.Ticket],
+  resume: Option[Ticket],
+  // early_data has a client send 0-RTT with a ticket that allows it, and a
+  // server take 0-RTT and issue tickets that allow it.
+  early_data: boolean,
 }
+
+// Ticket is a session ticket with the transport parameters of the server
+// that issued it, which bound what a client sends in 0-RTT (RFC 9000
+// section 7.4.1).
+pub struct Ticket { tls: tlsclient.Ticket, params: params.Params }
 ```
 
 ### `4 pub function config(alpn: string[]): Config`
@@ -158,7 +166,7 @@ pub struct Config {
 <<4 pub function config(alpn: string[]): Config>>=
 pub function config(alpn: string[]): Config {
   let p = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
-  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None, ecn: false, ticket_key: [], ticket_lifetime: time.duration_seconds(7200 as i64), resume: None };
+  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None, ecn: false, ticket_key: [], ticket_lifetime: time.duration_seconds(7200 as i64), resume: None, early_data: false };
 }
 
 // with_ecn says the transport carries ECN marks both ways: it sends each
@@ -190,8 +198,16 @@ pub function (c: Config) with_tickets(secret: [u8]): Config {
 }
 
 // with_ticket has a client offer the ticket `t` to resume its session.
-pub function (c: Config) with_ticket(t: tlsclient.Ticket): Config {
+pub function (c: Config) with_ticket(t: Ticket): Config {
   return Config { ...c, resume: Some(t) };
+}
+
+// with_early_data turns 0-RTT on: a client sends its first streams before
+// the handshake completes when its ticket allows it, and a server takes
+// them and issues tickets that allow it. 0-RTT data can be replayed, so a
+// server must take only what is safe to repeat (RFC 9001 section 9.2).
+pub function (c: Config) with_early_data(): Config {
+  return Config { ...c, early_data: true };
 }
 ```
 
@@ -288,7 +304,11 @@ pub struct Conn {
   // ticket_entropy is the randomness of the ticket a server issues, and
   // tickets the tickets a client received.
   ticket_entropy: u8[],
-  tickets: tlsclient.Ticket[],
+  tickets: Ticket[],
+  // zero_rtt says a client sends application packets as 0-RTT, and
+  // early_recv holds the keys a server opens 0-RTT packets with.
+  zero_rtt: boolean,
+  early_recv: Option[packet.Keys],
 }
 
 // Cid is one connection ID with its sequence number and the stateless reset
@@ -350,12 +370,12 @@ function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handsha
 
 function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_bytes: u8[]): handshake.ServerConfig {
   let ext = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
-  return handshake.ServerConfig { ...handshake.server_config(chain, schemes), alpn: c.alpn, quic: true, extensions: [ext] };
+  return handshake.ServerConfig { ...handshake.server_config(chain, schemes), alpn: c.alpn, quic: true, extensions: [ext], early_data: c.early_data };
 }
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None, ecn_in: 0, held_ecn: [], ecn_failed: false, ticket_entropy: [], tickets: [] };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None, ecn_in: 0, held_ecn: [], ecn_failed: false, ticket_entropy: [], tickets: [], zero_rtt: false, early_recv: None };
 }
 ```
 
@@ -372,14 +392,21 @@ function __offered(c: Config, unix_ms: i64): Option[handshake.Resumption] {
   let Some(t) = c.resume else {
     return None;
   };
-  return tlsclient.offered(t, c.server_name, time.timestamp_from_unix_millis(unix_ms));
+  return tlsclient.offered(t.tls, c.server_name, time.timestamp_from_unix_millis(unix_ms));
+}
+
+function __early_wanted(c: Config): boolean {
+  let Some(t) = c.resume else {
+    return false;
+  };
+  return c.early_data && t.tls.max_early > 0 as u32;
 }
 
 function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
   let scid = __bytes_range(entropy, 0, c.cid_len);
   let dcid = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
-  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: __offered(c, unix_ms) };
+  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: __offered(c, unix_ms), early_data: __early_wanted(c) };
   let secret = __bytes_range(entropy, c.cid_len + 8, c.cid_len + 8 + CID_SECRET);
   match (handshake.client_start(cc, entropy[c.cid_len + 8 + CID_SECRET:entropy.len()])) {
     Ok(step) => {
@@ -547,7 +574,7 @@ pub function (c: Conn) handshaking(): boolean {
 // the client to prove its address before it kept any state.
 // tickets are the session tickets a client received, to resume with
 // Config.with_ticket.
-pub function (c: Conn) tickets(): tlsclient.Ticket[] {
+pub function (c: Conn) tickets(): Ticket[] {
   return c.tickets;
 }
 
@@ -700,7 +727,7 @@ pub function (c: Conn) sent(): Conn {
 ```fern
 <<15 pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string]>>=
 pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
-  if (c.state != ESTABLISHED) {
+  if (!c.__app_ready()) {
     return Err("quic: the connection is not established");
   }
   let cur = Conn { ...c, streams: c.streams.open(uni) };
@@ -712,7 +739,17 @@ pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
 }
 
 pub function (c: Conn) can_open(uni: boolean): boolean {
-  return c.state == ESTABLISHED && c.streams.can_open(uni);
+  return c.__app_ready() && c.streams.can_open(uni);
+}
+
+// __app_ready says streams can carry data: once established, while a
+// client sends 0-RTT, and on a server that took 0-RTT once it can write
+// 1-RTT.
+function (c: Conn) __app_ready(): boolean {
+  if (c.state == ESTABLISHED || c.zero_rtt) {
+    return true;
+  }
+  return c.server && c.state == HANDSHAKING && c.early_recv.is_some() && c.spaces[recovery.APPLICATION].send.is_some();
 }
 
 pub function (c: Conn) blocked_open(uni: boolean): Conn {
@@ -1091,10 +1128,33 @@ function (c: Conn) __packet(datagram: [u8], h: packet.Header, now: i64): Conn {
     packet.OneRtt => {
       return c.__protected(datagram, h, recovery.APPLICATION, frames.IN_ONE_RTT, now);
     },
+    packet.ZeroRtt => {
+      return c.__zero_rtt(datagram, h, now);
+    },
     _ => {
       return c;
     }
   }
+}
+
+// __zero_rtt opens a 0-RTT packet on a server that took the client's early
+// data; any other server drops it.
+function (c: Conn) __zero_rtt(datagram: [u8], h: packet.Header, now: i64): Conn {
+  let Some(keys) = c.early_recv else {
+    return c;
+  };
+  if (!c.server || !c.__ours(h)) {
+    return c;
+  }
+  match (packet.open(datagram, h, keys, c.spaces[recovery.APPLICATION].largest_recv)) {
+    Ok(o) => {
+      return c.__opened(h, o, recovery.APPLICATION, frames.IN_ZERO_RTT, now);
+    },
+    Err(_) => {
+      return c;
+    }
+  }
+  return c;
 }
 
 function (c: Conn) __version_negotiation(h: packet.Header, now: i64): Conn {
@@ -1797,12 +1857,45 @@ function (c: Conn) __tls_event(e: handshake.Event, now: i64): Conn {
       return c.__secret(t);
     },
     handshake.Connected => {
-      return c.__connected(now).__ticket_issued(now);
+      return c.__connected(now).__early_settled().__ticket_issued(now);
     },
     _ => {
       return c.__tls_question(e, now);
     }
   }
+}
+
+// __early_settled resends in 1-RTT what a client sent in 0-RTT when the
+// server rejected its early data (RFC 9001 section 4.6.2).
+function (c: Conn) __early_settled(): Conn {
+  if (c.server || c.early_state() != handshake.EARLY_REJECTED) {
+    return c;
+  }
+  let cur = c;
+  for sent in c.recovery.unacked(recovery.APPLICATION) {
+    cur = cur.__resend(sent.resend);
+  }
+  return Conn { ...cur, recovery: cur.recovery.discard(recovery.APPLICATION) };
+}
+
+// early_state is a client's handshake.EARLY_* state, and on a server
+// EARLY_ACCEPTED when it took the client's early data.
+pub function (c: Conn) early_state(): i32 {
+  match (c.tls) {
+    TlsClient(t) => {
+      return t.early_state();
+    },
+    TlsServer(t) => {
+      if (t.early_accepted()) {
+        return handshake.EARLY_ACCEPTED;
+      }
+      return handshake.EARLY_NONE;
+    },
+    TlsNone => {
+      return handshake.EARLY_NONE;
+    }
+  }
+  return handshake.EARLY_NONE;
 }
 
 // __ticket_issued sends a server's session ticket once the handshake is
@@ -1813,7 +1906,7 @@ function (c: Conn) __ticket_issued(now: i64): Conn {
   }
   match (c.tls) {
     TlsServer(t) => {
-      return c.__server_step(t.ticket(tlsserver.issue_ticket(c.config.ticket_key, c.config.ticket_lifetime, t, c.ticket_entropy, c.__wall_ms(now), false)), now);
+      return c.__server_step(t.ticket(tlsserver.issue_ticket(c.config.ticket_key, c.config.ticket_lifetime, t, c.ticket_entropy, c.__wall_ms(now), c.config.early_data)), now);
     },
     _ => {
       return c;
@@ -1827,6 +1920,9 @@ function (c: Conn) __wall_ms(now: i64): i64 {
 }
 
 function (c: Conn) __secret(t: handshake.TrafficSecret): Conn {
+  if (t.level == handshake.EARLY_LEVEL) {
+    return c.__early_secret(t);
+  }
   let k = packet.keys(__suite(c), t.secret);
   let s = c.spaces[t.level];
   if (t.write) {
@@ -1837,12 +1933,35 @@ function (c: Conn) __secret(t: handshake.TrafficSecret): Conn {
   let cur = Conn { ...c, spaces: c.spaces.with(t.level, s) };
   if (t.level == recovery.APPLICATION) {
     if (t.write) {
-      cur = Conn { ...cur, key_next_send: Some(k.updated()) };
+      cur = Conn { ...cur, key_next_send: Some(k.updated()), zero_rtt: false };
     } else {
       cur = Conn { ...cur, key_next_recv: Some(k.updated()) };
     }
   }
   return cur;
+}
+
+// __early_secret takes the 0-RTT keys. A client sends its application
+// packets as 0-RTT under the limits its ticket remembered, until the 1-RTT
+// keys replace them. A server opens 0-RTT packets, and may answer them in
+// 1-RTT before the handshake completes, under the client's limits.
+function (c: Conn) __early_secret(t: handshake.TrafficSecret): Conn {
+  if (t.write) {
+    let Some(ticket) = c.config.resume else {
+      return c;
+    };
+    let suite = keyschedule.cipher_suite(ticket.tls.suite).unwrap_or(__suite(c));
+    let s = c.spaces[recovery.APPLICATION];
+    return Conn { ...c, spaces: c.spaces.with(recovery.APPLICATION, Space { ...s, send: Some(packet.keys(suite, t.secret)) }), zero_rtt: true, streams: c.streams.with_peer(ticket.params) };
+  }
+  match (c.__peer_transport_params()) {
+    Ok(p) => {
+      return Conn { ...c, early_recv: Some(packet.keys(__suite(c), t.secret)), streams: c.streams.with_peer(p) };
+    },
+    Err(_) => {
+      return c;
+    }
+  }
 }
 
 function __suite(c: Conn): keyschedule.CipherSuite {
@@ -1874,7 +1993,10 @@ function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
         handshake.Ticket(nst) => {
           match (tlsclient.ticket_from(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)))) {
             Some(kept) => {
-              return Conn { ...c, tickets: c.tickets.append(kept) };
+              let Some(p) = c.peer_params else {
+                return c;
+              };
+              return Conn { ...c, tickets: c.tickets.append(Ticket { tls: kept, params: p }) };
             },
             None => {
               return c;
@@ -2310,7 +2432,7 @@ function (c: Conn) __control_out(space: i32, room: i32): Conn {
 }
 
 function (c: Conn) __streams_out(space: i32, room: i32): Conn {
-  if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
+  if (space != recovery.APPLICATION || !c.__app_ready()) {
     return c;
   }
   let before = c.plans[space].payload.len();
@@ -2426,6 +2548,9 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
     payload = frames.put(payload, frames.Padding(extra));
   }
   let n = packet.pn_len(s.next_pn, -1i64);
+  if (p.space == recovery.APPLICATION && c.zero_rtt) {
+    return packet.seal_long(packet.Long { kind: packet.ZeroRtt, dcid: c.dcid, scid: c.scid, token: [], pn: s.next_pn, pn_len: n }, payload, keys);
+  }
   if (p.space == recovery.APPLICATION) {
     return packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   }
