@@ -345,6 +345,55 @@ These result allocations remain an optimization target.
 This small synthetic workload does not predict full-resolution device playback.
 It has no comparison with an established decoder and establishes no world-leading performance claim.
 
+## Matched QTRLE qualification
+
+`scripts/compare-video-qtrle` compares the public Fern and FFmpeg QTRLE decode APIs on identical packets.
+FFmpeg supplies a separate native reference executable for the qualification tool.
+The Fern decoder and the Android app do not acquire an FFmpeg dependency.
+
+The tool generates four-frame RGB24 and ARGB32 sequences with repeated runs, literal pixels, sparse changes, and dense changes.
+It includes one unchanged frame per sequence. Full workloads use 512 by 288 and 1920 by 1080 images.
+Both decoders must reproduce every canonical ARGB byte before timing starts.
+A separate native sanitizer build and optional WASI execution must reproduce those bytes too.
+
+Each process preloads its packets and retains only the current frame.
+FFmpeg uses one decoder thread. Each process completes one corpus cycle before the timed loop.
+The loop measures public decode calls and one sampled pixel per frame with `CLOCK_MONOTONIC`.
+Setup, frame verification, output writes, and process startup remain outside that interval.
+
+Pairs alternate their execution order. The report preserves every trial, checksums, compiler and binary hashes, tool versions, and corpus hashes.
+
+A small native sampler forks each measured process after its own exec.
+This excludes the Python parent's inherited RSS floor.
+The sampler records peak process RSS and complete-process user and system CPU time through Linux `wait4`.
+RSS includes runtime code, shared libraries, preloaded packets, and frame storage. It is not a decoder-only allocation budget.
+
+Fern pixel arrays use a different representation from FFmpeg's packed pixel buffers.
+A separate instrumented executable counts Fern allocations. Its time and RSS do not enter the comparison.
+Assembly checks require the timed executable to omit allocation instrumentation.
+FFmpeg allocation counts remain unmeasured.
+
+The tool requires Linux, a C compiler, FFmpeg, its development headers, and `pkg-config`.
+WASI verification also requires `wasmtime`.
+
+```sh
+scripts/compare-video-qtrle --wasi --output build/video/qtrle-comparison.json
+scripts/compare-video-qtrle --smoke --wasi --output build/video/qtrle-smoke.json
+```
+
+`--smoke` verifies the sampler, malformed-input rejection, complete frames, and timed checksums on small images.
+It records no performance ratios. The Android build lane runs this check with WASI verification and retains its report.
+
+The workloads repeat four packets on one host. They do not represent every animation, general video decode, or full application playback.
+Shared-host timings and process RSS require interpretation. They do not establish world-leading performance, physical-device power, or lip-sync accuracy.
+
+The [2026-11-08 x86-64 checkpoint](benchmarks/video-qtrle-2026-11-08/README.md) contains the first matched results.
+That compiler takes 2.2 to 7.7 times the FFmpeg loop time on those four workloads.
+
+The [2026-11-09 checkpoint](benchmarks/video-qtrle-2026-11-09/README.md) repeats the same packets with compiler source `15a62e417f`.
+Fern takes 2.3 to 7.4 times the FFmpeg loop time in that run.
+These results identify allocation and memory targets. They do not establish a general decoder ranking.
+
 ## Player work and qualification order
 
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
