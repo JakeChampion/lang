@@ -17,11 +17,8 @@ func TestSelfHostWasmShimCore(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	watbin, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	source := string(watbin) + "\n" + shimCoreSelfTestMain
+	watbin := assemblerSource(t, "watbin.fern")
+	source := watbin + "\n" + shimCoreSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -73,11 +70,8 @@ func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	watbin, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	source := string(watbin) + "\n" + suffixStdoutSelfTestMain
+	watbin := assemblerSource(t, "watbin.fern")
+	source := watbin + "\n" + suffixStdoutSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

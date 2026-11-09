@@ -8,7 +8,9 @@ import "./util";
 
 pub struct Reserved { f: ssasem.Func, changed: boolean, sites: semarrayreport.Site[] }
 
-struct Plan { counted: semunroll.Counted, phi: i32, bound: i32, before: i32, zero: i32, reason: i32 }
+// When length_of is not -1, bound is the length of that array, read in the loop
+// header, and the reservation reads the length again before the loop.
+struct Plan { counted: semunroll.Counted, phi: i32, bound: i32, length_of: i32, before: i32, zero: i32, reason: i32 }
 
 const RESERVED: i32 = 0;
 
@@ -172,7 +174,7 @@ function block_at(g: ssa.SFunc, id: i32): i32 {
 
 function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index: util.NameIndex, bad: boolean[]): Plan {
   let c = semunroll.counted_shape(f, d, hi);
-  let p = Plan { counted: c, phi: phi.result, bound: -1, before: -1, zero: -1, reason: SHAPE_UNSUPPORTED };
+  let p = Plan { counted: c, phi: phi.result, bound: -1, length_of: -1, before: -1, zero: -1, reason: SHAPE_UNSUPPORTED };
   if (c.iv < 0 || c.start != 0 || c.step != 1 || c.offset != 0 || !empty(f, d, phi.args[c.entry], 0)) {
     return p;
   }
@@ -189,11 +191,15 @@ function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index
       return p;
     }
     let n = compare.args[1];
-    if (d.block[n] < 0 || d.block[n] != before && f.graph.blocks[d.block[n]].id != f.graph.entry || !ssasem.is_i32(f.values[n])) {
+    if (d.block[n] < 0 || !ssasem.is_i32(f.values[n])) {
+      return p;
+    }
+    let length_of = header_length(f, d, c, before, n);
+    if (length_of < 0 && d.block[n] != before && f.graph.blocks[d.block[n]].id != f.graph.entry) {
       return p;
     }
     if let Some(iv) = definition(f, d, c.iv) {
-      p = Plan { ...p, bound: n, before: before, zero: iv.args[c.entry] };
+      p = Plan { ...p, bound: n, length_of: length_of, before: before, zero: iv.args[c.entry] };
     }
   }
   if (p.bound < 0 || p.zero < 0 || !exact_append(f, d, c, phi)) {
@@ -203,6 +209,24 @@ function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index
     return Plan { ...p, reason: NON_SCALAR };
   }
   return Plan { ...p, reason: body_reason(f, c, phi, index, bad) };
+}
+
+// header_length is the array whose length n is when a loop header reads that
+// length from an array defined before the loop, as `for x in xs` does, or -1.
+function header_length(f: ssasem.Func, d: ssa.DefSites, c: semunroll.Counted, before: i32, n: i32): i32 {
+  if (util.index_of_i32(c.heads, d.block[n]) < 0) {
+    return -1;
+  }
+  if let Some(len) = definition(f, d, n) {
+    if (len.kind_tag != ssasem.length() || len.args.len() != 1) {
+      return -1;
+    }
+    let a = len.args[0];
+    if (d.block[a] >= 0 && (d.block[a] == before || f.graph.blocks[d.block[a]].id == f.graph.entry)) {
+      return a;
+    }
+  }
+  return -1;
 }
 
 function exact_append(f: ssasem.Func, d: ssa.DefSites, c: semunroll.Counted, phi: ssa.SInst): boolean {
@@ -251,9 +275,17 @@ function reserved(f: ssasem.Func, p: Plan): ssasem.Func {
   let value = f.values.len();
   let h = g.blocks[p.counted.head];
   let before = g.blocks[p.before];
-  let cond = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [p.bound, p.zero], imm: 0, str: ">" };
+  let values = f.values;
+  let bound = p.bound;
+  if (p.length_of >= 0) {
+    bound = value;
+    before = ssa.SBlock { ...before, insts: before.insts.append(ssa.SInst { kind_tag: ssasem.length(), result: bound, args: [p.length_of], imm: 0, str: "" }) };
+    values = values.append(f.values[p.bound]);
+    value += 1;
+  }
+  let cond = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [bound, p.zero], imm: 0, str: ">" };
   before = ssa.SBlock { ...before, insts: before.insts.append(cond), term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: value, target: 0, t: next, f: next + 1, value: 0 } };
-  let reserve = ssa.SInst { kind_tag: ssasem.array_reserve(), result: value + 1, args: [p.bound], imm: 0, str: "" };
+  let reserve = ssa.SInst { kind_tag: ssasem.array_reserve(), result: value + 1, args: [bound], imm: 0, str: "" };
   let fresh = ssa.SBlock { id: next, insts: [reserve], term: jump(next + 1), preds: [before.id] };
   let insts: ssa.SInst[] = [];
   let original = -1;
@@ -275,7 +307,7 @@ function reserved(f: ssasem.Func, p: Plan): ssasem.Func {
       blocks = blocks.append(if (i == p.before) { before } else { g.blocks[i] });
     }
   }
-  let values = f.values.append(typeinfo.TypeBool { tag: 0 }).append(f.values[p.phi]).append(f.values[p.phi]);
+  values = values.append(typeinfo.TypeBool { tag: 0 }).append(f.values[p.phi]).append(f.values[p.phi]);
   let source = f.source_positions;
   if (source.entry.line != 0) {
     while (source.values.len() < values.len()) {

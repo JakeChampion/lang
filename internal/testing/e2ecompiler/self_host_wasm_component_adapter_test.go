@@ -32,14 +32,8 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(withPrintInt(asmReadFileDriver))
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
 	if len(asmWat) == 0 {
