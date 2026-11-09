@@ -134,8 +134,10 @@ owned-ident occurrence: projection targets, call callees, binary
 operands, casts, slices, borrowed-position call args, and
 borrowed-self receivers are *borrows*; any other whole-value use
 is a *consume*. Using a consumed binding is E050
-(checker.go:7670); a consume inside a loop body of a param live
-at loop entry is E050 (checker.go:7718); branch joins merge only
+(checker.go:7670); a param live at loop entry must be live again
+on each path back to the loop head, the reachable end of the body
+and each `continue`, or its consume is E050 (`loopBody`); a
+`break` takes its moved set past the loop; branch joins merge only
 non-diverging arms (checker.go:7683); matching an owned
 scrutinee moves its pointer payloads into arm bindings, owned
 for the arm's scope (checker.go:7778-7814). A call scrutinee is

@@ -822,6 +822,17 @@ function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
   }
 }
 
+function arm64_linux_image(image: string, base: i64, size: i64): string {
+  let b = elf.elf_arm64_linux_image(image.as_bytes(), base, size);
+  if (b.len() == 0) {
+    eprint("fern: the load segments of the arm64-kernel image do not ascend, so it has no Image form");
+    return "";
+  }
+  unsafe {
+    return string_from_bytes_unchecked(b);
+  }
+}
+
 // The startup reads the address and the page-rounded length of the read-only
 // region from two data slots. Fixed-address images use a read-only load
 // segment instead. A relocating image with constant bytes needs both slots.
@@ -2648,7 +2659,7 @@ function flag_groups(): FlagGroup[] {
     FlagGroup { title: "compile", flags: [
       cli_flag("-target", "ISA-ENV", "the target to build for (default arm64-linux); -targets lists them"),
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
-      cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module or command-module"),
+      cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module, command-module, or image (an arm64 Linux Image of an arm64-kernel image, which a loader puts 2M above the start of its RAM, so BASE of -ram is that start plus 2M)"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
       cli_flag("-stdlib", "DIR", "compile against the standard library in DIR, not the one that this binary embeds"),
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
@@ -4203,6 +4214,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let package_roots: string[] = [visibility.package_root(entry_ident, root, root_package.dir)];
   let module_packages: pkggrants.ModuleAt[] = [];
   let grant_mans = pkggrants.with_manifest([], gov.dir, gov.man);
+  let gov_dirs: string[] = [];
+  let govs: Governed[] = [];
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
@@ -4253,7 +4266,14 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       srcs = srcs.append(rm.src);
       m = flatten.resolve_imports(m, mdir, root);
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
-      let module_gov = governing_manifest(mdir);
+      // Most modules share a few directories, so each one is searched once.
+      let gi = util.index_of_str(gov_dirs, mdir);
+      if (gi < 0) {
+        gov_dirs = gov_dirs.append(mdir);
+        govs = govs.append(governing_manifest(mdir));
+        gi = govs.len() - 1;
+      }
+      let module_gov = govs[gi];
       if (module_gov.man.err.len() > 0) {
         return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, errs: [] }, module_gov.dir, module_gov.man);
       }
@@ -5968,8 +5988,11 @@ pub function emit_refusal(target: string, emit: string): string {
   if (emit == "command-module" && target != "wasm32-wasi") {
     return "fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)";
   }
-  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
-    return "fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)";
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module" && emit != "image") {
+    return "fern: unknown -emit: " + emit + " (want asm, core-module, command-module, image, or omit it for the target's default output form)";
+  }
+  if (emit == "image" && target != "arm64-kernel") {
+    return "fern: -emit image is the arm64 Linux Image form of -target arm64-kernel; -target " + target + " has no image form";
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
     return "fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit";
@@ -7337,6 +7360,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (!ram_ok) {
     return 2;
   }
+  if (emit == "image" && ram_base % 2097152i64 != 0i64) {
+    eprint("fern: -emit image needs a BASE of -ram that is a multiple of 2M: a loader puts an arm64 Image 2 MiB above the start of its RAM, which is on a 2 MiB boundary (got \"" + ram_text + "\")");
+    return 2;
+  }
   pie = executable_pie(pie, target, shared);
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {
@@ -7535,6 +7562,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = arm64_kernel_image(out_asm, words_of(recs), ram_base);
       if (out_asm.len() == 0) {
         return 2;
+      }
+      if (emit == "image") {
+        out_asm = arm64_linux_image(out_asm, ram_base, ram_size);
+        if (out_asm.len() == 0) {
+          return 2;
+        }
       }
     }
   } else if (target == "x86-64-kernel") {

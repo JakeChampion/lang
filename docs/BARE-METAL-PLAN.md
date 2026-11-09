@@ -416,6 +416,27 @@ ELF `ET_EXEC` image:
 - qemu-virt puts the device tree at the start of its RAM for an image that is
   not a Linux kernel. So `-ram 0x40200000,126M` keeps the first 2 MiB for it.
 
+**`-emit image` writes an arm64 Linux `Image` (#14767).** Firecracker on arm64
+loads only this form, and qemu-virt loads an initrd only for it. The `Image`
+holds the same memory as the ELF form: each load segment is at its address
+minus BASE. The 64-byte header takes the place of the ELF header:
+
+- `code0` is a branch to `_start`, and the magic `ARM\x64` is at byte 56.
+- The text offset is 2 MiB. A loader puts the `Image` 2 MiB above the start of
+  its RAM, so BASE must be that start plus 2 MiB. qemu-virt and Firecracker
+  both do this. qemu also moves an `Image` with a text offset of 0 up by
+  2 MiB, because it keeps the bottom of the RAM for its own boot code.
+- The image size is SIZE of `-ram`, so a loader that reads it keeps the device
+  tree and the initrd out of the RAM of the image.
+- The loader puts the device tree address in x0, so `__boot_info()` gives it,
+  and `/chosen` names the initrd. `std/fdt` reads the range with
+  `property_cells`.
+
+`internal/testing/e2ecompiler/self_host_kernel_image_test.go` compares the
+`Image` with the ELF form of the same program and checks the header.
+`TestSelfHostKernelLinuxImageOnQemu` boots the `Image` on qemu-virt with an
+initrd, and reads a file from it with `std/cpio`.
+
 `internal/testing/e2ecompiler/self_host_kernel_test.go` reads the program
 headers and the entry point. `TestSelfHostKernelBootsOnQemu` boots the image on
 `qemu-system-aarch64 -M virt`. The image prints through a PL011 provider. It
@@ -618,6 +639,10 @@ check time, in the same mechanism that enforces the OS boundary today.
   intrinsics. The `privileged` capability gates the intrinsics, so a hosted
   program fails with E066, and a dependency needs the `privileged` package
   capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
+- **A filesystem** (#14264). The first one is a read-only cpio archive, the
+  format of a Linux initramfs: `std/cpio` reads it. A VMM loads it as the
+  initrd, or a virtio-blk disk holds it, and `std/virtio_blk` reads the disk.
+  A writable filesystem comes later, on the same driver.
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
   reads the header and the program headers of an ELF64 image, and
@@ -646,8 +671,9 @@ alone.
 
 **Start on a microVM.** The most active TamaGo targets are Firecracker, Cloud
 Hypervisor and QEMU `microvm`. Their device model is small: a serial port and
-virtio-mmio, with no PCI. Firecracker loads the kernel ELF directly, with no
-bootloader. That makes milestone 1 shorter.
+virtio-mmio, with no PCI. Firecracker loads the kernel directly, with no
+bootloader: an ELF image through its PVH note on x86-64, and an arm64 Linux
+`Image` on arm64. That makes milestone 1 shorter.
 
 A microVM also fits the workload that Fern is best at: a Fern HTTP handler that
 boots directly on Firecracker is a product, not only a test.
@@ -662,6 +688,8 @@ Thus a FernOS kernel that implements the syscalls of the compiler can run the
 of syscalls. The eggshell list of limits shows what a first kernel can omit:
 `ptrace`, SysV IPC, inotify, mounts and namespaces. An `arm64-fernos` user
 environment over the FernOS syscalls can come later, as an improvement.
+`docs/FERNOS-LINUX-ABI.md` records the measured set: 18 calls, one thread,
+and three `mmap` reservations at start.
 
 ## Sequencing
 
@@ -685,8 +713,8 @@ environment over the FernOS syscalls can come later, as an improvement.
 7. **Done: milestone 1** (#14260). An arm64 image on qemu-virt and an
    x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
    reads the device tree, and `std/pvh` reads the PVH start info through
-   `__boot_info`. Firecracker loads the same ELF and stays the production
-   target. **Done: the effect intrinsics** (#14252), with
+   `__boot_info`. Firecracker loads the same x86-64 ELF, and the `-emit
+   image` form of the arm64 image (#14767). It stays the production target. **Done: the effect intrinsics** (#14252), with
    `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info`, the system register,
    cache, TLB and port ops, `__breakpoint` and the IRQ ops (section 2).
    **Done: `@interrupt`** (#14253) on both kernel targets. `naked` remains.
@@ -785,7 +813,20 @@ environment over the FernOS syscalls can come later, as an improvement.
    answers match but for the date header. `std/serve` itself over `std/tcp`
    waits for the Linux ABI of milestone 4: then `std/serve` is a user
    program and the kernel implements its `tcp_*` syscalls over `std/tcp`.
-17. Beside those: the panic scope is decided (#14257, see the north-star
+17. **A read-only filesystem exists** (#14264, the filesystem half of
+   milestone 5). `std/cpio` reads a cpio archive in the `newc` format, the
+   format of a Linux initramfs. `std/virtio_blk` reads and writes the
+   sectors of a virtio-blk disk over `std/virtio`, and it sends a flush.
+   qemu-virt loads no initrd for an arm64 ELF image. The `-emit image` form
+   gets one, which `/chosen` names (section 4). On x86-64, qemu and
+   Firecracker load the initrd as module 0 of the PVH start info, and
+   `std/pvh` reads the module list. `TestSelfHostKernelVirtioBlkOnQemu` and
+   `TestSelfHostKernelX86VirtioBlkOnQemu` read an archive from the disk,
+   find a file by its path and sum a file of 100000 bytes, which takes two
+   requests. The x86-64 image also reads the same archive as its initrd.
+   Then both images write the last sector, and the Go test reads it in the
+   disk file. The ELF loader is the other half of the milestone.
+18. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

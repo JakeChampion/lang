@@ -83,7 +83,11 @@ block uses that a dominating block read (a record, tuple or payload field,
 or an array element at the same index), so the plan takes them instead of
 borrowing them. It re-reads only a read that borrowed, of a parent nothing
 spends while the child, or the value the block reads through it, lives, so
-a re-read never holds a parent longer than the plan already does. Before
+a re-read never holds a parent longer than the plan already does. An
+ancestor of the parent counts too (`ancestor_spent_past`). It does not
+re-read a value while a read off its first read lives into the block and is
+not read again there (`child_kept_across`). The plan holds that old read
+across the new one, and an update of it then copies. Before
 that, it merges a repeated read into a read of the same slot in a block that
 dominates it, when a read off the first is spent or is live out of the
 repeat's block. A `length` does not spend. A record field read used only in
