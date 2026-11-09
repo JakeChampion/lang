@@ -111,7 +111,11 @@ def run_playback(uri, error_uri, out):
         command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
                    "--es", "uri", uri, "--es", "error_uri", error_uri]
         if uri.startswith("content://"):
-            command += ["--grant-read-uri-permission", "-d", uri]
+            # The shell owns the MediaStore fixture and cannot grant its URI.
+            sdk = int(adb("shell", "getprop", "ro.build.version.sdk").strip())
+            permission = "READ_MEDIA_VIDEO" if sdk >= 33 else "READ_EXTERNAL_STORAGE"
+            adb("shell", "pm", "grant", PACKAGE, "android.permission." + permission)
+            command += ["-d", uri]
         adb(*command)
         # Two playback rounds take about 12 seconds. The error round waits for
         # the retries of the platform's HTTP source, about 30 seconds more.
