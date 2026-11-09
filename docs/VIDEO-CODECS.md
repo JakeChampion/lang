@@ -218,6 +218,21 @@ The header frame count is advisory. Each packet has its own timestamp.
 
 Timestamp conversion uses the declared rational timebase and checked arithmetic.
 
+`std/video/ivf/input` reads these packets from a borrowed sequential source.
+Each step performs at most one bounded read and emits at most one event.
+It accepts short reads and distinguishes I/O errors from malformed or truncated input.
+It validates the declared packet length before a payload read.
+Separate limits bound input-buffer bytes, packet bytes, packet count, and source-read operations.
+
+Packet events own their encoded bytes and preserve unsigned 64-bit timestamps without an order requirement.
+Payload offsets use signed 64-bit counts from the source start.
+EOF between packets returns `End`. EOF inside a header or payload returns `Truncated`.
+The header frame count remains advisory.
+The caller retains and closes the source after success or failure.
+
+The input-buffer limit excludes retained packet events and does not define an exact process-memory bound.
+Blocking source reads must run outside the Android loop callback.
+
 IVF support does not establish VP8, VP9, or AV1 software decode support.
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
@@ -323,6 +338,12 @@ Native and WASI file-input tests reject every media-payload read during index cr
 They cover short reads, an 8 GiB sparse range, truncated boxes, resource limits, and I/O failures.
 Fixtures cover reordered frames, signed composition offsets, fast-start layout, interleaved AAC, multiple video tracks, compact sample sizes, and 64-bit offsets.
 Normal native and WASI tests use checked-in reference bytes and require no FFmpeg installation.
+
+The same build lane runs `scripts/check-video-ivf-interop` on fresh VP8, VP9, and AV1 files.
+Native and WASI readers must return identical packet bytes through three-byte source reads.
+FFprobe independently checks packet sizes, timestamps, and offsets.
+FFmpeg decodes the reconstructed IVF files and compares every RGB sample with the original decode.
+Native and WASI boundary tests cover partial input, invalid lengths, exact budgets, I/O failures, and source offsets beyond 4 GiB.
 
 Emulator results do not establish physical hardware throughput or battery consumption.
 

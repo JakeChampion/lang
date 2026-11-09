@@ -1,0 +1,41 @@
+import "std/video/ivf/input";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "video_ivf_vectors";
+import "video_ivf_input_check" as check;
+
+function reference(): test.TestOutcome {
+  for vector in video_ivf_vectors.vectors() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("hex");
+    };
+    for short in [1, 3, 0] {
+      let limits = input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: 31, max_buffer_bytes: 4096 } };
+      let result = match (check.run(bytes, short, limits)) { Ok(value) => value, Err(error) => { return test.fail(error.message()); } };
+      let Some(header) = result.header else {
+        return test.fail("header event");
+      };
+      if (header.codec.to_debug() != vector.codec || header.format.width != 32 || header.format.height != 32 || header.rate != 6u32 || header.scale != 1u32) {
+        return test.fail("FFprobe stream metadata");
+      }
+      if (result.packets.len() != vector.packets.len() || result.offset != bytes.len() as i64 || result.largest > 31) {
+        return test.fail("packet count, source position, or read bound");
+      }
+      for i in 0..vector.packets.len() {
+        let actual = result.packets[i];
+        let expected = vector.packets[i];
+        if (actual.offset != expected.offset || actual.timestamp != expected.timestamp || hex.encode(actual.bytes) != expected.bytes) {
+          return test.fail("FFprobe packet range, time, or retained bytes");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded IVF packet input");
+  runner = runner.it("VP8, VP9, and AV1 packets match independent references through short reads", reference);
+  return runner.finish();
+}
