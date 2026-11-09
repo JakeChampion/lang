@@ -7,6 +7,68 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Narrow PCM conversion
+
+Source `86e27cfe596f23167f57adfa74e158b93dd76363` combines contiguous FFT stores with four-lane PCM8 and PCM16 conversion.
+Exact half-integer float results use the original double-precision conversion.
+This fallback preserves integer samples near each rounding boundary.
+The tests compare 589824 random and boundary samples with the independent scalar writer.
+
+The comparison uses the same compiler, C build, CPU, input types, and baseline revision as the packed FFT report below.
+Each of its 24 cases has thirty repetitions in six balanced execution orders.
+No other local builds or tests run during measurement.
+Every final WAV equals the baseline byte for byte, and all float64 oracle checks pass.
+
+Fern has lower medians than the baseline in 21 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.172×, or 1.245× without silence.
+The fixed-suite bootstrap interval is 1.145× to 1.200×.
+The calculation uses 2000 repetitions and seed 417.
+This interval covers repetition uncertainty within these cases.
+
+Fern has lower medians than C in 18 of 24 cases.
+The aggregate C/Fern ratio is 1.523×, or 1.085× without silence.
+The fixed-suite interval for the aggregate C comparison is 1.488× to 1.554×.
+C remains faster in six cases.
+These measurements do not establish a universal speed ranking.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM16 | 1.164 | 1.460 |
+| 10 | 32768 | PCM24 | 1.116 | 1.204 |
+| 10 | 32768 | PCM8 | 1.154 | 1.506 |
+| 100 | 2048 | PCM16 | 1.253 | 1.741 |
+| 100 | 2048 | PCM24 | 1.078 | 1.341 |
+| 100 | 2048 | PCM8 | 1.280 | 2.017 |
+
+[The complete report](x86-64-narrow-pcm.json) retains all individual times, hashes, regressions, and oracle errors.
+Its `baseline_summary` records the previous Fern comparison separately.
+The baseline revision is `49056c6e392ba85b267e4abb6a44dd94872cc891`.
+The compiler revision is `acbe1f2f38b76dddf0db952f11bba1e73876e04b`.
+
+Build the compiler and baseline with the commands in the packed FFT section below.
+Build the newer codec with that same compiler:
+
+```sh
+git worktree add /tmp/ulc-narrow-source 86e27cfe596f23167f57adfa74e158b93dd76363
+make -C /tmp/ulc-narrow-source/examples/ulc FERN=/tmp/ulc-fft-compiler/bin/fern
+make -C /tmp/ulc-narrow-source/examples/ulc build/reference64 FERN=/tmp/ulc-fft-compiler/bin/fern
+python3 examples/ulc/bench/run.py \
+  --fern /tmp/ulc-narrow-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-fft-before/examples/ulc/build/ulc \
+  --baseline-source-commit 49056c6e392ba85b267e4abb6a44dd94872cc891 \
+  --compiler /tmp/ulc-fft-compiler/bin/fern \
+  --source-commit 86e27cfe596f23167f57adfa74e158b93dd76363 \
+  --oracle /tmp/ulc-narrow-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM16 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-narrow-10-PCM16.json
+```
+
+Repeat for PCM8 and PCM24, then for 100 seconds at block size 2048.
+Use separate output paths for each configuration.
+Use `summarize.py --comparison Baseline` to reproduce the baseline aggregate.
+
 ## Packed FFT output
 
 Source `aadbb7a969b682269117759f8cb46af11db5594f` writes the packed FFT output with contiguous SIMD stores.
