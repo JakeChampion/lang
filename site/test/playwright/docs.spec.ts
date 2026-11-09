@@ -440,6 +440,33 @@ test("the benchmarks page lists every run with its machine", async ({ page }) =>
   await expect(tables.first()).toContainText("GitHub-hosted runner");
 });
 
+test("a fern code block that is a whole program links to the playground", async ({ page }) => {
+  await page.goto("cookbook/");
+  // "Read a file" is static code, because it needs a file. Its link holds
+  // the program.
+  const hrefs = await page.locator(".fern-run-link a").evaluateAll((as) => as.map((a) => a.getAttribute("href")!));
+  const programs = hrefs.map((h) => Buffer.from(h.split("#src=")[1], "base64url").toString());
+  expect(hrefs.every((h) => /^\/playground\/#src=[A-Za-z0-9_-]+$/.test(h))).toBe(true);
+  expect(programs.some((p) => p.includes('read_file("notes.txt")'))).toBe(true);
+  await expect(page.locator(".fern-run-link a").first()).toHaveText("Open in playground →");
+});
+
+test("a fern fragment has no playground link", async ({ page }) => {
+  await page.goto("reference/language-features/");
+  // The f-string block is a fragment, with no main.
+  const block = page.locator(".expressive-code", { hasText: 'f"hello, {name}' }).first();
+  await expect(block).toBeVisible();
+  await expect(block.locator(".fern-run-link")).toHaveCount(0);
+});
+
+test("a tutorial exercise has its goal", async ({ page }) => {
+  await page.goto("tutorial/first-steps/");
+  const iframe = page.locator("figure.fern-playground iframe[data-src*='&expect=']");
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&expect=']");
+  await expect(frame.locator("#exerciseGoal")).toHaveText("1\n2\n3\n4\n5\n", { timeout: 60_000 });
+});
+
 test("a captured diagnostic links to the page for its code", async ({ page }) => {
   await page.goto("./");
   const link = page.getByRole("link", { name: "What E030 means, and the fix" });

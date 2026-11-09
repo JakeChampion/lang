@@ -20,6 +20,7 @@ import { defineConfig } from "astro/config";
 import mdx from "@astrojs/mdx";
 import starlight from "@astrojs/starlight";
 
+import { playgroundLinks } from "./src/lib/ec-playground-link.mjs";
 import { stdlibItems } from "./src/lib/stdlib-sidebar.mjs";
 
 // A Netlify deploy preview sets SITE_URL to its own origin.
@@ -264,6 +265,9 @@ export default defineConfig({
     // MDX integration takes `gfm` from `markdown.gfm`, which is now unset,
     // so without this an .mdx page renders no tables. After Starlight, as
     // its docs require.
+    // After Starlight, so its plugin runs after Expressive Code, and before
+    // MDX, which takes the Markdown plugins when it starts.
+    playgroundLinks(),
     mdx({ gfm: true, optimize: true }),
   ],
 });
