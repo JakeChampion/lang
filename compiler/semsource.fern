@@ -682,17 +682,13 @@ function decimal(text: string): boolean {
   return true;
 }
 
-function hex_digit(b: i32): boolean {
-  return b >= 48 && b <= 57 || b >= 97 && b <= 102 || b >= 65 && b <= 70;
-}
-
 function hex_digits(text: string, from: i32): boolean {
   if (from >= text.len()) {
     return false;
   }
   let i = from;
   while (i < text.len()) {
-    if (!hex_digit(text[i] as i32)) {
+    if (!lexer.is_hex_digit(text[i] as i32)) {
       return false;
     }
     i += 1;
@@ -6120,7 +6116,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
       continue;
     }
     let n = slice_unchecked(d, 1, d.len()) + "";
-    if (util.index_of_str(out, n) < 0 && count_of(all, n) > count_of(local, n)) {
+    if (util.index_of_str(out, n) < 0 && util.count_str(all, n) > util.count_str(local, n)) {
       out = out.append(n);
     }
   }
@@ -6144,16 +6140,6 @@ function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
 
 function keep_found(e: ast.Expr, own acc: boolean): boolean {
   return acc;
-}
-
-function count_of(xs: string[], name: string): i32 {
-  let n = 0;
-  for x in xs {
-    if (x == name) {
-      n += 1;
-    }
-  }
-  return n;
 }
 
 function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
@@ -8380,7 +8366,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
     if (at >= 0) {
       let qs = quiet_slots(all[i].func);
       slots = slots.with(at, qs);
-      quiet = quiet.with(at, !reference(all[i].func.result) || any_true(qs));
+      quiet = quiet.with(at, !reference(all[i].func.result) || util.any_true(qs));
     }
     i += 1;
   }
@@ -8420,15 +8406,6 @@ function quiet_slots(f: ssasem.Func): boolean[] {
     out = out.append(reference(t) && (!holds || !ssasem.can_hold(f, f.result, t)));
   }
   return out;
-}
-
-function any_true(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function inferred_modes_change(p: Produced): boolean {

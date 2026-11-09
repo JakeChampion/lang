@@ -2256,7 +2256,7 @@ function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   return position_of(at, id);
 }
 
-function position_of(at: i32[], id: i32): i32 {
+pub function position_of(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return -1;
   }

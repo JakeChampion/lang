@@ -1243,7 +1243,7 @@ function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32,
 
 function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] {
   for v in args {
-    if (v == w.arr || v == w.x || v < 0 || v >= defs.len() || has_value(acc, v)) {
+    if (v == w.arr || v == w.x || v < 0 || v >= defs.len() || util.has_i32(acc, v)) {
       continue;
     }
     let d = defs[v];
@@ -1254,15 +1254,6 @@ function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] 
     }
   }
   return acc;
-}
-
-function has_value(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[] {

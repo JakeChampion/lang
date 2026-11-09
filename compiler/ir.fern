@@ -1882,18 +1882,11 @@ pub function const_str_word(text: string): string {
 function hex_text(text: string): string {
   let out: u8[] = [];
   for c in text {
-    out = out.append(hex_digit(c as i32 >> 4)).append(hex_digit(c as i32 & 15));
+    out = out.append(util.hex_digit(c as i32 >> 4)).append(util.hex_digit(c as i32 & 15));
   }
   unsafe {
     return string_from_bytes_unchecked(out);
   }
-}
-
-function hex_digit(d: i32): u8 {
-  if (d < 10) {
-    return (48 + d) as u8;
-  }
-  return (87 + d) as u8;
 }
 
 pub function const_struct_is_str(packed: string): boolean {

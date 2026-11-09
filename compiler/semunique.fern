@@ -3,6 +3,7 @@ import "./ssasem";
 import "./sourcepos";
 import "./typeinfo";
 import "./rtbytecopy";
+import "./util";
 
 // A loop that writes an array it was handed checks the array's count at
 // every push or with, because the array may be shared on entry. One check
@@ -191,20 +192,11 @@ function used_after(g: ssa.SFunc, at: i32[], from: i32, v: i32, phi: i32): boole
 
 function reads(b: ssa.SBlock, v: i32, phi: i32): boolean {
   for ins in b.insts {
-    if (ins.result != phi && has(ins.args, v)) {
+    if (ins.result != phi && util.has_i32(ins.args, v)) {
       return true;
     }
   }
   return b.term.kind_tag == ssa.TERM_RET && b.term.value == v || b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == v;
-}
-
-function has(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Whether a block from the header on grows the phi itself: an append, a

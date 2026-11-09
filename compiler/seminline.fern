@@ -696,11 +696,11 @@ function only_taken_apart(g: ssa.SFunc, v: i32): boolean {
     next += 1;
     for b in g.blocks {
       for ins in b.insts {
-        if (!has_arg(ins.args, w)) {
+        if (!util.has_i32(ins.args, w)) {
           continue;
         }
         if (ins.kind_tag == ssa.PHI || ins.kind_tag == ssa.COPY) {
-          if (!has_arg(work, ins.result)) {
+          if (!util.has_i32(work, ins.result)) {
             work = work.append(ins.result);
           }
         } else if (sempair.reads_apart(ins.kind_tag) && ins.args.len() == 1) {
@@ -715,15 +715,6 @@ function only_taken_apart(g: ssa.SFunc, v: i32): boolean {
     }
   }
   return read;
-}
-
-function has_arg(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function shared_spliceable(f: ssasem.Func, calls: i32, cycle: i32): boolean {
@@ -1465,7 +1456,7 @@ function lent_to_kernels(f: ssasem.Func, ins: ssa.SInst): boolean {
   }
   for b in f.graph.blocks {
     for reader in b.insts {
-      if (has_arg(reader.args, ins.result) && !kernel_read(f, reader)) {
+      if (util.has_i32(reader.args, ins.result) && !kernel_read(f, reader)) {
         return false;
       }
     }

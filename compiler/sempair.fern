@@ -1241,7 +1241,7 @@ function with_new_block(f: ssasem.Func, b: ssa.SBlock): ssasem.Func {
 function repointed(f: ssasem.Func, targets: i32[], from: i32, to: i32): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
-    if (has(targets, b.id)) {
+    if (util.has_i32(targets, b.id)) {
       let preds: i32[] = [];
       for q in b.preds {
         if (q == from) {
@@ -1256,15 +1256,6 @@ function repointed(f: ssasem.Func, targets: i32[], from: i32, to: i32): ssasem.F
     }
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
-}
-
-function has(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function with_contract(calls: ssasem.Contract[], c: ssasem.Contract): ssasem.Contract[] {
@@ -1510,7 +1501,7 @@ function split_calls(f0: ssasem.Func, sites: Sites, own: boolean[]): ssasem.Func
 
 function branch_position(f: ssasem.Func, defs: ssa.SInst[], site: Site, ins: ssa.SInst, own: boolean[], given: semscalarreturn.Given): i32 {
   for pos in 0..ins.args.len() {
-    let open = pos < site.split.len() && site.split[pos] && !has(given.at, pos);
+    let open = pos < site.split.len() && site.split[pos] && !util.has_i32(given.at, pos);
     if (open && semscalarreturn.needs_branch(f, defs, site.decl.params[pos], ins.args[pos], own)) {
       return pos;
     }
@@ -1580,15 +1571,6 @@ function field_types(r: semrecords.Record): typeinfo.Type[] {
   return out;
 }
 
-function any_true(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
-}
-
 pub struct Laid { funcs: ssasem.Func[], records: semrecords.Record[], changed: boolean[] }
 
 // Lays out each record field that is a record of one to four scalars, or an
@@ -1637,7 +1619,7 @@ function field_candidates(funcs: ssasem.Func[], rewrite: boolean[]): Layout {
       }
       seen = seen.added(key);
       let r = relay_of(f, rec, key);
-      if (laid_candidate(f, rec) && any_true(r.flat)) {
+      if (laid_candidate(f, rec) && util.any_true(r.flat)) {
         list = list.append(r);
         keys = keys.append(key);
       }
@@ -1897,7 +1879,7 @@ function settled(lay: Layout): Layout {
   let list: Relay[] = [];
   let keys: string[] = [];
   for r in lay.list {
-    if (any_true(r.flat)) {
+    if (util.any_true(r.flat)) {
       list = list.append(laid_relay(r));
       keys = keys.append(r.key);
     }

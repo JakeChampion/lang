@@ -5,19 +5,12 @@ import "./util";
 import "core/map";
 import "std/string";
 
-function hex_digit(d: i32): u8 {
-  if (d < 10) {
-    return (48 + d) as u8;
-  }
-  return (87 + d) as u8;
-}
-
 function append_hex_escape(out: u8[], b: i32): u8[] {
   let a = out;
   a = a.append(92 as u8);
   a = a.append(120 as u8);
-  a = a.append(hex_digit(b / 16));
-  a = a.append(hex_digit(b % 16));
+  a = a.append(util.hex_digit(b / 16));
+  a = a.append(util.hex_digit(b % 16));
   return a;
 }
 

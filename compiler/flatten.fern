@@ -339,17 +339,6 @@ function first_dot(s: string): i32 {
   return -1;
 }
 
-function first_bracket(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'[') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function is_in(name: string, list: string[]): boolean {
   let i = 0;
   while (i < list.len()) {
@@ -878,7 +867,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
           return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()) + "");
         }
       }
-      let rb = first_bracket(rest);
+      let rb = parser.first_bracket(rest);
       if (rb < 0) {
         return lookup_reexport(prefix + "__" + rest, ctx);
       }
@@ -890,7 +879,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return tn;
   }
-  let br = first_bracket(tn);
+  let br = parser.first_bracket(tn);
   if (br < 0) {
     return bare_type(tn, ctx);
   }
@@ -911,7 +900,7 @@ function bare_type(tn: string, ctx: RewriteCtx): string {
 }
 
 function rewrite_variant_name(tn: string, ctx: RewriteCtx): string {
-  if (first_dot(tn) < 0 && first_bracket(tn) < 0) {
+  if (first_dot(tn) < 0 && parser.first_bracket(tn) < 0) {
     return mangle_bare(tn, ctx);
   }
   return rewrite_type_name(tn, ctx);

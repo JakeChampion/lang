@@ -516,6 +516,49 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
+pub function has_i32(xs: i32[], n: i32): boolean {
+  return index_of_i32(xs, n) >= 0;
+}
+
+pub function count_str(xs: string[], s: string): i32 {
+  let n = 0;
+  for x in xs {
+    if (x == s) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+pub function any_true(xs: boolean[]): boolean {
+  for x in xs {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// index_of_byte is the first index at or after from that holds c, or -1.
+pub function index_of_byte(s: string, c: u8, from: i32): i32 {
+  let i = from;
+  while (i < s.len()) {
+    if (s[i] == c) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+// hex_digit is the lower-case hex character for d in 0..16.
+pub function hex_digit(d: i32): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  return (87 + d) as u8;
+}
+
 // path_base is the part of path after its last slash.
 pub function path_base(path: string): string {
   let start = 0;

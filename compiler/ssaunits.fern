@@ -782,7 +782,7 @@ function use_ids(value: i32, deps: i32[][]): i32[] {
   }
   let ids: i32[] = [value];
   for dep in deps[value] {
-    if (!has_id(ids, dep)) {
+    if (!util.has_i32(ids, dep)) {
       ids = ids.append(dep);
     }
   }
@@ -885,8 +885,8 @@ function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][], owned: bo
   for v in lent_operands(ins, counted) {
     for supply in counted {
       let unit = supplied_unit(owned, ids, supply.value);
-      let reads = supply.value == v || has_id(deps[v], supply.value) || unit == v || has_id(deps[v], unit);
-      if (reads && !has_id(out, supply.value)) {
+      let reads = supply.value == v || util.has_i32(deps[v], supply.value) || unit == v || util.has_i32(deps[v], unit);
+      if (reads && !util.has_i32(out, supply.value)) {
         out = out.append(supply.value);
       }
     }
@@ -1792,7 +1792,7 @@ function read_after_direct(a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, po
   let k = a.anchored.start[v];
   while (k < a.anchored.start[v + 1]) {
     let w = a.anchored.at[k];
-    if (has_id(a.parents[w], v) && ssasem.read_after(a.uses, bi, pos, w)) {
+    if (util.has_i32(a.parents[w], v) && ssasem.read_after(a.uses, bi, pos, w)) {
       return true;
     }
     k += 1;
@@ -2165,11 +2165,11 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
     if (w != s && !held[w] && !owned[w] && retainable_read(f, defs, w)) {
       let live = false;
       if (flows.firm.len() > 0) {
-        live = in_hand(a, flows, w, bi, pos, si) || si < 0 && (has_id(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
+        live = in_hand(a, flows, w, bi, pos, si) || si < 0 && (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
       } else if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
       } else {
-        live = used_after(a, bi, pos, w) || (has_id(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
+        live = used_after(a, bi, pos, w) || (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
       }
       if (live) {
         out = out.append(w);
@@ -2210,7 +2210,7 @@ function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32):
   let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
     let x = a.anchored.at[k];
-    if (has_id(args, x) && ssasem.holds_view(f, f.values[x])) {
+    if (util.has_i32(args, x) && ssasem.holds_view(f, f.values[x])) {
       return true;
     }
     k += 1;
@@ -2336,7 +2336,7 @@ function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, o
 }
 
 function dying_read(a: ssasem.Analysis, direct: ssalive.Flow, owned: boolean[], held: boolean[], supplies: Supply[], bi: i32, pos: i32, v: i32, own out: i32[]): i32[] {
-  if (!(owned[v] || held[v]) || has_id(out, v) || supplied(supplies, v)) {
+  if (!(owned[v] || held[v]) || util.has_i32(out, v) || supplied(supplies, v)) {
     return out;
   }
   if (!read_after_direct(a, direct, bi, pos, v)) {
@@ -2961,7 +2961,7 @@ function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], 
     let item = selected[i];
     let unit = supplied_unit(owned, ids, item.value);
     let mode = retain_unit();
-    if (owned[unit] && has_id(dead, unit) && !has_id(moved, unit) && !has_id(pinned, item.value)) {
+    if (owned[unit] && util.has_i32(dead, unit) && !util.has_i32(moved, unit) && !util.has_i32(pinned, item.value)) {
       mode = move_unit();
       moved = moved.append(unit);
     }
@@ -2970,20 +2970,11 @@ function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], 
   }
   let drops: i32[] = [];
   for v in dead {
-    if (owned[v] && !has_id(moved, v)) {
+    if (owned[v] && !util.has_i32(moved, v)) {
       drops = insert_sorted(drops, v);
     }
   }
   return Step { ...s, supplies: selected, drops: drops };
-}
-
-function has_id(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function insert_sorted(own xs: i32[], v: i32): i32[] {
@@ -3929,7 +3920,7 @@ function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[]
 }
 
 function lent_cleared(value: i32, state: boolean[], owned: boolean[], cleared: i32[]): boolean {
-  return owned[value] && (!state[value] || has_id(cleared, value));
+  return owned[value] && (!state[value] || util.has_i32(cleared, value));
 }
 
 function step_clears(s: Step, value: i32, owned: boolean[], ids: i32[]): boolean {
