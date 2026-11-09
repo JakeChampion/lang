@@ -32,7 +32,10 @@ import "std/virtio_rng";
 
 struct Boot { f: frames.Frames, ram: fdt.Region, a: cpio.Archive, kernel: pagetable.Tables, rng: Option[virtio_rng.Rng] }
 
-function initrd(t: fdt.Tree): Option[u8[]] {
+struct Range { start: usize, end: usize }
+
+// The initrd that /chosen names.
+function initrd(t: fdt.Tree): Option[Range] {
   let Some(c) = t.find_name("chosen") else {
     return None;
   };
@@ -42,15 +45,19 @@ function initrd(t: fdt.Tree): Option[u8[]] {
   let Some(end) = t.property_cells(c, "linux,initrd-end") else {
     return None;
   };
+  return Some(Range { start: start as usize, end: end as usize });
+}
+
+function copy_range(r: Range): u8[] {
   let image: u8[] = [];
   unsafe {
-    let at = start as usize;
-    while (at < end as usize) {
+    let at = r.start;
+    while (at < r.end) {
       image = image.append(__load_u8(at) as u8);
       at += 1 as usize;
     }
   }
-  return Some(image);
+  return image;
 }
 
 // The Unix time of the PL031 real-time clock of qemu-virt, in nanoseconds.
@@ -93,22 +100,10 @@ function kernel_tables(f: frames.Frames, ram: fdt.Region): Option[pagetable.Tabl
   return Some(tables);
 }
 
-function boot(): Option[Boot] {
-  let top = board.RAM_BASE + board.RAM_SIZE - board.STACK_BYTES;
-  let cursor = 0 as usize;
-  unsafe {
-    cursor = (__heap_mark() as usize) + 65536 as usize;
-  }
-  let Some(f) = frames.new(cursor, top - cursor) else {
-    return None;
-  };
-  let heap_frames = 4096 as usize;
-  let Some(heap) = f.alloc_run(heap_frames) else {
-    return None;
-  };
-  unsafe {
-    __heap_adopt(heap as i64, (heap + heap_frames * frames.FRAME_BYTES) as i64);
-  }
+// Moves the heap onto heap_frames frames, keeps the frames of the initrd out
+// of the pool, and reads the initrd. The device tree is parsed on the heap of
+// the reset entry, below the frames.
+function boot(heap_frames: usize): Option[Boot] {
   let Ok(t) = fdt.parse(board.device_tree()) else {
     return None;
   };
@@ -118,10 +113,25 @@ function boot(): Option[Boot] {
   let Some(ram) = t.reg(mem, 0) else {
     return None;
   };
-  let Some(bytes) = initrd(t) else {
+  let Some(rd) = initrd(t) else {
     return None;
   };
-  let Ok(a) = cpio.parse(bytes) else {
+  let top = board.RAM_BASE + board.RAM_SIZE - board.STACK_BYTES;
+  let cursor = 0 as usize;
+  unsafe {
+    cursor = (__heap_mark() as usize) + 65536 as usize;
+  }
+  let Some(f) = frames.new(cursor, top - cursor) else {
+    return None;
+  };
+  let kept = f.reserve(rd.start, rd.end - rd.start);
+  let Some(heap) = f.alloc_run(heap_frames) else {
+    return None;
+  };
+  unsafe {
+    __heap_adopt(heap as i64, (heap + heap_frames * frames.FRAME_BYTES) as i64);
+  }
+  let Ok(a) = cpio.parse(copy_range(rd)) else {
     return None;
   };
   let Some(kernel) = kernel_tables(f, ram) else {
@@ -136,6 +146,12 @@ function load(b: Boot, path: string, argv: string[]): Option[user_process.Proces
     print(path + ": not in the initrd");
     return None;
   };
+  return load_image(b, path, image, argv);
+}
+
+// Loads the program image into tables of its own, with the initrd as its root,
+// path as its exe, the wall clock and the entropy device.
+function load_image(b: Boot, path: string, image: u8[], argv: string[]): Option[user_process.Process] {
   let Some(tables) = kernel_tables(b.f, b.ram) else {
     print("no kernel mapping");
     return None;
@@ -157,6 +173,38 @@ function load(b: Boot, path: string, argv: string[]): Option[user_process.Proces
       return None;
     }
   }
+}
+
+// Runs p to its end, prints each line that it writes, and gives the process
+// after it ended.
+function run_to_end(path: string, p: user_process.Process): user_process.Process {
+  let line: u8[] = [];
+  while (true) {
+    let (q, stop) = p.run();
+    p = q;
+    match (stop) {
+      Output(fd, bytes) => {
+        line = print_lines(path, fd, line, bytes);
+      },
+      Exited(status) => {
+        print(path + " exit " + status.to_string());
+        return p;
+      },
+      Killed(why) => {
+        print(path + " killed: " + why);
+        return p;
+      },
+      Interrupted => {}
+    }
+  }
+  return p;
+}
+
+// Makes the kernel's own tables active again and gives back the frames of p.
+function release(b: Boot, path: string, p: user_process.Process, free: usize): void {
+  b.kernel.activate();
+  p.release();
+  print(path + " gave back its frames " + (b.f.free_count() == free).to_string());
 }
 
 // Prints each line that bytes ends, and gives the start of the next line.
@@ -181,40 +229,20 @@ const processMainSrc = processKernelSrc + `
 // back the frames of the process.
 function spawn(b: Boot, path: string, argv: string[]): void {
   let free = b.f.free_count();
-  let Some(p) = load(b, path, argv) else {
+  let Some(started) = load(b, path, argv) else {
     return;
   };
-  let line: u8[] = [];
-  while (true) {
-    let (q, stop) = p.run();
-    p = q;
-    match (stop) {
-      Output(fd, bytes) => {
-        line = print_lines(path, fd, line, bytes);
-      },
-      Exited(status) => {
-        print(path + " exit " + status.to_string());
-        break;
-      },
-      Killed(why) => {
-        print(path + " killed: " + why);
-        break;
-      },
-      Interrupted => {}
-    }
-  }
+  let p = run_to_end(path, started);
   if let Some(out) = p.written("/out/result.txt") {
     unsafe {
       print(path + " left /out/result.txt: " + string_from_bytes_unchecked(out));
     }
   }
-  b.kernel.activate();
-  p.release();
-  print(path + " gave back its frames " + (b.f.free_count() == free).to_string());
+  release(b, path, p, free);
 }
 
 function main(): i32 {
-  let Some(b) = boot() else {
+  let Some(b) = boot(4096 as usize) else {
     print("no boot");
     return 1;
   };

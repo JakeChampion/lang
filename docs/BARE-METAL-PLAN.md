@@ -945,7 +945,20 @@ and three `mmap` reservations at start.
    directory tree, writes, renames, reads back, sets a mode, lists and
    removes files there. A change of the archive fails, and the kernel reads
    the output that the program leaves.
-23. Beside those: the panic scope is decided (#14257, see the north-star
+23. **The compiler compiles a program on the kernel** (#14265, the first
+   "done when" item of milestone 6). The initrd holds the `arm64-linux`
+   compiler, unmodified, with its stdlib embedded, and a source file. The
+   compiler extracts its stdlib into the layer in memory, compiles the file,
+   and writes the output there. The kernel then runs the output as a second
+   process.
+   - The compile needs more RAM than the other boot tests. qemu-virt puts
+     the initrd 128 MiB above the start of its RAM. Thus `std/frames` gains
+     `reserve`, and the kernel reserves the frames of the initrd before it
+     allocates.
+   - `TestSelfHostKernelCompilesOnQemu` compares the size and the FNV-1a
+     hash of the output with the output of the same compiler on Linux,
+     under qemu-user.
+24. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
