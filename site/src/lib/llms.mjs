@@ -20,25 +20,25 @@ export function plainMarkdown(body) {
 
 const isStdlib = (e) => e.id.startsWith("stdlib/") && e.id !== "stdlib";
 
-export function pageUrl(site, base, entry) {
-  return `${site}${base}/${entry.id === "index" ? "" : `${entry.id}/`}`;
+export function pageUrl(site, entry) {
+  return `${site}/${entry.id === "index" ? "" : `${entry.id}/`}`;
 }
 
-function document(site, base, entries) {
+function document(site, entries) {
   return readingOrder(entries)
-    .map((e) => `# ${e.data.title}\n\nSource: ${pageUrl(site, base, e)}\n\n${plainMarkdown(e.body ?? "")}\n`)
+    .map((e) => `# ${e.data.title}\n\nSource: ${pageUrl(site, e)}\n\n${plainMarkdown(e.body ?? "")}\n`)
     .join("\n---\n\n");
 }
 
-export function llmsIndex(site, base, entries, description) {
+export function llmsIndex(site, entries, description) {
   const lines = [
     "# Fern",
     "",
     `> ${description}`,
     "",
     "Fern compiles to native binaries for Linux and macOS on arm64, Linux on x86-64, and to WebAssembly.",
-    `The full text of the guides and the reference is at ${site}${base}/llms-full.txt, and every`,
-    `standard-library module is at ${site}${base}/llms-stdlib.txt.`,
+    `The full text of the guides and the reference is at ${site}/llms-full.txt, and every`,
+    `standard-library module is at ${site}/llms-stdlib.txt.`,
     "",
   ];
   let section = null;
@@ -50,11 +50,11 @@ export function llmsIndex(site, base, entries, description) {
       lines.push(`## ${name}`, "");
     }
     const about = e.data.description ? `: ${e.data.description}` : "";
-    lines.push(`- [${e.data.title}](${pageUrl(site, base, e)})${about}`);
+    lines.push(`- [${e.data.title}](${pageUrl(site, e)})${about}`);
   }
-  lines.push("", "## Optional", "", `- [Standard library modules](${site}${base}/llms-stdlib.txt): one section for each module`);
+  lines.push("", "## Optional", "", `- [Standard library modules](${site}/llms-stdlib.txt): one section for each module`);
   return lines.join("\n") + "\n";
 }
 
-export const llmsFull = (site, base, entries) => document(site, base, entries.filter((e) => !isStdlib(e)));
-export const llmsStdlib = (site, base, entries) => document(site, base, entries.filter(isStdlib));
+export const llmsFull = (site, entries) => document(site, entries.filter((e) => !isStdlib(e)));
+export const llmsStdlib = (site, entries) => document(site, entries.filter(isStdlib));

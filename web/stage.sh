@@ -10,7 +10,7 @@
 # reason. It copies web/playground.wasm when it exists. A build that compiles
 # the wasm directly into DEST does not need that copy. The webfonts come from
 # the docs site, so the playground and the site use the same type. cp -L
-# copies the target of a symlink, because GitHub Pages refuses symlinks.
+# copies the target of a symlink, so the staged files are real files.
 set -euo pipefail
 
 if [ $# -ne 1 ]; then

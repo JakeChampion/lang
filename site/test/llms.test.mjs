@@ -57,7 +57,7 @@ test("orders pages by section, then sidebar order", () => {
 });
 
 test("writes an llmstxt.org index with one heading for each section", () => {
-  const text = llmsIndex("https://example.org", "", [page("index", "Fern"), page("tutorial/install", "Install", 1), page("stdlib/json", "std/json")], "A language.");
+  const text = llmsIndex("https://example.org", [page("index", "Fern"), page("tutorial/install", "Install", 1), page("stdlib/json", "std/json")], "A language.");
   assert.match(text, /^# Fern\n\n> A language\.\n/);
   assert.match(text, /## Tutorial\n\n- \[Install\]\(https:\/\/example\.org\/tutorial\/install\/\): Install\./);
   // Standard-library modules are in llms-stdlib.txt, not in the index.

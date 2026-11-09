@@ -12,7 +12,6 @@ const mainSafeCancel = "cancel-in-progress: ${{ github.ref != 'refs/heads/main' 
 
 var actionLanes = map[string]string{
 	"auto-rebase-prs.yml": "rebases and pushes every open PR branch",
-	"pages.yml":           "builds and deploys the docs site",
 }
 
 func TestMainLanesCancelOnlyWhenTheyCanFinish(t *testing.T) {

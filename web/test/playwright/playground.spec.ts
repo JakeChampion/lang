@@ -476,3 +476,21 @@ test("the editor colours Fern keywords from the TextMate grammar", async ({ page
   ]);
   expect(kwColour).not.toBe(textColour);
 });
+
+test("an autorun embed at phone width does not shift its layout", async ({ browser }) => {
+  // The embed classes are set before the first paint, and the Run label
+  // and the status keep their width, so nothing below them moves.
+  const ctx = await browser.newContext({ viewport: { width: 412, height: 823 }, isMobile: true });
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    (window as any).__shift = 0;
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries() as any[]) (window as any).__shift += e.value;
+    }).observe({ type: "layout-shift", buffered: true });
+  });
+  await page.goto("/index.html?embed=1&autorun=1");
+  await expect(page.locator("#out")).toContainText("hello, world", { timeout: 30_000 });
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as any).__shift)).toBeLessThan(0.05);
+  await ctx.close();
+});

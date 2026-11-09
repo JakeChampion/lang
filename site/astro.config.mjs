@@ -1,9 +1,7 @@
 // Astro + Starlight config for the Fern documentation site.
 //
-// Site lives at the repo root URL (https://<user>.github.io/lang/)
-// with the playground bundle nested at /playground/ — keeps the
-// canonical landing URL on docs (standard for a language project)
-// without breaking any existing playground deep links.
+// The site is at the root of fern-lang.netlify.app, with the playground
+// bundle at /playground/.
 //
 // Four top-level sections in the sidebar:
 //   - Tutorial: narrative learn-the-language pages, ordered.
@@ -14,10 +12,6 @@
 //     after that build step, and `stdlibSidebar()` groups whatever
 //     it finds there by purpose. A clean checkout where it
 //     hasn't run keeps the section, with just its overview link.
-//
-// `base` is set so the site works under GitHub Pages' project
-// subpath (https://<user>.github.io/lang/) without absolute-URL
-// breakage; override via `SITE_BASE` env if deploying elsewhere.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -27,8 +21,8 @@ import starlight from "@astrojs/starlight";
 
 import { stdlibItems } from "./src/lib/stdlib-sidebar.mjs";
 
-const base = process.env.SITE_BASE ?? "/lang";
-const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
+// A Netlify deploy preview sets SITE_URL to its own origin.
+const siteUrl = process.env.SITE_URL ?? "https://fern-lang.netlify.app";
 
 // One-line summary reused for the meta description, the Open Graph
 // card, and Starlight's own `description` — so search results, chat
@@ -37,11 +31,9 @@ const tagline =
   "Fern is a small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.";
 
 // Social-card image. Crawlers won't resolve a relative URL, so this has to
-// be absolute — built from the same two vars the rest of the site's URLs
-// come from, so a Netlify deploy (SITE_URL set, base rewritten to root)
-// points at its own copy rather than the Pages one. Rendered by
-// `npm run og` from src/assets/og-card.svg.
-const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`;
+// be absolute, on the origin of this deploy. Rendered by `npm run og` from
+// src/assets/og-card.svg.
+const ogImage = `${siteUrl.replace(/\/$/, "")}/og.png`;
 
 // Load the real Fern TextMate grammar (the same one the VS Code
 // extension ships) so ```fern code fences highlight as actual Fern
@@ -132,14 +124,14 @@ const fernGrammar = JSON.parse(
 
 export default defineConfig({
   site: siteUrl,
-  base,
   trailingSlash: "ignore",
   integrations: [
     starlight({
       title: "Fern",
+      // The site title "Fern" is next to the logo, so the image is decoration.
       logo: {
         src: "./src/assets/fern-logo.svg",
-        alt: "Fern",
+        alt: "",
       },
       description: tagline,
       // The Open Graph / Twitter card tags Starlight doesn't emit itself.
@@ -244,11 +236,6 @@ export default defineConfig({
         { label: "Contributing", link: "/contributing/" },
         {
           label: "Playground",
-          // Bare `/playground/` — Starlight prepends `base` to
-          // absolute sidebar links automatically, so don't double-
-          // prefix it here. (CI's lychee link-check caught the
-          // `/lang/lang/playground/` shape the previous `${base}`
-          // produced.)
           link: "/playground/",
           attrs: { target: "_blank" },
         },
