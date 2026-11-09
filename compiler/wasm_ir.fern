@@ -4422,6 +4422,9 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   let sh = wasm_lane_shape(o.width);
   let vtmp = util.i32_to_string(cx.base + 5);
   let vtmp2 = util.i32_to_string(cx.base + 6);
+  if (k == "vload_f32") {
+    return "    i64.load\n    i64x2.splat\n    f64x2.promote_low_f32x4\n";
+  }
   if (k == "vpack") {
     return "    local.set " + vtmp + "\n    f32x4.demote_f64x2_zero\n    local.get " + vtmp + "\n    f32x4.demote_f64x2_zero\n    f64x2.extract_lane 0\n    f64x2.replace_lane 1\n";
   }

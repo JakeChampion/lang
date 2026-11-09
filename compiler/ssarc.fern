@@ -6169,6 +6169,9 @@ function sysreg_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst)
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
+  if (verb == "load_f32_ptr") {
+    return emit(r, ir.op_lane("vload_f32", 64));
+  }
   if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
     for a in ins.args {
       r = emit(r, ir.op_drop());

@@ -2525,6 +2525,12 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
     }
     return VLanes { width: width, bits: bits };
   }
+  if (verb == "load_f32_ptr") {
+    let address = vint_as_i64(args[0]) as usize;
+    unsafe {
+      return VLanes { width: 64, bits: [f64_bits(f32_from_bits(__load_i32(address)) as f64), f64_bits(f32_from_bits(__load_i32(address + 4 as usize)) as f64)] };
+    }
+  }
   if (verb == "load_ptr") {
     let address = vint_as_i64(args[0]) as usize;
     let bits: i64[] = [];

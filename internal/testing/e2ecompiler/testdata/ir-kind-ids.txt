@@ -466,3 +466,4 @@ udp_sendmmsg=516
 udp_recvmmsg=517
 user_run=518
 cache_sync_code=519
+vload_f32=520
