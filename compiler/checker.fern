@@ -274,7 +274,7 @@ function t_array(elem: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeArray { elem: elem, view: false };
 }
 
-function is_sha_hw_builtin(name: string): boolean {
+pub function is_sha_hw_builtin(name: string): boolean {
   return name == "__sha256_hw" || name == "__sha1_hw";
 }
 
@@ -1902,10 +1902,6 @@ function sig_buckets(): i32 {
   return 4093;
 }
 
-function sig_name_bucket(name: string): i32 {
-  return (__str_hash(name, 0) & 1073741823) % 4093;
-}
-
 function sig_table(sigs: FuncSig[]): SigTable {
   let names: string[] = [];
   for sig in sigs {
@@ -2064,14 +2060,14 @@ function union_table(unions: UnionSig[]): UnionTable {
   let bnext = next;
   let k = vnames.len() - 1;
   while (k >= 0) {
-    let bk = sig_name_bucket(vnames[k]);
+    let bk = util.hash_bucket(vnames[k], 4093);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     if (!declared_by_entry(unions[vowner[k]])) {
       lib_next = lib_next.with(k, lib_head[bk]);
       lib_head = lib_head.with(bk, k);
     }
-    let bb = sig_name_bucket(bnames[k]);
+    let bb = util.hash_bucket(bnames[k], 4093);
     bnext = bnext.with(k, bhead[bb]);
     bhead = bhead.with(bb, k);
     k -= 1;
@@ -2116,9 +2112,9 @@ function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {
 
 function (ut: UnionTable) variant_chain_head(name: string): i32 {
   if (ut.from_import) {
-    return ut.lib_head[sig_name_bucket(name)];
+    return ut.lib_head[util.hash_bucket(name, 4093)];
   }
-  return ut.head[sig_name_bucket(name)];
+  return ut.head[util.hash_bucket(name, 4093)];
 }
 
 function (ut: UnionTable) variant_chain_next(e: i32): i32 {
@@ -3401,7 +3397,7 @@ function (s: Scope) variant_hidden(v: StructSig): boolean {
   if (!s.unions.from_import) {
     return false;
   }
-  let e = s.unions.head[sig_name_bucket(v.name)];
+  let e = s.unions.head[util.hash_bucket(v.name, 4093)];
   while (e >= 0) {
     let u = s.unions.unions[s.unions.vowner[e]];
     if (s.unions.vnames[e] == v.name && u.name == v.enum_owner) {
@@ -3419,7 +3415,7 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     n = 1;
   }
   let last: i32 = -1;
-  let e = s.unions.bhead[sig_name_bucket(bare)];
+  let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
     let o = s.unions.vowner[e];
     let u = s.unions.unions[o];
@@ -8586,7 +8582,7 @@ function view_index(sums: ViewSum[]): ViewIndex {
   let next = util.minus_ones(sums.len());
   let k = sums.len() - 1;
   while (k >= 0) {
-    let bk = sig_name_bucket(sums[k].key);
+    let bk = util.hash_bucket(sums[k].key, 4093);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     k -= 1;
@@ -8595,7 +8591,7 @@ function view_index(sums: ViewSum[]): ViewIndex {
 }
 
 function view_sum_pos(sums: ViewSum[], vix: ViewIndex, key: string): i32 {
-  let i = vix.head[sig_name_bucket(key)];
+  let i = vix.head[util.hash_bucket(key, 4093)];
   while (i >= 0) {
     if (sums[i].key == key) {
       return i;
@@ -8608,10 +8604,6 @@ function view_sum_pos(sums: ViewSum[], vix: ViewIndex, key: string): i32 {
 pub struct ViewRoots { local: boolean, params: string[] }
 
 pub struct ViewCallee { key: string, args: ast.Expr[] }
-
-function view_sum_key(fn: parser.FuncDecl): string {
-  return parser.decl_key(fn);
-}
 
 function view_positions(fn: parser.FuncDecl): string[] {
   let out: string[] = [];
@@ -17128,7 +17120,7 @@ function ambiguous_variants(ut: UnionTable): string[] {
 }
 
 function second_enum_declares(ut: UnionTable, e: i32): boolean {
-  let k = ut.bhead[sig_name_bucket(ut.bnames[e])];
+  let k = ut.bhead[util.hash_bucket(ut.bnames[e], 4093)];
   while (k >= 0) {
     if (ut.bnames[k] == ut.bnames[e] && ut.vowner[k] != ut.vowner[e] && ut.unions[ut.vowner[k]].is_enum) {
       return true;
@@ -20425,10 +20417,10 @@ function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
 }
 
 function lu_declares(st: ast.Stmt, name: string): boolean {
-  if (util.has_str(astwalk.fold_stmt_nodes(st, [], lu_var_names, lu_no_binders, astwalk.not_lambda), name)) {
+  if (util.has_str(astwalk.fold_stmt_nodes(st, [], lu_var_names, astwalk.keep_names, astwalk.not_lambda), name)) {
     return true;
   }
-  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, astwalk.not_lambda), name);
+  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, astwalk.keep_names, astwalk.not_lambda), name);
 }
 
 function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
@@ -20437,10 +20429,6 @@ function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
       acc = astwalk.pattern_binders(arm.pattern, acc);
     }
   }
-  return acc;
-}
-
-function lu_no_binders(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
@@ -21803,7 +21791,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, astwalk.collect_lambda, not_lambda);
+    nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
@@ -21814,10 +21802,6 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
-}
-
-function lu_skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  return acc;
 }
 
 // A lambda is decided as a function of its own, so a name it declares can
@@ -24389,7 +24373,7 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
   let out = e049_body_stores(fn, mod, env);
   let lams: ast.ExprLambda[] = [];
   for st in fn.body {
-    lams = astwalk.fold_stmt_nodes(st, lams, e049_no_stmt_lambdas, e049_lambda_at, e049_into_all);
+    lams = astwalk.fold_stmt_nodes(st, lams, astwalk.keep_lambdas, e049_lambda_at, e049_into_all);
   }
   for lm in lams {
     out = util.append_diags(out, e049_body_stores(parser.FuncDecl { ...fn, params: lm.params, ret_type: lm.ret_type, body: lm.body }, mod, env));
@@ -24419,10 +24403,6 @@ function e049_lambda_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[
       return acc.append(lm);
     }
   }
-  return acc;
-}
-
-function e049_no_stmt_lambdas(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   return acc;
 }
 
@@ -27690,7 +27670,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     let cscope = build_func_scope(cfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
     let cparams = view_positions(cfn);
     slc_functions = slc_functions.append(SlcFunction { scope: cscope, params: cparams, fixed_strings: fixed_string_locals(cfn.body, cscope) });
-    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(cparams.len()), fresh: false });
+    slc_sums = slc_sums.append(ViewSum { key: parser.decl_key(cfn), flags: __alloc_bool(cparams.len()), fresh: false });
   }
   let slc_ix = view_index(slc_sums);
   let slc_calls: util.NameIndex[] = [];
@@ -27932,7 +27912,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (e065_summarised(sfn, slc_functions[sfi].scope)) {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(slc_functions[sfi].scope);
-      e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
+      e065_sums = e065_sums.append(ViewSum { key: parser.decl_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }
   let e065_ix = view_index(e065_sums);
@@ -30594,7 +30574,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 }
 
 function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
-  let (ne, ns, nh) = astwalk.map_expr_where(e, s, pretype_at_stmt, pretype_at_expr, astwalk.every_expr);
+  let (ne, ns, nh) = astwalk.map_expr_where(e, s, pretype_at_stmt, pretype_at_expr, astwalk.descend_all);
   return ne;
 }
 
@@ -31254,7 +31234,7 @@ function qualify_expr(e: ast.Expr, want: typeinfo.Type, s: Scope, coll: util.Nam
   if (!expr_names_shared(e, coll)) {
     return e;
   }
-  let (out, _, _) = astwalk.map_expr_where(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at, astwalk.every_expr);
+  let (out, _, _) = astwalk.map_expr_where(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at, astwalk.descend_all);
   return out;
 }
 
@@ -33739,7 +33719,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (at < 0) {
         return (st, rw, false);
       }
-      let (ie, ia, ih) = astwalk.map_expr_where(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+      let (ie, ia, ih) = astwalk.map_expr_where(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
       return (ast.StmtVar { ...v, type_name: rw.tags[at], init: ie }, rw, true);
     },
     ast.StmtFor(fr) => {
@@ -33764,7 +33744,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if let ast.ExprCall(c) = fr.iter {
         iter = ast.ExprCall { ...c, args: nb };
       }
-      let (body, ba) = astwalk.map_stmts_where(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+      let (body, ba) = astwalk.map_stmts_where(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
       return (ast.StmtFor { ...fr, iter: iter, body: body }, rw, true);
     },
     _ => {
@@ -33841,11 +33821,11 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     if (pt >= 0) {
       a = settle_wide_literals(a, rw.ptypes[pt]);
     }
-    let (ae, aa, ah) = astwalk.map_expr_where(a, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+    let (ae, aa, ah) = astwalk.map_expr_where(a, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
     args = args.append(ae);
     k += 1;
   }
-  let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+  let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
   return ast.ExprCall { ...c, callee: ce, args: args };
 }
 
@@ -34049,7 +34029,7 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
   if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
-  let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+  let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
   return out;
 }
 

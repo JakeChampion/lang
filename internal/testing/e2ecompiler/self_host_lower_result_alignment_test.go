@@ -21,7 +21,7 @@ function body(kind: i32, name: string, params: i32): irtables.LowerState {
     ops: [], n_locals: params, scratch_start: 0, n_params: params, erased_wide: false,
     arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
     name: name, result_kind: irtables.result_i32(), dbg_slots: [], dbg_names: [], dbg_types: [],
-    source_positions: irtables.no_source(),
+    source_positions: sourcepos.no_source(),
   };
 }
 

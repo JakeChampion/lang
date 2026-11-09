@@ -1,5 +1,6 @@
 import "std/unicode";
 import "std/utf8";
+import "./util";
 
 pub struct TokEof { line: i32, col: i32 }
 
@@ -713,10 +714,10 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     suffix_tag = numeric_suffix_tag(suffix);
     if (suffix_tag == 0u8) {
-      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(text + ""), start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + util.quoted(suffix) + " on " + util.quoted(text + ""), start_line, start_col) };
     }
     if (is_float && suffix[0] != b'f') {
-      return NumResult { lex: l, tok: num_error_tok("integer suffix " + quoted(suffix) + " on float literal " + quoted(text + ""), start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("integer suffix " + util.quoted(suffix) + " on float literal " + util.quoted(text + ""), start_line, start_col) };
     }
   }
   if (!is_float && suffix.len() > 0 && suffix[0] == b'f') {
@@ -778,7 +779,7 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     suffix_tag = numeric_suffix_tag(suffix);
     if (suffix_tag == 0u8 || suffix[0] == b'f') {
-      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + util.quoted(suffix) + " on " + util.quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
     }
   }
   let raw = slice_unchecked(l.src, begin, l.i) + "";
@@ -906,10 +907,6 @@ function rune_of_byte(b: i32): string {
   unsafe {
     return string_from_bytes_unchecked([(192 | b >> 6) as u8, (128 | b & 63) as u8]);
   }
-}
-
-function quoted(s: string): string {
-  return "\"" + s + "\"";
 }
 
 function quote_char(src: string, i: i32, n: i32): string {
