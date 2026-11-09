@@ -1814,7 +1814,7 @@ function printable_width(s: string): i32 {
   return n;
 }
 
-function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
+function column_count(lens: i32[], by_columns: boolean, width: i32): i32 {
   let n = lens.len();
   let max_cols = width / min_column_width();
   if (width % min_column_width() != 0) {
@@ -1826,65 +1826,45 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
   if (max_cols < 1) {
     max_cols = 1;
   }
-  let base: i32[] = [];
-  let total: i32[] = [];
-  let valid: boolean[] = [];
-  let flat: i32[] = [];
-  let at = 0;
-  let i = 0;
-  while (i < max_cols) {
-    base = base.append(at);
-    total = total.append(min_column_width() * (i + 1));
-    valid = valid.append(true);
-    let j = 0;
-    while (j <= i) {
-      flat = flat.append(min_column_width());
-      j += 1;
+  let cols = max_cols;
+  while (cols > 1) {
+    let widths: i32[] = [];
+    let i = 0;
+    while (i < cols) {
+      widths = widths.append(min_column_width());
+      i += 1;
     }
-    at = at + i + 1;
-    i += 1;
-  }
-  let f = 0;
-  while (f < n) {
-    let len = lens[f];
-    let k = 0;
-    while (k < max_cols) {
-      if (valid[k]) {
-        let cols = k + 1;
-        let idx = 0;
-        if (by_columns) {
-          let rows = (n + k) / cols;
-          if (rows > 0) {
-            idx = f / rows;
-          }
-        } else {
-          idx = f % cols;
-        }
-        let want = len;
-        if (idx != k) {
-          want += 2;
-        }
-        let slot = base[k] + idx;
-        if (flat[slot] < want) {
-          total = total.with(k, total[k] + want - flat[slot]);
-          flat = flat.with(slot, want);
-          valid = valid.with(k, total[k] <= width);
-        }
+    let total = min_column_width() * cols;
+    let rows = (n + cols - 1) / cols;
+    let fits = true;
+    let f = 0;
+    while (f < n) {
+      let idx = 0;
+      if (by_columns) {
+        idx = f / rows;
+      } else {
+        idx = f % cols;
       }
-      k += 1;
+      let want = lens[f];
+      if (idx != cols - 1) {
+        want += 2;
+      }
+      if (widths[idx] < want) {
+        total += want - widths[idx];
+        if (total > width) {
+          fits = false;
+          break;
+        }
+        widths = widths.with(idx, want);
+      }
+      f += 1;
     }
-    f += 1;
-  }
-  let chosen = 1;
-  let c2 = max_cols;
-  while (c2 > 1) {
-    if (valid[c2 - 1]) {
-      chosen = c2;
-      break;
+    if (fits) {
+      return cols;
     }
-    c2 -= 1;
+    cols -= 1;
   }
-  return chosen;
+  return 1;
 }
 
 function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
@@ -2021,7 +2001,7 @@ function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns
     lens = lens.append(display_len(c, w, es[i]));
     i += 1;
   }
-  let cols = column_count(c, lens, by_columns, c.width as i32);
+  let cols = column_count(lens, by_columns, c.width as i32);
   let cw = column_widths(lens, cols, by_columns);
   let rows = (n + cols - 1) / cols;
   let out = o;
