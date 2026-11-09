@@ -1,0 +1,22 @@
+{
+  "args": [
+    "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/workspace/lang/build/parser-production-profile-20261109/frontend-cpu.s",
+    "build/parser-production-profile-20261109/frontend.fern",
+    "internal/stdlib"
+  ],
+  "cwd": "/workspace/lang-semantic-liveness-20261109",
+  "fern_env": {
+    "FERN_PROFILE": "cpu",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "exit_code": 0,
+  "executed_assembly_for_profile": false
+}

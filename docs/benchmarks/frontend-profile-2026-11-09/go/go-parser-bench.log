@@ -1,0 +1,6 @@
+goos: linux
+goarch: amd64
+pkg: github.com/jakechampion/lang/internal/syntax/parser
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkParseCompilerLexer-4   	    1580	   7376396 ns/op	   8.81 MB/s	 2334814 B/op	   13314 allocs/op
+PASS
