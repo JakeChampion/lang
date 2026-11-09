@@ -84,7 +84,7 @@ function content_print(src: string): string {
   let m = parser.parse_module(lx.tokens);
   let out: string[] = [];
   for c in lx.comments {
-    out = out.append("//" + literate.trim(c.text) + "\n");
+    out = out.append("//" + util.trim(c.text) + "\n");
   }
   for im in m.imports {
     out = out.append("import " + im.path + " " + im.alias + "\n");
@@ -167,7 +167,7 @@ function unwrap_formatted(formatted: string): string {
 }
 
 function format_chunk_body(body: string): (boolean, string) {
-  if (literate.trim(body).len() == 0) {
+  if (util.trim(body).len() == 0) {
     return (false, "");
   }
   if (parses_as_decls(body)) {

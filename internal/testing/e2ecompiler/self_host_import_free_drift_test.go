@@ -64,15 +64,14 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 
 	sort.Strings(free)
 	wantFree := []string{
-		"aborts", "aesref", "builtins", "capvocab", "docprintable", "elf", "literate", "rtbundle", "rtbytecopy", "rttemplates", "rtwasm",
-		"sourcepos", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "typeinfo", "watbin", "wit_fern_world", "wit_proxy_world",
+		"aborts", "aesref", "builtins", "capvocab", "docprintable", "elf", "rtbundle", "rtbytecopy", "rttemplates", "rtwasm",
+		"sourcepos", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "typeinfo", "wit_fern_world", "wit_proxy_world",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
-			"    These modules carry no `import` so e2ecompiler drivers can concatenate them with a\n"+
-			"    driver main() — see x86_native.fern's header. A module that GAINED an import breaks\n"+
-			"    those drivers; one that LOST its last import can join this list. Update wantFree and\n"+
-			"    say in the commit message which driver you checked.", free, wantFree)
+			"    A test that concatenates one of these modules with a driver main() breaks when the\n"+
+			"    module gains an import. Load such a module with assemblerSource or copySelfHostDriver\n"+
+			"    instead, then update wantFree.", free, wantFree)
 	}
 
 	allowed := map[string]string{
@@ -107,12 +106,10 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 		}
 		sort.Strings(detail)
 		t.Errorf("%s has %d copies across import-free modules and they have DIVERGED (%d distinct bodies):\n%s\n"+
-			"    These modules cannot import each other — e2ecompiler drivers concatenate them with a\n"+
-			"    driver main(), which only works while they pull in nothing — so the duplication is\n"+
-			"    deliberate and the copies must be kept in step BY HAND. A fix applied to one and not\n"+
-			"    the others is silent: every driver still builds and the fixpoint still converges.\n"+
-			"    Apply the change to every copy. If the copies are genuinely meant to differ, add the\n"+
-			"    name to `allowed` above with the reason.",
+			"    A copy in an import-free module is kept in step BY HAND. A fix applied to one copy and\n"+
+			"    not the others is silent: every driver still builds and the fixpoint still converges.\n"+
+			"    Delete the copy and import the module that owns it. If the module must stay import-free,\n"+
+			"    apply the change to every copy. If the copies must differ, add the name to `allowed`.",
 			name, len(copies), len(distinct), strings.Join(detail, "\n"))
 	}
 }

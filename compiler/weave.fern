@@ -11,7 +11,7 @@ function used_in(d: literate.Doc): UsedIn {
     if (b.kind == literate.CHUNK) {
       let k = b.first;
       while (k < b.first + b.count) {
-        let t = literate.trim(d.lines[k]);
+        let t = util.trim(d.lines[k]);
         if (literate.is_ref(t)) {
           u = UsedIn { refs: u.refs.append(literate.ref_name(t)), users: u.users.append(b.name) };
         }
@@ -105,7 +105,7 @@ function body_md(d: literate.Doc, b: literate.Block): string {
   let k = b.first;
   while (k < b.first + b.count) {
     let text = d.lines[k];
-    let t = literate.trim(text);
+    let t = util.trim(text);
     if (literate.is_ref(t)) {
       s = s + literate.leading_ws(text) + label(literate.ref_name(t)) + "\n";
     } else {
@@ -194,7 +194,7 @@ function body_html(d: literate.Doc, b: literate.Block): string {
   let k = b.first;
   while (k < b.first + b.count) {
     let text = d.lines[k];
-    let t = literate.trim(text);
+    let t = util.trim(text);
     if (literate.is_ref(t)) {
       s = s + html_escape(literate.leading_ws(text)) + ref_link(literate.ref_name(t)) + "\n";
     } else {
@@ -269,9 +269,9 @@ function html_title(d: literate.Doc): string {
   for b in d.blocks {
     if (b.kind == literate.PROSE) {
       for line in literate.split_lines(b.raw) {
-        let h = literate.trim(line);
+        let h = util.trim(line);
         if (util.str_has_prefix(h, "# ")) {
-          return literate.trim(slice_unchecked(h, 2, h.len()) + "");
+          return util.trim(slice_unchecked(h, 2, h.len()) + "");
         }
       }
     }
@@ -286,7 +286,7 @@ function toc_html(d: literate.Doc): string {
     if (b.kind == literate.PROSE) {
       let in_fence = 0;
       for line in literate.split_lines(b.raw) {
-        let t = literate.trim(line);
+        let t = util.trim(line);
         let fl = run_len(t, b'`');
         if (fl >= 3) {
           if (in_fence == 0) {
@@ -297,7 +297,7 @@ function toc_html(d: literate.Doc): string {
         } else if (in_fence == 0 && heading_level(t) > 0) {
           let n = heading_level(t);
           levels = levels.append(n);
-          texts = texts.append(literate.trim(slice_unchecked(t, n + 1, t.len()) + ""));
+          texts = texts.append(util.trim(slice_unchecked(t, n + 1, t.len()) + ""));
         }
       }
     }
@@ -316,11 +316,11 @@ function toc_html(d: literate.Doc): string {
 
 function strip_fence(raw: string): string {
   let lines = literate.split_lines(raw);
-  if (lines.len() < 2 || !util.str_has_prefix(literate.trim(lines[0]), "```")) {
+  if (lines.len() < 2 || !util.str_has_prefix(util.trim(lines[0]), "```")) {
     return raw;
   }
   let to = lines.len();
-  if (util.str_has_prefix(literate.trim(lines[to - 1]), "```")) {
+  if (util.str_has_prefix(util.trim(lines[to - 1]), "```")) {
     to -= 1;
   }
   let s = "";
@@ -390,7 +390,7 @@ pub function markdown_to_html(prose: string): string {
   let h = Html { out: "", para: [] };
   let i = 0;
   while (i < lines.len()) {
-    let t = literate.trim(lines[i]);
+    let t = util.trim(lines[i]);
     if (t.len() == 0) {
       h = flush_para(h);
       i += 1;
@@ -406,7 +406,7 @@ pub function markdown_to_html(prose: string): string {
     } else if (heading_level(t) > 0) {
       h = flush_para(h);
       let n = heading_level(t);
-      let text = literate.trim(slice_unchecked(t, n + 1, t.len()) + "");
+      let text = util.trim(slice_unchecked(t, n + 1, t.len()) + "");
       let tag = "h" + util.i32_to_string(n);
       h = Html { ...h, out: h.out + "<" + tag + " id=\"" + text.slugify() + "\">" + inline_markdown(text) + "</" + tag + ">\n" };
       i += 1;
@@ -429,13 +429,13 @@ pub function markdown_to_html(prose: string): string {
 }
 
 function fenced_html(lines: string[], i: i32): (string, i32) {
-  let t = literate.trim(lines[i]);
+  let t = util.trim(lines[i]);
   let open = run_len(t, b'`');
-  let lang = literate.trim(slice_unchecked(t, open, t.len()) + "");
+  let lang = util.trim(slice_unchecked(t, open, t.len()) + "");
   let s = "<pre class=\"code display\"><code>";
   let k = i + 1;
   while (k < lines.len()) {
-    let c = literate.trim(lines[k]);
+    let c = util.trim(lines[k]);
     if (run_len(c, b'`') >= open && run_len(c, b'`') == c.len()) {
       k += 1;
       break;
@@ -454,14 +454,14 @@ function quote_html(lines: string[], i: i32): (string, i32) {
   let s = "";
   let k = i;
   while (k < lines.len()) {
-    let q = literate.trim(lines[k]);
+    let q = util.trim(lines[k]);
     if (!util.str_has_prefix(q, ">")) {
       break;
     }
     if (k > i) {
       s += " ";
     }
-    s += inline_markdown(literate.trim(slice_unchecked(q, 1, q.len()) + ""));
+    s += inline_markdown(util.trim(slice_unchecked(q, 1, q.len()) + ""));
     k += 1;
   }
   return ("<blockquote>" + s + "</blockquote>\n", k);
@@ -475,13 +475,13 @@ function list_html(lines: string[], i: i32, unordered: boolean): (string, i32) {
   let s = "<" + tag + ">\n";
   let k = i;
   while (k < lines.len()) {
-    let t = literate.trim(lines[k]);
+    let t = util.trim(lines[k]);
     let item = ordered_item(t);
     if (unordered) {
       if (!is_unordered_item(t)) {
         break;
       }
-      item = literate.trim(slice_unchecked(t, 1, t.len()) + "");
+      item = util.trim(slice_unchecked(t, 1, t.len()) + "");
     } else if (item.len() == 0) {
       break;
     }
@@ -581,7 +581,7 @@ function find_closer(s: string, from: i32, want: i32): i32 {
 }
 
 function trim_code_span(c: string): string {
-  if (c.len() >= 2 && c[0] == b' ' && c[c.len() - 1] == b' ' && literate.trim(c).len() > 0) {
+  if (c.len() >= 2 && c[0] == b' ' && c[c.len() - 1] == b' ' && util.trim(c).len() > 0) {
     return slice_unchecked(c, 1, c.len() - 1) + "";
   }
   return c;
