@@ -1,3 +1,4 @@
+# 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
 # 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
 # 2026-11-08: must_consume_destructure_of_a_moved_payload is clean under RC trace.
@@ -376,6 +377,7 @@ general_reuse_crossblock                             0
 general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
+generic_arms_agree_in_type_argument                  0
 generic_array_callbacks_keep_their_types              0
 generic_array_method_chain                           0
 generic_array_methods                                0
