@@ -93,6 +93,58 @@ pub struct TypeConst { value: string }
 
 pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever | TypeConst;
 
+pub function t_i32(): Type {
+  return TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+}
+
+pub function t_i64(): Type {
+  return TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
+}
+
+pub function t_u8(): Type {
+  return TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
+}
+
+pub function t_u32(): Type {
+  return TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
+}
+
+pub function t_u64(): Type {
+  return TypeI32 { width: 64, unsigned: true, is_char: false, polymorphic: false };
+}
+
+pub function t_usize(): Type {
+  return TypeI32 { width: width_ptr(), unsigned: true, is_char: false, polymorphic: false };
+}
+
+pub function t_char(): Type {
+  return TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
+}
+
+pub function t_bool(): Type {
+  return TypeBool { tag: 0 };
+}
+
+pub function t_string(): Type {
+  return TypeString { tag: 0 };
+}
+
+pub function t_str(): Type {
+  return TypeString { tag: 1 };
+}
+
+pub function t_f64(): Type {
+  return TypeFloat { width: 64, polymorphic: false };
+}
+
+pub function t_f32(): Type {
+  return TypeFloat { width: 32, polymorphic: false };
+}
+
+pub function t_void(): Type {
+  return TypeVoid { tag: 0 };
+}
+
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
 }

@@ -578,7 +578,7 @@ function pair_result(sh: Shape): typeinfo.Type {
   if (sh.lanes) {
     return semscalarreturn.word_type();
   }
-  return t_i32();
+  return typeinfo.t_i32();
 }
 
 function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): ssasem.Func {
@@ -586,12 +586,12 @@ function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): ss
   let a = parts_of(Arm { f: f0, insts: b.insts, tag: -1 }, b.term.value, sh.ty, sh.payloads, defs);
   let f = a.a.f;
   let set = f.values.len();
-  f = with_value(f, t_i32());
+  f = with_value(f, typeinfo.t_i32());
   let insts = a.a.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [a.words[1]], imm: 0, str: pair_set_name(sh.payloads[1], 0) });
   if (sh.payloads.len() == 3) {
     if (ssasem.reference(sh.payloads[2])) {
       let set_third = f.values.len();
-      f = with_value(f, t_i32());
+      f = with_value(f, typeinfo.t_i32());
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set_third, args: [a.words[2]], imm: 0, str: pair_set_name(sh.payloads[2], 1) });
     } else {
       let lane = semscalarreturn.lane_set(f, insts, a.words[2], sh.payloads[2], 1);
@@ -630,12 +630,12 @@ function arm_return(a0: Arm, sh: Shape, at: i32, payload: i32[], defs: ssa.SInst
       insts = l.insts;
     } else {
       let set = f.values.len();
-      f = with_value(f, t_i32());
+      f = with_value(f, typeinfo.t_i32());
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [words[slot]], imm: 0, str: pair_set_name(ts[slot], slot) });
     }
   }
   let tag = f.values.len();
-  f = with_value(f, t_i32());
+  f = with_value(f, typeinfo.t_i32());
   insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: tag, args: [], imm: at, str: "" });
   return Arm { f: f, insts: insts, tag: tag };
 }
@@ -774,11 +774,11 @@ function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   }
   let tag = f0.values.len();
   let w = tag + 1;
-  let f = with_value(f0, t_i32());
+  let f = with_value(f0, typeinfo.t_i32());
   let insts: ssa.SInst[] = [ssa.SInst { ...call, result: tag, imm: ssasem.pair_capture_imm(w, count, wide) }];
   let words: i32[] = [];
   for slot in 0..count {
-    f = with_value(f, t_usize());
+    f = with_value(f, typeinfo.t_usize());
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w + slot, args: [tag], imm: 0, str: pair_word_name(slot) });
     words = words.append(w + slot);
   }
@@ -929,7 +929,7 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
     let ts = word_types(sh, i);
     for slot in 0..ts.len() {
       if (!in_lane(ts, slot)) {
-        calls = with_contract(calls, ssasem.Contract { name: word_as_name(ts[slot]), params: [t_usize()], modes: [ssasem.value_mode()], result: ts[slot] });
+        calls = with_contract(calls, ssasem.Contract { name: word_as_name(ts[slot]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: ts[slot] });
       }
     }
   }
@@ -937,7 +937,7 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
 }
 
 function word_contract(slot: i32): ssasem.Contract {
-  return ssasem.Contract { name: pair_word_name(slot), params: [t_i32()], modes: [ssasem.value_mode()], result: t_usize() };
+  return ssasem.Contract { name: pair_word_name(slot), params: [typeinfo.t_i32()], modes: [ssasem.value_mode()], result: typeinfo.t_usize() };
 }
 
 function with_callee_enum(f0: ssasem.Func, callee: ssasem.Func, sh: Shape): ssasem.Func {
@@ -969,7 +969,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   if let typeinfo.TypeStruct(_) = sh.ty {
     kind = ssasem.record_new();
   }
-  f = with_value(with_value(with_value(with_value(f, sh.payloads[0]), t_i32()), t_usize()), sh.payloads[1]);
+  f = with_value(with_value(with_value(with_value(f, sh.payloads[0]), typeinfo.t_i32()), typeinfo.t_usize()), sh.payloads[1]);
   let insts: ssa.SInst[] = [];
   let p = 0;
   while (p < b.insts.len()) {
@@ -989,7 +989,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let at = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
   calls = with_contract(calls, word_contract(0));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1004,7 +1004,7 @@ function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ss
   let w = first + 2;
   let lane = first + 3;
   let second = first + 4;
-  let f = with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), semscalarreturn.word_type()), sh.payloads[1]);
+  let f = with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), typeinfo.t_i32()), typeinfo.t_usize()), semscalarreturn.word_type()), sh.payloads[1]);
   let pre: ssa.SInst[] = [
     ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 2) },
     ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" },
@@ -1040,7 +1040,7 @@ function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ss
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
   calls = with_contract(calls, word_contract(0));
   calls = with_contract(calls, lane_contract(1));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1053,7 +1053,7 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
   let w1 = first + 3;
   let second = first + 4;
   let third = first + 5;
-  let f = with_value(with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), t_usize()), sh.payloads[1]), sh.payloads[2]);
+  let f = with_value(with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), typeinfo.t_i32()), typeinfo.t_usize()), typeinfo.t_usize()), sh.payloads[1]), sh.payloads[2]);
   let pre: ssa.SInst[] = [
     ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w0, 2, 0) },
     ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" },
@@ -1076,8 +1076,8 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
   let at = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
   calls = with_contract(with_contract(calls, word_contract(0)), word_contract(1));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1133,12 +1133,12 @@ function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
   let f = f0;
   let cond = f.values.len();
   if (semtypes.equal(f.values[v], sh.ty)) {
-    f = with_value(f, t_bool());
+    f = with_value(f, typeinfo.t_bool());
     return Test { f: f, insts: [ssa.SInst { kind_tag: ssasem.variant_is(), result: cond, args: [v], imm: 0, str: sh.names[j] }], cond: cond };
   }
   let c = cond;
   cond = c + 1;
-  f = with_value(with_value(f, t_i32()), t_bool());
+  f = with_value(with_value(f, typeinfo.t_i32()), typeinfo.t_bool());
   let insts: ssa.SInst[] = [
     ssa.SInst { kind_tag: ssa.CONST_INT, result: c, args: [], imm: j, str: "" },
     ssa.SInst { kind_tag: ssa.BINARY, result: cond, args: [v, c], imm: 0, str: "==" },
@@ -1165,7 +1165,7 @@ pub function pair_lane_slot(name: string): i32 {
 }
 
 function lane_contract(slot: i32): ssasem.Contract {
-  return ssasem.Contract { name: pair_lane_name(slot), params: [t_i32()], modes: [ssasem.value_mode()], result: semscalarreturn.word_type() };
+  return ssasem.Contract { name: pair_lane_name(slot), params: [typeinfo.t_i32()], modes: [ssasem.value_mode()], result: semscalarreturn.word_type() };
 }
 
 function pair_word_name(slot: i32): string {
@@ -1221,19 +1221,7 @@ function pair_set_contract(t: typeinfo.Type, slot: i32): ssasem.Contract {
   if (semtypes.needs_anchor(t)) {
     mode = ssasem.counted_mode();
   }
-  return ssasem.Contract { name: pair_set_name(t, slot), params: [t], modes: [mode], result: t_i32() };
-}
-
-function t_i32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
-}
-
-function t_usize(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
-}
-
-function t_bool(): typeinfo.Type {
-  return typeinfo.TypeBool { tag: 0 };
+  return ssasem.Contract { name: pair_set_name(t, slot), params: [t], modes: [mode], result: typeinfo.t_i32() };
 }
 
 function ret(value: i32): ssa.STerm {
@@ -1452,7 +1440,7 @@ function site_of(f: ssasem.Func, ins: ssa.SInst, s: Sites): Site {
       return Site { decl: decl, split: s.lay.list[r].flat, call: false };
     }
   }
-  return Site { decl: ssasem.Contract { name: "", params: [], modes: [], result: t_i32() }, split: [], call: false };
+  return Site { decl: ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.t_i32() }, split: [], call: false };
 }
 
 function has_sites(f: ssasem.Func, s: Sites): boolean {
