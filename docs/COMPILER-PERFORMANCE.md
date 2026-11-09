@@ -101,6 +101,19 @@ Its separate cache probe confirms 2,391 hits and zero misses.
 The profile and metadata audit identify possible reuse of checked graph facts in semantic liveness.
 No further optimization follows from this diagnostic profile alone.
 
+The [semantic liveness comparison](benchmarks/compiler-semantic-liveness-2026-11-09/README.md) reuses maps from checked graph facts.
+The baseline compiler and fixed input use `12be8f1186`, and the candidate code uses `3a296b887c`.
+Cold allocation events decrease by 17,277, or 0.0327%.
+Cold guest instructions decrease by 29,162,065, or 0.0697%.
+Warm guest instructions decrease by 29,097,267, or 0.0980%.
+The output hashes match, and the allocation runs report zero live bytes.
+
+Five alternating pairs per cache mode also measure complete native compilation.
+Median peak RSS decreases by 1,276 KiB cold and 1,020 KiB warm.
+Candidate wall-time medians are slightly slower, with mixed paired differences and substantial variation.
+These samples do not establish a wall-time or CPU-time speedup.
+The complete stage-2 and stage-3 compiler executables match byte for byte with certification enabled and the proof cache disabled.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.
