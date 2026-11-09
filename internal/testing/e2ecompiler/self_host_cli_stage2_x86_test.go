@@ -35,7 +35,7 @@ func TestSelfHostCLIStage2X86_64(t *testing.T) {
 	compile(t, stage1, filepath.Join(dir, "fern.fern"), stage2)
 
 	t.Run("lexer", func(t *testing.T) {
-		compile(t, stage2, langSrcAbs(t, "compiler/lexer.fern"), filepath.Join(dir, "lexer_stage2"))
+		compile(t, stage2, langSrcAbs(t, "compiler/drivers/lexer_check_run.fern"), filepath.Join(dir, "lexer_stage2"))
 	})
 
 	t.Run("program", func(t *testing.T) {
