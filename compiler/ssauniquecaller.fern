@@ -55,7 +55,7 @@ function program(input: string[], name: string, arm: boolean): Program {
     if (raw.contains("\n")) {
       ok = false;
     }
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "") {
       let label = "";
       if (line.ends_with(":")) {

@@ -98,7 +98,7 @@ function corruptions(site: ssaprepare.UniqueSite, arch: string, input: string, r
 function without_guard(text: string, arm: boolean, tag: boolean): string {
   let out = "";
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     let omit = if (tag) { line.starts_with(if (arm) { "tbnz " } else { "testb " }) || line.starts_with(if (arm) { "tst " } else { "jnz " }) || line.starts_with("b.ne ") } else { line.starts_with(if (arm) { "cmp " } else { "cmpq " }) || line.starts_with(if (arm) { "b.lo " } else { "jb " }) };
     if (!omit) {
       out = out + raw + "\n";

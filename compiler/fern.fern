@@ -85,7 +85,7 @@ function content_print(src: string): string {
   let m = parser.parse_module(lx.tokens);
   let out: string[] = [];
   for c in lx.comments {
-    out = out.append("//" + util.trim(c.text) + "\n");
+    out = out.append("//" + c.text.trim() + "\n");
   }
   for im in m.imports {
     out = out.append("import " + im.path + " " + im.alias + "\n");
@@ -168,7 +168,7 @@ function unwrap_formatted(formatted: string): string {
 }
 
 function format_chunk_body(body: string): (boolean, string) {
-  if (util.trim(body).len() == 0) {
+  if (body.trim().len() == 0) {
     return (false, "");
   }
   if (parses_as_decls(body)) {
@@ -3627,7 +3627,7 @@ function insert_dependency(src: string, line: string): string {
   let lines = mvs.split_char(src, b'\n');
   let i = 0;
   while (i < lines.len()) {
-    if (util.trim(fern_toml.line_content(lines[i])) == "[dependencies]") {
+    if (fern_toml.line_content(lines[i]).trim() == "[dependencies]") {
       let out = "";
       let k = 0;
       while (k < lines.len()) {

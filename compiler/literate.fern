@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 function is_backtick(b: u8): boolean {
   return b == b'`';
@@ -81,7 +82,7 @@ function fence_lang(line: string): string {
   while (i < n && is_backtick(line[i])) {
     i += 1;
   }
-  let info = util.trim(slice_unchecked(line, i, n));
+  let info = slice_unchecked(line, i, n).trim();
   let j = 0;
   let m = info.len();
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
@@ -113,7 +114,7 @@ function fence_info(line: string): string {
   while (i < n && is_backtick(line[i])) {
     i += 1;
   }
-  return util.trim(slice_unchecked(line, i, n));
+  return slice_unchecked(line, i, n).trim();
 }
 
 function split_ws(s: string): string[] {
@@ -166,7 +167,7 @@ function trim_quotes(s: string): string {
 }
 
 function is_fence_close(line: string, open_len: i32): boolean {
-  let t = util.trim(line);
+  let t = line.trim();
   let n = t.len();
   if (n < open_len) {
     return false;
@@ -189,11 +190,11 @@ function is_header(t: string): boolean {
   if (util.contains(inner, ">>")) {
     return false;
   }
-  return util.trim(inner).len() > 0;
+  return inner.trim().len() > 0;
 }
 
 function header_name(t: string): string {
-  return util.trim(slice_unchecked(t, 2, t.len() - 3));
+  return slice_unchecked(t, 2, t.len() - 3).trim();
 }
 
 pub function is_ref(t: string): boolean {
@@ -211,7 +212,7 @@ pub function is_ref(t: string): boolean {
 }
 
 pub function ref_name(t: string): string {
-  return util.trim(slice_unchecked(t, 2, t.len() - 2));
+  return slice_unchecked(t, 2, t.len() - 2).trim();
 }
 
 pub function de_escape(text: string): string {
@@ -241,7 +242,7 @@ pub struct Doc { blocks: Block[], lines: string[] }
 function header_index(lines: string[], first: i32, count: i32): i32 {
   let i = 0;
   while (i < count) {
-    let t = util.trim(lines[first + i]);
+    let t = lines[first + i].trim();
     if (t.len() == 0) {
       i += 1;
     } else {
@@ -283,7 +284,7 @@ function fence_block(lines: string[], open: i32, count: i32, raw: string): Block
   if (h < 0) {
     return Block { ...b, kind: DISPLAY };
   }
-  return Block { ...b, kind: CHUNK, name: header_name(util.trim(lines[open + 1 + h])), first: open + 2 + h, count: count - h - 1 };
+  return Block { ...b, kind: CHUNK, name: header_name(lines[open + 1 + h].trim()), first: open + 2 + h, count: count - h - 1 };
 }
 
 pub function parse(src: string): Doc {
@@ -431,7 +432,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
       let text = pieces[i].text;
-      let t = util.trim(text);
+      let t = text.trim();
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(pieces, rn)) {
@@ -508,8 +509,8 @@ pub function unused_chunks(src: string): string[] {
   let fp = parse_file_pieces(src);
   let i = 0;
   while (i < fp.len()) {
-    if (is_ref(util.trim(fp[i].text))) {
-      todo = todo.append(ref_name(util.trim(fp[i].text)));
+    if (is_ref(fp[i].text.trim())) {
+      todo = todo.append(ref_name(fp[i].text.trim()));
     }
     i += 1;
   }
@@ -522,8 +523,8 @@ pub function unused_chunks(src: string): string[] {
       reached = reached.append(n);
       let k = 0;
       while (k < pieces.len()) {
-        if (pieces[k].chunk == n && is_ref(util.trim(pieces[k].text))) {
-          todo = todo.append(ref_name(util.trim(pieces[k].text)));
+        if (pieces[k].chunk == n && is_ref(pieces[k].text.trim())) {
+          todo = todo.append(ref_name(pieces[k].text.trim()));
         }
         k += 1;
       }
@@ -630,7 +631,7 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
   while (i < fp.len()) {
     if (fp[i].path == path) {
       let text = fp[i].text;
-      let t = util.trim(text);
+      let t = text.trim();
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(chunks, rn)) {

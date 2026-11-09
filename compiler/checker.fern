@@ -13411,10 +13411,10 @@ function dyn_ret_at_spelling(ret: string, spelling: string, tparams: string[]): 
   let args: string[] = [];
   let out = ret;
   for raw in parser.split_top_commas(slice_unchecked(spelling, open + 1, spelling.len() - 1) + "") {
-    let entry = util.trim(raw);
+    let entry = raw.trim();
     let eq = pin_eq(entry);
     if (eq > 0) {
-      out = subst_self_proj(out, util.trim(slice_unchecked(entry, 0, eq) + ""), util.trim(slice_unchecked(entry, eq + 1, entry.len()) + ""));
+      out = subst_self_proj(out, (slice_unchecked(entry, 0, eq) + "").trim(), (slice_unchecked(entry, eq + 1, entry.len()) + "").trim());
     } else {
       args = args.append(entry);
     }
@@ -23503,7 +23503,7 @@ function ow_alias_holds_no_handle(al: parser.TypeAlias, dx: OwnDecls, seen: stri
 
 function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
   for f in sd.fields {
-    if (!ow_no_handle_in(util.trim(f.type_name), dx, sd.type_params, seen)) {
+    if (!ow_no_handle_in(f.type_name.trim(), dx, sd.type_params, seen)) {
       return false;
     }
   }
@@ -23543,7 +23543,7 @@ function ow_local_last_use(id: ast.ExprIdent, ctx: OwnCtx): boolean {
 
 function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
   for t in ts {
-    if (!ow_no_handle_in(util.trim(t), dx, free, seen)) {
+    if (!ow_no_handle_in(t.trim(), dx, free, seen)) {
       return false;
     }
   }
@@ -23883,7 +23883,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     while (i < fn.params.len()) {
       if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
-        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(util.trim(fn.params[i].type_name), dx)) {
+        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(fn.params[i].type_name.trim(), dx)) {
           all_own = false;
         }
       }
@@ -26933,7 +26933,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
         j += 1;
       }
       if (eq > 0) {
-        out = out.append(util.trim(slice_unchecked(seg, 0, eq) + ""));
+        out = out.append((slice_unchecked(seg, 0, eq) + "").trim());
       }
       start = i + 1;
     }
@@ -26964,7 +26964,7 @@ function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): ut
         continue;
       }
       for bound in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
-        let spelling = util.trim(bound);
+        let spelling = bound.trim();
         let target_trait = parser.parse_type_ref(spelling).base;
         let target = declared_bound_trait_req(mod, target_trait, fn.module);
         if (target < 0 || util.index_of_i32(seen, target) >= 0) {
@@ -27024,7 +27024,7 @@ function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
   for site in e021_dyn_sites(fn) {
     if (e021_dyn_target(site.spelling).len() > 0) {
       for entry in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
-        out = out.append(DynSite { spelling: parser.parse_type_ref(util.trim(entry)).base, line: site.line, col: site.col });
+        out = out.append(DynSite { spelling: parser.parse_type_ref(entry.trim()).base, line: site.line, col: site.col });
       }
     }
   }

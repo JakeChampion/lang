@@ -349,7 +349,7 @@ struct Suppressions {
 }
 
 function is_blank(line: string): boolean {
-  return util.trim(line).len() == 0;
+  return line.trim().len() == 0;
 }
 
 function split_src(src: string): string[] {
@@ -372,7 +372,7 @@ function comment_only(lines: string[], c: lexer.Comment): boolean {
   }
   let text = lines[c.line - 1];
   let before = c.col - 1;
-  return before >= 0 && before <= text.len() && util.trim(slice_unchecked(text, 0, before)).len() == 0;
+  return before >= 0 && before <= text.len() && slice_unchecked(text, 0, before).trim().len() == 0;
 }
 
 function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Comment): i32 {
@@ -403,9 +403,9 @@ function directive_finding(c: lexer.Comment, msg: string, help: string): Finding
 }
 
 function comment_body(text: string): string {
-  let t = util.trim(text);
+  let t = text.trim();
   if (t.starts_with("//")) {
-    t = util.trim(slice_unchecked(t, 2, t.len()) + "");
+    t = (slice_unchecked(t, 2, t.len()) + "").trim();
   }
   return t;
 }
@@ -418,7 +418,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     if (!text.starts_with("fern-lint:")) {
       continue;
     }
-    let body = util.trim(slice_unchecked(text, 10, text.len()) + "");
+    let body = (slice_unchecked(text, 10, text.len()) + "").trim();
     let sp = util.index_of_sub(body, " ");
     let verb = body;
     let rest = "";
@@ -435,7 +435,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     let i = 0;
     while (i <= rest.len()) {
       if (i == rest.len() || rest[i] == b',') {
-        let r = util.trim(slice_unchecked(rest, start, i) + "");
+        let r = (slice_unchecked(rest, start, i) + "").trim();
         if (r.len() > 0) {
           names = names.append(r);
         }
