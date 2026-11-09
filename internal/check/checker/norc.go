@@ -18,7 +18,7 @@ var noRCIntrinsics = map[string]bool{
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__fence": true, "__wfi": true, "__hvc": true, "__smc": true, "__boot_info": true, "__sysreg_read": true, "__sysreg_write": true,
-	"__cache_clean": true, "__cache_flush": true, "__tlb_flush": true, "__tlb_flush_all": true, "__breakpoint": true,
+	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__tlb_flush": true, "__tlb_flush_all": true, "__breakpoint": true,
 	"__irq_mask": true, "__irq_unmask": true, "__irq_wait": true, "__irq_pending": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,

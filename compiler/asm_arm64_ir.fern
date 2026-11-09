@@ -3624,7 +3624,9 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 
 // A cache or TLB op. A TLB op orders the table writes before it with dsb ishst,
 // and waits for the invalidation on every core of the inner-shareable domain.
-// tlbi vaae1is takes the page number, for every ASID.
+// tlbi vaae1is takes the page number, for every ASID. cache_sync_code cleans
+// the data line to the point of unification and then drops the instruction
+// line, so that a fetch on any core reads the new code.
 function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_tlb_flush_all") {
     s = s.write("    dsb ishst\n    tlbi vmalle1is\n    dsb ish\n    isb\n");
@@ -3642,6 +3644,9 @@ function arm64_maintenance_text(op: string): string {
   }
   if (op == "dev_cache_clean") {
     return "    dc cvac, x9\n";
+  }
+  if (op == "dev_cache_sync_code") {
+    return "    dc cvau, x9\n    dsb ish\n    ic ivau, x9\n    dsb ish\n    isb\n";
   }
   return "    dc civac, x9\n";
 }

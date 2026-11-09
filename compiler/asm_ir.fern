@@ -8439,14 +8439,15 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 
 // A cache or TLB op. clflush writes back and invalidates the line, because the
 // x86-64 baseline has no clwb. A reload of %cr3 drops every translation that is
-// not global.
+// not global. Instruction fetch sees each store on x86-64, so cache_sync_code
+// emits no instruction.
 function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_tlb_flush_all") {
     s = s.write("    movq %cr3, %rax\n    movq %rax, %cr3\n");
   } else if (ins.str == "dev_tlb_flush") {
     s = ssa_load(reg_of, ins.args[0], "%rax", s);
     s = s.write("    invlpg (%rax)\n");
-  } else {
+  } else if (ins.str != "dev_cache_sync_code") {
     s = ssa_load(reg_of, ins.args[0], "%rax", s);
     s = s.write("    clflush (%rax)\n");
   }

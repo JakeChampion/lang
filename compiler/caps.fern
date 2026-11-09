@@ -147,6 +147,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "__irq_unmask", capability: "privileged" },
     BuiltinCap { builtin: "__irq_wait", capability: "privileged" },
     BuiltinCap { builtin: "__user_run", capability: "privileged" },
+    BuiltinCap { builtin: "__cache_sync_code", capability: "privileged" },
     BuiltinCap { builtin: "__irq_pending", capability: "privileged" },
     BuiltinCap { builtin: "__port_in8", capability: "privileged" },
     BuiltinCap { builtin: "__port_in16", capability: "privileged" },

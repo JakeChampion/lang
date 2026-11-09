@@ -259,6 +259,13 @@ each one with E066:
   `__fence()`.
   - On arm64, they are `dc cvac` and `dc civac`.
   - On x86-64, both are `clflush`, because the baseline has no `clwb`.
+- `__cache_sync_code(address)` makes instruction fetch see the code that the
+  kernel wrote to the line of the address. A kernel calls it for each line of
+  the code that it loads for a process.
+  - On arm64, it cleans the data line with `dc cvau` and then invalidates the
+    instruction line with `ic ivau`, with `dsb ish` after each and an `isb`.
+  - On x86-64, it emits no instruction, because instruction fetch sees each
+    store.
 - `__tlb_flush(address)` drops the translation of the page that holds the
   address, and `__tlb_flush_all()` drops every translation. A kernel calls one
   after it changes a page table.
