@@ -22867,18 +22867,34 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   }
 }
 
+struct OwnLocalScope { parent: OwnCtx, moved: MovedEntry[], name: string }
+
 function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   let m = moved;
   let d: util.Diag[] = [];
   let c = ctx;
+  let locals: OwnLocalScope[] = [];
   for stmt in stmts {
     let r = ow_stmt(stmt, m, c);
     m = r.moved;
     d = util.append_diags(d, r.diags);
     if let ast.StmtVar(v) = stmt {
+      if (util.has_str(c.owned, v.name) || util.has_str(c.borrowed, v.name)) {
+        locals = locals.append(OwnLocalScope { parent: c, moved: m, name: v.name });
+        m = ow_moves_without(m, [v.name]);
+        c = ow_shadow_names_ctx(c, [v.name]);
+      }
       c = ow_bind_ctx(c, v.name);
     }
     c = OwnCtx { ...c, scope: bind_stmt(stmt, c.scope) };
+  }
+  let i = locals.len();
+  while (i > 0) {
+    i -= 1;
+    let local = locals[i];
+    m = ow_scope_moves(m, local.moved, [local.name]);
+    ow_arm_finish_ctx(c, local.parent, [local.name]);
+    c = local.parent;
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -22998,7 +23014,10 @@ function ow_exit_bound(ctx: OwnCtx, pat: ast.Pattern): boolean {
 }
 
 function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
-  let names = astwalk.pattern_binders(pat, []);
+  return ow_shadow_names_ctx(ctx, astwalk.pattern_binders(pat, []));
+}
+
+function ow_shadow_names_ctx(ctx: OwnCtx, names: string[]): OwnCtx {
   if (names.len() == 0) {
     return ctx;
   }
