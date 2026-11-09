@@ -7,6 +7,14 @@ var genericStructLitDestCases = []struct {
 	src  string
 	want int
 }{
+	{"concrete-struct-local", `struct Item { n: i32 }
+struct Box[T] { value: T }
+function main(): i32 {
+    let item = Item { n: 7 };
+    let box = Box { value: item };
+    return box.value.n;
+}
+`, 7},
 	{"var-annotation-i64-local", `struct Same[T] { a: T, b: T }
 function main(): i32 {
     let y: i64 = 4;

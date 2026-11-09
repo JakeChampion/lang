@@ -19,6 +19,16 @@ function generic[T](value: T): T {
   return unsafe { share_unchecked(value) };
 }
 
+struct Box[T] { value: T }
+
+function (box: Box[T]) shared(): T {
+  return unsafe { share_unchecked(box.value) };
+}
+
+function (box: Box[T]) share_value[U](value: U): U {
+  return unsafe { share_unchecked(value) };
+}
+
 function main(): i32 {
   let value = Bundle { output: stdout(), ns: [1, 2, 3] };
   print(local(value));
@@ -28,6 +38,11 @@ function main(): i32 {
   let alias = generic(value);
   print(grown(alias));
   print(grown(generic(value)));
+  print(value.ns.len());
+  let box = Box { value: value };
+  print(grown(box.shared()));
+  print(value.ns.len());
+  print(grown(box.share_value(value)));
   print(value.ns.len());
   return 0;
 }

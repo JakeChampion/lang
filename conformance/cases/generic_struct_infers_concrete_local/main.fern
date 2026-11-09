@@ -1,0 +1,10 @@
+struct Item { n: i32 }
+
+struct Box[T] { value: T }
+
+function main(): i32 {
+  let item = Item { n: 7 };
+  let box = Box { value: item };
+  print(box.value.n);
+  return 0;
+}
