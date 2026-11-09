@@ -1,0 +1,17 @@
+import "std/test";
+import "wavpack_predict_check";
+import "wavpack_predict_vectors";
+import "wavpack_check";
+import "wavpack_input_check";
+import "wavpack_file_check";
+
+function main(): i32 {
+  let runner = test.new("Direct WavPack reference decorrelation kernels");
+  for vector in wavpack_predict_vectors.all() {
+    runner = runner.it(vector.name, (): test.TestOutcome => wavpack_predict_check.reference(vector));
+  }
+  runner = runner.it("valid large predictor history file", (): test.TestOutcome => wavpack_check.reference(wavpack_predict_vectors.file()));
+  runner = runner.it("large history through short source reads", (): test.TestOutcome => wavpack_input_check.reference(wavpack_predict_vectors.file()));
+  runner = runner.it("large history through indexed source seeks", (): test.TestOutcome => wavpack_file_check.reference(wavpack_predict_vectors.file()));
+  return runner.finish();
+}
