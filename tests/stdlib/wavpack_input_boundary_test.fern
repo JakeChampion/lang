@@ -1,0 +1,145 @@
+import "std/audio/wavpack";
+import "std/audio/wavpack/input";
+import "std/audio/source";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+import "wavpack_smoke_vectors";
+import "wavpack_input_check";
+import "aac_kernel_check" as ref;
+
+function fixture(name: string): Result[u8[], string] {
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == name) {
+      return ref.unpack(vector.encoded);
+    }
+  }
+  return Err("missing fixture");
+}
+
+function limits(): input.Limits {
+  let value = input.default_limits();
+  return input.Limits { ...value, codec: wavpack.Limits { ...value.codec, audio: pcm.Limits { max_input_bytes: 256, max_samples: 32 } }, input: source.Limits { chunk_size: 17, max_buffer_bytes: 256 } };
+}
+
+function drain(bytes: u8[], configured: input.Limits): Result[input.Summary, source.ReadError] {
+  let state = input.create(configured)?;
+  let read = wavpack_input_check.bytes_reader(bytes, cell_new(0), cell_new(0), true);
+  let output: i32[] = [];
+  while (true) {
+    let input.Progress { state: next, event, samples } = state.next_into_with(read, output)?;
+    if let input.Output(input.End(summary)) = event {
+      return Ok(summary);
+    }
+    state = next;
+    output = samples;
+  }
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(bytes) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  for end in 0..bytes.len() {
+    let prefix: u8[] = [];
+    for byte in bytes[:end] {
+      prefix = prefix.append(byte);
+    }
+    if let Ok(_) = drain(prefix, limits()) {
+      return test.fail("accepted prefix " + end.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function corruption(): test.TestOutcome {
+  let Ok(bytes) = fixture("short-24-2-19") else {
+    return test.fail("fixture");
+  };
+  for at in 0..bytes.len() {
+    if let Ok(_) = drain(bytes.with(at, bytes[at] ^ 1u8), input.default_limits()) {
+      return test.fail("accepted corruption " + at.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function bounded(): test.TestOutcome {
+  let Ok(bytes) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let Ok(summary) = drain(bytes, limits()) else {
+    return test.fail("group budget");
+  };
+  return test.assert_true(summary.frames == 35i64 && summary.groups == 3i64 && summary.bytes_read == bytes.len() as i64);
+}
+
+function artwork(own bytes: u8[], size: i32): u8[] {
+  bytes = wire.put_le(bytes, size as u64, 4);
+  bytes = wire.put_le(bytes, 2u64, 4);
+  for byte in [67u8, 111u8, 118u8, 101u8, 114u8, 0u8] {
+    bytes = bytes.append(byte);
+  }
+  for _ in 0..size {
+    bytes = bytes.append(123u8);
+  }
+  for byte in [65u8, 80u8, 69u8, 84u8, 65u8, 71u8, 69u8, 88u8] {
+    bytes = bytes.append(byte);
+  }
+  bytes = wire.put_le(bytes, 2000u64, 4);
+  bytes = wire.put_le(bytes, (size + 46) as u64, 4);
+  bytes = wire.put_le(bytes, 1u64, 4);
+  return wire.put_le(bytes, 0u64, 12);
+}
+
+function streamed_artwork(): test.TestOutcome {
+  let Ok(bytes) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let tagged = artwork(bytes, 32768);
+  let Ok(summary) = drain(tagged, limits()) else {
+    return test.fail("bounded artwork");
+  };
+  if (summary.frames != 35i64 || summary.bytes_read != tagged.len() as i64) {
+    return test.fail("artwork extent");
+  }
+  let constrained = input.Limits { ...limits(), max_metadata_bytes: 32768i64 };
+  return match (drain(tagged, constrained)) { Err(source.ReadAudio(pcm.Limit)) => test.pass(), _ => test.fail("metadata byte budget") };
+}
+
+function io_error(): test.TestOutcome {
+  let Ok(state) = input.create(limits()) else {
+    return test.fail("create");
+  };
+  let read = (_: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  return match (state.step_into_with(read, [])) { Err(source.ReadIo(IoError.Interrupted)) => test.pass(), _ => test.fail("I/O error category") };
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(bytes) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let value = limits();
+  for configured in [
+    input.Limits { ...value, codec: wavpack.Limits { ...value.codec, max_blocks: 0 } },
+    input.Limits { ...value, codec: wavpack.Limits { ...value.codec, audio: pcm.Limits { ...value.codec.audio, max_input_bytes: 209 } } },
+    input.Limits { ...value, codec: wavpack.Limits { ...value.codec, audio: pcm.Limits { ...value.codec.audio, max_samples: 31 } } },
+    input.Limits { ...value, max_metadata_bytes: -1i64 },
+  ] {
+    if let Ok(_) = drain(bytes, configured) {
+      return test.fail("accepted budget");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("WavPack source boundaries");
+  runner = runner.it("every truncated prefix", prefixes);
+  runner = runner.it("every damaged byte", corruption);
+  runner = runner.it("whole track exceeds one group budget", bounded);
+  runner = runner.it("artwork exceeds the retained byte window", streamed_artwork);
+  runner = runner.it("source I/O error stays distinct", io_error);
+  runner = runner.it("explicit budgets reject input", budgets);
+  return runner.finish();
+}

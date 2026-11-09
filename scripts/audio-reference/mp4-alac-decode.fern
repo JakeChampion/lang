@@ -1,0 +1,28 @@
+import "std/audio/mp4/alac";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let audio = match (alac.decode(input, alac.default_limits())) { Ok(value) => value, Err(e) => { eprint(e.message()); return 3; } };
+  let raw: u8[] = [];
+  for value in audio.samples {
+    raw = wire.put_le(raw, value as u64, 4);
+  }
+  if let Err(_) = write_file_bytes(argv[2], raw) {
+    return 4;
+  }
+  print("bits=" + audio.format.bits_per_sample.to_string());
+  print("channels=" + audio.format.channels.to_string());
+  print("rate=" + audio.format.sample_rate.to_string());
+  print("frames=" + audio.frames.to_string());
+  return 0;
+}

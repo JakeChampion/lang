@@ -1,0 +1,10 @@
+The native WavPack decoder derives entropy and prediction algorithms from
+WavPack 5.8.1, commit 4827b9889665b937b6ed71b9c6c0123152cd7a02.
+
+Copyright (c) 1998 - 2025 David Bryant.
+Copyright (c) 1998 - 2013 Conifer Software.
+All rights reserved.
+
+The BSD-3-Clause license is in BSD-3-Clause.txt in this directory.
+The reference tools are independent qualification tools.
+The Fern decoder does not call the WavPack C library.

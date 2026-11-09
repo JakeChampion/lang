@@ -1,0 +1,35 @@
+import "std/audio/mp4";
+import "std/audio/mp4/alac";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_alac_smoke_vectors";
+
+// Keep every format field and sample visible in the small independent smoke.
+// fern-lint: allow cyclomatic-complexity
+function exact(): test.TestOutcome {
+  let vector = mp4_alac_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(vector.encoded) else {
+    return test.fail("encoded reference");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM reference");
+  };
+  let Ok(audio) = mp4.decode_alac(encoded, alac.default_limits()) else {
+    return test.fail("integer M4A decode");
+  };
+  if (audio.frames != 19i64 || audio.samples.len() != 19 || audio.format.bits_per_sample != 16 || audio.format.channels != 1 || audio.format.sample_rate != 48000 || audio.channel_mask != 4u32) {
+    return test.fail("lossless track metadata");
+  }
+  for i in 0..19 {
+    if (audio.samples[i] != ref.word(expected, i * 4)) {
+      return test.fail("exact integer PCM");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Independent M4A ALAC interpreter smoke");
+  runner = runner.it("exact integer PCM through the public MP4 API", exact);
+  return runner.finish();
+}

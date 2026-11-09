@@ -34,6 +34,7 @@ Errors consume cursors.
 
 import "std/audio/alac";
 import "std/audio/alac/config";
+import "std/audio/alac/layout";
 import "std/audio/caf/chunks";
 import "std/audio/pcm";
 import "std/audio/wire";
@@ -116,51 +117,11 @@ function cookie(input: [u8], chunk: chunks.Chunk): Result[u8[], pcm.AudioError] 
   return Ok(output);
 }
 
-function back_mask(channels: i32): u32 {
-  return match (channels) { 5 => 55u32, 6 => 63u32, 7 => 319u32, 8 => 255u32, _ => config.mask(channels) };
-}
-
-// The bounded Core Audio layout table identifies the supported speaker sets.
-// fern-lint: allow cyclomatic-complexity
-function layout_tag(tag: u32, channels: i32): Result[u32, pcm.AudioError] {
-  if ((tag & 65535u32) != channels as u32) {
-    return Err(pcm.Header);
-  }
-  let kind = tag >> 16u32;
-  let supported = match (channels) {
-    1 => kind == 100u32, 2 => kind == 101u32, 3 => kind == 112u32 || kind == 113u32,
-    4 => kind == 115u32 || kind == 116u32, 5 => kind >= 117u32 && kind <= 120u32,
-    6 => kind >= 121u32 && kind <= 124u32, 7 => kind == 125u32 || kind == 142u32,
-    _ => kind == 127u32,
-  };
-  if (!supported) {
-    return Err(pcm.Unsupported);
-  }
-  return Ok(back_mask(channels));
-}
-
 function channel_mask(input: [u8], value: Option[chunks.Chunk], info: config.Info): Result[u32, pcm.AudioError] {
   let Some(chunk) = value else {
     return Ok(info.channel_mask);
   };
-  if (chunk.end - chunk.start != 12) {
-    return Err(pcm.Unsupported);
-  }
-  let tag = wire.be(input, chunk.start, 4) as u32;
-  let mask = wire.be(input, chunk.start + 4, 4) as u32;
-  if (wire.be(input, chunk.start + 8, 4) != 0u64) {
-    return Err(pcm.Unsupported);
-  }
-  if (tag != 65536u32) {
-    if (mask != 0u32) {
-      return Err(pcm.Header);
-    }
-    return layout_tag(tag, info.format.channels);
-  }
-  if (mask != info.channel_mask && mask != back_mask(info.format.channels)) {
-    return Err(pcm.Unsupported);
-  }
-  return Ok(mask);
+  return layout.read(input[chunk.start:chunk.end], info);
 }
 
 function variable(input: [u8], at: i32, end: i32): Result[(i32, i32), pcm.AudioError] {
@@ -334,28 +295,6 @@ pub function (own value: Cursor) seek(position: i64): Result[Cursor, pcm.AudioEr
   return Ok(Cursor { ...value, packet: lo, target: position });
 }
 
-function ordered(own samples: i32[], format: pcm.Format, mask: u32, frames: i32): i32[] {
-  if (format.channels == 7 && mask == 319u32) {
-    for i in 0..frames {
-      let at = i * 7;
-      let center = samples[at + 4];
-      let left = samples[at + 5];
-      let right = samples[at + 6];
-      samples = samples.with(at + 4, left).with(at + 5, right).with(at + 6, center);
-    }
-  } else if (format.channels == 8 && mask == 255u32) {
-    for i in 0..frames {
-      let at = i * 8;
-      let near_left = samples[at + 4];
-      let near_right = samples[at + 5];
-      let surround_left = samples[at + 6];
-      let surround_right = samples[at + 7];
-      samples = samples.with(at + 4, surround_left).with(at + 5, surround_right).with(at + 6, near_left).with(at + 7, near_right);
-    }
-  }
-  return samples;
-}
-
 // One step validates one selected payload and returns its trimmed range in the same PCM buffer.
 // fern-lint: allow cyclomatic-complexity
 pub function (own state: Cursor) step_into(input: [u8], own output: i32[]): Result[(Cursor, BufferEvent), pcm.AudioError] {
@@ -372,7 +311,7 @@ pub function (own state: Cursor) step_into(input: [u8], own output: i32[]): Resu
   if (raw as i64 != index.positions[packet + 1] - index.positions[packet]) {
     return Err(pcm.Header);
   }
-  samples = ordered(samples, format, index.info.channel_mask, raw);
+  samples = layout.reorder(samples, format, index.info.channel_mask, raw)?;
   let next = Cursor { index: index, codec: next_codec, packet: packet + 1, target: target };
   let raw_start = index.positions[packet];
   let first = index.info.priming + target;
