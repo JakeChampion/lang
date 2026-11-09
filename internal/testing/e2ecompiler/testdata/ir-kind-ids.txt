@@ -467,3 +467,7 @@ udp_recvmmsg=517
 user_run=518
 cache_sync_code=519
 vload_f32=520
+atomic_load_acquire=521
+atomic_store_release=522
+atomic_fetch_add=523
+atomic_cas=524

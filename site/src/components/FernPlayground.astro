@@ -128,29 +128,8 @@ const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
         ? "dark"
         : "light";
     }
-    // One embed loads at a time. The next waits until the previous one
-    // has playground.wasm, so it gets the file from the HTTP cache.
-    const queue = [];
-    let loading = false;
-    function next() {
-      const iframe = queue.shift();
-      loading = Boolean(iframe);
-      if (iframe) load(iframe);
-    }
-    function want(iframe) {
-      if (iframe.getAttribute("src") || queue.includes(iframe)) return;
-      queue.push(iframe);
-      if (!loading) next();
-    }
     function load(iframe) {
-      iframe.addEventListener("load", () => {
-        let ready;
-        try {
-          ready = iframe.contentWindow.__fernDriverReady;
-        } catch (e) { /* not same-origin */ }
-        if (ready) ready.then(next, next);
-        else next();
-      }, { once: true });
+      if (iframe.getAttribute("src")) return;
       const u = new URL(iframe.dataset.src, location.href);
       u.searchParams.set("theme", currentTheme());
       iframe.src = u.toString();
@@ -158,14 +137,14 @@ const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
     function start() {
       const frames = document.querySelectorAll("[data-fern-playground] iframe[data-src]");
       if (!("IntersectionObserver" in window)) {
-        frames.forEach(want);
+        frames.forEach(load);
         return;
       }
       const io = new IntersectionObserver((entries) => {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
           io.unobserve(e.target);
-          want(e.target);
+          load(e.target);
         }
       }, { rootMargin: "200px 0px" });
       frames.forEach((f) => io.observe(f));

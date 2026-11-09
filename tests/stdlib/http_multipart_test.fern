@@ -227,6 +227,30 @@ function test_refused(): test.TestOutcome {
   return test.assert_eq(got, "415 expected a Content-Type of multipart/form-data|415 expected multipart/form-data, got application/json|400 the Content-Type names no boundary|400 malformed multipart body: no boundary found|400 malformed multipart body: a part is not terminated|400 malformed multipart body: a boundary line does not end in CRLF|400 malformed multipart body: a part header has no name");
 }
 
+function test_a_part_name_must_be_utf8(): test.TestOutcome {
+  let head = "--B\r\nContent-Disposition: form-data; name=\"a".bytes();
+  let tail = "\"; filename=\"f\"\r\n\r\n1\r\n--B--\r\n".bytes();
+  let body: u8[] = [];
+  for b in head {
+    body = body.append(b);
+  }
+  body = body.append(255 as u8).append(254 as u8);
+  for b in tail {
+    body = body.append(b);
+  }
+  let named = dump(streamed("multipart/form-data; boundary=B", body, 7), multipart.limits());
+  let keyed = "";
+  match (multipart.fields(streamed("multipart/form-data; boundary=B", body, 7), multipart.limits())) {
+    Ok(m) => {
+      keyed = "accepted";
+    },
+    Err(e) => {
+      keyed = e.message();
+    }
+  }
+  return test.assert_eq(named + "|" + keyed, "400 the body did not arrive whole|the body did not arrive whole");
+}
+
 function test_caps(): test.TestOutcome {
   let b = sample();
   let req = b.request("POST", "/upload");
@@ -292,6 +316,7 @@ function main(): i32 {
   r = r.it("pieces of a part", test_pieces);
   r = r.it("a preamble and padding", test_preamble_and_padding);
   r = r.it("refused bodies", test_refused);
+  r = r.it("a part name must be UTF-8", test_a_part_name_must_be_utf8);
   r = r.it("the caps", test_caps);
   r = r.it("fields", test_fields);
   r = r.it("quoted parameters", test_quoted_params);

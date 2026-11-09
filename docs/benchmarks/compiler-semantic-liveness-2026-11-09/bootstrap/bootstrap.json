@@ -1,0 +1,66 @@
+{
+  "source": "3a296b887ccb1c879743cce8a2a67351c548481f",
+  "pinned_producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "pinned_producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "proof_memo": false,
+  "stages": [
+    {
+      "stage": 2,
+      "producer_sha256": "b50f7950f4940d4ddaa87e949530d9a52f979ace33b31ee4c638eed358130dcc",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-bootstrap-20261109/fern-stage2",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T17:35:03.558854+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T17:35:58.093648+00:00",
+      "sha256": "67585e832dbec756767e59b0852c94b1bb3fa75b2f2d452a623241aa1df0bd51"
+    },
+    {
+      "stage": 3,
+      "producer_sha256": "67585e832dbec756767e59b0852c94b1bb3fa75b2f2d452a623241aa1df0bd51",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-bootstrap-20261109/fern-stage2",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-bootstrap-20261109/fern-stage3",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T17:35:58.142242+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T17:37:15.305839+00:00",
+      "sha256": "67585e832dbec756767e59b0852c94b1bb3fa75b2f2d452a623241aa1df0bd51"
+    }
+  ],
+  "stage1_sha256": "b50f7950f4940d4ddaa87e949530d9a52f979ace33b31ee4c638eed358130dcc",
+  "full_binaries_equal": true,
+  "complete": true
+}

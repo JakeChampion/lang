@@ -101,6 +101,42 @@ Its separate cache probe confirms 2,391 hits and zero misses.
 The profile and metadata audit identify possible reuse of checked graph facts in semantic liveness.
 No further optimization follows from this diagnostic profile alone.
 
+The [semantic liveness comparison](benchmarks/compiler-semantic-liveness-2026-11-09/README.md) reuses maps from checked graph facts.
+The baseline compiler and fixed input use `12be8f1186`, and the candidate code uses `3a296b887c`.
+Cold allocation events decrease by 17,277, or 0.0327%.
+Cold guest instructions decrease by 29,162,065, or 0.0697%.
+Warm guest instructions decrease by 29,097,267, or 0.0980%.
+The output hashes match, and the allocation runs report zero live bytes.
+
+Five alternating pairs per cache mode also measure complete native compilation.
+Median peak RSS decreases by 1,276 KiB cold and 1,020 KiB warm.
+Candidate wall-time medians are slightly slower, with mixed paired differences and substantial variation.
+These samples do not establish a wall-time or CPU-time speedup.
+The complete stage-2 and stage-3 compiler executables match byte for byte with certification enabled and the proof cache disabled.
+
+The [separate main comparison](benchmarks/compiler-semantic-liveness-main-2026-11-09/README.md) uses baseline `a19e87208c` and candidate `7dbc615c9c`.
+The fixed input remains `12be8f1186`.
+Cold allocation events decrease by 17,277, with balanced frees and zero live bytes.
+Cold guest instructions decrease by 29,160,452, or 0.0697%.
+Warm guest instructions decrease by 29,066,411, or 0.0979%.
+Output hashes match within each comparison.
+
+Five alternating pairs per mode retain every timing sample.
+Candidate cold medians are slightly lower, and warm medians are higher.
+The data establish no wall-time or CPU-time speedup.
+Median peak RSS decreases by 1,280 KiB cold and 1,152 KiB warm.
+The archive records the overlap of CI self-tests with the first cold baseline sample.
+Stage-2 and stage-3 compiler executables match byte for byte.
+
+The [later allocation controls](benchmarks/compiler-semantic-liveness-postmerge-2026-11-09/README.md) compare baseline `b9ba0a1a68` with candidate `20a9a0dbed`.
+The fixed input remains `12be8f1186`.
+Assembly compilation uses 52,703,024 versus 52,685,747 allocation events.
+Native compilation uses 51,660,258 versus 51,642,981 allocation events.
+Each comparison saves 17,277 events, with balanced frees, zero live bytes, and matching output hashes.
+
+All 67 targeted test and subtest results pass in 275.227 seconds across three targets, with no skips.
+These later controls establish no instruction or timing gain for their source pair.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.

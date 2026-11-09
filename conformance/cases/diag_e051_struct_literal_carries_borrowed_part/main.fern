@@ -1,0 +1,30 @@
+// A struct literal is owned only when each part that can hold a handle is
+// owned. A literal that takes a handle from a borrowed structure, by its base
+// or by a field value, cannot pass to an `own` parameter. The callee can close
+// a handle that the structure still holds.
+
+struct H { w: Writer, n: i32 }
+
+function finish(own h: H): i32 {
+  match (h.w.close()) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}
+
+function by_base(h: H): i32 {
+  return finish(H { ...h, n: 1 });
+}
+
+function by_field(h: H): i32 {
+  return finish(H { w: h.w, n: 2 });
+}
+
+function main(): i32 {
+  return 0;
+}

@@ -1,3 +1,7 @@
+# 2026-11-09: lambda_every_path_returns is clean under RC trace.
+# 2026-11-09: own_field_moves_beside_a_sibling_branch_read is clean under RC trace.
+# 2026-11-09: own_field_moves_beside_an_if_value is clean under RC trace.
+# 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
 # 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
 # 2026-11-09: own_takes_replaced_field_of_owned_base is clean under RC trace.
 # 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
@@ -396,6 +400,7 @@ generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
 generic_call_typed_by_its_destination                0
+generic_callback_copies_and_shared_results           0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0
 generic_enum_method_at_two_instantiations            0
@@ -423,6 +428,7 @@ generic_result_owned_and_handle_free                 0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
+generic_struct_infers_concrete_local                0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_struct_method_map_arg                        0
@@ -528,6 +534,7 @@ json_arrays_and_options                              0
 json_error_location                                  0
 json_object                                          0
 labeled_loops                                        0
+lambda_every_path_returns                            0
 lambda_returning_a_capturing_lambda                  0
 lambda_tuple_return                                  0
 lanes_array_memory                                   0
@@ -699,6 +706,8 @@ own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_field_move_in_one_branch                         0
+own_field_moves_beside_a_sibling_branch_read         0
+own_field_moves_beside_an_if_value                   0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
@@ -724,6 +733,7 @@ own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
+owned_match_results_rebuild_literal                 0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0
@@ -1143,6 +1153,7 @@ shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
 shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             0
+share_owner_result_survives_aliases                  0
 share_unchecked_gives_own_a_shared_value             0
 shared_quotient_runtime                              0
 shared_variant_name                                  0
@@ -1213,6 +1224,7 @@ struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
 struct_field_subpattern                              0
 struct_field_wide_array_append                       0
+struct_literal_parts_move_into_own                   0
 struct_nested                                        0
 struct_nested_field_identity_rebind                  0
 struct_producer_returns_local                        0

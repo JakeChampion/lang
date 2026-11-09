@@ -19,7 +19,7 @@ struct Image { t: gl.Texture, m: i32 }
 // wallpaper below the paper colour, for the wallpaper and for the fades at
 // the edges of a list. `atlas` holds the glyphs, and `slots` the slot of
 // each glyph by its key.
-pub struct Painter { canvas: Option[gl.Canvas], images: Map[string, Image], bytes: i64, atlas: gl.Atlas, slots: Map[i64, gl.Slot], cache: face.Cache, fonts: face.Fonts, wall: draw.Frame, d: f64, w: i32, h: i32, backdrop: gl.Texture, backdrop_key: string }
+pub struct Painter { canvas: Option[gl.Canvas], images: Map[string, Image], bytes: i64, atlas: gl.Atlas, slots: Map[i64, gl.Slot], cache: face.Cache, fonts: face.Fonts, wall: draw.Frame, d: f64, pal: ui.Palette, w: i32, h: i32, backdrop: gl.Texture, backdrop_key: string }
 
 // The size of the images, in bytes, above which a frame frees the images
 // that it did not draw.
@@ -29,7 +29,7 @@ const BUDGET: i64 = 100663296i64;
 const ATLAS_SIZE: i32 = 1024;
 
 pub function painter(fonts: face.Fonts): Painter {
-  return Painter { canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), cache: face.new_cache(), fonts: fonts, wall: draw.offscreen(0, 0), d: 2.0, w: 0, h: 0, backdrop: no_texture(), backdrop_key: "" };
+  return Painter { canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), cache: face.new_cache(), fonts: fonts, wall: draw.offscreen(0, 0), d: 2.0, pal: ui.palette(false), w: 0, h: 0, backdrop: no_texture(), backdrop_key: "" };
 }
 
 function no_texture(): gl.Texture {
@@ -92,12 +92,12 @@ function forget(p: Painter): Painter {
   return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), backdrop: no_texture(), backdrop_key: "" };
 }
 
-// The painter for a screen of w by h at the density `d`, with the wallpaper
-// `wall` at the width of the screen. It takes `wall` and releases the one
-// before it.
-pub function with_screen(p: Painter, wall: draw.Frame, w: i32, h: i32, d: f64): Painter {
+// The painter for a screen of w by h at the density `d` in the colours of
+// `pal`, with the wallpaper `wall` at the width of the screen. It takes
+// `wall` and releases the one before it.
+pub function with_screen(p: Painter, wall: draw.Frame, w: i32, h: i32, d: f64, pal: ui.Palette): Painter {
   draw.release(p.wall);
-  return Painter { ...p, wall: wall, w: w, h: h, d: d };
+  return Painter { ...p, wall: wall, w: w, h: h, d: d, pal: pal };
 }
 
 // The width of the wallpaper that the painter holds.
@@ -106,7 +106,7 @@ pub function wall_width(p: Painter): i32 {
 }
 
 // Draws the passes in their order and shows the frame.
-pub function present(p: Painter, passes: ui.Pass[]): Painter {
+pub function present(own p: Painter, passes: ui.Pass[]): Painter {
   let Some(c0) = p.canvas else {
     return p;
   };
@@ -115,7 +115,7 @@ pub function present(p: Painter, passes: ui.Pass[]): Painter {
   }
   let c = c0.sized(p.w, p.h);
   let q = backdrop(Painter { ...p, canvas: Some(c) }, c);
-  c.clear(ui.paper_color());
+  c.clear(q.pal.paper);
   for pass in passes {
     if (pass.alpha < 1.0) {
       c.begin_layer();
@@ -141,14 +141,14 @@ pub function present(p: Painter, passes: ui.Pass[]): Painter {
 
 // The painter with the backdrop of its screen and wallpaper.
 function backdrop(own p: Painter, c: gl.Canvas): Painter {
-  let key = p.w.to_string() + "x" + p.h.to_string() + "|" + p.wall.width.to_string() + "x" + p.wall.height.to_string();
+  let key = p.w.to_string() + "x" + p.h.to_string() + "|" + p.wall.width.to_string() + "x" + p.wall.height.to_string() + "|" + p.pal.paper.to_string();
   if (key == p.backdrop_key) {
     return p;
   }
   gl.free(p.backdrop);
   let fr = draw.offscreen(p.w, p.h);
   let n = ui.Node { x: 0, y: 0, w: p.w, h: p.h, paint: ui.Wallpaper, act: "", long: "", group: "", clip0: 0, clip1: p.h };
-  let cache = ui.raster(fr, p.fonts, p.cache, n, 0, p.wall, p.d);
+  let cache = ui.raster(fr, p.fonts, p.cache, n, 0, p.wall, p.d, p.pal);
   let t = gl.texture(fr);
   draw.release(fr);
   return Painter { ...p, cache: cache, backdrop: t, backdrop_key: key };
@@ -265,7 +265,7 @@ function draw_image(own p: Painter, c: gl.Canvas, n: ui.Node, dy: i32): Painter 
 function make_image(own p: Painter, n: ui.Node, key: string): Painter {
   let m = ui.margin(n, p.d);
   let fr = draw.offscreen(n.w + 2 * m, n.h + 2 * m);
-  let cache = ui.raster(fr, p.fonts, p.cache, n, m, p.wall, p.d);
+  let cache = ui.raster(fr, p.fonts, p.cache, n, m, p.wall, p.d, p.pal);
   let t = gl.texture(fr);
   draw.release(fr);
   return keep(Painter { ...p, cache: cache }, key, Image { t: t, m: m });

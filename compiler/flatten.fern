@@ -1033,7 +1033,6 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
@@ -1118,7 +1117,6 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm[] {

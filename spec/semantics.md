@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**136 of 139** claims are pinned by a conformance case. The remaining
+**138 of 141** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -173,6 +173,7 @@ of them.
 | `AL-04` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that only READS a container — a map lookup, hit or miss — reclaims what the read allocated | `alloc_flat_map_get` |
 | `AL-05` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that recycles a block still calls the allocator every round: the allocation COUNT scales with the round count where the fresh-byte mark stays flat | `alloc_count_sees_recycling` |
 | `AL-06` | `docs/ALLOCATION-OBSERVABLE.md` | An aggregate literal buys its box after evaluating its operands, so an operand that reads the allocation count does not see the literal's own box | `eval_order_aggregate_literal` |
+| `SH-01` | `docs/security/UNSAFE-INVENTORY.md` | The owned result of share_unchecked survives local aliases and helper returns. An unsafe block alone grants no ownership | `share_owner_result_survives_aliases` |
 | `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
@@ -205,7 +206,7 @@ of them.
 | `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
 | `RH-25` | `docs/security/HANDLE-AUDIT.md` | A write to a built-in `Writer` after its close is refused (`E051`) | `diag_e051_builtin_writer_written_after_close` |
 | `RH-26` | `docs/security/HANDLE-AUDIT.md` | A variant constructor carries its payload, so a result that wraps a borrowed value cannot pass to an `own` parameter (`E051`) | `diag_e051_variant_result_borrows_its_payload` |
-| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters and elements retain this borrow | `diag_e051_local_from_borrowing_call` |
+| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters, elements, and callback results retain this borrow | `diag_e051_local_from_borrowing_call` |
 | `RH-28` | `docs/security/HANDLE-AUDIT.md` | A call to a function that never returns ends the path, so an own parameter it consumes in a loop is not used again | `handle_consumed_before_a_call_that_never_returns` |
 | `RH-29` | `docs/security/HANDLE-AUDIT.md` | A name a match arm binds is declared afresh each round, so a payload taken in a loop closes once each round | `handle_payload_closes_in_loop_from_unpack` |
 | `RH-30` | `docs/security/HANDLE-AUDIT.md` | A field moves to a consuming call while the same call reads other fields of its owner | `handle_field_closes_beside_other_field_reads` |
@@ -217,6 +218,7 @@ of them.
 | `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
+| `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
 ## Every gap this index opened with is now closed
 

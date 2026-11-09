@@ -1,0 +1,24 @@
+{
+  "base": {
+    "exit_code": 0,
+    "stdout": "138168680515628 1125000",
+    "retired_instructions": 1806574765,
+    "binary_sha256": "53d1bdf64ee7ee0b41a7d45474d28d7cab913bb58ebee3db44988eedb54ca2c9",
+    "static_lines": {
+      "x86-64-linux": 5658,
+      "arm64-linux": 5976,
+      "wasm32-wasi": 6815
+    }
+  },
+  "candidate": {
+    "exit_code": 0,
+    "stdout": "138168680515628 325000",
+    "retired_instructions": 1717224731,
+    "binary_sha256": "c0c51132c8d5231abe0f897455e26161d8a947ee6d35a420f898def082f236b0",
+    "static_lines": {
+      "x86-64-linux": 5371,
+      "arm64-linux": 5682,
+      "wasm32-wasi": 6597
+    }
+  }
+}

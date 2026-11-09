@@ -2250,7 +2250,7 @@ function __path_byte(buf: u8[], at: i32, end: i32): i32 {
   let b = buf[at] as i32;
   if (b == 37) {
     b = __pct_byte(buf, at, end);
-    if (b <= 0 || b == 47) {
+    if (b <= 0 || b == 47 || b == 63 || b == 35) {
       return -1;
     }
     return b;
@@ -2407,6 +2407,9 @@ pub function serialize_response_conn(resp: HttpResponse, keep_alive: boolean): s
 }
 
 pub function serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
+  if (!fields_ok(resp.headers) || !fields_ok(resp.trailers)) {
+    return serialize_response_to(method, version, internal_error(""), keep_alive);
+  }
   let no_body = bodiless(resp.status);
   let framing = "";
   let body = "";
@@ -2433,6 +2436,9 @@ pub function serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boole
 }
 
 pub function serialize_response_to_bytes(method: string, version: string, resp: HttpResponse, keep_alive: boolean): u8[] {
+  if (!fields_ok(resp.headers) || !fields_ok(resp.trailers)) {
+    return serialize_response_to_bytes(method, version, internal_error(""), keep_alive);
+  }
   let cap = 256;
   match (resp.body) {
     BodyText(t) => {

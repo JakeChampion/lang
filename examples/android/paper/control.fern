@@ -43,7 +43,7 @@ const WEATHER_MAX_AGE_MS: i64 = 1800000;
 // off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
-// `open` starts a screen of the system: "alarms", "calendar", "search" (with
+// `open` starts a screen of the system: "clock", "calendar", "search" (with
 // the text), "info" and "uninstall" (with a package), "music",
 // "home-settings" and "listener-settings".
 pub struct Device {
@@ -73,7 +73,7 @@ pub struct Device {
   request_frame: () => void,
   property: (string) => string,
   attach_gpu: (gpu.Painter, usize) => gpu.Painter,
-  present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
+  present: (own gpu.Painter, ui.Pass[]) => gpu.Painter,
   detach_gpu: (gpu.Painter) => gpu.Painter,
   close_gpu: (gpu.Painter) => gpu.Painter,
 }
@@ -134,6 +134,7 @@ pub struct App {
   nodes: ui.Node[],
   dirty: boolean,
   bars: i32,
+  dark: boolean,
 }
 
 function no_press(): Press {
@@ -156,11 +157,17 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
   return App { ...s, d: dpi as f64 / 160.0 };
+}
+
+// The app in the dark theme when `dark` is true. Android starts the
+// activity again when the theme of the system changes.
+pub function with_theme(own s: App, dark: boolean): App {
+  return App { ...s, dark: dark };
 }
 
 function load_weather(own s: App): App {
@@ -183,7 +190,7 @@ function set(own s: App, settings: paper.Settings): App {
 }
 
 function metrics(s: App): ui.Metrics {
-  return ui.Metrics { w: s.w, h: s.h, d: s.d, top: s.top, bottom: s.bottom };
+  return ui.Metrics { w: s.w, h: s.h, d: s.d, top: s.top, bottom: s.bottom, pal: ui.palette(s.dark) };
 }
 
 function now_ms(s: App): i64 {
@@ -733,7 +740,7 @@ function act(own s: App, a: string, n: ui.Node): App {
     s.dev.keyboard(true);
     return App { ...s, typing: true, dirty: true };
   }
-  if (a == "calendar" || a == "alarms") {
+  if (a == "calendar" || a == "clock") {
     let opened = s.dev.open(a, "");
     return s;
   }
@@ -856,6 +863,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (!p.active) {
     return s;
   }
+  if (action == 2 && p.group == "index") {
+    return index_drag(s, y as i32);
+  }
   if (action == 2) {
     let y0 = p.y0;
     let moved = p.moved;
@@ -885,6 +895,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (action != 1 || p.fired) {
     return t;
   }
+  if (p.group == "index") {
+    return index_drag(t, y as i32);
+  }
   if (!p.moved) {
     let Some(n) = ui.hit(t.nodes, x as i32, y as i32) else {
       return tapped_empty(t);
@@ -894,13 +907,31 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   return swiped(t, p, x, y, motion.velocity(motion.track(p.samples, sample)));
 }
 
+// The app list at the first app of `letter`.
+function jump(own s: App, letter: string): App {
+  let to = ui.letter_scroll(metrics(s), s.fonts, results(s), letter);
+  return App { ...s, list_scroll: to, fling: no_fling(), dirty: true };
+}
+
+// A press on the letter index goes to the letter at the height `y` as it
+// moves and when it lifts, wherever it drifts across.
+function index_drag(own s: App, y: i32): App {
+  for n in s.nodes {
+    if (n.group == "index" && y >= n.y && y < n.y + n.h) {
+      return jump(s, suffix(n.act, "jump:"));
+    }
+  }
+  return s;
+}
+
 // A tap on no node: it ends typing in the app list.
 function tapped_empty(own s: App): App {
   return s;
 }
 
 // The end of a drag: a flick keeps a list scrolling, and on the home screen
-// a swipe up opens the app list and a swipe down opens the notifications.
+// a swipe up, left or right opens the app list and a swipe down opens the
+// notifications.
 // `v` is the speed of the finger in pixels per second.
 function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
   let m = metrics(s);
@@ -908,6 +939,9 @@ function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
   let dx = x - p.x0;
   let far = ui.dp(m, 64.0) as f32;
   let vertical = abs_f(dy) > abs_f(dx);
+  if (s.sheet.is_none() && s.layer == ui.HOME && !vertical && abs_f(dx) > far) {
+    return open_drawer(s);
+  }
   if (s.sheet.is_none() && s.layer == ui.HOME && vertical && abs_f(dy) > far) {
     let scrolled = p.group == "fav" && scroll_limit(s, "fav") > 0 && (dy < 0.0 && p.scroll0 < scroll_limit(s, "fav") || dy > 0.0 && p.scroll0 > 0);
     if (!scrolled) {
@@ -1184,7 +1218,7 @@ function placed(own s: App, window: usize): App {
     p = s.dev.attach_gpu(p, window);
   }
   if (w != s.w || h != s.h || gpu.wall_width(p) != w) {
-    p = gpu.with_screen(p, ui.wallpaper_layer(s.dev.wallpaper(w)), w, h, s.d);
+    p = gpu.with_screen(p, ui.wallpaper_layer(ui.themed(s.dev.wallpaper(w), ui.palette(s.dark))), w, h, s.d, ui.palette(s.dark));
   }
   return App { ...s, window: window, w: w, h: h, painter: p, dirty: true };
 }
@@ -1304,10 +1338,11 @@ pub function view(s: App, ns: i64): ui.View {
   return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note };
 }
 
-// Dark icons on a bar over a light part of the screen.
+// Dark icons on a bar over a light part of the screen. In the dark theme no
+// part is light.
 function sync_bars(own s: App): App {
-  let light_top = s.layer == ui.HOME || s.layer == ui.DRAWER;
-  let light_bottom = s.layer == ui.DRAWER || s.sheet.is_some();
+  let light_top = !s.dark && (s.layer == ui.HOME || s.layer == ui.DRAWER);
+  let light_bottom = !s.dark && (s.layer == ui.DRAWER || s.sheet.is_some());
   let code = 0;
   if (light_top) {
     code |= 1;
@@ -1330,6 +1365,8 @@ function draw_frame(own s: App, ns: i64): App {
     return s;
   }
   let v = view(s, ns);
+  let shown: ui.Node[] = [];
+  let passes: ui.Pass[] = [];
   if (s.slide.active) {
     let part = motion.ease(slide_part(s, ns));
     if (!s.slide.opening) {
@@ -1338,11 +1375,13 @@ function draw_frame(own s: App, ns: i64): App {
     let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
     let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
     let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
-    let slid = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]));
-    return App { ...s, painter: slid, nodes: [], dirty: false };
+    passes = [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }];
+  } else {
+    shown = ui.nodes(s.fonts, v);
+    passes = [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }];
   }
-  let shown = ui.nodes(s.fonts, v);
-  let p = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]));
+  let framed = with_overlay(s, passes);
+  let p = s.dev.present(s.painter, framed);
   return App { ...s, painter: p, nodes: shown, dirty: false };
 }
 

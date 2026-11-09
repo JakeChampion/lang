@@ -741,7 +741,7 @@ function v_struct_at(type_name: string, names: string[], values: Value[], targs:
   return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: targs };
 }
 
-function v_err(msg: string): Value {
+pub function v_err(msg: string): Value {
   return VErr { msg: msg, abort: false };
 }
 
@@ -793,7 +793,7 @@ function unwrap_try(v: Value): Value {
   }
 }
 
-function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
+pub function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
   let all = parser.inject_builtin_enums(structs);
   all = add_variant_decl(all, "Some", 1, "Option");
   all = add_variant_decl(all, "None", 0, "Option");
@@ -940,7 +940,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
 
 pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
 
-function new_env(heap: interpheap.Heap): Env {
+pub function new_env(heap: interpheap.Heap): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
@@ -1159,7 +1159,7 @@ function lam_read_names(st: ast.Stmt): string[] {
   return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, astwalk.not_lambda);
 }
 
-function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
+pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
   return lam_assign_targets(stmts, acc);
 }
 
@@ -1174,7 +1174,7 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   }
 }
 
-function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
+pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
   let out = cellify_env(env, stmt_lambda_writes(st));
   if (reassigned.len() == 0) {
     return out;
@@ -3711,7 +3711,7 @@ function (own e: Env) update(name: string, v: Value): Env {
     }
     i -= 1;
   }
-  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(Env { ...parent }.update(name, v)) }, None => e };
+  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(unsafe { share_unchecked(parent) }.update(name, v)) }, None => e };
 }
 
 function sat_exact(op: string, a: i64, b: i64): i64 {
@@ -5123,7 +5123,6 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return zero_value_of(env.heap, z.type_name);
     }
   }
-  return v_err("unhandled Expr variant");
 }
 
 function eval_expr_call(c: ast.ExprCall, env: Env): Value {
@@ -5133,7 +5132,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
 function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value {
   if let ast.ExprLambda(lm) = c.callee {
     if (c.args.len() == 0 && lm.params.len() == 0 && (lm.origin == parser.ORIGIN_BLOCK || lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR)) {
-      let step = eval_value_body(lm.body, Env { ...env }, expect);
+      let step = eval_value_body(lm.body, unsafe { share_unchecked(env) }, expect);
       if (step.sig == 0 || step.sig == 1 && is_err(step.ret)) {
         return step.ret;
       }
@@ -6350,7 +6349,7 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
       }
     },
     VArr(av) => {
-      let found = array_method(heap, VArr { ...av }, name, args);
+      let found = array_method(heap, unsafe { share_unchecked(av) }, name, args);
       if let Some(r) = found {
         return r;
       }
@@ -6486,7 +6485,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j += 1;
       }
-      let step = eval_block(fd.body, Env { ...env });
+      let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
         return v_void();
       }
@@ -8308,7 +8307,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j += 1;
       }
-      let step = eval_block(fd.body, Env { ...env });
+      let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
         return v_void();
       }
@@ -8512,7 +8511,6 @@ function value_eq(a: Value, b: Value): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub struct StepResult { env: Env, ret: Value, sig: i32 }
@@ -8536,7 +8534,7 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
   let assigned = body_assign_names(body, []);
   for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], assigned);
-    let step = eval_stmt(body[i], Env { ...cur });
+    let step = eval_stmt(body[i], unsafe { share_unchecked(cur) });
     if (step.sig != 0) {
       return step;
     }
@@ -8573,12 +8571,12 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
         }
       }
       if (yes) {
-        return eval_value_body(branch.then_body, Env { ...cur }, expect);
+        return eval_value_body(branch.then_body, unsafe { share_unchecked(cur) }, expect);
       }
-      return eval_value_body(branch.else_body, Env { ...cur }, expect);
+      return eval_value_body(branch.else_body, unsafe { share_unchecked(cur) }, expect);
     },
     ast.StmtMatch(m) => {
-      return eval_match_stmt_mode(m, Env { ...cur }, true, expect);
+      return eval_match_stmt_mode(m, unsafe { share_unchecked(cur) }, true, expect);
     },
     _ => {
       return step_stop(cur, v_err("value expression has no terminal value"));
@@ -8608,7 +8606,7 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
     }
     let step = eval_block(w.body, scope_env(Env { ...cur }, scoped));
     if (step.sig == 2) {
-      return step_none(trim_env(Env { ...step.env }, base));
+      return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
     if (step.sig == 3) {
       cur = trim_env(Env { ...step.env }, base);
@@ -8618,11 +8616,10 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
       return step;
     }
     if (step.sig > 3) {
-      return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig - 2 };
+      return StepResult { env: trim_env(unsafe { share_unchecked(step.env) }, base), ret: step.ret, sig: step.sig - 2 };
     }
     cur = trim_env(step.env, base);
   }
-  return step_none(cur);
 }
 
 @noinline
@@ -8848,7 +8845,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
     let iter_env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
     let step = eval_block(f.body, Env { ...iter_env });
     if (step.sig == 2) {
-      return step_none(trim_env(Env { ...step.env }, base));
+      return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
     if (step.sig == 3) {
       cur = trim_env(Env { ...step.env }, base);
@@ -8859,7 +8856,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
       return step;
     }
     if (step.sig > 3) {
-      return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig - 2 };
+      return StepResult { env: trim_env(unsafe { share_unchecked(step.env) }, base), ret: step.ret, sig: step.sig - 2 };
     }
     cur = trim_env(step.env, base);
     i += 1;
@@ -8867,7 +8864,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   return step_none(cur);
 }
 
-function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
+pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
   match (st) {
     ast.StmtDefer(d) => {
       return eval_stmt(d.action, env);
@@ -9202,23 +9199,6 @@ function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   return step_none(cur);
 }
 
-function eval_program(prog: ast.Stmt[]): Value {
-  let heap = interpheap.create();
-  let env = new_env(heap);
-  let preassigned = body_assign_names(prog, []);
-  let i = 0;
-  while (i < prog.len()) {
-    env = cellify_captures(env, prog[i], preassigned);
-    let r = eval_stmt(prog[i], env);
-    env = r.env;
-    if (r.sig != 0) {
-      return r.ret;
-    }
-    i += 1;
-  }
-  return v_err("program reached end without `return`");
-}
-
 pub function exit_status(v: Value): (boolean, i32) {
   match (v) {
     VInt(iv) => {
@@ -9346,7 +9326,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
         _ => {}
       }
     }
-    let r = eval_stmt(body[k], Env { ...env });
+    let r = eval_stmt(body[k], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
@@ -9497,1403 +9477,6 @@ function u64_text(n: i64, unsigned: boolean): string {
   let u = n as u64;
   let q = u / 10;
   return util.i64_to_string(q as i64) + util.i32_to_string((u - q * 10) as i32);
-}
-
-function run_source(src: string): Value {
-  let toks = lexer.tokenize(src);
-  let stmts = parser.parse_program(toks);
-  return eval_program(stmts);
-}
-
-function run_module(src: string): Value {
-  let toks = lexer.tokenize(src);
-  let mod = parser.parse_module(toks);
-  return eval_module(mod);
-}
-
-function main(): i32 {
-  let rc = check_arithmetic_and_idents();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_conditionals_and_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_while_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_functions_and_recursion();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_arrays();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_string_indexing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_slicing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_compound_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structs_and_fields();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_match_statements();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_receiver_methods();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_floats();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_for_in_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_tuples();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_break_and_continue();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_primitive_receivers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structural_equality();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_union_receiver_method();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_lambdas_and_closures();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_maps();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_numeric_widths();
-  if (rc != 0) {
-    return rc;
-  }
-  return check_string_ordering();
-}
-
-function check_string_ordering(): i32 {
-  let r = run_source("let n = 0; if (\"apple\" < \"pear\") { n = n + 1; } if (\"b\" <= \"b\") { n = n + 2; } if (\"ab\" > \"a\") { n = n + 4; } if (\"a\" >= \"b\") { n = n + 8; } return n;");
-  match (r) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 940;
-      }
-    },
-    _ => {
-      return 941;
-    }
-  }
-  return 0;
-}
-
-function check_arithmetic_and_idents(): i32 {
-  let r1 = run_source("let x = 1 + 2 * 3; let y = (1 + 2) * 3; return x + y;");
-  match (r1) {
-    VInt(i) => {
-      if (i.v != 16) {
-        return 10;
-      }
-    },
-    _ => {
-      return 11;
-    }
-  }
-
-  let r2: Value = run_source("let a = \"hi \" + \"there\"; return 0 - 1;");
-  match (r2) {
-    VInt(i) => {
-      if (i.v != -1) {
-        return 20;
-      }
-    },
-    _ => {
-      return 21;
-    }
-  }
-
-  let r3 = run_source("let b = 5 < 10; let c = b && (1 == 1); return 42;");
-  match (r3) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 30;
-      }
-    },
-    _ => {
-      return 31;
-    }
-  }
-
-  let r4: Value = run_source("let n = 0 - 5; return n;");
-  match (r4) {
-    VInt(i) => {
-      if (i.v != -5) {
-        return 40;
-      }
-    },
-    _ => {
-      return 41;
-    }
-  }
-
-  let r5 = run_source("return 20 / 4;");
-  match (r5) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 50;
-      }
-    },
-    _ => {
-      return 51;
-    }
-  }
-
-  let r6 = run_source("return 1 / 0;");
-  match (r6) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 60;
-      }
-    },
-    _ => {
-      return 61;
-    }
-  }
-  let r6b = run_source("return 7 % 0;");
-  match (r6b) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 62;
-      }
-    },
-    _ => {
-      return 63;
-    }
-  }
-
-  let r7 = run_source("return missing;");
-  match (r7) {
-    VErr(_) => {},
-    _ => {
-      return 70;
-    }
-  }
-
-  return 0;
-}
-
-function check_conditionals_and_assignment(): i32 {
-  let r8 = run_source("let x = 5; if (x < 10) { return 1; } else { return 2; }");
-  match (r8) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 80;
-      }
-    },
-    _ => {
-      return 81;
-    }
-  }
-
-  let r9 = run_source("let x = 20; if (x < 10) { return 1; } else { return 2; }");
-  match (r9) {
-    VInt(i) => {
-      if (i.v != 2) {
-        return 90;
-      }
-    },
-    _ => {
-      return 91;
-    }
-  }
-
-  let r10 = run_source("if (false) { return 7; } return 11;");
-  match (r10) {
-    VInt(i) => {
-      if (i.v != 11) {
-        return 100;
-      }
-    },
-    _ => {
-      return 101;
-    }
-  }
-
-  let r11 = run_source("let k = 2; if (k == 1) { return 10; } else if (k == 2) { return 20; } else { return 30; }");
-  match (r11) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 110;
-      }
-    },
-    _ => {
-      return 111;
-    }
-  }
-
-  let r12 = run_source("let n = 1; n = 7; return n;");
-  match (r12) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 120;
-      }
-    },
-    _ => {
-      return 121;
-    }
-  }
-
-  return 0;
-}
-
-function check_while_loops(): i32 {
-  let r13: Value = run_source(
-    "let i = 1; let s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;",
-  );
-  match (r13) {
-    VInt(i) => {
-      if (i.v != 15) {
-        return 130;
-      }
-    },
-    _ => {
-      return 131;
-    }
-  }
-
-  let r14: Value = run_source(
-    "let i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;",
-  );
-  match (r14) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 140;
-      }
-    },
-    _ => {
-      return 141;
-    }
-  }
-
-  let r15 = run_source("let x = 5; while (false) { x = 99; } return x;");
-  match (r15) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 150;
-      }
-    },
-    _ => {
-      return 151;
-    }
-  }
-
-  return 0;
-}
-
-function check_functions_and_recursion(): i32 {
-  let r16: Value = run_module(
-    "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }",
-  );
-  match (r16) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 160;
-      }
-    },
-    _ => {
-      return 161;
-    }
-  }
-
-  let r17: Value = run_module(
-    "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }",
-  );
-  match (r17) {
-    VInt(i) => {
-      if (i.v != 120) {
-        return 170;
-      }
-    },
-    _ => {
-      return 171;
-    }
-  }
-
-  let r18: Value = run_module(
-    "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); }"
-      + " function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); }"
-      + " function main(): i32 { return is_even(4); }",
-  );
-  match (r18) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 180;
-      }
-    },
-    _ => {
-      return 181;
-    }
-  }
-
-  let r19: Value = run_module(
-    "function main(): i32 { return missing(1); }",
-  );
-  match (r19) {
-    VErr(_) => {},
-    _ => {
-      return 190;
-    }
-  }
-
-  let r20: Value = run_module(
-    "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }",
-  );
-  match (r20) {
-    VErr(_) => {},
-    _ => {
-      return 200;
-    }
-  }
-
-  return 0;
-}
-
-function check_arrays(): i32 {
-  let r21: Value = run_source(
-    "let a = [10, 20, 30]; return a[2];",
-  );
-  match (r21) {
-    VInt(i) => {
-      if (i.v != 30) {
-        return 210;
-      }
-    },
-    _ => {
-      return 211;
-    }
-  }
-
-  let r22 = run_source("let a = [1, 2, 3, 4]; return a.len();");
-  match (r22) {
-    VInt(i) => {
-      if (i.v != 4) {
-        return 220;
-      }
-    },
-    _ => {
-      return 221;
-    }
-  }
-
-  let r23: Value = run_source(
-    "let a = [3, 5, 7, 9]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;",
-  );
-  match (r23) {
-    VInt(i) => {
-      if (i.v != 24) {
-        return 230;
-      }
-    },
-    _ => {
-      return 231;
-    }
-  }
-
-  let r24 = run_source("let a = [1, 2]; return a[5];");
-  match (r24) {
-    VErr(_) => {},
-    _ => {
-      return 240;
-    }
-  }
-
-  let r25 = run_source("let a = []; return a.len();");
-  match (r25) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 250;
-      }
-    },
-    _ => {
-      return 251;
-    }
-  }
-
-  return 0;
-}
-
-function check_string_indexing(): i32 {
-  let r26 = run_source("let s = \"hello\"; return s[0];");
-  match (r26) {
-    VInt(i) => {
-      if (i.v != 104) {
-        return 260;
-      }
-    },
-    _ => {
-      return 261;
-    }
-  }
-
-  let r27 = run_source("let s = \"ABC\"; return s[0] + s[1] + s[2];");
-  match (r27) {
-    VInt(i) => {
-      if (i.v != 198) {
-        return 270;
-      }
-    },
-    _ => {
-      return 271;
-    }
-  }
-
-  let r28 = run_source("let s = \"hi\"; return s[5];");
-  match (r28) {
-    VErr(_) => {},
-    _ => {
-      return 280;
-    }
-  }
-
-  return 0;
-}
-
-function check_slicing(): i32 {
-  let r29 = run_source("let s = \"hello\"; return s[1:4];");
-  match (r29) {
-    VStruct(sv29) => {
-      if (sv29.type_name != "Some") {
-        return 290;
-      }
-      match (sv29.field_values[0]) {
-        VString(s29) => {
-          if (s29.v != "ell") {
-            return 292;
-          }
-        },
-        _ => {
-          return 293;
-        }
-      }
-    },
-    _ => {
-      return 291;
-    }
-  }
-
-  let r30 = run_source("let s = \"hello\"; return slice_unchecked(s, 1, 4)[1];");
-  match (r30) {
-    VInt(i) => {
-      if (i.v != 108) {
-        return 300;
-      }
-    },
-    _ => {
-      return 301;
-    }
-  }
-
-  let r31 = run_source("let a = [10, 20, 30, 40, 50]; let b = a[1:4]; return b[0];");
-  match (r31) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 310;
-      }
-    },
-    _ => {
-      return 311;
-    }
-  }
-
-  let r32 = run_source("let s = \"hi\"; return s[0:99];");
-  match (r32) {
-    VStruct(sv32) => {
-      if (sv32.type_name != "None") {
-        return 320;
-      }
-    },
-    _ => {
-      return 321;
-    }
-  }
-
-  let r32b = run_source("let s = \"héllo\"; return s[0:2];");
-  match (r32b) {
-    VStruct(sv32b) => {
-      if (sv32b.type_name != "None") {
-        return 322;
-      }
-    },
-    _ => {
-      return 323;
-    }
-  }
-
-  let r32u = run_source("let s = \"hi\"; return slice_unchecked(s, 0, 99).len();");
-  match (r32u) {
-    VErr(_) => {},
-    _ => {
-      return 324;
-    }
-  }
-
-  return 0;
-}
-
-function check_compound_assignment(): i32 {
-  let r33: Value = run_source(
-    "let i = 1; let s = 0; while (i <= 10) { s += i; i += 1; } return s;",
-  );
-  match (r33) {
-    VInt(i) => {
-      if (i.v != 55) {
-        return 330;
-      }
-    },
-    _ => {
-      return 331;
-    }
-  }
-
-  let r34 = run_source("let x = 1; x *= 2; x *= 3; return x;");
-  match (r34) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 340;
-      }
-    },
-    _ => {
-      return 341;
-    }
-  }
-
-  return 0;
-}
-
-function check_structs_and_fields(): i32 {
-  let r35 = run_source("return Point { x: 3, y: 4 }.x;");
-  match (r35) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 350;
-      }
-    },
-    _ => {
-      return 351;
-    }
-  }
-
-  let r36: Value = run_source(
-    "let p = Point { x: 7, y: 11 }; return p.x + p.y;",
-  );
-  match (r36) {
-    VInt(i) => {
-      if (i.v != 18) {
-        return 360;
-      }
-    },
-    _ => {
-      return 361;
-    }
-  }
-
-  let r37: Value = run_source(
-    "let b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;",
-  );
-  match (r37) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 370;
-      }
-    },
-    _ => {
-      return 371;
-    }
-  }
-
-  let r38 = run_source("return Point { x: 1, y: 2 }.z;");
-  match (r38) {
-    VErr(_) => {},
-    _ => {
-      return 380;
-    }
-  }
-
-  return 0;
-}
-
-function check_match_statements(): i32 {
-  let src39: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
-  let r39 = run_module(src39);
-  match (r39) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 390;
-      }
-    },
-    _ => {
-      return 391;
-    }
-  }
-
-  let src40: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return -1; } } return -2; }";
-  let r40 = run_module(src40);
-  match (r40) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 400;
-      }
-    },
-    _ => {
-      return 401;
-    }
-  }
-
-  let src41: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { let t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return -1; }";
-  let r41 = run_module(src41);
-  match (r41) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 410;
-      }
-    },
-    _ => {
-      return 411;
-    }
-  }
-
-  let src42: string = "struct Empty { } function main(): i32 { let e = Empty { }; match (e) { Empty => { return 42; }, _ => { return -1; } } return -2; }";
-  let r42 = run_module(src42);
-  match (r42) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 420;
-      }
-    },
-    _ => {
-      return 421;
-    }
-  }
-
-  let src43: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Square(_) => { return 2; } } return -1; }";
-  let r43 = run_module(src43);
-  match (r43) {
-    VErr(_) => {},
-    _ => {
-      return 430;
-    }
-  }
-
-  let src44: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 8 }; let n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = -1; } } return n; }";
-  let r44 = run_module(src44);
-  match (r44) {
-    VInt(i) => {
-      if (i.v != 8) {
-        return 440;
-      }
-    },
-    _ => {
-      return 441;
-    }
-  }
-
-  let src45: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Circle(x) => { }, _ => { } } let x: i32 = 77; return x; }";
-  let r45 = run_module(src45);
-  match (r45) {
-    VInt(i) => {
-      if (i.v != 77) {
-        return 450;
-      }
-    },
-    _ => {
-      return 451;
-    }
-  }
-
-  return 0;
-}
-
-function check_receiver_methods(): i32 {
-  let src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { let k = Circle { r: 5 }; return k.area(); }";
-  let r46 = run_module(src46);
-  match (r46) {
-    VInt(i) => {
-      if (i.v != 25) {
-        return 460;
-      }
-    },
-    _ => {
-      return 461;
-    }
-  }
-
-  let src47: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }";
-  let r47 = run_module(src47);
-  match (r47) {
-    VInt(i) => {
-      if (i.v != 12) {
-        return 470;
-      }
-    },
-    _ => {
-      return 471;
-    }
-  }
-
-  let src48: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { let k = Circle { r: 5 }; let m: i32 = area(); let n: i32 = k.area(); return m + n; }";
-  let r48 = run_module(src48);
-  match (r48) {
-    VInt(i) => {
-      if (i.v != 125) {
-        return 480;
-      }
-    },
-    _ => {
-      return 481;
-    }
-  }
-
-  let src49: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { let sq = Square { s: 7 }; return sq.area(); }";
-  let r49 = run_module(src49);
-  match (r49) {
-    VErr(_) => {},
-    _ => {
-      return 490;
-    }
-  }
-
-  return 0;
-}
-
-function check_floats(): i32 {
-  let r50 = run_source("return 3.14;");
-  match (r50) {
-    VFloat(f) => {
-      if (f.v < 3.13 || f.v > 3.15) {
-        return 500;
-      }
-    },
-    _ => {
-      return 501;
-    }
-  }
-
-  let r51 = run_source("return 1.5 + 2.5;");
-  match (r51) {
-    VFloat(f) => {
-      if (f.v < 3.99 || f.v > 4.01) {
-        return 510;
-      }
-    },
-    _ => {
-      return 511;
-    }
-  }
-
-  let r52 = run_source("return 2.5 * 4.0;");
-  match (r52) {
-    VFloat(f) => {
-      if (f.v < 9.99 || f.v > 10.01) {
-        return 520;
-      }
-    },
-    _ => {
-      return 521;
-    }
-  }
-
-  let r53 = run_source("return 3.14 > 3.0;");
-  match (r53) {
-    VBool(b) => {
-      if (!b.v) {
-        return 530;
-      }
-    },
-    _ => {
-      return 531;
-    }
-  }
-
-  let r54 = run_source("return 1.5 == 1.5;");
-  match (r54) {
-    VBool(b) => {
-      if (!b.v) {
-        return 540;
-      }
-    },
-    _ => {
-      return 541;
-    }
-  }
-
-  let r55 = run_source("return 1 + 2.5;");
-  match (r55) {
-    VErr(_) => {},
-    _ => {
-      return 550;
-    }
-  }
-
-  let r55b = run_source("return 2.5 + 1;");
-  match (r55b) {
-    VErr(_) => {},
-    _ => {
-      return 551;
-    }
-  }
-
-  let r55c = run_source("let f: f64 = 1.5; return f + 1 / 2;");
-  match (r55c) {
-    VFloat(f) => {
-      if (f.v < 1.99 || f.v > 2.01) {
-        return 552;
-      }
-    },
-    _ => {
-      return 553;
-    }
-  }
-
-  let r56 = run_source("return 10.0 / 4.0;");
-  match (r56) {
-    VFloat(f) => {
-      if (f.v < 2.49 || f.v > 2.51) {
-        return 560;
-      }
-    },
-    _ => {
-      return 561;
-    }
-  }
-
-  let r57 = run_source("return 0.0 - 3.5;");
-  match (r57) {
-    VFloat(f) => {
-      if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) {
-        return 570;
-      }
-    },
-    _ => {
-      return 571;
-    }
-  }
-
-  return 0;
-}
-
-function check_for_in_loops(): i32 {
-  let src58 = "function main(): i32 { let arr = [1, 2, 3]; let s: i32 = 0; for n in arr { s = s + n; } return s; }";
-  let r58 = run_module(src58);
-  match (r58) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 580;
-      }
-    },
-    _ => {
-      return 581;
-    }
-  }
-
-  let src59: string = "function main(): i32 { for n in [10, 20, 30] { return n; } return 0 - 1; }";
-  let r59 = run_module(src59);
-  match (r59) {
-    VInt(i) => {
-      if (i.v != 10) {
-        return 590;
-      }
-    },
-    _ => {
-      return 591;
-    }
-  }
-
-  let src60 = "function main(): i32 { for n in 7 { } return 0; }";
-  let r60 = run_module(src60);
-  match (r60) {
-    VErr(_) => {},
-    _ => {
-      return 600;
-    }
-  }
-  return check_for_in_subjects();
-}
-
-function check_for_in_subjects(): i32 {
-  let srcs: string[] = [
-    "function main(): i32 { let n: i32 = 0; for b in \"ab\" { n = n + (b as i32); } return n; }",
-    "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"bc\", 2); let n: i32 = 0; for (k, v) in m { n = n + k.len() * 10 + v; } return n; }",
-    "function main(): i32 { let n: i32 = 0; for (a, b) in [(1, 2), (3, 4)] { n = n + a * b; } return n; }",
-    "struct Cd { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction main(): i32 { let n: i32 = 0; let c: Cd = Cd { n: 4 }; for v in c { if (v == 2) { continue; } n = n + v; } return n; }",
-    "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
-  ];
-  let wants: i32[] = [195, 33, 14, 8, 6];
-  let i = 0;
-  while (i < srcs.len()) {
-    let r = run_module(srcs[i]);
-    match (r) {
-      VInt(got) => {
-        if (got.v != wants[i]) {
-          return 920 + i;
-        }
-      },
-      _ => {
-        return 930 + i;
-      }
-    }
-    i += 1;
-  }
-  return 0;
-}
-
-function check_tuples(): i32 {
-  let r61 = run_source("let t = (1, 2, 3); return 0;");
-  match (r61) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 610;
-      }
-    },
-    _ => {
-      return 611;
-    }
-  }
-
-  let r62 = run_source("let t = (10, 20, 30); return t.0;");
-  match (r62) {
-    VInt(i) => {
-      if (i.v != 10) {
-        return 620;
-      }
-    },
-    _ => {
-      return 621;
-    }
-  }
-
-  let r63 = run_source("let t = (10, 20, 30); return t.1;");
-  match (r63) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 630;
-      }
-    },
-    _ => {
-      return 631;
-    }
-  }
-
-  let r64 = run_source("let t = (10, 20); return t.5;");
-  match (r64) {
-    VErr(_) => {},
-    _ => {
-      return 640;
-    }
-  }
-
-  let r65 = run_source("let t = (42, \"hi\"); return t.0;");
-  match (r65) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 650;
-      }
-    },
-    _ => {
-      return 651;
-    }
-  }
-
-  return 0;
-}
-
-function check_break_and_continue(): i32 {
-  let src66 = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
-  let r66 = run_module(src66);
-  match (r66) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 660;
-      }
-    },
-    _ => {
-      return 661;
-    }
-  }
-
-  let src67 = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
-  let r67 = run_module(src67);
-  match (r67) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 670;
-      }
-    },
-    _ => {
-      return 671;
-    }
-  }
-
-  let src68 = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
-  let r68 = run_module(src68);
-  match (r68) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 680;
-      }
-    },
-    _ => {
-      return 681;
-    }
-  }
-
-  let src69 = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
-  let r69 = run_module(src69);
-  match (r69) {
-    VInt(i) => {
-      if (i.v != 12) {
-        return 690;
-      }
-    },
-    _ => {
-      return 691;
-    }
-  }
-
-  return 0;
-}
-
-function check_primitive_receivers(): i32 {
-  let src70 = "function (s: string) doubled(): string { return s + s; } function main(): i32 { let v: string = \"ab\"; let w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
-  let r70 = run_module(src70);
-  match (r70) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 700;
-      }
-    },
-    _ => {
-      return 701;
-    }
-  }
-
-  let src71 = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { let x: i32 = 21; return x.twice(); }";
-  let r71 = run_module(src71);
-  match (r71) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 710;
-      }
-    },
-    _ => {
-      return 711;
-    }
-  }
-
-  return 0;
-}
-
-function check_structural_equality(): i32 {
-  let r72 = run_source("return (1, 2, 3) == (1, 2, 3);");
-  match (r72) {
-    VBool(b) => {
-      if (!b.v) {
-        return 720;
-      }
-    },
-    _ => {
-      return 721;
-    }
-  }
-
-  let r73 = run_source("return (1, 2, 3) == (1, 2, 4);");
-  match (r73) {
-    VBool(b) => {
-      if (b.v) {
-        return 730;
-      }
-    },
-    _ => {
-      return 731;
-    }
-  }
-
-  let r74 = run_source("return (1, \"hi\") == (1, \"hi\");");
-  match (r74) {
-    VBool(b) => {
-      if (!b.v) {
-        return 740;
-      }
-    },
-    _ => {
-      return 741;
-    }
-  }
-
-  let r75 = run_source("return [1, 2, 3] == [1, 2, 3];");
-  match (r75) {
-    VBool(b) => {
-      if (!b.v) {
-        return 750;
-      }
-    },
-    _ => {
-      return 751;
-    }
-  }
-
-  let r76 = run_source("return [1, 2, 3] == [1, 2, 4];");
-  match (r76) {
-    VBool(b) => {
-      if (b.v) {
-        return 760;
-      }
-    },
-    _ => {
-      return 761;
-    }
-  }
-
-  let r77 = run_source("return [1, 2] == [1, 2, 3];");
-  match (r77) {
-    VBool(b) => {
-      if (b.v) {
-        return 770;
-      }
-    },
-    _ => {
-      return 771;
-    }
-  }
-
-  let src78: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
-  let r78 = run_module(src78);
-  match (r78) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 780;
-      }
-    },
-    _ => {
-      return 781;
-    }
-  }
-
-  let src79: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
-  let r79 = run_module(src79);
-  match (r79) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 790;
-      }
-    },
-    _ => {
-      return 791;
-    }
-  }
-
-  return 0;
-}
-
-function check_union_receiver_method(): i32 {
-  let src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { let c = Circle { r: 3 }; return c.tag(); }";
-  let r80 = run_module(src80);
-  match (r80) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 800;
-      }
-    },
-    _ => {
-      return 801;
-    }
-  }
-
-  return 0;
-}
-
-function check_lambdas_and_closures(): i32 {
-  let src81 = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  let r81 = run_module(src81);
-  match (r81) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 810;
-      }
-    },
-    _ => {
-      return 811;
-    }
-  }
-
-  let src82 = "function main(): i32 { let k: i32 = 10; let f = (x: i32): i32 => { return x + k; }; return f(5); }";
-  let r82 = run_module(src82);
-  match (r82) {
-    VInt(i) => {
-      if (i.v != 15) {
-        return 820;
-      }
-    },
-    _ => {
-      return 821;
-    }
-  }
-
-  let src83 = "function main(): i32 { return (n: i32): i32 => { return n * 2; }(21); }";
-  let r83 = run_module(src83);
-  match (r83) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 830;
-      }
-    },
-    _ => {
-      return 831;
-    }
-  }
-
-  return 0;
-}
-
-function check_maps(): i32 {
-  let src84: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); let got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
-  let r84 = run_module(src84);
-  match (r84) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 840;
-      }
-    },
-    _ => {
-      return 841;
-    }
-  }
-
-  let src85 = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
-  let r85 = run_module(src85);
-  match (r85) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 850;
-      }
-    },
-    _ => {
-      return 851;
-    }
-  }
-
-  let src86 = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
-  let r86 = run_module(src86);
-  match (r86) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 860;
-      }
-    },
-    _ => {
-      return 861;
-    }
-  }
-
-  let src87 = "function main(): i32 { let m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
-  let r87 = run_module(src87);
-  match (r87) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 870;
-      }
-    },
-    _ => {
-      return 871;
-    }
-  }
-
-  let mainSrc88 = "function main(): i32 { return parser.parse_module(); }";
-  let modSrc88 = "pub function parse_module(): i32 { return 42; }";
-  let mainMod88 = parser.parse_module(lexer.tokenize(mainSrc88));
-  let pMod88 = parser.parse_module(lexer.tokenize(modSrc88));
-  let merged88 = parser.merge_module_prefixed(mainMod88, pMod88, "parser");
-  let r88 = eval_module(merged88);
-  match (r88) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 880;
-      }
-    },
-    _ => {
-      return 881;
-    }
-  }
-
-  return 0;
-}
-
-function check_numeric_widths(): i32 {
-  let src89 = "function main(): i32 { let x: u32 = 4294967288 as u32; let y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
-  let r89 = run_module(src89);
-  match (r89) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 890;
-      }
-    },
-    _ => {
-      return 891;
-    }
-  }
-  let src90 = "function main(): i32 { let x: u32 = 4294967290 as u32; let y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
-  let r90 = run_module(src90);
-  match (r90) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 900;
-      }
-    },
-    _ => {
-      return 901;
-    }
-  }
-
-  let src91 = "function main(): i32 { let a: f32 = 16777216.0 as f32; let b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 1; } return 0; }";
-  let r91 = run_module(src91);
-  match (r91) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 910;
-      }
-    },
-    _ => {
-      return 911;
-    }
-  }
-
-  return 0;
 }
 
 function interp_mulhi(a: u64, b: u64): u64 {

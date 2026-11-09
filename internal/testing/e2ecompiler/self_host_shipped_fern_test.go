@@ -69,6 +69,32 @@ func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 	}
 }
 
+// A cache directory that ends in "/" gives the same stdlib root as one that
+// does not. std/bigint and std/number_parse import each other, which the
+// loader allows only under the stdlib root (#14955).
+func TestSelfHostShippedFernCacheDirWithSlash(t *testing.T) {
+	fern := e2eharness.ShippedFern(t)
+	dir := t.TempDir()
+	prog := writeShippedSrc(t, dir, "big.fern", "import \"std/bigint\";\nfunction main(): i32 { print(bigint.from_i64(12345i64).to_string()); return 0; }\n")
+	for name, set := range map[string]string{
+		"FERN_CACHE_DIR": "FERN_CACHE_DIR=" + filepath.Join(dir, "cache") + "/",
+		"HOME":           "HOME=" + filepath.Join(dir, "home") + "/",
+	} {
+		var env []string
+		for _, kv := range e2eharness.ChildEnv(set) {
+			if !strings.HasPrefix(kv, "XDG_CACHE_HOME=") {
+				env = append(env, kv)
+			}
+		}
+		cmd := exec.Command(fern, "-run", "-target", e2eharness.HostSelfHostTarget(), prog)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != "12345\n" {
+			t.Errorf("%s ending in /: %v, output:\n%s\nwant \"12345\"", name, err, out)
+		}
+	}
+}
+
 func TestSelfHostShippedFernVersionAndExplain(t *testing.T) {
 	fern := e2eharness.ShippedFern(t)
 	cache := filepath.Join(t.TempDir(), "cache")

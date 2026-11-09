@@ -14,11 +14,11 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   let ix = util.name_index(names);
   let u = universe(funcs, usable);
   let op = opaque_types(funcs, ix, usable, roots, u);
-  let ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
+  let ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, ix, usable, u), records: records_of(funcs, usable, u), names: names_of(funcs, ix, usable), counters: counters_of(funcs, usable, u) };
   let w = start(ctx, roots, op, zeroed(funcs, usable));
   let walks: Walk[] = [];
   while (walks.len() < funcs.len()) {
-    walks = walks.append(Walk { vals: [], exec: [], edges: [], edge_at: [], stale: [], keys: [], cut: [], waits: [], changed: false });
+    walks = walks.append(Walk { vals: [], exec: [], edges: [], edge_at: [], stale: [], keys: [], records: [], cut: [], waits: [], changed: false });
   }
   while (w.next < w.queue.len()) {
     let i = w.queue[w.next];
@@ -307,7 +307,7 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
   return out;
 }
 
-struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][] }
+struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], records: i32[][], names: Names[], counters: i32[][] }
 
 function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
   let l = xs[at];
@@ -420,7 +420,7 @@ function element_record(u: Universe, t: typeinfo.Type): i32 {
   return -1;
 }
 
-function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
+function keys_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe): i32[][] {
   let out: i32[][] = [];
   let i = 0;
   while (i < funcs.len()) {
@@ -431,7 +431,7 @@ function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] 
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.result >= 0 && ins.result < keys.len()) {
-            keys = keys.with(ins.result, key_of(u, f, ins));
+            keys = keys.with(ins.result, key_of(ix, usable, u, f, ins));
           }
         }
       }
@@ -442,8 +442,104 @@ function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] 
   return out;
 }
 
-function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
+// The record type of each argument of a call, or -1.
+function records_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
+  let out: i32[][] = [];
+  let i = 0;
+  while (i < funcs.len()) {
+    let f = funcs[i];
+    let records: i32[] = [];
+    if (usable[i]) {
+      records = util.minus_ones(f.graph.nvals);
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.call()) {
+            for a in ins.args {
+              records = records.with(a, own_record(u, f.values[a]));
+            }
+          }
+        }
+      }
+    }
+    out = out.append(records);
+    i += 1;
+  }
+  return out;
+}
+
+// The functions that each instruction names, by its result value: the
+// targets from first[v] for count[v], and the hash and eq functions of the
+// map key types of the function.
+struct Names { first: i32[], count: i32[], targets: i32[], map_fns: i32[] }
+
+function names_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): Names[] {
+  let out: Names[] = [];
+  let i = 0;
+  while (i < funcs.len()) {
+    let nm = Names { first: [], count: [], targets: [], map_fns: [] };
+    if (usable[i]) {
+      nm = function_names(funcs[i], ix);
+    }
+    out = out.append(nm);
+    i += 1;
+  }
+  return out;
+}
+
+function function_names(f: ssasem.Func, ix: util.NameIndex): Names {
+  let first = util.minus_ones(f.graph.nvals);
+  let count = __alloc_i32(f.graph.nvals);
+  let targets: i32[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.str.len() > 0 && ins.result >= 0 && ins.result < f.graph.nvals) {
+        let at = targets.len();
+        targets = with_named(targets, ix, ins.str);
+        first = first.with(ins.result, at);
+        count = count.with(ins.result, targets.len() - at);
+      }
+    }
+  }
+  let map_fns: i32[] = [];
+  for t in f.values {
+    if let typeinfo.TypeMap(m) = t {
+      map_fns = with_target(with_target(map_fns, ix, ssasem.keyed_map_key_fn(m.key, "hash")), ix, ssasem.keyed_map_key_fn(m.key, "eq"));
+    }
+  }
+  return Names { first: first, count: count, targets: targets, map_fns: map_fns };
+}
+
+function with_named(own targets: i32[], ix: util.NameIndex, name: string): i32[] {
+  if (!ssasem.is_dyn_call(name)) {
+    return with_target(targets, ix, name);
+  }
+  for arm in ssasem.dyn_call_arms(name) {
+    targets = with_target(targets, ix, arm);
+  }
+  return targets;
+}
+
+function with_target(own targets: i32[], ix: util.NameIndex, name: string): i32[] {
+  let g = ix.find(name);
+  if (g < 0) {
+    return targets;
+  }
+  return targets.append(g);
+}
+
+// For a call, the function that it can enter, or -1 when its value is unknown.
+function key_of(ix: util.NameIndex, usable: boolean[], u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
   let k = ins.kind_tag;
+  if (k == ssasem.call()) {
+    if (ssasem.is_dyn_call(ins.str) || ins.imm != 0) {
+      return -1;
+    }
+    let g = ix.find(ins.str);
+    if (g < 0 || !usable[g]) {
+      return -1;
+    }
+    return g;
+  }
   if (k == ssasem.record_get()) {
     return u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
   }
@@ -555,26 +651,18 @@ function reached(w: World, i: i32): World {
   return queued(World { ...w, reach: w.reach.with(i, true) }, i);
 }
 
-function reached_name(ctx: Ctx, w: World, name: string): World {
-  let g = ctx.ix.find(name);
-  if (g < 0) {
-    return w;
-  }
-  return reached(w, g);
-}
-
 // edges holds one flag per predecessor edge, block by block. The edges into
 // the block at pos start at edge_at[pos], and edge_at[pos + 1] ends them.
 // cut[pos] is how many instructions of the block run, or -1 when all of them do.
 // waits are the record types whose absence cut a call.
-struct Walk { vals: i64[], exec: boolean[], edges: boolean[], edge_at: i32[], stale: boolean[], keys: i32[], cut: i32[], waits: i32[], changed: boolean }
+struct Walk { vals: i64[], exec: boolean[], edges: boolean[], edge_at: i32[], stale: boolean[], keys: i32[], records: i32[], cut: i32[], waits: i32[], changed: boolean }
 
 function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f = ctx.funcs[i];
   let g = f.graph;
   let at = ssa.block_positions(g);
   let edge_at = edge_starts(g);
-  let wk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
+  let wk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], records: ctx.records[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
   while (wk.changed) {
     wk = Walk { ...wk, changed: false };
     let pos = 0;
@@ -632,7 +720,7 @@ function call_cut(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst):
   if (r != -1) {
     return (wk, 0);
   }
-  if (call_value(ctx, w, ins) == top()) {
+  if (call_value(wk, w, ins) == top()) {
     return (wk, 1);
   }
   return (wk, -1);
@@ -673,7 +761,7 @@ function none_held(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst)
     if (wk.vals[a] == top()) {
       return -2;
     }
-    let r = own_record(ctx.u, f.values[a]);
+    let r = wk.records[a];
     if (r >= 0 && !w.inhabited[r]) {
       return r;
     }
@@ -816,7 +904,7 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
     return any();
   }
   if (k == ssasem.call()) {
-    return call_value(ctx, w, ins);
+    return call_value(wk, w, ins);
   }
   if (k == ssasem.length()) {
     let r = wk.keys[ins.result];
@@ -838,12 +926,9 @@ function only_built(u: Universe, w: World, vk: i32): boolean {
   return true;
 }
 
-function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
-  if (ssasem.is_dyn_call(ins.str) || ins.imm != 0) {
-    return any();
-  }
-  let g = ctx.ix.find(ins.str);
-  if (g < 0 || !ctx.usable[g]) {
+function call_value(wk: Walk, w: World, ins: ssa.SInst): i64 {
+  let g = wk.keys[ins.result];
+  if (g < 0) {
     return any();
   }
   return w.rets[g];
@@ -923,7 +1008,10 @@ function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
       w = absorb_block(ctx, w, f, i, wk, pos);
     }
   }
-  return map_keys_reached(ctx, w, f);
+  for g in ctx.names[i].map_fns {
+    w = reached(w, g);
+  }
+  return w;
 }
 
 // Function `i` waits for each result its walk found held by nothing.
@@ -944,20 +1032,10 @@ function absorb_block(ctx: Ctx, w: World, f: ssasem.Func, i: i32, wk: Walk, pos:
     n = wk.cut[pos];
   }
   for k in 0..n {
-    w = absorb_inst(ctx, w, f, wk, b.insts[k]);
+    w = absorb_inst(ctx, w, ctx.names[i], wk, b.insts[k]);
   }
   if (wk.cut[pos] < 0 && b.term.kind_tag == ssa.TERM_RET) {
     w = returned(ctx, w, i, wk, b.term.value);
-  }
-  return w;
-}
-
-// The hash and eq functions of each map key type of `f`.
-function map_keys_reached(ctx: Ctx, w: World, f: ssasem.Func): World {
-  for t in f.values {
-    if let typeinfo.TypeMap(m) = t {
-      w = reached_name(ctx, reached_name(ctx, w, ssasem.keyed_map_key_fn(m.key, "hash")), ssasem.keyed_map_key_fn(m.key, "eq"));
-    }
   }
   return w;
 }
@@ -974,9 +1052,12 @@ function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
   return queued_all(World { ...w, rets: w.rets.with(i, next) }, ctx.callers[i]);
 }
 
-function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): World {
+function absorb_inst(ctx: Ctx, w: World, nm: Names, wk: Walk, ins: ssa.SInst): World {
   if (ins.str.len() > 0) {
-    w = named(ctx, w, ins.str);
+    let at = nm.first[ins.result];
+    for k in 0..nm.count[ins.result] {
+      w = reached(w, nm.targets[at + k]);
+    }
   }
   if (ins.kind_tag == ssasem.record_new()) {
     return built_record(ctx, w, wk.keys[ins.result], wk, ins.args, 0);
@@ -995,16 +1076,6 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
       }
       return w;
     }
-  }
-  return w;
-}
-
-function named(ctx: Ctx, w: World, name: string): World {
-  if (!ssasem.is_dyn_call(name)) {
-    return reached_name(ctx, w, name);
-  }
-  for arm in ssasem.dyn_call_arms(name) {
-    w = reached_name(ctx, w, arm);
   }
   return w;
 }

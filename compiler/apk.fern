@@ -684,7 +684,6 @@ pub function new_scalar(): u8[] {
       Err(_) => {}
     }
   }
-  return [];
 }
 
 // APK Signature Scheme v2. The digest covers the entries, the central

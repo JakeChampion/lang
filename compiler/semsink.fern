@@ -15,17 +15,21 @@ struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
   let ru = reuse(f);
-  let sk = sink_rereads(ru.s.f, ru.reads, false);
+  let sk = sink_rereads(ru.s.f, ru.reads, false, ssadeps.unchecked());
   return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
 }
 
 // sink_past_lent re-reads a projection below a call that only borrows its
 // parent. It runs once ownership inference has settled the callees' modes,
 // which `sink` runs before: a record or variant parameter declared
-// borrowed that a callee consumes is counted by then.
-pub function sink_past_lent(f: ssasem.Func): Sunk {
-  let sk = sink_rereads(f, None, true);
-  let late = semlatehold.reread_before_spends(sk.f);
+// borrowed that a callee consumes is counted by then. facts describe the
+// graph of f when they are checked.
+pub function sink_past_lent(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
+  let sk = sink_rereads(f, None, true, facts);
+  if (sk.reread > 0) {
+    facts = ssadeps.unchecked();
+  }
+  let late = semlatehold.reread_before_spends(sk.f, facts);
   return Sunk { f: late.f, reread: sk.reread + late.reread };
 }
 
@@ -37,7 +41,7 @@ function reuse(f: ssasem.Func): Reused {
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: None };
   }
-  let rd = reads_of(f, at, false);
+  let rd = reads_of(f, at, false, ssadeps.unchecked());
   if (!rd.flow.ok) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
@@ -89,13 +93,13 @@ function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
   return r.kind_tag == ssasem.record_get() && !ssalive.live_out_has(rd.flow, bi, r.result);
 }
 
-function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean): Sunk {
+function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean, facts: ssadeps.Facts): Sunk {
   let g = f.graph;
   let at = crossing_projections(g, f.values);
   if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd = reads_at(f, at, known, lent);
+  let rd = reads_at(f, at, known, lent, facts);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
@@ -134,13 +138,13 @@ function projection(kind: i32): boolean {
 
 struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[], field: i32[] }
 
-function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean): Reads {
+function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean, facts: ssadeps.Facts): Reads {
   match (known) {
     Some(k) => {
       return Reads { ...k, at: at };
     },
     None => {
-      return reads_of(f, at, lent);
+      return reads_of(f, at, lent, facts);
     }
   }
 }
@@ -148,19 +152,24 @@ function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean
 // reads_of with lent leaves a call's record or variant argument unspent
 // when its callee's contract borrows it, and keeps the spends of every
 // argument in strict.
-function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
+function reads_of(f: ssasem.Func, at: i32[], lent: boolean, facts: ssadeps.Facts): Reads {
   let g = f.graph;
   let deps: i32[][] = [];
   while (deps.len() < f.values.len()) {
     deps = deps.append([]);
   }
   let t = projection_tree(g, f.values, deps);
-  let pos = ssa.block_positions(g);
+  let pos = facts.at;
+  let dom = facts.dom;
+  if (!facts.checked) {
+    pos = ssa.block_positions(g);
+    dom = ssadeps.dominates_at(g, pos);
+  }
   let strict: i32[][] = [];
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
   }
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first, field: t.field, types: f.values };
+  return Reads { dom: dom, par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first, field: t.field, types: f.values };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {

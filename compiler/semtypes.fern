@@ -1,74 +1,99 @@
 import "./typeinfo";
 
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(x) = a {
-    if let typeinfo.TypeArray(y) = b {
-      return x.view == y.view && equal(x.elem, y.elem);
-    }
+  match (a) {
+    typeinfo.TypeArray(x) => {
+      if let typeinfo.TypeArray(y) = b {
+        return x.view == y.view && equal(x.elem, y.elem);
+      }
+    },
+    typeinfo.TypeTuple(x) => {
+      if let typeinfo.TypeTuple(y) = b {
+        return equal_list(x.elements, y.elements);
+      }
+    },
+    typeinfo.TypeMap(x) => {
+      if let typeinfo.TypeMap(y) = b {
+        return equal(x.key, y.key) && equal(x.value, y.value);
+      }
+    },
+    typeinfo.TypeErased(x) => {
+      if let typeinfo.TypeErased(y) = b {
+        return x.name == y.name;
+      }
+    },
+    typeinfo.TypeStruct(x) => {
+      if let typeinfo.TypeStruct(y) = b {
+        return named_args_equal(x.name, x.args, y.name, y.args);
+      }
+    },
+    typeinfo.TypeUnion(x) => {
+      if let typeinfo.TypeUnion(y) = b {
+        return named_args_equal(x.name, x.args, y.name, y.args);
+      }
+    },
+    typeinfo.TypeFunc(x) => {
+      if let typeinfo.TypeFunc(y) = b {
+        return callable_equal(x, y);
+      }
+    },
+    typeinfo.TypeDyn(x) => {
+      if let typeinfo.TypeDyn(y) = b {
+        return x.traits == y.traits;
+      }
+    },
+    typeinfo.TypeHandle(x) => {
+      if let typeinfo.TypeHandle(y) = b {
+        return x.resource == y.resource && x.borrowed == y.borrowed;
+      }
+    },
+    typeinfo.TypeI32(x) => {
+      if let typeinfo.TypeI32(y) = b {
+        return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char && x.polymorphic == y.polymorphic;
+      }
+    },
+    typeinfo.TypeFloat(x) => {
+      if let typeinfo.TypeFloat(y) = b {
+        return x.width == y.width && x.polymorphic == y.polymorphic;
+      }
+    },
+    typeinfo.TypeLanes(x) => {
+      if let typeinfo.TypeLanes(y) = b {
+        return x.width == y.width;
+      }
+    },
+    typeinfo.TypeNever(_) => {
+      return is_never(b);
+    },
+    typeinfo.TypeBool(_) => {
+      if let typeinfo.TypeBool(_) = b {
+        return true;
+      }
+    },
+    typeinfo.TypeString(x) => {
+      if let typeinfo.TypeString(y) = b {
+        return x.tag == y.tag;
+      }
+    },
+    typeinfo.TypeVoid(_) => {
+      if let typeinfo.TypeVoid(_) = b {
+        return true;
+      }
+    },
+    typeinfo.TypeConst(x) => {
+      if let typeinfo.TypeConst(y) = b {
+        return x.value == y.value;
+      }
+    },
+    typeinfo.TypeUnknown(_) => {}
   }
-  if let typeinfo.TypeTuple(x) = a {
-    if let typeinfo.TypeTuple(y) = b {
-      return equal_list(x.elements, y.elements);
-    }
-  }
-  if let typeinfo.TypeMap(x) = a {
-    if let typeinfo.TypeMap(y) = b {
-      return equal(x.key, y.key) && equal(x.value, y.value);
-    }
-  }
-  return named_equal(a, b) || numeric_equal(a, b) || atomic_equal(a, b);
+  return false;
 }
 
 pub function lends_array(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = from {
     if let typeinfo.TypeArray(b) = to {
       return !a.view && b.view && equal(a.elem, b.elem);
-    }
-  }
-  return false;
-}
-
-function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(x) = a {
-    if let typeinfo.TypeI32(y) = b {
-      return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char && x.polymorphic == y.polymorphic;
-    }
-  }
-  if let typeinfo.TypeFloat(x) = a {
-    if let typeinfo.TypeFloat(y) = b {
-      return x.width == y.width && x.polymorphic == y.polymorphic;
-    }
-  }
-  if let typeinfo.TypeLanes(x) = a {
-    if let typeinfo.TypeLanes(y) = b {
-      return x.width == y.width;
-    }
-  }
-  return false;
-}
-
-function atomic_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if (is_never(a)) {
-    return is_never(b);
-  }
-  if let typeinfo.TypeBool(_) = a {
-    if let typeinfo.TypeBool(_) = b {
-      return true;
-    }
-  }
-  if let typeinfo.TypeString(x) = a {
-    if let typeinfo.TypeString(y) = b {
-      return x.tag == y.tag;
-    }
-  }
-  if let typeinfo.TypeVoid(_) = a {
-    if let typeinfo.TypeVoid(_) = b {
-      return true;
-    }
-  }
-  if let typeinfo.TypeConst(x) = a {
-    if let typeinfo.TypeConst(y) = b {
-      return x.value == y.value;
     }
   }
   return false;
@@ -156,40 +181,6 @@ function callable_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
     && own_masks_equal(a, b) && equal(a.ret_type, b.ret_type);
 }
 
-function named_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if let typeinfo.TypeErased(x) = a {
-    if let typeinfo.TypeErased(y) = b {
-      return x.name == y.name;
-    }
-  }
-  if let typeinfo.TypeStruct(x) = a {
-    if let typeinfo.TypeStruct(y) = b {
-      return named_args_equal(x.name, x.args, y.name, y.args);
-    }
-  }
-  if let typeinfo.TypeUnion(x) = a {
-    if let typeinfo.TypeUnion(y) = b {
-      return named_args_equal(x.name, x.args, y.name, y.args);
-    }
-  }
-  if let typeinfo.TypeFunc(x) = a {
-    if let typeinfo.TypeFunc(y) = b {
-      return callable_equal(x, y);
-    }
-  }
-  if let typeinfo.TypeDyn(x) = a {
-    if let typeinfo.TypeDyn(y) = b {
-      return x.traits == y.traits;
-    }
-  }
-  if let typeinfo.TypeHandle(x) = a {
-    if let typeinfo.TypeHandle(y) = b {
-      return x.resource == y.resource && x.borrowed == y.borrowed;
-    }
-  }
-  return false;
-}
-
 function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   if (a.len() != b.len()) {
     return false;
@@ -205,7 +196,56 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
 }
 
 pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
-  return concrete_numeric(t) || concrete_leaf(t, allow_void) || concrete_container(t) || concrete_named(t);
+  match (t) {
+    typeinfo.TypeI32(i) => {
+      return concrete_integer(i);
+    },
+    typeinfo.TypeFloat(f) => {
+      return !f.polymorphic && (f.width == 32 || f.width == 64);
+    },
+    typeinfo.TypeLanes(l) => {
+      return l.width == 32 || l.width == 64;
+    },
+    typeinfo.TypeBool(_) => {
+      return true;
+    },
+    typeinfo.TypeString(st) => {
+      return st.tag == 0 || st.tag == 1;
+    },
+    typeinfo.TypeDyn(d) => {
+      return d.traits.len() > 0;
+    },
+    typeinfo.TypeHandle(h) => {
+      return h.resource.len() > 0;
+    },
+    typeinfo.TypeVoid(_) => {
+      return allow_void;
+    },
+    typeinfo.TypeConst(c) => {
+      return c.value.len() > 0;
+    },
+    typeinfo.TypeArray(a) => {
+      return is_never(a.elem) || concrete(a.elem, false);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return tup.elements.len() >= 2 && concrete_payloads(tup.elements);
+    },
+    typeinfo.TypeMap(m) => {
+      return (is_never(m.key) || concrete(m.key, false)) && (is_never(m.value) || concrete(m.value, false));
+    },
+    typeinfo.TypeStruct(st) => {
+      return concrete_struct(st);
+    },
+    typeinfo.TypeUnion(u) => {
+      return concrete_union(u);
+    },
+    typeinfo.TypeFunc(f) => {
+      return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true);
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 // concrete_scalar is true for a concrete i32, float or bool type.
@@ -233,54 +273,6 @@ function concrete_integer(i: typeinfo.TypeI32): boolean {
     return i.width == 32 && !i.unsigned;
   }
   return i.width == 32 || i.width == 64 || i.width == 8 && i.unsigned || i.width == typeinfo.width_ptr() && i.unsigned;
-}
-
-function concrete_numeric(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(i) = t {
-    return concrete_integer(i);
-  }
-  if let typeinfo.TypeFloat(f) = t {
-    return !f.polymorphic && (f.width == 32 || f.width == 64);
-  }
-  if let typeinfo.TypeLanes(l) = t {
-    return l.width == 32 || l.width == 64;
-  }
-  return false;
-}
-
-function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
-  if let typeinfo.TypeBool(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeString(s) = t {
-    return s.tag == 0 || s.tag == 1;
-  }
-  if let typeinfo.TypeDyn(d) = t {
-    return d.traits.len() > 0;
-  }
-  if let typeinfo.TypeHandle(h) = t {
-    return h.resource.len() > 0;
-  }
-  if let typeinfo.TypeVoid(_) = t {
-    return allow_void;
-  }
-  if let typeinfo.TypeConst(c) = t {
-    return c.value.len() > 0;
-  }
-  return false;
-}
-
-function concrete_container(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return is_never(a.elem) || concrete(a.elem, false);
-  }
-  if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len() >= 2 && concrete_payloads(tup.elements);
-  }
-  if let typeinfo.TypeMap(m) = t {
-    return (is_never(m.key) || concrete(m.key, false)) && (is_never(m.value) || concrete(m.value, false));
-  }
-  return false;
 }
 
 pub function env_prefix(): string {
@@ -368,19 +360,6 @@ function concrete_struct(s: typeinfo.TypeStruct): boolean {
     return s.args.len() == 1 && concrete(s.args[0], false);
   }
   return s.name.len() > 0 && concrete_list(s.args);
-}
-
-function concrete_named(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(s) = t {
-    return concrete_struct(s);
-  }
-  if let typeinfo.TypeUnion(u) = t {
-    return concrete_union(u);
-  }
-  if let typeinfo.TypeFunc(f) = t {
-    return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true);
-  }
-  return false;
 }
 
 function concrete_union(u: typeinfo.TypeUnion): boolean {

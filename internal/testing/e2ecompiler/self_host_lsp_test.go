@@ -344,6 +344,7 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 	for _, c := range []struct{ name, in string }{
 		{"truncated-body", "Content-Length: 100\r\n\r\n{\"jsonrpc\":\"2.0\"}"},
 		{"no-content-length", "Content-Type: application/json\r\n\r\n{}"},
+		{"content-length-past-i32", "Content-Length: 4294967298\r\n\r\n{}"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, code, stderr := runLSPRaw(t, s.selfHost(), []byte(c.in))

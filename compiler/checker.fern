@@ -1035,8 +1035,17 @@ function privileged_sig(name: string): DeviceSig {
   if (name == "__boot_info" || name == "__irq_pending") {
     return DeviceSig { params: [], result: typeinfo.t_usize() };
   }
-  if (name == "__user_run") {
+  if (name == "__user_run" || name == "__atomic_load_acquire") {
     return DeviceSig { params: [typeinfo.t_usize()], result: w };
+  }
+  if (name == "__atomic_store_release") {
+    return DeviceSig { params: [typeinfo.t_usize(), w], result: typeinfo.t_void() };
+  }
+  if (name == "__atomic_fetch_add") {
+    return DeviceSig { params: [typeinfo.t_usize(), w], result: w };
+  }
+  if (name == "__atomic_cas") {
+    return DeviceSig { params: [typeinfo.t_usize(), w, w], result: w };
   }
   if (name == "__sysreg_read") {
     return DeviceSig { params: [typeinfo.t_string()], result: w };
@@ -1525,7 +1534,6 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // The type arguments of two uses of one generic name agree unless both are
@@ -2966,7 +2974,6 @@ function mlit_is_desugared(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function literal_insert(c: ast.ExprCall): boolean {
@@ -4639,7 +4646,6 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return false;
     }
   }
-  return false;
 }
 
 function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, unions: UnionSig[]): boolean {
@@ -9846,14 +9852,33 @@ function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b);
 }
 
-function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
+function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, unions: UnionSig[], self_name: string): util.Diag[] {
   if (lm.ret_type.len() > 0 && is_void(rt)) {
     return void_ret_diags(lm.body, lsc, unions);
   }
   if (lm.ret_type.len() > 0 || lm.origin == parser.ORIGIN_USE && !is_unknown(rt)) {
-    return ret_diags(lm.body, lsc, rt, unions);
+    let out = ret_diags(lm.body, lsc, rt, unions);
+    if (lm.ret_type.len() > 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+      out = out.append(lambda_missing_return(lm, self_name, lm.ret_type));
+    }
+    return out;
   }
-  return lambda_exit_diags(lm, lsc);
+  let out = lambda_exit_diags(lm, lsc);
+  if (out.len() == 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+    let inferred = exit_result(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)));
+    if (!is_unknown(inferred) && !is_void(inferred)) {
+      out = out.append(lambda_missing_return(lm, self_name, type_label(inferred)));
+    }
+  }
+  return out;
+}
+
+function lambda_missing_return(lm: ast.ExprLambda, self_name: string, ret: string): util.Diag {
+  let subject = "this lambda";
+  if (self_name.len() > 0) {
+    subject = "\"" + self_name + "\"";
+  }
+  return dg_at("E052", "missing return: " + subject + " has return type " + ret + " but can fall off the end without returning a value", lm.line, lm.col);
 }
 
 function lret_lambda(lm: ast.ExprLambda, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
@@ -9871,7 +9896,7 @@ function lret_lambda(lm: ast.ExprLambda, cur: Scope, unions: UnionSig[], self_na
     lsc = lsc.bind(lm.params[bi].name, pts[bi]);
     bi += 1;
   }
-  return util.append_diags(lambda_body_diags(lm, lsc, rt, unions), lret_stmts(lm.body, lsc, unions));
+  return util.append_diags(lambda_body_diags(lm, lsc, rt, unions, self_name), lret_stmts(lm.body, lsc, unions));
 }
 
 function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
@@ -10009,7 +10034,7 @@ pub function unsafe_intrinsics(): string[] {
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
     "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
-    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__user_run",
+    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__user_run", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "share_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
@@ -10585,7 +10610,6 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
       return false;
     }
   }
-  return false;
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
@@ -11503,7 +11527,6 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, no
       return false;
     }
   }
-  return false;
 }
 
 function if_leaves(f: ast.StmtIf, jumps: boolean, bound: boolean, noret: util.NameIndex): boolean {
@@ -12015,7 +12038,11 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unio
     }
     if (nm.len() > 0 && nm != "_") {
       let pt = payload_slot_type_name(ss, slot);
-      if (pt.len() > 0 && union_of_variant(nm, unions) == pt && variant_payload_count(nm, structs) < 0) {
+      let owner = union_of_variant(nm, unions);
+      if (owner.len() == 0) {
+        owner = parser.builtin_enum_of(nm);
+      }
+      if (pt.len() > 0 && owner == pt && variant_payload_count(nm, structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + pt + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
       }
     }
@@ -12047,6 +12074,33 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       }
     }
     slot += 1;
+  }
+  return out;
+}
+
+function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let typeinfo.TypeTuple(tt) = whole else {
+    return out;
+  };
+  let i = 0;
+  while (i < kinds.len() && i < binds.len() && i < tt.elements.len()) {
+    let nm = binds[i];
+    if let typeinfo.TypeUnion(u) = tt.elements[i] {
+      let owner = scope_variant_owner(nm, s);
+      if (owner.len() == 0) {
+        owner = parser.builtin_enum_of(nm);
+      }
+      if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
+        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      }
+    }
+    if (kinds[i] == 4 && i < pats.len()) {
+      if let ast.PatVariant(inner) = pats[i] {
+        out = util.append_diags(out, tuple_binder_diags(inner.tup_kinds, inner.tup_binds, inner.tup_pats, s, tt.elements[i], line, col));
+      }
+    }
+    i += 1;
   }
   return out;
 }
@@ -12549,7 +12603,6 @@ function mlit_is_base(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_map_new_name(name: string): boolean {
@@ -12586,7 +12639,6 @@ function unsettled_int_literal(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // A number, or a number under one or more unary minuses: `5`, `-5`, `-(-5)`.
@@ -12751,7 +12803,6 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
       return out;
     }
   }
-  return out;
 }
 
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -15711,7 +15762,6 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
       return none;
     }
   }
-  return none;
 }
 
 function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
@@ -16247,6 +16297,7 @@ function sugar_shape_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util
   for arm in sg.tup {
     if (!arm.is_wild) {
       out = util.append_diags(out, cover_shape_diags(tuple_cover(arm.elem_kinds, arm.lits, arm.elem_pats), t, s, arm.line, arm.col));
+      out = util.append_diags(out, tuple_binder_diags(arm.elem_kinds, arm.binds, arm.elem_pats, s, t, arm.line, arm.col));
     }
   }
   for arm in sg.strct {
@@ -17959,7 +18010,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
   "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-  "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code",
+  "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
   "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
   "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
@@ -18812,9 +18863,6 @@ function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
 
 function ow_is_fresh_literal(e: ast.Expr): boolean {
   match (e) {
-    ast.ExprStructLit(_) => {
-      return true;
-    },
     ast.ExprLambda(_) => {
       return true;
     },
@@ -18831,6 +18879,38 @@ function ow_is_fresh_literal(e: ast.Expr): boolean {
       return false;
     }
   }
+}
+
+// A struct literal owns what it holds: each field value is owned or
+// holds no handle, and each field that the literal keeps from a base that is
+// not owned holds no handle.
+function ow_struct_lit_owned(sl: ast.ExprStructLit, lt: typeinfo.Type, ctx: OwnCtx): boolean {
+  let sn = typeinfo.TypeStruct { name: sl.type_name, args: [] };
+  if let typeinfo.TypeStruct(t) = lt {
+    sn = t;
+  }
+  let Some(sig) = ctx.scope.lookup_struct(sn.name) else {
+    return false;
+  };
+  for i in 0..sl.field_names.len() {
+    if (!ow_is_owned_expr(sl.field_values[i], ctx) && !ow_field_no_handle(sn, sl.field_names[i], ctx)) {
+      return false;
+    }
+  }
+  if (!sl.has_base || ow_is_owned_expr(sl.base, ctx)) {
+    return true;
+  }
+  for name in sig.field_names {
+    if (!util.has_str(sl.field_names, name) && !ow_field_no_handle(sn, name, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_field_no_handle(sn: typeinfo.TypeStruct, field: string, ctx: OwnCtx): boolean {
+  let t = struct_field_type(sn, field, ctx.scope);
+  return !is_unknown(t) && ow_holds_no_handle(typeinfo.spelling(t), ctx.decls);
 }
 
 // The value of `unsafe { e }`, a value block of one value in an unsafe block.
@@ -19024,6 +19104,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     return true;
   }
   match (e) {
+    ast.ExprStructLit(sl) => {
+      return ow_struct_lit_owned(sl, check_expr(e, ctx.scope), ctx);
+    },
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
@@ -19338,7 +19421,6 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
       return f;
     }
   }
-  return f;
 }
 
 function lu_occ_count(fx: LuFn, name: string): i32 {
@@ -19421,6 +19503,11 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let Some(tail) = ow_unsafe_value(c) {
+      return lu_fresh_value(fx, tail);
+    }
+  }
   if let ast.ExprStructLit(sl) = e {
     if (sl.has_base) {
       return lu_fresh_value(fx, sl.base);
@@ -19434,7 +19521,7 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     return true;
   }
   if let ast.ExprIdent(id) = e {
-    if (fx.ofuncs.ctors.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
+    if ((id.name == "None" || fx.ofuncs.ctors.has(id.name)) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
       return true;
     }
   }
@@ -20772,7 +20859,7 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   }
   if let ast.StmtMatch(m) = st {
     let r = LU_CONTINUES;
-    let reach = LuReach { noret: fx.noret, frames: site.frames, level: site.frames.len() - 1, scope: scope };
+    let reach = LuReach { noret: fx.noret, frames: site.frames, level: site.frames.len() - 1, scope: scope, field: "" };
     if (lu_same_ident(m.scrutinee, aid)) {
       r = lu_match_tag_live(reach, m, aid.name);
     } else if (lu_mentions_at(m.scrutinee, aid)) {
@@ -20820,7 +20907,7 @@ function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIden
   }
   let settled = m.arms.len() > 0;
   for arm in m.arms {
-    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, aid.name) > 0) {
+    if (arm.has_guard && lu_reach_reads_expr(reach, arm.guard, aid.name)) {
       return LU_LIVE;
     }
     let r = lu_stmts_settle(reach, arm.body, aid.name);
@@ -20855,7 +20942,7 @@ function lu_match_tag_live(reach: LuReach, m: ast.StmtMatch, name: string): i32 
     if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
       continue;
     }
-    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
+    if (arm.has_guard && lu_reach_reads_expr(reach, arm.guard, name)) {
       return LU_LIVE;
     }
     let r = lu_stmts_settle(reach, arm.body, name);
@@ -20873,8 +20960,41 @@ function lu_match_tag_live(reach: LuReach, m: ast.StmtMatch, name: string): i32 
 }
 
 // Where a statement list sits: a break or a continue in it leaves to a loop
-// of frames, seen from level, for a binding at scope.
-struct LuReach { noret: util.NameIndex, frames: LuFrame[], level: i32, scope: i32 }
+// of frames, seen from level, for a binding at scope. A field names the one
+// path of the binding that was taken. An empty field takes the whole value.
+struct LuReach { noret: util.NameIndex, frames: LuFrame[], level: i32, scope: i32, field: string }
+
+// Whether the statement can read the taken value.
+function lu_reach_reads_stmt(reach: LuReach, st: ast.Stmt, name: string): boolean {
+  if (reach.field.len() == 0) {
+    return lu_mentions(st, name) > 0;
+  }
+  return lu_path_read_in(astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all), name, reach.field);
+}
+
+// Whether the expression can read the taken value.
+function lu_reach_reads_expr(reach: LuReach, e: ast.Expr, name: string): boolean {
+  if (reach.field.len() == 0) {
+    return astwalk.count_ident_expr(e, name) > 0;
+  }
+  return lu_path_read_in(astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all), name, reach.field);
+}
+
+function lu_path_read_in(f: LuFacts, name: string, field: string): boolean {
+  for o in f.occ {
+    if (o.name == name && lu_reads_path(f, o.line, o.col, field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A mention of a name reads its field unless it reads another field, or is
+// the base of an update literal that replaces the field.
+function lu_reads_path(f: LuFacts, line: i32, col: i32, field: string): boolean {
+  let sel = lu_sel_at(f, line, col);
+  return sel.len() == 0 && !lu_replaces(f, line, col, field) || sel == field;
+}
 
 // A statement list that follows a take of name. LU_LIVE: a read of name
 // before a whole assignment to it, also after a break or a continue.
@@ -20894,10 +21014,10 @@ function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
     if (r == LU_CONTINUES) {
       continue;
     }
-    if (lu_mentions(st, name) > 0) {
+    if (lu_reach_reads_stmt(reach, st, name)) {
       return LU_LIVE;
     }
-    if (lu_jumps_live(reach.noret, reach.frames, reach.level, lu_jumps(st), name, reach.scope)) {
+    if (lu_jumps_live(reach.noret, reach.frames, reach.level, lu_jumps(st), name, reach.scope, reach.field)) {
       return LU_LIVE;
     }
     let one: ast.Stmt[] = [st];
@@ -20942,7 +21062,7 @@ function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChai
   if (kind == LU_NOT_ARM) {
     return lu_chain_after(st, chain);
   }
-  if (astwalk.count_ident_expr(f.cond, name) > 0) {
+  if (lu_reach_reads_expr(reach, f.cond, name)) {
     return LuChain { ...chain, result: LU_LIVE };
   }
   let r = lu_flag_arm_settle(reach, f.then_body, name, chain.flag);
@@ -21069,12 +21189,12 @@ function lu_stmts_from(stmts: ast.Stmt[], k: i32): ast.Stmt[] {
 function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
   match (st) {
     ast.StmtMatch(m) => {
-      if (astwalk.count_ident_expr(m.scrutinee, name) > 0) {
+      if (lu_reach_reads_expr(reach, m.scrutinee, name)) {
         return LU_LIVE;
       }
       let settled = m.arms.len() > 0;
       for arm in m.arms {
-        if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
+        if (arm.has_guard && lu_reach_reads_expr(reach, arm.guard, name)) {
           return LU_LIVE;
         }
         let r = lu_stmts_settle(reach, arm.body, name);
@@ -21091,7 +21211,7 @@ function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
       return LU_CONTINUES;
     },
     ast.StmtIf(f) => {
-      if (astwalk.count_ident_expr(f.cond, name) > 0) {
+      if (lu_reach_reads_expr(reach, f.cond, name)) {
         return LU_LIVE;
       }
       let rt = lu_stmts_settle(reach, f.then_body, name);
@@ -21214,11 +21334,16 @@ function lu_assigns_whole(st: ast.Stmt, name: string): boolean {
 }
 
 function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string, scope: i32): boolean {
+  return lu_path_live_from(noret, frames, level, name, scope, "");
+}
+
+// As lu_live_from, for the one path of the binding that field names.
+function lu_path_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string, scope: i32, field: string): boolean {
   if (level < 0) {
     return false;
   }
   let f = frames[level];
-  let reach = LuReach { noret: noret, frames: frames, level: level, scope: scope };
+  let reach = LuReach { noret: noret, frames: frames, level: level, scope: scope, field: field };
   for j in f.idx + 1..f.stmts.len() {
     // A new value on every path replaces the local before any read of the
     // old one.
@@ -21240,21 +21365,21 @@ function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name
   if (level == 0) {
     return false;
   }
-  return lu_live_from(noret, frames, level - 1, name, scope);
+  return lu_path_live_from(noret, frames, level - 1, name, scope, field);
 }
 
 // Whether a continue or a break of the statement reaches a read of the name.
 // A jump to a loop at or outside the block of the binding leaves the binding.
-function lu_jumps_live(noret: util.NameIndex, frames: LuFrame[], level: i32, jumps: LuJumps, name: string, scope: i32): boolean {
+function lu_jumps_live(noret: util.NameIndex, frames: LuFrame[], level: i32, jumps: LuJumps, name: string, scope: i32, field: string): boolean {
   for label in jumps.continues {
     let l = lu_loop_level(frames, level, label);
-    if (l < 0 || l > scope && (scope >= 0 || lu_loop_head_live(frames, l, name) || lu_live_from(noret, frames, l - 1, name, scope))) {
+    if (l < 0 || l > scope && (scope >= 0 || lu_loop_head_live(frames, l, name) || lu_path_live_from(noret, frames, l - 1, name, scope, field))) {
       return true;
     }
   }
   for label in jumps.breaks {
     let l = lu_loop_level(frames, level, label);
-    if (l < 0 || l > scope && lu_live_from(noret, frames, l - 1, name, scope)) {
+    if (l < 0 || l > scope && lu_path_live_from(noret, frames, l - 1, name, scope, field)) {
       return true;
     }
   }
@@ -21309,7 +21434,7 @@ function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
     return false;
   };
   let before = 0;
-  for a in c.args {
+  for a in lu_call_parts(c.args) {
     if let ast.ExprIdent(x) = a {
       if (x.line == aid.line && x.col == aid.col) {
         return before + 1 == astwalk.count_ident_expr(call, aid.name);
@@ -21386,27 +21511,24 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_path_is_last(fx, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
+  return lu_field_path_dead(fx, site, q, fa.field);
 }
 
-// No path after the statement that holds the call reads q, and the statement
-// reads only other fields of q after q.field. A later mention in a branch
-// that the call does not reach is not a read.
-function lu_field_base_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+// No path after the statement that holds the call reads q.field, and the
+// statement does not read it after q. A later mention in a branch that the
+// call does not reach is not a read.
+function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
   if (site.frames.len() == 0) {
     return false;
   }
   let inner = site.frames[site.frames.len() - 1];
   let facts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   for o in facts.occ {
-    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
-      let sel = lu_sel_at(facts, o.line, o.col);
-      if (sel.len() == 0 || sel == field) {
-        return false;
-      }
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && lu_reads_path(facts, o.line, o.col, field)) {
+      return false;
     }
   }
-  return !lu_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name));
+  return !lu_path_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name), field);
 }
 
 struct LuFieldReads { name: string, field: string, n: i32 }
@@ -21414,7 +21536,15 @@ struct LuFieldReads { name: string, field: string, n: i32 }
 // The reads in call of a field of name other than field. A move of
 // name.field leaves those fields to the caller.
 function lu_other_field_reads(call: ast.Expr, name: string, field: string): i32 {
-  return astwalk.fold_expr_pruned(call, LuFieldReads { name: name, field: field, n: 0 }, lu_count_other_field, astwalk.not_lambda).n;
+  return astwalk.fold_expr_pruned(call, LuFieldReads { name: name, field: field, n: 0 }, lu_count_other_field, lu_not_closure).n;
+}
+
+// A value block runs where it stands, so a read in it is a read of the call.
+function lu_not_closure(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.params.len() == 0 && parser.is_value_block_origin(lm.origin);
+  }
+  return true;
 }
 
 function lu_count_other_field(e: ast.Expr, own r: LuFieldReads): LuFieldReads {
@@ -21564,20 +21694,7 @@ function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): s
   }
 }
 
-// A later update `S { ...q, field: v }` replaces the path, so it does not
-// read it.
-function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
-  for o in fx.facts.occ {
-    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
-      let sel = lu_sel_at(fx.facts, o.line, o.col);
-      if (sel.len() == 0 && !lu_replaces(fx.facts, o.line, o.col, field) || sel == field) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
+// Whether the mention is the base of an update `S { ...q, field: v }`.
 function lu_replaces(f: LuFacts, line: i32, col: i32, field: string): boolean {
   for u in f.updates {
     if (u.line == line && u.col == col && u.field == field) {
@@ -21723,22 +21840,20 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
-    if (!fx.ofuncs.methods.has(fa.field)) {
-      for a in c.args {
-        acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    if (fx.ofuncs.methods.has(fa.field)) {
+      for p in lu_arg_parts(fa.obj, []) {
+        acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
       }
-      return acc;
     }
-    acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
-    for a in c.args {
-      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    for p in lu_call_parts(c.args) {
+      acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
     }
     return acc;
   }
   let cname = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
-    for a in c.args {
-      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    for p in lu_call_parts(c.args) {
+      acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
     }
     return acc;
   }
@@ -21746,25 +21861,56 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   let i = 0;
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
-      match (c.args[i]) {
-        ast.ExprIdent(aid) => {
-          if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-            acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
-          }
-        },
-        ast.ExprFieldAccess(fa) => {
-          if let ast.ExprIdent(q) = fa.obj {
-            if (lu_field_dies(fx, e, fa, q, site)) {
-              acc = acc.append(lu_field_key(fa, q));
-            }
-          }
-        },
-        _ => {}
+      for p in lu_arg_parts(c.args[i], []) {
+        acc = lu_own_arg(p, e, outer, has_outer, site, fx, acc);
       }
     }
     i += 1;
   }
   return acc;
+}
+
+function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  match (a) {
+    ast.ExprIdent(aid) => {
+      if (lu_dies(fx, e, aid, outer, has_outer, site)) {
+        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(q) = fa.obj {
+        if (lu_field_dies(fx, e, fa, q, site)) {
+          acc = acc.append(lu_field_key(fa, q));
+        }
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+// The arguments of a call, with each struct literal argument replaced by its
+// base and its field values, at any depth. The literal takes each part, so a
+// part is an argument position for the last uses.
+function lu_call_parts(args: ast.Expr[]): ast.Expr[] {
+  let out: ast.Expr[] = [];
+  for a in args {
+    out = lu_arg_parts(a, out);
+  }
+  return out;
+}
+
+function lu_arg_parts(a: ast.Expr, own out: ast.Expr[]): ast.Expr[] {
+  if let ast.ExprStructLit(sl) = a {
+    if (sl.has_base) {
+      out = lu_arg_parts(sl.base, out);
+    }
+    for fv in sl.field_values {
+      out = lu_arg_parts(fv, out);
+    }
+    return out;
+  }
+  return out.append(a);
 }
 
 function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
@@ -23471,7 +23617,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   let i = 0;
   while (i < fn.params.len()) {
     if (ow_decl_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
-      if (i >= flags.len() || !flags[i]) {
+      if (i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") {
         out = out.append(fn.params[i].name);
       }
     }
@@ -23715,7 +23861,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
     if (fn.receiver_name.len() > 0) {
       let lend: boolean[] = [!fn.receiver_own && !ow_holds_no_handle(fn.receiver_type, dx)];
       for param in fn.params {
-        lend = lend.append(!param.own && ow_decl_type_is_pointer(fn, param.type_name, ofuncs) && !ow_holds_no_handle(param.type_name, dx));
+        lend = lend.append((!param.own || param.type_name == "fn") && ow_param_can_lend(fn, param, ofuncs, dx));
       }
       methods = methods.append(OwnLend { name: fn.name, lend: lend });
       continue;
@@ -23723,8 +23869,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
     let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
     let lend: boolean[] = [];
     for i in 0..fn.params.len() {
-      let tn: string = fn.params[i].type_name;
-      lend = lend.append((i >= flags.len() || !flags[i]) && ow_decl_type_is_pointer(fn, tn, ofuncs) && !ow_holds_no_handle(tn, dx));
+      lend = lend.append((i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") && ow_param_can_lend(fn, fn.params[i], ofuncs, dx));
     }
     rows = rows.append(OwnLend { name: fn.name, lend: lend });
     names = names.append(fn.name);
@@ -23749,6 +23894,15 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
   return util.has_str(fn.all_type_params, tn) || ow_type_is_pointer(tn, ofuncs);
+}
+
+// A callback can return a captured handle without consuming its capture.
+function ow_param_can_lend(fn: parser.FuncDecl, param: ast.ParamDecl, ofuncs: OwnFuncs, dx: OwnDecls): boolean {
+  let tn = param.type_name;
+  if (tn == "fn") {
+    tn = param.fn_ret;
+  }
+  return ow_decl_type_is_pointer(fn, tn, ofuncs) && !ow_holds_no_handle(tn, dx);
 }
 
 function ow_sig_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -23875,8 +24029,8 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
     ast.ExprZero(_) => {
       return false;
     },
-    ast.ExprLambda(_) => {
-      return false;
+    ast.ExprLambda(lm) => {
+      return ow_lambda_result_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
     },
     ast.ExprStructLit(_) => {
       return false;
@@ -23920,6 +24074,9 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 }
 
 function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  if let Some(tail) = ow_unsafe_value(c) {
+    return ow_expr_borrows(tail, ofuncs, borrowed, locals, values, borrows, builtins);
+  }
   if let ast.ExprLambda(lm) = c.callee {
     if (ow_value_block_call(c, lm)) {
       return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
@@ -23928,9 +24085,37 @@ function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], 
   if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
     return false;
   }
+  if (ow_expr_borrows(c.callee, ofuncs, borrowed, locals, values, borrows, builtins)) {
+    return true;
+  }
   for a in c.args {
     if (ow_expr_borrows(a, ofuncs, borrowed, locals, values, borrows, builtins)) {
       return true;
+    }
+  }
+  return false;
+}
+
+function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  let captured: string[] = [];
+  for name in util.append_all(borrowed, locals) {
+    let shadowed = false;
+    for param in lm.params {
+      if (param.name == name) {
+        shadowed = true;
+      }
+    }
+    if (!shadowed) {
+      captured = captured.append(name);
+    }
+  }
+  let spine = ow_spine_stmts(lm.body);
+  let bound = ow_borrowed_locals(spine, ofuncs, captured, values, borrows, builtins);
+  for st in spine {
+    if let ast.StmtReturn(r) = st {
+      if (ow_expr_borrows(r.value, ofuncs, captured, bound, values, borrows, builtins)) {
+        return true;
+      }
     }
   }
   return false;
@@ -23993,7 +24178,7 @@ function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
+    "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
@@ -24021,7 +24206,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     while (i < fn.params.len()) {
       if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
-        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(fn.params[i].type_name.trim(), dx)) {
+        if ((i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") && ow_param_can_lend(fn, fn.params[i], ofuncs, dx)) {
           all_own = false;
         }
       }
@@ -24103,7 +24288,7 @@ function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
 function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   let out = builtins.names;
   for fn in mod.funcs {
-    if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
+    if (fn.receiver_name.len() > 0 || !ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
       continue;
     }
     if (borrows.has(fn.name)) {
@@ -24122,7 +24307,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
     if (fn.receiver_name.len() == 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
+    if (!ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs) && !util.has_str(func_scope_tparams(fn), fn.ret_type)) {
       continue;
     }
     let key = ow_receiver_ns(fn.receiver_type) + "." + fn.name;
@@ -30766,7 +30951,6 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
@@ -30813,7 +30997,6 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       return (x, s, false);
     }
   }
-  return (x, s, false);
 }
 
 function pretype_value_block_args(c: ast.ExprCall, s: Scope): ast.Expr {

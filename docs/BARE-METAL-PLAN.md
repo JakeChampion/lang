@@ -501,13 +501,23 @@ memory map. The
 
 ### 5. Atomics
 
-Genuinely absent — there is no atomic surface in the language at all (the
-`atomic` hits in the tree are Go test-harness `sync/atomic` and atomic *file*
-writes). Needed
-for SMP kernels and lock-free structures, and gated on the memory-model decision
-above rather than on anyone writing a `Mutex`. Ordering it last is deliberate:
-under the handler-owns-nothing rule, single-core drivers and kernels do not need
-it.
+SMP kernels and lock-free structures need atomics (#14258). Under the
+handler-owns-nothing rule, single-core drivers and kernels do not. The language
+has four, on the 64-bit word at a raw address. They need `unsafe` and the
+`privileged` capability, and a `@norc` function can call them:
+
+| Intrinsic | Order | arm64 | x86-64 |
+|---|---|---|---|
+| `__atomic_load_acquire(addr)` | acquire | `ldar` | `mov` |
+| `__atomic_store_release(addr, v)` | release | `stlr` | `mov` |
+| `__atomic_fetch_add(addr, v)` | sequentially consistent | `ldaddal` | `lock xadd` |
+| `__atomic_cas(addr, old, new)` | sequentially consistent | `casal` | `lock cmpxchg` |
+
+`__atomic_fetch_add` and `__atomic_cas` give the old word. x86-64 orders each
+load as acquire and each store as release, so both are plain moves there. The
+ops lift as device ops, so no pass removes, merges or moves them, or moves a
+plain access across them. Refcounts stay non-atomic (`docs/MULTICORE-RESEARCH.md`
+C1).
 
 ### 6. Board packages: who supplies a capability
 
@@ -951,14 +961,27 @@ and three `mmap` reservations at start.
    compiler extracts its stdlib into the layer in memory, compiles the file,
    and writes the output there. The kernel then runs the output as a second
    process.
-   - The compile needs more RAM than the other boot tests. qemu-virt puts
-     the initrd 128 MiB above the start of its RAM. Thus `std/frames` gains
-     `reserve`, and the kernel reserves the frames of the initrd before it
-     allocates.
+   - The compile needs more RAM than the other boot tests. qemu-virt loads
+     the initrd above the RAM that the header of the Image claims, so the VM
+     has RAM above the `-ram` range for it. Another loader can put the
+     initrd in the RAM of the kernel. Thus `std/frames` gains `reserve`, and
+     the kernel reserves the frames of the initrd before it allocates.
    - `TestSelfHostKernelCompilesOnQemu` compares the size and the FNV-1a
      hash of the output with the output of the same compiler on Linux,
      under qemu-user.
-24. Beside those: the panic scope is decided (#14257, see the north-star
+24. **The compiler compiles itself on the kernel** (#14265, the second
+   "done when" item of milestone 6). The initrd holds the compiler, its
+   sources and its `-embed` stdlib. In a VM of 6 GiB the compiler compiles
+   itself in about 23 minutes. The result has the size and the FNV-1a hash
+   of the result of the same compiler on Linux.
+   - The run found a fault of the compiler: a cache directory that ends in
+     `/`, such as the `HOME=/` of the kernel, made the cycle inside the
+     stdlib an error (#14955). `cache_base` now gives a clean path.
+   - It also found that a node of the layer in memory could take the inode
+     of another node, and that each page-in flushed the whole TLB.
+   - `TestSelfHostKernelSelfCompilesOnQemu` runs in `fernos-nightly.yml`,
+     because it takes about 30 minutes.
+25. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

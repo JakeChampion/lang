@@ -71,6 +71,11 @@ var manifestParityCases = []struct{ name, src string }{
 	{"url without hash", "[package]\nname = \"app\"\n[dependencies]\nh = { url = \"https://x/h.tar.gz\" }\n"},
 	{"empty inline table", "[package]\nname = \"app\"\n[dependencies]\nh = {}\n"},
 	{"unbalanced bracket", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"h\" ], x = \"y\" }\n"},
+	{"package name with parent segments", "[package]\nname = \"../../escape\"\n"},
+	{"package name with a slash", "[package]\nname = \"a/b\"\n"},
+	{"absolute package name", "[package]\nname = \"/tmp/x\"\n"},
+	{"empty package name", "[package]\nname = \"\"\n"},
+	{"package name that starts with a digit", "[package]\nname = \"1app\"\n"},
 	{"invalid dependency name", "[package]\nname = \"app\"\n[dependencies]\n1h = { path = \"h\" }\n"},
 
 	{"unknown workspace key", "[workspace]\nexclude = [\"a\"]\n"},

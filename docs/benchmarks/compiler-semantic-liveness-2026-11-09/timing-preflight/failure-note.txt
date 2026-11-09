@@ -1,0 +1,1 @@
+The first timing sample did not start because /usr/bin/time is absent. The four priming/probe controls completed. No timing result is established by this failed collector. The original script and partial samples remain unchanged. A new output directory uses Python perf_counter_ns and Linux wait4 rusage instead. No performance sample was rejected for its value.

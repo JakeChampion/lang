@@ -124,6 +124,37 @@ function malformed(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function run_errors(): test.TestOutcome {
+  let format = frame.Format { width: 2, height: 1 };
+  let limits = frame.default_limits();
+  let truncated: u8[][] = [
+    [0, 0, 0, 8, 0, 0, 1, 0],
+    [0, 0, 0, 13, 0, 0, 1, 2, 10, 20, 30, 40, 50],
+    [0, 0, 0, 10, 0, 0, 1, 254, 10, 20],
+  ];
+  for packet in truncated {
+    if let Err(frame.Truncated) = qtrle.decode_into(packet, format, 24, [0u32, 0u32], limits) {} else {
+      return test.fail("truncated skip, literal, or repeat error category");
+    }
+  }
+  let invalid: u8[][] = [
+    [0, 0, 0, 8, 0, 0, 1, 3],
+    [0, 0, 0, 8, 0, 0, 1, 253],
+    [0, 0, 0, 9, 0, 0, 1, 0, 0],
+    [0, 0, 0, 9, 0, 0, 1, 0, 4],
+  ];
+  for packet in invalid {
+    if let Err(frame.Header) = qtrle.decode_into(packet, format, 24, [0u32, 0u32], limits) {} else {
+      return test.fail("row extent error takes priority over missing pixel bytes");
+    }
+  }
+  let zero_skip: u8[] = [0, 0, 0, 14, 0, 0, 1, 0, 1, 254, 10, 20, 30, 255];
+  let Ok(decoded) = qtrle.decode_into(zero_skip, format, 24, [0u32, 0u32], limits) else {
+    return test.fail("zero pixel skip");
+  };
+  return test.assert_true(decoded.pixels == [4278850590u32, 4278850590u32]);
+}
+
 function bounds(): test.TestOutcome {
   let format = frame.Format { width: 2, height: 1 };
   let limits = frame.default_limits();
@@ -386,6 +417,7 @@ function main(): i32 {
   let r = test.new("video codecs");
   r = r.it("QTRLE matches FFmpeg pixels and roundtrips delta frames", reference);
   r = r.it("QTRLE rejects malformed and truncated packets", malformed);
+  r = r.it("QTRLE run errors preserve their categories and priority", run_errors);
   r = r.it("video dimensions, storage, precision, and resource limits", bounds);
   r = r.it("IVF packets, timestamps, and resource limits", ivf_packets);
   r = r.it("AVC and HEVC configuration and Annex B packets", nal_packets);

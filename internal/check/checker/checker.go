@@ -2482,6 +2482,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__irq_pending"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	c.info.FuncSigs["__user_run"] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: i64T}
+	c.info.FuncSigs["__atomic_load_acquire"] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: i64T}
+	c.info.FuncSigs["__atomic_store_release"] = &ast.FuncType{Params: []ast.Type{usizeT, i64T}, Result: ast.VoidType{}}
+	c.info.FuncSigs["__atomic_fetch_add"] = &ast.FuncType{Params: []ast.Type{usizeT, i64T}, Result: i64T}
+	c.info.FuncSigs["__atomic_cas"] = &ast.FuncType{Params: []ast.Type{usizeT, i64T, i64T}, Result: i64T}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
@@ -5863,8 +5867,10 @@ type checker struct {
 	numericTypes   map[ast.Expr]ast.Type
 	numericCasts   map[ast.Expr]*ast.CastExpr
 	noRCIdentTypes map[*ast.Ident]ast.Type
-	callee         ast.Expr
-	funcSources    map[string]string
+	// litTypes holds the type each struct literal checked to.
+	litTypes    map[*ast.StructLit]ast.Type
+	callee      ast.Expr
+	funcSources map[string]string
 	// publicFreeFuncs lists the public free functions under the name their
 	// module declares, so a method call can name a function of that name.
 	publicFreeFuncs map[string][]publicFreeFunc
@@ -9434,6 +9440,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
 	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__user_run": true,
+	"__atomic_load_acquire": true, "__atomic_store_release": true, "__atomic_fetch_add": true, "__atomic_cas": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
 	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true,
@@ -10693,7 +10700,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		}
 		switch x := e.(type) {
-		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
+		case *ast.StructLit:
+			return c.structLitOwned(x, isOwnedExpr)
+		case *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
@@ -10728,7 +10737,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id.Name == "share_unchecked" {
 					return true
 				}
-				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
+				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
 					if !c.calleeResultBorrows(x) {
 						return true
 					}
@@ -14203,6 +14212,9 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	}()
 
 	c.checkBlock(fn.Body, root)
+	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+	}
 
 	fn.Captures = nil
 	for _, name := range captureOrder {
@@ -14274,6 +14286,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	if sl, ok := e.(*ast.StructLit); ok && t != nil {
+		if c.litTypes == nil {
+			c.litTypes = map[*ast.StructLit]ast.Type{}
+		}
+		c.litTypes[sl] = t
+	}
 	if c.current != nil && c.current.NoRC {
 		if id, ok := e.(*ast.Ident); ok {
 			if c.noRCIdentTypes == nil {
@@ -16019,6 +16037,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.inferReturnType(synth, lamRets)
 			c.settleLitReturns(synth)
 			n.ReturnType = synth.ReturnType
+		}
+		if n.Body != nil && !isVoidReturn(n.ReturnType) && !c.funcBodyExits(n.Body) {
+			c.errfCode(n.P, "E052", "missing return: this lambda has return type %s but can fall off the end without returning a value", n.ReturnType.String())
 		}
 		c.current = prev
 		n.Captures = nil

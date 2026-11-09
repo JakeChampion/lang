@@ -448,50 +448,142 @@ function can_hold_word(t: typeinfo.Type): boolean {
 // Follow return values through known callees before the splice rounds.
 // A function is examined again only when one of its callees starts to return a word.
 function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
-  return returned_words_since(funcs, ix, owners, none_of(funcs.len()), all_of(funcs.len()), word_callers(all_word_callees(funcs, ix)));
+  let callees = all_word_callees(funcs, ix);
+  return returned_words_since(funcs, ix, owners, none_of(funcs.len()), all_of(funcs.len()), word_callers(callees), callees);
 }
 
 // The least fixpoint is unchanged for a function that reaches no stale one
-// through its callees, so only the stale functions and their callers are
-// found again.
-function returned_words_since(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners, prev: boolean[], stale: boolean[], callers: i32[][]): boolean[] {
-  let words = prev;
-  let queued = none_of(funcs.len());
-  let queue: i32[] = [];
+// through its callees. The others are found again one strongly connected
+// component at a time, callees first. A component is found again only when
+// it holds a stale function or calls a component whose answer changed.
+function returned_words_since(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners, prev: boolean[], stale: boolean[], callers: i32[][], callees: i32[][]): boolean[] {
+  let inside = none_of(funcs.len());
+  let region: i32[] = [];
   for i in 0..funcs.len() {
     if (stale[i]) {
-      queued = queued.with(i, true);
-      queue = queue.append(i);
+      inside = inside.with(i, true);
+      region = region.append(i);
     }
   }
   let reach = 0;
-  while (reach < queue.len()) {
-    let i = queue[reach];
+  while (reach < region.len()) {
+    let i = region[reach];
     reach += 1;
-    words = words.with(i, false);
     for c in callers[i] {
-      if (!queued[c]) {
-        queued = queued.with(c, true);
-        queue = queue.append(c);
+      if (!inside[c]) {
+        inside = inside.with(c, true);
+        region = region.append(c);
       }
     }
   }
-  let head = 0;
-  while (head < queue.len()) {
-    let i = queue[head];
-    head += 1;
-    queued = queued.with(i, false);
-    if (!words[i] && returns_word(funcs[i], funcs, ix, words, owners)) {
-      words = words.with(i, true);
-      for c in callers[i] {
-        if (!words[c] && !queued[c]) {
-          queued = queued.with(c, true);
-          queue = queue.append(c);
+  let sccs = region_sccs(region, inside, callees, funcs.len());
+  let dirty = none_of(sccs.members.len());
+  for i in region {
+    if (stale[i]) {
+      dirty = dirty.with(sccs.comp[i], true);
+    }
+  }
+  let words = prev;
+  for k in 0..sccs.members.len() {
+    if (dirty[k]) {
+      let members = sccs.members[k];
+      let before: boolean[] = [];
+      for m in members {
+        before = before.append(words[m]);
+        words = words.with(m, false);
+      }
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for m in members {
+          if (!words[m] && returns_word(funcs[m], funcs, ix, words, owners)) {
+            words = words.with(m, true);
+            grew = true;
+          }
+        }
+      }
+      for j in 0..members.len() {
+        let m = members[j];
+        if (words[m] != before[j]) {
+          for c in callers[m] {
+            dirty = dirty.with(sccs.comp[c], true);
+          }
         }
       }
     }
   }
   return words;
+}
+
+// comp[i] is the component of each function in the region, and members holds
+// each component. A component comes after every component that it calls.
+struct Sccs { comp: i32[], members: i32[][] }
+
+function region_sccs(region: i32[], inside: boolean[], callees: i32[][], n: i32): Sccs {
+  let index = util.minus_ones(n);
+  let low = __alloc_i32(n);
+  let on_stack = none_of(n);
+  let stack: i32[] = [];
+  let comp = util.minus_ones(n);
+  let members: i32[][] = [];
+  let next = 0;
+  for root in region {
+    if (index[root] >= 0) {
+      continue;
+    }
+    index = index.with(root, next);
+    low = low.with(root, next);
+    next += 1;
+    stack = stack.append(root);
+    on_stack = on_stack.with(root, true);
+    let work: i32[] = [root];
+    let edge: i32[] = [0];
+    while (work.len() > 0) {
+      let top = work[work.len() - 1];
+      let e = edge[edge.len() - 1];
+      if (e < callees[top].len()) {
+        edge = edge.with(edge.len() - 1, e + 1);
+        let w = callees[top][e];
+        if (!inside[w]) {
+          continue;
+        }
+        if (index[w] < 0) {
+          index = index.with(w, next);
+          low = low.with(w, next);
+          next += 1;
+          stack = stack.append(w);
+          on_stack = on_stack.with(w, true);
+          work = work.append(w);
+          edge = edge.append(0);
+        } else if (on_stack[w] && index[w] < low[top]) {
+          low = low.with(top, index[w]);
+        }
+        continue;
+      }
+      work = work.truncate(work.len() - 1);
+      edge = edge.truncate(edge.len() - 1);
+      if (work.len() > 0) {
+        let parent = work[work.len() - 1];
+        if (low[top] < low[parent]) {
+          low = low.with(parent, low[top]);
+        }
+      }
+      if (low[top] == index[top]) {
+        let group: i32[] = [];
+        let more = true;
+        while (more) {
+          let v = stack[stack.len() - 1];
+          stack = stack.truncate(stack.len() - 1);
+          on_stack = on_stack.with(v, false);
+          comp = comp.with(v, members.len());
+          group = group.append(v);
+          more = v != top;
+        }
+        members = members.append(group);
+      }
+    }
+  }
+  return Sccs { comp: comp, members: members };
 }
 
 function returns_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
@@ -526,7 +618,7 @@ function current_words(w: Words, funcs: ssasem.Func[], ix: util.NameIndex, owner
     return w;
   }
   let edges = linked_words(w, funcs, ix);
-  return Words { ...edges, found: returned_words_since(funcs, ix, owners, w.found, w.stale, edges.callers), stale: none_of(funcs.len()), any_stale: false };
+  return Words { ...edges, found: returned_words_since(funcs, ix, owners, w.found, w.stale, edges.callers, edges.callees), stale: none_of(funcs.len()), any_stale: false };
 }
 
 function changed_words(w: Words, i: i32): Words {

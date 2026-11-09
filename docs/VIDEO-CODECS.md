@@ -99,9 +99,22 @@ Decoded frames remain in the platform surface, without a Fern pixel copy.
 The API exposes input backpressure, output format changes, EOS, flush, and timed output release.
 Output format changes report dimensions, crop, and available color identifiers.
 
+Each format change must satisfy the pixel limit from decoder open.
+The limit applies to complete output dimensions, before crop.
+An oversized format returns `Limit`. The lower-level player enters its failed state before it schedules more output.
+This check does not bound memory that MediaCodec allocates before its format event.
+
 Absent color identifiers remain zero. The adapter does not invent a color profile.
 
 `std/video/nal` converts MP4 length prefixes to Annex B start codes.
+It also reads NAL ranges from a complete Annex B byte view and converts them to length prefixes.
+The iterator borrows its input and excludes start codes and surrounding zero bytes.
+It preserves emulation-prevention bytes inside each unit.
+The converter checks complete input and output budgets, plus the capacity of each length prefix.
+
+Both functions inspect packet framing without a platform codec.
+They do not identify access units or supply timestamps. A muxer still needs packet boundaries and timing from the caller.
+
 It reads version-one AVC and HEVC configuration records for Android codec configuration data.
 AVC includes SPS, PPS, and optional SPS extensions.
 
@@ -302,6 +315,9 @@ The widths cross literal, repeat, and skip boundaries.
 Fern decodes each packet to the expected ARGB CRC.
 FFmpeg also decodes twenty-four Fern packets with exact equality to the original ARGB bytes.
 AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels in two additional streams.
+
+`scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
+Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
 `scripts/test-video` executes the native suite with the sanitizer and the WASI suite.
@@ -446,6 +462,11 @@ That compiler takes 2.2 to 7.7 times the FFmpeg loop time on those four workload
 The [2026-11-09 checkpoint](benchmarks/video-qtrle-2026-11-09/README.md) repeats the same packets with compiler source `15a62e417f`.
 Fern takes 2.3 to 7.4 times the FFmpeg loop time in that run.
 These results identify allocation and memory targets. They do not establish a general decoder ranking.
+
+The [run-state allocation control](benchmarks/video-qtrle-run-state-2026-11-09/README.md) compares both decoder versions with one frozen compiler.
+Scalar run validation reduces heap allocations by 83% to 94% across the four workloads.
+Every decoded pixel remains identical. Median time differences stay within the shared-host noise threshold, and peak RSS remains unchanged.
+The result establishes fewer allocations without a claim of general speed or peak-memory improvement.
 
 ## Player work and qualification order
 

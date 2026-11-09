@@ -9,13 +9,14 @@ text over an illustrated wallpaper. The app is in Fern only. It is a NativeActiv
 
 | Gesture | Result |
 | --- | --- |
-| Swipe up | Opens the app list, with the search field ready. Paper is in the list too. |
+| Swipe up, left or right | Opens the app list, with the search field ready. Paper is in the list too. |
+| Tap or drag a letter at either edge of the app list | Goes to the apps that start with that letter. |
 | Type | Filters the list. When one app matches, it opens. |
 | Enter | Opens the first match, or searches the web when no app matches. |
 | Swipe down | Opens the notification shade. |
 | Long-press the wallpaper | Opens the settings: the home apps, the music app, the notification filter, °F or °C, and the hidden apps. |
 | Long-press an app | Add to home, move, rename, hide, block for a while, pause before opening, app info, uninstall. |
-| Tap the time or the date | Opens the alarms or the calendar. |
+| Tap the time or the date | Opens the clock app or the calendar. |
 | Tap the weather | Asks for the location, or gets the weather again. |
 | Tap the round button | Opens the music app. Long-press it to choose the app. |
 
@@ -27,6 +28,8 @@ text over an illustrated wallpaper. The app is in Fern only. It is a NativeActiv
   opens.
 - "Block for a while" closes an app for 15 minutes, 1 hour, 4 hours or the
   rest of the day.
+- In the dark theme of the system, the paper is dark and the ink is light.
+  The sky of the wallpaper above the ridge takes the dark paper.
 
 Paper also does these things:
 

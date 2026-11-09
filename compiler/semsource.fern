@@ -13,6 +13,7 @@ import "./ssabounds";
 import "./ssaquotient";
 import "./ssabytes";
 import "./ssasem";
+import "./ssadeps";
 import "./ssaunits";
 import "./ownership";
 import "./util";
@@ -292,7 +293,6 @@ function dyn_set_end(spelling: string, i: i32): i32 {
     }
     i = j + 1;
   }
-  return i;
 }
 
 function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
@@ -6869,7 +6869,6 @@ function same_modulo_spaces(a: string, b: string): boolean {
     i += 1;
     j += 1;
   }
-  return false;
 }
 
 function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
@@ -7803,6 +7802,10 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__sysreg_write", params: [typeinfo.t_string(), typeinfo.t_i64()], modes: [b, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_clean", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_sync_code", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__atomic_load_acquire", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__atomic_store_release", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__atomic_fetch_add", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__atomic_cas", params: [typeinfo.t_usize(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__cache_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: typeinfo.t_void() },
@@ -9422,7 +9425,14 @@ function lent_rereads(p: Produced): semsink.Sunk {
   if (!p.ok || p.template || p.bodyless) {
     return semsink.Sunk { f: p.func, reread: 0 };
   }
-  return semsink.sink_past_lent(p.func);
+  match (p.analysis) {
+    Some(a) => {
+      return semsink.sink_past_lent(p.func, a.facts);
+    },
+    None => {
+      return semsink.sink_past_lent(p.func, ssadeps.unchecked());
+    }
+  }
 }
 
 pub function changed_rows(a: Built, b: Built): boolean[] {

@@ -685,34 +685,35 @@ pub function is_integer(t: typeinfo.Type): boolean {
 }
 
 pub function reference(t: typeinfo.Type): boolean {
-  if (semtypes.is_handle(t)) {
-    return false;
+  match (t) {
+    typeinfo.TypeStruct(st) => {
+      return !semtypes.is_fd_handle_name(st.name);
+    },
+    typeinfo.TypeString(_) => {
+      return true;
+    },
+    typeinfo.TypeArray(_) => {
+      return true;
+    },
+    typeinfo.TypeTuple(_) => {
+      return true;
+    },
+    typeinfo.TypeUnion(_) => {
+      return true;
+    },
+    typeinfo.TypeFunc(_) => {
+      return true;
+    },
+    typeinfo.TypeMap(_) => {
+      return true;
+    },
+    typeinfo.TypeDyn(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
   }
-  if let typeinfo.TypeString(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeArray(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeTuple(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeFunc(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeMap(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeDyn(_) = t {
-    return true;
-  }
-  return false;
 }
 
 pub function text_constant(t: typeinfo.Type): boolean {
@@ -3290,7 +3291,7 @@ function terminator_error(b: ssa.SBlock, f: Func): string {
   return "";
 }
 
-function operations_error(f: Func): string {
+function operations_error(f: Func, facts: ssadeps.Facts): string {
   let seen_params = 0;
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -3310,7 +3311,7 @@ function operations_error(f: Func): string {
   if (seen_params != f.params.len()) {
     return "missing parameter definition";
   }
-  return guard_error(f);
+  return guard_error(f, facts);
 }
 
 struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[], escape_kind: i32 }
@@ -3583,7 +3584,7 @@ function twin_of(g: Guards, v: i32): i32 {
   return v;
 }
 
-function guards_of(f: Func): Guards {
+function guards_of(f: Func, facts: ssadeps.Facts): Guards {
   let defs = ssa.inst_defs(f.graph);
   let tests: i32[] = [];
   let pi = 0;
@@ -3596,6 +3597,9 @@ function guards_of(f: Func): Guards {
       }
     }
     pi += 1;
+  }
+  if (facts.checked) {
+    return Guards { dom: facts.dom, at: facts.at, defs: defs, tests: tests, same: twins(defs) };
   }
   return Guards { dom: ssadeps.dominates(f.graph), at: ssa.block_positions(f.graph), defs: defs, tests: tests, same: twins(defs) };
 }
@@ -3643,12 +3647,16 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
   return true;
 }
 
-function guard_error(f: Func): string {
+// facts is unchecked when the verifier is off, and then the graph maps are built here.
+function guard_error(f: Func, facts: ssadeps.Facts): string {
   if (!has_guarded_projection(f)) {
     return "";
   }
-  let reachable = ssadeps.reachable_blocks(f.graph);
-  let g = guards_of(f);
+  let reachable = facts.reachable;
+  if (!facts.checked) {
+    reachable = ssadeps.reachable_blocks(f.graph);
+  }
+  let g = guards_of(f, facts);
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
@@ -4342,7 +4350,7 @@ pub function analyze(f: Func): Analysis {
   if (why != "") {
     return failed(why);
   }
-  why = operations_error(f);
+  why = operations_error(f, g);
   if (why != "") {
     return failed(why);
   }

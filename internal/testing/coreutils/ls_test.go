@@ -336,6 +336,23 @@ func listingCases(t *testing.T, util string) []invocation {
 		add("cols-x-w"+w, "-x", "-w", w)
 		add("cols-m-w"+w, "-m", "-w", w)
 	}
+	for _, count := range []int{17, 67, 137} {
+		fixture := t.TempDir()
+		for i := 0; i < count; i++ {
+			name := strconv.Itoa(1000+i) + strings.Repeat("x", (i*17)%29)
+			if err := os.WriteFile(filepath.Join(fixture, name), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, width := range []string{"1", "3", "5", "13", "21", "39", "40", "41", "79", "80", "81", "199", "200", "201"} {
+			for _, format := range []string{"-C", "-x"} {
+				cases = append(cases, invocation{
+					name: "cols-ragged-" + strconv.Itoa(count) + "-" + width + format,
+					args: []string{format, "-w", width}, dir: fixture,
+				})
+			}
+		}
+	}
 	for _, ts := range []string{"0", "1", "3", "4", "8", "16"} {
 		add("cols-tab"+ts, "-C", "-w", "60", "-T", ts)
 		add("cols-tab"+ts+"-across", "-x", "-w", "60", "-T", ts)

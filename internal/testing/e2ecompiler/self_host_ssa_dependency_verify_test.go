@@ -97,6 +97,13 @@ func dependencyVerifyCases() []dependencyVerifyCase {
 		{"phi-edges", "phi-edges", "", ""},
 		{"loop-anchor", "loop-anchor", "", ""},
 		{"rebound-value", "rebound-value", "", ""},
+		{"wide", "wide", "", ""},
+		{"explicit-params-sparse", "params-sparse", `let b = f.blocks[1];
+b = ssa.SBlock { ...b, insts: [
+  ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
+  ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
+] };
+f = ssa.SFunc { ...f, blocks: f.blocks.with(1, b) };`, ""},
 		{"missing-transitive-root", "nested-projection", "deps = deps.with(2, [1]);", "incomplete dependency closure"},
 		{"self-dependency", "nested-projection", "deps = deps.with(0, [0]);", "cyclic dependency"},
 		{"cycle", "nested-projection", "deps = deps.with(0, [1]);", "cyclic dependency"},
@@ -120,6 +127,19 @@ func dependencyVerifySource(t *testing.T, tc dependencyVerifyCase) string {
 	return source[:start] + tc.change + `
 let before = ssa.print_func(f);
 let checked = ssadeps.analyze(f, deps);
+let facts = ssadeps.check_graph(f);
+if (facts.checked) {
+  let reused = ssadeps.analyze_checked(f, deps, facts);
+  if (reused.ok != checked.ok || reused.why != checked.why) { return 5; }
+  if (checked.ok) {
+    for bi in 0..f.blocks.len() {
+      for v in 0..f.nvals {
+        if (ssalive.live_in_has(reused, bi, v) != ssalive.live_in_has(checked, bi, v)) { return 6; }
+        if (ssalive.live_out_has(reused, bi, v) != ssalive.live_out_has(checked, bi, v)) { return 7; }
+      }
+    }
+  }
+}
 let err = checked.why;
 if (checked.ok != (err == "")) { return 3; }
 if (!checked.ok && (checked.live_in.len() != 0 || checked.live_out.len() != 0)) { return 4; }
@@ -158,6 +178,29 @@ func TestSelfHostSSADependencyVerification(t *testing.T) {
 			got, err := cmd.CombinedOutput()
 			if err != nil || string(got) != tc.want+"\n" {
 				t.Fatalf("dependency verification: %v\ngot %s\nwant %s", err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSelfHostSSADependencyVerificationOff(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	for _, name := range []string{"nested-projection", "params-sparse", "wide"} {
+		t.Run(name, func(t *testing.T) {
+			source, want := lifetimeFixture(t, name)
+			source = strings.Replace(source, "import \"./ssalive\";", "import \"./ssalive\";\nimport \"./ssadeps\";", 1)
+			source = strings.Replace(source, "let result = ssalive.compute(f, deps);", "let result = ssadeps.analyze_checked(f, deps, ssadeps.Facts { ...ssadeps.unchecked(), checked: true });", 1)
+			dir := t.TempDir()
+			copySelfHostDriver(t, dir, "ssadeps.fern")
+			if err := os.WriteFile(filepath.Join(dir, "verify_off.fern"), []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := buildSelfHostBin(t, gcc, dir, "verify_off.fern", "verify-off")
+			cmd := runX86_64Bin(runner, bin)
+			cmd.Env = e2eharness.ChildEnv("FERN_IR_VERIFY=0")
+			got, err := cmd.CombinedOutput()
+			if err != nil || string(got) != want {
+				t.Fatalf("verification-off liveness: %v\ngot %s\nwant %s", err, got, want)
 			}
 		})
 	}

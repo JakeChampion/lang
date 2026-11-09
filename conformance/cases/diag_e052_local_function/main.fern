@@ -1,0 +1,9 @@
+function main(): i32 {
+    function pick(x: i32): string {
+        if (x > 0) {
+            return "a";
+        }
+    }
+    print(pick(0));
+    return 0;
+}

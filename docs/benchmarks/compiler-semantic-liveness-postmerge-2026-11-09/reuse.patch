@@ -1,0 +1,109 @@
+diff --git a/compiler/ssadeps.fern b/compiler/ssadeps.fern
+index a67879ea..985777c8 100644
+--- a/compiler/ssadeps.fern
++++ b/compiler/ssadeps.fern
+@@ -150,7 +150,8 @@ pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
+ 
+ pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssalive.Flow {
+   let why = limits_error(f);
+-  if (why == "" && util.verify_on()) {
++  let verify_enabled = why == "" && util.verify_on();
++  if (verify_enabled) {
+     if (g.checked) {
+       why = dependencies_error(f, dependencies, g);
+     } else {
+@@ -160,6 +161,9 @@ pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssa
+   if (why != "") {
+     return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] };
+   }
++  if (verify_enabled && g.checked) {
++    return ssalive.compute_checked_with_sites(f, dependencies, g.at, g.defs, g.positions);
++  }
+   return ssalive.compute_checked(f, dependencies);
+ }
+ 
+diff --git a/compiler/ssalive.fern b/compiler/ssalive.fern
+index 3c834be5..38e32dbe 100644
+--- a/compiler/ssalive.fern
++++ b/compiler/ssalive.fern
+@@ -385,6 +385,12 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
+   return compute_checked_kept(f, dependencies, []);
+ }
+ 
++// The caller must check the graph and dependency table before this call.
++// The maps must describe the same unchanged graph.
++pub function compute_checked_with_sites(f: ssa.SFunc, dependencies: i32[][], at: i32[], def_b: i32[], def_k: i32[]): Flow {
++  return compute_prepared(f, dependencies, [], at, def_b, def_k);
++}
++
+ // Block positions and definition sites must describe this unchanged graph.
+ // Dependency and graph checks still apply.
+ pub function compute_kept_with_sites(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], at: i32[], sites: ssa.DefSites): Flow {
+diff --git a/internal/testing/e2ecompiler/self_host_ssa_dependency_verify_test.go b/internal/testing/e2ecompiler/self_host_ssa_dependency_verify_test.go
+index c09b7f1f..35d8b3b2 100644
+--- a/internal/testing/e2ecompiler/self_host_ssa_dependency_verify_test.go
++++ b/internal/testing/e2ecompiler/self_host_ssa_dependency_verify_test.go
+@@ -97,6 +97,13 @@ func dependencyVerifyCases() []dependencyVerifyCase {
+ 		{"phi-edges", "phi-edges", "", ""},
+ 		{"loop-anchor", "loop-anchor", "", ""},
+ 		{"rebound-value", "rebound-value", "", ""},
++		{"wide", "wide", "", ""},
++		{"explicit-params-sparse", "params-sparse", `let b = f.blocks[1];
++b = ssa.SBlock { ...b, insts: [
++  ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
++  ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
++] };
++f = ssa.SFunc { ...f, blocks: f.blocks.with(1, b) };`, ""},
+ 		{"missing-transitive-root", "nested-projection", "deps = deps.with(2, [1]);", "incomplete dependency closure"},
+ 		{"self-dependency", "nested-projection", "deps = deps.with(0, [0]);", "cyclic dependency"},
+ 		{"cycle", "nested-projection", "deps = deps.with(0, [1]);", "cyclic dependency"},
+@@ -120,6 +127,19 @@ func dependencyVerifySource(t *testing.T, tc dependencyVerifyCase) string {
+ 	return source[:start] + tc.change + `
+ let before = ssa.print_func(f);
+ let checked = ssadeps.analyze(f, deps);
++let facts = ssadeps.check_graph(f);
++if (facts.checked) {
++  let reused = ssadeps.analyze_checked(f, deps, facts);
++  if (reused.ok != checked.ok || reused.why != checked.why) { return 5; }
++  if (checked.ok) {
++    for bi in 0..f.blocks.len() {
++      for v in 0..f.nvals {
++        if (ssalive.live_in_has(reused, bi, v) != ssalive.live_in_has(checked, bi, v)) { return 6; }
++        if (ssalive.live_out_has(reused, bi, v) != ssalive.live_out_has(checked, bi, v)) { return 7; }
++      }
++    }
++  }
++}
+ let err = checked.why;
+ if (checked.ok != (err == "")) { return 3; }
+ if (!checked.ok && (checked.live_in.len() != 0 || checked.live_out.len() != 0)) { return 4; }
+@@ -163,6 +183,29 @@ func TestSelfHostSSADependencyVerification(t *testing.T) {
+ 	}
+ }
+ 
++func TestSelfHostSSADependencyVerificationOff(t *testing.T) {
++	gcc, runner := x86_64Tooling(t)
++	for _, name := range []string{"nested-projection", "params-sparse", "wide"} {
++		t.Run(name, func(t *testing.T) {
++			source, want := lifetimeFixture(t, name)
++			source = strings.Replace(source, "import \"./ssalive\";", "import \"./ssalive\";\nimport \"./ssadeps\";", 1)
++			source = strings.Replace(source, "let result = ssalive.compute(f, deps);", "let result = ssadeps.analyze_checked(f, deps, ssadeps.Facts { ...ssadeps.unchecked(), checked: true });", 1)
++			dir := t.TempDir()
++			copySelfHostDriver(t, dir, "ssadeps.fern")
++			if err := os.WriteFile(filepath.Join(dir, "verify_off.fern"), []byte(source), 0o644); err != nil {
++				t.Fatal(err)
++			}
++			bin := buildSelfHostBin(t, gcc, dir, "verify_off.fern", "verify-off")
++			cmd := runX86_64Bin(runner, bin)
++			cmd.Env = e2eharness.ChildEnv("FERN_IR_VERIFY=0")
++			got, err := cmd.CombinedOutput()
++			if err != nil || string(got) != want {
++				t.Fatalf("verification-off liveness: %v\ngot %s\nwant %s", err, got, want)
++			}
++		})
++	}
++}
++
+ const dominanceReuseChecks = `function dominance_reuse_checks(): i32 {
+   let ret = ssa.STerm { kind_tag: 1, cond: -1, target: -1, t: -1, f: -1, value: 0 };
+   let split = ssa.STerm { kind_tag: 3, cond: 0, target: -1, t: 11, f: 30, value: -1 };

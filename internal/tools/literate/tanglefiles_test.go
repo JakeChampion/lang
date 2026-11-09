@@ -148,3 +148,20 @@ func TestTangleChunk(t *testing.T) {
 		t.Error("expected an error for an undefined chunk")
 	}
 }
+
+func TestTangleFilesRefusesAPathOutsideTheOutputDirectory(t *testing.T) {
+	for _, path := range []string{"../x.fern", "sub/../../x.fern", "/abs/x.fern", "a/..", `..\x.fern`} {
+		src := "```fern file=main.fern entry\nfunction main(): i32 { return 0; }\n```\n\n```fern file=" + path + "\nx\n```\n"
+		_, err := Parse(src).TangleFiles()
+		pe, ok := err.(*Error)
+		if !ok || pe.Position().Line != 5 || !strings.Contains(pe.Error(), "below the output directory") {
+			t.Errorf("file=%s: error = %v, want a refusal at line 5", path, err)
+		}
+	}
+	for _, path := range []string{"sub/x.fern", "a..b.fern", "..x/y.fern", "./x.fern"} {
+		src := "```fern file=" + path + "\nx\n```\n"
+		if _, err := Parse(src).TangleFiles(); err != nil {
+			t.Errorf("file=%s: %v, want no error", path, err)
+		}
+	}
+}

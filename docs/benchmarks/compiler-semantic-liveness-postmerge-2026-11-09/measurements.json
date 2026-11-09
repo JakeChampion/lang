@@ -1,0 +1,184 @@
+{
+  "baseline_source": "b9ba0a1a685d84103abd377440f41217dc3d33b6",
+  "candidate_source": "20a9a0dbed2d27a06ae61abae93c416e3b034bcd",
+  "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "compiler_binaries": {
+    "base-count": {
+      "sha256": "69a4b916d9ab8bbd80bf6af9d1c9fc2de3fa5651ef439ddb83d820e80948965c"
+    },
+    "candidate-count": {
+      "sha256": "3aa00663c7769304403330f942b2793bc732307c72734f4f7aac21178a475ae6"
+    },
+    "base-native-output": {
+      "sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    },
+    "candidate-native-output": {
+      "sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    }
+  },
+  "runs": [
+    {
+      "name": "build-base-count",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/base-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-base-20261109-1950",
+      "started": "2026-11-09T19:54:13.239669+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "1"
+      },
+      "finished": "2026-11-09T19:55:35.145965+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build-candidate-count",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "started": "2026-11-09T19:55:35.257867+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "1"
+      },
+      "finished": "2026-11-09T19:57:46.891280+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-alloc",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/base-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/checker.s",
+        "/workspace/lang-performance-input-20261109-1950/compiler/checker.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "started": "2026-11-09T19:57:46.926957+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T19:58:10.985862+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-alloc",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/checker.s",
+        "/workspace/lang-performance-input-20261109-1950/compiler/checker.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "started": "2026-11-09T19:58:11.059046+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T19:58:27.654476+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "base-native-output",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/base-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/checker",
+        "/workspace/lang-performance-input-20261109-1950/compiler/checker.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "started": "2026-11-09T19:58:27.717689+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T19:58:59.428257+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "candidate-native-output",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/postmerge-qualification-20261109-1950/checker",
+        "/workspace/lang-performance-input-20261109-1950/compiler/checker.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "started": "2026-11-09T19:58:59.434228+00:00",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "FERN_LEAKCHECK": "0"
+      },
+      "finished": "2026-11-09T19:59:21.363692+00:00",
+      "exit_code": 0
+    }
+  ],
+  "allocations": {
+    "base": {
+      "allocs": 52703024,
+      "frees": 52703024,
+      "live_bytes": 0,
+      "assembly_sha256": "3e61e785c7df6e9db9187ddf459179ea19ea92f66c28a3c7b4fb53afbe094b22"
+    },
+    "candidate": {
+      "allocs": 52685747,
+      "frees": 52685747,
+      "live_bytes": 0,
+      "assembly_sha256": "3e61e785c7df6e9db9187ddf459179ea19ea92f66c28a3c7b4fb53afbe094b22"
+    }
+  },
+  "instructions": {},
+  "cache_probes": {},
+  "claim": "Cold allocation and output requalification after later main changes. No instruction or timing comparison for these source identities.",
+  "complete": true
+}

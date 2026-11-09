@@ -24,7 +24,6 @@ function fill(inp: Input): (Input, boolean) {
       return (inp, false);
     }
   }
-  return (inp, false);
 }
 
 pub function read_frame(inp: Input): Frame {
@@ -39,7 +38,7 @@ pub function read_frame(inp: Input): Frame {
   }
   let n = content_length(slice_unchecked(inp.pending, 0, at) + "");
   if (n < 0) {
-    return Frame { inp: inp, body: "", done: true, err: "missing Content-Length header" };
+    return Frame { inp: inp, body: "", done: true, err: "missing or malformed Content-Length header" };
   }
   let start = at + 4;
   while (inp.pending.len() - start < n) {
@@ -66,8 +65,10 @@ function content_length(headers: string): i32 {
     let colon = util.index_of_sub(line, ":");
     if (colon > 0 && lower_ascii((slice_unchecked(line, 0, colon) + "").trim()) == "content-length") {
       let v = (slice_unchecked(line, colon + 1, line.len()) + "").trim();
-      if (util.is_all_digits(v)) {
+      if (util.is_all_digits(v) && v.len() <= 9) {
         n = util.digits_to_i32(v);
+      } else {
+        n = -1;
       }
     }
     if (end + 2 >= rest.len()) {

@@ -1,0 +1,9 @@
+Source: 7dbc615c9c1d2dd53f63529ae9c2925aad4ace5b. Main parent: a19e87208c5931d2600fdb75cc966fd179ae8c8f.
+
+Main has no ssadeps.fern or ssalive.fern change from 12be8f1186. The candidate retains its original API and reuse condition.
+The three external analyze_checked callers remain ssasem.analyze_parents, ssaunits.takes_past_holds, and ssaunits.units_analysis.
+Main adds stored-projection root traversal in ssasem.bytes_roots. It changes the dependencies that analysis receives, not the graph positions or definition sites.
+Other inspected SSA deltas classify the new widening lane load. Constant bitwise folds operate before these checked graph facts.
+The patch against the new main parent retains only the intended implementation and dependency test changes in those selected paths.
+All 67 targeted dependency and liveness results pass after the merge, including verifier-off fallback and invalid-metadata controls.
+This audit and these local tests do not replace the exact-head full CI verdict.

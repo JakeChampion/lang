@@ -20,7 +20,19 @@ const H: i32 = 2400;
 // 2025-08-21 21:06 UTC.
 const EPOCH: i64 = 1755810360000;
 
-function installed(): paper.Entry[] {
+// The apps of the fake device, with one more for each line of the file
+// "extra" in `dir`.
+function installed(dir: string): paper.Entry[] {
+  let out = base_apps();
+  for line in testkit.read_text(dir + "/extra").split("\n") {
+    if (line.len() > 0) {
+      out = out.append(paper.entry("test." + line.to_lower(), "Main", line.to_owned(), ""));
+    }
+  }
+  return out;
+}
+
+function base_apps(): paper.Entry[] {
   return [
     paper.entry("com.android.chrome", "Main", "Chrome", ""),
     paper.entry("com.google.android.gm", "Main", "Gmail", ""),
@@ -32,9 +44,9 @@ function installed(): paper.Entry[] {
   ];
 }
 
-function keys(): string[] {
+function keys(dir: string): string[] {
   let out: string[] = [];
-  for a in installed() {
+  for a in installed(dir) {
     out = out.append(a.key);
   }
   return out;
@@ -90,8 +102,8 @@ function fake(dir: string, now: i64): control.Device {
     write: (path: string, text: string): void => { let ok = write_file(path, text); },
     size: (window: usize): (i32, i32) => (W, H),
     wallpaper: (w: i32): draw.Image => ui_test.wallpaper(w),
-    apps: (): paper.Entry[] => installed(),
-    app_keys: (): string[] => keys(),
+    apps: (): paper.Entry[] => installed(dir),
+    app_keys: (): string[] => keys(dir),
     launch: (key: string, x: i32, y: i32, w: i32, h: i32): boolean => {
       log_line(dir, "launch " + key);
       return true;
@@ -116,7 +128,7 @@ function fake(dir: string, now: i64): control.Device {
       gpu_line(dir, "attach");
       return p;
     },
-    present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
+    present: (own p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
       let ok = write_file(dir + "/frames", testkit.read_text(dir + "/frames") + frame_line(passes) + "\n");
       return p;
     },
@@ -150,9 +162,15 @@ function shown(name: string): Run {
 // As `shown`, with the system properties in `props`, one "name=value" on
 // each line.
 function shown_with(name: string, props: string): Run {
+  return shown_apps(name, props, "");
+}
+
+// As `shown_with`, with an app more for each line of `extra`.
+function shown_apps(name: string, props: string, extra: string): Run {
   let dir = "/tmp/paper-control-" + name + "-" + now_unix_ms().to_string();
   let made = create_dir_all(dir);
   let wrote = write_file(dir + "/props", props);
+  let listed = write_file(dir + "/extra", extra);
   let s = control.with_density(control.new(fake(dir, 0), dir, ui_test.fonts()), 440);
   let r = Run { s: s, dir: dir, now: 0 };
   r = at(r, 0, android.Start);
@@ -220,6 +238,54 @@ function test_swipe_up_opens_list_with_paper(): test.TestOutcome {
   return test.assert_eq(r.s.layer.to_string() + " " + listed.to_string(), "1 true");
 }
 
+// A horizontal swipe on the home screen, left or right, opens the app list.
+function side_swipe(own r: Run, x0: i32, x1: i32): Run {
+  let y = H / 2;
+  let t = at(r, 100, android.Touch(0, x0 as f32, y as f32));
+  t = at(t, 30, android.Touch(2, ((x0 + x1) / 2) as f32, y as f32));
+  t = at(t, 30, android.Touch(2, x1 as f32, y as f32));
+  t = at(t, 10, android.Touch(1, x1 as f32, y as f32));
+  t = at(t, 100, android.Tick);
+  return at(t, 200, android.Tick);
+}
+
+function test_side_swipes_open_list(): test.TestOutcome {
+  let left = side_swipe(shown("swipe-left"), W - 100, 100);
+  let right = side_swipe(shown("swipe-right"), 100, W - 100);
+  return test.assert_eq(left.s.layer.to_string() + " " + right.s.layer.to_string(), "1 1");
+}
+
+// A tap on a letter of the index puts its first app at the top of the list.
+// A drag along the index goes to each letter it passes, and lifting the
+// finger beside the column opens no app.
+function test_letter_index_jumps(): test.TestOutcome {
+  let r = swipe(shown_apps("index", "", "Atlas\nAudible\nBank\nBooks\nClock\nContacts\nDrive\nDuo\nFiles\nFit\nHome\nKeep\nLens\nMeet\nNews\nPhotos\nPodcasts\nSlack\nTasks\nTV\nVLC\nWallet\nYouTube\nZoom"), 2000, 900);
+  let w = find(r, "jump:W");
+  r = tap(r, "jump:W");
+  let at_w = r.s.list_scroll;
+  let c = find(r, "jump:C");
+  let m = find(r, "jump:M");
+  let t = at(r, 100, android.Touch(0, (c.x + c.w / 2) as f32, (c.y + c.h / 2) as f32));
+  t = at(t, 30, android.Touch(2, (m.x + m.w / 2) as f32, (m.y + m.h / 2) as f32));
+  let at_m = t.s.list_scroll;
+  t = at(t, 30, android.Touch(1, (W / 2) as f32, (m.y + m.h / 2) as f32));
+  let mt = ui.Metrics { w: t.s.w, h: t.s.h, d: t.s.d, top: t.s.top, bottom: t.s.bottom, pal: ui.palette(false) };
+  let apps = paper.search(t.s.apps, "", t.s.settings.hidden);
+  let limit = ui.list_scroll_limit(mt, ui_test.fonts(), apps.len());
+  let row = ui.list_row(mt, ui_test.fonts());
+  return test.assert_eq((w.x == 0 || w.x + w.w == W).to_string() + " " + (limit > 0).to_string() + " " + (at_w == (row * first_of(apps, "W")).min(limit)).to_string() + " " + (at_m == first_of(apps, "M") * row && at_m > 0).to_string() + " " + (t.s.list_scroll == at_m).to_string() + " " + logged(t), "true true true true true ");
+}
+
+// The place in `apps` of the first app of `letter`.
+function first_of(apps: paper.Entry[], letter: string): i32 {
+  for i in 0..apps.len() {
+    if (ui.letter_of(apps[i].label) == letter) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function test_search_opens_single_match(): test.TestOutcome {
   let r = type_text(swipe(shown("search"), 2000, 900), "pap");
   return test.assert_eq(logged(r), "launch " + PAPER_KEY);
@@ -258,11 +324,11 @@ function add_home(own r: Run, key: string): Run {
 
 function test_unlimited_home_apps(): test.TestOutcome {
   let r = shown("home");
-  for k in keys() {
+  for k in keys(r.dir) {
     r = add_home(r, k);
   }
   let shown_all = true;
-  for k in keys() {
+  for k in keys(r.dir) {
     if (find(r, "open:" + k).y == -100) {
       shown_all = false;
     }
@@ -402,6 +468,8 @@ function test_held_notifications(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("android paper control");
   r = r.it("a swipe up opens the app list, which lists Paper", test_swipe_up_opens_list_with_paper);
+  r = r.it("a swipe left or right opens the app list", test_side_swipes_open_list);
+  r = r.it("the letter index goes to the apps of a letter", test_letter_index_jumps);
   r = r.it("a search with one match opens it", test_search_opens_single_match);
   r = r.it("enter opens the first match", test_enter_opens_first_match);
   r = r.it("a swipe down opens the notifications", test_swipe_down_opens_notifications);

@@ -45,7 +45,7 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
-		if !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
+		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
 			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
 				b.values[p.Name] = true
@@ -157,15 +157,18 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case nil:
 		return false
 	case *ast.Lambda:
-		// A function value cannot consume its captures. Passing a read
-		// callback does not lend the captured reader to the call's result.
-		return false
+		return c.lambdaResultBorrows(x, b)
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
 		return false
 	case *ast.Ident:
 		return b.borrowed[x.Name] || b.locals[x.Name]
+	case *ast.BlockExpr:
+		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
+			return c.exprBorrows(x.Tail, b)
+		}
+		return true
 	case *ast.FieldAccess:
 		return c.exprBorrows(x.Target, b)
 	case *ast.Index:
@@ -184,6 +187,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.Call:
 		if !c.calleeResultBorrows(x) {
 			return false
+		}
+		if c.exprBorrows(x.Callee, b) {
+			return true
 		}
 		// Dynamic methods keep the receiver on the callee, outside Args.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.Method != nil && c.exprBorrows(fa.Target, b) {
@@ -262,15 +268,54 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 	if sig == nil || i >= len(sig.Params) || sig.Params[i] == nil {
 		return true
 	}
-	if i < len(flags) && flags[i] {
+	if i < len(flags) && flags[i] && !c.callbackCanLend(sig.Params[i]) {
 		return false
 	}
 	pt := sig.Params[i]
-	return mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+	return c.callbackCanLend(pt) || mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+}
+
+// A callback can return a captured handle without consuming its capture.
+func (c *checker) callbackCanLend(t ast.Type) bool {
+	fn, ok := t.(*ast.FuncType)
+	return ok && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
+}
+
+func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
+	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
+		return false
+	}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values}
+	for name := range outer.borrowed {
+		b.borrowed[name] = true
+	}
+	for name := range outer.locals {
+		b.borrowed[name] = true
+	}
+	for _, p := range lm.Params {
+		delete(b.borrowed, p.Name)
+	}
+	b.locals = c.borrowedLocals(&ast.FuncDecl{Body: lm.Body}, b)
+	found := false
+	ast.Walk(lm.Body, func(n ast.Node) bool {
+		if _, nested := n.(*ast.Lambda); nested || found {
+			return false
+		}
+		if r, ok := n.(*ast.Return); ok && c.exprBorrows(r.Value, b) {
+			found = true
+		}
+		return true
+	})
+	return found
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
 	switch x := e.(type) {
+	case *ast.BlockExpr:
+		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
+			return c.argMayBorrow(x.Tail)
+		}
+		return true
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
@@ -300,10 +345,11 @@ func (c *checker) freshMethodResult(x *ast.Call) bool {
 
 var freshBuiltinMethods = map[string]bool{"open_dir": true, "open_reader": true, "open_writer": true, "open_reader_with": true, "open_writer_with": true}
 
-// A handle an open builtin returns is a kernel descriptor: it borrows nothing
-// from the path it was opened with.
+// These builtins promise an accepted owned result. share_unchecked makes
+// this promise explicit for a shared value inside an unsafe block.
 var freshResultBuiltins = map[string]bool{
-	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
+	"share_unchecked": true,
+	"__bytes_owned":   true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
@@ -320,12 +366,8 @@ func (c *checker) signatureResultBorrows(name string) bool {
 		return true
 	}
 	flags := c.ownFuncs[name]
-	for i, pt := range sig.Params {
-		if pt == nil || !mayRetainBorrow(pt) {
-			continue
-		}
-		// A parameter that cannot hold a handle cannot lend one to the result.
-		if (i >= len(flags) || !flags[i]) && !c.holdsNoHandle(pt) {
+	for i := range sig.Params {
+		if c.paramCanLend(sig, flags, i) {
 			return true
 		}
 	}
@@ -364,6 +406,40 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 // a handle.
 func (c *checker) holdsNoHandle(t ast.Type) bool {
 	return c.noHandleIn(t, nil, map[string]bool{})
+}
+
+// structLitOwned says a struct literal owns what it holds: each
+// field value is owned or holds no handle, and each field that the literal
+// keeps from a base that is not owned holds no handle.
+func (c *checker) structLitOwned(sl *ast.StructLit, owned func(ast.Expr) bool) bool {
+	decl := c.info.Structs[sl.TypeName]
+	if decl == nil {
+		return false
+	}
+	st, _ := c.litTypes[sl].(ast.StructType)
+	sub := declArgs(decl.TypeParams, st.Args)
+	fieldType := map[string]ast.Type{}
+	for _, f := range decl.Fields {
+		fieldType[f.Name] = substituteType(f.Type, sub)
+	}
+	noHandle := func(t ast.Type) bool {
+		return t != nil && c.holdsNoHandle(t)
+	}
+	written := map[string]bool{}
+	for _, f := range sl.Fields {
+		written[f.Name] = true
+		if !owned(f.Value) && !noHandle(fieldType[f.Name]) {
+			return false
+		}
+	}
+	if sl.Base != nil && !owned(sl.Base) {
+		for _, f := range decl.Fields {
+			if !written[f.Name] && !noHandle(fieldType[f.Name]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // arrayUpdateOwned says call is `with`, `append` or `truncate` on an array,

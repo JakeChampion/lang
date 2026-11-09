@@ -150,7 +150,8 @@ pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
 
 pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssalive.Flow {
   let why = limits_error(f);
-  if (why == "" && util.verify_on()) {
+  let verify_enabled = why == "" && util.verify_on();
+  if (verify_enabled) {
     if (g.checked) {
       why = dependencies_error(f, dependencies, g);
     } else {
@@ -159,6 +160,9 @@ pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssa
   }
   if (why != "") {
     return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] };
+  }
+  if (verify_enabled && g.checked) {
+    return ssalive.compute_checked_with_sites(f, dependencies, g.at, g.defs, g.positions);
   }
   return ssalive.compute_checked(f, dependencies);
 }

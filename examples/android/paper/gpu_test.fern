@@ -17,14 +17,14 @@ const TOLERANCE: i32 = 6;
 // The screen of `nodes` on the CPU.
 function cpu(fs: face.Fonts, nodes: ui.Node[], m: ui.Metrics): draw.Frame {
   let f = draw.offscreen(m.w, m.h);
-  let wall = ui.wallpaper_layer(ui_test.wallpaper(m.w));
-  let c = ui.render(f, fs, face.new_cache(), nodes, wall, m.d);
+  let wall = ui.wallpaper_layer(ui.themed(ui_test.wallpaper(m.w), m.pal));
+  let c = ui.render(f, fs, face.new_cache(), nodes, wall, m.d, m.pal);
   draw.release(wall);
   return f;
 }
 
 // The frame that the painter shows for `passes`, and the painter.
-function gpu_frame(p: gpu.Painter, passes: ui.Pass[]): (draw.Frame, gpu.Painter) {
+function gpu_frame(own p: gpu.Painter, passes: ui.Pass[]): (draw.Frame, gpu.Painter) {
   let q = gpu.present(p, passes);
   if let Some(c) = q.canvas {
     return (c.read(), q);
@@ -41,7 +41,7 @@ function sheet(): ui.Sheet {
 }
 
 // Each check is a digit of the result: home, the app list half slid in over
-// home, and the app list with a dialog over it.
+// home, the app list with a dialog over it, and home in the dark theme.
 pub function check(): i32 {
   let fs = ui_test.fonts();
   let v = ui_test.home_view();
@@ -50,7 +50,7 @@ pub function check(): i32 {
   if (canvas.is_none()) {
     return 9;
   }
-  let p = gpu.on_canvas(gpu.with_screen(gpu.painter(fs), ui.wallpaper_layer(ui_test.wallpaper(m.w)), m.w, m.h, m.d), canvas);
+  let p = gpu.on_canvas(gpu.with_screen(gpu.painter(fs), ui.wallpaper_layer(ui_test.wallpaper(m.w)), m.w, m.h, m.d, m.pal), canvas);
   let n = 0;
   let home = ui.nodes(fs, v);
   let (got, p1) = gpu_frame(p, [ui.Pass { nodes: home, dy: 0, alpha: 1.0 }]);
@@ -78,6 +78,18 @@ pub function check(): i32 {
   draw.release(shown);
   draw.release(expect);
   let q = gpu.detach(p3);
+  let dm = ui.Metrics { ...m, pal: ui.palette(true) };
+  let dv = ui.View { ...v, m: dm };
+  let dp = gpu.on_canvas(gpu.with_screen(gpu.painter(fs), ui.wallpaper_layer(ui.themed(ui_test.wallpaper(m.w), dm.pal)), m.w, m.h, m.d, dm.pal), gl.open_offscreen(m.w, m.h));
+  let dark_home = ui.nodes(fs, dv);
+  let (dark_got, dp1) = gpu_frame(dp, [ui.Pass { nodes: dark_home, dy: 0, alpha: 1.0 }]);
+  let dark_want = cpu(fs, dark_home, dm);
+  if (testkit.differ(dark_got, dark_want, TOLERANCE) == 0 && dark_got.pixel(m.w / 2, 2) == dm.pal.paper) {
+    n += 1000;
+  }
+  draw.release(dark_got);
+  draw.release(dark_want);
+  let dq = gpu.detach(dp1);
   return n;
 }
 

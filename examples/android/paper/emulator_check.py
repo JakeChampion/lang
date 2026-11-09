@@ -6,10 +6,12 @@ Usage: emulator_check.py APK OUT_DIR
 It installs the APK, which fern -apk wrote, makes Paper the home app, and
 presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
-screen in the paper colour above the wallpaper, a swipe up that opens the
-app list in the paper colour, a search for "pap" that finds Paper and opens
-it, the back key that goes back to the home screen, a frame section in
-the system trace while the list slides, and no crash in logcat. OUT_DIR
+screen in the paper colour above the wallpaper, a tap on the time that
+opens the clock app, a swipe up that opens the app list in the paper
+colour with the keyboard, a tap on the search field that shows the keyboard
+again after the back key hid it, a search for "pap" that finds Paper and
+opens it, the back key that goes back to the home screen, a frame section
+in the system trace while the list slides, and no crash in logcat. OUT_DIR
 gets the frames, logcat and the trace.
 """
 
@@ -28,14 +30,63 @@ PAPER = (255, 244, 230)
 
 
 
-def paper_part(out, name):
+def paper_part(out, name, top_half=False):
     """The share of the screen in the paper colour, from one pixel of each
-    four."""
+    four. With `top_half`, only the top half counts, above the keyboard."""
     time.sleep(1.0)
     width, height, pixels = screen(out, name)
-    part = count(pixels, PAPER, 4) * 4 / (width * height)
+    rows = height // 2 if top_half else height
+    part = count(pixels[: rows * width * 4], PAPER, 4) * 4 / (width * rows)
     print(f"{name}: {width}x{height}, paper {part:.3f}", flush=True)
     return width, height, part
+
+
+def keyboard_shown(timeout=5.0):
+    """The keyboard of the system shows within `timeout` seconds."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if re.search(r"mInputShown=true", adb("shell", "dumpsys", "input_method", check=False)):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def check_keyboard(width):
+    """The app list opens with the keyboard. After the back key hides it, a
+    tap on the search field shows it again. The search field is 36 dp below
+    the status bar, so a tap 74 dp from the top is on it."""
+    if not keyboard_shown():
+        fail("the app list opened without the keyboard")
+        return
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    if keyboard_shown(1.5):
+        fail("the back key did not hide the keyboard")
+        return
+    density = re.findall(r"(\d+)", adb("shell", "wm", "density"))
+    scale = int(density[-1]) / 160 if density else 1.0
+    adb("shell", "input", "tap", str(width // 2), str(int(74 * scale)))
+    if not keyboard_shown():
+        fail("a tap on the search field did not show the keyboard")
+
+
+def open_clock():
+    """Taps the time, which opens the clock app, and goes home again. The
+    first frame logs the middle of the time."""
+    place = re.search(r"paper: drawn .*clock at (\d+) (\d+)", logcat())
+    if not place:
+        fail("the home screen did not log the place of the clock")
+        return
+    adb("shell", "input", "tap", place.group(1), place.group(2))
+    opened = wait_for(r"paper: open clock (\S+)")
+    if not opened or opened.group(1) == "by":
+        fail("a tap on the time did not find the clock app")
+    else:
+        time.sleep(2.0)
+        resumed = adb("shell", "dumpsys", "activity", "activities", check=False)
+        if not re.search(r"(mResumedActivity|topResumedActivity).*" + re.escape(opened.group(1)), resumed):
+            fail(f"a tap on the time did not bring {opened.group(1)} to the front")
+    adb("shell", "input", "keyevent", "KEYCODE_HOME")
+    time.sleep(1.5)
 
 
 def main(apk, out):
@@ -56,6 +107,7 @@ def main(apk, out):
     # shows the paper colour.
     if part < 0.05 or part > 0.7:
         fail(f"the home screen has {part:.3f} of the paper colour, not paper above the wallpaper")
+    open_clock()
 
     adb("shell", "atrace", "--async_start", "-c", "-b", "4096", "-a", PACKAGE, check=False)
     adb("shell", "input", "swipe", str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 4), "150")
@@ -66,9 +118,10 @@ def main(apk, out):
         f.write(trace)
     if not re.search(r"B\|\d+\|frame", trace):
         fail("the system trace has no frame section of the app")
-    _, _, part = paper_part(out, "drawer")
+    _, _, part = paper_part(out, "drawer", top_half=True)
     if part < 0.6:
         fail(f"the app list has {part:.3f} of the paper colour")
+    check_keyboard(width)
 
     adb("shell", "input", "text", "pap")
     if not wait_for(r"paper: launch dev\.fern\.paper/dev\.fern\.paper\.Home"):

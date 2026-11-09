@@ -23,9 +23,10 @@ struct Cand { block: i32, at: i32, chain: i32[] }
 // the read off it holds its count from the read on in any case.
 struct Graph { defs: i32[], def_block: i32[], joined: boolean[], dom: ssadeps.Dom, live: ssalive.Flow }
 
-pub function reread_before_spends(f: ssasem.Func): Late {
+// facts describe the graph of f when they are checked.
+pub function reread_before_spends(f: ssasem.Func, facts: ssadeps.Facts): Late {
   let g = f.graph;
-  let gr = graph_of(g);
+  let gr = graph_of(g, facts);
   if (!gr.live.ok) {
     return Late { f: f, reread: 0 };
   }
@@ -41,7 +42,7 @@ pub function reread_before_spends(f: ssasem.Func): Late {
   return Late { f: f, reread: 0 };
 }
 
-function graph_of(g: ssa.SFunc): Graph {
+function graph_of(g: ssa.SFunc, facts: ssadeps.Facts): Graph {
   let defs = minus_ones(g.nvals);
   let def_block = minus_ones(g.nvals);
   let joined = __alloc_bool(g.nvals);
@@ -58,7 +59,11 @@ function graph_of(g: ssa.SFunc): Graph {
       }
     }
   }
-  return Graph { defs: defs, def_block: def_block, joined: joined, dom: ssadeps.dominates(g), live: ssalive.compute_checked(g, no_chains(g.nvals)) };
+  let dom = facts.dom;
+  if (!facts.checked) {
+    dom = ssadeps.dominates(g);
+  }
+  return Graph { defs: defs, def_block: def_block, joined: joined, dom: dom, live: ssalive.compute_checked(g, no_chains(g.nvals)) };
 }
 
 function marked(own flags: boolean[], vs: i32[]): boolean[] {

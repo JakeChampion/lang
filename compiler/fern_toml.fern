@@ -180,6 +180,9 @@ function with_package_key(m: Manifest, key: string, val: string): Manifest {
   match (parse_string(val)) {
     Ok(value) => {
       if (key == "name") {
+        if (!valid_dep_name(value)) {
+          return failed(m, "invalid [package] name " + docsummary.quote(value) + " (letters, digits, `_`, `-`; must not start with a digit)");
+        }
         return Manifest { ...m, name: value };
       }
       if (key == "lib") {
@@ -803,7 +806,7 @@ function lock_line(line: i32, message: string): string {
 }
 
 function complete_lock_entry(entry: LockEntry): Result[LockEntry, string] {
-  if (entry.name.len() == 0 || entry.version.len() == 0) {
+  if (entry.name.len() == 0 || entry.version.len() == 0 || entry.url.len() > 0 && entry.hash.len() == 0) {
     return Err("fern.lock: incomplete [[package]] entry");
   }
   return Ok(entry);

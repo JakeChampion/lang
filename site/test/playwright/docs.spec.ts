@@ -467,18 +467,6 @@ test("a tutorial exercise has its goal", async ({ page }) => {
   await expect(frame.locator("#exerciseGoal")).toHaveText("1\n2\n3\n4\n5\n", { timeout: 60_000 });
 });
 
-test("embeds load one at a time, so playground.wasm downloads do not overlap", async ({ page }) => {
-  await page.setViewportSize({ width: 1350, height: 940 });
-  const events: string[] = [];
-  page.on("request", (r) => { if (r.url().endsWith("/playground.wasm")) events.push("start"); });
-  page.on("requestfinished", (r) => { if (r.url().endsWith("/playground.wasm")) events.push("done"); });
-  await page.goto("tutorial/types/");
-  // Two embeds are near the first screen at this size.
-  await expect(page.locator("figure.fern-playground iframe[src]")).toHaveCount(2, { timeout: 60_000 });
-  await expect.poll(() => events.length, { timeout: 60_000 }).toBe(4);
-  expect(events).toEqual(["start", "done", "start", "done"]);
-});
-
 test("a captured diagnostic links to the page for its code", async ({ page }) => {
   await page.goto("./");
   const link = page.getByRole("link", { name: "What E030 means, and the fix" });

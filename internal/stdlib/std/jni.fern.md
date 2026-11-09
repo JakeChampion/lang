@@ -583,8 +583,10 @@ pub function call_static_void_method_a(env: usize, clazz: usize, method: usize, 
 // arguments `values`, and gives its result.
 pub function call_object(env: usize, obj: usize, name: string, sig: string, values: usize[]): usize {
   let args: usize = jvalues(values);
-  let got: usize = call_object_method_a(env, obj, get_method_id(env, get_object_class(env, obj), name, sig), args);
+  let class: usize = get_object_class(env, obj);
+  let got: usize = call_object_method_a(env, obj, get_method_id(env, class, name, sig), args);
   free_buffer(args);
+  let dropped: usize = delete_local_ref(env, class);
   return got;
 }
 
@@ -593,8 +595,10 @@ pub function call_object(env: usize, obj: usize, name: string, sig: string, valu
 // method throws.
 pub function call_void(env: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {
   let args: usize = jvalues(values);
-  let done: usize = call_void_method_a(env, obj, get_method_id(env, get_object_class(env, obj), name, sig), args);
+  let class: usize = get_object_class(env, obj);
+  let done: usize = call_void_method_a(env, obj, get_method_id(env, class, name, sig), args);
   free_buffer(args);
+  let dropped: usize = delete_local_ref(env, class);
   if (exception_occurred(env) != 0 as usize) {
     exception_clear(env);
     return false;

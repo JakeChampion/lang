@@ -793,7 +793,6 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
       return merged;
     }
   }
-  return merged;
 }
 
 pub function module_sig_string(mod: parser.Module): string {

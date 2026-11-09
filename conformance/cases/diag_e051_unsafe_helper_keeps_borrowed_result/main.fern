@@ -1,0 +1,40 @@
+// spec: SH-01
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function read_owned(own h: Handle): i32 {
+  return h.fd;
+}
+
+function borrowed(h: Handle): Handle {
+  return unsafe { h };
+}
+
+function f(h: Handle): i32 {
+  return read_owned(borrowed(h));
+}
+
+struct Box[T] { value: T }
+
+function (box: Box[T]) borrowed(): T {
+  return box.value;
+}
+
+function through_method(box: Box[Handle]): i32 {
+  return read_owned(box.borrowed());
+}
+
+function (box: Box[T]) borrow_value[U](value: U): U {
+  return value;
+}
+
+function through_generic_method(box: Box[Handle], value: Handle): i32 {
+  return read_owned(box.borrow_value(value));
+}
+
+function main(): i32 {
+  return 0;
+}

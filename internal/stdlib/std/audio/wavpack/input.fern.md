@@ -239,7 +239,8 @@ function tag_step(own state: Input, read: (i32) => Result[u8[], IoError], own sa
   let next = tag.step(buffer, read)?;
   let consumed = next.state.bytes_read() - before;
   let counted = offset(control, consumed)?;
-  return pending(Input { control: Control { ...counted, stage: if (next.done) { EndTrack } else { Tags }, metadata_bytes: counted.metadata_bytes + consumed }, buffer: next.buffer, builder: builder, plan: plan, scratch: scratch, tags: Some(next.state) }, samples);
+  let seen = counted.metadata_bytes + consumed;
+  return pending(Input { control: Control { ...counted, stage: if (next.done) { EndTrack } else { Tags }, metadata_bytes: seen }, buffer: next.buffer, builder: builder, plan: plan, scratch: scratch, tags: Some(next.state) }, samples);
 }
 
 function finish(own state: Input, own samples: i32[]): Result[Progress, source.ReadError] {

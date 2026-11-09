@@ -23,21 +23,16 @@ pub const SKY_TOP: f64 = 0.445;
 
 // --- colours
 
-pub function paper_color(): i32 {
-  return draw.rgb(255, 244, 230);
-}
+// The colours of the paper, the ink and the dialogs, light or dark. The
+// wallpaper keeps its own colours in both.
+pub struct Palette { paper: i32, ink: i32, ink_soft: i32, ink_faded: i32, dialog: i32, dialog_text: i32, dialog_soft: i32 }
 
-pub function ink(): i32 {
-  return draw.rgb(17, 17, 17);
-}
-
-pub function ink_soft(): i32 {
-  return draw.rgb(138, 122, 102);
-}
-
-// The ink of a hidden or a blocked app: ink at 40%.
-pub function ink_faded(): i32 {
-  return draw.rgba(17, 17, 17, 102);
+// The palette of the system theme: dark when `dark` is true.
+pub function palette(dark: boolean): Palette {
+  if (dark) {
+    return Palette { paper: draw.rgb(28, 26, 23), ink: draw.rgb(240, 230, 215), ink_soft: draw.rgb(168, 154, 136), ink_faded: draw.rgba(240, 230, 215, 102), dialog: draw.rgb(43, 40, 37), dialog_text: draw.rgb(236, 230, 224), dialog_soft: draw.rgb(190, 182, 172) };
+  }
+  return Palette { paper: draw.rgb(255, 244, 230), ink: draw.rgb(17, 17, 17), ink_soft: draw.rgb(138, 122, 102), ink_faded: draw.rgba(17, 17, 17, 102), dialog: draw.rgb(247, 242, 236), dialog_text: draw.rgb(29, 27, 32), dialog_soft: draw.rgb(73, 69, 79) };
 }
 
 pub function ridge(): i32 {
@@ -52,25 +47,12 @@ pub function cream(): i32 {
   return draw.rgb(255, 244, 230);
 }
 
-// The surface and the text of a dialog.
-pub function dialog_color(): i32 {
-  return draw.rgb(247, 242, 236);
-}
-
-pub function dialog_text(): i32 {
-  return draw.rgb(29, 27, 32);
-}
-
-pub function dialog_soft(): i32 {
-  return draw.rgb(73, 69, 79);
-}
-
 // --- metrics
 
 // The window is w by h. `d` is the pixels of one density-independent pixel.
 // `top` and `bottom` are the parts that the status bar, and the navigation
-// bar or the keyboard, cover.
-pub struct Metrics { w: i32, h: i32, d: f64, top: i32, bottom: i32 }
+// bar or the keyboard, cover. `pal` holds the colours of the theme.
+pub struct Metrics { w: i32, h: i32, d: f64, top: i32, bottom: i32, pal: Palette }
 
 pub function dp(m: Metrics, v: f64): i32 {
   return (v * m.d).round() as i32;
@@ -86,6 +68,39 @@ pub function wallpaper_layer(img: draw.Image): draw.Frame {
     f.image(0, 0, img.width, img.height, img);
   }
   return f;
+}
+
+// A pixel within NEAR_PAPER of the light paper, in each channel, takes the
+// dark paper in full. Between that and FAR_PAPER it takes less of it.
+const NEAR_PAPER: i32 = 48;
+
+const FAR_PAPER: i32 = 96;
+
+// The wallpaper `img` in the theme of `pal`. With a dark paper, a pixel near
+// the light paper moves to the dark paper with a third of its difference
+// from the light paper, so the sky above the ridge keeps a faint grain.
+pub function themed(img: draw.Image, pal: Palette): draw.Image {
+  let light = palette(false).paper;
+  if (pal.paper == light) {
+    return img;
+  }
+  let px = img.pixels;
+  for i in 0..img.width * img.height {
+    let k = i * 4;
+    let far = 0;
+    for ch in 0..3 {
+      far = far.max((px[k + ch] as i32 - (light >> 8 * ch & 255)).abs());
+    }
+    if (far < FAR_PAPER) {
+      let weight = (FAR_PAPER - far).min(FAR_PAPER - NEAR_PAPER);
+      for ch in 0..3 {
+        let v = px[k + ch] as i32;
+        let target = (pal.paper >> 8 * ch & 255) + (v - (light >> 8 * ch & 255)) / 3;
+        px = px.with(k + ch, (v + (target - v) * weight / (FAR_PAPER - NEAR_PAPER)).max(0).min(255) as u8);
+      }
+    }
+  }
+  return draw.Image { ...img, pixels: px };
 }
 
 pub function wallpaper(bytes: [u8], w: i32): draw.Image {
@@ -283,10 +298,10 @@ function home_base(m: Metrics, f: face.Fonts, v: View): Node[] {
   let ns: Node[] = [node(0, 0, m.w, m.h, Wallpaper)];
   let date_px = dp(m, 21.0);
   let dw = face.spaced_width(f, face.BOLD, date_px, -10, v.date);
-  ns = ns.append(tap(node((m.w - dw) / 2, date_y(m), dw, face.line(f, face.BOLD, date_px), Label(v.date, date_px, face.BOLD, -10, ink())), "calendar"));
+  ns = ns.append(tap(node((m.w - dw) / 2, date_y(m), dw, face.line(f, face.BOLD, date_px), Label(v.date, date_px, face.BOLD, -10, m.pal.ink)), "calendar"));
   let cpx = clock_px(m);
   let cw = face.spaced_width(f, face.EXTRABOLD, cpx, -35, v.time);
-  ns = ns.append(tap(node((m.w - cw) / 2, clock_y(m, f), cw, face.line(f, face.EXTRABOLD, cpx), Label(v.time, cpx, face.EXTRABOLD, -35, ink())), "alarms"));
+  ns = ns.append(tap(node((m.w - cw) / 2, clock_y(m, f), cw, face.line(f, face.EXTRABOLD, cpx), Label(v.time, cpx, face.EXTRABOLD, -35, m.pal.ink)), "clock"));
   ns = cat(ns, widgets(m, f, v, row_y(m, f)));
   return cat(ns, hint(m, f, v));
 }
@@ -331,9 +346,9 @@ function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
   let ix = dp(m, 24.0);
   let iy = dp(m, 18.0);
   ns = ns.append(node(x, y + (top_line - iy) / 2, ix, iy, Weather(sky)));
-  ns = ns.append(label(f, x + ix + dp(m, 4.0), y, first, px, face.BOLD, ink()));
-  ns = ns.append(label(f, x, y + top_line + dp(m, 3.0), face.fit(f, face.SEMIBOLD, px, second, room), px, face.SEMIBOLD, ink()));
-  ns = ns.append(label(f, x, y + top_line + dp(m, 3.0) + line, face.fit(f, face.SEMIBOLD, px, third, room), px, face.SEMIBOLD, ink()));
+  ns = ns.append(label(f, x + ix + dp(m, 4.0), y, first, px, face.BOLD, m.pal.ink));
+  ns = ns.append(label(f, x, y + top_line + dp(m, 3.0), face.fit(f, face.SEMIBOLD, px, second, room), px, face.SEMIBOLD, m.pal.ink));
+  ns = ns.append(label(f, x, y + top_line + dp(m, 3.0) + line, face.fit(f, face.SEMIBOLD, px, third, room), px, face.SEMIBOLD, m.pal.ink));
   let block_h = widget_h(m, f);
   ns = ns.append(tap(node(x, y, room, block_h, Blank), "weather"));
   ns = ns.append(Node { ...node(mx, y + (block_h - music) / 2, music, music, Music), act: "music", long: "pick-music" });
@@ -434,23 +449,23 @@ pub function list_scroll_limit(m: Metrics, f: face.Fonts, n: i32): i32 {
 
 // The top of the app list: the search field and the ridge.
 function drawer_head(m: Metrics, f: face.Fonts, v: View): Node[] {
-  let ns: Node[] = [fill(0, 0, m.w, m.h, paper_color(), 0)];
+  let ns: Node[] = [fill(0, 0, m.w, m.h, m.pal.paper, 0)];
   let x = dp(m, 32.0);
   let spx = search_px(m);
   let sy = search_y(m);
   let room = m.w - 2 * x - dp(m, 4.0);
   let shown = face.fit_end(f, face.EXTRABOLD, spx, v.query, room);
   if (v.query.len() == 0) {
-    ns = ns.append(label(f, x, sy, "Search", spx, face.EXTRABOLD, ink_soft()));
+    ns = ns.append(label(f, x, sy, "Search", spx, face.EXTRABOLD, m.pal.ink_soft));
   } else {
-    ns = ns.append(label(f, x, sy, shown, spx, face.EXTRABOLD, ink()));
+    ns = ns.append(label(f, x, sy, shown, spx, face.EXTRABOLD, m.pal.ink));
   }
   if (v.typing) {
     let qw = 0;
     if (v.query.len() > 0) {
       qw = face.width(f, face.EXTRABOLD, spx, shown);
     }
-    ns = ns.append(fill(x + qw + dp(m, 1.0), sy, dp(m, 2.0), face.line(f, face.EXTRABOLD, spx), ink(), 0));
+    ns = ns.append(fill(x + qw + dp(m, 1.0), sy, dp(m, 2.0), face.line(f, face.EXTRABOLD, spx), m.pal.ink, 0));
   }
   ns = ns.append(tap(node(0, m.top, m.w, sy + face.line(f, face.EXTRABOLD, spx) - m.top, Blank), "type"));
   let ridge_y = sy + face.line(f, face.EXTRABOLD, spx) + dp(m, 6.0);
@@ -468,8 +483,8 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
   ns = ns.append(in_list(node(0, top, m.w, bottom - top, Blank), "list", top, bottom));
   if (v.results.len() == 0) {
     let epx = dp(m, 17.0);
-    ns = ns.append(label(f, x, top + dp(m, 12.0), "No matching apps.", epx, face.MEDIUM, ink_soft()));
-    ns = ns.append(label(f, x, top + dp(m, 12.0) + face.line(f, face.MEDIUM, epx), "Press enter to search the web.", epx, face.MEDIUM, ink_soft()));
+    ns = ns.append(label(f, x, top + dp(m, 12.0), "No matching apps.", epx, face.MEDIUM, m.pal.ink_soft));
+    ns = ns.append(label(f, x, top + dp(m, 12.0) + face.line(f, face.MEDIUM, epx), "Press enter to search the web.", epx, face.MEDIUM, m.pal.ink_soft));
     return ns;
   }
   let first = v.list_scroll / row;
@@ -478,9 +493,9 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
   while (i < v.results.len() && y < bottom) {
     let a = v.results[i];
     let text = a.label;
-    let color = ink();
+    let color = m.pal.ink;
     if (paper.has(v.dim, a.key)) {
-      color = ink_faded();
+      color = m.pal.ink_faded;
       if (paper.has(v.dim, "blocked:" + a.key)) {
         text += " · blocked";
       }
@@ -491,6 +506,72 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
     ns = ns.append(in_list(Node { ...node(0, y, m.w, row, Blank), act: "open:" + a.key, long: "menu:" + a.key }, "list", top, bottom));
     y += row;
     i += 1;
+  }
+  if (v.query.len() == 0) {
+    ns = cat(ns, letter_index(m, f, v.results, top, bottom));
+  }
+  return ns;
+}
+
+const ALPHABET: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+// The letter of an app name in the index: its first letter, A to Z, or "#".
+pub function letter_of(name: string): string {
+  if (name.len() == 0) {
+    return "#";
+  }
+  let b = name[0] as i32;
+  if (b >= 97 && b <= 122) {
+    b -= 32;
+  }
+  if (b < 65 || b > 90) {
+    return "#";
+  }
+  return ALPHABET.drop(b - 65).take(1).to_owned();
+}
+
+// The letters of the apps, in the order of the list, each once.
+pub function letters(apps: paper.Entry[]): string[] {
+  let out: string[] = [];
+  for a in apps {
+    let l = letter_of(a.label);
+    if (!paper.has(out, l)) {
+      out = out.append(l);
+    }
+  }
+  return out;
+}
+
+// The scroll of the app list that puts the first app of `letter` at the top.
+pub function letter_scroll(m: Metrics, f: face.Fonts, apps: paper.Entry[], letter: string): i32 {
+  for i in 0..apps.len() {
+    if (letter_of(apps[i].label) == letter) {
+      return (i * list_row(m, f)).min(list_scroll_limit(m, f, apps.len()));
+    }
+  }
+  return 0;
+}
+
+// A column of the letters of the apps on each edge of the app list. A tap
+// or a drag on a letter goes to its apps.
+function letter_index(m: Metrics, f: face.Fonts, apps: paper.Entry[], top: i32, bottom: i32): Node[] {
+  let ls = letters(apps);
+  if (ls.len() < 2) {
+    return [];
+  }
+  let px = dp(m, 13.0);
+  let col = dp(m, 28.0);
+  let slot = ((bottom - top) / ls.len()).min(dp(m, 26.0));
+  let y = top + (bottom - top - slot * ls.len()) / 2;
+  let lh = face.line(f, face.SEMIBOLD, px);
+  let ns: Node[] = [];
+  for l in ls {
+    let w = face.width(f, face.SEMIBOLD, px, l);
+    for x in [0, m.w - col] {
+      ns = ns.append(label(f, x + (col - w) / 2, y + (slot - lh) / 2, l, px, face.SEMIBOLD, m.pal.ink_soft));
+      ns = ns.append(Node { ...node(x, y, col, slot, Blank), act: "jump:" + l, group: "index" });
+    }
+    y += slot;
   }
   return ns;
 }
@@ -563,12 +644,12 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
   let (top, h, r0, r1) = dialog_box(m, f, s);
   let w = dialog_width(m);
   let left = (m.w - w) / 2;
-  ns = ns.append(tap(fill(left, top, w, h, dialog_color(), dp(m, 28.0)), "none"));
+  ns = ns.append(tap(fill(left, top, w, h, m.pal.dialog, dp(m, 28.0)), "none"));
   let pad = dp(m, 24.0);
   let x = left + pad;
   let inner = w - 2 * pad;
   let tpx = dp(m, 24.0);
-  ns = ns.append(label(f, x, top + pad, face.fit(f, face.REGULAR, tpx, s.title, inner), tpx, face.REGULAR, dialog_text()));
+  ns = ns.append(label(f, x, top + pad, face.fit(f, face.REGULAR, tpx, s.title, inner), tpx, face.REGULAR, m.pal.dialog_text));
   let y = top + pad + face.line(f, face.REGULAR, tpx) + dp(m, 16.0);
   if (s.field) {
     let fpx = dp(m, 18.0);
@@ -579,16 +660,16 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
     let room = inner - dp(m, 8.0);
     let shown = face.fit_end(f, face.REGULAR, fpx, s.text, room);
     if (s.text.len() == 0) {
-      ns = ns.append(label(f, x + dp(m, 4.0), ty, face.fit(f, face.REGULAR, fpx, s.hint, room), fpx, face.REGULAR, dialog_soft()));
+      ns = ns.append(label(f, x + dp(m, 4.0), ty, face.fit(f, face.REGULAR, fpx, s.hint, room), fpx, face.REGULAR, m.pal.dialog_soft));
     } else {
-      ns = ns.append(label(f, x + dp(m, 4.0), ty, shown, fpx, face.REGULAR, dialog_text()));
+      ns = ns.append(label(f, x + dp(m, 4.0), ty, shown, fpx, face.REGULAR, m.pal.dialog_text));
     }
     let tw = 0;
     if (s.text.len() > 0) {
       tw = face.width(f, face.REGULAR, fpx, shown);
     }
-    ns = ns.append(fill(x + dp(m, 4.0) + tw + dp(m, 1.0), ty, dp(m, 2.0), face.line(f, face.REGULAR, fpx), ink(), 0));
-    ns = ns.append(node(x, fy + fh - dp(m, 8.0), inner, dp(m, 2.0), Underline(ink())));
+    ns = ns.append(fill(x + dp(m, 4.0) + tw + dp(m, 1.0), ty, dp(m, 2.0), face.line(f, face.REGULAR, fpx), m.pal.ink, 0));
+    ns = ns.append(node(x, fy + fh - dp(m, 8.0), inner, dp(m, 2.0), Underline(m.pal.ink)));
   }
   let rpx = dp(m, 16.0);
   ns = ns.append(in_list(node(left, r0, w, r1 - r0, Blank), "sheet", r0, r1));
@@ -607,9 +688,9 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
       let lh = face.line(f, face.REGULAR, rpx);
       let ly = ry + (rh - lines.len() * lh) / 2;
       for k in 0..lines.len() {
-        let color = dialog_text();
+        let color = m.pal.dialog_text;
         if (k == 0 && lines.len() > 1) {
-          color = dialog_soft();
+          color = m.pal.dialog_soft;
         }
         ns = ns.append(in_list(label(f, tx, ly, face.fit(f, face.REGULAR, rpx, lines[k], left + w - pad - tx), rpx, face.REGULAR, color), "sheet", r0, r1));
         ly += lh;
@@ -633,7 +714,7 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
         at = left + pad - dp(m, 12.0);
       }
       ns = ns.append(tap(node(at, by, bw, bh, Blank), b.act));
-      ns = ns.append(label(f, at + dp(m, 12.0), by + (bh - face.line(f, face.MEDIUM, bpx)) / 2, b.text, bpx, face.MEDIUM, ink()));
+      ns = ns.append(label(f, at + dp(m, 12.0), by + (bh - face.line(f, face.MEDIUM, bpx)) / 2, b.text, bpx, face.MEDIUM, m.pal.ink));
       bx = at - dp(m, 8.0);
       k -= 1;
     }
@@ -881,9 +962,9 @@ pub function margin(n: Node, d: f64): i32 {
 // Draws node `n` alone on the transparent frame `fr`, with its top left
 // corner `m` pixels in from the corner of the frame. The pixels of the frame
 // are then premultiplied.
-pub function raster(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, m: i32, wall: draw.Frame, d: f64): face.Cache {
+pub function raster(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, m: i32, wall: draw.Frame, d: f64, pal: Palette): face.Cache {
   fr.store(0, 0, fr.width, fr.height, 0);
-  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: 1 << 30 }, wall, d, 0);
+  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: 1 << 30 }, wall, d, pal, 0);
 }
 
 // The rows of `fr` from y0 to y1, as a frame of its own.
@@ -904,7 +985,7 @@ function band(fr: draw.Frame, y0: i32, y1: i32): draw.Frame {
 
 // Draws the nodes. `wall` is the layer of the wallpaper at the width of the
 // frame. It gives the cache with the sprites it made.
-pub function render(fr: draw.Frame, f: face.Fonts, own c: face.Cache, ns: Node[], wall: draw.Frame, d: f64): face.Cache {
+pub function render(fr: draw.Frame, f: face.Fonts, own c: face.Cache, ns: Node[], wall: draw.Frame, d: f64, pal: Palette): face.Cache {
   let cache = c;
   for n in ns {
     if (n.clip0 > 0 || n.clip1 < fr.height) {
@@ -914,17 +995,17 @@ pub function render(fr: draw.Frame, f: face.Fonts, own c: face.Cache, ns: Node[]
       }
       let b = band(fr, top, n.clip1);
       if (b.height > 0) {
-        cache = paint(b, f, cache, Node { ...n, y: n.y - top }, wall, d, top);
+        cache = paint(b, f, cache, Node { ...n, y: n.y - top }, wall, d, pal, top);
       }
     } else {
-      cache = paint(fr, f, cache, n, wall, d, 0);
+      cache = paint(fr, f, cache, n, wall, d, pal, 0);
     }
   }
   return cache;
 }
 
 // `y0` is the row of the window where the frame `fr` starts.
-function paint(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, wall: draw.Frame, d: f64, y0: i32): face.Cache {
+function paint(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, wall: draw.Frame, d: f64, pal: Palette, y0: i32): face.Cache {
   match (n.paint) {
     Label(s, px, weight, track, color) => {
       return face.text(c, fr, f, weight, px, track, n.x, n.y + face.ascent(f, weight, px), s, color);
@@ -933,16 +1014,16 @@ function paint(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, wall: 
       return shadowed(c, fr, f, n, s, px, weight, color, blur, d);
     },
     Gauge(now, range, frac) => {
-      return paint_gauge(c, fr, f, n, now, range, frac);
+      return paint_gauge(c, fr, f, n, now, range, frac, pal);
     },
     _ => {
-      paint_shape(fr, n, wall, d, y0);
+      paint_shape(fr, n, wall, d, pal, y0);
       return c;
     }
   }
 }
 
-function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, y0: i32): void {
+function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, pal: Palette, y0: i32): void {
   match (n.paint) {
     Fill(color, r) => {
       if (r > 0) {
@@ -955,17 +1036,17 @@ function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, y0: i32)
       outline(fr, n, color, r, width);
     },
     Wallpaper => {
-      fr.store(0, 0, fr.width, fr.height, paper_color());
+      fr.store(0, 0, fr.width, fr.height, pal.paper);
       fr.blit(wall, 0, fr.height - wall.height);
     },
     Fade(top) => {
-      fade(fr, n, wall, top, y0);
+      fade(fr, n, wall, top, pal.paper, y0);
     },
     Weather(sky) => {
-      paint_sky(fr, n, sky);
+      paint_sky(fr, n, sky, pal.ink);
     },
     Music => {
-      paint_music(fr, n);
+      paint_music(fr, n, pal);
     },
     Ridge => {
       paint_ridge(fr, n, d);
@@ -974,7 +1055,7 @@ function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, y0: i32)
       paint_breath(fr, n, scale, d);
     },
     Check(on) => {
-      paint_check(fr, n, on, d);
+      paint_check(fr, n, on, d, pal);
     },
     Underline(color) => {
       fr.fill(n.x, n.y, n.w, n.h, color);
@@ -986,7 +1067,7 @@ function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, y0: i32)
 // The wallpaper drawn back over the edge of a list, from all of it at the
 // edge to none of it `n.h` pixels in. The frame starts at row `y0` of the
 // window, where the wallpaper sits on the bottom edge.
-function fade(fr: draw.Frame, n: Node, wall: draw.Frame, top: boolean, y0: i32): void {
+function fade(fr: draw.Frame, n: Node, wall: draw.Frame, top: boolean, paper: i32, y0: i32): void {
   if (wall.width <= 0) {
     return;
   }
@@ -1004,7 +1085,7 @@ function fade(fr: draw.Frame, n: Node, wall: draw.Frame, top: boolean, y0: i32):
     let iy = y + y0 - wall_top;
     for x in n.x..n.x + n.w {
       if (x >= 0 && x < fr.width) {
-        let color = paper_color();
+        let color = paper;
         if (iy >= 0 && iy < wall.height && x < wall.width) {
           color = wall.pixel(x, iy);
         }
@@ -1069,62 +1150,62 @@ function disc(fr: draw.Frame, cx: f64, cy: f64, r: f64, color: i32): void {
   }
 }
 
-function paint_sky(fr: draw.Frame, n: Node, sky: paper.Sky): void {
+function paint_sky(fr: draw.Frame, n: Node, sky: paper.Sky, ink: i32): void {
   let w = n.w as f64;
   let h = n.h as f64;
   let x = n.x as f64;
   let y = n.y as f64;
   match (sky) {
     paper.Clear => {
-      sun(fr, x + w * 0.5, y + h * 0.5, h * 0.24, w * 0.08);
+      sun(fr, x + w * 0.5, y + h * 0.5, h * 0.24, w * 0.08, ink);
     },
     paper.Partly => {
-      sun(fr, x + w * 0.62, y + h * 0.32, w * 0.15, w * 0.08);
-      cloud(fr, x, y + h * 0.12, w, h * 0.88);
+      sun(fr, x + w * 0.62, y + h * 0.32, w * 0.15, w * 0.08, ink);
+      cloud(fr, x, y + h * 0.12, w, h * 0.88, ink);
     },
     paper.Fog => {
       for i in 0..3 {
         let ly = y + h * (0.3 + i as f64 * 0.22);
-        stroke(fr, x + w * 0.12, ly, x + w * 0.88, ly, w * 0.04, ink());
+        stroke(fr, x + w * 0.12, ly, x + w * 0.88, ly, w * 0.04, ink);
       }
     },
     paper.Cloudy => {
-      cloud(fr, x, y + h * 0.1, w, h * 0.9);
+      cloud(fr, x, y + h * 0.1, w, h * 0.9, ink);
     },
     paper.Snow => {
-      cloud(fr, x, y, w, h * 0.72);
+      cloud(fr, x, y, w, h * 0.72, ink);
       for i in 0..3 {
-        disc(fr, x + w * (0.3 + i as f64 * 0.2), y + h * 0.86, w * 0.05, ink());
+        disc(fr, x + w * (0.3 + i as f64 * 0.2), y + h * 0.86, w * 0.05, ink);
       }
     },
     _ => {
-      cloud(fr, x, y, w, h * 0.72);
+      cloud(fr, x, y, w, h * 0.72, ink);
       for i in 0..3 {
         let px = x + w * (0.3 + i as f64 * 0.2);
-        stroke(fr, px, y + h * 0.8, px - w * 0.06, y + h * 0.96, w * 0.04, ink());
+        stroke(fr, px, y + h * 0.8, px - w * 0.06, y + h * 0.96, w * 0.04, ink);
       }
     }
   }
 }
 
-function sun(fr: draw.Frame, cx: f64, cy: f64, r: f64, ray: f64): void {
-  disc(fr, cx, cy, r, ink());
+function sun(fr: draw.Frame, cx: f64, cy: f64, r: f64, ray: f64, ink: i32): void {
+  disc(fr, cx, cy, r, ink);
   for i in 0..8 {
     let a = 3.14159265 * (i as f64) / 4.0;
-    stroke(fr, cx + a.cos() * r * 1.45, cy + a.sin() * r * 1.45, cx + a.cos() * r * 1.95, cy + a.sin() * r * 1.95, ray / 2.0, ink());
+    stroke(fr, cx + a.cos() * r * 1.45, cy + a.sin() * r * 1.45, cx + a.cos() * r * 1.95, cy + a.sin() * r * 1.95, ray / 2.0, ink);
   }
 }
 
 // The cloud of Paper's weather icon: a pill with two circles on it, in a
 // box of w by h at x and y.
-function cloud(fr: draw.Frame, x: f64, y: f64, w: f64, h: f64): void {
+function cloud(fr: draw.Frame, x: f64, y: f64, w: f64, h: f64, ink: i32): void {
   let base = y + h * 0.92;
   let bh = (base - y) * 0.42;
-  disc(fr, x + w * 0.04 + bh / 2.0, base - bh / 2.0, bh / 2.0, ink());
-  disc(fr, x + w * 0.96 - bh / 2.0, base - bh / 2.0, bh / 2.0, ink());
-  fr.fill((x + w * 0.04 + bh / 2.0) as i32, (base - bh) as i32, (w * 0.92 - bh) as i32 + 1, bh as i32, ink());
-  disc(fr, x + w * 0.33, base - bh * 0.95, w * 0.2, ink());
-  disc(fr, x + w * 0.6, base - bh * 1.25, w * 0.27, ink());
+  disc(fr, x + w * 0.04 + bh / 2.0, base - bh / 2.0, bh / 2.0, ink);
+  disc(fr, x + w * 0.96 - bh / 2.0, base - bh / 2.0, bh / 2.0, ink);
+  fr.fill((x + w * 0.04 + bh / 2.0) as i32, (base - bh) as i32, (w * 0.92 - bh) as i32 + 1, bh as i32, ink);
+  disc(fr, x + w * 0.33, base - bh * 0.95, w * 0.2, ink);
+  disc(fr, x + w * 0.6, base - bh * 1.25, w * 0.27, ink);
 }
 
 // An arc of the circle at cx, cy of radius r, from angle a0 to a1 in
@@ -1140,16 +1221,16 @@ function arc(fr: draw.Frame, cx: f64, cy: f64, r: f64, a0: f64, a1: f64, half: f
 
 // Today's temperature as a knob on the arc from the low to the high, with
 // the temperature in the middle and the range in the gap at the bottom.
-function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, now: string, range: string, frac: f64): face.Cache {
+function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, now: string, range: string, frac: f64, pal: Palette): face.Cache {
   let w = n.w as f64;
   let s = w * 0.06;
   let r = w / 2.0 - s;
   let cx = n.x as f64 + w / 2.0;
   let cy = n.y as f64 + r + s;
-  arc(fr, cx, cy, r, 135.0, 405.0, s / 2.0, ink());
+  arc(fr, cx, cy, r, 135.0, 405.0, s / 2.0, pal.ink);
   let big = (w * 0.42) as i32;
   let bw = face.width(f, face.EXTRABOLD, big, now);
-  let cache = face.text(c, fr, f, face.EXTRABOLD, big, 0, (cx - bw as f64 / 2.0) as i32, (cy + big as f64 * 0.36) as i32, now, ink());
+  let cache = face.text(c, fr, f, face.EXTRABOLD, big, 0, (cx - bw as f64 / 2.0) as i32, (cy + big as f64 * 0.36) as i32, now, pal.ink);
   if (frac < 0.0) {
     return cache;
   }
@@ -1160,19 +1241,19 @@ function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, 
   let a = (135.0 + 270.0 * t) * 3.14159265 / 180.0;
   let kx = cx + a.cos() * r;
   let ky = cy + a.sin() * r;
-  disc(fr, kx, ky, s * 1.5, paper_color());
-  disc(fr, kx, ky, s * 0.85, ink());
+  disc(fr, kx, ky, s * 1.5, pal.paper);
+  disc(fr, kx, ky, s * 0.85, pal.ink);
   let small = (w * 0.22) as i32;
   let rw = face.width(f, face.BOLD, small, range);
-  return face.text(cache, fr, f, face.BOLD, small, 0, (cx - rw as f64 / 2.0) as i32, (cy + r + small as f64 * 0.35) as i32, range, ink());
+  return face.text(cache, fr, f, face.BOLD, small, 0, (cx - rw as f64 / 2.0) as i32, (cy + r + small as f64 * 0.35) as i32, range, pal.ink);
 }
 
 // A round ink button with three sound-wave arcs.
-function paint_music(fr: draw.Frame, n: Node): void {
+function paint_music(fr: draw.Frame, n: Node, pal: Palette): void {
   let r = n.w as f64 / 2.0;
   let cx = n.x as f64 + r;
   let cy = n.y as f64 + n.h as f64 / 2.0;
-  disc(fr, cx, cy, r, ink());
+  disc(fr, cx, cy, r, pal.ink);
   for i in 0..3 {
     let y = cy - r * 0.26 + i as f64 * r * 0.27;
     let half = r * (0.6 - i as f64 * 0.1);
@@ -1186,7 +1267,7 @@ function paint_music(fr: draw.Frame, n: Node): void {
     for k in 0..steps + 1 {
       let t = k as f64 / (steps as f64);
       let u = 1.0 - t;
-      disc(fr, u * u * x0 + 2.0 * u * t * cx + t * t * x2, u * u * y0 + 2.0 * u * t * y1 + t * t * y2, width / 2.0, paper_color());
+      disc(fr, u * u * x0 + 2.0 * u * t * cx + t * t * x2, u * u * y0 + 2.0 * u * t * y1 + t * t * y2, width / 2.0, pal.paper);
     }
   }
 }
@@ -1220,18 +1301,18 @@ function paint_breath(fr: draw.Frame, n: Node, scale: f64, d: f64): void {
 
 // A check box of Android's dialogs: a rounded square with a 2 dp border,
 // filled with a tick when it is on.
-function paint_check(fr: draw.Frame, n: Node, on: boolean, d: f64): void {
+function paint_check(fr: draw.Frame, n: Node, on: boolean, d: f64, pal: Palette): void {
   let r = (2.0 * d) as i32;
   let b = (2.0 * d) as i32;
   if (on) {
-    fr.round_rect(n.x, n.y, n.w, n.h, r, ink());
+    fr.round_rect(n.x, n.y, n.w, n.h, r, pal.ink);
     let x = n.x as f64;
     let y = n.y as f64;
     let w = n.w as f64;
-    stroke(fr, x + w * 0.22, y + w * 0.52, x + w * 0.42, y + w * 0.72, d * 0.9, dialog_color());
-    stroke(fr, x + w * 0.42, y + w * 0.72, x + w * 0.8, y + w * 0.32, d * 0.9, dialog_color());
+    stroke(fr, x + w * 0.22, y + w * 0.52, x + w * 0.42, y + w * 0.72, d * 0.9, pal.dialog);
+    stroke(fr, x + w * 0.42, y + w * 0.72, x + w * 0.8, y + w * 0.32, d * 0.9, pal.dialog);
   } else {
-    fr.round_rect(n.x, n.y, n.w, n.h, r, dialog_soft());
-    fr.round_rect(n.x + b, n.y + b, n.w - 2 * b, n.h - 2 * b, 0, dialog_color());
+    fr.round_rect(n.x, n.y, n.w, n.h, r, pal.dialog_soft);
+    fr.round_rect(n.x + b, n.y + b, n.w - 2 * b, n.h - 2 * b, 0, pal.dialog);
   }
 }

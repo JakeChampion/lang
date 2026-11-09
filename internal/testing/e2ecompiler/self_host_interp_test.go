@@ -8,14 +8,14 @@ import (
 func writeSelfHostInterpProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_check_run.fern")
 	return dir
 }
 
 func TestSelfHostInterpX86_64(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := writeSelfHostInterpProject(t)
-	binPath := buildSelfHostBinFor(t, dir, "interp.fern", "prog", e2eharness.TargetX86_64Linux)
+	binPath := buildSelfHostBinFor(t, dir, "drivers/interp_check_run.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -26,7 +26,7 @@ func TestSelfHostInterpX86_64(t *testing.T) {
 func TestSelfHostInterpArm64(t *testing.T) {
 	qemu := arm64Runner(t)
 	dir := writeSelfHostInterpProject(t)
-	binPath := buildSelfHostBinFor(t, dir, "interp.fern", "prog", e2eharness.TargetArm64Linux)
+	binPath := buildSelfHostBinFor(t, dir, "drivers/interp_check_run.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {

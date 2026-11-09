@@ -32,6 +32,12 @@ func (doc *Document) TangleFiles() ([]FileResult, error) {
 	results := make([]FileResult, 0, len(doc.fileOrder))
 	for _, path := range doc.fileOrder {
 		fr := doc.fileIndex[path]
+		if pathEscapes(path) {
+			return nil, &Error{
+				Pos: ast.Position{Line: fr.firstLine, Col: 1},
+				Msg: "literate: `file=" + path + "` must name a file below the output directory (no absolute path, no `..` segment)",
+			}
+		}
 		out, lineMap, err := collect(func(emit emitFn) error {
 			return doc.expandBody(fr.body, "", map[string]bool{}, emit)
 		})
@@ -71,4 +77,16 @@ func (doc *Document) EntryFile() (string, error) {
 			Msg: fmt.Sprintf("literate: %d output files (%s) but none marked `entry` — add `entry` to the ```fern file=… block that holds main", len(doc.fileOrder), strings.Join(doc.fileOrder, ", ")),
 		}
 	}
+}
+
+func pathEscapes(path string) bool {
+	if path == "" || path[0] == '/' || path[0] == '\\' {
+		return true
+	}
+	for _, seg := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }

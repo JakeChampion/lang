@@ -1,6 +1,6 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
-Status: [plan] in progress. Slices 1 to 7, 4b, 9, 0-RTT and the h3spec half of 8 landed. Open: the rest of 8 (a second peer as a client of `std/serve`), the rest of 10 (speed) and the h3spec case of 0-RTT.
+Status: [plan] in progress. Slices 1 to 9, 4b and 0-RTT landed. Open: the rest of 10 (speed) and the h3spec case of 0-RTT.
 
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
@@ -235,8 +235,9 @@ Each is a bound with a test that crosses it.
    against `std/serve` with HTTP/3 on, landed (#12511).
    `scripts/net-quic-interop` carries HTTP/3 both ways against aioquic, and
    `std/fetch` against h2o's quicly. Against h2o, the client resumes a
-   session and sends 0-RTT. A second peer as a client of `std/serve` is
-   open. Gate: the nightly jobs.
+   session and sends 0-RTT. ngtcp2's example client resumes against
+   `std/serve`: its GET in 0-RTT is taken, and its POST in 0-RTT gets 425.
+   Gate: the nightly jobs.
 9. **Client (landed, #12510).** `std/fetch` speaks HTTP/3 to an origin
    that offers it. An Alt-Svc field on a TLS response from the origin
    itself names the UDP port (`fetch.alt_svc` reads the value, the pool's
@@ -296,12 +297,11 @@ Each is a bound with a test that crosses it.
       steps (`written`, `read_into`). A fifth fewer instructions per
       request with 64 requests in flight per connection
       (`docs/benchmarks/net-h3-2026-10-17.md`).
-    - **What remains per request**, by the x86-64 trace: packet receive
-      and AEAD open, the HTTP/3 request path (each request record bound
-      before it is rebuilt, a field section's partial copied), the AEAD
-      blocks a fused kernel would fold, and `concat`, which builds its
-      result an element at a time; a runtime kernel sizing it once is a
-      compiler change that every program gains from.
+    - **What remains per request**: 50.69 allocations on 2026-11-09. No
+      site costs more than three. HTTP/3 and QPACK cost 21 of them, and
+      the serve loop, the packets and the streams about 9 each.
+      `docs/benchmarks/net-h3-sites-2026-11-09.md` ranks the sites and
+      says how to trace them again.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
       The send side landed with #12516: `udp_sendmmsg(sock, addrs, data,
