@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Measure the time from process start to exit of a hello-world program.
+
+    scripts/startup-bench -o table.md
+
+Each language builds the same program, which prints "hello, world" and
+exits. hyperfine runs each binary with no shell between, after warm-up
+runs, and the table gives the mean and standard deviation of the wall
+time, and the size of the file that runs. A language whose tool is not
+installed is named in the "Not measured" line, not left out silently.
+
+Environment: FERN (default bin/fern), RUNS (default 300), WARMUP
+(default 30).
+"""
+
+import argparse
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HELLO = {
+    "fern": 'function main(): i32 {\n    print("hello, world");\n    return 0;\n}\n',
+    "c": '#include <stdio.h>\nint main(void) { puts("hello, world"); return 0; }\n',
+    "rs": 'fn main() { println!("hello, world"); }\n',
+    "go": 'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println("hello, world") }\n',
+    "zig": 'const std = @import("std");\n'
+           'pub fn main(init: std.process.Init) !void {\n'
+           '    var buf: [64]u8 = undefined;\n'
+           '    var w: std.Io.File.Writer = .init(.stdout(), init.io, &buf);\n'
+           '    try w.interface.writeAll("hello, world\\n");\n'
+           '    try w.interface.flush();\n}\n',
+    "js": 'console.log("hello, world");\n',
+    "py": 'print("hello, world")\n',
+}
+
+
+def host_target():
+    machine = platform.machine().lower()
+    isa = "arm64" if machine in ("arm64", "aarch64") else "x86-64"
+    return f"{isa}-{'darwin' if sys.platform == 'darwin' else 'linux'}"
+
+
+def version(cmd):
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    return (out.stdout or out.stderr).strip().splitlines()[0]
+
+
+def build(work):
+    """Each language as (name, version, argv to run, file to size), or a reason it was skipped."""
+    fern = os.path.abspath(os.environ.get("FERN", "bin/fern"))
+    src = lambda ext: os.path.join(work, f"hello.{ext}")
+    for ext, text in HELLO.items():
+        with open(src(ext), "w") as f:
+            f.write(text)
+    out = lambda name: os.path.join(work, name)
+    langs = [
+        ("Fern", [fern, "-version"], [fern, "-target", host_target(), "-O", "-o", out("fern"), src("fern")], [out("fern")]),
+        ("C (cc -O2)", ["cc", "--version"], ["cc", "-O2", "-o", out("c"), src("c")], [out("c")]),
+        ("Rust (rustc -O)", ["rustc", "--version"], ["rustc", "-O", "-C", "strip=symbols", "-o", out("rs"), src("rs")], [out("rs")]),
+        ("Go", ["go", "version"], ["go", "build", "-ldflags=-s -w", "-o", out("go"), src("go")], [out("go")]),
+        ("Zig (ReleaseSmall)", ["zig", "version"], ["zig", "build-exe", "-OReleaseSmall", "-fstrip", f"-femit-bin={out('zig')}", src("zig")], [out("zig")]),
+        ("Node.js", ["node", "--version"], None, ["node", src("js")]),
+        ("Python", ["python3", "--version"], None, ["python3", src("py")]),
+    ]
+    measured, skipped = [], []
+    for name, ver, compile_cmd, run in langs:
+        if shutil.which(ver[0]) is None:
+            skipped.append(f"{name} (no {ver[0]})")
+            continue
+        if compile_cmd:
+            res = subprocess.run(compile_cmd, cwd=work, capture_output=True, text=True,
+                                 env={**os.environ, "GOCACHE": out("gocache")})
+            if res.returncode != 0:
+                skipped.append(f"{name} (build failed: {res.stderr.strip().splitlines()[-1] if res.stderr.strip() else res.returncode})")
+                continue
+        got = subprocess.run(run, capture_output=True, text=True).stdout
+        if got != "hello, world\n":
+            skipped.append(f"{name} (printed {got!r})")
+            continue
+        size = os.path.getsize(run[0]) if compile_cmd else None
+        measured.append((name, version(ver), run, size))
+    return measured, skipped
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-o", "--output", required=True)
+    args = ap.parse_args()
+    if shutil.which("hyperfine") is None:
+        sys.exit("startup-bench: needs hyperfine")
+    runs = os.environ.get("RUNS", "300")
+    warmup = os.environ.get("WARMUP", "30")
+    with tempfile.TemporaryDirectory() as work:
+        measured, skipped = build(work)
+        cmds = [" ".join(run) for _, _, run, _ in measured]
+        report = os.path.join(work, "report.json")
+        subprocess.run(["hyperfine", "-N", "--warmup", warmup, "--runs", runs, "--export-json", report, *cmds],
+                       check=True, stdout=subprocess.DEVNULL)
+        with open(report) as f:
+            results = json.load(f)["results"]
+    lines = [
+        f"startup-bench: {platform.system()}/{platform.machine()}, hyperfine {version(['hyperfine', '--version']).split()[-1]}, "
+        f"{runs} runs after {warmup} warm-up runs, no shell. Not measured: {', '.join(skipped) or 'none'}.",
+        "",
+        "| language | version | mean (ms) | σ (ms) | size (bytes) |",
+        "|---|---|---|---|---|",
+    ]
+    for (name, ver, _, size), r in zip(measured, results):
+        size_cell = f"{size}" if size is not None else "interpreter"
+        lines.append(f"| {name} | {ver} | {r['mean'] * 1000:.2f} | {r['stddev'] * 1000:.2f} | {size_cell} |")
+    with open(args.output, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+if __name__ == "__main__":
+    main()
