@@ -6,7 +6,7 @@ import "./util";
 
 struct Rel { lo: i32, hi: i32, strict: boolean }
 
-struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
+struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
@@ -24,6 +24,8 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
       let proof = proof_of(g, b, ins);
       if (proof == PROOF_UNCHECKED) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
+      } else if (proof == PROOF_LANE_SPAN) {
+        insts = insts.append(ssa.SInst { ...ins, imm: ssasem.lane_span_proven() });
       } else if (proof == PROOF_NONE) {
         insts = insts.append(ins);
       }
@@ -48,8 +50,18 @@ const PROOF_UNCHECKED: i32 = 1;
 
 const PROOF_DROPPED: i32 = 2;
 
+const PROOF_LANE_SPAN: i32 = 3;
+
 // A checked access the facts prove becomes unchecked, and a proven group check goes.
 function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
+  if (byte_lane_read(ins)) {
+    let high = small_max(g, ins.args[1]);
+    let length = literal_len(g, ins.args[0]);
+    if (high >= 0 && length >= 16 && high <= length - 16) {
+      return PROOF_LANE_SPAN;
+    }
+    return PROOF_NONE;
+  }
   if ((checked_index(ins) || checked_write(ins)) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
     return PROOF_UNCHECKED;
   }
@@ -60,7 +72,11 @@ function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
 }
 
 function index_read(ins: ssa.SInst): boolean {
-  return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.args.len() == 2;
+  return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.args.len() == 2 && ins.str != "lane_bytes";
+}
+
+function byte_lane_read(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.str == "lane_bytes" && ins.imm != ssasem.lane_span_proven();
 }
 
 function checked_index(ins: ssa.SInst): boolean {
@@ -74,7 +90,7 @@ function checked_write(ins: ssa.SInst): boolean {
 function any_checked_index(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (checked_index(ins) || checked_write(ins) || group_check(ins)) {
+      if (checked_index(ins) || checked_write(ins) || group_check(ins) || byte_lane_read(ins)) {
         return true;
       }
     }
@@ -140,12 +156,23 @@ function graph_of(f: ssasem.Func): Graph {
   let home: i32[] = [];
   let i32s: boolean[] = [];
   let i64s: boolean[] = [];
+  let unsigned_max: i64[] = [];
   let v = 0;
   while (v < n) {
     defs = defs.append(none);
     home = home.append(-1);
     i32s = i32s.append(ssasem.is_i32(f.values[v]));
     i64s = i64s.append(ssasem.is_i64(f.values[v]));
+    let upper = -1i64;
+    if let typeinfo.TypeI32(t) = f.values[v] {
+      if (t.unsigned && t.width == 32) {
+        upper = 4294967295i64;
+      }
+      if (t.unsigned && t.width == 8) {
+        upper = 255i64;
+      }
+    }
+    unsigned_max = unsigned_max.append(upper);
     v += 1;
   }
   let widens = __alloc_i32(n);
@@ -162,7 +189,7 @@ function graph_of(f: ssasem.Func): Graph {
     b += 1;
   }
   let at = ssa.block_positions(f.graph);
-  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
+  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   b = 0;
   while (b < nb) {
     let blk = f.graph.blocks[b];
@@ -520,7 +547,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (is_const(g, x)) {
     return const_value(g, x) >= 0;
   }
-  if (is_length(g, x) || masked(g, x) >= 0) {
+  if (is_length(g, x) || small_max(g, x) >= 0) {
     return true;
   }
   let d = g.defs[x];
@@ -633,13 +660,62 @@ function edge_block(g: Graph, phi: i32, k: i32, operand: i32): i32 {
   return g.home[ssa.copy_root(g.defs, operand)];
 }
 
-// The largest value of a constant or a mask, or -1.
+// A nonnegative upper bound that fits a signed i32, or -1.
 function small_max(g: Graph, v: i32): i32 {
+  let high = bounded_max(g, v, depth());
+  return if (high >= 0i64 && high <= 2147483647i64) { high as i32 } else { -1 };
+}
+
+// Every accepted arithmetic result is nonnegative and fits a signed i32.
+// Unsigned inputs retain their full range until a mask or shift reduces it.
+function bounded_max(g: Graph, v: i32, steps: i32): i64 {
   v = ssa.copy_root(g.defs, v);
-  if (is_const(g, v)) {
-    return if (const_value(g, v) >= 0) { const_value(g, v) } else { -1 };
+  let d = g.defs[v];
+  if (d.kind_tag == ssa.CONST_INT) {
+    let k = if (d.str == "") { d.imm as i64 } else { util.lit_to_i64(d.str) };
+    return if (k >= 0i64) { k } else { -1i64 };
   }
-  return masked(g, v);
+  let mask = masked(g, v);
+  if (mask >= 0) {
+    return mask as i64;
+  }
+  let fallback = g.unsigned_max[v];
+  if (steps <= 0) {
+    return fallback;
+  }
+  if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[v]) {
+    let a = bounded_max(g, d.args[0], steps - 1);
+    return if (a >= 0i64 && a <= 2147483647i64) { a } else { -1i64 };
+  }
+  if (d.kind_tag != ssa.BINARY || d.args.len() != 2) {
+    return fallback;
+  }
+  let a = bounded_max(g, d.args[0], steps - 1);
+  let b = bounded_max(g, d.args[1], steps - 1);
+  if (a < 0i64 || b < 0i64) {
+    return fallback;
+  }
+  let fixed_shift = g.defs[ssa.copy_root(g.defs, d.args[1])].kind_tag == ssa.CONST_INT;
+  if (d.str == ">>" && fixed_shift && b < 32i64) {
+    return a >> b;
+  }
+  if (a > 2147483647i64 || b > 2147483647i64) {
+    return fallback;
+  }
+  let high = -1i64;
+  if (d.str == "+") {
+    high = a + b;
+  }
+  if (d.str == "*") {
+    high = a * b;
+  }
+  if (d.str == "<<" && fixed_shift && b < 31i64) {
+    high = a << b;
+  }
+  if (high >= 0i64 && high <= 2147483647i64) {
+    return high;
+  }
+  return fallback;
 }
 
 // The operand of `a + k` that is not the small one, or -1.

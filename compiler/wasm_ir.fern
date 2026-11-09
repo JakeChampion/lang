@@ -4454,12 +4454,12 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     return emit_wasm_lane_round(o.width, sh, vtmp);
   }
   if (util.has_str(["vget", "vset"], k)) {
-    return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned);
+    return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned, o.unsigned && o.i32_imm == 1);
   }
   return "    " + wasm_lane_verb(k, sh) + "\n";
 }
 
-function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boolean): string {
+function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boolean, unchecked: boolean): string {
   let arr = util.i32_to_string(base);
   let at = "    local.get " + util.i32_to_string(base + 4) + "\n";
   let v = "    local.get " + util.i32_to_string(base + 5) + "\n";
@@ -4467,9 +4467,16 @@ function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boole
   if (set) {
     out = "    local.set " + util.i32_to_string(base + 5) + "\n";
   }
-  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4, "arr");
+  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n";
+  if (!unchecked) {
+    out += wasm_arr_index_trap(base, base + 4, "arr");
+  } else {
+    out += "    local.set " + arr + "\n";
+  }
   if (packed) {
-    out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.sub\n    i32.const 16\n    i32.lt_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
+    if (!unchecked) {
+      out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.sub\n    i32.const 16\n    i32.lt_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
+    }
     out = out + "    local.get " + arr + "\n" + at + "    i32.add\n    i32.const 8\n    i32.add\n";
     if (set) {
       return out + v + "    v128.store\n";
