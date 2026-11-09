@@ -26,6 +26,13 @@ The original Go oracle/native `opus_delimited` subtest also passes in 439.89 sec
 The index removes 22.56% of guest instructions on the first diagnostic group, relative to the shortcut version.
 Exact-head CI remains the merge gate.
 
+The [fresh main comparison](benchmarks/compiler-interpreter-index-main-2026-11-09/README.md) compares main `4a044282` with merged source `6f6bddfc`.
+The original oracle/native Opus subtest passes in 634.93 seconds under the unchanged package timeout.
+Ten targeted suites report 387 passes and zero skips.
+The combined shortcut and index remove 648,690 allocation events on the first group and 20,027,874 on the second group.
+All allocation controls balance their frees and report zero live bytes.
+The separate cold and warm compilation controls retain identical native output and establish no compiler timing gain.
+
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |
 | Tokenize and parse | Source bytes per second, allocations, peak memory | Real source corpus and malformed input |

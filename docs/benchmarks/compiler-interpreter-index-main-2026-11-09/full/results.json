@@ -1,0 +1,40 @@
+{
+  "baseline_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "candidate_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "mode": "full",
+  "note": "Fresh qualification after main4a merge. Same producer, input, stdlib, no debug variables, no embedded sources. Certification on. Other tests/controls can overlap. Old source totals do not transfer.",
+  "runs": [
+    {
+      "label": "full-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261109-2320/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "eea6e6b57c6a767cffc6e98394738c9c110b5c6270504d97610eab0bb2c5692a",
+      "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:27:12.539687+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 431159757258,
+      "cpu_user": 430.638142,
+      "cpu_system": 0.415468,
+      "peak_rss_kib": 222284,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+      "finished": "2026-11-09T23:34:23.701937+00:00"
+    }
+  ],
+  "finished": "2026-11-09T23:34:23.707211+00:00"
+}

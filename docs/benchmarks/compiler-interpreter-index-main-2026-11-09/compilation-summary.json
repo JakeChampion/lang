@@ -1,0 +1,58 @@
+{
+  "workload": "Compile the full Opus reference program and its imports to native code. This differs from the earlier checker-compilation workload. Do not pool totals.",
+  "baseline_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "candidate_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "output_sha256": "f3db053f31e511450898afc3ea6776613774f596703623a65e07520fc25af809",
+  "cache_probes": {
+    "baseline": {
+      "hits": 112,
+      "misses": 0
+    },
+    "candidate": {
+      "hits": 112,
+      "misses": 0
+    }
+  },
+  "measurements": {
+    "cold": {
+      "baseline": {
+        "wall_median_s": 4.87614929,
+        "wall_range_s": [
+          4.870993379,
+          5.142244215
+        ],
+        "cpu_median_s": 4.873111,
+        "rss_median_kib": 163532
+      },
+      "candidate": {
+        "wall_median_s": 4.836043758,
+        "wall_range_s": [
+          4.740428374,
+          5.019607887
+        ],
+        "cpu_median_s": 4.834006,
+        "rss_median_kib": 163532
+      }
+    },
+    "warm": {
+      "baseline": {
+        "wall_median_s": 4.753411844,
+        "wall_range_s": [
+          4.726149438,
+          5.128027639
+        ],
+        "cpu_median_s": 4.752885,
+        "rss_median_kib": 163148
+      },
+      "candidate": {
+        "wall_median_s": 4.698797469,
+        "wall_range_s": [
+          4.671396408,
+          4.794486768
+        ],
+        "cpu_median_s": 4.696268999999999,
+        "rss_median_kib": 163148
+      }
+    }
+  }
+}
