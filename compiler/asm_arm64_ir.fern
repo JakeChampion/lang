@@ -2435,70 +2435,11 @@ function ssa_unsupported(f: ssa.SFunc): string {
   return "";
 }
 
-function ssa_block_at(fr: SsaFrame, id: i32): i32 {
-  if (id < 0 || id >= fr.blk_pos.len()) {
-    return -1;
-  }
-  return fr.blk_pos[id];
-}
-
-// The block that a branch to id reaches through blocks that emit no code and
-// only jump on. A phi emits no code in its own block.
-function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
-  let cur = id;
-  for step in 0..8 {
-    let bi = ssa_block_at(fr, cur);
-    if (bi < 0) {
-      return cur;
-    }
-    let b = f.blocks[bi];
-    if (!ssa.only_phis(b) || b.term.kind_tag != ssa.TERM_BR || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
-      return cur;
-    }
-    cur = b.term.target;
-  }
-  return cur;
-}
-
-// A jump to the next block falls through, even when that block only jumps on.
-function ssa_same_fallthrough(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], to: i32, next: i32): boolean {
-  return to == next || ssa_forward(f, fr, reg_of, to) == ssa_forward(f, fr, reg_of, next);
-}
-
 function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa_same_fallthrough(f, fr, reg_of, to, next)) {
+  if (ssa.same_fallthrough(f, fr.blk_pos, fr.imm, reg_of, to, next)) {
     return s;
   }
-  return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
-}
-
-// The edge from pred needs a move for some phi of id.
-function ssa_edge_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, id: i32): boolean {
-  let ti = ssa_block_at(fr, id);
-  if (ti < 0) {
-    return false;
-  }
-  let tb = f.blocks[ti];
-  let sl = ssa.pred_slot(tb, pred);
-  for ins in tb.insts {
-    if (ins.kind_tag == ssa.PHI && reg_of[ins.result] != -1 && (fr.imm.is_imm[ins.args[sl]] || reg_of[ins.args[sl]] != reg_of[ins.result])) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
-  let ti = ssa_block_at(fr, id);
-  if (ti < 0) {
-    return false;
-  }
-  for ins in f.blocks[ti].insts {
-    if (ins.kind_tag == ssa.PHI) {
-      return true;
-    }
-  }
-  return false;
+  return ssa_jump(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, to), next, s);
 }
 
 function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
@@ -3197,19 +3138,6 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
   return ssa_helper_entry(ins, reg_of, ".r", s);
 }
 
-// A helper name that the module defines itself is an ordinary call.
-function ssa_is_helper(name: string, s: asmcore.EmitState): boolean {
-  return ircore.is_fern_helper(name) && asmcore.top_level_fn(name, s) < 0;
-}
-
-// A compiled Fern helper takes the arguments of its call in reverse order.
-function helper_arg_reg(ins: ssa.SInst, a: i32): i32 {
-  if (rtbytecopy.is_helper(ins.str)) {
-    return ins.args.len() - 1 - a;
-  }
-  return a;
-}
-
 function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_bl_sym(helper_arg_moves(ins, reg_of, s), ircore.ir_helper_symbol(ins.str) + suffix);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
@@ -3221,7 +3149,7 @@ function helper_arg_moves(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): 
   let hdst: i32[] = [];
   for ha in 0..ins.args.len() {
     hsrc = hsrc.append(reg_of[ins.args[ha]]);
-    hdst = hdst.append(helper_arg_reg(ins, ha));
+    hdst = hdst.append(ircore.helper_arg_index(ins.str, ins.args.len(), ha));
   }
   return ssa_parallel_moves(hsrc, hdst, s);
 }
@@ -3236,7 +3164,7 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
   let hdst: i32[] = [];
   for ha in 0..ins.args.len() {
     hsrc = hsrc.append(reg_of[ins.args[ha]]);
-    hdst = hdst.append([0, 8, 9][helper_arg_reg(ins, ha)]);
+    hdst = hdst.append([0, 8, 9][ircore.helper_arg_index(ins.str, ins.args.len(), ha)]);
   }
   let sn = asmcore.lab_new(ssa_parallel_moves(hsrc, hdst, helper_call_needs(ins.str, s)), lp + "bcs" + id);
   let fx = asmcore.lab_new(sn.state, lp + "bcf" + id);
@@ -3317,7 +3245,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
-  if (ssa_is_helper(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
+  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   let rr = "x0";
@@ -3331,7 +3259,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (asmcore.has_lane_param(s.float_mask(asmcore.sanitize_label(ins.str)))) {
     ssa_lane_refuse("call of " + ins.str);
   }
-  let helper = ssa_is_helper(ins.str, s);
+  let helper = ircore.is_runtime_helper_call(ins.str, s);
   if (helper) {
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
@@ -4565,7 +4493,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
 
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
-  let ti = ssa_block_at(fr, succ);
+  let ti = ssa.block_index(fr.blk_pos, succ);
   if (ti < 0) {
     return s;
   }
@@ -4742,15 +4670,15 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     return ssa_jump_on(f, fr, reg_of, lp, t.t, next, s);
   }
-  let fl = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.f));
-  let stub = ssa_edge_moves(f, fr, reg_of, blk.id, t.f);
+  let fl = ssa_blab(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.f));
+  let stub = ssa.edge_moves(f, fr.blk_pos, fr.imm, reg_of, blk.id, t.f);
   if (stub) {
     let sn = asmcore.lab_new(s, lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f));
     s = sn.state;
     fl = sn.lab;
   }
-  if (!stub && ssa_same_fallthrough(f, fr, reg_of, t.f, next) && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
-    let tl = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.t));
+  if (!stub && ssa.same_fallthrough(f, fr.blk_pos, fr.imm, reg_of, t.f, next) && !ssa.edge_moves(f, fr.blk_pos, fr.imm, reg_of, blk.id, t.t)) {
+    let tl = ssa_blab(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.t));
     if (fu.n > 0 && fu.tag == 0) {
       return ssa_cbz(s, false, tr, tl);
     }
@@ -4859,7 +4787,7 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
 }
 
 function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
-  let ti = ssa_block_at(fr, to);
+  let ti = ssa.block_index(fr.blk_pos, to);
   if (ti < 0 || ti > from) {
     return false;
   }
@@ -4867,7 +4795,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   if (h.term.kind_tag != ssa.TERM_BRIF || h.term.t == h.term.f) {
     return false;
   }
-  if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) {
+  if (ssa.has_phis(f, fr.blk_pos, h.term.t) || ssa.has_phis(f, fr.blk_pos, h.term.f)) {
     return false;
   }
   let n = 0;
@@ -4900,8 +4828,8 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   }
   if (t.kind_tag == ssa.TERM_BR) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
-    if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
-      let h = f.blocks[ssa_block_at(fr, t.target)];
+    if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), t.target)) {
+      let h = f.blocks[ssa.block_index(fr.blk_pos, t.target)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
@@ -4976,7 +4904,7 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   if (ins.kind_tag != ssa.CALL || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
-  if (ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
+  if (ircore.is_runtime_helper_call(ins.str, s) || ircore.is_c_call(ins.str)) {
     return false;
   }
   return irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
@@ -4995,7 +4923,7 @@ function ssa_float_calls(f: ssa.SFunc, s: asmcore.EmitState): boolean[] {
 }
 
 function ssa_f64_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  if (ins.kind_tag != ssa.CALL || ins.result < 0 || ssa.rc_inlined(ins) || ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
+  if (ins.kind_tag != ssa.CALL || ins.result < 0 || ssa.rc_inlined(ins) || ircore.is_runtime_helper_call(ins.str, s) || ircore.is_c_call(ins.str)) {
     return false;
   }
   return asmcore.float_result(s.float_mask(asmcore.sanitize_label(ins.str)));

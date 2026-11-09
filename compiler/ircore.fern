@@ -87,6 +87,19 @@ pub function is_fern_helper(name: string): boolean {
     || is_text_helper(name) || rtbytecopy.is_helper(name);
 }
 
+// A helper name that the module defines itself is an ordinary call.
+pub function is_runtime_helper_call(name: string, s: asmcore.EmitState): boolean {
+  return is_fern_helper(name) && asmcore.top_level_fn(name, s) < 0;
+}
+
+// A compiled Fern helper takes the arguments of its call in reverse order.
+pub function helper_arg_index(name: string, nargs: i32, a: i32): i32 {
+  if (rtbytecopy.is_helper(name)) {
+    return nargs - 1 - a;
+  }
+  return a;
+}
+
 function is_rc_helper(name: string): boolean {
   return name == "__fern_rc_inc"
     || name == "__fern_rc_dec"

@@ -6041,6 +6041,66 @@ pub function only_phis(b: SBlock): boolean {
   return true;
 }
 
+// block_index is the index in its function of block id, given the function's
+// map from block id to index, or -1.
+pub function block_index(blk_pos: i32[], id: i32): i32 {
+  if (id < 0 || id >= blk_pos.len()) {
+    return -1;
+  }
+  return blk_pos[id];
+}
+
+// edge_moves is true when the edge from pred into block id needs a phi move.
+pub function edge_moves(f: SFunc, blk_pos: i32[], imm: Imms, reg_of: i32[], pred: i32, id: i32): boolean {
+  let ti = block_index(blk_pos, id);
+  if (ti < 0) {
+    return false;
+  }
+  let tb = f.blocks[ti];
+  let sl = pred_slot(tb, pred);
+  for ins in tb.insts {
+    if (ins.kind_tag == PHI && reg_of[ins.result] != -1 && (imm.is_imm[ins.args[sl]] || reg_of[ins.args[sl]] != reg_of[ins.result])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// forward_target follows up to 8 blocks that hold only phis and branch on
+// with no edge moves, and returns the block a jump to id reaches.
+pub function forward_target(f: SFunc, blk_pos: i32[], imm: Imms, reg_of: i32[], id: i32): i32 {
+  let cur = id;
+  for step in 0..8 {
+    let bi = block_index(blk_pos, cur);
+    if (bi < 0) {
+      return cur;
+    }
+    let b = f.blocks[bi];
+    if (!only_phis(b) || b.term.kind_tag != TERM_BR || b.term.target == cur || edge_moves(f, blk_pos, imm, reg_of, cur, b.term.target)) {
+      return cur;
+    }
+    cur = b.term.target;
+  }
+  return cur;
+}
+
+pub function same_fallthrough(f: SFunc, blk_pos: i32[], imm: Imms, reg_of: i32[], to: i32, next: i32): boolean {
+  return to == next || forward_target(f, blk_pos, imm, reg_of, to) == forward_target(f, blk_pos, imm, reg_of, next);
+}
+
+pub function has_phis(f: SFunc, blk_pos: i32[], id: i32): boolean {
+  let ti = block_index(blk_pos, id);
+  if (ti < 0) {
+    return false;
+  }
+  for ins in f.blocks[ti].insts {
+    if (ins.kind_tag == PHI) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function view_slots(f: SFunc): i32[] {
   let out: i32[] = [];
   let n = 0;
