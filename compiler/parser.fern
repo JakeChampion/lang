@@ -1261,7 +1261,7 @@ pub function resolve_labels_module(mod: Module): Module {
 function has_labeled_jump(stmts: ast.Stmt[]): boolean {
   let found = false;
   for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, labeled_jump_at, keep_flag, astwalk.descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, labeled_jump_at, astwalk.keep_flag, astwalk.descend_all);
   }
   return found;
 }
@@ -1273,10 +1273,6 @@ function labeled_jump_at(st: ast.Stmt, own acc: boolean): boolean {
   if let ast.StmtContinue(c) = st {
     return acc || c.label.len() > 0;
   }
-  return acc;
-}
-
-function keep_flag(e: ast.Expr, own acc: boolean): boolean {
   return acc;
 }
 
@@ -9277,7 +9273,15 @@ function type_ends_arr(s: string): boolean {
   return slice_unchecked(s, s.len() - 2, s.len()) == "[]";
 }
 
-function first_bracket(s: string): i32 {
+pub function import_paths(mod: Module): string[] {
+  let out: string[] = [];
+  for im in mod.imports {
+    out = out.append(im.path);
+  }
+  return out;
+}
+
+pub function first_bracket(s: string): i32 {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
@@ -12809,7 +12813,7 @@ function bc_body(stmts: ast.Stmt[], ctx: BoundUse): (ast.Stmt[], BoundUse) {
   let out: ast.Stmt[] = [];
   let cur = ctx;
   for stmt in stmts {
-    let (ns, na, nh) = astwalk.map_stmt_where(stmt, cur, bc_stmt, bc_expr, astwalk.every_expr);
+    let (ns, na, nh) = astwalk.map_stmt_where(stmt, cur, bc_stmt, bc_expr, astwalk.descend_all);
     out = out.append(ns);
     cur = na;
   }
@@ -12817,7 +12821,7 @@ function bc_body(stmts: ast.Stmt[], ctx: BoundUse): (ast.Stmt[], BoundUse) {
 }
 
 function bc_rewrite(e: ast.Expr, ctx: BoundUse): ast.Expr {
-  let (out, a, h) = astwalk.map_expr_where(e, ctx, bc_stmt, bc_expr, astwalk.every_expr);
+  let (out, a, h) = astwalk.map_expr_where(e, ctx, bc_stmt, bc_expr, astwalk.descend_all);
   return out;
 }
 
@@ -18657,14 +18661,10 @@ function dl_name_expr(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function dl_name_descend(e: ast.Expr): boolean {
-  return true;
-}
-
 function dl_action_names(actions: ast.Stmt[]): string[] {
   let acc: string[] = [];
   for a in actions {
-    acc = astwalk.fold_stmt_nodes(a, acc, dl_name_stmt, dl_name_expr, dl_name_descend);
+    acc = astwalk.fold_stmt_nodes(a, acc, dl_name_stmt, dl_name_expr, astwalk.descend_all);
   }
   return acc;
 }
@@ -18796,31 +18796,17 @@ function dl_param_names(params: ast.ParamDecl[]): string[] {
   return out;
 }
 
-function dl_count_str(xs: string[], name: string): i32 {
-  let n = 0;
-  for x in xs {
-    if (x == name) {
-      n += 1;
-    }
-  }
-  return n;
-}
-
-function dl_name_keep(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
 function dl_hoistable(want: string[], src: ast.Stmt[], params: string[]): string[] {
   let bound: string[] = [];
   for p in params {
     bound = astwalk.append_bound_name(bound, p);
   }
   for st in src {
-    bound = astwalk.fold_stmt_nodes(st, bound, astwalk.binders_of, dl_name_keep, dl_name_descend);
+    bound = astwalk.fold_stmt_nodes(st, bound, astwalk.binders_of, astwalk.keep_names, astwalk.descend_all);
   }
   let out: string[] = [];
   for w in want {
-    if (dl_count_str(bound, w) < 2) {
+    if (util.count_str(bound, w) < 2) {
       out = out.append(w);
     }
   }
@@ -19604,7 +19590,7 @@ function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt
 struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
 
 function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
-  return astwalk.map_stmts_where(body, ctx, step_continue_stmt, step_continue_expr, astwalk.every_expr);
+  return astwalk.map_stmts_where(body, ctx, step_continue_stmt, step_continue_expr, astwalk.descend_all);
 }
 
 function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
@@ -19759,7 +19745,7 @@ function desugar_ranges_body(body: ast.Stmt[]): ast.Stmt[] {
 function has_range_for(stmts: ast.Stmt[]): boolean {
   let found = false;
   for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, range_for_at, keep_flag, astwalk.descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, range_for_at, astwalk.keep_flag, astwalk.descend_all);
   }
   return found;
 }
@@ -20289,12 +20275,12 @@ function fda_leave(inner: FdaWalk, outer: FdaWalk): FdaWalk {
 }
 
 function fda_expr(e: ast.Expr, w: FdaWalk): (ast.Expr, FdaWalk) {
-  let (out, tail, handled) = astwalk.map_expr_where(e, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
+  let (out, tail, handled) = astwalk.map_expr_where(e, w, fda_stmt_at, fda_expr_at, astwalk.descend_all);
   return (out, tail);
 }
 
 function fda_body(stmts: ast.Stmt[], w: FdaWalk): (ast.Stmt[], FdaWalk) {
-  return astwalk.map_stmts_where(stmts, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
+  return astwalk.map_stmts_where(stmts, w, fda_stmt_at, fda_expr_at, astwalk.descend_all);
 }
 
 function fda_call(c: ast.ExprCall, w: FdaWalk): (ast.Expr, FdaWalk) {
@@ -20386,7 +20372,7 @@ function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
       return (ast.StmtMatch { ...m, scrutinee: scrutinee, arms: arms }, cur, true);
     },
     ast.StmtDefer(d) => {
-      let (action, tail, handled) = astwalk.map_stmt_where(d.action, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
+      let (action, tail, handled) = astwalk.map_stmt_where(d.action, w, fda_stmt_at, fda_expr_at, astwalk.descend_all);
       return (ast.StmtDefer { ...d, action: action }, fda_leave(tail, w), true);
     },
     _ => {
@@ -22685,7 +22671,7 @@ function tv_obj_body(stmts: ast.Stmt[], sc: TvScope): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur = sc;
   for st in stmts {
-    let (ns, na, nh) = astwalk.map_stmt_where(st, cur, tv_obj_stmt, tv_obj_expr, astwalk.every_expr);
+    let (ns, na, nh) = astwalk.map_stmt_where(st, cur, tv_obj_stmt, tv_obj_expr, astwalk.descend_all);
     out = out.append(ns);
     if let ast.StmtVar(v) = st {
       cur = tv_shadow(cur, astwalk.append_bound_name([], v.name));
@@ -22695,7 +22681,7 @@ function tv_obj_body(stmts: ast.Stmt[], sc: TvScope): ast.Stmt[] {
 }
 
 function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
-  let (out, a, h) = astwalk.map_expr_where(e, sc, tv_obj_stmt, tv_obj_expr, astwalk.every_expr);
+  let (out, a, h) = astwalk.map_expr_where(e, sc, tv_obj_stmt, tv_obj_expr, astwalk.descend_all);
   return out;
 }
 
@@ -25270,7 +25256,7 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
   return probe;
 }
 
-function is_float_type_name(t: string): boolean {
+pub function is_float_type_name(t: string): boolean {
   return t == "f64" || t == "f32";
 }
 

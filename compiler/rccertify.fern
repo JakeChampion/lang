@@ -2163,7 +2163,7 @@ function tracked_values(w: Walk): boolean[] {
 }
 
 function live_of(w: Walk, takes: Takes): Live {
-  let fl = ssalive.compute_kept(w.f, debt_deps(w, takes, alias_deps(w)), tracked_values(w));
+  let fl = ssalive.compute_kept_with_sites(w.f, debt_deps(w, takes, alias_deps(w)), tracked_values(w), w.at, w.defs);
   if (!fl.ok) {
     return no_live(fl.why);
   }

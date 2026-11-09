@@ -20,6 +20,9 @@ func TestSelfHostNestedEmptyArrayInference(t *testing.T) {
 		{"owned-string", "", `let n = 0; for xs in [[], [seed]] { for text in xs { if (text != seed) { return 2; } n = n + 1; } } return n - 1;`},
 		{"generic-record", `struct Box[T] { value: T }`, `let n = 0; for xs in [[], [Box { value: seed }]] { for item in xs { if (item.value != seed) { return 2; } n = n + 1; } } return n - 1;`},
 		{"generic-numeric-literal", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[], [Box { value: 1 }], [Box { value: 7i64 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
+		{"generic-numeric-literal-wide-first", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[Box { value: 7i64 }], [], [Box { value: 1 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
+		{"generic-numeric-literal-no-empty", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[Box { value: 1 }], [Box { value: 7i64 }]] { for item in xs { sum = sum + item.value; } } return (sum - 8i64) as i32;`},
+		{"generic-numeric-literal-two-level", `struct Box[T] { value: T }`, `let sum = 0i64; for xs in [[[Box { value: 1 }]], [[Box { value: 7i64 }]]] { for ys in xs { for item in ys { sum = sum + item.value; } } } return (sum - 8i64) as i32;`},
 		{"typed-tail", "", `let sum = 0i64; for xs in [[], [7i64]] { for x in xs { sum = sum + x; } } return (sum - 7i64) as i32;`},
 		{"explicit-control", "", `let arrays: i32[][] = [[], [1]]; let n = 0; for xs in arrays { n = n + xs.len(); } return n - 1;`},
 		{"argument-control", `function count(arrays: [i32[]]): i32 { let n = 0; for xs in arrays { n = n + xs.len(); } return n; }`, `return count([[], [1]]) - 1;`},
@@ -59,6 +62,7 @@ func TestSelfHostNestedEmptyArrayRejectsMixedElements(t *testing.T) {
 		{"nested-depth", "", "", `[[[]], [[1]], [["text"]]]`},
 		{"nominal-records", `struct A { n: i32 } struct B { n: i32 }`, "", `[[], [A { n: 1 }], [B { n: 1 }]]`},
 		{"generic-records", `struct Box[T] { value: T }`, "", `[[], [Box { value: 1 }], [Box { value: "text" }]]`},
+		{"generic-records-typed-literals", `struct Box[T] { value: T }`, "", `[[], [Box { value: 1i32 }], [Box { value: 7i64 }]]`},
 		{"array-depth", "", "", `[[], [1], [[1]]]`},
 		{"owned-view", "", `let owned = [1]; let borrowed: [i32] = owned[:];`, `[[], [owned], [borrowed]]`},
 	} {

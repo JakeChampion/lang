@@ -259,6 +259,7 @@ function main(): i32 {
 
 const inlineOpaqueReturnProgram = `import "./ssa";
 import "./ssasem";
+import "./sourcepos";
 import "./seminline";
 import "./semrecords";
 import "./typeinfo";
@@ -268,7 +269,7 @@ function word_type(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.
 function byte_type(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }; }
 function op(k: i32, r: i32, args: i32[], imm: i32, name: string): ssa.SInst { return ssa.SInst { kind_tag: k, result: r, args: args, imm: imm, str: name }; }
 function func(name: string, params: typeinfo.Type[], types: typeinfo.Type[], blocks: ssa.SBlock[], result: typeinfo.Type, calls: ssasem.Contract[]): ssasem.Func {
- return ssasem.Func { graph: ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: false, blocks: blocks }, values: types, params: params, result: result, records: semrecords.no_records(), enums: [], calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false };
+ return ssasem.Func { graph: ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: false, blocks: blocks }, values: types, params: params, result: result, records: semrecords.no_records(), enums: [], calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), schema_checked: false };
 }
 function block(ops: ssa.SInst[], r: i32): ssa.SBlock { return ssa.SBlock { id: 0, preds: [], insts: ops, term: ssa.STerm { kind_tag: 1, value: r, cond: 0, target: 0, t: 0, f: 0 } }; }
 function main(): i32 {
@@ -486,7 +487,7 @@ function word_flow_probe_func(blocks: ssa.SBlock[]): ssasem.Func {
   let word: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
   let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
   let bytes: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false };
-  return ssasem.Func { graph: ssa.SFunc { name: "word_flow", nparams: 1, nvals: 10, entry: 0, takes_env: false, blocks: blocks }, values: [bytes, word, word, word, word, word, word, word, word, word], params: [bytes], result: word, records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false };
+  return ssasem.Func { graph: ssa.SFunc { name: "word_flow", nparams: 1, nvals: 10, entry: 0, takes_env: false, blocks: blocks }, values: [bytes, word, word, word, word, word, word, word, word, word], params: [bytes], result: word, records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), schema_checked: false };
 }
 pub function test_word_flow_checks(): i32 {
   let param = word_flow_probe_op(ssasem.param(), 0, [], "");
@@ -529,10 +530,16 @@ pub function test_word_flow_checks(): i32 {
   let found = returned_words(before, fnames, owners);
   if (!found[0] || !found[1] || found[2]) { print("word flow caller"); return 96; }
   let whole = returned_words(after, fnames, owners);
-  let again = returned_words_since(after, fnames, owners, found, [true, false, true]);
+  let again = returned_words_since(after, fnames, owners, found, [true, false, true], word_callers(all_word_callees(after, fnames)));
   if (whole[0] || whole[1] || !whole[2] || again[0] != whole[0] || again[1] != whole[1] || again[2] != whole[2]) { print("incremental word flow"); return 97; }
-  let kept = returned_words_since(before, fnames, owners, found, [false, false, false]);
+  let kept = returned_words_since(before, fnames, owners, found, [false, false, false], word_callers(all_word_callees(before, fnames)));
   if (!kept[0] || !kept[1] || kept[2]) { print("unchanged word flow"); return 98; }
+  let call_c = word_flow_probe_op(ssasem.call(), 1, [0], "c");
+  let caller_c = word_flow_probe_func([word_flow_probe_block(0, [], [param, call_c], ssa.STerm { ...ret, value: 1 })]);
+  let s1 = current_words(unknown_words(3), [chain, caller, mixed], fnames, owners);
+  let s2 = current_words(changed_words(s1, 1), [chain, caller_c, mixed], fnames, owners);
+  let s3 = current_words(changed_words(s2, 2), [chain, caller_c, chain], fnames, owners);
+  if (!s1.found[1] || s2.found[1] || !s3.found[1] || !s3.found[2]) { print("relinked word flow"); return 99; }
   return 0;
 }
 `

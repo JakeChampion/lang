@@ -172,7 +172,7 @@ block changes their scope.
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | EMI mutants | a miscompile of a real program, in shapes that fernsmith does not write: the corpus cases' own types, stdlib calls and control flow, with dead and wrapped code around them. The interpreter must give the case's expected output first, so a fault in the mutator or the interpreter is a failure too. The sanitize leg builds the same mutants under `-sanitize` | `TestDifferential_SelfHostEMIX86_64`, `TestDifferential_SelfHostEMISanitizeX86_64` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
-| Coverage feedback, stdlib readers | steers hostile bytes toward new paths in the stdlib readers, and judges every input by the budgets and the oracle of its Go target | `TestSelfHostStdCoverageGuidedFuzz`, `TestSelfHostStdCoverageBeatsBlind` |
+| Coverage feedback, readers | steers hostile bytes toward new paths in the stdlib readers and the compiler's fuzz drivers, and judges every input by the budgets and the oracle of its Go target | `TestSelfHostReaderCoverageGuidedFuzz`, `TestSelfHostReaderCoverageBeatsBlind` |
 
 ### Bisecting a failure to one decision
 
@@ -248,7 +248,7 @@ is the earlier, single hand-written plant.
 ## The boundaries after the front end
 
 Thirty-two targets feed hostile bytes to the boundaries after the front end,
-through the CLI, four drivers and one program the shipped CLI builds. They
+through five drivers and one program the shipped CLI builds. They
 are the build manifest reader, the IR verifiers, both in-process assemblers
 and, through them, the linker and the ELF writer, whose images Go's
 `debug/elf` must read,

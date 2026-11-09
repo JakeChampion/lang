@@ -1,6 +1,7 @@
 import "./util";
 import "./lexer";
 import "./parser";
+import "./astwalk";
 import "./flatten";
 import "./asm_ir";
 import "./asm_arm64_ir";
@@ -34,6 +35,7 @@ import "./arm64_native";
 import "./x86_native";
 import "./elf";
 import "./elfimage";
+import "./imagemanifest";
 import "./apk";
 import "./dex";
 import "./ircore";
@@ -2385,6 +2387,7 @@ function flag_groups(): FlagGroup[] {
     ] },
     FlagGroup { title: "doc", flags: [
       mode_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
+      sub_flag("-doc-source", "TEMPLATE", ["-doc"], "with -doc: link each declaration to its source, TEMPLATE with {path} and {line} in it"),
       mode_flag("-tangle", "", "the Fern source a literate DOC.fern.md tangles to"),
       sub_flag("-chunk", "NAME", ["-tangle"], "with -tangle: only the named chunk"),
       mode_flag("-weave", "", "the woven Markdown of a literate DOC.fern.md"),
@@ -2602,117 +2605,15 @@ function run_manifest(path: string): i32 {
       return 1;
     }
   }
-  let line = image_manifest_line(image);
-  if (line.len() == 0) {
+  let fields = imagemanifest.manifest_fields(image);
+  if (fields.len() == 0) {
     eprint("fern: no build manifest in " + path + ": not a native Fern executable, or one built before the manifest");
     return 1;
   }
-  let field = "";
-  let i = 0;
-  while (i < line.len()) {
-    if (line[i] == b' ') {
-      print(manifest_field(field));
-      field = "";
-    } else {
-      unsafe {
-        field += string_from_bytes_unchecked([line[i]]);
-      }
-    }
-    i += 1;
-  }
-  if (field.len() > 0) {
-    print(manifest_field(field));
+  for field in fields {
+    print(field);
   }
   return 0;
-}
-
-// The manifest line of an image, or "" without one. The magic is built from
-// bytes so that this compiler's own literal pool never holds it, and a
-// candidate must end in a newline within 512 bytes.
-function image_manifest_line(image: u8[]): string {
-  let magic = "";
-  unsafe {
-    magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
-  }
-  let from = 0;
-  while (true) {
-    let at = find_bytes_from(image, magic, from);
-    if (at < 0) {
-      return "";
-    }
-    let start = at + magic.len() - 7;
-    let end = start;
-    while (end < image.len() && end - start < 512 && image[end] != b'\n') {
-      end += 1;
-    }
-    if (manifest_candidate(image, start, end)) {
-      let bytes: u8[] = [];
-      let k = start;
-      while (k < end) {
-        bytes = bytes.append(image[k]);
-        k += 1;
-      }
-      let line = "";
-      unsafe {
-        line = string_from_bytes_unchecked(bytes);
-      }
-      if (find_bytes(bytes, " profile=") >= 0 && find_bytes(bytes, " heap_limit=") >= 0) {
-        return line;
-      }
-    }
-    from = at + 1;
-  }
-  return "";
-}
-
-// A candidate ends in a newline, names its target, and holds printable ASCII
-// only, so a hostile file cannot send control bytes to the terminal.
-function manifest_candidate(b: u8[], start: i32, end: i32): boolean {
-  if (end >= b.len() || b[end] != b'\n' || b[start + 7] == b' ') {
-    return false;
-  }
-  for k in start..end {
-    if (b[k] < 32 || b[k] > 126) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
-function manifest_field(field: string): string {
-  let eq = __memchr(field, 61, 0);
-  if (eq < 0) {
-    return field;
-  }
-  let key = slice_unchecked(field, 0, eq) + "";
-  let value = slice_unchecked(field, eq + 1, field.len()) + "";
-  if (value == "1") {
-    value = "yes";
-  } else if (value == "0") {
-    value = "no";
-  }
-  return key + ": " + value;
-}
-
-function find_bytes(hay: u8[], needle: string): i32 {
-  return find_bytes_from(hay, needle, 0);
-}
-
-function find_bytes_from(hay: u8[], needle: string, from: i32): i32 {
-  let n = needle.len();
-  let i = from;
-  while (i + n <= hay.len()) {
-    let j = 0;
-    while (j < n && hay[i + j] == needle[j]) {
-      j += 1;
-    }
-    if (j == n) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function list_targets(): i32 {
@@ -2798,6 +2699,24 @@ function interrupt_entries(merged: parser.Module): string[] {
     out = out.append(m.arg + " __fn_" + asmcore.sanitize_label(m.func_name));
   }
   return out;
+}
+
+// Whether a function calls __user_run. A kernel image then holds the
+// lower-level trap entries that return to it.
+function calls_user_run(merged: parser.Module): boolean {
+  let want = util.name_index(["__user_run"]);
+  for fd in merged.funcs {
+    let calls: astwalk.CallSite[] = [];
+    for st in fd.body {
+      calls = astwalk.collect_calls_stmt(st, want, calls);
+    }
+    for c in calls {
+      if (!c.method && c.name == "__user_run") {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // The label of the `@early` hook, which the reset entry calls before the heap
@@ -3142,7 +3061,7 @@ function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
   }
   dir = abs_dir(dir);
   if (!fern_toml.valid_dep_name(name)) {
-    eprint("fern: -add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    eprint("fern: -add: invalid dependency name " + util.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
     return 1;
   }
   let mdir = find_manifest_dir(dir);
@@ -3157,7 +3076,7 @@ function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
     return 1;
   }
   if (fern_toml.has_dep(man, name)) {
-    eprint("fern: -add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+    eprint("fern: -add: " + util.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
     return 1;
   }
   let line = dep_line(name, spec, grant, fetcher);
@@ -3216,7 +3135,7 @@ function dep_line(name: string, spec: string, grant: string, fetcher: Fetcher): 
   }
   if (grant.len() == 0) {
     if (spec.starts_with("version:")) {
-      return name + " = " + mvs.quoted(slice_unchecked(spec, 8, spec.len()) + "");
+      return name + " = " + util.quoted(slice_unchecked(spec, 8, spec.len()) + "");
     }
     return name + " = { " + fields + " }";
   }
@@ -3233,21 +3152,21 @@ function dep_source(spec: string, fetcher: Fetcher): string {
   } else if (spec.starts_with("path:")) {
     let p = slice_unchecked(spec, 5, spec.len()) + "";
     if (p.len() == 0) {
-      eprint("fern: -add: empty path in " + mvs.quoted(spec));
+      eprint("fern: -add: empty path in " + util.quoted(spec));
       return "";
     }
-    return "path = " + mvs.quoted(p);
+    return "path = " + util.quoted(p);
   } else if (spec.starts_with("version:")) {
     let v = slice_unchecked(spec, 8, spec.len()) + "";
     if (!fern_toml.is_version(v)) {
-      eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + mvs.quoted(v));
+      eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + util.quoted(v));
       return "";
     }
-    return "version = " + mvs.quoted(v);
+    return "version = " + util.quoted(v);
   } else if (spec.starts_with("url:")) {
     let u = slice_unchecked(spec, 4, spec.len()) + "";
     if (!u.starts_with("https://") && !u.starts_with("http://")) {
-      eprint("fern: -add: url must be http(s), got " + mvs.quoted(u));
+      eprint("fern: -add: url must be http(s), got " + util.quoted(u));
       return "";
     }
     eprint("fetching " + u + " to compute its hash…");
@@ -3256,9 +3175,9 @@ function dep_source(spec: string, fetcher: Fetcher): string {
       eprint("fern: -add: " + got.err);
       return "";
     }
-    return "url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash);
+    return "url = " + util.quoted(u) + ", hash = " + util.quoted(got.hash);
   }
-  eprint("fern: -add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z");
+  eprint("fern: -add: unrecognised source " + util.quoted(spec) + " — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z");
   return "";
 }
 
@@ -3271,7 +3190,7 @@ function grant_list(grant: string): string {
     if (quoted.len() > 0) {
       quoted += ", ";
     }
-    quoted += mvs.quoted(name);
+    quoted += util.quoted(name);
   }
   match (fern_toml.parse_capabilities("[" + quoted + "]")) {
     Ok(caps) => {
@@ -3280,7 +3199,7 @@ function grant_list(grant: string): string {
         if (out.len() > 0) {
           out += ", ";
         }
-        out += mvs.quoted(cap);
+        out += util.quoted(cap);
       }
       return "[" + out + "]";
     },
@@ -3376,7 +3295,7 @@ function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       }
       let got = fetch_into_store(fetcher, d.url, d.hash);
       if (got.err.len() > 0) {
-        return FetchWalk { ...out, err: "dependency " + mvs.quoted(d.name) + ": " + got.err };
+        return FetchWalk { ...out, err: "dependency " + util.quoted(d.name) + ": " + got.err };
       }
       ddir = got.dir;
     } else if (d.kind == "path") {
@@ -3406,7 +3325,7 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
       let got = fetcher.fetch(e.url, e.hash);
       if (got.err.len() > 0) {
-        return FetchWalk { ...out, err: "locked dependency " + mvs.quoted(e.name) + ": " + got.err };
+        return FetchWalk { ...out, err: "locked dependency " + util.quoted(e.name) + ": " + got.err };
       }
       out = FetchWalk { ...out, fetched: out.fetched + 1 };
     }
@@ -3454,7 +3373,7 @@ function run_vendor(start: string): i32 {
         mem = mvs.join_path(mdir, rel);
       }
       if (!has_manifest(mem)) {
-        eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
+        eprint("vendor: workspace member " + util.quoted(rel) + " has no fern.toml");
         return 1;
       }
       starts = starts.append(mem + "");
@@ -3479,7 +3398,7 @@ function run_vendor(start: string): i32 {
   while (i < set.names.len()) {
     let err = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
     if (err.len() > 0) {
-      eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
+      eprint("vendor: copying " + util.quoted(set.names[i]) + ": " + err);
       return 1;
     }
     i += 1;
@@ -3526,7 +3445,7 @@ function vendor_collect(starts: string[]): VendorSet {
         if (srcs[at] != src.dir) {
           return VendorSet {
             names: names, srcs: srcs,
-            err: "vendor: two different packages both named " + mvs.quoted(key)
+            err: "vendor: two different packages both named " + util.quoted(key)
               + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor",
           };
         }
@@ -3549,7 +3468,7 @@ function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
   if (d.kind == "url") {
     let store = store_dir(d.hash);
     if (store.len() == 0) {
-      return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
+      return VendorSrc { dir: "", err: "dependency " + util.quoted(d.name) + " (" + d.hash
         + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
     }
     return VendorSrc { dir: store, err: "" };
@@ -3571,12 +3490,12 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     Err(e) => {}
   }
   if (!have) {
-    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
+    return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is versioned but " + mdir
       + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
   let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(lock) => lock.entries, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
   if (!fern_toml.lock_has(entries, name)) {
-    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+    return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is not in " + mdir
       + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
   match (fern_toml.lock_path_of(entries, name)) {
@@ -3589,7 +3508,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     Some(h) => {
       let store = store_dir(h);
       if (store.len() == 0) {
-        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
+        return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + "@"
           + fern_toml.lock_version_of(entries, name) + " (" + h
           + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
       }
@@ -3597,7 +3516,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     },
     None => {}
   }
-  return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+  return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is not in " + mdir
     + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
 }
 
@@ -4466,9 +4385,9 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
   return 0;
 }
 
-function run_doc(path: string, out_path: string): i32 {
+function run_doc(path: string, out_path: string, links: string): i32 {
   if (util.is_dir(path)) {
-    return doc_tree(path, out_path);
+    return doc_tree(path, out_path, links);
   }
   let src = "";
   let read_ok = false;
@@ -4483,12 +4402,12 @@ function run_doc(path: string, out_path: string): i32 {
     eprint("fern: -doc: cannot read " + path);
     return 1;
   }
-  let (code, terr) = doc_source(path, src);
+  let (code, map, terr) = doc_source(path, src);
   if (terr.len() > 0) {
     eprint(terr);
     return 1;
   }
-  let page = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  let page = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))), ferndoc.SourceLinks { template: links, path: path, map: map });
   if (out_path.len() == 0) {
     write(page);
     return 0;
@@ -4504,7 +4423,7 @@ function run_doc(path: string, out_path: string): i32 {
   }
 }
 
-function doc_tree(dir: string, out_dir: string): i32 {
+function doc_tree(dir: string, out_dir: string, links: string): i32 {
   if (out_dir.len() == 0) {
     eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
     return 2;
@@ -4579,13 +4498,13 @@ function doc_tree(dir: string, out_dir: string): i32 {
         continue;
       }
       let stem = doc_stem(child_rel);
-      let (code, terr) = doc_source(child, src);
+      let (code, map, terr) = doc_source(child, src);
       if (terr.len() > 0) {
         eprint(terr);
         status = 1;
         continue;
       }
-      let page = ferndoc.render_page(code, doc_module_path(ns, stem));
+      let page = ferndoc.render_page(code, doc_module_path(ns, stem), ferndoc.SourceLinks { template: links, path: child, map: map });
       if (page.len() == 0) {
         continue;
       }
@@ -4609,12 +4528,14 @@ function is_doc_module(name: string): boolean {
   return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
-function doc_source(path: string, src: string): (string, string) {
+// The Fern source of a module, a literate one tangled, and the map from its
+// lines to the lines of the file.
+function doc_source(path: string, src: string): (string, util.LineMap, string) {
   let (mods, terr) = entry_sources(path, src);
   if (terr.len() > 0) {
-    return ("", terr);
+    return ("", util.no_line_map(), terr);
   }
-  return (mods.srcs[0], "");
+  return (mods.srcs[0], mods.maps[0], "");
 }
 
 function doc_stem(p: string): string {
@@ -6756,6 +6677,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let chunk = "";
   let grant = "";
   let mode_doc = false;
+  let doc_links = "";
   let mode_add = false;
   let mode_vendor = false;
   let mode_fetch = false;
@@ -6892,6 +6814,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       mode_tangle = f.on;
     } else if (f.name == "-doc") {
       mode_doc = f.on;
+    } else if (f.name == "-doc-source") {
+      doc_links = f.value;
     } else if (f.name == "-add") {
       mode_add = f.on;
     } else if (f.name == "-fetch") {
@@ -6985,7 +6909,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (!have_entry) {
       return usage(embedded);
     }
-    return run_doc(entry_path, out_path);
+    return run_doc(entry_path, out_path, doc_links);
   }
 
   if (mode_add) {
@@ -7209,7 +7133,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: early_entry(merged) } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: early_entry(merged), user_mode: calls_user_run(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

@@ -1,0 +1,183 @@
+import "std/video/mp4";
+import "std/video/mp4/file" as mp4file;
+import "std/audio/mp4/boxes";
+import "std/audio/mp4/tables";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "video_mp4_vectors";
+
+pub struct Segment { at: i64, bytes: u8[] }
+
+pub struct Counts { seeks: i32, reads: i32, bytes: i64, largest: i32 }
+
+pub struct Source { seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], counts: () => Counts }
+
+pub function copy(input: [u8]): u8[] {
+  let output: u8[] = [];
+  for byte in input {
+    output = output.append(byte);
+  }
+  return output;
+}
+
+function blocked(media: [tables.Media], at: i64, count: i32): boolean {
+  for range in media {
+    if (at < range.end && at + count as i64 > range.start) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function memory(segments: Segment[], media: tables.Media[], short: i32): Source {
+  let position = cell_new(0i64);
+  let seeks = cell_new(0);
+  let reads = cell_new(0);
+  let total = cell_new(0i64);
+  let largest = cell_new(0);
+  let seek = (at: i64): Result[i64, IoError] => {
+    position.set(at);
+    seeks.set(seeks.get() + 1);
+    return Ok(at);
+  };
+  let read = (requested: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    if (requested > largest.get()) {
+      largest.set(requested);
+    }
+    let at = position.get();
+    for segment in segments {
+      if (at >= segment.at && at - segment.at < segment.bytes.len() as i64) {
+        let offset = (at - segment.at) as i32;
+        let count = requested;
+        if (short > 0 && short < count) {
+          count = short;
+        }
+        if (segment.bytes.len() - offset < count) {
+          count = segment.bytes.len() - offset;
+        }
+        if (blocked(media, at, count)) {
+          return Err(IoError.Interrupted);
+        }
+        position.set(at + count as i64);
+        total.set(total.get() + count as i64);
+        return Ok(copy(segment.bytes[offset:offset + count]));
+      }
+    }
+    return Ok([]);
+  };
+  let counts = (): Counts => Counts { seeks: seeks.get(), reads: reads.get(), bytes: total.get(), largest: largest.get() };
+  return Source { seek: seek, read: read, counts: counts };
+}
+
+pub function top(input: [u8]): Result[boxes.Box[], pcm.AudioError] {
+  let (_, values) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: 1000 })?;
+  return Ok(values);
+}
+
+pub function media(input: [u8]): Result[tables.Media[], pcm.AudioError] {
+  let ranges: tables.Media[] = [];
+  for box in top(input)? {
+    if (box.kind == boxes.tag("mdat")) {
+      ranges = ranges.append(tables.Media { start: box.data as i64, end: box.end as i64 });
+    }
+  }
+  return Ok(ranges);
+}
+
+pub function fixture(name: string): Result[u8[], string] {
+  for v in video_mp4_vectors.vectors() {
+    if (v.name == name) {
+      return match (hex.decode(v.bytes)) { Ok(value) => Ok(value), Err(_) => Err("fixture hex") };
+    }
+  }
+  return Err("missing fixture");
+}
+
+function bytes_equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_edits(x: mp4.Track, y: mp4.Track): boolean {
+  if (x.edits.len() != y.edits.len()) {
+    return false;
+  }
+  for j in 0..x.edits.len() {
+    if (x.edits[j].duration != y.edits[j].duration || x.edits[j].media_time != y.edits[j].media_time) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_descriptions(x: mp4.Track, y: mp4.Track): boolean {
+  if (x.descriptions.len() != y.descriptions.len()) {
+    return false;
+  }
+  for j in 0..x.descriptions.len() {
+    let p = x.descriptions[j];
+    let q = y.descriptions[j];
+    if (p.codec != q.codec || p.format != q.format || p.config.length_size != q.config.length_size || !bytes_equal(p.config.csd0, q.config.csd0) || !bytes_equal(p.config.csd1, q.config.csd1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_packets(x: mp4.Track, y: mp4.Track, shift: i64): boolean {
+  if (x.packets.len() != y.packets.len()) {
+    return false;
+  }
+  for j in 0..x.packets.len() {
+    let p = x.packets[j];
+    let q = y.packets[j];
+    if (p.offset != q.offset + shift || p.bytes != q.bytes || p.description != q.description || p.decode_time != q.decode_time || p.presentation_time != q.presentation_time || p.duration != q.duration || p.sync != q.sync) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_track(x: mp4.Track, y: mp4.Track, shift: i64): boolean {
+  return x.id == y.id && x.enabled == y.enabled && x.clock.scale == y.clock.scale && x.clock.duration == y.clock.duration && same_edits(x, y) && same_descriptions(x, y) && same_packets(x, y, shift);
+}
+
+pub function same(a: mp4.Index, b: mp4.Index, shift: i64): boolean {
+  if (a.movie.scale != b.movie.scale || a.movie.duration != b.movie.duration || a.tracks.len() != b.tracks.len()) {
+    return false;
+  }
+  for i in 0..a.tracks.len() {
+    if (!same_track(a.tracks[i], b.tracks[i], shift)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function reference(v: video_mp4_vectors.Vector, short: i32): Result[void, string] {
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return Err("hex");
+  };
+  let Ok(expected) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return Err("complete index");
+  };
+  let Ok(ranges) = media(bytes) else {
+    return Err("media ranges");
+  };
+  let io = memory([Segment { at: 0i64, bytes: bytes }], ranges, short);
+  let limits = mp4file.Limits { ...mp4file.default_limits(), input: source.Limits { chunk_size: 31, max_buffer_bytes: 65536 } };
+  let value = match (mp4file.inspect_with(bytes.len() as i64, io.seek, io.read, limits)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (value.bytes != bytes.len() as i64 || !same(value, expected, 0i64) || io.counts().largest > 31) {
+    return Err("metadata, packet index, or read bound differs");
+  }
+  return Ok(());
+}

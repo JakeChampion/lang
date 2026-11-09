@@ -339,23 +339,22 @@ test("Build component reports compile errors instead of a download", async ({
   });
 });
 
-test("theme toggle flips body.dark and updates the glyph", async ({ page }) => {
+test("theme toggle flips body.dark and shows the other theme's icon", async ({ page }) => {
   await gotoReady(page);
   // Force light mode first so the toggle has a deterministic
   // before-state regardless of the CI runner's prefers-color-
   // scheme.
-  await page.evaluate(() => {
-    document.body.classList.remove("dark");
-    document.getElementById("themeGlyph")!.textContent = "🌙";
-  });
+  await page.evaluate(() => document.body.classList.remove("dark"));
   await expect(page.locator("body")).not.toHaveClass(/dark/);
+  await expect(page.locator("#themeToggle .icon-moon")).toBeVisible();
   await page.locator("#themeToggle").click();
   await expect(page.locator("body")).toHaveClass(/dark/);
-  await expect(page.locator("#themeGlyph")).toHaveText("☀");
+  await expect(page.locator("#themeToggle .icon-sun")).toBeVisible();
+  await expect(page.locator("#themeToggle .icon-moon")).not.toBeVisible();
   // Click back to light.
   await page.locator("#themeToggle").click();
   await expect(page.locator("body")).not.toHaveClass(/dark/);
-  await expect(page.locator("#themeGlyph")).toHaveText("🌙");
+  await expect(page.locator("#themeToggle .icon-moon")).toBeVisible();
 });
 
 test("?theme=dark URL param boots into dark mode", async ({ page }) => {
@@ -405,4 +404,159 @@ test("standalone mode does NOT show the embed tab strip", async ({ page }) => {
   await gotoReady(page);
   // Tab strip is gated on body.embed in CSS; standalone hides it.
   await expect(page.locator(".pane-tabs")).not.toBeVisible();
+});
+
+// The program input: argv after the program name, and stdin. Both run
+// paths take it, and a share link carries it in the hash.
+const grepSrc = `import "std/string";
+import "std/io";
+
+function main(): i32 {
+    let argv: string[] = args();
+    if (argv.len() < 2) {
+        eprint("usage: grep PATTERN");
+        return 2;
+    }
+    match (io.read_input("-")) {
+        Ok(text) => {
+            for line in text.lines() {
+                if (line.contains(argv[1])) { print(line); }
+            }
+            return 0;
+        },
+        Err(_) => { return 2; }
+    }
+}`;
+
+function b64url(s: string): string {
+  return Buffer.from(s, "utf8").toString("base64url");
+}
+
+const grepHash =
+  "#src=" + b64url(grepSrc) +
+  "&args=" + b64url("fern") +
+  "&stdin=" + b64url("fern frond\noak leaf\nfern spore\n");
+
+test("Run gives the program its arguments and stdin", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("#progInput")).toHaveAttribute("open", "");
+  await expect(page.locator("#progArgs")).toHaveValue("fern");
+  await page.locator("#run").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfern spore\n", { timeout: 10_000 });
+  await expect(page.locator("#meta .exit-ok")).toBeVisible();
+});
+
+test("Run (wasm) gives the program its arguments and stdin", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfern spore\n", { timeout: 30_000 });
+});
+
+test("Share keeps the program input in the hash", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.evaluate(() => {
+    (navigator as any).clipboard = { writeText: async () => {} };
+  });
+  await page.locator("#share").click();
+  await expect.poll(() => page.url()).toContain(grepHash);
+});
+
+test("the editor colours Fern keywords from the TextMate grammar", async ({ page }) => {
+  await gotoReady(page);
+  // `function` is keyword-class text in the grammar, so it gets its own
+  // highlight span with a colour that differs from plain text.
+  const kw = page.locator(".cm-content span", { hasText: /^function$/ }).first();
+  await expect(kw).toBeVisible();
+  const [kwColour, textColour] = await kw.evaluate((el) => [
+    getComputedStyle(el).color,
+    getComputedStyle(el.closest(".cm-line")!).color,
+  ]);
+  expect(kwColour).not.toBe(textColour);
+});
+
+test("an autorun embed at phone width does not shift its layout", async ({ browser }) => {
+  // The embed classes are set before the first paint, and the Run label
+  // and the status keep their width, so nothing below them moves.
+  const ctx = await browser.newContext({ viewport: { width: 412, height: 823 }, isMobile: true });
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    (window as any).__shift = 0;
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries() as any[]) (window as any).__shift += e.value;
+    }).observe({ type: "layout-shift", buffered: true });
+  });
+  await page.goto("/index.html?embed=1&autorun=1");
+  await expect(page.locator("#out")).toContainText("hello, world", { timeout: 30_000 });
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as any).__shift)).toBeLessThan(0.05);
+  await ctx.close();
+});
+
+test("an exercise shows its goal and says when the output is the goal", async ({ page }) => {
+  const start = 'import "std/i32";\n\nfunction main(): i32 {\n    print("0");\n    return 0;\n}';
+  const hash = "#src=" + b64url(start) + "&expect=" + b64url("1\n2\n");
+  await page.goto("/index.html" + hash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("#exercise")).toBeVisible();
+  await expect(page.locator("#exerciseGoal")).toHaveText("1\n2\n");
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Not yet: the output is different from the goal.");
+  const solved = 'import "std/i32";\n\nfunction main(): i32 {\n    print("1");\n    print("2");\n    return 0;\n}';
+  await page.goto("/index.html#src=" + b64url(solved) + "&expect=" + b64url("1\n2\n"));
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Done: the output is the goal.");
+});
+
+test("a page with no exercise shows no goal", async ({ page }) => {
+  await gotoReady(page);
+  await expect(page.locator("#exercise")).toBeHidden();
+});
+
+test("the command-line template sets its arguments and stdin", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("cli");
+  await expect(page.locator("#progArgs")).toHaveValue("fern");
+  await expect(page.locator("#progInput")).toHaveAttribute("open", "");
+  await page.locator("#run").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", { timeout: 10_000 });
+});
+
+// Share asks /api/share for a short link, and copies the long one when no
+// such endpoint answers.
+async function shareAndCopy(page) {
+  await page.evaluate(() => {
+    (window as any).__copied = "";
+    // navigator.clipboard is a getter on the prototype, so a plain
+    // assignment does nothing.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => { (window as any).__copied = t; } },
+    });
+  });
+  await page.locator("#share").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).not.toBe("");
+  return page.evaluate(() => (window as any).__copied as string);
+}
+
+test("Share copies a short link when the site stores snippets", async ({ page }) => {
+  let body = "";
+  await page.route("**/api/share", async (route) => {
+    body = route.request().postData() ?? "";
+    await route.fulfill({ json: { id: "abc123" } });
+  });
+  await gotoReady(page);
+  const copied = await shareAndCopy(page);
+  expect(copied).toMatch(/\/p\/abc123$/);
+  expect(JSON.parse(body).hash).toMatch(/^#src=/);
+  await expect.poll(() => page.url()).toMatch(/#src=/);
+});
+
+test("Share copies the full link when no short-link endpoint answers", async ({ page }) => {
+  await page.route("**/api/share", (route) => route.fulfill({ status: 404, body: "" }));
+  await gotoReady(page);
+  expect(await shareAndCopy(page)).toMatch(/\/index\.html#src=/);
 });

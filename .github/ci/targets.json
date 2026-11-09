@@ -75,7 +75,9 @@
     },
     "playground": {
       "inputs": [
-        "web/**"
+        "web/**",
+        "editors/vscode/syntaxes/**",
+        "site/src/assets/fonts/**"
       ]
     },
     "android": {

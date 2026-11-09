@@ -19,16 +19,12 @@ struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[
 
 struct Destinations { targets: i32[], ok: boolean }
 
-function symbol_char(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function symbol(s: string): boolean {
   if (s == "") {
     return false;
   }
   for c in s {
-    if (!symbol_char(c)) {
+    if (!util.is_symbol_byte(c)) {
       return false;
     }
   }

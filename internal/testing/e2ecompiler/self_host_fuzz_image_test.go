@@ -116,75 +116,46 @@ func inLoadMem(loads []*elf.Prog, lo, hi uint64) bool {
 	return false
 }
 
-// imageFaults runs the image mode of the driver on one input and returns the
-// faults of its run and of each image it wrote.
-func imageFaults(driver, which string, want imageLayout, work string, input []byte) []string {
-	path := filepath.Join(work, "text.s")
-	if err := os.WriteFile(path, input, 0o644); err != nil {
-		return []string{err.Error()}
-	}
-	out := filepath.Join(work, "out")
-	os.RemoveAll(out)
-	if err := os.MkdirAll(out, 0o755); err != nil {
-		return []string{err.Error()}
-	}
-	r := runUnderBudget(exec.Command(driver, which+"-image", path, out))
-	if fault := budgetFault("asm_fuzz_run "+which+"-image", r, input); fault != "" {
-		return []string{fault}
-	}
-	if r.code == 134 && strings.HasPrefix(r.stderr, "fern: ") {
-		return nil
-	}
-	fields := strings.Fields(r.stdout)
-	if r.code != 0 || len(fields) != 7 || fields[0] != which+"-image" {
-		return []string{fmt.Sprintf("exit %d on %d bytes, want 0 with the image sizes or 134 with a cause\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)}
-	}
-	var faults []string
-	for i := 1; i < len(fields); i += 2 {
-		kind := fields[i]
-		n, err := strconv.Atoi(fields[i+1])
-		if err != nil {
-			return []string{fmt.Sprintf("the driver printed %q", r.stdout)}
+// imageCheck reads the summary of an image run, `READER static N pie N g N`,
+// and checks each image of size N above 0 that the driver wrote beside the
+// input. A size of 0 is a refusal, which must have a cause line.
+func imageCheck(want imageLayout) readerCheck {
+	return func(r readerRun) string {
+		fields := strings.Fields(r.summary)
+		if len(fields) != 7 {
+			return fmt.Sprintf("the driver printed %q", r.summary)
 		}
-		if n == 0 {
-			if !strings.Contains(r.stderr, "fern: ") {
-				faults = append(faults, fmt.Sprintf("the %s image was refused with no cause\nstderr: %q", kind, r.stderr))
+		var faults []string
+		for i := 1; i < len(fields); i += 2 {
+			kind := fields[i]
+			n, err := strconv.Atoi(fields[i+1])
+			if err != nil {
+				return fmt.Sprintf("the driver printed %q", r.summary)
 			}
-			continue
+			if n == 0 {
+				if !strings.Contains(r.stderr, "fern: ") {
+					faults = append(faults, fmt.Sprintf("the %s image was refused with no cause\nstderr: %q", kind, r.stderr))
+				}
+				continue
+			}
+			if fault := imageFault(r.path+"."+kind, kind, want); fault != "" {
+				faults = append(faults, kind+" image: "+fault)
+			}
 		}
-		if fault := imageFault(filepath.Join(out, kind), kind, want); fault != "" {
-			faults = append(faults, kind+" image: "+fault)
+		if len(faults) > 0 {
+			return strings.Join(faults, "\n") + fmt.Sprintf("\ninput: %q", r.input)
 		}
+		return ""
 	}
-	return faults
-}
-
-// fuzzImage shares the body of the two image targets. The seeds are the
-// assembler targets' seeds: the assembly of a compiled program and short
-// texts that probe labels, sections and alignment.
-func fuzzImage(f *testing.F, which, target string, want imageLayout) {
-	bin, stdlib := fuzzCLI(f)
-	driver := fuzzDriver(f, "asm_fuzz_run")
-	for _, seed := range assemblerSeeds(f, bin, stdlib, target) {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
-		}
-		for _, fault := range imageFaults(driver, which, want, t.TempDir(), input) {
-			t.Errorf("%s\ninput: %q", fault, input)
-		}
-	})
 }
 
 // FuzzSelfHostX86Image takes hostile text through the x86-64 assembler, the
 // linker and the ELF writer.
-func FuzzSelfHostX86Image(f *testing.F) { fuzzImage(f, "x86", "x86-64-linux", x86Layout) }
+func FuzzSelfHostX86Image(f *testing.F) { fuzzReaderTarget(f) }
 
 // FuzzSelfHostArm64Image takes hostile text through the arm64 assembler, the
 // linker and the ELF writer.
-func FuzzSelfHostArm64Image(f *testing.F) { fuzzImage(f, "arm64", "arm64-linux", arm64Layout) }
+func FuzzSelfHostArm64Image(f *testing.F) { fuzzReaderTarget(f) }
 
 // TestSelfHostImageOfCompiledProgram runs the image mode on the assembly of a
 // compiled program, which shows that the checks accept what a real compile
@@ -195,28 +166,29 @@ func FuzzSelfHostArm64Image(f *testing.F) { fuzzImage(f, "arm64", "arm64-linux",
 func TestSelfHostImageOfCompiledProgram(t *testing.T) {
 	for _, c := range []struct {
 		which, target string
-		want          imageLayout
-	}{{"x86", "x86-64-linux", x86Layout}, {"arm64", "arm64-linux", arm64Layout}} {
+	}{{"x86", "x86-64-linux"}, {"arm64", "arm64-linux"}} {
 		t.Run(c.which, func(t *testing.T) {
+			r := readerTargetNamed(t, c.which+"-image")
 			bin, stdlib := fuzzCLI(t)
 			driver := fuzzDriver(t, "asm_fuzz_run")
-			run := func(text []byte, kinds ...string) string {
+			run := func(text []byte, kinds ...string) {
 				t.Helper()
-				work := t.TempDir()
-				if faults := imageFaults(driver, c.which, c.want, work, text); len(faults) > 0 {
-					t.Fatal(strings.Join(faults, "\n"))
+				path := filepath.Join(t.TempDir(), "text.s")
+				if err := os.WriteFile(path, text, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if fault := readerFault(r, text, path, runUnderBudget(exec.Command(driver, r.reader, path))); fault != "" {
+					t.Fatal(fault)
 				}
 				var written []string
 				for _, kind := range []string{"static", "pie", "g"} {
-					if _, err := os.Stat(filepath.Join(work, "out", kind)); err == nil {
+					if _, err := os.Stat(path + "." + kind); err == nil {
 						written = append(written, kind)
 					}
 				}
-				got := strings.Join(written, " ")
-				if want := strings.Join(kinds, " "); got != want {
+				if got, want := strings.Join(written, " "), strings.Join(kinds, " "); got != want {
 					t.Errorf("the images written are %q, want %q", got, want)
 				}
-				return got
 			}
 			run(compiledAssembly(t, bin, stdlib, c.target), "static", "g")
 			run(compiledAssembly(t, bin, stdlib, c.target, "-pie"), "static", "pie", "g")

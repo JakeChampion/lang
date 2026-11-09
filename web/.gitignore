@@ -1,5 +1,5 @@
 # Build artefacts produced by web/build.sh — not source.
-# A static host (e.g. GitHub Pages) regenerates these on push;
+# The site build regenerates these on each deploy;
 # committing the binaries would balloon the repo per version of the
 # toolchain (what is served is the gzipped size).
 playground.wasm

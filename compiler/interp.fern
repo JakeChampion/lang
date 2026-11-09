@@ -323,23 +323,6 @@ function is_vuint64(v: Value): boolean {
   }
 }
 
-function is_int_value(v: Value): boolean {
-  match (v) {
-    VInt(_) => {
-      return true;
-    },
-    VInt64(_) => {
-      return true;
-    },
-    VUint(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
 function index_in(v: Value, n: i32): i32 {
   let wide = vint_as_i64(v);
   if (wide < 0 || wide >= n as i64) {
@@ -388,17 +371,6 @@ function vint_bits(v: Value): i32 {
       return 0;
     }
   }
-}
-
-function is_destructure_name(name: string): boolean {
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b',') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
 }
 
 function split_binding_names(csv: string): string[] {
@@ -1159,7 +1131,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
   let a = acc;
   for st in stmts {
-    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all);
+    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, astwalk.keep_names, astwalk.descend_all);
   }
   return a;
 }
@@ -1200,10 +1172,6 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-}
-
-function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
 }
 
 function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
@@ -3740,10 +3708,6 @@ function (own e: Env) update(name: string, v: Value): Env {
   return match (e.outer) { Some(parent) => Env { ...e, outer: Some(Env { ...parent }.update(name, v)) }, None => e };
 }
 
-function is_sat_op_name(op: string): boolean {
-  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
-}
-
 function sat_exact(op: string, a: i64, b: i64): i64 {
   if (op == "+|") {
     return a + b;
@@ -4104,7 +4068,7 @@ function checked_64(op: string, a: i64, b: i64, signed: boolean): Option[i64] {
 }
 
 function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value {
-  if (ty == "u8" && is_sat_op_name(op) && is_int_like(lv) && is_int_like(rv)) {
+  if (ty == "u8" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
     return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
   }
   let v = eval_binary(op, lv, rv);
@@ -4156,7 +4120,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       let ua = a as u64;
       let ub = b as u64;
       let uzero = 0 as u64;
-      if (is_sat_op_name(op)) {
+      if (lexer.is_saturating_op(op)) {
         return v_uint64(sat_u64(op, ua, ub));
       }
       if (op == "/") {
@@ -4190,7 +4154,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         return v_bool(ua >= ub);
       }
     }
-    if (is_sat_op_name(op)) {
+    if (lexer.is_saturating_op(op)) {
       return v_int64(sat_i64(op, a, b));
     }
     if (op == "/") {
@@ -4235,7 +4199,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     if (op == "*") {
       return v_uint(la * rb);
     }
-    if (is_sat_op_name(op)) {
+    if (lexer.is_saturating_op(op)) {
       return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
     }
     if (op == "&") {
@@ -4333,7 +4297,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       return v_bool(fa != fb);
     }
   }
-  if (is_sat_op_name(op)) {
+  if (lexer.is_saturating_op(op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -5458,7 +5422,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
   if (is_err(iv)) {
     return iv;
   }
-  if (!is_int_value(iv)) {
+  if (!is_int_like(iv)) {
     return v_err("index must be an integer");
   }
   match (av) {
@@ -7706,10 +7670,6 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
   return w;
 }
 
-function is_sha_hw_name(name: string): boolean {
-  return name == "__sha256_hw" || name == "__sha1_hw";
-}
-
 function is_sha_blocks_name(name: string): boolean {
   return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
@@ -7985,7 +7945,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
     return call_aes_gcm_into(heap, name, args);
   }
-  if (args.len() == 0 && is_sha_hw_name(name)) {
+  if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);
   }
   if (args.len() == 2 && is_sha_blocks_name(name)) {
@@ -8905,7 +8865,7 @@ function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       if (is_err(val)) {
         return step_stop(env, val);
       }
-      if (is_destructure_name(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return destructure_step(env, v, val);
       }
       let declared = v.type_name;
@@ -9116,7 +9076,7 @@ function for_elements(iv: Value): Option[Value[]] {
 }
 
 function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
-  if (is_destructure_name(header)) {
+  if (util.contains(header, ",")) {
     let (out, err) = bind_destructure(env, header, "", elem);
     if (!is_err(err)) {
       return out;

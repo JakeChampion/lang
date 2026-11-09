@@ -104,13 +104,6 @@ function is_bool(t: typeinfo.Type): boolean {
   return semtypes.equal(t, typeinfo.t_bool());
 }
 
-function is_void(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeVoid(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function fail(s: State, why: string): State {
   if (!s.ok) {
     return s;
@@ -152,10 +145,6 @@ function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.S
 
 function t_none(): ssa.STerm {
   return ssa.STerm { kind_tag: ssa.TERM_NONE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
-}
-
-function t_unreachable(): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }
 
 function emit(s: State, ins: ssa.SInst): State {
@@ -693,17 +682,13 @@ function decimal(text: string): boolean {
   return true;
 }
 
-function hex_digit(b: i32): boolean {
-  return b >= 48 && b <= 57 || b >= 97 && b <= 102 || b >= 65 && b <= 70;
-}
-
 function hex_digits(text: string, from: i32): boolean {
   if (from >= text.len()) {
     return false;
   }
   let i = from;
   while (i < text.len()) {
-    if (!hex_digit(text[i] as i32)) {
+    if (!lexer.is_hex_digit(text[i] as i32)) {
       return false;
     }
     i += 1;
@@ -792,13 +777,6 @@ function decimal_text(t: string): string {
   return slice_unchecked(t, i, t.len()) + "";
 }
 
-function boolean_value(b: boolean): i32 {
-  if (b) {
-    return 1;
-  }
-  return 0;
-}
-
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
   let value = lookup(s, id.name);
   if (value >= 0) {
@@ -821,13 +799,6 @@ function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type
     s = State { ...s, calls: s.calls.append(contract) };
   }
   return define(s, ssasem.call(), [], 0, id.name, contract.result);
-}
-
-function union_name(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
 }
 
 function union_variants(s: State, name: string): string[] {
@@ -885,7 +856,7 @@ function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
 }
 
 function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
-  if (is_void(ty)) {
+  if (typeinfo.is_void(ty)) {
     return semrecords.Variant { name: name, fields: [] };
   }
   return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
@@ -910,7 +881,7 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) else {
+  let Some(shape) = checker.variant_shape_sig(s.scope, name, typeinfo.union_name(whole)) else {
     return None;
   };
   let sig = checker.instantiated_variant(shape, s.scope, whole);
@@ -921,7 +892,7 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)) else {
+  let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), typeinfo.union_name(whole)) else {
     return None;
   };
   let sig = checker.instantiated_variant(shape, s.scope, whole);
@@ -929,12 +900,12 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
 }
 
 function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
-  let sig: checker.UnionSig = match (checker.union_sig(s.scope, union_name(whole))) { Some(u) => u, None => { return name; } };
+  let sig: checker.UnionSig = match (checker.union_sig(s.scope, typeinfo.union_name(whole))) { Some(u) => u, None => { return name; } };
   if (sig.instance == "" || util.index_of_str(sig.variants, name) >= 0) {
     return name;
   }
   // Enum instances preserve the declaration order of their variants.
-  let origin: checker.UnionSig = match (checker.union_sig(s.scope, union_name(enum_origin(whole, s)))) { Some(u) => u, None => { return name; } };
+  let origin: checker.UnionSig = match (checker.union_sig(s.scope, typeinfo.union_name(enum_origin(whole, s)))) { Some(u) => u, None => { return name; } };
   let at = util.index_of_str(origin.variants, name);
   if (at >= 0 && origin.variants.len() == sig.variants.len()) {
     return sig.variants[at];
@@ -944,13 +915,13 @@ function literal_variant_name(s: State, whole: typeinfo.Type, name: string): str
 
 function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
   let ty = checked(e, s);
-  if (union_name(expected) != union_name(ty)) {
+  if (typeinfo.union_name(expected) != typeinfo.union_name(ty)) {
     if (completes_enum(enum_origin(ty, s), enum_origin(expected, s))) {
       return expected;
     }
     return ty;
   }
-  if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
+  if (builtin_union_layout(typeinfo.union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
     return expected;
   }
   return ty;
@@ -971,7 +942,7 @@ function union_unsettled(t: typeinfo.Type): boolean {
 }
 
 function names_variant(s: State, whole: typeinfo.Type, name: string): boolean {
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   if (owner == "") {
     return false;
   }
@@ -1248,7 +1219,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id]));
   }
   let whole = checked(e, s);
-  let layout = union_layout(s, union_name(whole));
+  let layout = union_layout(s, typeinfo.union_name(whole));
   if (layout != semrecords.layout_option()) {
     return refused(s, "unsupported slice result");
   }
@@ -1361,17 +1332,6 @@ function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
   return None;
 }
 
-function record_field_index(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let container = expr(fa.obj, s, typeinfo.unchecked());
   s = container.s;
@@ -1384,7 +1344,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let Some(sig) = record_sig(s.values[container.id], s) else {
     return refused(s, "unsupported projection");
   };
-  let at = record_field_index(sig, fa.field);
+  let at = util.index_of_str(sig.field_names, fa.field);
   if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
     return refused(s, "record projection contract");
   }
@@ -1398,7 +1358,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
   let at: i32[] = [];
   let i = 0;
   while (i < sl.field_values.len()) {
-    let slot = field_slot(sig, sl.field_names[i]);
+    let slot = util.index_of_str(sig.field_names, sl.field_names[i]);
     if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
       return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] };
     }
@@ -1468,17 +1428,6 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty, base.id + 1);
 }
 
-function field_slot(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sl.has_base) {
     return record_update(e, sl, s);
@@ -1504,7 +1453,7 @@ function record_type(name: string, s: State): Option[typeinfo.Type] {
 
 function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: State): Value {
   name = literal_variant_name(s, whole, name);
-  let layout = union_layout(s, union_name(whole));
+  let layout = union_layout(s, typeinfo.union_name(whole));
   if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) {
     return refused(s, "unsupported variant literal");
   }
@@ -1512,7 +1461,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
     return refused(s, "unsupported variant literal");
   };
   let args = written;
-  if (shape.unit && written.len() == 1 && is_void(checked(written[0], s))) {
+  if (shape.unit && written.len() == 1 && typeinfo.is_void(checked(written[0], s))) {
     let unit = expr(written[0], s, typeinfo.t_void());
     s = unit.s;
     if (!s.ok) {
@@ -1908,7 +1857,7 @@ function method_owner(t: typeinfo.Type): string {
   }
   let owner = struct_name(t);
   if (owner == "") {
-    return union_name(t);
+    return typeinfo.union_name(t);
   }
   return owner;
 }
@@ -2095,8 +2044,8 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
     return v;
   }
   let from = s.values[v.id];
-  let flayout = union_layout(s, union_name(from));
-  let rlayout = union_layout(s, union_name(s.result));
+  let flayout = union_layout(s, typeinfo.union_name(from));
+  let rlayout = union_layout(s, typeinfo.union_name(s.result));
   if (!try_layout(flayout)) {
     return refused(s, "try of a value that is not a union");
   }
@@ -2198,7 +2147,7 @@ function armed_cleanup(s: State): ast.Stmt[] {
 }
 
 function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): string {
-  if (ssasem.is_dyn(to)) {
+  if (typeinfo.is_dyn(to)) {
     return "dyn";
   }
   let key = nominal_method_key("from", to, s);
@@ -2221,15 +2170,15 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (ssasem.is_integer(s.values[v.id])) {
     return checked_int_cast(u, v, s);
   }
-  if (!ssasem.is_dyn(s.values[v.id])) {
+  if (!typeinfo.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
   let target = slice_unchecked(u.op, 4, u.op.len()) + "";
   let concrete = resolved(s.scope.resolve_type(target), s.template, s.binding, s.scope);
-  if (struct_name(concrete) != target && union_name(concrete) != target) {
+  if (struct_name(concrete) != target && typeinfo.union_name(concrete) != target) {
     return refused(s, "downcast target: " + target);
   }
-  if (union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
+  if (typeinfo.union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
     return refused(s, "downcast to an enum whose box carries no shape: " + target);
   }
   let whole = ssasem.option_of(concrete);
@@ -2435,7 +2384,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
   }
   let rhs_end = s.cur.id;
   s = terminate(s, ssa.t_br(join));
-  let short = define(open(s, skip, [pred]), 2, [], boolean_value(b.op == "||"), "", typeinfo.t_bool());
+  let short = define(open(s, skip, [pred]), 2, [], util.bool_i32(b.op == "||"), "", typeinfo.t_bool());
   s = terminate(short.s, ssa.t_br(join));
   return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", typeinfo.t_bool());
 }
@@ -2760,7 +2709,7 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: S
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
@@ -2809,7 +2758,7 @@ function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
@@ -2833,7 +2782,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: St
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
-  if (semtypes.is_cell(s.values[recv])) {
+  if (typeinfo.is_cell(s.values[recv])) {
     return cell_method(c, fa, recv, s, statement);
   }
   if (ssasem.is_map(s.values[recv])) {
@@ -2898,12 +2847,12 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     return produced;
   }
   let recv = produced.id;
-  if (ssasem.is_dyn(s.values[recv])) {
+  if (typeinfo.is_dyn(s.values[recv])) {
     return dyn_method(c, fa, recv, s, statement);
   }
   let owner = method_owner(s.values[recv]);
   if let Some(fsig) = record_sig(s.values[recv], s) {
-    let fat = record_field_index(fsig, fa.field);
+    let fat = util.index_of_str(fsig.field_names, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
       let fv = field_read(s, recv, fat, fa.field, fsig.field_types[fat]);
       if (!fv.s.ok) {
@@ -2950,7 +2899,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   if (ssasem.contract_variables(contract).len() > 0) {
@@ -2992,7 +2941,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
     if (statement) {
       ty = typeinfo.t_void();
     }
-    return unreachable_value(terminate(s, t_unreachable()), ty);
+    return unreachable_value(terminate(s, ssa.t_unreachable()), ty);
   }
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
@@ -3014,7 +2963,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if (c.args.len() + 1 != shape.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(shape.result) && !statement) {
+  if (typeinfo.is_void(shape.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   let params: typeinfo.Type[] = [receiver];
@@ -3202,7 +3151,7 @@ function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolea
   if (c.args.len() != params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(result) && !statement) {
+  if (typeinfo.is_void(result) && !statement) {
     return refused(s, "unsupported void call");
   }
   let ids: i32[] = [callee];
@@ -3506,7 +3455,7 @@ function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expe
 }
 
 function names_member(s: State, whole: typeinfo.Type, name: string): boolean {
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) {
     return false;
   }
@@ -3557,7 +3506,7 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
   if (c.args.len() != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke(c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
@@ -3667,7 +3616,7 @@ function declared_type_head(name: string, s: State): string {
 }
 
 function literal_owner(s: State, whole: typeinfo.Type, head: string): boolean {
-  return union_name(whole) == head || union_name(enum_origin(whole, s)) == head;
+  return typeinfo.union_name(whole) == head || typeinfo.union_name(enum_origin(whole, s)) == head;
 }
 
 function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
@@ -3692,7 +3641,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
   if (c.args.len() != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke(c.args, contract, s, binding, destination_binding(contract, expected));
@@ -3870,7 +3819,7 @@ function exiting(name: string, v: Value): Value {
   if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
     return v;
   }
-  return Value { s: terminate(v.s, t_unreachable()), id: v.id };
+  return Value { s: terminate(v.s, ssa.t_unreachable()), id: v.id };
 }
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
@@ -4003,7 +3952,7 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
 }
 
 function enum_origin(t: typeinfo.Type, s: State): typeinfo.Type {
-  if let Some(sig) = checker.union_sig(s.scope, union_name(t)) {
+  if let Some(sig) = checker.union_sig(s.scope, typeinfo.union_name(t)) {
     if (sig.instance != "") {
       return settled(resolved(checker.spelled_type(s.scope, sig.instance), s.template, s.binding, s.scope));
     }
@@ -4113,13 +4062,13 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (ssasem.is_view(typeinfo.array_elem(expected)) && ssasem.is_string_array(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
+  if (typeinfo.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || typeinfo.union_name(s.values[v.id]) != "")) {
     return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
+  if (typeinfo.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
     return define(s, ssasem.dyn_box(), [v.id], 0, typeinfo.spelling(s.values[v.id]), expected);
   }
-  let owner = union_name(expected);
+  let owner = typeinfo.union_name(expected);
   let member = struct_name(s.values[v.id]);
   if (owner == "" || member == "") {
     return v;
@@ -4193,7 +4142,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return number(n, s, expected);
     },
     ast.ExprBool(b) => {
-      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", typeinfo.t_bool());
+      return define(s, ssa.CONST_BOOL, [], util.bool_i32(b.value), "", typeinfo.t_bool());
     },
     ast.ExprString(st) => {
       return string_literal(st, s, expected);
@@ -4331,7 +4280,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   }
   let i = 0;
   while (i < names.len()) {
-    let at = record_field_index(sig, fields[i]);
+    let at = util.index_of_str(sig.field_names, fields[i]);
     if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
       return fail(s, "record projection contract");
     }
@@ -4389,7 +4338,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
       ty = cty;
     }
   }
-  if (!semtypes.concrete(ty, false) && is_call(v.init)) {
+  if (!semtypes.concrete(ty, false) && ast.is_call(v.init)) {
     return declare_from_call(v, s, after);
   }
   if (!semtypes.concrete(ty, true)) {
@@ -4509,13 +4458,6 @@ function value_local_placeholder(v: ast.StmtVar): boolean {
   return false;
 }
 
-function is_call(e: ast.Expr): boolean {
-  if let ast.ExprCall(_) = e {
-    return true;
-  }
-  return false;
-}
-
 function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): State {
   let init = expr(v.init, s, typeinfo.unchecked());
   s = init.s;
@@ -4554,12 +4496,12 @@ function assign(a: ast.StmtAssign, s: State): State {
 
 function ret(r: ast.StmtReturn, s: State): State {
   if (parser.bare_return(r.value)) {
-    if (!is_void(s.result)) {
+    if (!typeinfo.is_void(s.result)) {
       return fail(s, "missing return value");
     }
     return terminate(s, ssa.t_ret(-1));
   }
-  if (is_void(s.result)) {
+  if (typeinfo.is_void(s.result)) {
     s = discard(r.value, s);
     if (!s.ok) {
       return s;
@@ -5032,7 +4974,7 @@ function total_match(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrecord
     if (a.has_guard) {
       continue;
     }
-    let name = arm_variant_name(a, union_name(whole));
+    let name = arm_variant_name(a, typeinfo.union_name(whole));
     if (util.index_of_str(declared, name) < 0) {
       return false;
     }
@@ -5116,7 +5058,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     return no_chain(s);
   }
   let whole = s.values[scrut];
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   let layout = union_layout(s, owner);
   let variants = laid_variants(s, whole, layout);
   m = inhabited_arms(m, whole, variants);
@@ -5177,7 +5119,7 @@ function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrec
   for a in m.arms {
     let name = "";
     if let ast.PatVariant(pv) = a.pattern {
-      name = unqualified(pv, union_name(whole)).type_name;
+      name = unqualified(pv, typeinfo.union_name(whole)).type_name;
     }
     if (util.index_of_str(absent, name) < 0) {
       arms = arms.append(a);
@@ -5470,7 +5412,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
-    if (parser.is_value_block(c) && is_void(block_type(e, c, s, typeinfo.t_void()))) {
+    if (parser.is_value_block(c) && typeinfo.is_void(block_type(e, c, s, typeinfo.t_void()))) {
       return stmts(parser.vb_body(c), s);
     }
     return call(e, c, s, true, typeinfo.t_void()).s;
@@ -5699,7 +5641,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
+  let f = ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5830,31 +5772,24 @@ function slot_init(body: ast.Stmt[], name: string): ast.Expr {
     }
     if let ast.StmtIf(f) = st {
       let then_init = slot_init(f.then_body, name);
-      if (!is_unknown_expr(then_init)) {
+      if (!ast.is_unknown(then_init)) {
         return then_init;
       }
       let else_init = slot_init(f.else_body, name);
-      if (!is_unknown_expr(else_init)) {
+      if (!ast.is_unknown(else_init)) {
         return else_init;
       }
     }
     if let ast.StmtMatch(m) = st {
       for arm in m.arms {
         let arm_init = slot_init(arm.body, name);
-        if (!is_unknown_expr(arm_init)) {
+        if (!ast.is_unknown(arm_init)) {
           return arm_init;
         }
       }
     }
   }
   return parser.e_unknown("no such slot");
-}
-
-function is_unknown_expr(e: ast.Expr): boolean {
-  if let ast.ExprUnknown(_) = e {
-    return true;
-  }
-  return false;
 }
 
 function calls_synthesised(e: ast.Expr): boolean {
@@ -5903,7 +5838,7 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
     if (!literal_adapts(returned, declared)) {
       let body = inferred_result(fd, scope, b, contracts);
       // `Ok(x)` infers `never` for the error, which the declaration completes.
-      if (semtypes.concrete(body, true) && !is_void(body) && !completes_enum(body, declared)) {
+      if (semtypes.concrete(body, true) && !typeinfo.is_void(body) && !completes_enum(body, declared)) {
         return body;
       }
       if (calls_synthesised(returned)) {
@@ -5986,7 +5921,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6000,13 +5935,6 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
   };
 }
 
-function name_uses(st: ast.Stmt, own acc: string[]): string[] {
-  if let ast.StmtAssign(a) = st {
-    return acc.append(a.target);
-  }
-  return acc;
-}
-
 function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = e {
     return acc.append(id.name);
@@ -6014,13 +5942,9 @@ function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function descend_all(e: ast.Expr): boolean {
-  return true;
-}
-
 function uses_in(stmts: ast.Stmt[], own acc: string[]): string[] {
   for st in stmts {
-    acc = astwalk.fold_stmt_nodes(st, acc, name_uses, ident_uses, descend_all);
+    acc = astwalk.fold_stmt_nodes(st, acc, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
   }
   return acc;
 }
@@ -6031,7 +5955,7 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
       if let ast.PatVariant(pv) = a.pattern {
         let local = uses_in(a.body, []);
         if (a.has_guard) {
-          local = astwalk.fold_expr_nodes(a.guard, local, name_uses, ident_uses, descend_all);
+          local = astwalk.fold_expr_nodes(a.guard, local, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
         }
         let names: string[] = [pv.binding];
         for n in pv.extra_bindings {
@@ -6136,19 +6060,15 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
   return acc;
 }
 
-function keep_names(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
 function escaping_bindings(body: ast.Stmt[]): string[] {
   if (!defer_lowered(body)) {
     return [];
   }
   let local = list_var_uses(body, []);
   for st in body {
-    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, astwalk.descend_all);
   }
   if (local.len() == 0) {
     return [];
@@ -6160,7 +6080,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
       continue;
     }
     let n = slice_unchecked(d, 1, d.len()) + "";
-    if (util.index_of_str(out, n) < 0 && count_of(all, n) > count_of(local, n)) {
+    if (util.index_of_str(out, n) < 0 && util.count_str(all, n) > util.count_str(local, n)) {
       out = out.append(n);
     }
   }
@@ -6170,7 +6090,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
 function defer_lowered(body: ast.Stmt[]): boolean {
   let found = false;
   for st in body {
-    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, keep_found, descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, astwalk.keep_flag, astwalk.descend_all);
   }
   return found;
 }
@@ -6180,20 +6100,6 @@ function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
     return acc || v.name == parser.DFA_TRYALL;
   }
   return acc;
-}
-
-function keep_found(e: ast.Expr, own acc: boolean): boolean {
-  return acc;
-}
-
-function count_of(xs: string[], name: string): i32 {
-  let n = 0;
-  for x in xs {
-    if (x == name) {
-      n += 1;
-    }
-  }
-  return n;
 }
 
 function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
@@ -6314,7 +6220,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if let typeinfo.TypeTuple(tup) = t {
     return types_hold_view(tup.elements, views, impls);
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return type_holds_view(semtypes.cell_elem(t), views, impls);
   }
   if let typeinfo.TypeMap(m) = t {
@@ -6329,7 +6235,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (ssasem.is_func(t)) {
     return util.index_of_str(views, func_view_key(t)) >= 0;
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
         if (v == n || v.starts_with(n + "__")) {
@@ -6394,7 +6300,7 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
 struct Roots { types: typeinfo.Type[], at: i32[], ix: util.NameIndex }
 
 function with_distinct_root(r: Roots, t: typeinfo.Type): Roots {
-  if (!names_schema(t) && !ssasem.is_dyn(t)) {
+  if (!names_schema(t) && !typeinfo.is_dyn(t)) {
     return r;
   }
   let sp = typeinfo.spelling(t);
@@ -6443,7 +6349,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     }
     return out;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return schema_of(semtypes.cell_elem(t), s, out);
   }
 
@@ -6506,7 +6412,7 @@ function with_known_enum(out: Schemas, at: i32): Schemas {
 }
 
 function with_new_enum(out: Schemas, e: semrecords.Enum): Schemas {
-  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e), enum_names: out.memo.enum_names.added(semrecords.union_name_of(e.ty)) } };
+  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e), enum_names: out.memo.enum_names.added(typeinfo.union_name(e.ty)) } };
 }
 
 function enum_members(e: semrecords.Enum, s: State, out: Schemas): Schemas {
@@ -6584,7 +6490,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
 }
 
 function typed_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
-  return laid_variants(s, whole, union_layout(s, union_name(whole)));
+  return laid_variants(s, whole, union_layout(s, typeinfo.union_name(whole)));
 }
 
 function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.Variant[] {
@@ -6592,9 +6498,9 @@ function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.
     return builtin_variants(whole);
   }
   let variants: semrecords.Variant[] = [];
-  for name in union_variants(s, union_name(whole)) {
+  for name in union_variants(s, typeinfo.union_name(whole)) {
     let fields: semrecords.Field[] = [];
-    if let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) {
+    if let Some(shape) = checker.variant_shape_sig(s.scope, name, typeinfo.union_name(whole)) {
       fields = fields_of(checker.instantiated_variant(shape, s.scope, whole), s.scope);
     }
     variants = variants.append(semrecords.Variant { name: name, fields: fields });
@@ -6631,7 +6537,7 @@ function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRo
     }
     for c in envs {
       let env = env_serving(c, t);
-      if (semtypes.is_env(env) && !has_env_row(out, t, env)) {
+      if (semtypes.is_env(env) && !ssasem.has_env_row(out, t, env)) {
         out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: env });
       }
     }
@@ -6670,7 +6576,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     let dreach = r.dyns;
     let grown = false;
     for row in env_rows(reach, s.contracts.envs) {
-      if (has_env_row(rows, row.fn_ty, row.env_ty)) {
+      if (ssasem.has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
       rows = rows.append(row);
@@ -6679,7 +6585,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     }
     for t in dreach {
       for c in dyn_concretes(t, s) {
-        if (has_env_row(drows, t, c)) {
+        if (ssasem.has_env_row(drows, t, c)) {
           continue;
         }
         drows = drows.append(ssasem.EnvRow { fn_ty: t, env_ty: c });
@@ -6725,7 +6631,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
   if (fns && ssasem.is_func(t)) {
     return Reach { ...r, fns: r.fns.append(t) };
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return Reach { ...r, dyns: r.dyns.append(t) };
   }
   if let typeinfo.TypeArray(a) = t {
@@ -6737,7 +6643,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
     }
     return r;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return reach_in(semtypes.cell_elem(t), r, fns);
   }
   if let typeinfo.TypeMap(m) = t {
@@ -6972,15 +6878,6 @@ function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
   return false;
 }
 
-function has_env_row(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
-  for row in rows {
-    if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for c in calls {
@@ -6998,8 +6895,8 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   if (!s.ok) {
     return Made { p: refuse(s.why), memo: memo };
   }
-  if (s.live && !is_void(s.result)) {
-    s = terminate(s, t_unreachable());
+  if (s.live && !typeinfo.is_void(s.result)) {
+    s = terminate(s, ssa.t_unreachable());
   }
   s = terminate(s, ssa.t_ret(-1));
   let blocks = reachable(s.blocks);
@@ -7902,6 +7799,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__sysreg_read", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__sysreg_write", params: [typeinfo.t_string(), typeinfo.t_i64()], modes: [b, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_clean", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__cache_sync_code", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: typeinfo.t_void() },
@@ -7909,6 +7807,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__irq_mask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_unmask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_wait", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__user_run", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__irq_pending", params: [], modes: [], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__hvc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__smc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
@@ -8429,7 +8328,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
     if (at >= 0) {
       let qs = quiet_slots(all[i].func);
       slots = slots.with(at, qs);
-      quiet = quiet.with(at, !reference(all[i].func.result) || any_true(qs));
+      quiet = quiet.with(at, !reference(all[i].func.result) || util.any_true(qs));
     }
     i += 1;
   }
@@ -8469,15 +8368,6 @@ function quiet_slots(f: ssasem.Func): boolean[] {
     out = out.append(reference(t) && (!holds || !ssasem.can_hold(f, f.result, t)));
   }
   return out;
-}
-
-function any_true(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function inferred_modes_change(p: Produced): boolean {

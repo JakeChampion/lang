@@ -345,8 +345,10 @@ pub function port_intrinsic(name: string): boolean {
 // on the line that holds an address, and the TLB ops drop the translation of an
 // address or of every address. The IRQ ops mask and unmask interrupts, wait
 // for one with interrupts masked, and give the address of the IRQ region.
+// __user_run runs the user context of a trap frame until it traps.
+// __cache_sync_code makes instruction fetch see the code written to a line.
 pub function privileged_intrinsic(name: string): boolean {
-  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending"], name) || sysreg.intrinsic(name);
+  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code"], name) || sysreg.intrinsic(name);
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any

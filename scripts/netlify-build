@@ -2,8 +2,7 @@
 #
 # scripts/netlify-build — build the docs site + playground for a Netlify deploy.
 #
-# Mirrors the four build steps in .github/workflows/pages.yml, which is the
-# canonical recipe for a publishable bundle:
+# The steps:
 #
 #   1. Compile the playground's wasm bundle: the self-host compiler
 #      (compiler/playground_run.fern, built by bin/fern-selfhost).
@@ -12,9 +11,8 @@
 #   3. Run `fern -doc` to emit the generated stdlib reference pages.
 #   4. npm install && astro build under site/ → site/dist/.
 #
-# One deliberate difference from the Pages workflow, to leave the source tree
-# alone during a deploy: the wasm is compiled straight into the staging
-# directory rather than to web/playground.wasm and copied across.
+# The wasm is compiled straight into the staging directory, not to
+# web/playground.wasm, so a deploy leaves the source tree as it was.
 #
 # Netlify runs this from the repository root; `publish` is site/dist (see
 # netlify.toml).
@@ -47,27 +45,28 @@ bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
   -o "$stage/playground.wasm" "$PWD/compiler/playground_run.fern" "$PWD/internal/stdlib"
 
 echo "==> staging playground assets"
-# index.html statically imports ./wasi-shim.js and ./wasi-http-shim.js, so a
-# missing sibling breaks the whole ES module and the playground hangs on
-# "loading runtime…". Glob rather than list, so a newly-added local asset
-# stages without a change here.
-cp -L web/*.html web/*.js "$stage/"
+web/stage.sh "$stage"
 
 echo "==> generating stdlib reference"
-bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
-bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
+site/scripts/stdlib-docs.sh
 
 echo "==> building site"
 cd site
 
-# astro.config.mjs defaults `site` to the GitHub Pages origin, which would put
-# another host's domain in this deploy's canonical + Open Graph URLs. Netlify
-# exposes the deploy's own origin, so hand it over through the config's
-# existing SITE_URL hook. DEPLOY_PRIME_URL is the branch/preview URL; URL is
-# the production one. Only set it when non-empty: the config falls back on a
-# nullish value, and an empty string is not nullish — it would fail the build.
+# astro.config.mjs defaults `site` to the production origin, which a branch
+# deploy or a preview must not name in its canonical and Open Graph URLs.
+# Netlify exposes the deploy's own origin, so hand it over through the
+# config's SITE_URL hook. URL is the production origin. DEPLOY_PRIME_URL is
+# the branch or preview URL, and a production deploy sets it to the main--
+# branch URL, so it applies only outside CONTEXT=production. Only set it when
+# non-empty: the config falls back on a nullish value, and an empty string is
+# not nullish — it would fail the build.
 if [ -z "${SITE_URL:-}" ]; then
-  deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  if [ "${CONTEXT:-}" = production ]; then
+    deploy_url="${URL:-}"
+  else
+    deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  fi
   if [ -n "$deploy_url" ]; then
     export SITE_URL="$deploy_url"
     echo "==> SITE_URL=$SITE_URL"

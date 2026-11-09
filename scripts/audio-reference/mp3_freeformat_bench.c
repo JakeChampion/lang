@@ -1,6 +1,8 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_FLOAT_OUTPUT
+#ifndef FERN_MPEG_LAYERS_12
 #define MINIMP3_ONLY_MP3
+#endif
 #ifndef FERN_MP3_BENCH_SIMD
 #define MINIMP3_NO_SIMD
 #endif
@@ -37,6 +39,9 @@ static int decode(const unsigned char *input, int size, int frames) {
         mp3dec_frame_info_t info = {0};
         int count = mp3dec_decode_frame(&state, input + at, size - at, pcm, &info);
         if (!count || info.frame_bytes < 1) return 1;
+#ifdef FERN_MPEG_LAYERS_12
+        if (info.layer != 2 || count != 1152) return 1;
+#endif
         hash(pcm, (size_t)count * info.channels);
         at += info.frame_bytes;
     }

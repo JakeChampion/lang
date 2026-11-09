@@ -41,6 +41,7 @@ function main(): i32 {
 		"vmovdqu (%rax,%rdx), %ymm0":   2,
 		"vpmovmskb %ymm0,":             4,
 		"vzeroupper":                   7,
+		"vpsadbw %ymm3, %ymm2, %ymm2":  1,
 	} {
 		if got := strings.Count(text, want); got < atLeast {
 			t.Errorf("%q appears %d times in the x86-64 text, want at least %d", want, got, atLeast)

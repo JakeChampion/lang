@@ -93,7 +93,7 @@ function no_stmt(st: ast.Stmt, own w: Walk): Walk {
 }
 
 function add_edge(s: Scan, callee: i32): Scan {
-  if (has_i32(s.edges, callee)) {
+  if (util.has_i32(s.edges, callee)) {
     return s;
   }
   return Scan { ...s, edges: s.edges.append(callee) };
@@ -138,7 +138,7 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
 function ident_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprIdent(id) => {
-      if (!has_i32(w.s.callee_pos, pos_key(id.line, id.col)) && !util.has_str(w.s.locals, id.name) && w.ctx.names.has(id.name)) {
+      if (!util.has_i32(w.s.callee_pos, pos_key(id.line, id.col)) && !util.has_str(w.s.locals, id.name) && w.ctx.names.has(id.name)) {
         let k = func_at(w.funcs, id.name);
         return Walk { ...w, s: Scan { ...add_edge(w.s, k), escaping: w.s.escaping.append(k) } };
       }
@@ -151,7 +151,7 @@ function ident_expr(e: ast.Expr, own w: Walk): Walk {
 function lambda_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprLambda(lm) => {
-      if (!has_i32(w.s.applied_pos, pos_key(lm.line, lm.col))) {
+      if (!util.has_i32(w.s.applied_pos, pos_key(lm.line, lm.col))) {
         let inner = Walk { ...w, s: Scan { ...fresh_scan(), locals: w.s.locals, lambda_locals: w.s.lambda_locals } };
         for st in lm.body {
           inner = astwalk.fold_stmt_nodes(st, inner, no_stmt, call_expr, astwalk.descend_all);
@@ -216,15 +216,6 @@ function func_at(funcs: parser.FuncDecl[], name: string): i32 {
     k += 1;
   }
   return -1;
-}
-
-function has_i32(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function context(mod: parser.Module, tagged: string[]): Ctx {

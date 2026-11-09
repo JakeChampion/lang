@@ -215,6 +215,51 @@ function main(): i32 {
     assert.equal(r.exit, 0);
   });
 
+  // -source-bytes N takes the first N bytes of stdin as the source and leaves
+  // the rest for the program, and the arguments after `--` follow the
+  // program's name in its argv.
+  const echoInput = `import "std/io";
+function main(): i32 {
+  let argv: string[] = args();
+  match (io.read_input("-")) {
+    Ok(text) => {
+      print(argv.len().to_string() + " " + argv[0] + " " + argv[1] + " [" + text + "]");
+      return 0;
+    },
+    Err(_) => { return 2; }
+  }
+}`;
+
+  it("gives the interpreted program its arguments and the rest of stdin", async () => {
+    const n = Buffer.byteLength(echoInput);
+    const r = await runCoreWasm(playground, {
+      stdin: echoInput + "fern\nfrond\n",
+      args: ["playground", "-interp", "-source-bytes", String(n), "--", "-x"],
+    });
+    assert.equal(r.stderr, "");
+    assert.equal(r.stdout, "2 main -x [fern\nfrond\n]\n");
+    assert.equal(r.exit, 0);
+  });
+
+  it("refuses a source shorter than -source-bytes", async () => {
+    const n = Buffer.byteLength(echoInput) + 10;
+    const r = await runCoreWasm(playground, {
+      stdin: echoInput,
+      args: ["playground", "-interp", "-source-bytes", String(n)],
+    });
+    assert.equal(r.stderr, `fern: stdin ended before -source-bytes ${n} bytes of source\n`);
+    assert.equal(r.exit, 1);
+  });
+
+  it("refuses a -source-bytes value that is not a byte count", async () => {
+    const r = await runCoreWasm(playground, {
+      stdin: echoInput,
+      args: ["playground", "-interp", "-source-bytes", "-3"],
+    });
+    assert.equal(r.stderr, "fern: -source-bytes needs a byte count of zero or more\n");
+    assert.equal(r.exit, 1);
+  });
+
   // The page's language server: one session per question, framed as an
   // editor frames it, answered from the embedded stdlib.
   it("answers a language-server session", async () => {

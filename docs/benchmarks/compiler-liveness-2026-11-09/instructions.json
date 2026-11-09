@@ -1,0 +1,23 @@
+{
+  "target": "x86-64-linux",
+  "tool": "Callgrind 3.24.0",
+  "certification": true,
+  "output": "native executable",
+  "cold_proof_memo": "disabled",
+  "warm_proof_memo": "separate primed directories with equal-length paths",
+  "trace_children": false,
+  "runs_per_compiler_per_mode": 1,
+  "cold": {
+    "base": 41648447069,
+    "candidate": 41523381241,
+    "reduction": 125065828,
+    "change_percent": -0.3002892948032354
+  },
+  "warm": {
+    "base": 29490210760,
+    "candidate": 29478244350,
+    "reduction": 11966410,
+    "change_percent": -0.04057756689969105
+  },
+  "native_sha256": "d7911fa4fc954fab82bbb3f6ffd6e26b1b39a3495230126668ae0ddf371e30e0"
+}

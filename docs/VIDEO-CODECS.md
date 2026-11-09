@@ -70,7 +70,26 @@ Fragmented media, encryption, and external data references return `Unsupported`.
 The input must be a complete byte view, within an explicit input limit.
 Separate budgets bound boxes, tracks, descriptions, edits, packets, dimensions, and each packet's size.
 The packet budget is cumulative across video tracks. The track budget includes audio and other non-video tracks.
-This API does not stream a large file or define an exact process-memory bound.
+The complete byte-view API does not stream a large file or define an exact process-memory bound.
+
+`std/video/mp4/file` indexes the same tracks from a borrowed seekable source.
+It reads top-level headers and one movie metadata box. It skips media payloads without a copy.
+It reuses the same nested box and sample-table readers.
+The source length and packet offsets use signed 64-bit counts.
+
+Its defaults permit files up to 64 GiB and movie metadata up to 16 MiB.
+Separate limits bound each input window and the number of seek and read operations.
+Short reads are permitted. Empty reads before a window completes report truncation.
+I/O errors retain their own category.
+
+The returned index retains metadata and packet ranges, without encoded payloads.
+These limits do not define an exact process-memory bound.
+
+The caller retains and closes the source after success or failure.
+The source must remain immutable through index and packet reads.
+Use `std/audio/file.Window` to read one indexed packet range through the same source.
+Skipped payloads still need truncation checks when the caller reads them.
+These synchronous calls must run outside a latency-sensitive Android loop callback.
 
 ## Android packet path
 
@@ -151,11 +170,13 @@ Container codec restrictions and sample order still apply.
 
 `std/android/video/extractor` reads platform-supported containers from an explicit file range.
 Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+
 `std/android/video/source` opens a granted content URI for this packet path.
 It duplicates the asset descriptor and preserves the provider's offset and length.
 An unknown length resolves from the seekable file's end. Non-seekable sources return `Unsupported`.
 A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
 The adapter does not buffer the complete source or retain Java global references.
+
 Close the extractor or player before source close. Each source has one owner.
 The app needs a URI read grant, without broad storage permission.
 
@@ -200,7 +221,8 @@ Timestamp conversion uses the declared rational timebase and checked arithmetic.
 IVF support does not establish VP8, VP9, or AV1 software decode support.
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
-Native Fern demuxers for MP4, MOV, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
+The native MP4 indexer above supports self-contained AVC and HEVC tracks.
+Other MOV tracks, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
 
@@ -272,7 +294,7 @@ It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
 
-The compiler differential suite includes the native video, MP4 packet, codec-policy, and source-range tests.
+The compiler differential suite includes the native video, MP4 packet and file-input, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
 The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
@@ -282,13 +304,23 @@ The Android workflow builds `tests/android/video/app.fern` and runs it on the AP
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
+
 The workflow also copies the byte-buffer export into MediaStore and grants the video APK video read permission.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
 
 The APK build lane also runs `scripts/check-video-mp4-interop` on fresh FFmpeg fixtures.
 It compares native packet ranges, timestamps, durations, and sync flags with FFprobe.
-It extracts AVC and HEVC Annex B streams through Fern and compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+It compares complete-view and seekable-file packet indexes for all six generated fixtures.
+Native and WASI file readers must return the same packet bytes and metadata.
+It extracts AVC and HEVC Annex B streams through bounded file windows.
+It compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+
+An additional sparse AVC file places media beyond 8 GiB and checks packet offsets against FFprobe.
+The sparse file occupies less than 1 MiB of disk blocks and does not enter repository artifacts.
+
+Native and WASI file-input tests reject every media-payload read during index creation.
+They cover short reads, an 8 GiB sparse range, truncated boxes, resource limits, and I/O failures.
 Fixtures cover reordered frames, signed composition offsets, fast-start layout, interleaved AAC, multiple video tracks, compact sample sizes, and 64-bit offsets.
 Normal native and WASI tests use checked-in reference bytes and require no FFmpeg installation.
 

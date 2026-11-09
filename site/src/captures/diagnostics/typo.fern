@@ -1,0 +1,7 @@
+import "std/i32";
+
+function main(): i32 {
+  let total: i32 = 40;
+  print((totl + 2).to_string());
+  return 0;
+}

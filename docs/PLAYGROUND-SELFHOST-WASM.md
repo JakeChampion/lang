@@ -124,8 +124,8 @@ Two facts worth having before costing anything:
   gate and is not: it covers self-host *driver* binaries, not this.
 - **Nothing builds `cmd/fern-wasm` under CI's normal test lanes.** No `go vet`
   or `go build` under `GOOS=js` anywhere; it is compile-checked only by the
-  three path-filtered workflows that publish the site (`pages.yml`,
-  `docs-build.yml`, `playground-e2e.yml`).
+  two path-filtered workflows that build the site (`docs-build.yml`,
+  `playground-e2e.yml`).
 
 ## The measurement
 

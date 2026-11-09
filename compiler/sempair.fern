@@ -555,16 +555,16 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   }
   let calls = f.calls;
   if (sh.pair) {
-    calls = with_contract(calls, pair_set_contract(sh.payloads[1], 0));
+    calls = ssasem.with_contract(calls, pair_set_contract(sh.payloads[1], 0));
     if (three_reference_tuple(sh.ty)) {
-      calls = with_contract(calls, pair_set_contract(sh.payloads[2], 1));
+      calls = ssasem.with_contract(calls, pair_set_contract(sh.payloads[2], 1));
     }
   } else if (!sh.lanes) {
     for i in 0..sh.payloads.len() {
       let ts = word_types(sh, i);
       for slot in 0..ts.len() {
         if (!in_lane(ts, slot)) {
-          calls = with_contract(calls, pair_set_contract(ts[slot], slot));
+          calls = ssasem.with_contract(calls, pair_set_contract(ts[slot], slot));
         }
       }
     }
@@ -788,7 +788,7 @@ function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
     if ((wide >> slot & 1) != 0) {
       let lane = f.values.len();
       f = with_value(f, semscalarreturn.word_type());
-      f = ssasem.Func { ...f, calls: with_contract(f.calls, lane_contract(slot)) };
+      f = ssasem.Func { ...f, calls: ssasem.with_contract(f.calls, lane_contract(slot)) };
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [tag], imm: 0, str: pair_lane_name(slot) });
       lanes = lanes.with(slot, lane);
     }
@@ -922,15 +922,15 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
   if (sh.lanes) {
     return calls;
   }
-  calls = with_contract(calls, word_contract(0));
+  calls = ssasem.with_contract(calls, word_contract(0));
   if (sh.split) {
-    calls = with_contract(calls, word_contract(1));
+    calls = ssasem.with_contract(calls, word_contract(1));
   }
   for i in 0..sh.payloads.len() {
     let ts = word_types(sh, i);
     for slot in 0..ts.len() {
       if (!in_lane(ts, slot)) {
-        calls = with_contract(calls, ssasem.Contract { name: word_as_name(ts[slot]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: ts[slot] });
+        calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(ts[slot]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: ts[slot] });
       }
     }
   }
@@ -989,8 +989,8 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let calls = f.calls;
   let at = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
-  calls = with_contract(calls, word_contract(0));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = ssasem.with_contract(calls, word_contract(0));
+  calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1039,9 +1039,9 @@ function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ss
   let calls = f.calls;
   let at = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
-  calls = with_contract(calls, word_contract(0));
-  calls = with_contract(calls, lane_contract(1));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = ssasem.with_contract(calls, word_contract(0));
+  calls = ssasem.with_contract(calls, lane_contract(1));
+  calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1076,9 +1076,9 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
   let calls = f.calls;
   let at = ssasem.find_contract_in(calls, call.str);
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
-  calls = with_contract(with_contract(calls, word_contract(0)), word_contract(1));
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
-  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });
+  calls = ssasem.with_contract(ssasem.with_contract(calls, word_contract(0)), word_contract(1));
+  calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });
   return ssasem.Func { ...f, calls: calls };
 }
 
@@ -1241,7 +1241,7 @@ function with_new_block(f: ssasem.Func, b: ssa.SBlock): ssasem.Func {
 function repointed(f: ssasem.Func, targets: i32[], from: i32, to: i32): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
-    if (has(targets, b.id)) {
+    if (util.has_i32(targets, b.id)) {
       let preds: i32[] = [];
       for q in b.preds {
         if (q == from) {
@@ -1256,22 +1256,6 @@ function repointed(f: ssasem.Func, targets: i32[], from: i32, to: i32): ssasem.F
     }
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
-}
-
-function has(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function with_contract(calls: ssasem.Contract[], c: ssasem.Contract): ssasem.Contract[] {
-  if (ssasem.find_contract_in(calls, c.name) >= 0) {
-    return calls;
-  }
-  return calls.append(c);
 }
 
 pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
@@ -1510,7 +1494,7 @@ function split_calls(f0: ssasem.Func, sites: Sites, own: boolean[]): ssasem.Func
 
 function branch_position(f: ssasem.Func, defs: ssa.SInst[], site: Site, ins: ssa.SInst, own: boolean[], given: semscalarreturn.Given): i32 {
   for pos in 0..ins.args.len() {
-    let open = pos < site.split.len() && site.split[pos] && !has(given.at, pos);
+    let open = pos < site.split.len() && site.split[pos] && !util.has_i32(given.at, pos);
     if (open && semscalarreturn.needs_branch(f, defs, site.decl.params[pos], ins.args[pos], own)) {
       return pos;
     }
@@ -1580,15 +1564,6 @@ function field_types(r: semrecords.Record): typeinfo.Type[] {
   return out;
 }
 
-function any_true(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
-}
-
 pub struct Laid { funcs: ssasem.Func[], records: semrecords.Record[], changed: boolean[] }
 
 // Lays out each record field that is a record of one to four scalars, or an
@@ -1637,7 +1612,7 @@ function field_candidates(funcs: ssasem.Func[], rewrite: boolean[]): Layout {
       }
       seen = seen.added(key);
       let r = relay_of(f, rec, key);
-      if (laid_candidate(f, rec) && any_true(r.flat)) {
+      if (laid_candidate(f, rec) && util.any_true(r.flat)) {
         list = list.append(r);
         keys = keys.append(key);
       }
@@ -1748,7 +1723,7 @@ function reached_records(f: ssasem.Func, t0: typeinfo.Type): string[] {
 }
 
 function held_types(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return [semtypes.cell_elem(t)];
   }
   match (t) {
@@ -1897,7 +1872,7 @@ function settled(lay: Layout): Layout {
   let list: Relay[] = [];
   let keys: string[] = [];
   for r in lay.list {
-    if (any_true(r.flat)) {
+    if (util.any_true(r.flat)) {
       list = list.append(laid_relay(r));
       keys = keys.append(r.key);
     }
