@@ -1,3 +1,7 @@
+# 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
+# string_count_byte after main updates. Bank the reported size and work counts.
+# Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
+# Evidence: docs/benchmarks/compiler-semantic-liveness-ci-2026-11-09/. Keep all tolerances.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI jobs 129298782292 and 129298782302
 # measure eight changed rows after the merge of main d04e79179f. Bank each value.
 # The string count kernel grows in size and uses fewer instructions. Keep all tolerances.
@@ -281,8 +285,8 @@ x86_64/sort_strings.text	3098
 x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1926
 x86_64/string_build.ir	42886116
-x86_64/string_count_byte.text	1271
-x86_64/string_count_byte.ir	68053368
+x86_64/string_count_byte.text	1321
+x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
