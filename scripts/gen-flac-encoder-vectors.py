@@ -131,6 +131,7 @@ def main():
                 'sources': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
                             [ROOT / 'internal/stdlib/std/audio/flac/encoder.fern.md',
                              ROOT / 'internal/stdlib/std/audio/flac/plan.fern.md',
+                             ROOT / 'internal/stdlib/std/audio/flac/lpc.fern.md',
                              ROOT / 'internal/stdlib/std/audio/flac/bitwriter.fern.md',
                              ROOT / 'internal/stdlib/std/audio/flac/checksum.fern.md']},
                 'vectors': manifest}

@@ -1,0 +1,61 @@
+import "std/audio/flac/encoder";
+import "std/audio/flac";
+import "std/audio/pcm";
+import "std/test";
+import "flac_lpc_check";
+import "flac_lpc_vectors";
+
+function options(): test.TestOutcome {
+  for order in [-1, 33] {
+    let options = encoder.Options { ...encoder.default_options(), max_lpc_order: order };
+    if let Err(pcm.Header) = encoder.encode([0], pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 }, options, pcm.default_limits()) {} else {
+      return test.fail("LPC order bounds");
+    }
+  }
+  return test.pass();
+}
+
+// Check complete LPC output against exact budgets and damaged checksums.
+// fern-lint: allow cyclomatic-complexity
+function budgets(): test.TestOutcome {
+  let input: i32[] = [];
+  for at in 0..128 {
+    input = input.append(if (at % 2 == 0) { 1000 } else { -3000 });
+  }
+  let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+  let options = encoder.Options { ...encoder.default_options(), block_frames: 128, max_lpc_order: 2 };
+  let Ok(encoded) = encoder.encode(input, format, options, pcm.default_limits()) else {
+    return test.fail("LPC stream");
+  };
+  let Ok(fixed) = encoder.encode(input, format, encoder.Options { ...options, max_lpc_order: 0 }, pcm.default_limits()) else {
+    return test.fail("fixed stream");
+  };
+  if (encoded.len() >= fixed.len()) {
+    return test.fail("periodic LPC compression");
+  }
+  let limits = pcm.Limits { max_input_bytes: encoded.len(), max_samples: input.len() };
+  if let Ok(_) = encoder.encode(input, format, options, limits) {} else {
+    return test.fail("exact byte and sample budget");
+  }
+  if let Err(pcm.Limit) = encoder.encode(input, format, options, pcm.Limits { ...limits, max_input_bytes: encoded.len() - 1 }) {} else {
+    return test.fail("one byte short");
+  }
+  if let Err(pcm.Limit) = encoder.encode(input, format, options, pcm.Limits { ...limits, max_samples: input.len() - 1 }) {} else {
+    return test.fail("one sample short");
+  }
+  if let Err(pcm.Checksum) = flac.decode(encoded.with(encoded.len() - 1, encoded[encoded.len() - 1] ^ 1u8), pcm.default_limits()) {} else {
+    return test.fail("frame checksum");
+  }
+  if let Err(pcm.Checksum) = flac.decode(encoded.with(26, encoded[26] ^ 1u8), pcm.default_limits()) {} else {
+    return test.fail("PCM MD5");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("FLAC LPC small reference controls");
+  runner = runner.it("bounded LPC orders", options);
+  runner = runner.it("LPC compression, exact budgets, checksums, and PCM MD5", budgets);
+  runner = runner.it("independent stream, exact PCM, and retained input", () => flac_lpc_check.reference(flac_lpc_vectors.smoke()));
+  return runner.finish();
+}

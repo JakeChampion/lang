@@ -2,8 +2,9 @@
   "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
   "libFLAC": "1.5.0",
   "sources": {
-    "internal/stdlib/std/audio/flac/encoder.fern.md": "49a0bb0d99180a9ab2868326ecc8779e3a781ac42a1e043eb98e93836276627d",
-    "internal/stdlib/std/audio/flac/plan.fern.md": "6460c7bce58be4bd7dcd5cc0583cc01b76afb480eb49e16c2e33b5fbd9c81731",
+    "internal/stdlib/std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
+    "internal/stdlib/std/audio/flac/plan.fern.md": "afb46d11ae7b414430ec009feaac554d7dca2540852d40f8765147f6476fc919",
+    "internal/stdlib/std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
     "internal/stdlib/std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
     "internal/stdlib/std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53"
   },
