@@ -448,14 +448,13 @@ function can_hold_word(t: typeinfo.Type): boolean {
 // Follow return values through known callees before the splice rounds.
 // A function is examined again only when one of its callees starts to return a word.
 function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
-  return returned_words_since(funcs, ix, owners, none_of(funcs.len()), all_of(funcs.len()));
+  return returned_words_since(funcs, ix, owners, none_of(funcs.len()), all_of(funcs.len()), word_callers(all_word_callees(funcs, ix)));
 }
 
 // The least fixpoint is unchanged for a function that reaches no stale one
 // through its callees, so only the stale functions and their callers are
 // found again.
-function returned_words_since(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners, prev: boolean[], stale: boolean[]): boolean[] {
-  let callers = word_callers(funcs, ix);
+function returned_words_since(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners, prev: boolean[], stale: boolean[], callers: i32[][]): boolean[] {
   let words = prev;
   let queued = none_of(funcs.len());
   let queue: i32[] = [];
@@ -514,44 +513,94 @@ function returns_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, 
 }
 
 // The returned words of each function, and the functions changed since they
-// were found.
-struct Words { found: boolean[], stale: boolean[], any_stale: boolean }
+// were found. callees and callers hold the call edges once linked is set; a
+// changed function's edges are found again with its answer.
+struct Words { found: boolean[], stale: boolean[], any_stale: boolean, linked: boolean, callees: i32[][], callers: i32[][] }
 
 function unknown_words(n: i32): Words {
-  return Words { found: none_of(n), stale: all_of(n), any_stale: n > 0 };
+  return Words { found: none_of(n), stale: all_of(n), any_stale: n > 0, linked: false, callees: [], callers: [] };
 }
 
 function current_words(w: Words, funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): Words {
   if (!w.any_stale) {
     return w;
   }
-  return Words { found: returned_words_since(funcs, ix, owners, w.found, w.stale), stale: none_of(funcs.len()), any_stale: false };
+  let edges = linked_words(w, funcs, ix);
+  return Words { ...edges, found: returned_words_since(funcs, ix, owners, w.found, w.stale, edges.callers), stale: none_of(funcs.len()), any_stale: false };
 }
 
 function changed_words(w: Words, i: i32): Words {
-  return Words { found: w.found, stale: w.stale.with(i, true), any_stale: true };
+  return Words { ...w, stale: w.stale.with(i, true), any_stale: true };
 }
 
-// The callees whose result memory_read takes from words, inverted.
-function word_callers(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
+// The call edges of funcs: all of them the first time, then the edges of each
+// stale function in place of its old ones.
+function linked_words(w: Words, funcs: ssasem.Func[], ix: util.NameIndex): Words {
+  if (!w.linked) {
+    let callees = all_word_callees(funcs, ix);
+    return Words { ...w, linked: true, callees: callees, callers: word_callers(callees) };
+  }
+  let callees = w.callees;
+  let callers = w.callers;
+  for i in 0..funcs.len() {
+    if (w.stale[i]) {
+      for at in callees[i] {
+        callers = callers.with(at, without_i32(callers[at], i));
+      }
+      let now = word_callees(funcs[i], ix);
+      for at in now {
+        callers = callers.with(at, callers[at].append(i));
+      }
+      callees = callees.with(i, now);
+    }
+  }
+  return Words { ...w, callees: callees, callers: callers };
+}
+
+function without_i32(xs: i32[], n: i32): i32[] {
+  let out: i32[] = [];
+  for x in xs {
+    if (x != n) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+// The functions whose result memory_read takes from words in f, each once.
+function word_callees(f: ssasem.Func, ix: util.NameIndex): i32[] {
+  let out: i32[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let at = called(ins, ix);
+      if (at < 0) {
+        at = closure_callee(f, ins, ix);
+      }
+      if (at >= 0 && util.index_of_i32(out, at) < 0) {
+        out = out.append(at);
+      }
+    }
+  }
+  return out;
+}
+
+function all_word_callees(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
   let out: i32[][] = [];
-  while (out.len() < funcs.len()) {
+  for f in funcs {
+    out = out.append(word_callees(f, ix));
+  }
+  return out;
+}
+
+// The callees, inverted.
+function word_callers(callees: i32[][]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < callees.len()) {
     out = out.append([]);
   }
-  for i in 0..funcs.len() {
-    for b in funcs[i].graph.blocks {
-      for ins in b.insts {
-        let at = called(ins, ix);
-        if (at < 0) {
-          at = closure_callee(funcs[i], ins, ix);
-        }
-        if (at >= 0) {
-          let l = out[at];
-          if (l.len() == 0 || l[l.len() - 1] != i) {
-            out = out.with(at, l.append(i));
-          }
-        }
-      }
+  for i in 0..callees.len() {
+    for at in callees[i] {
+      out = out.with(at, out[at].append(i));
     }
   }
   return out;
