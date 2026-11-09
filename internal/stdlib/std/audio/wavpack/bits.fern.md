@@ -3,14 +3,20 @@
 Fields use least significant bit order.
 Every read checks the declared bitstream boundary.
 The exponential code rejects more than 32 prefix bits.
+Unary limits must be nonnegative.
 
 ```fern
 <<*>>=
 // Bounded little-endian bit reads for WavPack entropy and extension streams.
 import "std/audio/pcm";
+import "std/u32";
+
+function valid_span(input: [u8], at: i64, end: i64): boolean {
+  return at >= 0i64 && end >= at && end <= input.len() as i64 * 8i64;
+}
 
 pub function read(input: [u8], at: i64, end: i64, count: i32): Result[(i64, u32), pcm.AudioError] {
-  if (count < 0 || count > 32 || at < 0i64 || end < at || end > input.len() as i64 * 8i64) {
+  if (count < 0 || count > 32 || !valid_span(input, at, end)) {
     return Err(pcm.Header);
   }
   if (count as i64 > end - at) {
@@ -26,15 +32,34 @@ pub function read(input: [u8], at: i64, end: i64, count: i32): Result[(i64, u32)
   return Ok((at + count as i64, (value >> shift as u64 & mask) as u32));
 }
 
+function unary_width(at: i64, end: i64, remaining: i64): i32 {
+  let width = 8i64 - (at & 7i64);
+  if (width > end - at) {
+    width = end - at;
+  }
+  if (width > remaining) {
+    width = remaining;
+  }
+  return width as i32;
+}
+
 pub function unary(input: [u8], at: i64, end: i64, limit: i32): Result[(i64, u32), pcm.AudioError] {
+  if (limit < 0 || !valid_span(input, at, end)) {
+    return Err(pcm.Header);
+  }
   let count = 0u32;
   while (count <= limit as u32) {
-    let (next, bit) = read(input, at, end, 1)?;
-    at = next;
-    if (bit == 0u32) {
-      return Ok((at, count));
+    let width = unary_width(at, end, limit as i64 - count as i64 + 1i64);
+    if (width == 0) {
+      return Err(pcm.Truncated);
     }
-    count += 1u32;
+    let (next, value) = read(input, at, end, width)?;
+    let ones = (~value).trailing_zeros();
+    if (ones < width) {
+      return Ok((at + ones as i64 + 1i64, count + ones as u32));
+    }
+    at = next;
+    count += width as u32;
   }
   return Err(pcm.Header);
 }
@@ -52,12 +77,7 @@ pub function code(input: [u8], at: i64, end: i64, maximum: u32): Result[(i64, u3
   if (maximum < 2u32) {
     return read(input, at, end, maximum as i32);
   }
-  let width = 0;
-  let value = maximum;
-  while (value != 0u32) {
-    value >>= 1u32;
-    width += 1;
-  }
+  let width = 32 - maximum.leading_zeros();
   let extras = ((1u64 << width as u64) - maximum as u64 - 1u64) as u32;
   let (next, short) = read(input, at, end, width - 1)?;
   if (short < extras) {

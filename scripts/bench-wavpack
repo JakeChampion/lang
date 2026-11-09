@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--case", action="append", dest="cases")
     parser.add_argument("--cpu", type=int)
     parser.add_argument("--reference-include", type=Path)
+    parser.add_argument("--baseline-stdlib", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if (
@@ -208,6 +209,30 @@ def main():
             check=True,
             env=env,
         )
+        if args.baseline_stdlib:
+            baseline = args.baseline_stdlib.resolve()
+            binaries["baseline_fern"] = temp / "baseline-fern"
+            subprocess.run(
+                [
+                    str(compiler),
+                    "-stdlib",
+                    str(baseline),
+                    "-O",
+                    "-target",
+                    target,
+                    "-o",
+                    str(binaries["baseline_fern"]),
+                    str(ROOT / "bench/audio/wavpack_decode.fern"),
+                ],
+                check=True,
+                env=env,
+            )
+            baseline_sources = sorted((baseline / "std/audio/wavpack").glob("*.fern*"))
+            baseline_sources.append(baseline / "std/audio/wavpack.fern.md")
+            result["baseline_stdlib"] = str(baseline)
+            result["baseline_source_sha256"] = {
+                str(path.relative_to(baseline)): sha(path) for path in baseline_sources
+            }
         subprocess.run(
             [
                 "cc",
@@ -293,6 +318,15 @@ def main():
                 "paired_ratios": ratios,
                 "median_paired_fern_over_c": statistics.median(ratios),
             }
+            if args.baseline_stdlib:
+                paired = [
+                    trials["fern"][i]["wall_ns"] / trials["baseline_fern"][i]["wall_ns"]
+                    for i in range(args.trials)
+                ]
+                result["cases"][name]["paired_fern_over_baseline"] = paired
+                result["cases"][name]["median_paired_fern_over_baseline"] = (
+                    statistics.median(paired)
+                )
             print(
                 name + " " + json.dumps(medians, sort_keys=True),
                 file=sys.stderr,

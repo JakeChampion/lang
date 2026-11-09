@@ -1,0 +1,88 @@
+import "std/audio/wavpack/bits";
+import "std/audio/pcm";
+import "std/test";
+
+function unary_case(start: i32, run: i32, limit: i32, extent: i32): boolean {
+  let input = [255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8];
+  let stop = start + run;
+  let byte = stop / 8;
+  input = input.with(byte, input[byte] & ~(1u8 << (stop & 7) as u8));
+  let result = bits.unary(input, start as i64, (start + extent) as i64, limit);
+  if (run <= limit && extent > run) {
+    return match (result) { Ok((at, count)) => at == (stop + 1) as i64 && count == run as u32, _ => false };
+  }
+  let expected = if (run > limit && extent > limit) { pcm.Header } else { pcm.Truncated };
+  return match (result) { Err(error) => error == expected, _ => false };
+}
+
+function unary_boundaries(): test.TestOutcome {
+  for start in 0..8 {
+    for run in 0..35 {
+      for limit in [0, 1, 7, 15, 16, 31, 32] {
+        for extent in [0, run, run + 1] {
+          if (!unary_case(start, run, limit, extent)) {
+            return test.fail("unary boundary");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function code_case(maximum: u32, width: i32, value: u32, start: i32): boolean {
+  let extras = (1u64 << width as u64) - maximum as u64 - 1u64;
+  let count = width;
+  let encoded = value as u64;
+  if (value as u64 < extras) {
+    count -= 1;
+  } else {
+    let adjusted = value as u64 + extras;
+    encoded = adjusted >> 1u64 | (adjusted & 1u64) << (width - 1) as u64;
+  }
+  let word = encoded << start as u64;
+  let input: u8[] = [];
+  for i in 0..5 {
+    input = input.append((word >> (i * 8) as u64) as u8);
+  }
+  return match (bits.code(input, start as i64, (start + count) as i64, maximum)) {
+    Ok((at, actual)) => actual == value && at == (start + count) as i64,
+    _ => false,
+  };
+}
+
+function coded_widths(): test.TestOutcome {
+  for width in 2..33 {
+    let power = 1u64 << (width - 1) as u64;
+    for wide in [power, power + 1u64, power * 2u64 - 1u64] {
+      let maximum = wide as u32;
+      let extras = ((1u64 << width as u64) - wide - 1u64) as u32;
+      for value in [0u32, extras, maximum / 2u32, maximum] {
+        for start in 0..8 {
+          if (!code_case(maximum, width, value, start)) {
+            return test.fail("bounded code width");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_spans(): test.TestOutcome {
+  let input = [255u8];
+  for (at, end, limit) in [(-1i64, 8i64, 32), (1i64, 0i64, 32), (0i64, 9i64, 32), (0i64, 8i64, -1)] {
+    if let Err(pcm.Header) = bits.unary(input, at, end, limit) {} else {
+      return test.fail("invalid unary span or limit");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("WavPack entropy bit boundaries");
+  runner = runner.it("unary runs at every bit alignment and boundary", unary_boundaries);
+  runner = runner.it("independent bounded codes through 32 bits", coded_widths);
+  runner = runner.it("invalid spans and limits", invalid_spans);
+  return runner.finish();
+}

@@ -366,6 +366,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"wavpack", langSrcAbs(t, "tests/stdlib/wavpack_test.fern"), ""},
 		{"wavpack_boundary", langSrcAbs(t, "tests/stdlib/wavpack_boundary_test.fern"), ""},
 		{"wavpack_smoke", langSrcAbs(t, "tests/stdlib/wavpack_smoke_test.fern"), ""},
+		{"wavpack_bits", langSrcAbs(t, "tests/stdlib/wavpack_bits_test.fern"), ""},
 		{"wavpack_input", langSrcAbs(t, "tests/stdlib/wavpack_input_test.fern"), ""},
 		{"wavpack_input_boundary", langSrcAbs(t, "tests/stdlib/wavpack_input_boundary_test.fern"), ""},
 		{"wavpack_input_smoke", langSrcAbs(t, "tests/stdlib/wavpack_input_smoke_test.fern"), ""},
