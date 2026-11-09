@@ -777,13 +777,6 @@ function decimal_text(t: string): string {
   return slice_unchecked(t, i, t.len()) + "";
 }
 
-function boolean_value(b: boolean): i32 {
-  if (b) {
-    return 1;
-  }
-  return 0;
-}
-
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
   let value = lookup(s, id.name);
   if (value >= 0) {
@@ -2391,7 +2384,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
   }
   let rhs_end = s.cur.id;
   s = terminate(s, ssa.t_br(join));
-  let short = define(open(s, skip, [pred]), 2, [], boolean_value(b.op == "||"), "", typeinfo.t_bool());
+  let short = define(open(s, skip, [pred]), 2, [], util.bool_i32(b.op == "||"), "", typeinfo.t_bool());
   s = terminate(short.s, ssa.t_br(join));
   return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", typeinfo.t_bool());
 }
@@ -4149,7 +4142,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return number(n, s, expected);
     },
     ast.ExprBool(b) => {
-      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", typeinfo.t_bool());
+      return define(s, ssa.CONST_BOOL, [], util.bool_i32(b.value), "", typeinfo.t_bool());
     },
     ast.ExprString(st) => {
       return string_literal(st, s, expected);
@@ -5648,7 +5641,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
+  let f = ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5928,7 +5921,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -5949,13 +5942,9 @@ function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function descend_all(e: ast.Expr): boolean {
-  return true;
-}
-
 function uses_in(stmts: ast.Stmt[], own acc: string[]): string[] {
   for st in stmts {
-    acc = astwalk.fold_stmt_nodes(st, acc, astwalk.assign_target_of, ident_uses, descend_all);
+    acc = astwalk.fold_stmt_nodes(st, acc, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
   }
   return acc;
 }
@@ -5966,7 +5955,7 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
       if let ast.PatVariant(pv) = a.pattern {
         let local = uses_in(a.body, []);
         if (a.has_guard) {
-          local = astwalk.fold_expr_nodes(a.guard, local, astwalk.assign_target_of, ident_uses, descend_all);
+          local = astwalk.fold_expr_nodes(a.guard, local, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
         }
         let names: string[] = [pv.binding];
         for n in pv.extra_bindings {
@@ -6071,19 +6060,15 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
   return acc;
 }
 
-function keep_names(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
 function escaping_bindings(body: ast.Stmt[]): string[] {
   if (!defer_lowered(body)) {
     return [];
   }
   let local = list_var_uses(body, []);
   for st in body {
-    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, astwalk.descend_all);
   }
   if (local.len() == 0) {
     return [];
@@ -6105,7 +6090,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
 function defer_lowered(body: ast.Stmt[]): boolean {
   let found = false;
   for st in body {
-    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, keep_found, descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, astwalk.keep_flag, astwalk.descend_all);
   }
   return found;
 }
@@ -6114,10 +6099,6 @@ function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
   if let ast.StmtVar(v) = st {
     return acc || v.name == parser.DFA_TRYALL;
   }
-  return acc;
-}
-
-function keep_found(e: ast.Expr, own acc: boolean): boolean {
   return acc;
 }
 

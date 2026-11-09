@@ -7,6 +7,7 @@ import "../semlower";
 import "../physicalbody";
 import "../lexer";
 import "../parser";
+import "../sourcepos";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -17,7 +18,7 @@ function require(ok: boolean, code: i32): void {
 function state(name: string, ops: ir.Op[]): irtables.LowerState {
   return irtables.LowerState {
     scratch_start: 0,
-    source_positions: irtables.no_source(),
+    source_positions: sourcepos.no_source(),
     ok: true, ops: ops, n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
     why: "", name: name, result_kind: 0, dbg_slots: [], dbg_names: [], dbg_types: [],

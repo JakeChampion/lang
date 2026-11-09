@@ -173,8 +173,9 @@ findings. Ranked by leverage.
     `util`, and the tests load them through `modload`. Their copies of the
     `parse_f64_bits` family and of `index_of_str` are deleted. `x86_native` and
     `arm64_native` also import `gas`, which holds the DWARF call-frame encoder
-    and the GAS-text helpers they had in two copies. `elf.fern` imports nothing
-    and shares no function with `util`.
+    and the GAS-text helpers they had in two copies. `elf.fern` and `gas.fern`
+    import `util` for the byte writers that the object writers share, and the
+    tests load them through `modload` too.
 
   The last candidate was `split_commas` (`irlower`, `printer`).
   The 2026-10 tree no longer contains `irlower.fern`.

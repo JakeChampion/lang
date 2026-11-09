@@ -615,17 +615,13 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
   return Units { mods: mods, caches: caches, loose: loose, physical: physical };
 }
 
-function owner_key(fd: parser.FuncDecl): string {
-  return parser.decl_key(fd);
-}
-
 function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
   let declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
   let types: Map[string, i32] = map_new(64);
   let p: i32 = 0;
   while (p < parts.len()) {
     for fd in parts[p].funcs {
-      declared = declared.insert(owner_key(fd), p + 1);
+      declared = declared.insert(parser.decl_key(fd), p + 1);
     }
     for sd in parts[p].structs {
       types = types.insert(sd.name, p + 1);
@@ -637,7 +633,7 @@ function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
   }
   let owner: i32[] = [];
   for fd in g.im.funcs {
-    let at: i32 = declared.get_or(owner_key(fd), 0);
+    let at: i32 = declared.get_or(parser.decl_key(fd), 0);
     if (at == 0 && fd.receiver_type.len() > 0) {
       at = types.get_or(util.base_type_name(fd.receiver_type), 0);
     }
@@ -803,7 +799,7 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
   while (i < cache.len() && i < mod.funcs.len()) {
     unit += cache[i].ops.len();
     if (inline_leaf(mod.funcs[i], cache[i])) {
-      names = names.append(inline_label(mod.funcs[i]));
+      names = names.append(parser.decl_key(mod.funcs[i]));
       at = at.append(i);
     }
     i += 1;
@@ -824,7 +820,7 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
     if (r.ok && !r.superseded && !claims && budget > 0) {
       let self = r.name;
       if (i < mod.funcs.len()) {
-        self = inline_label(mod.funcs[i]);
+        self = parser.decl_key(mod.funcs[i]);
       }
       let sp = splice_leaves(r, self, reg, names, at, cache, budget);
       budget = sp.budget;
@@ -879,10 +875,6 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
 pub function body_for_emit(name: string, r: irtables.LowerResult): irtables.Lowered {
   lower_failed_refuse(name, r);
   return match (irtables.body_payload(r)) { Some(body) => body, None => { eprint("error: internal: superseded body reached emission: " + name); exit(3); } };
-}
-
-function inline_label(fd: parser.FuncDecl): string {
-  return parser.decl_key(fd);
 }
 
 function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
