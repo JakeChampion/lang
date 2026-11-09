@@ -337,5 +337,10 @@ Each is a bound with a test that crosses it.
       `tests/stdlib/quic_conn_test.fern`, `tests/stdlib/quic_recovery_test.fern`
       and `TestServeH3EcnX86_64`.
 
-0-RTT waits on early data in `std/tls/handshake`, which does not derive
-an early traffic secret yet.
+0-RTT (#12514) starts with session resumption over QUIC. A server
+configured `with_tickets` issues a NewSessionTicket in 1-RTT once the
+handshake is done. The ticket has the sealed format of `std/tls/server`
+(`issue_ticket`, `lookup_ticket`). A TCP and a QUIC server with one secret
+can take each other's tickets, which no test checks yet. A client keeps each
+ticket (`Conn.tickets`) and offers it with `with_ticket`. Early data comes
+next: `std/tls/handshake` does not derive an early traffic secret yet.

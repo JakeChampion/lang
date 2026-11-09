@@ -179,19 +179,26 @@ function __hello(config: Config): handshake.ClientConfig {
 function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumption] {
   match (config.resume) {
     Some(t) => {
-      let age = now.since(t.received);
-      if (t.server_name != config.server_name || age.is_negative() || age.cmp(t.lifetime) >= 0) {
-        return None;
-      }
-      match (keyschedule.cipher_suite(t.suite)) {
-        Some(suite) => {
-          let obfuscated = age.as_millis() + t.age_add as i64 & 0xffffffff as i64;
-          return Some(handshake.Resumption { identity: t.identity, psk: t.psk, suite: suite, obfuscated_age: obfuscated as u32 });
-        },
-        None => {
-          return None;
-        }
-      }
+      return offered(t, config.server_name, now);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// offered is the resumption a client for `server_name` offers at `now` with
+// the ticket `t`, or None when the ticket is for another name or has expired.
+pub function offered(t: Ticket, server_name: string, now: time.Timestamp): Option[handshake.Resumption] {
+  let age = now.since(t.received);
+  if (t.server_name != server_name || age.is_negative() || age.cmp(t.lifetime) >= 0) {
+    return None;
+  }
+  match (keyschedule.cipher_suite(t.suite)) {
+    Some(suite) => {
+      let obfuscated = age.as_millis() + t.age_add as i64 & 0xffffffff as i64;
+      return Some(handshake.Resumption { identity: t.identity, psk: t.psk, suite: suite, obfuscated_age: obfuscated as u32 });
     },
     None => {
       return None;
@@ -425,15 +432,29 @@ function __no_keys(): handshake.KernelKeys {
 }
 
 function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: message.NewSessionTicket, now: time.Timestamp): Ticket[] {
-  match (c.resumption_psk(t.nonce)) {
-    Ok(psk) => {
-      return tickets.append(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: s.name });
+  match (ticket_from(c, t, s.name, now)) {
+    Some(kept) => {
+      return tickets.append(kept);
     },
-    Err(_) => {
+    None => {
       return tickets;
     }
   }
   return tickets;
+}
+
+// ticket_from is the ticket a client for `server_name` keeps from the
+// NewSessionTicket `t` that the server sent on the connection `c`.
+pub function ticket_from(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp): Option[Ticket] {
+  match (c.resumption_psk(t.nonce)) {
+    Ok(psk) => {
+      return Some(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: server_name });
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  return None;
 }
 
 function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: time.Timestamp): Result[handshake.ClientStep, tls.Failure] {

@@ -583,7 +583,7 @@ function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn
   let Ok(h) = packet.parse(data, 0, cfg.cid_len) else {
     return None;
   };
-  let Ok(q) = quic.accept(cfg, __sim_bytes(n, quic.server_entropy(cfg)), h, now) else {
+  let Ok(q) = quic.accept(cfg, __sim_bytes(n, quic.server_entropy(cfg)), h, now, n.wall()) else {
     return None;
   };
   n.h3_accepted.set(n.h3_accepted.get() + 1);

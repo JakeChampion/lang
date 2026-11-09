@@ -6392,9 +6392,9 @@ function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.Socket
 function __h3_opened(q: __Quic, h: packet.Header, odcid: u8[]): Result[quic.Conn, string] {
   let entropy = random_bytes(quic.server_entropy(q.cfg));
   if (h.token.len() > 0) {
-    return quic.accept_validated(q.cfg, entropy, h, odcid, clock.instant());
+    return quic.accept_validated(q.cfg, entropy, h, odcid, clock.instant(), clock.now());
   }
-  return quic.accept(q.cfg, entropy, h, clock.instant());
+  return quic.accept(q.cfg, entropy, h, clock.instant(), clock.now());
 }
 
 function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst) {

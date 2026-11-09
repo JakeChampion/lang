@@ -92,7 +92,7 @@ function to_server(e: Ends, d: u8[]): Ends {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return e;
   };
-  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, at_ns(e.now)) else {
+  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, at_ns(e.now), time.timestamp_from_unix_millis(WALL_MS + e.now / 1000000)) else {
     return e;
   };
   return Ends { ...e, server: Some(h3q.server(q, h3.config()).receive(d, at_ns(e.now))) };
