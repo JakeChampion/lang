@@ -3517,7 +3517,7 @@ pub function kind_count(): i32 {
 }
 
 pub function kind_retired(id: i32): boolean {
-  return id == 110 || id == 114 || id == 115 || id == 168 || id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 125 && id <= 137 || id == 198;
+  return id > 0 && id < KIND_NAMES.len() && KIND_NAMES[id] == "";
 }
 
 function pops0(t: i32): boolean {
