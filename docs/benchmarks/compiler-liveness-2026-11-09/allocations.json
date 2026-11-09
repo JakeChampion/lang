@@ -1,0 +1,20 @@
+{
+  "workload": "fixed checker and imports",
+  "target": "x86-64-linux",
+  "certification": true,
+  "proof_memo": "disabled",
+  "output": "assembly",
+  "before": {
+    "allocs": 52453768,
+    "frees": 52453768,
+    "live_bytes": 0
+  },
+  "after": {
+    "allocs": 52437124,
+    "frees": 52437124,
+    "live_bytes": 0
+  },
+  "allocation_reduction": 16644,
+  "allocation_reduction_percent": 0.0317307995871717,
+  "assembly_sha256": "a25a2a24e2060404238c5b3a7d6408e709417454b0e0f96bba680a2be93462ae"
+}

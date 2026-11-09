@@ -51,12 +51,8 @@ function shorty(ret: string, params: string[]): string {
 
 // Bytes, little-endian.
 
-function put8(out: u8[], v: i32): u8[] {
-  return out.append((v & 255) as u8);
-}
-
 function put16(out: u8[], v: i32): u8[] {
-  return put8(put8(out, v), v >> 8);
+  return util.put_u8(util.put_u8(out, v), v >> 8);
 }
 
 function put32(out: u8[], v: i32): u8[] {
@@ -66,17 +62,10 @@ function put32(out: u8[], v: i32): u8[] {
 function uleb(out: u8[], v: i32): u8[] {
   let x = v;
   while (x >= 128) {
-    out = put8(out, x & 127 | 128);
+    out = util.put_u8(out, x & 127 | 128);
     x = x >> 7;
   }
-  return put8(out, x);
-}
-
-function cat(out: u8[], b: [u8]): u8[] {
-  for x in b {
-    out = out.append(x);
-  }
-  return out;
+  return util.put_u8(out, x);
 }
 
 function pad4(out: u8[]): u8[] {
@@ -425,7 +414,7 @@ function nonzero(xs: i32[]): i32 {
 function lay_strings(l: Layout, t: Tables): Layout {
   l = Layout { ...l, strings_at: here(l) };
   for s in t.strings {
-    l = Layout { ...l, string_off: l.string_off.append(here(l)), data: put8(cat(uleb(l.data, s.len()), s.as_bytes()), 0) };
+    l = Layout { ...l, string_off: l.string_off.append(here(l)), data: util.put_u8(util.append_bytes(uleb(l.data, s.len()), s.as_bytes()), 0) };
   }
   return l;
 }
@@ -533,7 +522,7 @@ function ids(l: Layout, t: Tables, classes: Class[]): u8[] {
 // The header, with zeros for the checksum and the signature.
 function header(t: Tables, nc: i32, size: i32, data_off: i32, map_at: i32): u8[] {
   let at = id_offsets(t);
-  let head = cat([], "dex\n035".as_bytes()).append(0 as u8);
+  let head = util.append_bytes([], "dex\n035".as_bytes()).append(0 as u8);
   head = put32(head, 0);
   for k in 0..20 {
     head = head.append(0 as u8);
@@ -556,7 +545,7 @@ pub function write(classes: Class[], library: string): u8[] {
   let map_at = here(l);
   l = lay_map(l, t, nc);
   let size = here(l);
-  let file = cat(cat(header(t, nc, size, data_off, map_at), ids(l, t, classes)), l.data);
+  let file = util.append_bytes(util.append_bytes(header(t, nc, size, data_off, map_at), ids(l, t, classes)), l.data);
   let sig = crypto.sha1(file[32:file.len()]);
   for k in 0..20 {
     file = file.with(12 + k, sig[k]);

@@ -754,6 +754,15 @@ site-search dialog h2 {
   margin-top: 0.75rem;
 }
 
+.fern-diag-codes {
+  margin: 0.6rem 0 0;
+  font-size: var(--sl-text-sm);
+}
+
+.fern-diag-codes a {
+  color: var(--sl-color-text-accent);
+}
+
 /* --- Measured speed ----------------------------------------------- */
 
 .fern-bench-head {

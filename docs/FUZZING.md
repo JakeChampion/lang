@@ -248,7 +248,7 @@ is the earlier, single hand-written plant.
 ## The boundaries after the front end
 
 Thirty-two targets feed hostile bytes to the boundaries after the front end,
-through the CLI, four drivers and one program the shipped CLI builds. They
+through five drivers and one program the shipped CLI builds. They
 are the build manifest reader, the IR verifiers, both in-process assemblers
 and, through them, the linker and the ELF writer, whose images Go's
 `debug/elf` must read,

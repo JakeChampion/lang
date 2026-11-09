@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "prebuild": "node scripts/capture.mjs",
+    "prebuild": "node scripts/capture.mjs && node scripts/error-docs.mjs",
     "build": "astro build",
     "preview": "astro preview",
     "test": "node --test \"test/*.test.mjs\"",
