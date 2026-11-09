@@ -1,3 +1,4 @@
+# 2026-11-09: PR #14829. The counted append capacity check adds control flow. Six emitted-size rows grow 1.0% through 2.4%, measured locally on all three targets.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The nine emitted sizes that #14756 pinned high fall back on every target, by scripts/perf-bench-selfhost. Each is pinned at its measured value.
 # 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The emitted size of the nine benchmarks that #14756 raised falls back on every target with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The three rows moved with the drift of main since the last bank. Each is pinned at its measured value.
@@ -263,9 +264,9 @@ selfhost/arm64-linux/struct_drop.emit	2598
 selfhost/arm64-linux/tokenize.emit	1437
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8188
 selfhost/arm64-linux/utf8_ingest_validated.emit	8735
-selfhost/wasm32-wasi/array_append.emit	460
-selfhost/wasm32-wasi/array_index.emit	465
-selfhost/wasm32-wasi/array_scale_f64.emit	520
+selfhost/wasm32-wasi/array_append.emit	471
+selfhost/wasm32-wasi/array_index.emit	476
+selfhost/wasm32-wasi/array_scale_f64.emit	531
 selfhost/wasm32-wasi/array_with.emit	510
 selfhost/wasm32-wasi/ascii_scan.emit	1216
 selfhost/wasm32-wasi/byte_copy_append.emit	571
@@ -286,7 +287,7 @@ selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
 selfhost/wasm32-wasi/sort_inplace.emit	1013
-selfhost/wasm32-wasi/sort_ints.emit	2179
+selfhost/wasm32-wasi/sort_ints.emit	2205
 selfhost/wasm32-wasi/sort_strings.emit	3323
 selfhost/wasm32-wasi/string_build.emit	1267
 selfhost/wasm32-wasi/string_count_byte.emit	544
@@ -298,8 +299,8 @@ selfhost/wasm32-wasi/struct_drop.emit	1629
 selfhost/wasm32-wasi/tokenize.emit	890
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8993
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	9917
-selfhost/x86-64-linux/array_append.emit	1178
-selfhost/x86-64-linux/array_index.emit	1179
+selfhost/x86-64-linux/array_append.emit	1190
+selfhost/x86-64-linux/array_index.emit	1191
 selfhost/x86-64-linux/array_scale_f64.emit	1306
 selfhost/x86-64-linux/array_with.emit	1334
 selfhost/x86-64-linux/ascii_scan.emit	1391
