@@ -1,0 +1,24 @@
+// A field of a fresh local moves into an `own` parameter when the same call
+// reads another field of the local in an `if` value.
+
+struct N { done: boolean, w: Writer }
+struct H { k: i32, w: Writer }
+
+function take(own h: H): i32 {
+  return h.k;
+}
+
+function made(done: boolean): N {
+  return N { done: done, w: stdout() };
+}
+
+function chosen(done: boolean): i32 {
+  let next = made(done);
+  return take(H { k: if (next.done) { 1 } else { 2 }, w: next.w });
+}
+
+function main(): i32 {
+  print(chosen(true));
+  print(chosen(false));
+  return 0;
+}
