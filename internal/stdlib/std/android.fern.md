@@ -123,12 +123,6 @@ function c_activity_finish(activity: usize): void;
 @import("libandroid.so", "ANativeActivity_setWindowFlags")
 function c_activity_window_flags(activity: usize, add: i32, remove: i32): void;
 
-@import("libandroid.so", "ANativeActivity_showSoftInput")
-function c_activity_show_input(activity: usize, flags: i32): void;
-
-@import("libandroid.so", "ANativeActivity_hideSoftInput")
-function c_activity_hide_input(activity: usize, flags: i32): void;
-
 @import("libandroid.so", "AAssetManager_open")
 function c_asset_open(manager: usize, name: usize, mode: i32): usize;
 
@@ -1051,16 +1045,37 @@ pub function to_background(ctx: usize): void {
 
 // Shows the keyboard of the system, or hides it. Its keys come to the loop
 // thread as Key events. The activity has no text field, so a keyboard that
-// sends only text, not keys, types nothing.
+// sends only text, not keys, types nothing. The request names the decor view
+// of the window: the system serves the keyboard to it, because the content
+// view of a NativeActivity cannot take the focus.
 pub function show_keyboard(ctx: usize, show: boolean): void {
-  unsafe {
-    let activity: usize = Context.c_load_activity(ctx);
-    if (show) {
-      // ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED
-      c_activity_show_input(activity, 2);
-    } else {
-      c_activity_hide_input(activity, 0);
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
+  let name: usize = jni.new_string(e, "input_method");
+  let imm: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [name]);
+  if (imm != 0 as usize && decor != 0 as usize) {
+    let target: usize = decor;
+    let method = "showSoftInput";
+    let sig = "(Landroid/view/View;I)Z";
+    if (!show) {
+      target = jni.call_object(e, decor, "getWindowToken", "()Landroid/os/IBinder;", []);
+      method = "hideSoftInputFromWindow";
+      sig = "(Landroid/os/IBinder;I)Z";
     }
+    let class: usize = jni.get_object_class(e, imm);
+    let args: usize = jni.jvalues([target, 0 as usize]);
+    let done: i32 = jni.call_boolean_method_a(e, imm, jni.get_method_id(e, class, method, sig), args);
+    jni.free_buffer(args);
+    let a: usize = jni.delete_local_ref(e, class);
+    if (!show) {
+      let b: usize = jni.delete_local_ref(e, target);
+    }
+  }
+  let cleared: usize = jni.exception_clear(e);
+  for r in [imm, name, decor, window] {
+    let d: usize = jni.delete_local_ref(e, r);
   }
 }
 ```

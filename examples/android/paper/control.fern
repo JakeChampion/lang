@@ -73,7 +73,7 @@ pub struct Device {
   request_frame: () => void,
   property: (string) => string,
   attach_gpu: (gpu.Painter, usize) => gpu.Painter,
-  present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
+  present: (own gpu.Painter, ui.Pass[]) => gpu.Painter,
   detach_gpu: (gpu.Painter) => gpu.Painter,
   close_gpu: (gpu.Painter) => gpu.Painter,
 }
@@ -1338,6 +1338,8 @@ function draw_frame(own s: App, ns: i64): App {
     return s;
   }
   let v = view(s, ns);
+  let shown: ui.Node[] = [];
+  let passes: ui.Pass[] = [];
   if (s.slide.active) {
     let part = motion.ease(slide_part(s, ns));
     if (!s.slide.opening) {
@@ -1346,11 +1348,13 @@ function draw_frame(own s: App, ns: i64): App {
     let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
     let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
     let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
-    let slid = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]));
-    return App { ...s, painter: slid, nodes: [], dirty: false };
+    passes = [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }];
+  } else {
+    shown = ui.nodes(s.fonts, v);
+    passes = [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }];
   }
-  let shown = ui.nodes(s.fonts, v);
-  let p = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]));
+  let framed = with_overlay(s, passes);
+  let p = s.dev.present(s.painter, framed);
   return App { ...s, painter: p, nodes: shown, dirty: false };
 }
 
