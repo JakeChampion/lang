@@ -1,0 +1,251 @@
+import "std/audio/mp4/alac";
+import "std/audio/mp4/boxes";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_alac_smoke_vectors";
+
+struct Location { media: boxes.Box, codec: boxes.Box, entry: boxes.Box, parents: boxes.Box[] }
+
+function nested(input: [u8], parent: boxes.Box, skip: i32): Result[boxes.Box[], pcm.AudioError] {
+  let (_, values) = boxes.children(input, parent.data + skip, parent.end, boxes.Budget { boxes: 0, maximum: 100 })?;
+  return Ok(values);
+}
+
+// Follow each level of this fixed fixture hierarchy with checked box reads.
+// fern-lint: allow cyclomatic-complexity
+function locate(input: [u8]): Result[Location, pcm.AudioError] {
+  let (_, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: 100 })?;
+  let media = boxes.required(top, "mdat")?;
+  let movie = boxes.required(top, "moov")?;
+  let track = boxes.required(nested(input, movie, 0)?, "trak")?;
+  let mdia = boxes.required(nested(input, track, 0)?, "mdia")?;
+  let minf = boxes.required(nested(input, mdia, 0)?, "minf")?;
+  let table = boxes.required(nested(input, minf, 0)?, "stbl")?;
+  let descriptions = boxes.required(nested(input, table, 0)?, "stsd")?;
+  let entry = boxes.required(nested(input, descriptions, 8)?, "alac")?;
+  let codec = boxes.required(nested(input, entry, 28)?, "alac")?;
+  return Ok(Location { media: media, codec: codec, entry: entry, parents: [movie, track, mdia, minf, table, descriptions, entry] });
+}
+
+function join(own first: u8[], rest: [u8]): u8[] {
+  for byte in rest {
+    first = first.append(byte);
+  }
+
+  return first;
+}
+
+function field(input: [u8], at: i32, bytes: i32, value: u64): u8[] {
+  let output = join([], input);
+  for i in 0..bytes {
+    output = output.with(at + i, (value >> ((bytes - 1 - i) * 8) as u64) as u8);
+  }
+  return output;
+}
+
+function inserted(input: [u8], at: i32, bytes: [u8], parents: [boxes.Box]): u8[] {
+  let output = join(join(join([], input[:at]), bytes), input[at:]);
+  for parent in parents {
+    output = field(output, parent.start, 4, wire.be(input, parent.start, 4) + bytes.len() as u64);
+  }
+  return output;
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp4_alac_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  for cut in 0..input.len() {
+    if let Err(_) = alac.inspect(input[:cut], alac.default_limits()) {} else {
+      return test.fail("incomplete prefix");
+    }
+  }
+  return test.pass();
+}
+
+function configurations(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp4_alac_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(where) = locate(input) else {
+    return test.fail("fixture boxes");
+  };
+  let at = where.codec.data + 4;
+  for bad in [field(input, at, 4, 0u64), field(input, at, 4, 4294967295u64), field(input, at + 4, 1, 1u64), field(input, at + 5, 1, 8u64), field(input, at + 8, 1, 32u64), field(input, at + 9, 1, 0u64), field(input, at + 9, 1, 9u64), field(input, at + 20, 4, 0u64), field(input, where.codec.data + 1, 3, 1u64), field(input, where.entry.data + 6, 2, 2u64), field(input, where.entry.data + 8, 2, 2u64)] {
+    if let Err(_) = alac.inspect(bad, alac.default_limits()) {} else {
+      return test.fail("invalid configuration or sample entry");
+    }
+  }
+  let duplicate = inserted(input, where.codec.end, input[where.codec.start:where.codec.end], where.parents);
+  if let Err(pcm.Header) = alac.inspect(duplicate, alac.default_limits()) {} else {
+    return test.fail("duplicate ALAC configuration");
+  }
+  return test.pass();
+}
+
+// Check exact stored-metadata and PCM budgets through both index and decode entry points.
+// fern-lint: allow cyclomatic-complexity
+function limits(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp4_alac_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let defaults = alac.default_limits();
+  for small in [pcm.Limits { ...defaults.audio, max_input_bytes: input.len() - 1 }, pcm.Limits { ...defaults.audio, max_samples: 31 }, pcm.Limits { ...defaults.audio, max_samples: -1 }] {
+    if let Err(pcm.Limit) = alac.inspect(input, container_limits(defaults, small)) {} else {
+      return test.fail("audio configuration limit");
+    }
+  }
+  for small in [alac.Limits { ...defaults, max_boxes: 0 }, alac.Limits { ...defaults, max_tracks: 0 }, alac.Limits { ...defaults, max_packets: 0 }, alac.Limits { ...defaults, max_descriptions: 0 }, alac.Limits { ...defaults, max_edits: -1 }] {
+    if let Err(pcm.Limit) = alac.inspect(input, small) {} else {
+      return test.fail("index limit");
+    }
+  }
+  let Ok(index) = alac.inspect(input, defaults) else {
+    return test.fail("index");
+  };
+  if let Err(pcm.Header) = alac.decode_track(input.append(0u8), index, 0, defaults) {} else {
+    return test.fail("different source extent");
+  }
+  for position in [-1, 1] {
+    if let Err(pcm.Header) = index.information(position) {} else {
+      return test.fail("metadata track range");
+    }
+    if let Err(pcm.Header) = alac.decode_track(input, index, position, defaults) {} else {
+      return test.fail("decode track range");
+    }
+  }
+  let tight = alac.Limits { ...defaults, audio: pcm.Limits { max_samples: 32, max_input_bytes: input.len() }, max_tracks: 1, max_packets: 1, max_descriptions: 1, max_edits: 0 };
+  if let Ok(audio) = alac.decode_track(input, index, 0, tight) {
+    if (audio.frames != 19i64) {
+      return test.fail("exact budget extent");
+    }
+  } else {
+    return test.fail("exact PCM scratch and input budgets");
+  }
+  return test.pass();
+}
+
+function container_limits(defaults: alac.Limits, audio: pcm.Limits): alac.Limits {
+  return alac.Limits { ...defaults, audio: audio };
+}
+
+// Verify each layout and wrapping form with explicit positive and negative controls.
+// fern-lint: allow cyclomatic-complexity
+function layouts(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp4_alac_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(where) = locate(input) else {
+    return test.fail("fixture boxes");
+  };
+  let chan = wire.put_be(wire.put_be(wire.put_be([0u8, 0u8, 0u8, 24u8, 99u8, 104u8, 97u8, 110u8, 0u8, 0u8, 0u8, 0u8], 65536u64, 4), 4u64, 4), 0u64, 4);
+  let valid = inserted(input, where.entry.end, chan, where.parents);
+  let Ok(decoded) = alac.decode(valid, alac.default_limits()) else {
+    return test.fail("explicit Core Audio layout");
+  };
+  if (decoded.channel_mask != 4u32 || decoded.frames != 19i64) {
+    return test.fail("explicit layout metadata");
+  }
+  let duplicate = inserted(valid, where.entry.end, chan, where.parents);
+  if let Err(_) = alac.inspect(duplicate, alac.default_limits()) {} else {
+    return test.fail("duplicate layout");
+  }
+  let bad_mask = field(valid, where.entry.end + 16, 4, 3u64);
+  if let Err(pcm.Unsupported) = alac.inspect(bad_mask, alac.default_limits()) {} else {
+    return test.fail("layout channel mismatch");
+  }
+  let wave = join([0u8, 0u8, 0u8, 44u8, 119u8, 97u8, 118u8, 101u8], input[where.codec.start:where.codec.end]);
+  let rebuilt = join(join([], input[:where.codec.start]), wave);
+  rebuilt = join(rebuilt, input[where.codec.end:]);
+  for parent in where.parents {
+    rebuilt = field(rebuilt, parent.start, 4, (parent.end - parent.start + 8) as u64);
+  }
+  if let Ok(audio) = alac.decode(rebuilt, alac.default_limits()) {
+    if (audio.frames != 19i64 || audio.samples[0] != decoded.samples[0]) {
+      return test.fail("wave configuration PCM");
+    }
+  } else {
+    return test.fail("wave-wrapped ALAC configuration");
+  }
+  return test.pass();
+}
+
+function packet_error(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp4_alac_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(where) = locate(input) else {
+    return test.fail("fixture boxes");
+  };
+  let changed = input.with(where.media.end - 1, input[where.media.end - 1] ^ 1u8);
+  if let Ok(_) = alac.inspect(changed, alac.default_limits()) {} else {
+    return test.fail("metadata inspection decoded payload");
+  }
+  if let Err(_) = alac.decode(changed, alac.default_limits()) {} else {
+    return test.fail("malformed packet accepted");
+  }
+  return test.pass();
+}
+
+function boxed(name: string, input: [u8]): u8[] {
+  return join(join(wire.put_be([], (input.len() + 8) as u64, 4), name.as_bytes()), input);
+}
+
+function edited(input: [u8], where: Location, edits: [(i32, i32)]): Result[u8[], pcm.AudioError] {
+  let payload = wire.put_be([0u8, 0u8, 0u8, 0u8], edits.len() as u64, 4);
+  let total = 0;
+  for (duration, position) in edits {
+    payload = wire.put_be(wire.put_be(wire.put_be(payload, duration as u64, 4), position as u64, 4), 65536u64, 4);
+    total += duration;
+  }
+  let movie = where.parents[0];
+  let track = where.parents[1];
+  let mvhd = boxes.required(nested(input, movie, 0)?, "mvhd")?;
+  let tkhd = boxes.required(nested(input, track, 0)?, "tkhd")?;
+  let output = inserted(input, track.end, boxed("edts", boxed("elst", payload)), [movie, track]);
+  return Ok(field(field(output, mvhd.data + 16, 4, total as u64), tkhd.data + 20, 4, total as u64));
+}
+
+// Check silence, repeated source ranges, output extent, and every sample together.
+// fern-lint: allow cyclomatic-complexity
+function edit_spans(): test.TestOutcome {
+  let vector = mp4_alac_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let Ok(where) = locate(input) else {
+    return test.fail("fixture boxes");
+  };
+  let Ok(changed) = edited(input, where, [(3, -1), (7, 5), (4, 1)]) else {
+    return test.fail("edit fixture");
+  };
+  let Ok(audio) = alac.decode(changed, alac.default_limits()) else {
+    return test.fail("empty and repeated edits");
+  };
+  if (audio.frames != 14i64 || audio.samples.len() != 14) {
+    return test.fail("edit extent");
+  }
+  for i in 0..14 {
+    let sample = if (i < 3) { 0 } else if (i < 10) { ref.word(expected, (i + 2) * 4) } else { ref.word(expected, (i - 9) * 4) };
+    if (audio.samples[i] != sample) {
+      return test.fail("edited integer PCM");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("M4A ALAC metadata, layout, and output boundaries");
+  runner = runner.it("every incomplete byte prefix", prefixes);
+  runner = runner.it("sample entries, codec records, and duplicate configuration", configurations);
+  runner = runner.it("metadata budgets, scratch budgets, retained sources, and track ranges", limits);
+  runner = runner.it("Core Audio layouts and direct or wave-wrapped configuration", layouts);
+  runner = runner.it("payload validation follows metadata inspection", packet_error);
+  runner = runner.it("empty edits insert silence and repeated media spans retain exact samples", edit_spans);
+  return runner.finish();
+}
