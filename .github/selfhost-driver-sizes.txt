@@ -1,3 +1,6 @@
+# 2026-11-09: PR #14809 at 3be087d8. CI run 42575901537, driver-sizes-x86_64.
+# checker_modload_run grows 5.3% with the CLayout synthesis of the parser and the drift of main
+# since the last bank, which grew each other driver by up to 4.6%. Pinned at its measured value.
 # 2026-11-07: drivers/checker_codes_run.fern joins the table, so driver-sizes warms it for the
 # shards. Measured locally with the pin on main at 1de5de6d.
 # 2026-11-06: drivers/runtime_run.fern and drivers/interp_run.fern join the table, so driver-sizes
@@ -606,6 +609,6 @@ drivers/wasm_ir_run.fern 9208976
 drivers/wasm_run.fern 9219200
 drivers/wasm_runio_run.fern 9197104
 drivers/asm_pathprobe_run.fern 5756560
-drivers/checker_modload_run.fern 3717520
+drivers/checker_modload_run.fern 3913968
 drivers/checker_codes_run.fern 3478064
 drivers/interp_run.fern 2697248
