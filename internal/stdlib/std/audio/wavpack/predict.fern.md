@@ -104,11 +104,11 @@ function apply(weight: i32, source: i32): i32 {
   // The reference split-word path wraps its i32 intermediates before rounding.
   // A signed 16-bit weight keeps the low-word product in range. The cast
   // preserves the reference wrap before the final rounding and shift.
-  if (weight == (weight << 16 >> 16)) {
+  if (weight == weight << 16 >> 16) {
     let scaled = (weight as i64 * (source as i64) >> 9i64) as i32;
     return scaled + 1 >> 1;
   }
-  if (source == (source << 16 >> 16)) {
+  if (source == source << 16 >> 16) {
     return weight * source + 512 >> 10;
   }
   let lower = (source & 65535) * weight >> 9;
