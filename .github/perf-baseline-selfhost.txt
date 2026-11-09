@@ -1,3 +1,4 @@
+# 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The emitted size of the nine benchmarks that #14756 raised falls back on every target with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The three rows moved with the drift of main since the last bank. Each is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The emitted size of nine benchmarks rises on every target, as the .text rows do. The growth is main's at 1c692d87: its compiler and this PR's emit the same code.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: http_hello.emit on wasm32-wasi grows 3.3% and is pinned at its measured value.
@@ -238,11 +239,11 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	19276
+selfhost/arm64-linux/http_hello.emit	16228
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
-selfhost/arm64-linux/map_string.emit	12939
+selfhost/arm64-linux/map_string.emit	9472
 selfhost/arm64-linux/ordmap_insert.emit	5741
 selfhost/arm64-linux/pmap_insert.emit	3249
 selfhost/arm64-linux/pvec_with.emit	3211
@@ -250,17 +251,17 @@ selfhost/arm64-linux/record_update.emit	1559
 selfhost/arm64-linux/sort_inplace.emit	1725
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 selfhost/arm64-linux/sort_ints.emit	2061
-selfhost/arm64-linux/sort_strings.emit	6955
-selfhost/arm64-linux/string_build.emit	5604
+selfhost/arm64-linux/sort_strings.emit	3488
+selfhost/arm64-linux/string_build.emit	2292
 selfhost/arm64-linux/string_count_byte.emit	1493
 selfhost/arm64-linux/string_find_byte.emit	1892
 selfhost/arm64-linux/string_rfind_byte.emit	2011
-selfhost/arm64-linux/string_scan.emit	5958
+selfhost/arm64-linux/string_scan.emit	2491
 selfhost/arm64-linux/string_slice.emit	1181
-selfhost/arm64-linux/struct_drop.emit	6065
+selfhost/arm64-linux/struct_drop.emit	2598
 selfhost/arm64-linux/tokenize.emit	1437
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	11153
-selfhost/arm64-linux/utf8_ingest_validated.emit	11700
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8188
+selfhost/arm64-linux/utf8_ingest_validated.emit	8735
 selfhost/wasm32-wasi/array_append.emit	460
 selfhost/wasm32-wasi/array_index.emit	465
 selfhost/wasm32-wasi/array_scale_f64.emit	520
@@ -271,31 +272,31 @@ selfhost/wasm32-wasi/byte_copy_with.emit	586
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
 selfhost/wasm32-wasi/deflate_decode.emit	19938
-selfhost/wasm32-wasi/deflate_encode.emit	11578
+selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	21408
+selfhost/wasm32-wasi/http_hello.emit	18484
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
-selfhost/wasm32-wasi/map_string.emit	17427
+selfhost/wasm32-wasi/map_string.emit	14007
 selfhost/wasm32-wasi/ordmap_insert.emit	6767
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
 selfhost/wasm32-wasi/sort_inplace.emit	1013
 selfhost/wasm32-wasi/sort_ints.emit	2179
-selfhost/wasm32-wasi/sort_strings.emit	6743
-selfhost/wasm32-wasi/string_build.emit	4686
+selfhost/wasm32-wasi/sort_strings.emit	3323
+selfhost/wasm32-wasi/string_build.emit	1267
 selfhost/wasm32-wasi/string_count_byte.emit	544
 selfhost/wasm32-wasi/string_find_byte.emit	1695
 selfhost/wasm32-wasi/string_rfind_byte.emit	1744
-selfhost/wasm32-wasi/string_scan.emit	4825
+selfhost/wasm32-wasi/string_scan.emit	1405
 selfhost/wasm32-wasi/string_slice.emit	543
-selfhost/wasm32-wasi/struct_drop.emit	5049
+selfhost/wasm32-wasi/struct_drop.emit	1629
 selfhost/wasm32-wasi/tokenize.emit	890
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	11615
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	12539
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8993
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	9917
 selfhost/x86-64-linux/array_append.emit	1178
 selfhost/x86-64-linux/array_index.emit	1179
 selfhost/x86-64-linux/array_scale_f64.emit	1306
@@ -306,31 +307,31 @@ selfhost/x86-64-linux/byte_copy_with.emit	1240
 selfhost/x86-64-linux/call_overhead.emit	347
 selfhost/x86-64-linux/closure_call.emit	955
 selfhost/x86-64-linux/deflate_decode.emit	12766
-selfhost/x86-64-linux/deflate_encode.emit	7125
+selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	18368
+selfhost/x86-64-linux/http_hello.emit	15234
 selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
-selfhost/x86-64-linux/map_string.emit	12784
+selfhost/x86-64-linux/map_string.emit	9311
 selfhost/x86-64-linux/ordmap_insert.emit	5377
 selfhost/x86-64-linux/pmap_insert.emit	2942
 selfhost/x86-64-linux/pvec_with.emit	2953
 selfhost/x86-64-linux/record_update.emit	1335
 selfhost/x86-64-linux/sort_inplace.emit	1534
 selfhost/x86-64-linux/sort_ints.emit	1774
-selfhost/x86-64-linux/sort_strings.emit	6571
-selfhost/x86-64-linux/string_build.emit	5285
+selfhost/x86-64-linux/sort_strings.emit	3098
+selfhost/x86-64-linux/string_build.emit	1926
 selfhost/x86-64-linux/string_count_byte.emit	1219
 selfhost/x86-64-linux/string_find_byte.emit	1593
 selfhost/x86-64-linux/string_rfind_byte.emit	1737
-selfhost/x86-64-linux/string_scan.emit	5639
+selfhost/x86-64-linux/string_scan.emit	2166
 selfhost/x86-64-linux/string_slice.emit	944
-selfhost/x86-64-linux/struct_drop.emit	5814
+selfhost/x86-64-linux/struct_drop.emit	2341
 selfhost/x86-64-linux/tokenize.emit	1237
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	10789
-selfhost/x86-64-linux/utf8_ingest_validated.emit	11372
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7735
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1954
@@ -351,5 +352,5 @@ selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 selfhost/x86-64-linux/video_qtrle.emit 5680
-selfhost/arm64-linux/video_qtrle.emit 6080
-selfhost/wasm32-wasi/video_qtrle.emit 6837
+selfhost/arm64-linux/video_qtrle.emit 6027
+selfhost/wasm32-wasi/video_qtrle.emit 6814

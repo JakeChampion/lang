@@ -1,3 +1,4 @@
+# 2026-11-09: PR #14797, perf-aarch64 job 128935982726 on 81290273 and perf-x86_64 job 128939680803 on 801b4a44. The eighteen .text rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The same nine x86_64 .text rows rise as on aarch64. The growth is main's at 1c692d87.
 # 2026-11-08: PR #14756, perf-aarch64 job 128872144937 on f0a8de2f. Nine aarch64 .text rows rise: http_hello, map_string, sort_strings, string_build, string_scan, struct_drop, both utf8_ingest rows and video_qtrle. The growth is main's at 1c692d87: its compiler and this PR's emit the same asm for these benchmarks.
@@ -248,7 +249,7 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	18368
+x86_64/http_hello.text	15234
 x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
@@ -256,7 +257,7 @@ x86_64/map_int.text	8488
 x86_64/map_int.ir	24563319
 x86_64/map_probe_chain.text	8492
 x86_64/map_probe_chain.ir	241010587
-x86_64/map_string.text	12784
+x86_64/map_string.text	9311
 x86_64/map_string.ir	53037751	2
 x86_64/ordmap_insert.text	5394
 x86_64/ordmap_insert.ir	81070676
@@ -270,9 +271,9 @@ x86_64/sort_inplace.text	1538
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1778
 x86_64/sort_ints.ir	23120269
-x86_64/sort_strings.text	6571
+x86_64/sort_strings.text	3098
 x86_64/sort_strings.ir	96173451
-x86_64/string_build.text	5285
+x86_64/string_build.text	1926
 x86_64/string_build.ir	42886116
 x86_64/string_count_byte.text	1226
 x86_64/string_count_byte.ir	135589355
@@ -280,17 +281,17 @@ x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	5639
+x86_64/string_scan.text	2166
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	944
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	5814
+x86_64/struct_drop.text	2341
 x86_64/struct_drop.ir	200820598
 x86_64/tokenize.text	1247
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	10789
+x86_64/utf8_ingest_unchecked.text	7735
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	11372
+x86_64/utf8_ingest_validated.text	8318
 x86_64/utf8_ingest_validated.ir	5207391
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -534,7 +535,7 @@ aarch64/deflate_encode.text	7818
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	19276
+aarch64/http_hello.text	16228
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23616615
 aarch64/int_loop.text	383
@@ -544,7 +545,7 @@ aarch64/map_int.text	8497
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8507
 aarch64/map_probe_chain.ir	233221143
-aarch64/map_string.text	12939
+aarch64/map_string.text	9472
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
 aarch64/ordmap_insert.text	5771
@@ -561,9 +562,9 @@ aarch64/sort_inplace.ir	43684079
 # 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
 aarch64/sort_ints.text	2063
 aarch64/sort_ints.ir	24753301
-aarch64/sort_strings.text	6955
+aarch64/sort_strings.text	3488
 aarch64/sort_strings.ir	100996546
-aarch64/string_build.text	5604
+aarch64/string_build.text	2292
 aarch64/string_build.ir	46680569
 aarch64/string_count_byte.text	1495
 aarch64/string_count_byte.ir	295207223
@@ -571,17 +572,17 @@ aarch64/string_find_byte.text	1906
 aarch64/string_find_byte.ir	55921279
 aarch64/string_rfind_byte.text	2013
 aarch64/string_rfind_byte.ir	55941911
-aarch64/string_scan.text	5958
+aarch64/string_scan.text	2491
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
 aarch64/string_slice.ir	43620107
-aarch64/struct_drop.text	6065
+aarch64/struct_drop.text	2598
 aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1444
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	11153
+aarch64/utf8_ingest_unchecked.text	8188
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	11700
+aarch64/utf8_ingest_validated.text	8735
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
@@ -611,5 +612,5 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
-aarch64/video_qtrle.text 6080
+aarch64/video_qtrle.text 6027
 aarch64/video_qtrle.ir 1662057925
