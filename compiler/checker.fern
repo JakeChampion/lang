@@ -5072,12 +5072,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             _ => {}
           }
           if (bts.len() > 0) {
-            let result = vb_arms_unified(bts, mx_body_result_exprs(lm.body));
+            let arms = mx_body_result_exprs(lm.body);
+            bts = mx_settle_struct_arms(bts, arms, t_unknown("no destination"), s);
+            let result = vb_arms_unified(bts, arms);
             if (!is_unknown(result)) {
               return result;
             }
             if (parser.is_value_block_origin(lm.origin)) {
-              let arms = mx_body_result_exprs(lm.body);
               let fold = vb_arms_fold(bts, arms, s);
               if (is_unknown(fold.acc.t)) {
                 return t_unknown("value block arms disagree");
@@ -10844,6 +10845,40 @@ function mx_widen_to(types: typeinfo.Type[], want: typeinfo.Type, s: Scope): typ
   return types;
 }
 
+// mx_arm_types gives each arm the type the destination or a sibling arm
+// settles it to, before the arms are compared.
+function mx_arm_types(types: typeinfo.Type[], exprs: ast.Expr[], want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  return mx_settle_struct_arms(mx_widen_to(types, want, s), exprs, want, s);
+}
+
+// A struct literal arm whose differing type arguments only unsuffixed literals
+// bind takes the type of the destination or of a sibling arm.
+function mx_settle_struct_arms(types: typeinfo.Type[], exprs: ast.Expr[], want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if (types.len() != exprs.len()) {
+    return types;
+  }
+  let targets: typeinfo.Type[] = [want];
+  for t in types {
+    targets = targets.append(t);
+  }
+  let out: typeinfo.Type[] = [];
+  let i = 0;
+  while (i < types.len()) {
+    out = out.append(mx_struct_arm_target(exprs[i], types[i], targets, s));
+    i += 1;
+  }
+  return out;
+}
+
+function mx_struct_arm_target(e: ast.Expr, t: typeinfo.Type, targets: typeinfo.Type[], s: Scope): typeinfo.Type {
+  for target in targets {
+    if (struct_lit_yields(e, t, target, s, false)) {
+      return target;
+    }
+  }
+  return t;
+}
+
 function mx_fold_diags(f: MxFold, line: i32, col: i32, if_form: boolean): util.Diag[] {
   let kind: string = if (if_form) { "if-expression branches differ: " } else { "match-expression arms differ: " };
   return mx_named_fold_diags(f, line, col, kind);
@@ -11125,12 +11160,12 @@ function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, 
         if let typeinfo.TypeUnion(_) = check_expr(m.scrutinee, s) {
           enum_match = true;
         }
-        out = util.append_diags(out, mx_e031(mx_widen_to(mts, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+        out = util.append_diags(out, mx_e031(mx_arm_types(mts, arms, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
         out = util.append_diags(out, vb_pinned_ranges(mts, arms));
       },
       ast.StmtIf(f) => {
         let fts = mx_if_branch_types(f, s);
-        out = util.append_diags(out, mx_if_diags(f, mx_widen_to(fts, want, s), arms, unions, enums, lm.origin, c.line, c.col));
+        out = util.append_diags(out, mx_if_diags(f, mx_arm_types(fts, arms, want, s), arms, unions, enums, lm.origin, c.line, c.col));
         out = util.append_diags(out, vb_pinned_ranges(fts, arms));
       },
       _ => {}
@@ -11147,7 +11182,7 @@ function mx_value_local_arms(body: ast.Stmt[], local: string, want: typeinfo.Typ
     types = types.append(store.t);
     exprs = exprs.append(store.e);
   }
-  let fold = mx_fold_arms(mx_widen_to(types, want, s), exprs, unions, enums, false, true);
+  let fold = mx_fold_arms(mx_arm_types(types, exprs, want, s), exprs, unions, enums, false, true);
   if (fold.ok) {
     return [];
   }

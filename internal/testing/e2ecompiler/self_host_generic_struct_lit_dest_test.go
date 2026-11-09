@@ -79,6 +79,27 @@ function main(): i32 {
     return (p.b / 1073741824 + p.a) as i32;
 }
 `, 7},
+	{"value-block-arms-no-destination", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    let y: i64 = 4294967296;
+    let p = if (true) { Same { a: 3, b: y } } else { Same { a: 1, b: 2 } };
+    return (p.b / 1073741824 + p.a) as i32;
+}
+`, 7},
+	{"value-block-literal-arm-first", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    let y: i64 = 4294967296;
+    let p = if (false) { Same { a: 1, b: 2 } } else { Same { a: 3, b: y } };
+    return (p.b / 1073741824 + p.a) as i32;
+}
+`, 7},
+	{"match-arms", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    let y: i64 = 4294967296;
+    let p: Same[i64] = match (true) { true => Same { a: 3, b: y }, false => Same { a: 1, b: 2 } };
+    return (p.b / 1073741824 + p.a) as i32;
+}
+`, 7},
 	{"lambda-result", `struct Same[T] { a: T, b: T }
 function main(): i32 {
     let y: i64 = 4294967296;
