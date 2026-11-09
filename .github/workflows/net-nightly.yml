@@ -163,6 +163,15 @@ jobs:
         with:
           path: ~/.cache/fern-h3-tools
           key: h3-tools-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/h3tools') }}
+      # The packages http.zig and zap pin, each named by its content hash,
+      # so a host that fails to serve an archive does not fail the run.
+      - name: Cache the Zig servers' packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            scripts/net-bench.d/httpzhello/zig-pkg
+            scripts/net-bench.d/zaphello/zig-pkg
+          key: zig-pkg-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/httpzhello/build.zig.zon', 'scripts/net-bench.d/zaphello/build.zig.zon') }}
 
       - name: Load the hello servers
         env:
