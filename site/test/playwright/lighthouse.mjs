@@ -62,6 +62,8 @@ try {
     }
     const perf = runs.map((r) => Math.round(r.categories.performance.score * 100)).join("/");
     console.log(`${page.padEnd(18)} ${Object.entries(scores).map(([k, v]) => `${k} ${v}`).join(", ")}, layout shift ${cls.toFixed(3)} (performance runs ${perf})`);
+    const ms = (id) => `${Math.round(lhr.audits[id].numericValue)} ms`;
+    console.log(`  median run: FCP ${ms("first-contentful-paint")}, LCP ${ms("largest-contentful-paint")}, TBT ${ms("total-blocking-time")}, speed index ${ms("speed-index")}`);
     for (const line of low) console.log(`  FAIL ${line}`);
     if (low.length > 0) failed++;
   }
