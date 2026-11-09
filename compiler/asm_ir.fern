@@ -5384,7 +5384,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_avx = clo5.name;
     let clo6 = asmcore.fresh_label(clo5.state);
     let c_avx_done = clo6.name;
-    s = clo6.state;
+    let clo7 = asmcore.fresh_label(clo6.state);
+    let c_wide = clo7.name;
+    s = clo7.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     if (o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
@@ -5403,6 +5405,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
+    s = s.write(c_wide + ":\n");
+    s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+    s = s.write("    cmpq $128, %r9\n    jl " + c_avx + "\n");
+    s = s.write("    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpcmpeqb 32(%rax,%rdx), %ymm1, %ymm2\n");
+    s = s.write("    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm2, %r11d\n");
+    s = s.write("    popcntl %r9d, %r9d\n    popcntl %r11d, %r11d\n    addq %r9, %r10\n    addq %r11, %r10\n");
+    s = s.write("    vpcmpeqb 64(%rax,%rdx), %ymm1, %ymm0\n    vpcmpeqb 96(%rax,%rdx), %ymm1, %ymm2\n");
+    s = s.write("    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm2, %r11d\n");
+    s = s.write("    popcntl %r9d, %r9d\n    popcntl %r11d, %r11d\n    addq %r9, %r10\n    addq %r11, %r10\n");
+    s = s.write("    addq $128, %rdx\n    jmp " + c_wide + "\n");
     s = s.write(c_avx + ":\n");
     s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
     s = s.write("    cmpq $32, %r9\n    jl " + c_avx_done + "\n");

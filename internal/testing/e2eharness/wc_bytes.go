@@ -93,6 +93,14 @@ func RunWcByteCases(t *testing.T, bin string, runner []string, census func(*test
 		t.Skip("requires GNU wc")
 	}
 	t.Logf("reference: %s (%s)", oracle, strings.SplitN(string(version), "\n", 2)[0])
+	RunWcByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunWcByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU wc reference command")
+	}
 	for _, tc := range WcByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -132,7 +140,8 @@ func RunWcByteCases(t *testing.T, bin string, runner []string, census func(*test
 			env = append(append(env, "LC_ALL=C"), tc.Env...)
 			var want []byte
 			if tc.Error == "" {
-				ref := exec.CommandContext(ctx, oracle, args...)
+				refArgs := append(append([]string{}, oracle[1:]...), args...)
+				ref := exec.CommandContext(ctx, oracle[0], refArgs...)
 				ref.Dir, ref.Env, ref.Stdin = dir, env, strings.NewReader(input)
 				var err error
 				want, err = ref.Output()
