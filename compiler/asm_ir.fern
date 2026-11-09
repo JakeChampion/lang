@@ -5891,7 +5891,7 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (ssa_direct_bin(tag)) {
     return 0;
   }
-  if (ssa_shift_tag(tag)) {
+  if (asmcore.ssa_shift_tag(tag)) {
     return if (imm.is_imm[ins.args[1]]) { 0 } else { 4 };
   }
   return -1;
@@ -6096,7 +6096,7 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Al
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
-  let cold = ssa.cold_positions(f, s.size, ssa_inline_back(s));
+  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let crossing = ssalive.call_crossers(f, ssa.hard_call_positions(f, cold));
   let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, crossing);
   let audited = ssa_can_borrow_r11(f, imm, floats);
@@ -6371,10 +6371,6 @@ function ssa_lea_sym(s: asmcore.EmitState, label: string, dst: string): asmcore.
     }
   }
   return s.write("    leaq " + label + "(%rip), " + dst + "\n");
-}
-
-function ssa_sext32(what: string, unsigned: boolean): boolean {
-  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
 }
 
 function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
@@ -6900,10 +6896,6 @@ function ssa_test_imm(s: asmcore.EmitState, imm: i32, reg: string): asmcore.Emit
   return s.write("    testq $" + util.i32_to_string(imm) + ", " + reg + "\n");
 }
 
-function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
-  return asmcore.EmitState { ...s, ssa_x0: -1 };
-}
-
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
   if (reg == "%r11") {
     s = asmcore.EmitState { ...s, ssa_x0: v };
@@ -6944,10 +6936,6 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 
 function ssa_direct_bin(tag: i32): boolean {
   return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || ircore.is_int_cmp_kind(tag);
-}
-
-function ssa_shift_tag(tag: i32): boolean {
-  return tag == 31 || tag == 32 || tag == 33;
 }
 
 function ssa_commutative(tag: i32): boolean {
@@ -6992,7 +6980,7 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
   let a = ins.args[0];
   let b = ins.args[1];
   let dh = ssa_dst(reg_of, v);
-  let swap = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
+  let swap = fr.imm.is_imm[a] && !asmcore.ssa_shift_tag(tag);
   if (!swap && !fr.imm.is_imm[b] && ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
       swap = true;
@@ -7026,7 +7014,7 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
   } else {
     s = ssa_load(reg_of, a, dh, s);
   }
-  if (ssa_shift_tag(tag)) {
+  if (asmcore.ssa_shift_tag(tag)) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh));
   } else if (ssa_alu_ext(tag) >= 0) {
     s = ssa_alu_rhs(s, ssa_alu_ext(tag), size, fr, reg_of, b, dh);
@@ -7163,17 +7151,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
-}
-
-function ssa_funary_known(what: string): boolean {
-  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
-  for x in un {
-    if (x == what) {
-      return true;
-    }
-  }
-  return util.str_has_prefix(what, "i32_to_f64:");
+  return util.str_has_prefix(what, "rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -7481,35 +7459,12 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
-  let units: boolean[] = [];
-  let v = 0;
-  while (v < lanes.len()) {
-    if (lanes[v] && reg_of[v] < -1) {
-      let u = ssa.spill_slot(reg_of[v]);
-      while (units.len() <= u + 1) {
-        units = units.append(false);
-      }
-      units = units.with(u, true).with(u + 1, true);
-    }
-    v += 1;
-  }
-  return units;
-}
-
 function ssa_lane_disp(disp: i32, s: asmcore.EmitState): boolean {
   if (s.ssa_lane_slots.len() == 0) {
     return false;
   }
   let u: i32 = (-disp - s.ssa_save) / 8 - 1;
   return u >= 0 && u < s.ssa_lane_slots.len() && s.ssa_lane_slots[u];
-}
-
-function ssa_lane_spill(f: ssa.SFunc, nspill: i32): i32 {
-  if (nspill % 2 == 1 && ssa.has_lanes(f)) {
-    return nspill + 1;
-  }
-  return nspill;
 }
 
 function ssa_lane_sfx(width: i32): string {
@@ -7529,7 +7484,7 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     let d = ssa_dst(reg_of, ins.result);
     let target = if (ins.imm == 32) { ssa_r32(d) } else { d };
     let op = if (ins.imm == 32) { "pextrd" } else { "pextrq" };
-    s = s.write("    " + op + " $" + util.i32_to_string(ssa_lane_index(ins.str)) + ", " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", " + target + "\n");
+    s = s.write("    " + op + " $" + util.i32_to_string(asmcore.ssa_lane_index(ins.str)) + ", " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", " + target + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (b == "vbitmask") {
@@ -7583,7 +7538,7 @@ function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (a != "%xmm1") {
     s = s.write("    movaps " + a + ", %xmm1\n");
   }
-  let mode = ssa_lane_index(ins.str);
+  let mode = asmcore.ssa_lane_index(ins.str);
   if (mode == 0 || mode == 3) {
     let mask = if (ins.imm == 32 && mode == 0) { 27 } else { 78 };
     s = s.write("    pshufd $" + util.i32_to_string(mask) + ", %xmm1, %xmm1\n");
@@ -7635,7 +7590,7 @@ function ssa_vsplat(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 }
 
 function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let lane = ssa_lane_index(ins.str);
+  let lane = asmcore.ssa_lane_index(ins.str);
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   let v = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
@@ -7653,19 +7608,8 @@ function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-function ssa_lane_index(what: string): i32 {
-  let k = 0;
-  while (k < what.len()) {
-    if (what[k] == b':') {
-      return what[k + 1] as i32 - 48;
-    }
-    k += 1;
-  }
-  return 0;
-}
-
 function ssa_vreplace(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let lane = util.i32_to_string(ssa_lane_index(ins.str));
+  let lane = util.i32_to_string(asmcore.ssa_lane_index(ins.str));
   s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
   let v = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
@@ -7979,7 +7923,7 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   } else {
     s = ssa_load(reg_of, ins.args[1], count, s);
   }
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let src = ssa_src(reg_of, ins.args[0], "");
   if (src == "") {
     src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
@@ -8116,10 +8060,6 @@ function ssa_is_helper(name: string, s: asmcore.EmitState): boolean {
   return ircore.is_fern_helper(name) && asmcore.top_level_fn(name, s) < 0;
 }
 
-function ssa_inline_back(s: asmcore.EmitState): boolean {
-  return !s.size && asmcore.top_level_fn("__fern_bytes_append_back", s) < 0;
-}
-
 // A compiled Fern helper takes the arguments of its call in reverse order.
 function helper_arg_reg(ins: ssa.SInst, a: i32): i32 {
   if (rtbytecopy.is_helper(ins.str)) {
@@ -8130,7 +8070,7 @@ function helper_arg_reg(ins: ssa.SInst, a: i32): i32 {
 
 function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_call_sym(helper_arg_moves(ins, reg_of, s), ircore.ir_helper_symbol(ins.str) + suffix);
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function helper_arg_moves(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -8165,22 +8105,17 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
   s = ssa_alu_ir(ssa_alu_ir(s, 0, 64, 8i64, "%rcx"), 0, 64, 8i64, "%rsi");
   s = ssa_branch(ssa_branch(ssa_alu_rr(s, 7, 64, "%rdi", "%rcx"), J_JB, wn.lab), J_JMP, en.lab);
   s = ssa_call_saving(s.lab_def(sn.lab), ircore.ir_helper_symbol(ins.str) + "_slow.r", saves);
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s.lab_def(en.lab)));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
-  if (saves.mask != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
-    return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, ssa_x0_forget(s));
+  if (saves.mask != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
+    return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, asmcore.ssa_x0_forget(s));
   }
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
   s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
   return ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
-}
-
-// A release whose count test is inline, so only its freeing call is slow.
-function ssa_inline_rc_dec(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  return ins.kind_tag == ssa.CALL && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
@@ -8217,7 +8152,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (ssa.rc_inlined(ins) && !s.size) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, SlowSaves { mask: 0, base: 0, save: 0 }, s);
   }
@@ -8228,7 +8163,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
-    return ssa_call_result(ins, reg_of, ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
+    return ssa_call_result(ins, reg_of, asmcore.ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc = ins.args.len();
   if (asmcore.has_lane_param(s.float_mask(asmcore.sanitize_label(ins.str)))) {
@@ -8259,7 +8194,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (argc > 0) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
-  return ssa_call_result(ins, reg_of, ssa_x0_forget(s));
+  return ssa_call_result(ins, reg_of, asmcore.ssa_x0_forget(s));
 }
 
 function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -8415,7 +8350,7 @@ function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: 
 }
 
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   s = ssa_str_marks(ins.str, s);
   let target = "__fern_" + ssa.runtime_helper_name(ins.str);
   if (ssa_register_runtime(ins, reg_of, target, s)) {
@@ -8426,7 +8361,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
       dsts = dsts.append(ssa_arg_loc("", a));
     }
     s = ssa_call_sym(ssa_parallel_moves(srcs, dsts, s), "__fn_" + target + ".r");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   let argc = ins.args.len();
   let i = argc - 1;
@@ -8438,11 +8373,11 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (argc > 0) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   s = s.need("str_eq");
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let a = ssa_src(reg_of, ins.args[0], "%r11");
@@ -8474,40 +8409,17 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   }
   s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), J_JMP, dn.lab);
   s = ssa_zero(s.lab_def(nn.lab), "%rax").lab_def(dn.lab);
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
-}
-
-function ssa_host_need(op: string): string {
-  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
-    return op;
-  }
-  let fs: string[] = [
-    "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
-    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "subprocess", "writer_write",
-  ];
-  for x in fs {
-    if (x == op) {
-      return op;
-    }
-  }
-  if (op == "read_chunk" || op == "reader_close") {
-    return "reader";
-  }
-  return "";
-}
-
-function ssa_host_bare(op: string): boolean {
-  return op == "putchar" || op == "monotonic_ns" || op == "now_unix_ms";
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "temp_dir") {
     return s.need("heap").need("monotonic_ns").need("temp_dir");
   }
-  if (ssa_host_need(op) != "") {
-    return s.need("heap").need(ssa_host_need(op));
+  if (asmcore.ssa_host_need(op) != "") {
+    return s.need("heap").need(asmcore.ssa_host_need(op));
   }
-  if (ssa_host_bare(op)) {
+  if (asmcore.ssa_host_bare(op)) {
     return s.need(op);
   }
   if (op == "str_concat") {
@@ -8541,10 +8453,6 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   return s.need("str_from_bytes");
 }
 
-function ssa_host_kind(op: string): boolean {
-  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "dev_");
-}
-
 // One port access, at the width after the colon. in zero-extends the value.
 function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
@@ -8565,13 +8473,13 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     } else if (w == 16) {
       s = s.write("    movzwl %ax, %eax\n");
     }
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   s = ssa_push_operand(reg_of, ins.args[0], s);
   s = ssa_push_operand(reg_of, ins.args[1], s);
   s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rdx");
   s = s.write("    out" + sfx + " " + acc + ", %dx\n    xorl %eax, %eax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 // A system-register op. A control register moves through %rax. A model-specific
@@ -8597,7 +8505,7 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   } else {
     s = s.write("    movq %rax, %rdx\n    shrq $32, %rdx\n    movl $" + util.i64_to_string(msr) + ", %ecx\n    wrmsr\n    xorl %eax, %eax\n");
   }
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 // A cache or TLB op. clflush writes back and invalidates the line, because the
@@ -8614,7 +8522,7 @@ function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     s = s.write("    clflush (%rax)\n");
   }
   s = s.write("    xorl %eax, %eax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 // A privileged op. boot_info reads the %ebx that the reset entry saved.
@@ -8627,18 +8535,18 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   }
   if (ins.str == "dev_boot_info") {
     s = s.write("    movq __fern_boot_info(%rip), %rax\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   if (ins.str == "dev_irq_pending") {
     s = s.write("    leaq __fern_irq_pending(%rip), %rax\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   let fixed = x86_no_operand_op(ins.str);
   if (fixed == "") {
     ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
   }
   s = s.write("    " + fixed + "\n    xorl %eax, %eax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 // wfi is hlt and breakpoint is int3. x86-64 has no equivalent of hvc or smc.
@@ -8670,7 +8578,7 @@ function x86_no_operand_op(op: string): string {
 function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_fence") {
     s = s.write("    mfence\n    xorl %eax, %eax\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   if (util.str_has_prefix(ins.str, "dev_port_")) {
     return ssa_port(ins, reg_of, s);
@@ -8690,7 +8598,7 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
       ld = "movslq (%rcx), %rax";
     }
     s = s.write("    " + ld + "\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   s = ssa_push_operand(reg_of, ins.args[0], s);
   s = ssa_push_operand(reg_of, ins.args[1], s);
@@ -8704,11 +8612,11 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     st = "movl %eax, (%rcx)";
   }
   s = s.write("    " + st + "\n    xorl %eax, %eax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   if (util.str_has_prefix(ins.str, "dev_")) {
     return ssa_device(ins, reg_of, s);
   }
@@ -8731,7 +8639,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     } else {
       s = s.raw_syscall("__" + ins.str);
     }
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
@@ -8744,13 +8652,13 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
       s = s.write(exit_provider_call(s, "%r11") + "    ud2\n");
     }
     s = s.write("    xorl %eax, %eax\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   s = s.need("heap");
   s = ssa_load(reg_of, ins.args[0], "%r11", s);
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = s.write("    movq %r11, %rdi\n    movq %rcx, %rsi\n    call __fern_str_box_hdr\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ir_memcpy_asm(): string {
@@ -8762,7 +8670,7 @@ function ir_memset_asm(): string {
 }
 
 function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let args: asmcore.DynArg[] = [];
   let moved = false;
   for v in ins.args {
@@ -8781,13 +8689,13 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     }
   }
   s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
   if (kind == ir.K_TCP_POLLABLE) {
-    s = ssa_x0_forget(s);
+    s = asmcore.ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_load(reg_of, ins.args[0], d, s);
     return ssa_store(reg_of, ins.result, d, s);
@@ -8796,7 +8704,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
   s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
@@ -8817,10 +8725,10 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   let result = ssa_trailing_push(body);
   if (result != "") {
     s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
-    return ssa_store(reg_of, ins.result, result, ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, result, asmcore.ssa_x0_forget(s));
   }
   s = s.write(body + "    popq %rax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_pop_line(reg: string): string {
@@ -8913,7 +8821,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     let progressed = false;
     let i = 0;
     while (i < dsts.len()) {
-      if (!done[i] && !ssa_still_read(srcs, done, dsts[i], i)) {
+      if (!done[i] && !asmcore.ssa_still_read(srcs, done, dsts[i], i)) {
         if (srcs[i] != dsts[i]) {
           out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
         }
@@ -8947,17 +8855,6 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
   return out;
 }
 
-function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
-  let j = 0;
-  while (j < srcs.len()) {
-    if (j != self && !done[j] && srcs[j] == reg) {
-      return true;
-    }
-    j += 1;
-  }
-  return false;
-}
-
 function ssa_arg_regs(): string[] {
   return ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
 }
@@ -8969,7 +8866,7 @@ function ssa_buf_arg_reg(a: i32): i32 {
 }
 
 function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   for a in 0..ins.args.len() {
@@ -8978,7 +8875,7 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   }
   s = ssa_parallel_moves(srcs, dsts, s);
   s = ssa_call_sym(s, sym).buf_needs(sym);
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_home_name(reg_of: i32[], v: i32): string {
@@ -9036,15 +8933,6 @@ function ssa_shared_environ(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-// Under -sanitize the user `__alloc` goes through the wrapper that adds the
-// redzone.
-function raw_alloc_sym(s: asmcore.EmitState): string {
-  if (s.rc_free_debug) {
-    return "__fern_raw_alloc_san";
-  }
-  return "__fern_alloc";
-}
-
 // The owned-allocation census takes the request of a user `__alloc` in %rdi.
 function lc_rt_req_alloc(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.leak_check || !s.rt_owned_allocs) {
@@ -9059,7 +8947,7 @@ function lc_rt_req_free(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   s = s.need("heap");
   let sym = "__fern_alloc";
   if (ins.str == "alloc_u8") {
@@ -9106,7 +8994,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.write("    addq $24, %rdi\n");
   }
   if (ins.str == "alloc") {
-    sym = raw_alloc_sym(s);
+    sym = asmcore.raw_alloc_sym(s);
     s = lc_rt_req_alloc(s);
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
@@ -9122,7 +9010,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     s = lc_rt_uncount(s, "__fern_lc_alloc_bytes", "__fern_lc_alloc_count");
   }
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 function lc_rt_uncount(s: asmcore.EmitState, bytes: string, count: string): asmcore.EmitState {
@@ -9180,7 +9068,7 @@ function push_count_test(unique: boolean, ls: ArrPushLabs, s: asmcore.EmitState)
 }
 
 function ssa_is_rt_call(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.RT_CALL && !ssa_host_kind(ins.str);
+  return ins.kind_tag == ssa.RT_CALL && !asmcore.ssa_host_kind(ins.str);
 }
 
 function ssa_rt_arg_reg(a: i32): i32 {
@@ -9191,7 +9079,7 @@ function ssa_rt_arg_reg(a: i32): i32 {
 }
 
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   if (ins.imm == 2) {
     return ssa_frame_box(ins, reg_of, base_off, s);
   }
@@ -9212,7 +9100,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
     s = s.write("    movl $" + util.i32_to_string(borrowed_marker()) + ", 4(%rdx)\n");
   }
   s = s.write("    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
-  return ssa_store(reg_of, ins.result, "%rdx", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
 function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -9223,7 +9111,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   s = s.write("    leaq " + util.i32_to_string(base_off) + "(%rbp), %rdx\n");
   s = s.write("    movq $-1, (%rdx)\n");
   s = s.write("    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
-  return ssa_store(reg_of, ins.result, "%rdx", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
@@ -9461,7 +9349,7 @@ function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
   s = ssa_load(reg_of, ins.args[0], d, s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
   if (d == "%r11") {
-    s = ssa_x0_forget(s);
+    s = asmcore.ssa_x0_forget(s);
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -9476,7 +9364,7 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.
   s = ssa_load(reg_of, other, d, s);
   s = s.write("    " + op + " $0, " + d + "\n");
   if (d == "%r11") {
-    s = ssa_x0_forget(s);
+    s = asmcore.ssa_x0_forget(s);
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -9493,7 +9381,7 @@ function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   }
   s = ssa_load(reg_of, ins.args[0], "%r11", s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", %r11\n");
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let d = ssa_dst(reg_of, ins.result);
   s = s.write("    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n");
   return ssa_store(reg_of, ins.result, d, s);
@@ -9512,10 +9400,6 @@ function ssa_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
 function ssa_cc_text(cc: i32): string {
   let names: string[] = ["o", "no", "b", "ae", "e", "ne", "be", "a", "s", "ns", "p", "np", "l", "ge", "le", "g"];
   return names[cc];
-}
-
-function ssa_join(lp: string, blk: i32): string {
-  return lp + "uq" + util.i32_to_string(blk);
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
@@ -9558,7 +9442,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 }
 
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let argc = ins.args.len() - 1;
   if (!ssa.slot_call(ins)) {
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
@@ -9589,7 +9473,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (argc > ssa_nargs()) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
 // The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian,
@@ -9627,7 +9511,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): a
 }
 
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let k = ins.kind_tag;
   let label = "";
   if (k == ssa.FN_ADDR) {
@@ -9647,38 +9531,16 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   } else {
     s = s.need("heap");
     s = ssa_call_sym(ssa_mov_ir(s, 64, ins.imm as i64, util.i32_to_string(ins.imm), "%rdi"), "__fern_arr_box");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   let d = ssa_dst(reg_of, ins.result);
   s = ssa_lea_sym(s, label, d);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (id < 0 || id >= rows.len() || rows[id].line <= 0) {
-    return s;
-  }
-  let pos = rows[id];
-  return ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
-}
-
-function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
-  let pos = ins.imm as i64 << 32 | util.digits_to_i32(ins.str) as i64;
-  if (s.dw_pos == pos) {
-    return s;
-  }
-  s = asmcore.EmitState { ...s, dw_pos: pos };
-  let row = asmcore.loc_row(s, ins.imm, ins.str);
-  if (s.dw_first) {
-    row += " prologue_end";
-    s = asmcore.EmitState { ...s, dw_first: false };
-  }
-  return s.write(row + "\n");
-}
-
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
-  if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
+  if (ssa.back_copy_call(ins) && asmcore.ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base, save: fr.nsave }, s);
   }
   if (k == ssa.CALL) {
@@ -9708,7 +9570,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.STR_CALL) {
     return ssa_str_call(ins, reg_of, s);
   }
-  if (k == ssa.RT_CALL && ssa_host_kind(ins.str)) {
+  if (k == ssa.RT_CALL && asmcore.ssa_host_kind(ins.str)) {
     return ssa_host_call(ins, reg_of, fr.imm, s);
   }
   if (ssa_is_rt_call(ins)) {
@@ -9727,7 +9589,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_agg_lit(ins, reg_of, s);
   }
   if (k == ssa.LINE) {
-    return ssa_line_loc(ins, s);
+    return asmcore.ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
     return ssa_lane_arm(ins, reg_of, s);
@@ -9752,7 +9614,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
   } else if (k == ssa.BINARY && ssa_direct_bin(ir.kind_id(ins.str))) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == ssa.BINARY && ssa_shift_tag(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ir.kind_id(ins.str))) {
     return ssa_shift(ins, reg_of, fr, s);
   } else if (k == ssa.BINARY) {
     d = ssa_bin_work(ins.str);
@@ -9772,7 +9634,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (src != "") {
       from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
     }
-    if (s.records() && ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
+    if (s.records() && asmcore.ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
       if (src == "") {
         s = ssa_load(reg_of, ins.args[0], d, s);
         src = d;
@@ -9789,7 +9651,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
 }
 
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
+  s = asmcore.ssa_x0_forget(s);
   let ti = ssa_block_at(fr, succ);
   if (ti < 0) {
     return s;
@@ -9882,7 +9744,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
     let progressed = false;
     let i = 0;
     while (i < srcs.len()) {
-      if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
+      if (!done[i] && !asmcore.ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
           s = ssa_unpark(dsts[i], ssa_vec_loc(parked, s), s);
         } else {
@@ -9911,7 +9773,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       }
     }
   }
-  return ssa_x0_forget(s);
+  return asmcore.ssa_x0_forget(s);
 }
 
 // The move that closes a two-register cycle with move j, when no other
@@ -9973,17 +9835,6 @@ function ssa_unpark(loc: i32, vec: boolean, s: asmcore.EmitState): asmcore.EmitS
     return ssa_mov_rr(s, ssa_reg(loc), "%xmm2");
   }
   return ssa_mov_slot(s, false, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
-}
-
-function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
-  let k = 0;
-  while (k < srcs.len()) {
-    if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) {
-      return true;
-    }
-    k += 1;
-  }
-  return false;
 }
 
 function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -10062,7 +9913,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
   if (stub) {
     s = ssa_branch(s, J_JMP, ssa_blab(fr, lp, t.t));
-    s = ssa_x0_forget(s);
+    s = asmcore.ssa_x0_forget(s);
     s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
     return ssa_jump_on(f, fr, reg_of, lp, t.f, next, s);
@@ -10210,7 +10061,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
       let h = f.blocks[ssa_block_at(fr, t.target)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
-      return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
+      return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
     return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
   }
@@ -10445,7 +10296,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let saved = ssa_saved_regs(reg_of);
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let views = ssa.view_slots(f);
-  let nspill = ssa_lane_spill(f, ssa.spill_count(reg_of));
+  let nspill = asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of));
   let tails = s.profile == 0;
   let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);
@@ -10493,7 +10344,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, s);
   let pos = 0;
   let bi = 0;
@@ -10503,7 +10354,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     if (bi + 1 < f.blocks.len()) {
       next = f.blocks[bi + 1].id;
     }
-    s = ssa_x0_forget(s);
+    s = asmcore.ssa_x0_forget(s);
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
     let fu = ssa_fuse(ssa_fuse_view(fr), blk);
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
@@ -10513,18 +10364,18 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
-        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_emit_tail_call(ins, reg_of, fr, sourcepos.at(prepared.source.terms, blk.id), s);
         tailed = true;
       } else {
-        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, SlowSaves { mask: cold.by_pos[pos + ii], base: fr.cold_base, save: save }, s);
       }
       ii += 1;
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
-    s = ssa_fused_loc(prepared.source, blk, ii, tailed, s);
-    s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
+    s = asmcore.ssa_fused_loc(prepared.source, blk, ii, tailed, s);
+    s = ssa_fused_test(fr, reg_of, fu, asmcore.ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
       s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
@@ -10739,9 +10590,9 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
       a += 1;
     }
   }
-  s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
+  s = ssa_parallel_moves(srcs, dsts, asmcore.ssa_x0_forget(s));
   if (pos.line > 0) {
-    s = ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+    s = asmcore.ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
   }
   return ssa_emit_exit(fr, s, target);
 }
@@ -12323,14 +12174,10 @@ function emit_startup_failure(own s: asmcore.EmitState, label: string, msg: stri
   return s.syscall(231);
 }
 
-function reset_stack_bytes(): i64 {
-  return 1048576i64;
-}
-
 // The page tables and the GDT of the reset entry: a PML4, a PDPT, four page
 // directories and a GDT page, below the stack.
 function reset_tables(s: asmcore.EmitState): i64 {
-  return s.ram_base + s.ram_size - reset_stack_bytes() - 7i64 * 4096i64;
+  return s.ram_base + s.ram_size - asmcore.reset_stack_bytes() - 7i64 * 4096i64;
 }
 
 // A VMM enters _start through the PVH note in 32-bit protected mode with
@@ -13420,18 +13267,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (needs_heap_runtime(s)) {
     s = emit_trap_stubs(s.write("    .text\n"));
-  }
-  return s;
-}
-
-function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: asmcore.EmitState): asmcore.EmitState {
-  let mi = begin;
-  while (mi < blk.insts.len()) {
-    s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
-    mi += 1;
-  }
-  if (!tailed) {
-    s = ssa_prepared_loc(source.terms, blk.id, s);
   }
   return s;
 }

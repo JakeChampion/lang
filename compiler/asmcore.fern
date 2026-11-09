@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./sourcepos";
 import "./rtprofile";
 import "./platforms";
 import "./ir";
@@ -6836,4 +6837,171 @@ pub function runtime_sync_roots(s: EmitState): string {
     out = out + " " + "__fern_sync";
   }
   return out;
+}
+
+// Under -sanitize the user `__alloc` goes through the wrapper that adds the
+// redzone.
+pub function raw_alloc_sym(s: EmitState): string {
+  if (s.rc_free_debug) {
+    return "__fern_raw_alloc_san";
+  }
+  return "__fern_alloc";
+}
+
+// The kernel image's stack holds the top 1 MiB of the RAM, and the heap holds
+// the rest above the image.
+pub function reset_stack_bytes(): i64 {
+  return 1048576i64;
+}
+
+pub function ssa_funary_known(what: string): boolean {
+  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
+  for x in un {
+    if (x == what) {
+      return true;
+    }
+  }
+  return util.str_has_prefix(what, "i32_to_f64:");
+}
+
+pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {
+  let mi = begin;
+  while (mi < blk.insts.len()) {
+    s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
+    mi += 1;
+  }
+  if (!tailed) {
+    s = ssa_prepared_loc(source.terms, blk.id, s);
+  }
+  return s;
+}
+
+pub function ssa_host_bare(op: string): boolean {
+  return op == "putchar" || op == "monotonic_ns" || op == "now_unix_ms";
+}
+
+pub function ssa_host_kind(op: string): boolean {
+  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "dev_");
+}
+
+pub function ssa_host_need(op: string): string {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
+    return op;
+  }
+  let fs: string[] = [
+    "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
+    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "subprocess", "writer_write",
+  ];
+  for x in fs {
+    if (x == op) {
+      return op;
+    }
+  }
+  if (op == "read_chunk" || op == "reader_close") {
+    return "reader";
+  }
+  return "";
+}
+
+pub function ssa_inline_back(s: EmitState): boolean {
+  return !s.size && top_level_fn("__fern_bytes_append_back", s) < 0;
+}
+
+// A release whose count test is inline, so only its freeing call is slow.
+pub function ssa_inline_rc_dec(ins: ssa.SInst, s: EmitState): boolean {
+  return ins.kind_tag == ssa.CALL && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
+}
+
+pub function ssa_join(lp: string, blk: i32): string {
+  return lp + "uq" + util.i32_to_string(blk);
+}
+
+pub function ssa_lane_index(what: string): i32 {
+  let k = 0;
+  while (k < what.len()) {
+    if (what[k] == b':') {
+      return what[k + 1] as i32 - 48;
+    }
+    k += 1;
+  }
+  return 0;
+}
+
+pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
+  let units: boolean[] = [];
+  let v = 0;
+  while (v < lanes.len()) {
+    if (lanes[v] && reg_of[v] < -1) {
+      let u = ssa.spill_slot(reg_of[v]);
+      while (units.len() <= u + 1) {
+        units = units.append(false);
+      }
+      units = units.with(u, true).with(u + 1, true);
+    }
+    v += 1;
+  }
+  return units;
+}
+
+pub function ssa_lane_spill(f: ssa.SFunc, nspill: i32): i32 {
+  if (nspill % 2 == 1 && ssa.has_lanes(f)) {
+    return nspill + 1;
+  }
+  return nspill;
+}
+
+pub function ssa_line_loc(ins: ssa.SInst, s: EmitState): EmitState {
+  let pos = ins.imm as i64 << 32 | util.digits_to_i32(ins.str) as i64;
+  if (s.dw_pos == pos) {
+    return s;
+  }
+  s = EmitState { ...s, dw_pos: pos };
+  let row = loc_row(s, ins.imm, ins.str);
+  if (s.dw_first) {
+    row += " prologue_end";
+    s = EmitState { ...s, dw_first: false };
+  }
+  return s.write(row + "\n");
+}
+
+pub function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
+  let k = 0;
+  while (k < srcs.len()) {
+    if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) {
+      return true;
+    }
+    k += 1;
+  }
+  return false;
+}
+
+pub function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: EmitState): EmitState {
+  if (id < 0 || id >= rows.len() || rows[id].line <= 0) {
+    return s;
+  }
+  let pos = rows[id];
+  return ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+}
+
+pub function ssa_sext32(what: string, unsigned: boolean): boolean {
+  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
+}
+
+pub function ssa_shift_tag(tag: i32): boolean {
+  return tag == 31 || tag == 32 || tag == 33;
+}
+
+pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
+  let j = 0;
+  while (j < srcs.len()) {
+    if (j != self && !done[j] && srcs[j] == reg) {
+      return true;
+    }
+    j += 1;
+  }
+  return false;
+}
+
+pub function ssa_x0_forget(s: EmitState): EmitState {
+  return EmitState { ...s, ssa_x0: -1 };
 }
