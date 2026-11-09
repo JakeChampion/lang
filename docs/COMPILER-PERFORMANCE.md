@@ -114,6 +114,20 @@ Candidate wall-time medians are slightly slower, with mixed paired differences a
 These samples do not establish a wall-time or CPU-time speedup.
 The complete stage-2 and stage-3 compiler executables match byte for byte with certification enabled and the proof cache disabled.
 
+The [separate main comparison](benchmarks/compiler-semantic-liveness-main-2026-11-09/README.md) uses baseline `a19e87208c` and candidate `7dbc615c9c`.
+The fixed input remains `12be8f1186`.
+Cold allocation events decrease by 17,277, with balanced frees and zero live bytes.
+Cold guest instructions decrease by 29,160,452, or 0.0697%.
+Warm guest instructions decrease by 29,066,411, or 0.0979%.
+Output hashes match within each comparison.
+
+Five alternating pairs per mode retain every timing sample.
+Candidate cold medians are slightly lower, and warm medians are higher.
+The data establish no wall-time or CPU-time speedup.
+Median peak RSS decreases by 1,280 KiB cold and 1,152 KiB warm.
+The archive records the overlap of CI self-tests with the first cold baseline sample.
+Stage-2 and stage-3 compiler executables match byte for byte.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.

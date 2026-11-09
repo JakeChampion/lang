@@ -1,0 +1,66 @@
+{
+  "source": "7dbc615c9c1d2dd53f63529ae9c2925aad4ace5b",
+  "pinned_producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "pinned_producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "proof_memo": false,
+  "stages": [
+    {
+      "stage": 2,
+      "producer_sha256": "bdf842674d210e4822feb21572e0e8822160aa97a3fd33ffce6b9facc52724de",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-20261109/candidate-native",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-bootstrap-20261109/fern-stage2",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:20:53.122673+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:21:44.616850+00:00",
+      "sha256": "2abba70bd410645a6880f5090e88ac77fc218a290b84ba38b798393a3adf2cd8"
+    },
+    {
+      "stage": 3,
+      "producer_sha256": "2abba70bd410645a6880f5090e88ac77fc218a290b84ba38b798393a3adf2cd8",
+      "args": [
+        "/workspace/lang/build/semantic-liveness-main-bootstrap-20261109/fern-stage2",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang/build/semantic-liveness-main-bootstrap-20261109/fern-stage3",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:21:44.652916+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:22:51.472663+00:00",
+      "sha256": "2abba70bd410645a6880f5090e88ac77fc218a290b84ba38b798393a3adf2cd8"
+    }
+  ],
+  "stage1_sha256": "bdf842674d210e4822feb21572e0e8822160aa97a3fd33ffce6b9facc52724de",
+  "full_binaries_equal": true,
+  "complete": true
+}

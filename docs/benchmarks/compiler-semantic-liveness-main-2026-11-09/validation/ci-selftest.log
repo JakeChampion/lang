@@ -1,0 +1,52 @@
+node scripts/ci-changes-selftest.mjs
+ci-changes-selftest: 112 cases pass against the changes and verdict scripts in ci.yml
+node scripts/ci-run-affected-selftest.mjs
+ci-run-affected-selftest: consumer selection, failures, platform filters, native patterns, and format checks pass
+node scripts/main-red-selftest.mjs
+main-red-selftest: 33 cases pass against the reporter script
+node scripts/perf-gate-selftest.mjs
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf
+node scripts/nightly-findings-selftest.mjs
+nightly-findings selftest: ok
+python3 scripts/gen-large-push-wide-decoder-reference.py --check
+{"cases": 4681, "success": 4224, "errors": 457, "bundle_sha256": "23ab94aae0bc6ec6bae9adf55fec000f6adc3eb91d7babd4f998b35630ff4417"}
+python3 -m unittest discover -s scripts -p test_large_push_wide_decoder.py
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.009s
+
+OK
+python3 scripts/gen-large-push-wide-machine-reference.py --check
+{"cases": 336, "positive": 160, "negative": 176, "bundle_sha256": "4d22272a26f32fc656b487b84a930e9fa7e2f6a102977ecd3d80d5a1e9acf9ae"}
+python3 scripts/gen-large-free-wide-classes.py --check
+{"cases": 1566, "grids": [70, 103, 103], "sha256": "24a60dabd0e686061aad1e35b5dfd31b59a92d3ea092cf6b8b8298f196c1488c"}
+python3 -m unittest discover -s scripts -p test_large_free_wide_classes.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 3.501s
+
+OK
+python3 -B -m unittest discover -s scripts -p test_native_pair_bench.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 1.919s
+
+OK
+python3 -m unittest discover -s scripts -p test_large_push_wide_machine.py
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.004s
+
+OK
+python3 -m unittest discover -s scripts -p test_gen_mp3_tables.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+python3 -m unittest discover -s scripts -p test_gen_silk_tables.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
