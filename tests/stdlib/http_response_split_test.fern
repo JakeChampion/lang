@@ -1,0 +1,37 @@
+import "std/test";
+import "std/http";
+import "std/string";
+import "std/utf8";
+
+function echoed(value: string): HttpResponse {
+  return http.text(200, "ok").with_header("X-Echo", value);
+}
+
+function test_a_field_value_with_crlf_is_a_500(): test.TestOutcome {
+  let wire = http.serialize_response_to("GET", "HTTP/1.1", echoed("a\r\nSet-Cookie: evil=1"), false);
+  return test.assert_true(wire.starts_with("HTTP/1.1 500 ") && !wire.contains("Set-Cookie"));
+}
+
+function test_the_bytes_form_refuses_the_same_value(): test.TestOutcome {
+  let wire = utf8.from_bytes_lossy(http.serialize_response_to_bytes("GET", "HTTP/1.1", echoed("a\nSet-Cookie: evil=1"), true));
+  return test.assert_true(wire.starts_with("HTTP/1.1 500 ") && !wire.contains("Set-Cookie"));
+}
+
+function test_a_field_name_with_a_colon_is_a_500(): test.TestOutcome {
+  let wire = http.serialize_response(http.text(200, "ok").with_header("X: y\r\nSet-Cookie", "evil=1"));
+  return test.assert_true(wire.starts_with("HTTP/1.1 500 ") && !wire.contains("Set-Cookie"));
+}
+
+function test_a_clean_field_is_written(): test.TestOutcome {
+  let wire = http.serialize_response_to("GET", "HTTP/1.1", echoed("/plain path"), false);
+  return test.assert_true(wire.starts_with("HTTP/1.1 200 ") && wire.contains("X-Echo: /plain path\r\n"));
+}
+
+function main(): i32 {
+  let r = test.new("std/http response field refusal");
+  r = r.it("a field value with CRLF is a 500", test_a_field_value_with_crlf_is_a_500);
+  r = r.it("the bytes form refuses the same value", test_the_bytes_form_refuses_the_same_value);
+  r = r.it("a field name with a colon is a 500", test_a_field_name_with_a_colon_is_a_500);
+  r = r.it("a clean field is written", test_a_clean_field_is_written);
+  return r.finish();
+}
