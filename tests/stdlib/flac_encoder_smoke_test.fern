@@ -15,7 +15,7 @@ function roundtrip(): test.TestOutcome {
           input = input.append((at * at + ch * 11) % 13 - 6 << depth - 4);
         }
       }
-      let options = encoder.Options { block_frames: 16, max_fixed_order: 4, max_partition_order: 4, stereo: true };
+      let options = encoder.Options { ...encoder.default_options(), block_frames: 16, max_partition_order: 4 };
       let encoded = match (encoder.encode(input, format, options, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("encode: " + e.message()); } };
       let decoded = match (flac.decode(encoded, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode: " + e.message()); } };
       if (decoded.samples.len() != input.len() || decoded.format.bits_per_sample != depth || decoded.format.channels != channels || decoded.format.sample_rate != format.sample_rate) {

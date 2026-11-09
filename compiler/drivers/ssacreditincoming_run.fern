@@ -1,5 +1,4 @@
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ssa";
 import "../ssa_lift";
@@ -188,7 +187,7 @@ function source(): string {
 }
 
 function target_checks(target: string): void {
-  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
+  let sub = semlower.driven(boxed.parsed(source(), ["parent", "replace", "handoff"]), target).sub;
   let producers: ssa.SFunc[] = [];
   let consumers: ssa.SFunc[] = [];
   let callers: ssa.SFunc[] = [];

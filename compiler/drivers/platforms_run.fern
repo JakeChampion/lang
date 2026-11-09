@@ -2,6 +2,7 @@ import "../lexer";
 import "../parser";
 import "../platforms";
 import "../util";
+import "std/string";
 
 function violations(src: string, target: string): platforms.Violation[] {
   return platforms.enforce(parser.parse_module(lexer.tokenize(src)), target);
@@ -41,7 +42,7 @@ function main(): i32 {
     return 4;
   }
   for t in platforms.targets() {
-    if (!util.str_has_prefix(t, platforms.for_target(t).isa + "-")) {
+    if (!t.starts_with(platforms.for_target(t).isa + "-")) {
       eprint(t + ": the descriptor names the ISA " + platforms.for_target(t).isa);
       return 4;
     }

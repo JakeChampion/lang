@@ -65,7 +65,7 @@ function index(f: ssasem.Func): Index {
 
 function literal(ix: Index, v: i32, n: i32): boolean {
   let d = ix.defs[v];
-  return d.kind_tag == 1 && d.imm == n;
+  return d.kind_tag == ssa.CONST_INT && d.imm == n;
 }
 
 // A value defined outside the loop. A parameter has no home.
@@ -163,13 +163,13 @@ function count_chain(ix: Index, v: i32, l: Loop, own c: Chain, steps: i32): Chai
 }
 
 function chain_op(d: ssa.SInst): boolean {
-  if (d.kind_tag == 1 || d.kind_tag == ssasem.length() || d.kind_tag == ssasem.record_get()) {
+  if (d.kind_tag == ssa.CONST_INT || d.kind_tag == ssasem.length() || d.kind_tag == ssasem.record_get()) {
     return true;
   }
   if (d.kind_tag == ssasem.array_get()) {
     return d.imm != ssasem.check_only();
   }
-  return d.kind_tag == 9 && chain_binary(d.str);
+  return d.kind_tag == ssa.BINARY && chain_binary(d.str);
 }
 
 function chain_binary(op: string): boolean {
@@ -275,7 +275,7 @@ struct Tail { len: i32, distance: i32 }
 function tail_distance(ix: Index, l: Loop, index: i32): Tail {
   let no = Tail { len: -1, distance: -1 };
   let at = ix.defs[index];
-  if (at.kind_tag != 9 || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l)) {
+  if (at.kind_tag != ssa.BINARY || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l)) {
     return no;
   }
   let len = ix.defs[at.args[0]];

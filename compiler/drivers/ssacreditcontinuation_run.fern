@@ -1,5 +1,4 @@
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ircore";
 import "../ssa";
@@ -210,9 +209,9 @@ function cycling(f: ssa.SFunc): ssa.SFunc {
 }
 
 function target_checks(target: string): void {
-  let original = semlower.driven(parser.parse_module(lexer.tokenize(source(true))), target).sub;
+  let original = semlower.driven(boxed.parsed(source(true), ["parent", "replace", "handoff"]), target).sub;
   expect(check(original, body(original, "handoff")), "replace", "scalar call may exit with unproved caller obligations");
-  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(false))), target).sub;
+  let sub = semlower.driven(boxed.parsed(source(false), ["parent", "replace", "handoff"]), target).sub;
   let wrapper = body(sub, "handoff");
   expect(check(sub, wrapper), "handoff", "proved checked storage wrapper continuation");
   controls(sub, wrapper);

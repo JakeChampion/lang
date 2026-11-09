@@ -1,6 +1,6 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
-Status: [plan] in progress. Slices 1 to 7 and the h3spec half of 8 landed. Open: 4b, the rest of 8 (more interop peers), 9 (the client), the rest of 10 (speed) and the h3spec case of 0-RTT.
+Status: [plan] in progress. Slices 1 to 7, 4b, 9, 0-RTT and the h3spec half of 8 landed. Open: the rest of 8 (a second peer as a client of `std/serve`), the rest of 10 (speed) and the h3spec case of 0-RTT.
 
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
@@ -232,9 +232,11 @@ Each is a bound with a test that crosses it.
    Retry. `scripts/net-quic-interop` has aioquic's HTTP/3 client answer
    the Fern server's Retry.
 8. **Interop nightly.** h3spec on `scripts/net-h3spec`, every case
-   against `std/serve` with HTTP/3 on, landed (#12511). More HTTP/3 peers
-   beside aioquic (`scripts/net-quic-interop` has carried HTTP/3 both ways
-   since 7a) are open. Gate: the nightly jobs.
+   against `std/serve` with HTTP/3 on, landed (#12511).
+   `scripts/net-quic-interop` carries HTTP/3 both ways against aioquic, and
+   `std/fetch` against h2o's quicly. Against h2o, the client resumes a
+   session and sends 0-RTT. A second peer as a client of `std/serve` is
+   open. Gate: the nightly jobs.
 9. **Client (landed, #12510).** `std/fetch` speaks HTTP/3 to an origin
    that offers it. An Alt-Svc field on a TLS response from the origin
    itself names the UDP port (`fetch.alt_svc` reads the value, the pool's

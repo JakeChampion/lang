@@ -532,7 +532,7 @@ function section(g: Graph, title: string, v: Vocab): string {
   while (k < g.funcs.len()) {
     let reached = label_names(v, rows[k]);
     let via = label_names(v, (rows[k] | direct[k]) ^ direct[k]);
-    let at = index_of_i32(sizes, reached.len());
+    let at = util.index_of_i32(sizes, reached.len());
     if (at < 0) {
       sizes = sizes.append(reached.len());
       counts = counts.append(1);
@@ -573,7 +573,7 @@ function section(g: Graph, title: string, v: Vocab): string {
   let size = 0;
   let shown = 0;
   while (shown < sizes.len()) {
-    let at = index_of_i32(sizes, size);
+    let at = util.index_of_i32(sizes, size);
     if (at >= 0) {
       out = out + "  row size " + util.i32_to_string(size) + ": " + util.i32_to_string(counts[at]) + " functions\n";
       shown += 1;
@@ -599,17 +599,6 @@ function direct_origin(g: Graph, v: Vocab, k: i32): boolean {
     b += 1;
   }
   return false;
-}
-
-function index_of_i32(xs: i32[], v: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == v) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 pub function report(mod: parser.Module): string {

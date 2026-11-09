@@ -246,7 +246,7 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Twenty-seven targets feed hostile bytes to the boundaries after the front end,
+Thirty targets feed hostile bytes to the boundaries after the front end,
 through the CLI, four drivers and one program the shipped CLI builds. They
 are the build manifest reader, the IR verifiers, both in-process assemblers,
 the package layer's manifest, lock, index and archive readers, the literate
@@ -255,7 +255,7 @@ stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
 and server connection, HPACK and QPACK decoders, QUIC packet and frame
 readers, TLS record, handshake message, server and client handshake, PEM,
 X.509 and chain verifier readers, DEFLATE, gzip, zlib, zstd and Brotli
-decoders, JSON parser and URL parser. The DEFLATE, gzip and zlib targets
+decoders, DNS message, protobuf and JPEG readers, JSON parser and URL parser. The DEFLATE, gzip and zlib targets
 must agree with Go's decoders on every input. Each input runs in a child process under a time and
 a memory budget. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
@@ -370,6 +370,12 @@ regression test where the bug lived:
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
+- **Bounds traps in the JPEG decoder** (`FuzzSelfHostStdJPEG`, November 2026).
+  The fuzzer found three traps. A frame of 65535 by 65535 pixels passed the
+  range of an i32 in its block counts. A segment shorter than its fields was
+  read past the file. A scan with an undefined Huffman table read the empty
+  table. `std/jpeg` now refuses a frame over its pixel limit, checks each
+  segment length, and decodes such a scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
 
 Earlier: the closure-dispatch cluster (#5001, #5007, #5009, #5026), the
 `i64[]` narrowing (#5729), the u32 shift that miscompiled SHA-256, the float

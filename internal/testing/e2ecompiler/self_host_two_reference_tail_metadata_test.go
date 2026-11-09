@@ -45,7 +45,7 @@ func TestSelfHostTwoReferenceTailMetadata(t *testing.T) {
 }
 
 const twoRefMetadataProbe = `import "./physicalbody"; import "./ssasem"; import "./semrecords"; import "./typeinfo";
-import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util";
+import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util"; import "std/string";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: str };
@@ -71,7 +71,7 @@ function array_type(): typeinfo.Type { return typeinfo.TypeArray { elem: typeinf
 function triple_type(): typeinfo.Type { return typeinfo.TypeTuple { elements: [array_type(), array_type(), typeinfo.TypeBool { tag: 0 }] }; }
 function quad_type(): typeinfo.Type { return typeinfo.TypeTuple { elements: [array_type(), array_type(), typeinfo.TypeBool { tag: 0 }, typeinfo.TypeBool { tag: 0 }] }; }
 function main(): i32 {
- let name = args()[1]; let in_callee = util.str_has_prefix(name, "callee-");
+ let name = args()[1]; let in_callee = name.starts_with("callee-");
  let params: typeinfo.Type[] = []; let modes: i32[] = []; let result: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
  if (in_callee) { params = [array_type(), array_type(), typeinfo.TypeBool { tag: 0 }]; modes = [ssasem.counted_mode(), ssasem.counted_mode(), ssasem.value_mode()]; result = triple_type(); }
  if (name == "call-return-primary" || name == "call-return-secondary") { result = array_type(); }

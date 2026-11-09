@@ -19,6 +19,7 @@ import "./sempair";
 import "./semscalarreturn";
 import "./rtbytecopy";
 import "./sysreg";
+import "std/string";
 
 function empty(why: string): irtables.LowerState {
   return irtables.LowerState {
@@ -2559,7 +2560,7 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 }
 
 function value_op(k: i32): boolean {
-  return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8 || k == 35 || k == ssasem.zero() || k == ssasem.call()
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssa.PARAM || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.zero() || k == ssasem.call()
     || k == ssasem.append_range() || ssasem.scalar_op(k) || ssasem.is_function_op(k)
     || k == ssasem.checked_present() || k == ssasem.checked_value();
 }
@@ -3838,7 +3839,7 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
 }
 
 function constant_op(k: i32): boolean {
-  return k == 1 || k == 2 || k == 5 || k == ssasem.zero();
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssasem.zero();
 }
 
 function instruction(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, token: i32, tested: boolean): irtables.LowerState {
@@ -4396,7 +4397,7 @@ function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssa
   let kept: ssaunits.Supply[] = [];
   for supply in step.supplies {
     let owed: boolean = supply.mode == ssaunits.retain_unit() && supply.slot >= 0 && supply.slot < dest.insts.len()
-      && dest.insts[supply.slot].kind_tag == 8 && links[dest.insts[supply.slot].result] == supply.value;
+      && dest.insts[supply.slot].kind_tag == ssa.PHI && links[dest.insts[supply.slot].result] == supply.value;
     if (!owed) {
       kept = kept.append(supply);
     }
@@ -4659,7 +4660,7 @@ function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[
 }
 
 function array_reuse_candidate(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.call() && (ins.str == "__scale_f64" || util.str_has_prefix(ins.str, "__arrm_map__"));
+  return ins.kind_tag == ssasem.call() && (ins.str == "__scale_f64" || ins.str.starts_with("__arrm_map__"));
 }
 
 function in_place_array(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): boolean {
@@ -4741,7 +4742,7 @@ pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: ut
   for b in f.graph.blocks {
     let pos = 0;
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")) {
+      if (ins.kind_tag == ssasem.call() && ins.str.starts_with("__arrm_map__")) {
         let why = map_reason(f, modes, at(p, idx, b.id, pos, -1), links, pure, ins);
         if (disabled && why == semarrayreport.storage_guarded_reuse()) {
           why = semarrayreport.storage_reuse_disabled();
@@ -4864,7 +4865,7 @@ function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
 
 function consumed_param(f: ssasem.Func, modes: i32[], v: i32): boolean {
   let d = defining(f, v);
-  return d.result == v && d.kind_tag == 6 && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
+  return d.result == v && d.kind_tag == ssa.PARAM && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
 }
 
 function supplied(step: ssaunits.Step, v: i32): boolean {
@@ -5163,7 +5164,7 @@ function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.S
 // A fixed-count mismatch shares the wrapper instead of a full generic kernel.
 function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.str == "__mismatch_bytes" && ins.args.len() == 5) {
-    return defining(f, ins.args[4]).kind_tag != 1;
+    return defining(f, ins.args[4]).kind_tag != ssa.CONST_INT;
   }
   return true;
 }
@@ -5285,7 +5286,7 @@ function call_ops(name: string): ir.Op[] {
 }
 
 function paired_op(name: string): boolean {
-  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || sempair.pair_lane_slot(name) >= 0 || util.str_has_prefix(name, sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
+  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || sempair.pair_lane_slot(name) >= 0 || name.starts_with(sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
 }
 
 function pair_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
@@ -5296,7 +5297,7 @@ function pair_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }
-  if (util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
+  if (ins.str.starts_with(sempair.word_as_prefix())) {
     return r;
   }
   r = emit(r, ir.op_drop());
@@ -5336,20 +5337,20 @@ function capture_scalar_words(own r: irtables.LowerState, imm: i32): irtables.Lo
 }
 
 function scalar_op(name: string): boolean {
-  return util.str_has_prefix(name, semscalarreturn.bits_name() + ":") || util.str_has_prefix(name, semscalarreturn.as_name() + ":")
-    || util.str_has_prefix(name, semscalarreturn.set_prefix()) || util.str_has_prefix(name, semscalarreturn.word_prefix());
+  return name.starts_with(semscalarreturn.bits_name() + ":") || name.starts_with(semscalarreturn.as_name() + ":")
+    || name.starts_with(semscalarreturn.set_prefix()) || name.starts_with(semscalarreturn.word_prefix());
 }
 
 function scalar_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
-  if (util.str_has_prefix(ins.str, semscalarreturn.word_prefix())) {
+  if (ins.str.starts_with(semscalarreturn.word_prefix())) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }
-  if (util.str_has_prefix(ins.str, semscalarreturn.set_prefix())) {
+  if (ins.str.starts_with(semscalarreturn.set_prefix())) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_const_i32(0));
   }
-  let encode = util.str_has_prefix(ins.str, semscalarreturn.bits_name() + ":");
+  let encode = ins.str.starts_with(semscalarreturn.bits_name() + ":");
   return scalar_conversion(r, f, ins, encode);
 }
 
@@ -5417,7 +5418,7 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (m == "Dir.open_dir") {
     return Lowered { found: true, r: emit(r, ir.op_dir_open()) };
   }
-  if (util.str_has_prefix(m, "Dir.open_")) {
+  if (m.starts_with("Dir.open_")) {
     return dir_open_file_site(r, m);
   }
   if (m == "Dir.entries_bytes") {
@@ -5476,7 +5477,7 @@ function dir_open_file_site(own r: irtables.LowerState, m: string): Lowered {
 }
 
 function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "open_dir" || util.str_has_prefix(ins.str, "Dir.")) {
+  if (ins.str == "open_dir" || ins.str.starts_with("Dir.")) {
     return dir_site(r, ins);
   }
   if (ins.str == "stdin") {
@@ -5596,7 +5597,7 @@ function handle_metadata_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
 }
 
 function handle_method(name: string): string {
-  if (!util.str_has_prefix(name, "Reader.") && !util.str_has_prefix(name, "Writer.")) {
+  if (!name.starts_with("Reader.") && !name.starts_with("Writer.")) {
     return "";
   }
   let method = slice_unchecked(name, 7, name.len());
@@ -6370,6 +6371,9 @@ function word_bytes(name: string): i32 {
 }
 
 function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
+  if (ins.str == "__bytes_data") {
+    return Lowered { found: true, r: emit(r, ssabytes.read_data(ins.args[0])) };
+  }
   if (ins.str == ssabytes.word_name(4) || ins.str == ssabytes.word_name(8)) {
     return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], word_bytes(ins.str))) };
   }
@@ -6485,10 +6489,10 @@ function device_op(name: string): ir.Op {
   if (privileged_kind(name) > 0) {
     return ir.op_privileged(privileged_kind(name));
   }
-  if (util.str_has_prefix(name, "__port_in")) {
+  if (name.starts_with("__port_in")) {
     return ir.op_port_in(util.digits_to_i32(slice_unchecked(name, 9, name.len()) + ""));
   }
-  if (util.str_has_prefix(name, "__port_out")) {
+  if (name.starts_with("__port_out")) {
     return ir.op_port_out(util.digits_to_i32(slice_unchecked(name, 10, name.len()) + ""));
   }
   if (builtinsigs.access_store(name)) {
@@ -6499,7 +6503,7 @@ function device_op(name: string): ir.Op {
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.
 function privileged_kind(name: string): i32 {
-  if (!util.str_has_prefix(name, "__")) {
+  if (!name.starts_with("__")) {
     return 0;
   }
   let k = ir.kind_id(slice_unchecked(name, 2, name.len()) + "");
@@ -6543,7 +6547,7 @@ function raw_floor_ops(): RawOps[] {
 }
 
 function raw_floor_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (!util.str_has_prefix(ins.str, "__raw_") && !util.str_has_prefix(ins.str, "__syscall") && !util.str_has_prefix(ins.str, "__rc_")) {
+  if (!ins.str.starts_with("__raw_") && !ins.str.starts_with("__syscall") && !ins.str.starts_with("__rc_")) {
     return Lowered { found: false, r: r };
   }
   for row in raw_floor_ops() {
@@ -7052,7 +7056,7 @@ function returned_records(f: ssasem.Func): i32[] {
   let at = 0;
   while (at < out.len()) {
     let def = defining(f, out[at]);
-    if (def.kind_tag == 7 || def.kind_tag == 8) {
+    if (def.kind_tag == ssa.COPY || def.kind_tag == ssa.PHI) {
       for arg in def.args {
         if (util.index_of_i32(out, arg) < 0) {
           out = out.append(arg);

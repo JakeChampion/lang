@@ -239,13 +239,11 @@ function group_text(e: usize, info: usize): string {
 
 // A heap copy of `text` for the loop thread: its length, then its bytes.
 function text_buffer(text: string): usize {
-  let b: u8[] = text.bytes();
+  let b = text.as_bytes();
   unsafe {
     let buf: usize = __alloc(4 + b.len());
     __store_i32(buf, b.len());
-    for k in 0..b.len() {
-      __store_u8(buf + (4 + k) as usize, b[k] as i32);
-    }
+    __memcpy(buf + 4 as usize, __bytes_data(b), b.len());
     return buf;
   }
 }

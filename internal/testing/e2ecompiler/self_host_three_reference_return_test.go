@@ -109,14 +109,14 @@ function main(): i32 { unsafe {
 `
 
 const threeReferenceMetadata = `import "./physicalbody"; import "./ssasem"; import "./semrecords"; import "./typeinfo";
-import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util";
+import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util"; import "std/string";
 function inst(kind: i32,result: i32,args: i32[],imm: i32,str: string): ssa.SInst {return ssa.SInst {kind_tag:kind,result:result,args:args,imm:imm,str:str};}
 function call(result: i32,name: string,args: i32[]): ssa.SInst {return inst(11,result,args,0,name);}
 function ret(v: i32): ssa.STerm {return ssa.STerm {kind_tag:1,cond:0,target:0,t:0,f:0,value:v};}
 function array_type(): typeinfo.Type {return typeinfo.TypeArray {elem:typeinfo.TypeString {tag:0},view:false};}
 function triple_type(): typeinfo.Type {return typeinfo.TypeTuple {elements:[array_type(),array_type(),array_type()]};}
 function main(): i32 {
- let name=args()[1];let in_callee=util.str_has_prefix(name,"callee-");
+ let name=args()[1];let in_callee=name.starts_with("callee-");
  let params: typeinfo.Type[]=[];let modes: i32[]=[];let result: typeinfo.Type=typeinfo.TypeI32 {width:32,unsigned:false,is_char:false,polymorphic:false};
  if (in_callee) {params=[array_type(),array_type(),array_type()];modes=[ssasem.counted_mode(),ssasem.counted_mode(),ssasem.counted_mode()];result=triple_type();}
  let returned: i32= -1;

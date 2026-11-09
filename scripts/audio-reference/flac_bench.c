@@ -30,7 +30,7 @@ static FLAC__StreamEncoderSeekStatus seek_bytes(const FLAC__StreamEncoder *e, FL
 static FLAC__StreamEncoderTellStatus tell_bytes(const FLAC__StreamEncoder *e, FLAC__uint64 *at, void *ctx) {
     (void)e;*at=((Buffer *)ctx)->at;return FLAC__STREAM_ENCODER_TELL_STATUS_OK;
 }
-static int encode(const int32_t *pcm, unsigned frames, unsigned bits, unsigned channels, Buffer *b) {
+static int encode(const int32_t *pcm, unsigned frames, unsigned bits, unsigned channels, unsigned lpc_order, Buffer *b) {
     FLAC__StreamEncoder *e=FLAC__stream_encoder_new();
     if (!e) return 0;
     int good=FLAC__stream_encoder_set_streamable_subset(e,0)
@@ -39,13 +39,16 @@ static int encode(const int32_t *pcm, unsigned frames, unsigned bits, unsigned c
       && FLAC__stream_encoder_set_bits_per_sample(e,bits)
       && FLAC__stream_encoder_set_sample_rate(e,48000)
       && FLAC__stream_encoder_set_blocksize(e,4096)
-      && FLAC__stream_encoder_set_max_lpc_order(e,0)
+      && FLAC__stream_encoder_set_max_lpc_order(e,lpc_order)
       && FLAC__stream_encoder_set_min_residual_partition_order(e,0)
       && FLAC__stream_encoder_set_max_residual_partition_order(e,6)
       && FLAC__stream_encoder_set_do_mid_side_stereo(e,channels==2)
       && FLAC__stream_encoder_set_loose_mid_side_stereo(e,0)
       && FLAC__stream_encoder_set_do_exhaustive_model_search(e,1)
       && FLAC__stream_encoder_set_total_samples_estimate(e,frames);
+    if (lpc_order) good=good && FLAC__stream_encoder_set_apodization(e,"welch")
+      && FLAC__stream_encoder_set_qlp_coeff_precision(e,15)
+      && FLAC__stream_encoder_set_do_qlp_coeff_prec_search(e,0);
     good=good && FLAC__stream_encoder_init_stream(e,write_bytes,seek_bytes,tell_bytes,NULL,b)==FLAC__STREAM_ENCODER_INIT_STATUS_OK;
     good=good && FLAC__stream_encoder_process_interleaved(e,pcm,frames);
     int finished=FLAC__stream_encoder_finish(e);
@@ -60,7 +63,10 @@ static long peak_rss(void) {
     fclose(f);return rss;
 }
 int main(int argc,char **argv) {
-    if (argc!=7 || strcmp(argv[6],"fixed")) return 1;
+    if (argc!=7) return 1;
+    char *end=NULL;
+    long lpc_order=!strcmp(argv[6],"fixed")?0:strtol(argv[6],&end,10);
+    if (lpc_order<0 || lpc_order>32 || (end && (*end || end==argv[6]))) return 1;
     int bits=atoi(argv[3]),channels=atoi(argv[4]),rounds=atoi(argv[5]);
     if (bits<4 || bits>32 || channels<1 || channels>8 || rounds<1) return 1;
     FILE *f=fopen(argv[1],"rb");if (!f || fseek(f,0,SEEK_END)) return 2;
@@ -68,14 +74,14 @@ int main(int argc,char **argv) {
     int32_t *pcm=malloc((size_t)bytes);if (!pcm || fread(pcm,1,(size_t)bytes,f)!=(size_t)bytes) return 2;fclose(f);
     unsigned frames=(unsigned)(bytes/(4*channels));
     for (int i=0;i<2;i++) {
-        Buffer b={0};if (!encode(pcm,frames,bits,channels,&b)) return 3;
+        Buffer b={0};if (!encode(pcm,frames,bits,channels,(unsigned)lpc_order,&b)) return 3;
         if (!i) {f=fopen(argv[2],"wb");if (!f || fwrite(b.data,1,b.size,f)!=b.size || fclose(f)) return 4;}
         free(b.data);
     }
     uint32_t hash=2166136261u;uint64_t total=0;
     long long started=nanoseconds();
     for (int i=0;i<rounds;i++) {
-        Buffer b={0};if (!encode(pcm,frames,bits,channels,&b)) return 5;
+        Buffer b={0};if (!encode(pcm,frames,bits,channels,(unsigned)lpc_order,&b)) return 5;
         for (size_t j=0;j<b.size;j++) hash=(hash^b.data[j])*16777619u;
         total+=b.size;free(b.data);
     }

@@ -1757,7 +1757,7 @@ pub function op_aes_gcm_open_into(): Op {
 }
 
 pub function is_aes_gcm_op(tag: i32): boolean {
-  return tag == 402 || tag == 403 || tag == 404 || tag == 444 || tag == 445;
+  return tag == K_AES_EXPAND_KEY || tag == K_AES_CTR32 || tag == K_GHASH || tag == K_AES_GCM_SEAL_INTO || tag == K_AES_GCM_OPEN_INTO;
 }
 
 pub function op_sha256_hw(): Op {
@@ -2778,6 +2778,28 @@ pub const K_UDP_SENDTO_BYTES: i32 = 355;
 
 pub const K_UDP_SENDMMSG: i32 = 516;
 
+pub const K_STRUCT_MAKE: i32 = 138;
+
+pub const K_STRUCT_GET: i32 = 139;
+
+pub const K_STRUCT_SET_SHAPE: i32 = 141;
+
+pub const K_TUPLE_MAKE: i32 = 142;
+
+pub const K_TUPLE_GET: i32 = 143;
+
+pub const K_TUPLE_SET: i32 = 144;
+
+pub const K_VARIANT_IS: i32 = 145;
+
+pub const K_DYN_BOX: i32 = 146;
+
+pub const K_DIR_STAT: i32 = 423;
+
+pub const K_DIR_UNLINK: i32 = 425;
+
+pub const K_DIR_OPEN_FILE: i32 = 428;
+
 pub const K_UDP_RECVMMSG: i32 = 517;
 
 pub const K_RENAME_NOREPLACE: i32 = 356;
@@ -3752,10 +3774,10 @@ function pops_of(fixed: i32, o: Op): i32 {
     return fixed;
   }
   let t = o.kind_tag;
-  if (t == 87 || t == 138 || t == 142 || t == 149) {
+  if (t == K_ARR_MAKE || t == K_STRUCT_MAKE || t == K_TUPLE_MAKE || t == K_CALL_DIRECT) {
     return o.i32_imm;
   }
-  if (t == 150) {
+  if (t == K_CALL_INDIRECT) {
     return o.i32_imm + 1;
   }
   return -1;
@@ -3840,13 +3862,13 @@ function kind_pops(t: i32): i32 {
 
 pub function pure_value_op(o: Op): boolean {
   let t = o.kind_tag;
-  if (t == 1 || t == 3 || t == 4 || t == 5 || t == 6 || t == 218 || t == 18) {
+  if (t == K_CONST_I32 || t == K_CONST_I64 || t == K_CONST_F64 || t == K_CONST_STR || t == K_CONST_FUNC || t == K_CONST_STRUCT || t == K_LOAD_LOCAL) {
     return true;
   }
-  if (t == 88 || t == 139 || t == 143 || t == 90 || t == 97 || t == 101) {
+  if (t == K_ARR_GET || t == K_STRUCT_GET || t == K_TUPLE_GET || t == K_ARR_LEN || t == K_STR_LEN || t == K_STR_INDEX) {
     return true;
   }
-  if (t == 19 || t == 20) {
+  if (t == K_STORE_LOCAL || t == K_TEE_LOCAL) {
     return false;
   }
   return pops2_arith(t) || pops1_conv(t);
@@ -3854,19 +3876,19 @@ pub function pure_value_op(o: Op): boolean {
 
 pub function op_pushes(o: Op): i32 {
   let t = o.kind_tag;
-  if (t == 19 || t == 159 || lane_writes(t)) {
+  if (t == K_STORE_LOCAL || t == K_DROP || lane_writes(t)) {
     return 0;
   }
-  if (t == 288) {
+  if (t == K_LINE) {
     return 0;
   }
-  if (t == 89 || t == 124 || t == 140 || t == 144) {
+  if (t == K_ARR_SET || t == K_OPT_SET_PAYLOAD || t == K_STRUCT_SET || t == K_TUPLE_SET) {
     return 0;
   }
-  if (t == 152 || t == 153 || t == 154 || t == 155 || t == 156) {
+  if (t == K_BLOCK || t == K_LOOP || t == K_IF || t == K_ELSE || t == K_END) {
     return 0;
   }
-  if (t == 157 || t == 158 || t == 160) {
+  if (t == K_BR || t == K_BRIF || t == K_RETURN) {
     return 0;
   }
   return 1;
@@ -4011,7 +4033,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         }
       }
       if (!folded && i + 1 < cur.len() && r32
-        && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
+        && cur[i + 1].kind_tag == K_INT_EXTEND && cur[i + 1].width == 64) {
         let xv = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
           xv = xv & 4294967295i64;
@@ -4022,7 +4044,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         folded = true;
       }
       if (!folded && i + 1 < cur.len() && r64
-        && cur[i + 1].kind_tag == 8 && cur[i + 1].width == 0
+        && cur[i + 1].kind_tag == K_INT_WRAP && cur[i + 1].width == 0
         && (!cur[i + 1].unsigned || const_i64_value(cur[i]) as i32 >= 0)) {
         out = out.append(op_const_i32(const_i64_value(cur[i]) as i32));
         i += 2;
@@ -5640,13 +5662,13 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_TEE_LOCAL) {
     return "tee_local " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == K_CALL_DIRECT) {
     return "call_direct " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 157) {
+  if (o.kind_tag == K_BR) {
     return "br " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 158) {
+  if (o.kind_tag == K_BRIF) {
     return "brif " + util.i32_to_string(o.i32_imm);
   }
   if (o.kind_tag == K_LOAD) {
@@ -5688,25 +5710,25 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_OPT_MAKE) {
     return "opt_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 122) {
+  if (o.kind_tag == K_OPT_TAG) {
     return "opt_tag";
   }
-  if (o.kind_tag == 123) {
+  if (o.kind_tag == K_OPT_PAYLOAD) {
     return "opt_payload";
   }
-  if (o.kind_tag == 124) {
+  if (o.kind_tag == K_OPT_SET_PAYLOAD) {
     return "opt_set_payload";
   }
-  if (o.kind_tag == 138) {
+  if (o.kind_tag == K_STRUCT_MAKE) {
     return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 139) {
+  if (o.kind_tag == K_STRUCT_GET) {
     return "struct_get " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 140) {
+  if (o.kind_tag == K_STRUCT_SET) {
     return "struct_set " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 145) {
+  if (o.kind_tag == K_VARIANT_IS) {
     return "variant_is " + o.str;
   }
   if (o.kind_tag == K_CONST_STRUCT) {
@@ -5716,10 +5738,10 @@ pub function render_op(o: Op): string {
     }
     return "const_struct " + const_struct_type(o.str) + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 142) {
+  if (o.kind_tag == K_TUPLE_MAKE) {
     return "tuple_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 143) {
+  if (o.kind_tag == K_TUPLE_GET) {
     return "tuple_get " + util.i32_to_string(o.i32_imm);
   }
   return kind_name(o.kind_tag);
@@ -5753,125 +5775,125 @@ pub function call_needs_heap(name: string): boolean {
 }
 
 pub function op_needs_heap(o: Op): boolean {
-  return op_allocates(o.kind_tag) || o.kind_tag == 149 && call_needs_heap(o.str);
+  return op_allocates(o.kind_tag) || o.kind_tag == K_CALL_DIRECT && call_needs_heap(o.str);
 }
 
 pub function op_allocates(tag: i32): boolean {
-  if (tag == 381 || tag == 382 || tag == 383) {
+  if (tag == K_OUTER_MUL_F64 || tag == K_INNER_MUL_ADD_F64 || tag == K_ARR_RESERVE) {
     return true;
   }
   if (is_aes_gcm_op(tag) || is_sha_blocks_op(tag)) {
     return true;
   }
-  if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {
+  if (tag == K_READ_CHUNK_BYTES || tag == K_WRITE_BYTES || tag == K_WRITE_SOME_BYTES || tag == K_WRITE_FILE_BYTES) {
     return true;
   }
-  if (tag == 218) {
+  if (tag == K_CONST_STRUCT) {
     return true;
   }
-  if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
+  if (tag == K_ALLOC || tag == K_ALLOC_U8 || tag == K_ARR_MAKE || tag == K_ARR_PUSH || tag == K_ARR_PUSH_OWNED || tag == K_ARR_PUSH_I64 || tag == K_ARR_PUSH_F64 || tag == K_ARR_PUSH_OWNED_I64 || tag == K_ARR_PUSH_OWNED_F64) {
     return true;
   }
-  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 380) {
+  if (tag == K_CONST_STR || tag == K_STR_CONCAT || tag == K_STR_SLICE || tag == K_STR_FROM_BYTES || tag == K_STR_FROM_BYTES_RANGE) {
     return true;
   }
-  if (tag == 138 || tag == 142) {
+  if (tag == K_STRUCT_MAKE || tag == K_TUPLE_MAKE) {
     return true;
   }
-  if (tag == 120) {
+  if (tag == K_OPT_MAKE) {
     return true;
   }
-  if (tag == 185 || tag == 104 || tag == 105) {
+  if (tag == K_RANDOM_BYTES || tag == K_STR_BYTES || tag == K_STR_SPLIT) {
     return true;
   }
-  if (tag == 180) {
+  if (tag == K_ARGS) {
     return true;
   }
-  if (tag == 169 || tag == 170) {
+  if (tag == K_READ_FILE || tag == K_WRITE_FILE) {
     return true;
   }
-  if (tag == 203 || tag == 304 || tag == 305) {
+  if (tag == K_OPEN_FILE || tag == K_OPEN_READER_WITH || tag == K_OPEN_WRITER_WITH) {
     return true;
   }
-  if (tag == 202 || tag == 308 || tag == 431) {
+  if (tag == K_WRITER_WRITE || tag == K_WRITE_SOME || tag == K_WRITER_SPLICE_FOREVER) {
     return true;
   }
-  if (tag == 233) {
+  if (tag == K_READ_FILE_BYTES) {
     return true;
   }
-  if (tag == 172) {
+  if (tag == K_REMOVE_DIR_ALL) {
     return true;
   }
-  if (tag == 173) {
+  if (tag == K_REMOVE_FILE) {
     return true;
   }
-  if (tag == 174) {
+  if (tag == K_TEMP_DIR) {
     return true;
   }
-  if (tag == 231) {
+  if (tag == K_CREATE_DIR_ALL) {
     return true;
   }
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363 || tag == 364 || tag == 365 || tag == 405) {
+  if (tag == K_CREATE_DIR || tag == K_REMOVE_DIR || tag == K_CREATE_LINK || tag == K_CREATE_SYMLINK || tag == K_READ_LINK || tag == K_RENAME || tag == K_SET_FILE_TIMES || tag == K_WRITER_SET_TIMES || tag == K_TRUNCATE || tag == K_RENAME_NOREPLACE || tag == K_RENAME_EXCHANGE || tag == K_GETXATTR || tag == K_LGETXATTR || tag == K_SETXATTR || tag == K_LSETXATTR || tag == K_CLONE_FILE) {
     return true;
   }
-  if (tag == 171 || tag == 310 || tag == 391 || tag == 432) {
+  if (tag == K_READ_DIR || tag == K_READ_DIR_ALL || tag == K_READ_DIR_INO || tag == K_READ_DIR_INO_ALL) {
     return true;
   }
-  if (tag == 176) {
+  if (tag == K_ENV) {
     return true;
   }
-  if (tag == 175) {
+  if (tag == K_STAT) {
     return true;
   }
-  if (tag == 270) {
+  if (tag == K_STATFS) {
     return true;
   }
-  if (tag == 398) {
+  if (tag == K_MOUNTS) {
     return true;
   }
-  if (tag == 401) {
+  if (tag == K_SYSCTL) {
     return true;
   }
-  if (tag == 276 || tag == 408) {
+  if (tag == K_WINDOW_SIZE || tag == K_PIPE) {
     return true;
   }
-  if (tag >= 420 && tag <= 428) {
+  if (tag >= K_OPEN_DIR && tag <= K_DIR_OPEN_FILE) {
     return true;
   }
   if (util.index_of_i32([241, 242, 281, 490, 307, 330, 407, 366], tag) >= 0) {
     return true;
   }
-  if (tag == 177) {
+  if (tag == K_SUBPROCESS) {
     return true;
   }
-  if (tag == 240 || tag == 250 || tag == 251) {
+  if (tag == K_HOSTNAME || tag == K_UNAME_FIELD || tag == K_GETCWD) {
     return true;
   }
-  if (tag == 248 || tag == 249) {
+  if (tag == K_GETGROUPS || tag == K_ENVIRON) {
     return true;
   }
-  if (tag == 106 || tag == 107) {
+  if (tag == K_STR_TO_UPPER || tag == K_STR_TO_LOWER) {
     return true;
   }
-  if (tag == 108 || tag == 109) {
+  if (tag == K_STR_REPEAT || tag == K_STR_TRIM) {
     return true;
   }
-  if (tag == 111 || tag == 113) {
+  if (tag == K_STR_REPLACE || tag == K_STR_LINES) {
     return true;
   }
-  if (tag == 146) {
+  if (tag == K_DYN_BOX) {
     return true;
   }
-  if (tag == 80 || tag == 315) {
+  if (tag == K_HEAP_BUMP_BYTES || tag == K_HEAP_ALLOC_COUNT) {
     return true;
   }
-  if (tag == 229 || tag == 230 || tag == 491) {
+  if (tag == K_HEAP_MARK || tag == K_HEAP_RELEASE_TO || tag == K_HEAP_ADOPT) {
     return true;
   }
-  if (tag == 216 || tag == 217) {
+  if (tag == K_ARR_PUSH_SHARED_COUNT || tag == K_ARR_PUSH_SHARED_BYTES) {
     return true;
   }
-  if (tag == 222) {
+  if (tag == K_MAP_HASH_SEED) {
     return true;
   }
   return false;
@@ -5879,12 +5901,12 @@ pub function op_allocates(tag: i32): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 385 || tag == 384 || tag == 383 || tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 482 || tag == 358 || tag == 97 || tag == 101 || tag == 102
-    || tag == 104 || tag == 105 || tag == 106
-    || tag == 107 || tag == 108 || tag == 109
-    || tag == 111 || tag == 113 || tag == 98
-    || tag == 99 || tag == 100 || tag == 225 || tag == 227
-    || tag == 234 || tag == 235 || tag == 245 || tag == 253 || tag == 446
-    || tag == 309 || tag == 480 || tag == 481 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
-    || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == 433;
+  return tag == K_CALL_WORD || tag == K_RET_WORD || tag == K_ARR_RESERVE || tag == K_INNER_MUL_ADD_F64 || tag == K_OUTER_MUL_F64 || tag == K_STR_FROM_BYTES_RANGE || tag == K_CRC32_CKSUM_ARRAY || tag == K_SUM_BYTES_ARRAY || tag == K_BSD_SUM_BYTES || tag == K_SCAN_SET_BYTES || tag == K_COUNT_RUNS_BYTES || tag == K_MISMATCH_BYTES || tag == K_RMEMCHR_BYTES || tag == K_COUNT_BYTE_BYTES || tag == K_COUNT_BELOW_U64 || tag == K_MEMCHR_BYTES || tag == K_STR_LEN || tag == K_STR_INDEX || tag == K_STR_SLICE
+    || tag == K_STR_BYTES || tag == K_STR_SPLIT || tag == K_STR_TO_UPPER
+    || tag == K_STR_TO_LOWER || tag == K_STR_REPEAT || tag == K_STR_TRIM
+    || tag == K_STR_REPLACE || tag == K_STR_LINES || tag == K_STR_CONCAT
+    || tag == K_STR_EQ || tag == K_STR_CMP || tag == K_MEMCHR || tag == K_ASCII_RUN
+    || tag == K_RMEMCHR || tag == K_COUNT_BYTE || tag == K_MISMATCH || tag == K_SUM_BYTES || tag == K_MISMATCH_BYTES_STR
+    || tag == K_CRC32_CKSUM || tag == K_CRC32_IEEE || tag == K_CRC32_IEEE_ARRAY || tag == K_SCALE_F64 || tag == K_SCAN_SET || tag == K_COUNT_RUNS || tag == K_BSD_SUM || tag == K_STR_HASH
+    || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == K_UTF8_BLOCKS;
 }

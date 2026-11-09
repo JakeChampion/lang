@@ -33,17 +33,17 @@ function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
 }
 
 function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, site: incoming.Site): State {
-  if (op.kind_tag == 11) {
+  if (op.kind_tag == ssa.CALL) {
     return call(s, op, b.id, site);
   }
   let value = Value { kind: -1, scalar: 0 };
-  if (op.kind_tag == 6 && op.imm == 0) {
+  if (op.kind_tag == ssa.PARAM && op.imm == 0) {
     value = Value { kind: 0, scalar: site.input };
-  } else if (op.kind_tag == 1) {
+  } else if (op.kind_tag == ssa.CONST_INT) {
     value = Value { kind: 0, scalar: op.imm };
-  } else if (op.kind_tag == 7) {
+  } else if (op.kind_tag == ssa.COPY) {
     value = s.values[util.index_of_i32(s.ids, op.args[0])];
-  } else if (op.kind_tag == 8) {
+  } else if (op.kind_tag == ssa.PHI) {
     let pos = util.index_of_i32(b.preds, previous.id);
     value = predecessor.values[util.index_of_i32(s.ids, op.args[pos])];
   }

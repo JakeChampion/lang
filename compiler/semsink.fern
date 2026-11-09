@@ -273,7 +273,7 @@ function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
 }
 
 function spends(k: i32): boolean {
-  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != 8;
+  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != ssa.PHI;
 }
 
 function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
@@ -282,7 +282,7 @@ function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[]
     let s = g.blocks[pos[sid]];
     let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
-      if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
+      if (phi.kind_tag == ssa.PHI && slot >= 0 && slot < phi.args.len()) {
         spent = spend(spent, parent, phi.args[slot], bi);
       }
     }
@@ -424,7 +424,7 @@ function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
     let s = g.blocks[rd.pos[sid]];
     let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
-      if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len() && read_above(rd, bi, phi.args[slot])) {
+      if (phi.kind_tag == ssa.PHI && slot >= 0 && slot < phi.args.len() && read_above(rd, bi, phi.args[slot])) {
         return true;
       }
     }
@@ -463,7 +463,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     let k = 0;
     while (k < s.insts.len()) {
       let phi = s.insts[k];
-      if (phi.kind_tag == 8) {
+      if (phi.kind_tag == ssa.PHI) {
         let slot = 0;
         while (slot < s.preds.len() && slot < phi.args.len()) {
           if (s.preds[slot] == b.id) {
@@ -483,7 +483,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     return Sinking { b: b, values: values, added: 0, edits: [] };
   }
   let lead = 0;
-  while (lead < insts.len() && (insts[lead].kind_tag == 6 || insts[lead].kind_tag == 8)) {
+  while (lead < insts.len() && (insts[lead].kind_tag == ssa.PARAM || insts[lead].kind_tag == ssa.PHI)) {
     lead += 1;
   }
   let out: ssa.SInst[] = [];

@@ -303,10 +303,50 @@ and the symbol with `@import` on a function with no body:
 function log_write(prio: i32, tag: usize, msg: usize): i32;
 ```
 
-The object then loads the library at load time. A C import takes at most 4
-integer or `usize` parameters. It returns an integer, a `usize`, an `f32`,
-an `f64` or nothing. An executable cannot import, because a static image has
-no dynamic loader.
+The object then loads the library at load time. A C import takes up to 14
+integer or `usize` parameters and up to 8 `f32` or `f64` parameters. It
+returns an integer, a `usize`, an `f32`, an `f64` or nothing. With `weak`,
+as in `@import("libandroid.so", "ATrace_setCounter", weak)`, the object
+loads also where the library has no such symbol. Do not call the function
+there. An executable cannot import, because a static image has no dynamic
+loader.
+
+To call a variadic C function, declare one import for each set of argument
+types that you pass. Each declaration names the same symbol:
+
+```fern
+@import("libc.so.6", "snprintf")
+function format_int(buf: usize, size: usize, format: usize, value: i64): i32;
+
+@import("libc.so.6", "snprintf")
+function format_float(buf: usize, size: usize, format: usize, value: f64): i32;
+```
+
+The System V ABI of x86-64 and the Linux ABI of arm64 put a variadic
+argument where they put a fixed argument of its type. So each declaration
+is a correct call. Pass an `f64` for a C `float`, and an `i64` or `i32` for
+the smaller integers, as C promotes them.
+
+A C function often takes the address of a struct. `@derive(ffi.CLayout)` from
+[`std/ffi`](../../stdlib/ffi/) gives a struct the offsets and the size of the
+same struct in C:
+
+```fern
+import "std/ffi";
+
+@derive(ffi.CLayout)
+struct Rect { left: i32, top: i32, right: i32, bottom: i32 }
+
+function width(p: usize): i32 {
+  let r = unsafe { Rect.c_load(p) };
+  return r.right - r.left;
+}
+```
+
+The derive gives `Rect.c_size()`, `Rect.c_load(p)` and `r.c_store(p)`. For each
+field `f` it also gives `Rect.c_offset_f()`, `Rect.c_load_f(p)` and
+`Rect.c_store_f(p, v)`. A field is `u8`, `i32`, `u32`, `i64`, `u64`, `usize`,
+`f32` or `f64`. The loads and the stores are `unsafe`.
 
 `@jni("dev.fern.demo.Native", "static long add(long, int)")` on a function
 binds it to a Java native method. The compiler checks each Fern type against

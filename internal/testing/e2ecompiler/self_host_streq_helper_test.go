@@ -17,10 +17,7 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
+	leb := assemblerSource(t, "watbin.fern")
 	const prog = `
 function mk(c: i32): string { return unsafe { string_from_bytes_unchecked([c as u8]) }; }
 function streq(a: string, b: string): boolean { return a == b; }
@@ -34,7 +31,7 @@ function main(): i32 {
     return 0;
 }
 `
-	wat := runCapture(t, gcc, runner, driverBin, []byte(string(leb)+"\n"+prog))
+	wat := runCapture(t, gcc, runner, driverBin, []byte(leb+"\n"+prog))
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
 	}

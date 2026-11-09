@@ -1,0 +1,28 @@
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/bench";
+import "std/audio/wire";
+import "std/io";
+
+function main(): i32 {
+  let argv = args();
+  let Ok(raw) = io.read_input_bytes(argv[1]) else {
+    return 1;
+  };
+  let before = bench.alloc_count();
+  let storage_before = bench.bump_bytes();
+  let input: i32[] = [];
+  for at in 0..raw.len() / 4 {
+    input = input.append(wire.le(raw, at * 4, 4) as i32);
+  }
+  let allocations = bench.allocs_after(before);
+  let storage = bench.fresh_bytes_after(storage_before);
+  let Ok(encoded) = encoder.encode(input, pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 24 }, encoder.default_options(), pcm.default_limits()) else {
+    return 2;
+  };
+  print("elements=" + input.len().to_string());
+  print("construction_allocs=" + allocations.to_string());
+  print("construction_fresh_bytes=" + storage.to_string());
+  print("encoded_bytes=" + encoded.len().to_string());
+  return 0;
+}

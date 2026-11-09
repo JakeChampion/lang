@@ -1,5 +1,4 @@
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ircore";
 import "../irtables";
@@ -158,7 +157,7 @@ function controls(sub: ircore.Sub, fs: ssa.SFunc[], sparse_ids: boolean): void {
 }
 
 pub function run(source: string, target: string, exiting: boolean): void {
-  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let driven = semlower.driven(boxed.parsed(source, ["parent", "replace", "handoff"]), target);
   let sub = driven.sub;
   let initial: ssa.SFunc[] = [];
   for b in util.append_all(sub.bodies, sub.extra) {

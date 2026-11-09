@@ -13,6 +13,7 @@ import "../printer";
 import "../util";
 import "../lexer";
 import "../parser";
+import "./ssacreditboxed" as boxed;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -37,7 +38,10 @@ function symbol(selected: physicalbody.Lowered, i: i32): string {
 }
 
 function parity(src: string, selected: physicalbody.Lowered): void {
-  let direct = semlower.runtime_bodies(src);
+  parity_bodies(semlower.runtime_bodies(src), selected);
+}
+
+function parity_bodies(direct: irtables.Lowered[], selected: physicalbody.Lowered): void {
   require(ircore.lowered_digest(irtables.lowered_results(direct)) == ircore.lowered_digest(irtables.lowered_results(selected.bodies)), 111);
   require(direct.len() == selected.bodies.len(), 112);
   let i = 0;
@@ -67,8 +71,9 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
 }
 
 function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void {
-  let selected = state.rt_lower(parser.parse_module(lexer.tokenize(src)));
-  parity(src, selected);
+  let mod = boxed.parsed(src, ["parent", "replace", "handoff"]);
+  let selected = state.rt_lower(mod);
+  parity_bodies(semlower.runtime_module_lowering(mod).bodies, selected);
   require(selected.declarations.len() == 6 && selected.bodies.len() > selected.declarations.len(), 120);
   require(util.index_of_str(selected.declarations, "boxed_result") >= 0, 120);
   let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_enums: selected.enums, physical_finalizers: selected.finalizers };

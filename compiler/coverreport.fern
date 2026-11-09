@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 const LINE_PREFIX: string = "fern-cover: ";
 
@@ -82,8 +83,8 @@ pub function fold(text: string): Folded {
     let row = sub(text, start, i);
     start = i + 1;
     i += 1;
-    let is_branch = util.str_has_prefix(row, BRANCH_PREFIX);
-    if (!is_branch && !util.str_has_prefix(row, LINE_PREFIX)) {
+    let is_branch = row.starts_with(BRANCH_PREFIX);
+    if (!is_branch && !row.starts_with(LINE_PREFIX)) {
       continue;
     }
     let rest = "";

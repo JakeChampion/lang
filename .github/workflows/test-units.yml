@@ -193,6 +193,7 @@ jobs:
         env:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
           FERN_CI_UNIT_PACKAGES: ${{ inputs.packages }}
+          FERN_CHECK_CORPUS_SHARD: "0/4"
           FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.group == 'heavy' && 3 || 1 }}"
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
@@ -257,13 +258,44 @@ jobs:
           path: ~/.cache/go-build
           key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ steps.day.outputs.stamp }}
 
+  check-corpus:
+    if: ${{ contains(fromJSON(inputs.groups || '["heavy","rest"]'), 'rest') && (inputs.packages == '' || inputs.packages == '[]' || contains(fromJSON(inputs.packages), './cmd/fern')) }}
+    name: check-corpus-${{ matrix.host }}-${{ matrix.shard }}
+    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [x86_64, aarch64]
+        shard: [1, 2, 3]
+        exclude:
+          - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
+    env:
+      FERN_CHECK_CORPUS_SHARD: "${{ matrix.shard }}/4"
+      GOMAXPROCS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: units-corpus-${{ matrix.host }}-${{ matrix.shard }}
+      - name: Check each program as a separate entry
+        run: gotestsum --format pkgname-and-test-fails -- -timeout 25m -count=1 -run '^TestEveryExampleChecks$' ./cmd/fern
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
   verify-heavy:
     name: test-units-x86_64-heavy
     if: ${{ !cancelled() }}
-    needs: test
+    needs: [test, check-corpus]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every unit worker
         env:
           WORKER_RESULT: ${{ needs.test.result }}
-        run: test "$WORKER_RESULT" = success
+          CORPUS_RESULT: ${{ needs.check-corpus.result }}
+        run: |
+          test "$WORKER_RESULT" = success
+          test "$CORPUS_RESULT" = success || test "$CORPUS_RESULT" = skipped

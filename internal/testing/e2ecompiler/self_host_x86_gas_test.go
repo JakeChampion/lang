@@ -255,9 +255,9 @@ function main(): i32 {
     if (sp2.len() != 2 || sp2[0] != "x" || sp2[1] != "y,z") { return 102; }
     let sp3: string[] = x86_str_split("none", "\n");
     if (sp3.len() != 1 || sp3[0] != "none") { return 103; }
-    let fv: f64 = x86_gas_parse_f64("84.5");
+    let fv: f64 = f64_from_bits(util__parse_f64_bits("84.5"));
     if (fv < 84.4 || fv > 84.6) { return 17; }
-    let fz: f64 = x86_gas_parse_f64("2.0");
+    let fz: f64 = f64_from_bits(util__parse_f64_bits("2.0"));
     if (fz < 1.9 || fz > 2.1) { return 18; }
     // .ascii byte extraction (slice 2o): "hi!" -> 104,105,33.
     let ab: i32[] = x86_gas_ascii([], ".ascii \"hi!\"");
@@ -278,11 +278,11 @@ function main(): i32 {
     // exponent parsing (#4342): the pre-fix parser stopped at the 'e',
     // so a spliced-text .double operand like 1e3 mis-assembled off by the
     // whole power of ten.
-    let fe: f64 = x86_gas_parse_f64("1e3");
+    let fe: f64 = f64_from_bits(util__parse_f64_bits("1e3"));
     if (fe < 999.9 || fe > 1000.1) { return 24; }
-    let fs: f64 = x86_gas_parse_f64("1.5e-2");
+    let fs: f64 = f64_from_bits(util__parse_f64_bits("1.5e-2"));
     if (fs < 0.0149 || fs > 0.0151) { return 25; }
-    let fm: f64 = x86_gas_parse_f64("-2.5e+2");
+    let fm: f64 = f64_from_bits(util__parse_f64_bits("-2.5e+2"));
     if (fm < (0.0 - 250.1) || fm > (0.0 - 249.9)) { return 26; }
     // A '#' inside a string literal is DATA, not the start of a comment.
     // Stripping from the first '#' truncated the string and shifted every

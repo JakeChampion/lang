@@ -49,6 +49,7 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__port_in8(port)` … `__port_in32(port)`, `__port_out8(port, v)` … `__port_out32(port, v)` | `i32 -> i32`, `i32, i32 -> void` | `port` must be an I/O port of a device that accepts an access of that width. A write can reset or stop the machine. Only a kernel target grants these ops (E066), and only x86-64 has a port space. |
 | `__memcpy(d, s, n)`, `__memset(d, v, n)` | `usize, usize or i32, i32 -> void` | Both ranges must be valid for `n` bytes and must not overlap. |
 | `__str_bytes(s, p)` | `string, usize -> usize` | `p` must have room for the string's bytes. |
+| `__bytes_data(b)` | `[u8] -> usize` | The address of the bytes of the view `b`. A later use of `b` must keep it alive while the address is in use. Nothing may write the bytes through the address while another value can read them. |
 | `__account_entry(k, p)` | `i32, usize -> usize` | `p` must be an allocator block header. |
 | `string_from_bytes_unchecked(b)`, `string_from_bytes_range_unchecked(b, from, end)` | `u8[] -> string`, `u8[], i32, i32 -> string` | The bytes must be well-formed UTF-8. A `string` is always valid UTF-8, and `std/utf8.from_bytes` is the safe constructor. |
 | `__fern_rc_inc(p)`, `__fern_arr_dec(p, n)`, `__fern_box_free(p, n)`, `__fern_drop_arr_ptr(p, n)`, `__fern_str_dec(s)` | box pointer and count | `p` must be a live box with a correct count. A wrong count double-frees or leaks. |
@@ -56,7 +57,7 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).
 The arena checks each obligation above, and a broken obligation stops the run with an error.
 The arena holds only `__alloc` blocks, so it cannot read the layout of a value.
-Thus the oracle does not run `__alloc_reuse`, `__str_bytes`, `__account_entry` or the box helpers.
+Thus the oracle does not run `__alloc_reuse`, `__str_bytes`, `__bytes_data`, `__account_entry` or the box helpers.
 `fern -interp` sends these calls to the runtime of its own process, and it does no checks.
 
 ## Group B: release, count, layout, FFI, and runtime hooks

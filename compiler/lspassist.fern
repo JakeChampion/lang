@@ -8,6 +8,7 @@ import "./lspquery";
 import "./parser";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Item { label: string, kind: i32, detail: string }
 
@@ -131,7 +132,7 @@ function enum_items(s: checker.Scope, name: string, variants: string[], own: str
 }
 
 function visible(name: string): boolean {
-  return name.len() > 0 && !util.str_has_prefix(name, "__");
+  return name.len() > 0 && !name.starts_with("__");
 }
 
 function type_text(t: typeinfo.Type): string {
@@ -197,7 +198,7 @@ function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Ite
 }
 
 function exported(is_pub: boolean, name: string, head: string): boolean {
-  return is_pub && util.str_has_prefix(name, head);
+  return is_pub && name.starts_with(head);
 }
 
 function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {

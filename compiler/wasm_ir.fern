@@ -17,6 +17,7 @@ import "./physicalbody";
 import "./wasmlocals";
 import "./rtbytecopy";
 import "./wasm_abort";
+import "std/string";
 
 pub function fl_cells(): i32 {
   return 65536;
@@ -33,10 +34,10 @@ pub function str_values(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 5) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STR) {
         vals = intern_str(vals, r.ops[i].str);
       }
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = nested_strs(vals, r.ops[i].str);
       }
       i += 1;
@@ -466,7 +467,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = intern_const_agg(vals, r.ops[i].str);
       }
       if (answers_empty_bytes(r.ops[i]) && util.index_of_str(vals, empty_bytes_const()) < 0) {
@@ -480,7 +481,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
 }
 
 function answers_empty_bytes(o: ir.Op): boolean {
-  return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
+  return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == ir.K_CALL_DIRECT && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
 function intern_const_agg(vals: string[], packed: string): string[] {
@@ -720,73 +721,73 @@ pub function module_uses_str_slice(cache: irtables.LowerResult[]): boolean {
 }
 
 function wasm_binop(tag: i32): string {
-  if (tag == 21) {
+  if (tag == ir.K_ADD) {
     return "i32.add";
   }
-  if (tag == 22) {
+  if (tag == ir.K_SUB) {
     return "i32.sub";
   }
-  if (tag == 23) {
+  if (tag == ir.K_MUL) {
     return "i32.mul";
   }
-  if (tag == 24) {
+  if (tag == ir.K_DIV_S) {
     return "call $__fern_idiv";
   }
-  if (tag == 26) {
+  if (tag == ir.K_REM_S) {
     return "call $__fern_irem";
   }
-  if (tag == 28) {
+  if (tag == ir.K_AND) {
     return "i32.and";
   }
-  if (tag == 29) {
+  if (tag == ir.K_OR) {
     return "i32.or";
   }
-  if (tag == 30) {
+  if (tag == ir.K_XOR) {
     return "i32.xor";
   }
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "i32.shl";
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "i32.shr_s";
   }
-  if (tag == 33) {
+  if (tag == ir.K_SHR_U) {
     return "i32.shr_u";
   }
-  if (tag == 25) {
+  if (tag == ir.K_DIV_U) {
     return "call $__fern_udiv";
   }
-  if (tag == 27) {
+  if (tag == ir.K_REM_U) {
     return "call $__fern_urem";
   }
-  if (tag == 35) {
+  if (tag == ir.K_EQ) {
     return "i32.eq";
   }
-  if (tag == 36) {
+  if (tag == ir.K_NE) {
     return "i32.ne";
   }
-  if (tag == 37) {
+  if (tag == ir.K_LT_S) {
     return "i32.lt_s";
   }
-  if (tag == 38) {
+  if (tag == ir.K_LE_S) {
     return "i32.le_s";
   }
-  if (tag == 39) {
+  if (tag == ir.K_GT_S) {
     return "i32.gt_s";
   }
-  if (tag == 40) {
+  if (tag == ir.K_GE_S) {
     return "i32.ge_s";
   }
-  if (tag == 41) {
+  if (tag == ir.K_LT_U) {
     return "i32.lt_u";
   }
-  if (tag == 42) {
+  if (tag == ir.K_LE_U) {
     return "i32.le_u";
   }
-  if (tag == 43) {
+  if (tag == ir.K_GT_U) {
     return "i32.gt_u";
   }
-  if (tag == 44) {
+  if (tag == ir.K_GE_U) {
     return "i32.ge_u";
   }
   return ircore.unsupported_op_refuse(tag, "wasm");
@@ -796,121 +797,121 @@ function wasm_binop_w(tag: i32, width: i32): string {
   if (width != 64) {
     return wasm_binop(tag);
   }
-  if (tag == 21) {
+  if (tag == ir.K_ADD) {
     return "i64.add";
   }
-  if (tag == 22) {
+  if (tag == ir.K_SUB) {
     return "i64.sub";
   }
-  if (tag == 23) {
+  if (tag == ir.K_MUL) {
     return "i64.mul";
   }
-  if (tag == 24) {
+  if (tag == ir.K_DIV_S) {
     return "call $__fern_idiv64";
   }
-  if (tag == 26) {
+  if (tag == ir.K_REM_S) {
     return "call $__fern_irem64";
   }
-  if (tag == 25) {
+  if (tag == ir.K_DIV_U) {
     return "call $__fern_udiv64";
   }
-  if (tag == 27) {
+  if (tag == ir.K_REM_U) {
     return "call $__fern_urem64";
   }
-  if (tag == 28) {
+  if (tag == ir.K_AND) {
     return "i64.and";
   }
-  if (tag == 29) {
+  if (tag == ir.K_OR) {
     return "i64.or";
   }
-  if (tag == 30) {
+  if (tag == ir.K_XOR) {
     return "i64.xor";
   }
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "i64.shl";
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "i64.shr_s";
   }
-  if (tag == 33) {
+  if (tag == ir.K_SHR_U) {
     return "i64.shr_u";
   }
-  if (tag == 35) {
+  if (tag == ir.K_EQ) {
     return "i64.eq";
   }
-  if (tag == 36) {
+  if (tag == ir.K_NE) {
     return "i64.ne";
   }
-  if (tag == 37) {
+  if (tag == ir.K_LT_S) {
     return "i64.lt_s";
   }
-  if (tag == 38) {
+  if (tag == ir.K_LE_S) {
     return "i64.le_s";
   }
-  if (tag == 39) {
+  if (tag == ir.K_GT_S) {
     return "i64.gt_s";
   }
-  if (tag == 40) {
+  if (tag == ir.K_GE_S) {
     return "i64.ge_s";
   }
-  if (tag == 41) {
+  if (tag == ir.K_LT_U) {
     return "i64.lt_u";
   }
-  if (tag == 42) {
+  if (tag == ir.K_LE_U) {
     return "i64.le_u";
   }
-  if (tag == 43) {
+  if (tag == ir.K_GT_U) {
     return "i64.gt_u";
   }
-  if (tag == 44) {
+  if (tag == ir.K_GE_U) {
     return "i64.ge_u";
   }
-  if (tag == 45) {
+  if (tag == ir.K_FADD) {
     return "f64.add";
   }
-  if (tag == 46) {
+  if (tag == ir.K_FSUB) {
     return "f64.sub";
   }
-  if (tag == 47) {
+  if (tag == ir.K_FMUL) {
     return "f64.mul";
   }
-  if (tag == 48) {
+  if (tag == ir.K_FDIV) {
     return "f64.div";
   }
-  if (tag == 57) {
+  if (tag == ir.K_FSQRT) {
     return "f64.sqrt";
   }
-  if (tag == 59) {
+  if (tag == ir.K_FFLOOR) {
     return "f64.floor";
   }
-  if (tag == 58) {
+  if (tag == ir.K_FCEIL) {
     return "f64.ceil";
   }
-  if (tag == 60) {
+  if (tag == ir.K_FTRUNC) {
     return "f64.trunc";
   }
-  if (tag == 56) {
+  if (tag == ir.K_FABS) {
     return "f64.abs";
   }
-  if (tag == 55) {
+  if (tag == ir.K_FNEG) {
     return "f64.neg";
   }
-  if (tag == 49) {
+  if (tag == ir.K_FEQ) {
     return "f64.eq";
   }
-  if (tag == 50) {
+  if (tag == ir.K_FNE) {
     return "f64.ne";
   }
-  if (tag == 51) {
+  if (tag == ir.K_FLT) {
     return "f64.lt";
   }
-  if (tag == 52) {
+  if (tag == ir.K_FLE) {
     return "f64.le";
   }
-  if (tag == 53) {
+  if (tag == ir.K_FGT) {
     return "f64.gt";
   }
-  if (tag == 54) {
+  if (tag == ir.K_FGE) {
     return "f64.ge";
   }
   return ircore.unsupported_op_refuse(tag, "wasm");
@@ -1030,14 +1031,14 @@ function is_frame_window(o: ir.Op): boolean {
 
 pub function module_calls_direct(cache: irtables.LowerResult[], name: string): boolean {
   function is_call_to(o: ir.Op): boolean {
-    return o.kind_tag == 149 && o.str == name;
+    return o.kind_tag == ir.K_CALL_DIRECT && o.str == name;
   }
   return any_op(cache, is_call_to);
 }
 
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   function is_task_call(o: ir.Op): boolean {
-    return o.kind_tag == 149 && ircore.is_task_runtime_fn(o.str);
+    return o.kind_tag == ir.K_CALL_DIRECT && ircore.is_task_runtime_fn(o.str);
   }
   return any_op(cache, is_task_call);
 }
@@ -4004,10 +4005,10 @@ pub function fn_value_table(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {
+      if (r.ops[i].kind_tag == ir.K_CONST_FUNC && util.index_of_str(out, r.ops[i].str) < 0) {
         out = out.append(r.ops[i].str);
       }
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         let cfb = ir.const_struct_fn_body(r.ops[i].str);
         if (cfb.len() > 0 && util.index_of_str(out, cfb) < 0) {
           out = out.append(cfb);
@@ -4044,7 +4045,7 @@ pub function indirect_fn_sigs(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 150) {
+      if (r.ops[i].kind_tag == ir.K_CALL_INDIRECT) {
         let nm = fn_type_name(r.ops[i]);
         let sg = r.ops[i].str;
         if (sg.len() == 0) {
@@ -4151,12 +4152,12 @@ function emit_map_hash_seed_wat(): string {
 }
 
 function is_host_op_kind(tag: i32): boolean {
-  return tag == 163 || tag == 164 || tag == 182 || tag == 184
-    || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 169 || tag == 233 || tag == 170 || tag == 352
-    || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
-    || tag == 171 || tag == 310 || tag == 391 || tag == 432 || tag == 172 || tag == 180 || tag == 249 || tag == 166
-    || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
-    || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 405;
+  return tag == ir.K_PRINT_STR || tag == ir.K_EPRINT_STR || tag == ir.K_MONOTONIC_NS || tag == ir.K_NOW_UNIX_MS
+    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == 209 || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
+    || tag == ir.K_OPEN_FILE || tag == ir.K_OPEN_READER_WITH || tag == ir.K_OPEN_WRITER_WITH || tag == ir.K_WRITER_WRITE || tag == ir.K_WRITE_SOME || tag == ir.K_ENV || tag == ir.K_STAT || tag == ir.K_LSTAT || tag == ir.K_REMOVE_FILE || tag == ir.K_CREATE_DIR_ALL
+    || tag == ir.K_READ_DIR || tag == ir.K_READ_DIR_ALL || tag == ir.K_READ_DIR_INO || tag == ir.K_READ_DIR_INO_ALL || tag == ir.K_REMOVE_DIR_ALL || tag == ir.K_ARGS || tag == ir.K_ENVIRON || tag == ir.K_EXIT
+    || tag == ir.K_CREATE_DIR || tag == ir.K_REMOVE_DIR || tag == ir.K_CREATE_LINK || tag == ir.K_CREATE_SYMLINK || tag == ir.K_READ_LINK
+    || tag == ir.K_RENAME || tag == ir.K_SET_FILE_TIMES || tag == ir.K_WRITER_SET_TIMES || tag == ir.K_TRUNCATE || tag == ir.K_CLONE_FILE;
 }
 
 function emit_host_op_wat(o: ir.Op): string {
@@ -4492,7 +4493,7 @@ function wasm_lane_verb(k: string, sh: string): string {
   let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "veq", "vne", "vlt", "vle", "vgt", "vge", "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore"];
   let verbs: string[] = ["add", "sub", "mul", "div", "pmin", "pmax", "sqrt", "abs", "neg", "floor", "ceil", "trunc", "eq", "ne", "lt", "le", "gt", "ge", "v128.and", "v128.or", "v128.xor", "v128.andnot", "v128.bitselect", "v128.load", "v128.store"];
   let v = verbs[util.index_of_str(names, k)];
-  if (util.str_has_prefix(v, "v128.")) {
+  if (v.starts_with("v128.")) {
     return v;
   }
   return sh + "." + v;
@@ -4640,7 +4641,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_fd_syncfs\n");
   } else if (o.kind_tag == ir.K_FD_DUP_ONTO) {
     parts = parts.append("    call $__fern_fd_dup_onto\n");
-  } else if (o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == 497) {
+  } else if (o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     parts = parts.append("");
   } else if (o.kind_tag == ir.K_WRITER_NONBLOCKING) {
     parts = parts.append("    call $__fern_writer_nonblocking\n");
@@ -4678,7 +4679,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_signal_disposition_read(parts);
   } else if (o.kind_tag == ir.K_HOSTNAME) {
     parts = emit_wasm_hostname(bctmp, parts);
-  } else if (o.kind_tag == 148) {
+  } else if (o.kind_tag == ir.K_WASM_TIMER_POLLABLE) {
     parts = emit_wasm_wasm_timer_pollable(parts);
   } else if (o.kind_tag == ir.K_WASM_POLLABLE_DROP) {
     parts = parts.append("    call $__fern_pollable_drop\n");
@@ -4816,23 +4817,23 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.tee " + util.i32_to_string(o.i32_imm) + "\n");
   } else if (o.kind_tag == ir.K_NOT) {
     parts = parts.append("    i32.eqz\n");
-  } else if (o.kind_tag == 160) {
+  } else if (o.kind_tag == ir.K_RETURN) {
     parts = parts.append("    return\n");
-  } else if (o.kind_tag == 154) {
+  } else if (o.kind_tag == ir.K_IF) {
     parts = parts.append("    if\n");
-  } else if (o.kind_tag == 155) {
+  } else if (o.kind_tag == ir.K_ELSE) {
     parts = parts.append("    else\n");
-  } else if (o.kind_tag == 152) {
+  } else if (o.kind_tag == ir.K_BLOCK) {
     parts = parts.append("    block\n");
-  } else if (o.kind_tag == 153) {
+  } else if (o.kind_tag == ir.K_LOOP) {
     parts = parts.append("    loop\n");
-  } else if (o.kind_tag == 156) {
+  } else if (o.kind_tag == ir.K_END) {
     parts = parts.append("    end\n");
-  } else if (o.kind_tag == 157) {
+  } else if (o.kind_tag == ir.K_BR) {
     parts = parts.append("    br " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 158) {
+  } else if (o.kind_tag == ir.K_BRIF) {
     parts = parts.append("    br_if " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 159) {
+  } else if (o.kind_tag == ir.K_DROP) {
     parts = parts.append("    drop\n");
   } else if (o.kind_tag == ir.K_RAW_STORE_PTR) {
     parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
@@ -4900,43 +4901,43 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  } else if (o.kind_tag == 122) {
+  } else if (o.kind_tag == ir.K_OPT_TAG) {
     parts = parts.append("    i32.load\n");
-  } else if (o.kind_tag == 123 && o.width == 64) {
+  } else if (o.kind_tag == ir.K_OPT_PAYLOAD && o.width == 64) {
     parts = parts.append("    i32.const 8\n    i32.add\n");
     if (o.unsigned) {
       parts = parts.append("    i64.load\n");
     } else {
       parts = parts.append("    f64.load\n");
     }
-  } else if (o.kind_tag == 123) {
+  } else if (o.kind_tag == ir.K_OPT_PAYLOAD) {
     parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
-  } else if (o.kind_tag == 124) {
+  } else if (o.kind_tag == ir.K_OPT_SET_PAYLOAD) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == ir.K_PUTCHAR) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= 297 || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
+  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= ir.K_BUF_FREE || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
     parts = emit_wasm_buf_op(o, parts);
-  } else if (o.kind_tag == 138) {
+  } else if (o.kind_tag == ir.K_STRUCT_MAKE) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
   } else if (o.kind_tag == ir.K_CONST_STRUCT) {
     parts = emit_wasm_const_struct(cagg_vals, ns, o, parts);
-  } else if (o.kind_tag == 139) {
+  } else if (o.kind_tag == ir.K_STRUCT_GET) {
     parts = emit_wasm_struct_get(o, parts);
-  } else if (o.kind_tag == 140) {
+  } else if (o.kind_tag == ir.K_STRUCT_SET) {
     parts = emit_wasm_struct_set(eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 144) {
+  } else if (o.kind_tag == ir.K_TUPLE_SET) {
     parts = emit_wasm_tuple_set(eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 141) {
+  } else if (o.kind_tag == ir.K_STRUCT_SET_SHAPE) {
     parts = parts.append("    local.tee " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
-  } else if (o.kind_tag == 145) {
+  } else if (o.kind_tag == ir.K_VARIANT_IS) {
     parts = parts.append("    i32.load\n" + tid_get(o.str) + "    i32.eq\n");
-  } else if (o.kind_tag == 142) {
+  } else if (o.kind_tag == ir.K_TUPLE_MAKE) {
     parts = emit_wasm_tuple_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 143) {
+  } else if (o.kind_tag == ir.K_TUPLE_GET) {
     parts = parts.append("    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n");
     if (o.width == 64 && o.unsigned) {
       parts = parts.append("    i64.load\n");
@@ -4945,27 +4946,27 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else {
       parts = parts.append("    i32.load\n");
     }
-  } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_inc") {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && o.str == "__fern_arr_share_inc") {
     parts = emit_wasm_call_direct(parts);
-  } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && o.str == "__fern_arr_share_dec") {
     parts = parts.append("    call $__fern_arr_dec\n");
-  } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && ircore.is_fern_helper(o.str)) {
     parts = parts.append("    call " + wasm_helper_symbol(o.str) + "\n");
-  } else if (o.kind_tag == 149) {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT) {
     parts = parts.append("    call $" + o.str + "\n");
-  } else if (o.kind_tag == 147) {
+  } else if (o.kind_tag == ir.K_DYN_DISPATCH) {
     parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
-  } else if (o.kind_tag == 146) {
+  } else if (o.kind_tag == ir.K_DYN_BOX) {
     parts = emit_wasm_dyn_box(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_CONST_FUNC) {
     parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n");
-  } else if (o.kind_tag == 150) {
+  } else if (o.kind_tag == ir.K_CALL_INDIRECT) {
     parts = emit_wasm_call_indirect(o, parts);
   } else if (o.kind_tag == ir.K_MULHI_U) {
     parts = parts.append("    call $__fern_mulhi_u64\n");
   } else if (o.kind_tag == ir.K_MULHI_S) {
     parts = parts.append("    call $__fern_mulhi_s64\n");
-  } else if (o.kind_tag >= 421 && o.kind_tag <= 428) {
+  } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     parts = parts.append("    unreachable\n");
   } else {
     parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");
@@ -5258,15 +5259,15 @@ function view_string_wat(o: ir.Op, tmp: i32): string {
 }
 
 function branch_only_if(ops: ir.Op[], i: i32): string {
-  if (i + 3 >= ops.len() || ops[i].kind_tag != 154 || ops[i + 3].kind_tag != 156) {
+  if (i + 3 >= ops.len() || ops[i].kind_tag != ir.K_IF || ops[i + 3].kind_tag != ir.K_END) {
     return "";
   }
   let branch = ops[i + 1];
   let invert = false;
-  if (branch.kind_tag == 155 && ops[i + 2].kind_tag == 157) {
+  if (branch.kind_tag == ir.K_ELSE && ops[i + 2].kind_tag == ir.K_BR) {
     branch = ops[i + 2];
     invert = true;
-  } else if (branch.kind_tag != 157 || ops[i + 2].kind_tag != 155) {
+  } else if (branch.kind_tag != ir.K_BR || ops[i + 2].kind_tag != ir.K_ELSE) {
     return "";
   }
   if (branch.i32_imm == 0) {
@@ -5346,7 +5347,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     }
     let o = f.ops[i];
     let window = util.index_of_i32(placed, i) * 8;
-    if (o.kind_tag == 160) {
+    if (o.kind_tag == ir.K_RETURN) {
       parts = parts.append(shadow_frame_pop(windows));
     }
     parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window }));

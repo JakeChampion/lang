@@ -1,0 +1,3 @@
+# Matched checker source, repaired compiler, certification disabled
+x86_64/checker.cliff_bytes	40126728
+x86_64/checker.cliff_count	397570

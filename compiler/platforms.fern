@@ -2,6 +2,7 @@ import "./ast";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "std/string";
 
 pub struct Descriptor {
   name: string,
@@ -91,10 +92,10 @@ function target_environment(name: string): string {
 
 // The ISA half of a target name.
 pub function target_isa(name: string): string {
-  if (util.str_has_prefix(name, "x86-64-")) {
+  if (name.starts_with("x86-64-")) {
     return "x86-64";
   }
-  if (util.str_has_prefix(name, "wasm32-")) {
+  if (name.starts_with("wasm32-")) {
     return "wasm32";
   }
   return "arm64";

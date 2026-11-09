@@ -25,7 +25,7 @@ pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
       continue;
     }
     for k in 0..h.insts.len() {
-      if (h.insts[k].kind_tag != 8) {
+      if (h.insts[k].kind_tag != ssa.PHI) {
         break;
       }
       let phi = blocks[hi].insts[k];
@@ -114,7 +114,7 @@ function owned_entry(f: ssasem.Func, modes: i32[], e: i32): boolean {
       if (d.kind_tag == ssasem.call()) {
         next = lent_arrays(f, d, next);
       }
-      if (!(d.result >= 0 && d.kind_tag != 8 && d.kind_tag != ssasem.variant_get() && d.kind_tag != ssasem.tuple_get() && d.kind_tag != ssasem.array_get())) {
+      if (!(d.result >= 0 && d.kind_tag != ssa.PHI && d.kind_tag != ssasem.variant_get() && d.kind_tag != ssasem.tuple_get() && d.kind_tag != ssasem.array_get())) {
         return false;
       }
     }

@@ -42,6 +42,9 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdZlib` | the zlib decoder of `std/deflate`, compared with Go's `compress/zlib` | `tests/fuzz/stdparse.fern zlib` | the same, and agreement with Go |
 | `FuzzSelfHostStdZstd` | the decoder of `std/zstd`, and a round trip of the input through its compressor | `tests/fuzz/stdparse.fern zstd` | the same, and a round trip that gives the input back |
 | `FuzzSelfHostStdBrotli` | the decoder of `std/brotli`, and a round trip of the input through its compressor | `tests/fuzz/stdparse.fern brotli` | the same, and a round trip that gives the input back |
+| `FuzzSelfHostStdDNS` | the DNS message reader of `std/dns`, and an encode and a second decode of each message it reads | `tests/fuzz/stdparse.fern dns` | the same, and a second decode that gives the same message |
+| `FuzzSelfHostStdProtobuf` | the protobuf reader of `std/protobuf`, and the reader again on each length-delimited field | `tests/fuzz/stdparse.fern protobuf` | the same |
+| `FuzzSelfHostStdJPEG` | the JPEG decoder of `std/jpeg` under a limit of 1048576 pixels, compared with Go's `image/jpeg` | `tests/fuzz/stdparse.fern jpeg` | the same, and the dimensions that Go reads when both accept the file |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -111,12 +114,24 @@ Each decoder has an output limit of 1 MiB.
 The DEFLATE, gzip and zlib targets decode every input with Go's `compress` packages too.
 When both accept the input, the length and the CRC-32 of the two outputs must be the same.
 When one accepts the input, the other must accept it too, unless the Go output passes the limit.
+The gzip oracle refuses a member header with a reserved flag bit, as RFC 1952 requires and Go's `compress/gzip` does not.
+
 Go has no zstd or Brotli decoder, so those targets compress each input with the Fern compressor and decode it back.
 
 The DEFLATE, gzip and zlib seeds are text, random bytes, runs and an empty input, written by Go at four levels.
 Each seed also has three damaged copies: the last byte flipped, the stream cut in half, and a byte after the end.
 Other seeds carry stored blocks with a good and a bad length check, two gzip members, a zlib preset dictionary and bad headers.
 The zstd and Brotli seeds are the frames of the codec tests, their damaged copies, and plain inputs for the round trip.
+
+The DNS seeds are queries and replies with compressed names, A, AAAA, CNAME, PTR, SOA and OPT records, and a pointer that points forward.
+They also carry a pointer past the message, a label of 64 bytes and more questions than the message holds.
+One more seed carries a record shorter than its length.
+The protobuf seeds carry each wire type, nested messages, a varint at its limit and a length past the input.
+They also carry the group wire types, an unknown wire type and a field number of 0.
+
+The JPEG seeds are files that Go's encoder wrote at three qualities, the Pillow files of `tests/stdlib/image_vectors.fern` and damaged copies.
+Other seeds carry a frame of 65535 by 65535 pixels, a lossless frame and a file with no frame.
+`TestSelfHostStdJPEGAgainstGo` requires the dimensions that Go reads for each Go and Pillow file.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -172,9 +187,21 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdZlib` | 17732 | 15 | none |
 | `FuzzSelfHostStdZstd` | 23013 | 1 | none |
 | `FuzzSelfHostStdBrotli` | 43762 | 2 | none |
+| `FuzzSelfHostStdDNS` | 57088 | 2 | none |
+| `FuzzSelfHostStdProtobuf` | 53336 | 1 | none |
+| `FuzzSelfHostStdJPEG` | 10861 | 1 | three, fixed in this change |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
+
+## Findings
+
+The JPEG target found three ways that a hostile file stopped the decoder with a bounds trap.
+Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern` and a seed in `testdata/fuzz/FuzzSelfHostStdJPEG/`.
+
+- A frame of 65535 by 65535 pixels. The block counts of the frame passed the range of an i32, so the coefficient buffer was too small. The decoder now counts the coefficients as i64 and refuses a frame of more pixels than its limit with `Unsupported`, before it allocates. `decode_image_limit` takes the limit.
+- A segment shorter than its fields. A frame of length 0 read its fields past the end of the file. Each segment now checks its length: the frame, the quantization tables, the restart interval and the scan header. A second frame is `Corrupt`, because the coefficients were sized for the first.
+- A scan that uses a Huffman table that the file does not define. The decoder read the empty table. It now decodes such a scan as corrupt data, as the module contract says for other corrupt data.
 
 ## Crash triage
 
@@ -185,9 +212,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the twenty-seven targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the thirty targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the twenty-seven targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits

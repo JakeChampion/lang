@@ -4,8 +4,11 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
+import "./semreserve";
+import "./optbisect";
+import "std/string";
 
-pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
+pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], pipelines: boolean[], sites: semarrayreport.Site[], reserves: semarrayreport.Site[] }
 
 struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], aborts: boolean[], any: boolean }
 
@@ -19,7 +22,10 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
   let cx = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
+  let pipelines: boolean[] = [];
   let sites: semarrayreport.Site[] = [];
+  let reserves: semarrayreport.Site[] = [];
+  let switches = optbisect.switches();
   let i = 0;
   while (i < funcs.len()) {
     let f = funcs[i];
@@ -41,11 +47,18 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
         sites = util.append_all(sites, remaining_sites(f, cx, names[i], enabled));
       }
     }
+    pipelines = pipelines.append(changed);
+    if (usable[i] && semreserve.candidate(f)) {
+      let r = semreserve.reserve(f, cx.index, cx.bad, enabled && optbisect.allowed_by(switches, "fuse", names[i]), report, names[i]);
+      f = r.f;
+      changed = changed || r.changed;
+      reserves = util.append_all(reserves, r.sites);
+    }
     out = out.append(f);
     rewritten = rewritten.append(changed);
     i += 1;
   }
-  return Fused { funcs: out, rewritten: rewritten, sites: sites };
+  return Fused { funcs: out, rewritten: rewritten, pipelines: pipelines, sites: sites, reserves: reserves };
 }
 
 @noinline
@@ -54,9 +67,11 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
   let verbs: string[] = [];
   let report_verbs: string[] = [];
   let any = false;
+  let reserves = false;
   let i = 0;
   while (i < funcs.len()) {
     let v = fn_verb(usable[i], names[i], trusted, iter_trusted);
+    reserves = reserves || usable[i] && semreserve.candidate(funcs[i]);
     if (report) {
       report_verbs = report_verbs.append(v);
     }
@@ -67,10 +82,14 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     any = any || v != "" || report && report_verbs[i] != "";
     i += 1;
   }
-  if (!any) {
+  if (!any && !reserves) {
     return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], aborts: [], any: false };
   }
-  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: may_abort(funcs, usable, index), any: true };
+  let aborts: boolean[] = [];
+  if (any) {
+    aborts = may_abort(funcs, usable, index);
+  }
+  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: aborts, any: any };
 }
 
 function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_trusted: util.NameIndex): string {
@@ -87,7 +106,7 @@ function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_tr
 }
 
 function verb_of(name: string): string {
-  if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
+  if (!name.starts_with("__arrm_") && !name.starts_with("array__")) {
     return "";
   }
   let v = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
@@ -103,8 +122,8 @@ function iter_verb_of(name: string): string {
   if (n == "iter__range") {
     return "range";
   }
-  if (util.str_has_prefix(n, "iter__of")) {
-    if (n.len() == 8 || util.str_has_prefix(slice_unchecked(n, 8, n.len()) + "", "__")) {
+  if (n.starts_with("iter__of")) {
+    if (n.len() == 8 || (slice_unchecked(n, 8, n.len()) + "").starts_with("__")) {
       return "of";
     }
     return "";
@@ -117,7 +136,7 @@ function iter_verb_of(name: string): string {
     }
     return "";
   }
-  if (!util.str_has_prefix(n, "__smm_")) {
+  if (!n.starts_with("__smm_")) {
     return "";
   }
   return smm_verb(n, verbs);
@@ -220,8 +239,8 @@ function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameInde
 }
 
 function aborting_kind(k: i32): boolean {
-  if (k >= 1) {
-    return k > 10;
+  if (k >= ssa.CONST_INT) {
+    return k > ssa.UNARY;
   }
   return k != ssasem.call() && k != ssasem.cast() && k != ssasem.tuple_get() && k != ssasem.record_get() && k != ssasem.zero();
 }
@@ -571,10 +590,6 @@ function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boo
   return out;
 }
 
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
-}
-
 function is_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(_) = t {
     return true;
@@ -593,7 +608,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   let b = f.graph.blocks[c.block];
   let sink = b.insts[c.sink];
   let e = base_element(f, c);
-  if (!scalar(e)) {
+  if (!ssasem.is_scalar(e)) {
     return first_pos(c);
   }
   let j = 0;
@@ -604,7 +619,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
     if (c.verbs[j] == "flat_map") {
       e = element(ssasem.func_result(f.values[c.fns[j]]));
     }
-    if (!scalar(e)) {
+    if (!ssasem.is_scalar(e)) {
       return c.stages[j];
     }
     j += 1;
@@ -620,10 +635,10 @@ function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean
     return !ssasem.is_integer(f.values[sink.result]);
   }
   if (verb == "fold") {
-    return !scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
+    return !ssasem.is_scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
   }
   if (verb == "scan") {
-    return !scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result]));
+    return !ssasem.is_scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result]));
   }
   return false;
 }
@@ -643,7 +658,7 @@ function first_pos(c: Chain): i32 {
 }
 
 function removed(c: Chain, p: i32): boolean {
-  return index_of(c.stages, p) >= 0 || index_of(c.roots, p) >= 0;
+  return util.index_of_i32(c.stages, p) >= 0 || util.index_of_i32(c.roots, p) >= 0;
 }
 
 function defs_of(g: ssa.SFunc): Def[] {
@@ -666,17 +681,6 @@ function defs_of(g: ssa.SFunc): Def[] {
     bi += 1;
   }
   return out;
-}
-
-function index_of(xs: i32[], x: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == x) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function prepend(x: i32, xs: i32[]): i32[] {
@@ -714,10 +718,10 @@ function brif(cond: i32, t: i32, f: i32): ssa.STerm {
 }
 
 function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];
@@ -1168,7 +1172,7 @@ function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
     if (i == at) {
       blk = built[0];
     }
-    if (index_of(targets, blk.id) >= 0) {
+    if (util.index_of_i32(targets, blk.id) >= 0) {
       blk = ssa.SBlock { ...blk, preds: renamed(blk.preds, old.id, last) };
     }
     out = out.append(blk);

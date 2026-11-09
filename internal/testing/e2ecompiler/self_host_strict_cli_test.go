@@ -33,7 +33,13 @@ func newStrictRuntimeCLI(t *testing.T) *strictCLI {
 
 func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (string, string, error) {
 	t.Helper()
-	proj := t.TempDir()
+	return c.tryEmitIn(t, t.TempDir(), target, src, env...)
+}
+
+// tryEmitIn compiles src as main.fern in proj, so it can import modules
+// already copied there.
+func (c *strictCLI) tryEmitIn(t *testing.T, proj, target, src string, env ...string) (string, string, error) {
+	t.Helper()
 	mainPath := filepath.Join(proj, "main.fern")
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)

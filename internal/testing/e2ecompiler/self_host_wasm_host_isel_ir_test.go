@@ -120,14 +120,16 @@ type watbinRejection struct{ name, wat, stderr string }
 func runWatbinRejections(t *testing.T, cases []watbinRejection) {
 	t.Helper()
 	cli := newStrictCLI(t)
-	watbin, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			src := string(watbin) + "\nfunction main(): i32 {\n    let b: i32[] = wat_to_binary(\"" + c.wat + "\");\n    return 0;\n}\n"
-			bin := buildBin(t, cli.gcc, t.TempDir(), "watbin", cli.emit(t, "x86-64-linux", src))
+			proj := t.TempDir()
+			copySelfHostDriver(t, proj, "watbin.fern")
+			src := "import \"./watbin\";\nfunction main(): i32 {\n    let b: i32[] = watbin.wat_to_binary(\"" + c.wat + "\");\n    return 0;\n}\n"
+			asm, diags, err := cli.tryEmitIn(t, proj, "x86-64-linux", src)
+			if err != nil {
+				t.Fatalf("compile: %v\n%s", err, diags)
+			}
+			bin := buildBin(t, cli.gcc, t.TempDir(), "watbin", asm)
 			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 			want := 0
 			if c.stderr != "" {

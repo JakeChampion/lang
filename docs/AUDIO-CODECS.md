@@ -10,7 +10,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
 | AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
 | AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
-| FLAC | Yes | Fixed predictors | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
+| FLAC | Yes | Fixed and LPC | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
@@ -108,7 +108,7 @@ Reader playback and indexed seeks for these M4A tracks remain open in #14513, #1
 `flac.encode(samples, format, limits)` emits a complete lossless FLAC stream.
 `std/audio/flac/encoder` also supplies block settings, independent frames, and STREAMINFO construction.
 The encoder supports every sample depth from 4 through 32, one through eight channels, and sample rates from 1 through 1,048,575 Hz.
-It compares stereo assignments and uses constant, verbatim, or fixed predictors with Rice/Rice2 residual partitions.
+It compares stereo assignments and uses constant, verbatim, fixed, or LPC predictors with Rice/Rice2 residual partitions.
 It writes frame checksums, the total sample count, and the PCM MD5.
 
 The default block size is 4096 frames. The encoded byte budget is `max_input_bytes`.
@@ -116,13 +116,27 @@ The default block size is 4096 frames. The encoded byte budget is `max_input_byt
 For incremental output, the caller supplies STREAMINFO and maintains the stream count and PCM digest.
 The complete-stream API requires at least one frame and computes that metadata itself.
 
-The encoder performs no quantization. LPC analysis and matched performance qualification remain open in #14688 and #14515.
+The default `max_lpc_order` is zero and preserves fixed-only output.
+An explicit order from 1 through 32 enables Welch-window autocorrelation and stable Levinson-Durbin analysis.
+The encoder quantizes predictor coefficients to signed 15-bit integers, with nonnegative shifts through 15.
+It computes every residual with exact wide integer arithmetic and retains every PCM bit.
+Complete bit costs include coefficient metadata, warm-up samples, residual partitions, and wasted bits.
+LPC cannot increase the output size relative to the fixed-only options for the same block settings.
+
+LPC analysis uses bounded temporary arrays and can substantially increase CPU work.
+For 33-bit stereo transforms, the coefficient sums fit within signed 64-bit arithmetic.
+Residuals that exceed the permitted signed 32-bit range retain a fixed or verbatim fallback.
+Further encoder work and matched performance qualification remain open in #14688 and #14515.
 No compression, speed, or memory lead is claimed.
 
 The frozen bank contains 81 bitstreams independently decoded by FFmpeg and libFLAC 1.5.0 with MD5 verification.
 A separate exhaustive oracle checks 147 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
 Regenerate the banks with `scripts/gen-flac-encoder-vectors.py --encoder PATH` and `scripts/gen-flac-encoder-costs.py`.
 The encoder executable comes from `scripts/audio-reference/flac-encode.fern`.
+An additional bank contains 70 LPC streams with the same independent decode and MD5 checks.
+It covers every sample depth, all eight channel counts, selected orders through 32, short blocks, and 33-bit stereo transforms.
+Regenerate it with `scripts/gen-flac-lpc-vectors.py --encoder PATH`.
+The reference executable accepts an optional final LPC order.
 
 ## PCM and memory
 

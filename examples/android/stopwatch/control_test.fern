@@ -4,7 +4,7 @@
 // test writes the last frame of each case there as a PNG file.
 import "std/android";
 import "std/android/draw";
-import "std/png";
+import "std/android/testkit";
 import "std/test";
 import "../look";
 import "./control";
@@ -76,18 +76,8 @@ function centre(r: screen.Rect): (i32, i32) {
 }
 
 function save(f: draw.Frame, name: string): void {
-  let Some(dir) = env("STOPWATCH_CONTROL_PNG") else {
-    return;
-  };
-  let rgb: u8[] = [];
-  for y in 0..f.height {
-    for x in 0..f.width {
-      let c = f.pixel(x, y);
-      rgb = rgb.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8);
-    }
-  }
-  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
-    let written = write_file_bytes(dir + "/" + name + ".png", bytes);
+  if let Some(dir) = env("STOPWATCH_CONTROL_PNG") {
+    let saved = testkit.save_png(f, dir + "/" + name + ".png");
   }
 }
 

@@ -10,6 +10,7 @@ import "./util";
 import "./visibility";
 import "core/map";
 import "core/error";
+import "std/string";
 
 // Primitive display implementations load as runtime dependencies, without
 // source import edges that expose unrelated library methods.
@@ -203,7 +204,7 @@ pub function embedded_sources(assets: (string, string)[], sealed: boolean): Over
   let files = no_buffers();
   for asset in assets {
     let name = asset.0;
-    if (!util.is_stdlib_path(name) || !util.str_has_suffix(name, ".fern") && !util.str_has_suffix(name, ".fern.md")) {
+    if (!util.is_stdlib_path(name) || !name.ends_with(".fern") && !name.ends_with(".fern.md")) {
       continue;
     }
     let module = util.without_fern_ext(name);
@@ -278,7 +279,7 @@ pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
 function load_dependency(ov: Overlay, m: fern_toml.Manifest, dir: string, path: string): Resolved {
   match (dep_dir(m, dir, util.dep_name(path))) {
     Ok(Some(dd)) => {
-      if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
+      if (!util.is_dir(dd) && dd.starts_with(store_root() + "/")) {
         return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
       }
       let rest = util.dep_subpath(path);
@@ -404,7 +405,7 @@ pub function up_dir(dir: string): Option[string] {
     return Some("");
   }
   up += "/";
-  if (util.str_has_prefix(up, "../") && same_dir(dir, up)) {
+  if (up.starts_with("../") && same_dir(dir, up)) {
     return None;
   }
   return Some(up);
@@ -589,7 +590,7 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
     return false;
   }
   let tree = "core";
-  if (util.str_has_prefix(path, "std/")) {
+  if (path.starts_with("std/")) {
     tree = "std";
   }
   return !util.is_dir(dir + tree);
@@ -612,7 +613,7 @@ function import_key(ov: Overlay, path: string, dir: string, root: string): strin
 }
 
 function resolved_ident(r: Resolved): string {
-  if (util.str_has_prefix(r.shown, "stdlib://")) {
+  if (r.shown.starts_with("stdlib://")) {
     return flatten.module_ident(r.shown);
   }
   return flatten.module_ident(util.clean_path(r.shown));
@@ -743,7 +744,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     }
     let m = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
     let mdir = dir;
-    if (!util.str_has_prefix(r.shown, "stdlib://")) {
+    if (!r.shown.starts_with("stdlib://")) {
       mdir = dirname(util.clean_path(r.shown));
     }
     files = files.append(r.shown);
@@ -856,7 +857,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   let path = entry_path;
   if (!parts[idx].is_entry) {
     let id = parts[idx].ident;
-    if (util.str_has_prefix(id, "stdlib://")) {
+    if (id.starts_with("stdlib://")) {
       let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
       if (!source.ok) {
         return None;
@@ -865,7 +866,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
     }
     path = id + ".fern";
   }
-  if (util.str_has_suffix(path, ".fern.md")) {
+  if (path.ends_with(".fern.md")) {
     path = slice_unchecked(path, 0, path.len() - 3) + "";
   }
   let source = read_module(ov.files, path);
