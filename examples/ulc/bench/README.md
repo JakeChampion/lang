@@ -40,8 +40,10 @@ It does not quantify other inputs, machines, or runs.
 [The complete report](x86-64-post-stores.json) retains every timing, regression, executable hash, and oracle error.
 Every final WAV equals the baseline byte for byte.
 The float64 oracle checks frame counts and sample errors outside the timed commands.
+
 Fern has lower medians than C in 13 of 24 cases.
-The aggregate C/Fern ratio is 1.397×; the ratio without silence is 0.955×.
+The aggregate C/Fern ratio is 1.397×.
+The ratio without silence is 0.955×.
 C remains faster in eleven cases.
 
 Build the pinned compiler and both codec revisions:
@@ -74,9 +76,9 @@ Use the native C build flags in the reproduction section below.
 Summarize C or the baseline as the selected comparison:
 
 ```sh
-python3 examples/ulc/bench/summarize.py --output /tmp/ulc-fft-c.json /tmp/ulc-fft-*.json
+python3 examples/ulc/bench/summarize.py --output /tmp/ulc-fft-c.json /tmp/ulc-fft-[0-9]*-PCM*.json
 python3 examples/ulc/bench/summarize.py --comparison Baseline \
-  --output /tmp/ulc-fft-baseline.json /tmp/ulc-fft-*.json
+  --output /tmp/ulc-fft-baseline.json /tmp/ulc-fft-[0-9]*-PCM*.json
 ```
 
 ## Integer PCM output
