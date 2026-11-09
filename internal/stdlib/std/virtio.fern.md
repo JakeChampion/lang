@@ -180,6 +180,14 @@ pub function (d: Device) config_u8(offset: usize): u8 {
   }
 }
 
+// One 32-bit word of the device configuration space. A 64-bit field is two
+// words, the low word first.
+pub function (d: Device) config_u32(offset: usize): u32 {
+  unsafe {
+    return __mmio_load32(d.base + REG_CONFIG + offset) as u32;
+  }
+}
+
 // Reads and acknowledges the interrupt status. Bit 0 is a used buffer, and
 // bit 1 a configuration change.
 pub function (d: Device) interrupt_ack(): i32 {

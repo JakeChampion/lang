@@ -23,7 +23,7 @@ import (
 // library as this tree compiles it. Each parser refuses malformed bytes with
 // an error value, so the one accepted outcome is exit 0 with a summary.
 
-func fuzzStdParse(f *testing.F) string {
+func fuzzStdParse(f testing.TB) string {
 	fuzzBuildCache(f)
 	if _, runner := e2eharness.X86_64Tooling(f); len(runner) != 0 {
 		f.Skip("the fuzz programs run natively only")
@@ -39,7 +39,7 @@ func fuzzStdParser(f *testing.F, reader string, seeds [][]byte) {
 	fuzzBinReader(f, fuzzStdParse(f), "stdparse", reader, seeds)
 }
 
-func hexSeed(f *testing.F, s string) []byte {
+func hexSeed(f testing.TB, s string) []byte {
 	b, err := hex.DecodeString(s)
 	if err != nil {
 		f.Fatal(err)

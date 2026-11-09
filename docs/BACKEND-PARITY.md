@@ -28,7 +28,7 @@ bare `arm64` meaning arm64-Linux. There is no x86-64 Darwin target.
 | wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | a wasi:cli/run component by default |
 | wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler (docs/WASI-PREVIEW2.md) |
 | arm64-freestanding, x86-64-freestanding | | freestanding | assembly (`-emit asm`) | AAPCS64 / System V AMD64 | no host; the embedder calls `__fern_heap_init` and the `-export` functions (docs/FREESTANDING-CORE.md) |
-| arm64-kernel | arm64 | kernel | ELF (ET_EXEC at `-ram BASE`) | AAPCS64 | no host; the reset `_start` sets the stack, clears .bss, seeds the heap and calls `main` (docs/BARE-METAL-PLAN.md, section 4) |
+| arm64-kernel | arm64 | kernel | ELF (ET_EXEC at `-ram BASE`), or an arm64 Linux Image with `-emit image` | AAPCS64 | no host; the reset `_start` sets the stack, clears .bss, seeds the heap and calls `main` (docs/BARE-METAL-PLAN.md, section 4) |
 | x86-64-kernel | x86-64 | kernel | ELF (ET_EXEC at `-ram BASE`, PVH note) | System V AMD64 | no host; the 32-bit PVH `_start` enables long mode, then sets the stack, clears .bss, seeds the heap and calls `main` (docs/BARE-METAL-PLAN.md, section 4) |
 
 Two axes are deliberately NOT in the name: `-backend` names the target's

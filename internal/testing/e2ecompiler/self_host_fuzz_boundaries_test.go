@@ -83,7 +83,7 @@ func failOutsideBudget(t *testing.T, what string, r fuzzRun, input []byte) bool 
 // instead of compiling the compiler again. Without a shared cache every
 // worker spent the whole budget building the CLI, so the run ended before
 // its first execution and still passed.
-func fuzzBuildCache(f *testing.F) {
+func fuzzBuildCache(f testing.TB) {
 	if os.Getenv("FERN_SELFHOST_BUILD_CACHE") != "" {
 		return
 	}
