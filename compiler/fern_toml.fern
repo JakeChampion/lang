@@ -806,7 +806,7 @@ function lock_line(line: i32, message: string): string {
 }
 
 function complete_lock_entry(entry: LockEntry): Result[LockEntry, string] {
-  if (entry.name.len() == 0 || entry.version.len() == 0) {
+  if (entry.name.len() == 0 || entry.version.len() == 0 || entry.url.len() > 0 && entry.hash.len() == 0) {
     return Err("fern.lock: incomplete [[package]] entry");
   }
   return Ok(entry);
