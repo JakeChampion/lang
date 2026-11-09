@@ -10,7 +10,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
 | AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
 | AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
-| FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
+| FLAC | Yes | Fixed predictors | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
@@ -45,7 +45,7 @@ function convert(input: [u8]): Result[u8[], pcm.AudioError] {
 }
 ```
 
-`examples/audio-convert.fern` converts AAC-LC ADTS, M4A, MP3, WAVE, native FLAC, or QOA input to WAVE or QOA output.
+`examples/audio-convert.fern` converts AAC-LC ADTS, M4A, MP3, WAVE, native FLAC, or QOA input to WAVE, FLAC, or QOA output.
 Integer input retains its bit depth. QOA output from integer input requires 16-bit samples.
 AAC and MP3 input use float PCM. The example quantizes them to 32-bit WAVE or 16-bit QOA.
 
@@ -60,6 +60,7 @@ fern -target x86-64-linux -o audio-convert examples/audio-convert.fern
 ./audio-convert wav input.m4a output.wav
 ./audio-convert wav input.aac output.wav
 ./audio-convert qoa input16.wav output.qoa
+./audio-convert flac input24.wav output.flac
 ```
 
 ## Lossless M4A playback
@@ -83,6 +84,27 @@ The manifest identifies cases outside the FFmpeg decoder's packet support.
 
 Fragmented files, encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
 Reader playback and indexed seeks for these M4A tracks remain open in #14513, #14518, and #14685.
+
+## Native FLAC encoding
+
+`flac.encode(samples, format, limits)` emits a complete lossless FLAC stream.
+`std/audio/flac/encoder` also supplies block settings, independent frames, and STREAMINFO construction.
+The encoder supports every sample depth from 4 through 32, one through eight channels, and sample rates from 1 through 1,048,575 Hz.
+It compares stereo assignments and uses constant, verbatim, or fixed predictors with Rice/Rice2 residual partitions.
+It writes frame checksums, the total sample count, and the PCM MD5.
+
+The default block size is 4096 frames. The encoded byte budget is `max_input_bytes`.
+`encode_frame` bounds each block and accepts a fixed frame number or a variable sample position.
+For incremental output, the caller supplies STREAMINFO and maintains the stream count and PCM digest.
+The complete-stream API requires at least one frame and computes that metadata itself.
+
+The encoder performs no quantization. LPC analysis and matched performance qualification remain open in #14688 and #14515.
+No compression, speed, or memory lead is claimed.
+
+The frozen bank contains 81 bitstreams independently decoded by FFmpeg and libFLAC 1.5.0 with MD5 verification.
+A separate exhaustive oracle checks 147 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
+Regenerate the banks with `scripts/gen-flac-encoder-vectors.py --encoder PATH` and `scripts/gen-flac-encoder-costs.py`.
+The encoder executable comes from `scripts/audio-reference/flac-encode.fern`.
 
 ## PCM and memory
 

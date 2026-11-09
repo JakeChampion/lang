@@ -1,3 +1,4 @@
+# 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
 # 2026-11-08: must_consume_destructure_of_a_moved_payload is clean under RC trace.
 # 2026-11-08: must_consume_sibling_bindings_share_a_name is clean under RC trace.
@@ -1276,6 +1277,7 @@ union_eval                                           0
 union_lambda_param                                   0
 union_member_expected_type                           0
 union_member_widens_in_variant_payload               0
+unit_variant_through_generic_call_settles            0
 unsafe_block_accepts_obligations                     0
 unsafe_block_accepts_pointer_casts                   0
 unsafe_block_accepts_raw_builtins                    0

@@ -166,14 +166,11 @@ pub const K_VEXTRACT_BITS: i32 = 514;
 pub const K_ALLOC_UNINIT: i32 = 515;
 
 pub function lane_kind_names(): string[] {
-  return [
-    "vsplat", "vextract", "vreplace",
-    "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
-    "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround",
-    "veq", "vne", "vlt", "vle", "vgt", "vge",
-    "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset", "vbitmask", "vpack", "vpermute", "vextract_bits",
-  ];
+  let out: string[] = [];
+  for id in LANE_KIND_FIRST..LANE_KIND_LAST + 1 {
+    out = out.append(KIND_NAMES[id]);
+  }
+  return out.append(KIND_NAMES[K_VPACK]).append(KIND_NAMES[K_VPERMUTE]).append(KIND_NAMES[K_VEXTRACT_BITS]);
 }
 
 function lane_kind_pops(): i32[] {
@@ -186,26 +183,6 @@ pub function lane_writes(id: i32): boolean {
 
 pub function is_lane_kind(id: i32): boolean {
   return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK || id == K_VPERMUTE || id == K_VEXTRACT_BITS;
-}
-
-function kind_id_lane(name: string): i32 {
-  if (name == "vextract_bits") {
-    return K_VEXTRACT_BITS;
-  }
-  if (name == "vpermute") {
-    return K_VPERMUTE;
-  }
-  if (name == "vpack") {
-    return K_VPACK;
-  }
-  if (name.len() < 3 || name.len() > 8 || name[0] != b'v') {
-    return 0;
-  }
-  let i = util.index_of_str(lane_kind_names(), name);
-  if (i < 0) {
-    return 0;
-  }
-  return LANE_KIND_FIRST + i;
 }
 
 pub function op_lane(kind: string, width: i32): Op {
@@ -1245,54 +1222,6 @@ pub function op_send_root(): Op {
   return op0(K_SEND_ROOT);
 }
 
-// The worker ops, 491 to 497, by name and by id.
-function kind_id_worker(name: string): i32 {
-  if (name == "heap_adopt") {
-    return 491;
-  }
-  if (name == "worker_region") {
-    return 492;
-  }
-  if (name == "worker_exit") {
-    return 493;
-  }
-  if (name == "worker_reap") {
-    return 494;
-  }
-  if (name == "send_adopt") {
-    return 495;
-  }
-  if (name == "worker_unmap") {
-    return 496;
-  }
-  if (name == "send_root") {
-    return 497;
-  }
-  return 0;
-}
-
-function kind_name_worker(id: i32): string {
-  if (id == 491) {
-    return "heap_adopt";
-  }
-  if (id == 492) {
-    return "worker_region";
-  }
-  if (id == 493) {
-    return "worker_exit";
-  }
-  if (id == 494) {
-    return "worker_reap";
-  }
-  if (id == 495) {
-    return "send_adopt";
-  }
-  if (id == 496) {
-    return "worker_unmap";
-  }
-  return "send_root";
-}
-
 function worker_pops1(t: i32): boolean {
   return t == 492 || t == 494 || t == 495 || t == 497;
 }
@@ -1377,79 +1306,6 @@ pub function op_port_out(width: i32): Op {
 
 pub function is_device_kind(id: i32): boolean {
   return id == K_MMIO_LOAD || id == K_MMIO_STORE || id == K_FENCE || id == K_PORT_IN || id == K_PORT_OUT || is_privileged_kind(id);
-}
-
-function device_kind_name(id: i32): string {
-  if (id == K_MMIO_LOAD) {
-    return "mmio_load";
-  }
-  if (id == K_FENCE) {
-    return "fence";
-  }
-  if (id == K_WFI) {
-    return "wfi";
-  }
-  if (id == K_HVC) {
-    return "hvc";
-  }
-  if (id == K_SMC) {
-    return "smc";
-  }
-  if (id == K_BOOT_INFO) {
-    return "boot_info";
-  }
-  return access_kind_name(id);
-}
-
-function access_kind_name(id: i32): string {
-  if (id == K_PORT_IN) {
-    return "port_in";
-  }
-  if (id == K_PORT_OUT) {
-    return "port_out";
-  }
-  if (id == K_SYSREG_READ) {
-    return "sysreg_read";
-  }
-  if (id == K_SYSREG_WRITE) {
-    return "sysreg_write";
-  }
-  return maintenance_kind_name(id);
-}
-
-function maintenance_kind_name(id: i32): string {
-  if (id == K_CACHE_CLEAN) {
-    return "cache_clean";
-  }
-  if (id == K_CACHE_FLUSH) {
-    return "cache_flush";
-  }
-  if (id == K_TLB_FLUSH) {
-    return "tlb_flush";
-  }
-  if (id == K_TLB_FLUSH_ALL) {
-    return "tlb_flush_all";
-  }
-  if (id == K_BREAKPOINT) {
-    return "breakpoint";
-  }
-  return irq_kind_name(id);
-}
-
-function irq_kind_name(id: i32): string {
-  if (id == K_IRQ_MASK) {
-    return "irq_mask";
-  }
-  if (id == K_IRQ_UNMASK) {
-    return "irq_unmask";
-  }
-  if (id == K_IRQ_WAIT) {
-    return "irq_wait";
-  }
-  if (id == K_IRQ_PENDING) {
-    return "irq_pending";
-  }
-  return "mmio_store";
 }
 
 pub function op_arr_push_shared_count(): Op {
@@ -3102,2935 +2958,566 @@ pub const K_WRITER_SET_TIMES: i32 = 498;
 
 pub const K_TCP_ACCEPT_WITH: i32 = 511;
 
+// The name of each IR kind, indexed by its id. An empty name marks an id
+// that names no kind: 0, a retired kind, or a gap. A new kind takes the next
+// id; run `go run ./cmd/irkindgen compiler/ir.fern` after an edit.
+const KIND_NAMES: string[] = [
+  "",  // 0
+  "const_i32",  // 1
+  "const_i32_text",  // 2
+  "const_i64",  // 3
+  "const_f64",  // 4
+  "const_str",  // 5
+  "const_func",  // 6
+  "int_extend",  // 7
+  "int_wrap",  // 8
+  "int_cast",  // 9
+  "u32_wrap",  // 10
+  "i32_to_f64",  // 11
+  "f64_to_i32",  // 12
+  "f64_to_i64",  // 13
+  "f32_bits",  // 14
+  "f32_from_bits",  // 15
+  "f64_bits",  // 16
+  "f64_from_bits",  // 17
+  "load_local",  // 18
+  "store_local",  // 19
+  "tee_local",  // 20
+  "add",  // 21
+  "sub",  // 22
+  "mul",  // 23
+  "div_s",  // 24
+  "div_u",  // 25
+  "rem_s",  // 26
+  "rem_u",  // 27
+  "and",  // 28
+  "or",  // 29
+  "xor",  // 30
+  "shl",  // 31
+  "shr_s",  // 32
+  "shr_u",  // 33
+  "not",  // 34
+  "eq",  // 35
+  "ne",  // 36
+  "lt_s",  // 37
+  "le_s",  // 38
+  "gt_s",  // 39
+  "ge_s",  // 40
+  "lt_u",  // 41
+  "le_u",  // 42
+  "gt_u",  // 43
+  "ge_u",  // 44
+  "fadd",  // 45
+  "fsub",  // 46
+  "fmul",  // 47
+  "fdiv",  // 48
+  "feq",  // 49
+  "fne",  // 50
+  "flt",  // 51
+  "fle",  // 52
+  "fgt",  // 53
+  "fge",  // 54
+  "fneg",  // 55
+  "fabs",  // 56
+  "fsqrt",  // 57
+  "fceil",  // 58
+  "ffloor",  // 59
+  "ftrunc",  // 60
+  "fround",  // 61
+  "",  // 62
+  "",  // 63
+  "",  // 64
+  "",  // 65
+  "",  // 66
+  "load",  // 67
+  "store",  // 68
+  "load_i32",  // 69
+  "load_i64",  // 70
+  "load_ptr",  // 71
+  "store_i32",  // 72
+  "store_ptr",  // 73
+  "memcpy",  // 74
+  "memset",  // 75
+  "alloc",  // 76
+  "alloc_u8",  // 77
+  "free",  // 78
+  "ptr_width",  // 79
+  "heap_bump_bytes",  // 80
+  "raw_alloc",  // 81
+  "raw_store8",  // 82
+  "raw_load8",  // 83
+  "raw_store_ptr",  // 84
+  "raw_load_ptr",  // 85
+  "raw_string",  // 86
+  "arr_make",  // 87
+  "arr_get",  // 88
+  "arr_set",  // 89
+  "arr_len",  // 90
+  "arr_rc",  // 91
+  "arr_push",  // 92
+  "arr_push_owned",  // 93
+  "arr_push_i64",  // 94
+  "arr_push_f64",  // 95
+  "arr_slice",  // 96
+  "str_len",  // 97
+  "str_concat",  // 98
+  "str_eq",  // 99
+  "str_cmp",  // 100
+  "str_index",  // 101
+  "str_slice",  // 102
+  "str_from_bytes",  // 103
+  "str_bytes",  // 104
+  "str_split",  // 105
+  "str_to_upper",  // 106
+  "str_to_lower",  // 107
+  "str_repeat",  // 108
+  "str_trim",  // 109
+  "",  // 110
+  "str_replace",  // 111
+  "tcp_pollable",  // 112
+  "str_lines",  // 113
+  "",  // 114
+  "",  // 115
+  "tcp_close",  // 116
+  "",  // 117
+  "",  // 118
+  "",  // 119
+  "opt_make",  // 120
+  "",  // 121
+  "opt_tag",  // 122
+  "opt_payload",  // 123
+  "opt_set_payload",  // 124
+  "",  // 125
+  "",  // 126
+  "",  // 127
+  "",  // 128
+  "",  // 129
+  "",  // 130
+  "",  // 131
+  "",  // 132
+  "",  // 133
+  "",  // 134
+  "",  // 135
+  "",  // 136
+  "",  // 137
+  "struct_make",  // 138
+  "struct_get",  // 139
+  "struct_set",  // 140
+  "struct_set_shape",  // 141
+  "tuple_make",  // 142
+  "tuple_get",  // 143
+  "tuple_set",  // 144
+  "variant_is",  // 145
+  "dyn_box",  // 146
+  "dyn_dispatch",  // 147
+  "wasm_timer_pollable",  // 148
+  "call_direct",  // 149
+  "call_indirect",  // 150
+  "call_closure_direct",  // 151
+  "block",  // 152
+  "loop",  // 153
+  "if",  // 154
+  "else",  // 155
+  "end",  // 156
+  "br",  // 157
+  "brif",  // 158
+  "drop",  // 159
+  "return",  // 160
+  "wasm_pollable_drop",  // 161
+  "wasm_block",  // 162
+  "print_str",  // 163
+  "eprint_str",  // 164
+  "putchar",  // 165
+  "exit",  // 166
+  "wasm_poll",  // 167
+  "",  // 168
+  "read_file",  // 169
+  "write_file",  // 170
+  "read_dir",  // 171
+  "remove_dir_all",  // 172
+  "remove_file",  // 173
+  "temp_dir",  // 174
+  "stat",  // 175
+  "env",  // 176
+  "subprocess",  // 177
+  "read_chunk",  // 178
+  "reader_close",  // 179
+  "args",  // 180
+  "sleep_ms",  // 181
+  "monotonic_ns",  // 182
+  "now_ns",  // 183
+  "now_unix_ms",  // 184
+  "random_bytes",  // 185
+  "random_i32",  // 186
+  "poll",  // 187
+  "timer_fd",  // 188
+  "",  // 189
+  "",  // 190
+  "",  // 191
+  "",  // 192
+  "",  // 193
+  "",  // 194
+  "",  // 195
+  "",  // 196
+  "",  // 197
+  "",  // 198
+  "store_i64",  // 199
+  "tcp_listen",  // 200
+  "tcp_accept",  // 201
+  "writer_write",  // 202
+  "open_file",  // 203
+  "syscall3",  // 204
+  "raw_scratch",  // 205
+  "syscall4",  // 206
+  "raw_environ",  // 207
+  "",  // 208
+  "",  // 209
+  "",  // 210
+  "proc_fork",  // 211
+  "proc_waitpid",  // 212
+  "proc_exec",  // 213
+  "",  // 214
+  "",  // 215
+  "arr_push_shared_count",  // 216
+  "arr_push_shared_bytes",  // 217
+  "const_struct",  // 218
+  "clz",  // 219
+  "ctz",  // 220
+  "popcount",  // 221
+  "map_hash_seed",  // 222
+  "raw_addr",  // 223
+  "raw_arr_box",  // 224
+  "memchr",  // 225
+  "write_file_exec",  // 226
+  "ascii_run",  // 227
+  "syscall5",  // 228
+  "heap_mark",  // 229
+  "heap_release_to",  // 230
+  "create_dir_all",  // 231
+  "isatty",  // 232
+  "read_file_bytes",  // 233
+  "rmemchr",  // 234
+  "count_byte",  // 235
+  "lstat",  // 236
+  "access",  // 237
+  "geteuid",  // 238
+  "getegid",  // 239
+  "hostname",  // 240
+  "fd_stat",  // 241
+  "reader_seek",  // 242
+  "signal_ignore",  // 243
+  "signal_default",  // 244
+  "mismatch",  // 245
+  "getuid",  // 246
+  "getgid",  // 247
+  "getgroups",  // 248
+  "environ",  // 249
+  "uname_field",  // 250
+  "getcwd",  // 251
+  "cpu_count",  // 252
+  "sum_bytes",  // 253
+  "",  // 254
+  "",  // 255
+  "",  // 256
+  "",  // 257
+  "",  // 258
+  "",  // 259
+  "create_dir",  // 260
+  "remove_dir",  // 261
+  "create_link",  // 262
+  "create_symlink",  // 263
+  "read_link",  // 264
+  "umask",  // 265
+  "sleep_ns",  // 266
+  "rename",  // 267
+  "chmod",  // 268
+  "set_file_times",  // 269
+  "statfs",  // 270
+  "process_alive",  // 271
+  "rlimit_nofile",  // 272
+  "truncate",  // 273
+  "mknod",  // 274
+  "chown_at",  // 275
+  "window_size",  // 276
+  "chdir",  // 277
+  "signal_mask",  // 278
+  "signal_disposition",  // 279
+  "proc_exec_as",  // 280
+  "writer_truncate",  // 281
+  "priority",  // 282
+  "set_priority",  // 283
+  "set_process_group",  // 284
+  "signal_send",  // 285
+  "proc_waitpid_nohang",  // 286
+  "raw_cover",  // 287
+  "line",  // 288
+  "",  // 289
+  "",  // 290
+  "buf_new",  // 291
+  "buf_push",  // 292
+  "buf_push_range",  // 293
+  "buf_push_byte",  // 294
+  "buf_len",  // 295
+  "buf_take",  // 296
+  "buf_free",  // 297
+  "sync",  // 298
+  "fd_fsync",  // 299
+  "fd_fdatasync",  // 300
+  "fd_syncfs",  // 301
+  "arr_push_owned_i64",  // 302
+  "arr_push_owned_f64",  // 303
+  "open_reader_with",  // 304
+  "open_writer_with",  // 305
+  "buf_push_u64",  // 306
+  "fd_flags",  // 307
+  "write_some",  // 308
+  "crc32_cksum",  // 309
+  "read_dir_all",  // 310
+  "fd_dup_onto",  // 311
+  "termios_get",  // 312
+  "termios_set",  // 313
+  "set_window_size",  // 314
+  "heap_alloc_count",  // 315
+  "chroot",  // 316
+  "setuid",  // 317
+  "setgid",  // 318
+  "setgroups",  // 319
+  "tcp_local_port",  // 320
+  "chmod_at",  // 321
+  "scale_f64",  // 322
+  "syscall6",  // 323
+  "scan_set",  // 324
+  "buf_push_mapped",  // 325
+  "buf_push_filtered",  // 326
+  "count_runs",  // 327
+  "buf_push_expanded",  // 328
+  "bsd_sum",  // 329
+  "reader_splice",  // 330
+  "raw_splice_pipe",  // 331
+  "tcp_listen_with",  // 332
+  "tcp_socket_ctl",  // 333
+  "udp_bind",  // 334
+  "udp_connect",  // 335
+  "udp_sendto",  // 336
+  "udp_recvfrom",  // 337
+  "tcp_connect_with",  // 338
+  "unix_listen",  // 339
+  "unix_connect",  // 340
+  "reactor_new",  // 341
+  "reactor_ctl",  // 342
+  "reactor_wait",  // 343
+  "tcp_recv_into",  // 344
+  "str_data",  // 345
+  "tcp_sendfile",  // 346
+  "buf_take_bytes",  // 347
+  "read_chunk_bytes",  // 348
+  "write_bytes",  // 349
+  "write_some_bytes",  // 350
+  "buf_push_bytes_range",  // 351
+  "write_file_bytes",  // 352
+  "tcp_send_bytes",  // 353
+  "",  // 354
+  "udp_sendto_bytes",  // 355
+  "rename_noreplace",  // 356
+  "rename_exchange",  // 357
+  "memchr_bytes",  // 358
+  "count_byte_bytes",  // 359
+  "rmemchr_bytes",  // 360
+  "scan_set_bytes",  // 361
+  "getxattr",  // 362
+  "lgetxattr",  // 363
+  "setxattr",  // 364
+  "lsetxattr",  // 365
+  "fd_drop_cache",  // 366
+  "raw_task_state",  // 367
+  "sum_bytes_array",  // 368
+  "bsd_sum_bytes",  // 369
+  "buf_push_bytes_mapped",  // 370
+  "buf_push_bytes_filtered",  // 371
+  "buf_push_bytes_expanded",  // 372
+  "crc32_cksum_array",  // 373
+  "getxattr_bytes",  // 374
+  "lgetxattr_bytes",  // 375
+  "setxattr_bytes",  // 376
+  "lsetxattr_bytes",  // 377
+  "mismatch_bytes",  // 378
+  "count_runs_bytes",  // 379
+  "str_from_bytes_range",  // 380
+  "outer_mul_f64",  // 381
+  "inner_mul_add_f64",  // 382
+  "arr_reserve",  // 383
+  "ret_word",  // 384
+  "call_word",  // 385
+  "buf_clear",  // 386
+  "tcp_send_buf",  // 387
+  "clock_set",  // 388
+  "clock_resolution",  // 389
+  "str_hash",  // 390
+  "read_dir_ino",  // 391
+  "signal_catch",  // 392
+  "signal_taken",  // 393
+  "signal_catch_interrupting",  // 394
+  "signal_raise",  // 395
+  "disable_core_dumps",  // 396
+  "proc_waitpid_status",  // 397
+  "mounts",  // 398
+  "ct_mark",  // 399
+  "vg_request",  // 400
+  "sysctl",  // 401
+  "aes_expand_key",  // 402
+  "aes_ctr32",  // 403
+  "ghash",  // 404
+  "clone_file",  // 405
+  "set_extproc",  // 406
+  "reader_copy_range",  // 407
+  "pipe",  // 408
+  "sha256_hw",  // 409
+  "sha256_hw_blocks",  // 410
+  "bswap",  // 411
+  "mmio_load",  // 412
+  "mmio_store",  // 413
+  "fence",  // 414
+  "wfi",  // 415
+  "hvc",  // 416
+  "smc",  // 417
+  "port_in",  // 418
+  "port_out",  // 419
+  "open_dir",  // 420
+  "dir_open",  // 421
+  "dir_entries",  // 422
+  "dir_stat",  // 423
+  "dir_access",  // 424
+  "dir_unlink",  // 425
+  "dir_chmod",  // 426
+  "dir_chown",  // 427
+  "dir_open_file",  // 428
+  "",  // 429
+  "mulhi_u",  // 430
+  "writer_splice_forever",  // 431
+  "read_dir_ino_all",  // 432
+  "utf8_blocks",  // 433
+  "ring_new",  // 434
+  "ring_ctl",  // 435
+  "ring_wait",  // 436
+  "tcp_ktls",  // 437
+  "ring_recv",  // 438
+  "ring_send_zc",  // 439
+  "sha1_hw",  // 440
+  "sha1_hw_blocks",  // 441
+  "udp_bind_with",  // 442
+  "raw_vdso",  // 443
+  "aes_gcm_seal_into",  // 444
+  "aes_gcm_open_into",  // 445
+  "mismatch_bytes_str",  // 446
+  "vsplat",  // 447
+  "vextract",  // 448
+  "vreplace",  // 449
+  "vadd",  // 450
+  "vsub",  // 451
+  "vmul",  // 452
+  "vdiv",  // 453
+  "vmin",  // 454
+  "vmax",  // 455
+  "vfma",  // 456
+  "vsqrt",  // 457
+  "vabs",  // 458
+  "vneg",  // 459
+  "vfloor",  // 460
+  "vceil",  // 461
+  "vtrunc",  // 462
+  "vround",  // 463
+  "veq",  // 464
+  "vne",  // 465
+  "vlt",  // 466
+  "vle",  // 467
+  "vgt",  // 468
+  "vge",  // 469
+  "vand",  // 470
+  "vor",  // 471
+  "vxor",  // 472
+  "vandnot",  // 473
+  "vselect",  // 474
+  "vload",  // 475
+  "vstore",  // 476
+  "vget",  // 477
+  "vset",  // 478
+  "vbitmask",  // 479
+  "crc32_ieee",  // 480
+  "crc32_ieee_array",  // 481
+  "count_below_u64",  // 482
+  "prctl_query",  // 483
+  "mulhi_s",  // 484
+  "buf_push_decimal",  // 485
+  "tcp_addr_into",  // 486
+  "buf_push_base64",  // 487
+  "buf_push_base32",  // 488
+  "buf_decode_base32",  // 489
+  "writer_nonblocking",  // 490
+  "heap_adopt",  // 491
+  "worker_region",  // 492
+  "worker_exit",  // 493
+  "worker_reap",  // 494
+  "send_adopt",  // 495
+  "worker_unmap",  // 496
+  "send_root",  // 497
+  "writer_set_times",  // 498
+  "boot_info",  // 499
+  "sysreg_read",  // 500
+  "sysreg_write",  // 501
+  "cache_clean",  // 502
+  "cache_flush",  // 503
+  "tlb_flush",  // 504
+  "tlb_flush_all",  // 505
+  "breakpoint",  // 506
+  "irq_mask",  // 507
+  "irq_unmask",  // 508
+  "irq_wait",  // 509
+  "irq_pending",  // 510
+  "tcp_accept_with",  // 511
+  "vpack",  // 512
+  "vpermute",  // 513
+  "vextract_bits",  // 514
+  "alloc_uninit",  // 515
+  "udp_sendmmsg",  // 516
+  "udp_recvmmsg",  // 517
+];
+
+// BEGIN GENERATED KIND ORDER (cmd/irkindgen) — do not edit by hand.
+const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 151, 149, 150, 385, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 221, 418, 419, 483, 163, 282, 213, 280, 211, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 324, 361, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 467, 475, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
+
+// END GENERATED KIND ORDER
+
+pub function kind_name(id: i32): string {
+  if (id <= 0 || id >= KIND_NAMES.len() || KIND_NAMES[id] == "") {
+    return "invalid";
+  }
+  return KIND_NAMES[id];
+}
+
+// The id of the kind name, or 0. KIND_ORDER lists the ids by name.
+pub function kind_id(name: string): i32 {
+  let lo = 0;
+  let hi = KIND_ORDER.len();
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    let at = KIND_NAMES[KIND_ORDER[mid]];
+    if (at < name) {
+      lo = mid + 1;
+    } else if (name < at) {
+      hi = mid;
+    } else {
+      return KIND_ORDER[mid];
+    }
+  }
+  return 0;
+}
+
 pub function kind_count(): i32 {
   return 188;
 }
 
 pub function kind_retired(id: i32): boolean {
-  return id == 110 || id == 114 || id == 115 || id == 168 || id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 125 && id <= 137 || id == 198;
-}
-
-pub function kind_id(name: string): i32 {
-  if (name == "alloc_uninit") {
-    return K_ALLOC_UNINIT;
-  }
-  let n = name.len();
-  if (n == 7 && name == "mulhi_u") {
-    return 430;
-  }
-  if (n == 7 && name == "mulhi_s") {
-    return 484;
-  }
-  let lane = kind_id_lane(name);
-  if (lane > 0) {
-    return lane;
-  }
-  let worker = kind_id_worker(name);
-  if (worker > 0) {
-    return worker;
-  }
-  let device = kind_id_device(name);
-  if (device > 0) {
-    return device;
-  }
-  if (n >= 8 && n <= 13 && (name[0] == b'd' || name[0] == b'o')) {
-    let dir = kind_id_dir(name);
-    if (dir > 0) {
-      return dir;
-    }
-  }
-  if (n == 2) {
-    return kind_id_len2(name);
-  }
-  if (n == 3) {
-    return kind_id_len3(name);
-  }
-  if (n == 4) {
-    return kind_id_len4(name);
-  }
-  if (n == 5) {
-    return kind_id_len5(name);
-  }
-  if (n == 6) {
-    return kind_id_len6(name);
-  }
-  if (n == 7) {
-    return kind_id_len7(name);
-  }
-  if (n == 8) {
-    return kind_id_len8(name);
-  }
-  if (n == 9) {
-    return kind_id_len9(name);
-  }
-  if (n == 10) {
-    return kind_id_len10(name);
-  }
-  if (n == 11) {
-    return kind_id_len11(name);
-  }
-  if (n == 12) {
-    return kind_id_len12(name);
-  }
-  if (n == 13) {
-    return kind_id_len13(name);
-  }
-  if (n == 14) {
-    return kind_id_len14(name);
-  }
-  if (n == 15) {
-    return kind_id_len15(name);
-  }
-  if (n == 16) {
-    return kind_id_len16(name);
-  }
-  if (n == 17) {
-    return kind_id_len17(name);
-  }
-  if (n == 18) {
-    return kind_id_len18(name);
-  }
-  if (n == 19) {
-    return kind_id_len19(name);
-  }
-  if (n == 20 && name == "buf_push_bytes_range") {
-    return 351;
-  }
-  if (n == 20 && name == "str_from_bytes_range") {
-    return 380;
-  }
-  if (n == 21) {
-    return kind_id_len21(name);
-  }
-  if (n == 23) {
-    return kind_id_len23(name);
-  }
-  if (n == 25 && name == "signal_catch_interrupting") {
-    return 394;
-  }
-  return 0;
-}
-
-function dir_kind_names(): string[] {
-  return ["open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file"];
-}
-
-function kind_id_dir(name: string): i32 {
-  let names = dir_kind_names();
-  let i = 0;
-  while (i < names.len()) {
-    if (name == names[i]) {
-      return 420 + i;
-    }
-    i += 1;
-  }
-  return 0;
-}
-
-function dir_kind_name(id: i32): string {
-  return dir_kind_names()[id - 420];
-}
-
-function kind_id_len2(name: string): i32 {
-  let c = name[0];
-  if (c == b'b' && name == "br") {
-    return 157;
-  }
-  if (c == b'e' && name == "eq") {
-    return 35;
-  }
-  if (c == b'i' && name == "if") {
-    return 154;
-  }
-  if (c == b'n' && name == "ne") {
-    return 36;
-  }
-  if (c == b'o' && name == "or") {
-    return 29;
-  }
-  return 0;
-}
-
-function kind_id_len3(name: string): i32 {
-  let c = name[0];
-  if (c == b'a' && name == "add") {
-    return 21;
-  }
-  if (c == b'a' && name == "and") {
-    return 28;
-  }
-  if (c == b'c' && name == "clz") {
-    return 219;
-  }
-  if (c == b'c' && name == "ctz") {
-    return 220;
-  }
-  if (c == b'e' && name == "end") {
-    return 156;
-  }
-  if (c == b'e' && name == "env") {
-    return 176;
-  }
-  if (c == b'f') {
-    return kind_id_len3_f(name);
-  }
-  if (c == b'm' && name == "mul") {
-    return 23;
-  }
-  if (c == b'n' && name == "not") {
-    return 34;
-  }
-  if (c == b's' && name == "sub") {
-    return 22;
-  }
-  if (c == b's' && name == "shl") {
-    return 31;
-  }
-  if (c == b'x' && name == "xor") {
-    return 30;
-  }
-  return 0;
-}
-
-// The device ops whose names the length tables do not hold.
-function kind_id_device(name: string): i32 {
-  if (name == "port_in") {
-    return K_PORT_IN;
-  }
-  if (name == "port_out") {
-    return K_PORT_OUT;
-  }
-  if (name == "wfi") {
-    return K_WFI;
-  }
-  if (name == "hvc") {
-    return K_HVC;
-  }
-  if (name == "smc") {
-    return K_SMC;
-  }
-  if (name == "boot_info") {
-    return K_BOOT_INFO;
-  }
-  return kind_id_sysreg(name);
-}
-
-function kind_id_sysreg(name: string): i32 {
-  if (name == "sysreg_read") {
-    return K_SYSREG_READ;
-  }
-  if (name == "sysreg_write") {
-    return K_SYSREG_WRITE;
-  }
-  return kind_id_maintenance(name);
-}
-
-function kind_id_maintenance(name: string): i32 {
-  if (name == "cache_clean") {
-    return K_CACHE_CLEAN;
-  }
-  if (name == "cache_flush") {
-    return K_CACHE_FLUSH;
-  }
-  if (name == "tlb_flush") {
-    return K_TLB_FLUSH;
-  }
-  if (name == "tlb_flush_all") {
-    return K_TLB_FLUSH_ALL;
-  }
-  if (name == "breakpoint") {
-    return K_BREAKPOINT;
-  }
-  return kind_id_irq(name);
-}
-
-function kind_id_irq(name: string): i32 {
-  if (name == "irq_mask") {
-    return K_IRQ_MASK;
-  }
-  if (name == "irq_unmask") {
-    return K_IRQ_UNMASK;
-  }
-  if (name == "irq_wait") {
-    return K_IRQ_WAIT;
-  }
-  if (name == "irq_pending") {
-    return K_IRQ_PENDING;
-  }
-  return 0;
-}
-
-function kind_id_len3_f(name: string): i32 {
-  if (name == "feq") {
-    return 49;
-  }
-  if (name == "fne") {
-    return 50;
-  }
-  if (name == "flt") {
-    return 51;
-  }
-  if (name == "fle") {
-    return 52;
-  }
-  if (name == "fgt") {
-    return 53;
-  }
-  if (name == "fge") {
-    return 54;
-  }
-  return 0;
-}
-
-function kind_id_len4(name: string): i32 {
-  let c = name[0];
-  if (c == b'a' && name == "args") {
-    return 180;
-  }
-  if (c == b'b' && name == "brif") {
-    return 158;
-  }
-  if (c == b'd' && name == "drop") {
-    return 159;
-  }
-  if (c == b'e' && name == "else") {
-    return 155;
-  }
-  if (c == b'e' && name == "exit") {
-    return 166;
-  }
-  if (c == b'f') {
-    return kind_id_len4_f(name);
-  }
-  if (c == b'g') {
-    return kind_id_len4_g(name);
-  }
-  if (c == b'l') {
-    return kind_id_len4_l(name);
-  }
-  if (c == b'p' && name == "poll") {
-    return 187;
-  }
-  if (c == b'p' && name == "pipe") {
-    return 408;
-  }
-  if (c == b's' && name == "stat") {
-    return 175;
-  }
-  if (c == b's' && name == "sync") {
-    return 298;
-  }
-  return 0;
-}
-
-function kind_id_len4_f(name: string): i32 {
-  if (name == "fadd") {
-    return 45;
-  }
-  if (name == "fsub") {
-    return 46;
-  }
-  if (name == "fmul") {
-    return 47;
-  }
-  if (name == "fdiv") {
-    return 48;
-  }
-  if (name == "fneg") {
-    return 55;
-  }
-  if (name == "fabs") {
-    return 56;
-  }
-  if (name == "free") {
-    return 78;
-  }
-  return 0;
-}
-
-function kind_id_len4_g(name: string): i32 {
-  if (name == "gt_s") {
-    return 39;
-  }
-  if (name == "ge_s") {
-    return 40;
-  }
-  if (name == "gt_u") {
-    return 43;
-  }
-  if (name == "ge_u") {
-    return 44;
-  }
-  return 0;
-}
-
-function kind_id_len4_l(name: string): i32 {
-  if (name == "line") {
-    return 288;
-  }
-  if (name == "lt_s") {
-    return 37;
-  }
-  if (name == "le_s") {
-    return 38;
-  }
-  if (name == "lt_u") {
-    return 41;
-  }
-  if (name == "le_u") {
-    return 42;
-  }
-  if (name == "load") {
-    return 67;
-  }
-  if (name == "loop") {
-    return 153;
-  }
-  return 0;
-}
-
-function kind_id_len5(name: string): i32 {
-  let c = name[0];
-  if (name == "fence") {
-    return K_FENCE;
-  }
-  if (c == b'a' && name == "alloc") {
-    return 76;
-  }
-  if (c == b'b' && name == "bswap") {
-    return 411;
-  }
-  if (c == b'b' && name == "block") {
-    return 152;
-  }
-  if (c == b'c' && name == "chmod") {
-    return 268;
-  }
-  if (c == b'c' && name == "chdir") {
-    return 277;
-  }
-  if (c == b'm' && name == "mknod") {
-    return 274;
-  }
-  if (c == b'd' && name == "div_s") {
-    return 24;
-  }
-  if (c == b'd' && name == "div_u") {
-    return 25;
-  }
-  if (c == b'f' && name == "fsqrt") {
-    return 57;
-  }
-  if (c == b'f' && name == "fceil") {
-    return 58;
-  }
-  if (c == b'l' && name == "lstat") {
-    return 236;
-  }
-  if (c == b'u' && name == "umask") {
-    return 265;
-  }
-  if (c == b'r' && name == "rem_s") {
-    return 26;
-  }
-  if (c == b'r' && name == "rem_u") {
-    return 27;
-  }
-  if (c == b'g' && name == "ghash") {
-    return 404;
-  }
-  if (c == b's') {
-    return kind_id_len5_s(name);
-  }
-  return 0;
-}
-
-function kind_id_len5_s(name: string): i32 {
-  if (name == "shr_s") {
-    return 32;
-  }
-  if (name == "shr_u") {
-    return 33;
-  }
-  if (name == "store") {
-    return 68;
-  }
-  return 0;
-}
-
-function kind_id_len6(name: string): i32 {
-  let c = name[0];
-  if (c == b'a' && name == "arr_rc") {
-    return 91;
-  }
-  if (c == b'a' && name == "access") {
-    return 237;
-  }
-  if (c == b'f') {
-    return kind_id_len6_f(name);
-  }
-  if (c == b'c' && name == "chroot") {
-    return 316;
-  }
-  if (c == b'g' && name == "getuid") {
-    return 246;
-  }
-  if (c == b'g' && name == "getgid") {
-    return 247;
-  }
-  if (c == b'g' && name == "getcwd") {
-    return 251;
-  }
-  if (c == b'i' && name == "isatty") {
-    return 232;
-  }
-  if (c == b'm') {
-    return kind_id_len6_m(name);
-  }
-  if (c == b'n' && name == "now_ns") {
-    return 183;
-  }
-  if (c == b'r' && name == "rename") {
-    return 267;
-  }
-  if (c == b'r' && name == "return") {
-    return 160;
-  }
-  if (c == b's' && name == "setuid") {
-    return 317;
-  }
-  if (c == b's' && name == "setgid") {
-    return 318;
-  }
-  if (c == b's' && name == "str_eq") {
-    return 99;
-  }
-  if (c == b's' && name == "statfs") {
-    return 270;
-  }
-  if (c == b's' && name == "sysctl") {
-    return 401;
-  }
-  return 0;
-}
-
-function kind_id_len6_f(name: string): i32 {
-  if (name == "ffloor") {
-    return 59;
-  }
-  if (name == "ftrunc") {
-    return 60;
-  }
-  if (name == "fround") {
-    return 61;
-  }
-  return 0;
-}
-
-function kind_id_len6_m(name: string): i32 {
-  if (name == "mounts") {
-    return 398;
-  }
-  if (name == "memcpy") {
-    return 74;
-  }
-  if (name == "memset") {
-    return 75;
-  }
-  if (name == "memchr") {
-    return 225;
-  }
-  return 0;
-}
-
-function kind_id_len7(name: string): i32 {
-  let c = name[0];
-  if (c == b'a') {
-    return kind_id_len7_a(name);
-  }
-  if (c == b'd' && name == "dyn_box") {
-    return 146;
-  }
-  if (c == b'f' && name == "fd_stat") {
-    return 241;
-  }
-  if (c == b'g' && name == "geteuid") {
-    return 238;
-  }
-  if (c == b'g' && name == "getegid") {
-    return 239;
-  }
-  if (c == b'e' && name == "environ") {
-    return 249;
-  }
-  if (c == b'b' && name == "buf_new") {
-    return 291;
-  }
-  if (c == b'b' && name == "buf_len") {
-    return 295;
-  }
-  if (c == b'b' && name == "bsd_sum") {
-    return 329;
-  }
-  if (c == b'c' && name == "ct_mark") {
-    return 399;
-  }
-  if (c == b'o' && name == "opt_tag") {
-    return 122;
-  }
-  if (c == b'p' && name == "putchar") {
-    return 165;
-  }
-  if (c == b'r' && name == "rmemchr") {
-    return 234;
-  }
-  if (c == b's') {
-    return kind_id_len7_s(name);
-  }
-  return 0;
-}
-
-function kind_id_len7_s(name: string): i32 {
-  if (name == "str_len") {
-    return 97;
-  }
-  if (name == "str_cmp") {
-    return 100;
-  }
-  if (name == "sha1_hw") {
-    return 440;
-  }
-  return 0;
-}
-
-function kind_id_len7_a(name: string): i32 {
-  if (name == "arr_get") {
-    return 88;
-  }
-  if (name == "arr_set") {
-    return 89;
-  }
-  if (name == "arr_len") {
-    return 90;
-  }
-  return 0;
-}
-
-function kind_id_len8(name: string): i32 {
-  let c = name[0];
-  if (c == b'r' && name == "raw_vdso") {
-    return 443;
-  }
-  if (c == b'a') {
-    return kind_id_len8_a(name);
-  }
-  if (c == b'f' && name == "fd_fsync") {
-    return 299;
-  }
-  if (c == b'f' && name == "fd_flags") {
-    return 307;
-  }
-  if (c == b'b') {
-    return kind_id_len8_b(name);
-  }
-  if (c == b'c' && name == "chown_at") {
-    return 275;
-  }
-  if (c == b'c' && name == "chmod_at") {
-    return 321;
-  }
-  if (c == b'f' && name == "f32_bits") {
-    return 14;
-  }
-  if (c == b'f' && name == "f64_bits") {
-    return 16;
-  }
-  if (c == b'g' && name == "getxattr") {
-    return 362;
-  }
-  if (c == b's' && name == "setxattr") {
-    return 364;
-  }
-  if (c == b'h' && name == "hostname") {
-    return 240;
-  }
-  if (c == b'i' && name == "int_wrap") {
-    return 8;
-  }
-  if (c == b'i' && name == "int_cast") {
-    return 9;
-  }
-  if (c == b'l') {
-    return kind_id_len8_l(name);
-  }
-  if (c == b'm') {
-    return kind_id_len8_m(name);
-  }
-  if (c == b'o' && name == "opt_make") {
-    return 120;
-  }
-  if (c == b'p' && name == "popcount") {
-    return 221;
-  }
-  if (c == b'p' && name == "priority") {
-    return 282;
-  }
-  if (c == b'r') {
-    return kind_id_len8_r(name);
-  }
-  if (c == b's') {
-    return kind_id_len8_s(name);
-  }
-  if (c == b't') {
-    return kind_id_len8_t(name);
-  }
-  if (c == b'u' && name == "u32_wrap") {
-    return 10;
-  }
-  if (c == b'u' && name == "udp_bind") {
-    return 334;
-  }
-  return 0;
-}
-
-function kind_id_len8_a(name: string): i32 {
-  if (name == "alloc_u8") {
-    return 77;
-  }
-  if (name == "arr_make") {
-    return 87;
-  }
-  if (name == "arr_push") {
-    return 92;
-  }
-  return 0;
-}
-
-function kind_id_len8_b(name: string): i32 {
-  if (name == "buf_push") {
-    return 292;
-  }
-  if (name == "buf_take") {
-    return 296;
-  }
-  if (name == "buf_free") {
-    return 297;
-  }
-  return 0;
-}
-
-function kind_id_len8_m(name: string): i32 {
-  if (name == "mismatch") {
-    return 245;
-  }
-  return 0;
-}
-
-function kind_id_len8_l(name: string): i32 {
-  if (name == "load_i32") {
-    return 69;
-  }
-  if (name == "load_i64") {
-    return 70;
-  }
-  if (name == "load_ptr") {
-    return 71;
-  }
-  return 0;
-}
-
-function kind_id_len8_r(name: string): i32 {
-  if (name == "ret_word") {
-    return 384;
-  }
-  if (name == "ring_new") {
-    return 434;
-  }
-  if (name == "ring_ctl") {
-    return 435;
-  }
-  if (name == "read_dir") {
-    return 171;
-  }
-  if (name == "raw_addr") {
-    return 223;
-  }
-  return 0;
-}
-
-function kind_id_len8_s(name: string): i32 {
-  if (name == "str_trim") {
-    return 109;
-  }
-  if (name == "str_data") {
-    return 345;
-  }
-  if (name == "str_hash") {
-    return 390;
-  }
-  if (name == "sleep_ms") {
-    return 181;
-  }
-  if (name == "sleep_ns") {
-    return 266;
-  }
-  if (name == "syscall3") {
-    return 204;
-  }
-  if (name == "syscall4") {
-    return 206;
-  }
-  if (name == "syscall5") {
-    return 228;
-  }
-  if (name == "syscall6") {
-    return 323;
-  }
-  if (name == "scan_set") {
-    return 324;
-  }
-  return 0;
-}
-
-function kind_id_len8_t(name: string): i32 {
-  if (name == "tcp_ktls") {
-    return 437;
-  }
-  if (name == "temp_dir") {
-    return 174;
-  }
-  if (name == "truncate") {
-    return 273;
-  }
-  if (name == "timer_fd") {
-    return 188;
-  }
-  return 0;
-}
-
-function kind_id_len9(name: string): i32 {
-  let c = name[0];
-  if (c == b'a' && name == "arr_slice") {
-    return 96;
-  }
-  if (c == b'a' && name == "ascii_run") {
-    return 227;
-  }
-  if (c == b'a' && name == "aes_ctr32") {
-    return 403;
-  }
-  if (c == b's' && name == "sha256_hw") {
-    return 409;
-  }
-  if (c == b'b' && name == "buf_clear") {
-    return 386;
-  }
-  if (c == b'c') {
-    return kind_id_len9_c(name);
-  }
-  if (c == b'f' && name == "fd_syncfs") {
-    return 301;
-  }
-  if (c == b'g' && name == "getgroups") {
-    return 248;
-  }
-  if (c == b'h' && name == "heap_mark") {
-    return 229;
-  }
-  if (c == b'l' && name == "lgetxattr") {
-    return 363;
-  }
-  if (c == b'l' && name == "lsetxattr") {
-    return 365;
-  }
-  if (name == "mmio_load") {
-    return K_MMIO_LOAD;
-  }
-  if (c == b'o' && name == "open_file") {
-    return 203;
-  }
-  if (c == b'p') {
-    return kind_id_len9_p(name);
-  }
-  if (c == b'r') {
-    return kind_id_len9_r(name);
-  }
-  if (c == b's') {
-    return kind_id_len9_s(name);
-  }
-  if (c == b't') {
-    return kind_id_len9_t(name);
-  }
-  if (c == b'w' && name == "wasm_poll") {
-    return 167;
-  }
-  return 0;
-}
-
-function kind_id_len9_c(name: string): i32 {
-  if (name == "call_word") {
-    return 385;
-  }
-  if (name == "clock_set") {
-    return 388;
-  }
-  if (name == "cpu_count") {
-    return 252;
-  }
-  if (name == "const_i32") {
-    return 1;
-  }
-  if (name == "const_i64") {
-    return 3;
-  }
-  if (name == "const_f64") {
-    return 4;
-  }
-  if (name == "const_str") {
-    return 5;
-  }
-  return 0;
-}
-
-function kind_id_len9_p(name: string): i32 {
-  if (name == "ptr_width") {
-    return 79;
-  }
-  if (name == "print_str") {
-    return 163;
-  }
-  if (name == "proc_fork") {
-    return 211;
-  }
-  if (name == "proc_exec") {
-    return 213;
-  }
-  return 0;
-}
-
-function kind_id_len9_r(name: string): i32 {
-  if (name == "raw_alloc") {
-    return 81;
-  }
-  if (name == "ring_recv") {
-    return 438;
-  }
-  if (name == "ring_wait") {
-    return 436;
-  }
-  if (name == "raw_load8") {
-    return 83;
-  }
-  if (name == "read_file") {
-    return 169;
-  }
-  if (name == "read_link") {
-    return 264;
-  }
-  if (name == "raw_cover") {
-    return 287;
-  }
-  return 0;
-}
-
-function kind_id_len9_s(name: string): i32 {
-  if (name == "setgroups") {
-    return 319;
-  }
-  if (name == "sum_bytes") {
-    return 253;
-  }
-  if (name == "scale_f64") {
-    return 322;
-  }
-  if (name == "store_i32") {
-    return 72;
-  }
-  if (name == "store_ptr") {
-    return 73;
-  }
-  if (name == "store_i64") {
-    return 199;
-  }
-  if (name == "str_index") {
-    return 101;
-  }
-  if (name == "str_slice") {
-    return 102;
-  }
-  if (name == "str_bytes") {
-    return 104;
-  }
-  if (name == "str_split") {
-    return 105;
-  }
-  if (name == "str_lines") {
-    return 113;
-  }
-  return 0;
-}
-
-function kind_id_len9_t(name: string): i32 {
-  if (name == "tee_local") {
-    return 20;
-  }
-  if (name == "tuple_get") {
-    return 143;
-  }
-  if (name == "tuple_set") {
-    return 144;
-  }
-  if (name == "tcp_close") {
-    return 116;
-  }
-  return 0;
-}
-
-function kind_id_len10(name: string): i32 {
-  let c = name[0];
-  if (c == b'c' && name == "const_func") {
-    return 6;
-  }
-  if (c == b'c' && name == "count_byte") {
-    return 235;
-  }
-  if (c == b'c' && name == "count_runs") {
-    return 327;
-  }
-  if (c == b'c' && name == "create_dir") {
-    return 260;
-  }
-  if (c == b'c' && name == "clone_file") {
-    return 405;
-  }
-  if (c == b'c' && name == "crc32_ieee") {
-    return 480;
-  }
-  if (c == b'e' && name == "eprint_str") {
-    return 164;
-  }
-  if (c == b'f' && name == "f64_to_i32") {
-    return 12;
-  }
-  if (c == b'f' && name == "f64_to_i64") {
-    return 13;
-  }
-  if (c == b'i' && name == "int_extend") {
-    return 7;
-  }
-  if (c == b'i' && name == "i32_to_f64") {
-    return 11;
-  }
-  if (c == b'l' && name == "load_local") {
-    return 18;
-  }
-  if (name == "mmio_store") {
-    return K_MMIO_STORE;
-  }
-  if (c == b'r') {
-    return kind_id_len10_r(name);
-  }
-  if (c == b's') {
-    return kind_id_len10_s(name);
-  }
-  if (c == b't') {
-    return kind_id_len10_t(name);
-  }
-  if (c == b'u' && name == "udp_sendto") {
-    return 336;
-  }
-  if (c == b'v' && name == "variant_is") {
-    return 145;
-  }
-  if (c == b'v' && name == "vg_request") {
-    return 400;
-  }
-  if (c == b'w' && name == "write_file") {
-    return 170;
-  }
-  if (c == b'w' && name == "write_some") {
-    return 308;
-  }
-  if (c == b'w' && name == "wasm_block") {
-    return 162;
-  }
-  return 0;
-}
-
-function kind_id_len10_r(name: string): i32 {
-  if (name == "remove_dir") {
-    return 261;
-  }
-  if (name == "raw_store8") {
-    return 82;
-  }
-  if (name == "raw_string") {
-    return 86;
-  }
-  if (name == "read_chunk") {
-    return 178;
-  }
-  if (name == "random_i32") {
-    return 186;
-  }
-  return 0;
-}
-
-function kind_id_len10_s(name: string): i32 {
-  if (name == "str_concat") {
-    return 98;
-  }
-  if (name == "str_repeat") {
-    return 108;
-  }
-  if (name == "struct_get") {
-    return 139;
-  }
-  if (name == "struct_set") {
-    return 140;
-  }
-  if (name == "subprocess") {
-    return 177;
-  }
-  return 0;
-}
-
-function kind_id_len10_t(name: string): i32 {
-  if (name == "tuple_make") {
-    return 142;
-  }
-  if (name == "tcp_listen") {
-    return 200;
-  }
-  if (name == "tcp_accept") {
-    return 201;
-  }
-  return 0;
-}
-
-function kind_id_len11(name: string): i32 {
-  if (name == "prctl_query") {
-    return 483;
-  }
-  if (name == "arr_reserve") {
-    return 383;
-  }
-  if (name == "write_bytes") {
-    return 349;
-  }
-  let c = name[0];
-  if (c == b'c' && name == "call_direct") {
-    return 149;
-  }
-  if (c == b'f' && name == "fd_dup_onto") {
-    return 311;
-  }
-  if (c == b'c' && name == "crc32_cksum") {
-    return 309;
-  }
-  if (c == b'c' && name == "create_link") {
-    return 262;
-  }
-  if (c == b'n' && name == "now_unix_ms") {
-    return 184;
-  }
-  if (c == b'o' && name == "opt_payload") {
-    return 123;
-  }
-  if (c == b'u' && name == "utf8_blocks") {
-    return 433;
-  }
-  if (c == b'r') {
-    return kind_id_len11_r(name);
-  }
-  if (c == b's') {
-    return kind_id_len11_s(name);
-  }
-  if (c == b't' && name == "termios_get") {
-    return 312;
-  }
-  if (c == b't' && name == "termios_set") {
-    return 313;
-  }
-  if (c == b'u' && name == "uname_field") {
-    return 250;
-  }
-  if (c == b'u' && name == "udp_connect") {
-    return 335;
-  }
-  if (c == b'u' && name == "unix_listen") {
-    return 339;
-  }
-  if (c == b'w' && name == "window_size") {
-    return 276;
-  }
-  return 0;
-}
-
-function kind_id_len11_r(name: string): i32 {
-  if (name == "remove_file") {
-    return 173;
-  }
-  if (name == "reactor_new") {
-    return 341;
-  }
-  if (name == "reactor_ctl") {
-    return 342;
-  }
-  if (name == "raw_scratch") {
-    return 205;
-  }
-  if (name == "raw_environ") {
-    return 207;
-  }
-  if (name == "raw_arr_box") {
-    return 224;
-  }
-  if (name == "reader_seek") {
-    return 242;
-  }
-  return 0;
-}
-
-function kind_id_len11_s(name: string): i32 {
-  if (name == "store_local") {
-    return 19;
-  }
-  if (name == "set_extproc") {
-    return 406;
-  }
-  if (name == "signal_send") {
-    return 285;
-  }
-  if (name == "str_replace") {
-    return 111;
-  }
-  if (name == "struct_make") {
-    return 138;
-  }
-  if (name == "signal_mask") {
-    return 278;
-  }
-  return 0;
-}
-
-function kind_id_len12(name: string): i32 {
-  if (name == "memchr_bytes") {
-    return 358;
-  }
-  let c = name[0];
-  if (c == b'a' && name == "arr_push_i64") {
-    return 94;
-  }
-  if (c == b'a' && name == "arr_push_f64") {
-    return 95;
-  }
-  if (c == b'b' && name == "buf_push_u64") {
-    return 306;
-  }
-  if (c == b'c' && name == "const_struct") {
-    return 218;
-  }
-  if (c == b'f' && name == "fd_fdatasync") {
-    return 300;
-  }
-  if (c == b'd' && name == "dyn_dispatch") {
-    return 147;
-  }
-  if (c == b'm' && name == "monotonic_ns") {
-    return 182;
-  }
-  if (c == b'p' && name == "proc_waitpid") {
-    return 212;
-  }
-  if (c == b'p' && name == "proc_exec_as") {
-    return 280;
-  }
-  if (c == b'r') {
-    return kind_id_len12_r(name);
-  }
-  if (c == b's') {
-    return kind_id_len12_s(name);
-  }
-  if (c == b't' && name == "tcp_pollable") {
-    return 112;
-  }
-  if (c == b'u' && name == "udp_recvfrom") {
-    return 337;
-  }
-  if (c == b'u' && name == "udp_sendmmsg") {
-    return 516;
-  }
-  if (c == b'u' && name == "udp_recvmmsg") {
-    return 517;
-  }
-  if (c == b'u' && name == "unix_connect") {
-    return 340;
-  }
-  if (c == b'w' && name == "writer_write") {
-    return 202;
-  }
-  if (c == b't' && name == "tcp_sendfile") {
-    return 346;
-  }
-  if (c == b't' && name == "tcp_send_buf") {
-    return 387;
-  }
-  return 0;
-}
-
-function kind_id_len12_r(name: string): i32 {
-  if (name == "ring_send_zc") {
-    return 439;
-  }
-  if (name == "raw_load_ptr") {
-    return 85;
-  }
-  if (name == "reactor_wait") {
-    return 343;
-  }
-  if (name == "read_dir_all") {
-    return 310;
-  }
-  if (name == "read_dir_ino") {
-    return 391;
-  }
-  if (name == "reader_close") {
-    return 179;
-  }
-  if (name == "random_bytes") {
-    return 185;
-  }
-  return 0;
-}
-
-function kind_id_len12_s(name: string): i32 {
-  if (name == "set_priority") {
-    return 283;
-  }
-  if (name == "signal_catch") {
-    return 392;
-  }
-  if (name == "signal_raise") {
-    return 395;
-  }
-  if (name == "signal_taken") {
-    return 393;
-  }
-  if (name == "str_to_upper") {
-    return 106;
-  }
-  if (name == "str_to_lower") {
-    return 107;
-  }
-  return 0;
-}
-
-function kind_id_len13(name: string): i32 {
-  if (name == "outer_mul_f64") {
-    return 381;
-  }
-  if (name == "bsd_sum_bytes") {
-    return 369;
-  }
-  if (name == "fd_drop_cache") {
-    return 366;
-  }
-  if (name == "rmemchr_bytes") {
-    return 360;
-  }
-  let c = name[0];
-  if (c == b'c' && name == "call_indirect") {
-    return 150;
-  }
-  if (c == b'f' && name == "f32_from_bits") {
-    return 15;
-  }
-  if (c == b'f' && name == "f64_from_bits") {
-    return 17;
-  }
-  if (c == b't' && name == "tcp_recv_into") {
-    return 344;
-  }
-  if (c == b't' && name == "tcp_addr_into") {
-    return 486;
-  }
-  if (c == b'u' && name == "udp_bind_with") {
-    return 442;
-  }
-  if (c == b'm' && name == "map_hash_seed") {
-    return 222;
-  }
-  if (c == b'p' && name == "process_alive") {
-    return 271;
-  }
-  if (c == b'b' && name == "buf_push_byte") {
-    return 294;
-  }
-  if (c == b'r' && name == "raw_store_ptr") {
-    return 84;
-  }
-  if (c == b'r' && name == "rlimit_nofile") {
-    return 272;
-  }
-  if (c == b'r' && name == "reader_splice") {
-    return 330;
-  }
-  if (c == b's' && name == "signal_ignore") {
-    return 243;
-  }
-  return 0;
-}
-
-function kind_id_len14(name: string): i32 {
-  if (name == "setxattr_bytes") {
-    return 376;
-  }
-  if (name == "sha1_hw_blocks") {
-    return 441;
-  }
-  if (name == "aes_expand_key") {
-    return 402;
-  }
-  if (name == "getxattr_bytes") {
-    return 374;
-  }
-  if (name == "scan_set_bytes") {
-    return 361;
-  }
-  if (name == "raw_task_state") {
-    return 367;
-  }
-  if (name == "tcp_send_bytes") {
-    return 353;
-  }
-  if (name == "mismatch_bytes") {
-    return 378;
-  }
-  if (name == "buf_take_bytes") {
-    return 347;
-  }
-  let c = name[0];
-  if (c == b'a' && name == "arr_push_owned") {
-    return 93;
-  }
-  if (c == b'b' && name == "buf_push_range") {
-    return 293;
-  }
-  if (c == b'c' && name == "const_i32_text") {
-    return 2;
-  }
-  if (c == b'c' && name == "create_dir_all") {
-    return 231;
-  }
-  if (c == b'c' && name == "create_symlink") {
-    return 263;
-  }
-  if (c == b'r' && name == "remove_dir_all") {
-    return 172;
-  }
-  if (c == b's' && name == "str_from_bytes") {
-    return 103;
-  }
-  if (c == b's' && name == "signal_default") {
-    return 244;
-  }
-  if (c == b's' && name == "set_file_times") {
-    return 269;
-  }
-  if (c == b't' && name == "tcp_local_port") {
-    return 320;
-  }
-  if (c == b't' && name == "tcp_socket_ctl") {
-    return 333;
-  }
-  return 0;
-}
-
-function kind_id_len15(name: string): i32 {
-  if (name == "count_below_u64") {
-    return 482;
-  }
-  if (name == "tcp_accept_with") {
-    return 511;
-  }
-  if (name == "buf_push_base64") {
-    return 487;
-  }
-  if (name == "buf_push_base32") {
-    return 488;
-  }
-  if (name == "lsetxattr_bytes") {
-    return 377;
-  }
-  if (name == "lgetxattr_bytes") {
-    return 375;
-  }
-  if (name == "sum_bytes_array") {
-    return 368;
-  }
-  let c = name[0];
-  if (c == b'r' && name == "rename_exchange") {
-    return 357;
-  }
-  if (c == b'b' && name == "buf_push_mapped") {
-    return 325;
-  }
-  if (c == b'h' && name == "heap_bump_bytes") {
-    return 80;
-  }
-  if (c == b'h' && name == "heap_release_to") {
-    return 230;
-  }
-  if (c == b'r' && name == "read_file_bytes") {
-    return 233;
-  }
-  if (c == b'r' && name == "raw_splice_pipe") {
-    return 331;
-  }
-  if (c == b's' && name == "set_window_size") {
-    return 314;
-  }
-  if (c == b'w' && name == "write_file_exec") {
-    return 226;
-  }
-  if (c == b'w' && name == "writer_truncate") {
-    return 281;
-  }
-  if (c == b't' && name == "tcp_listen_with") {
-    return 332;
-  }
-  if (c == b'o' && name == "opt_set_payload") {
-    return 124;
-  }
-  return 0;
-}
-
-function kind_id_len16(name: string): i32 {
-  if (name == "writer_set_times") {
-    return 498;
-  }
-  if (name == "crc32_ieee_array") {
-    return 481;
-  }
-  if (name == "buf_push_decimal") {
-    return 485;
-  }
-  if (name == "sha256_hw_blocks") {
-    return 410;
-  }
-  if (name == "read_dir_ino_all") {
-    return 432;
-  }
-  if (name == "count_runs_bytes") {
-    return 379;
-  }
-  if (name == "clock_resolution") {
-    return 389;
-  }
-  if (name == "rename_noreplace") {
-    return 356;
-  }
-  if (name == "udp_sendto_bytes") {
-    return 355;
-  }
-  if (name == "write_file_bytes") {
-    return 352;
-  }
-  if (name == "count_byte_bytes") {
-    return 359;
-  }
-  if (name == "write_some_bytes") {
-    return 350;
-  }
-  if (name == "read_chunk_bytes") {
-    return 348;
-  }
-  let c = name[0];
-  if (c == b'h' && name == "heap_alloc_count") {
-    return 315;
-  }
-  if (c == b's' && name == "struct_set_shape") {
-    return 141;
-  }
-  if (c == b't' && name == "tcp_connect_with") {
-    return 338;
-  }
-  if (c == b'o' && name == "open_reader_with") {
-    return 304;
-  }
-  if (c == b'o' && name == "open_writer_with") {
-    return 305;
-  }
-  return 0;
-}
-
-function kind_id_len17(name: string): i32 {
-  if (name == "buf_decode_base32") {
-    return 489;
-  }
-  if (name == "aes_gcm_seal_into") {
-    return 444;
-  }
-  if (name == "aes_gcm_open_into") {
-    return 445;
-  }
-  if (name == "inner_mul_add_f64") {
-    return 382;
-  }
-  if (name == "crc32_cksum_array") {
-    return 373;
-  }
-  let c = name[0];
-  if (c == b's' && name == "set_process_group") {
-    return 284;
-  }
-  if (c == b'b' && name == "buf_push_filtered") {
-    return 326;
-  }
-  if (c == b'b' && name == "buf_push_expanded") {
-    return 328;
-  }
-  if (c == b'r' && name == "reader_copy_range") {
-    return 407;
-  }
-  return 0;
-}
-
-function kind_id_len18(name: string): i32 {
-  let c = name[0];
-  if (c == b'w' && name == "wasm_pollable_drop") {
-    return 161;
-  }
-  if (c == b's' && name == "signal_disposition") {
-    return 279;
-  }
-  if (c == b'd' && name == "disable_core_dumps") {
-    return 396;
-  }
-  if (c == b'a' && name == "arr_push_owned_i64") {
-    return 302;
-  }
-  if (c == b'a' && name == "arr_push_owned_f64") {
-    return 303;
-  }
-  if (c == b'm' && name == "mismatch_bytes_str") {
-    return 446;
-  }
-  if (c == b'w' && name == "writer_nonblocking") {
-    return 490;
-  }
-  return 0;
-}
-
-function kind_id_len19(name: string): i32 {
-  let c = name[0];
-  if (c == b'p' && name == "proc_waitpid_nohang") {
-    return 286;
-  }
-  if (c == b'p' && name == "proc_waitpid_status") {
-    return 397;
-  }
-  if (c == b'c' && name == "call_closure_direct") {
-    return 151;
-  }
-  if (c == b'w' && name == "wasm_timer_pollable") {
-    return 148;
-  }
-  return 0;
-}
-
-function kind_id_len23(name: string): i32 {
-  if (name == "buf_push_bytes_filtered") {
-    return 371;
-  }
-  if (name == "buf_push_bytes_expanded") {
-    return 372;
-  }
-  return 0;
-}
-
-function kind_id_len21(name: string): i32 {
-  if (name == "buf_push_bytes_mapped") {
-    return 370;
-  }
-  let c = name[0];
-  if (c == b'a' && name == "arr_push_shared_count") {
-    return 216;
-  }
-  if (c == b'a' && name == "arr_push_shared_bytes") {
-    return 217;
-  }
-  if (c == b'w' && name == "writer_splice_forever") {
-    return 431;
-  }
-  return 0;
-}
-
-function kind_name_0(id: i32): string {
-  if (id == 1) {
-    return "const_i32";
-  }
-  if (id == 2) {
-    return "const_i32_text";
-  }
-  if (id == 3) {
-    return "const_i64";
-  }
-  if (id == 4) {
-    return "const_f64";
-  }
-  if (id == 5) {
-    return "const_str";
-  }
-  if (id == 6) {
-    return "const_func";
-  }
-  if (id == 7) {
-    return "int_extend";
-  }
-  if (id == 8) {
-    return "int_wrap";
-  }
-  if (id == 9) {
-    return "int_cast";
-  }
-  if (id == 10) {
-    return "u32_wrap";
-  }
-  if (id == 11) {
-    return "i32_to_f64";
-  }
-  if (id == 12) {
-    return "f64_to_i32";
-  }
-  if (id == 13) {
-    return "f64_to_i64";
-  }
-  if (id == 14) {
-    return "f32_bits";
-  }
-  if (id == 15) {
-    return "f32_from_bits";
-  }
-  if (id == 16) {
-    return "f64_bits";
-  }
-  if (id == 17) {
-    return "f64_from_bits";
-  }
-  if (id == 18) {
-    return "load_local";
-  }
-  if (id == 19) {
-    return "store_local";
-  }
-  if (id == 20) {
-    return "tee_local";
-  }
-  if (id == 21) {
-    return "add";
-  }
-  if (id == 22) {
-    return "sub";
-  }
-  if (id == 23) {
-    return "mul";
-  }
-  if (id == 24) {
-    return "div_s";
-  }
-  if (id == 25) {
-    return "div_u";
-  }
-  if (id == 26) {
-    return "rem_s";
-  }
-  if (id == 27) {
-    return "rem_u";
-  }
-  if (id == 28) {
-    return "and";
-  }
-  if (id == 29) {
-    return "or";
-  }
-  if (id == 30) {
-    return "xor";
-  }
-  if (id == 31) {
-    return "shl";
-  }
-  if (id == 32) {
-    return "shr_s";
-  }
-  if (id == 33) {
-    return "shr_u";
-  }
-  if (id == 34) {
-    return "not";
-  }
-  if (id == 35) {
-    return "eq";
-  }
-  if (id == 36) {
-    return "ne";
-  }
-  if (id == 37) {
-    return "lt_s";
-  }
-  if (id == 38) {
-    return "le_s";
-  }
-  if (id == 39) {
-    return "gt_s";
-  }
-  if (id == 40) {
-    return "ge_s";
-  }
-  return "invalid";
-}
-
-function kind_name_1(id: i32): string {
-  if (id == 41) {
-    return "lt_u";
-  }
-  if (id == 42) {
-    return "le_u";
-  }
-  if (id == 43) {
-    return "gt_u";
-  }
-  if (id == 44) {
-    return "ge_u";
-  }
-  if (id == 45) {
-    return "fadd";
-  }
-  if (id == 46) {
-    return "fsub";
-  }
-  if (id == 47) {
-    return "fmul";
-  }
-  if (id == 48) {
-    return "fdiv";
-  }
-  if (id == 49) {
-    return "feq";
-  }
-  if (id == 50) {
-    return "fne";
-  }
-  if (id == 51) {
-    return "flt";
-  }
-  if (id == 52) {
-    return "fle";
-  }
-  if (id == 53) {
-    return "fgt";
-  }
-  if (id == 54) {
-    return "fge";
-  }
-  if (id == 55) {
-    return "fneg";
-  }
-  if (id == 56) {
-    return "fabs";
-  }
-  if (id == 57) {
-    return "fsqrt";
-  }
-  if (id == 58) {
-    return "fceil";
-  }
-  if (id == 59) {
-    return "ffloor";
-  }
-  if (id == 60) {
-    return "ftrunc";
-  }
-  if (id == 61) {
-    return "fround";
-  }
-  if (id == 67) {
-    return "load";
-  }
-  if (id == 68) {
-    return "store";
-  }
-  if (id == 69) {
-    return "load_i32";
-  }
-  if (id == 70) {
-    return "load_i64";
-  }
-  if (id == 71) {
-    return "load_ptr";
-  }
-  if (id == 72) {
-    return "store_i32";
-  }
-  if (id == 73) {
-    return "store_ptr";
-  }
-  if (id == 74) {
-    return "memcpy";
-  }
-  if (id == 75) {
-    return "memset";
-  }
-  if (id == 76) {
-    return "alloc";
-  }
-  if (id == 77) {
-    return "alloc_u8";
-  }
-  if (id == 78) {
-    return "free";
-  }
-  if (id == 79) {
-    return "ptr_width";
-  }
-  if (id == 80) {
-    return "heap_bump_bytes";
-  }
-  return "invalid";
-}
-
-function kind_name_2(id: i32): string {
-  if (id == 81) {
-    return "raw_alloc";
-  }
-  if (id == 82) {
-    return "raw_store8";
-  }
-  if (id == 83) {
-    return "raw_load8";
-  }
-  if (id == 84) {
-    return "raw_store_ptr";
-  }
-  if (id == 85) {
-    return "raw_load_ptr";
-  }
-  if (id == 86) {
-    return "raw_string";
-  }
-  if (id == 87) {
-    return "arr_make";
-  }
-  if (id == 88) {
-    return "arr_get";
-  }
-  if (id == 89) {
-    return "arr_set";
-  }
-  if (id == 90) {
-    return "arr_len";
-  }
-  if (id == 91) {
-    return "arr_rc";
-  }
-  if (id == 92) {
-    return "arr_push";
-  }
-  if (id == 93) {
-    return "arr_push_owned";
-  }
-  if (id == 94) {
-    return "arr_push_i64";
-  }
-  if (id == 95) {
-    return "arr_push_f64";
-  }
-  if (id == 96) {
-    return "arr_slice";
-  }
-  if (id == 97) {
-    return "str_len";
-  }
-  if (id == 98) {
-    return "str_concat";
-  }
-  if (id == 99) {
-    return "str_eq";
-  }
-  if (id == 100) {
-    return "str_cmp";
-  }
-  if (id == 101) {
-    return "str_index";
-  }
-  if (id == 102) {
-    return "str_slice";
-  }
-  if (id == 103) {
-    return "str_from_bytes";
-  }
-  if (id == 104) {
-    return "str_bytes";
-  }
-  if (id == 105) {
-    return "str_split";
-  }
-  if (id == 106) {
-    return "str_to_upper";
-  }
-  if (id == 107) {
-    return "str_to_lower";
-  }
-  if (id == 108) {
-    return "str_repeat";
-  }
-  if (id == 109) {
-    return "str_trim";
-  }
-  if (id == 111) {
-    return "str_replace";
-  }
-  if (id == 112) {
-    return "tcp_pollable";
-  }
-  if (id == 113) {
-    return "str_lines";
-  }
-  if (id == 116) {
-    return "tcp_close";
-  }
-  if (id == 120) {
-    return "opt_make";
-  }
-  return "invalid";
-}
-
-// fern-lint: allow cyclomatic-complexity
-// Each kind has one match arm.
-function kind_name_3(id: i32): string {
-  match (id) {
-    122 => {
-      return "opt_tag";
-    },
-    123 => {
-      return "opt_payload";
-    },
-    124 => {
-      return "opt_set_payload";
-    },
-    138 => {
-      return "struct_make";
-    },
-    139 => {
-      return "struct_get";
-    },
-    140 => {
-      return "struct_set";
-    },
-    141 => {
-      return "struct_set_shape";
-    },
-    142 => {
-      return "tuple_make";
-    },
-    143 => {
-      return "tuple_get";
-    },
-    144 => {
-      return "tuple_set";
-    },
-    145 => {
-      return "variant_is";
-    },
-    146 => {
-      return "dyn_box";
-    },
-    147 => {
-      return "dyn_dispatch";
-    },
-    148 => {
-      return "wasm_timer_pollable";
-    },
-    149 => {
-      return "call_direct";
-    },
-    150 => {
-      return "call_indirect";
-    },
-    151 => {
-      return "call_closure_direct";
-    },
-    152 => {
-      return "block";
-    },
-    153 => {
-      return "loop";
-    },
-    154 => {
-      return "if";
-    },
-    155 => {
-      return "else";
-    },
-    156 => {
-      return "end";
-    },
-    157 => {
-      return "br";
-    },
-    158 => {
-      return "brif";
-    },
-    159 => {
-      return "drop";
-    },
-    160 => {
-      return "return";
-    },
-    _ => {
-      return "invalid";
-    }
-  }
-}
-
-// The names past 160, in two halves so each stays readable.
-function kind_name_4(id: i32): string {
-  if (id >= 491 && id <= 497) {
-    return kind_name_worker(id);
-  }
-  if (id == 498) {
-    return "writer_set_times";
-  }
-  let a = kind_name_4a(id);
-  if (a != "invalid") {
-    return a;
-  }
-  return kind_name_4b(id);
-}
-
-// fern-lint: allow cyclomatic-complexity
-// Each kind has one match arm.
-function kind_name_4a(id: i32): string {
-  if (id == 161) {
-    return "wasm_pollable_drop";
-  }
-  if (id == 162) {
-    return "wasm_block";
-  }
-  if (id == 163) {
-    return "print_str";
-  }
-  if (id == 164) {
-    return "eprint_str";
-  }
-  if (id == 165) {
-    return "putchar";
-  }
-  if (id == 166) {
-    return "exit";
-  }
-  if (id == 167) {
-    return "wasm_poll";
-  }
-  if (id == 169) {
-    return "read_file";
-  }
-  if (id == 233) {
-    return "read_file_bytes";
-  }
-  if (id == 170) {
-    return "write_file";
-  }
-  if (id == 171) {
-    return "read_dir";
-  }
-  if (id == 310) {
-    return "read_dir_all";
-  }
-  if (id == 172) {
-    return "remove_dir_all";
-  }
-  if (id == 173) {
-    return "remove_file";
-  }
-  if (id == 174) {
-    return "temp_dir";
-  }
-  if (id == 175) {
-    return "stat";
-  }
-  if (id == 236) {
-    return "lstat";
-  }
-  if (id == 176) {
-    return "env";
-  }
-  if (id == 177) {
-    return "subprocess";
-  }
-  if (id == 178) {
-    return "read_chunk";
-  }
-  if (id == 348) {
-    return "read_chunk_bytes";
-  }
-  if (id == 349) {
-    return "write_bytes";
-  }
-  if (id == 350) {
-    return "write_some_bytes";
-  }
-  if (id == 179) {
-    return "reader_close";
-  }
-  if (id == 180) {
-    return "args";
-  }
-  if (id == 181) {
-    return "sleep_ms";
-  }
-  if (id == 182) {
-    return "monotonic_ns";
-  }
-  if (id == 183) {
-    return "now_ns";
-  }
-  if (id == 184) {
-    return "now_unix_ms";
-  }
-  if (id == 185) {
-    return "random_bytes";
-  }
-  if (id == 186) {
-    return "random_i32";
-  }
-  if (id == 187) {
-    return "poll";
-  }
-  if (id == 188) {
-    return "timer_fd";
-  }
-  if (id == 199) {
-    return "store_i64";
-  }
-  if (id == 200) {
-    return "tcp_listen";
-  }
-  if (id == 201) {
-    return "tcp_accept";
-  }
-  if (id == 511) {
-    return "tcp_accept_with";
-  }
-  if (id == 516) {
-    return "udp_sendmmsg";
-  }
-  if (id == 517) {
-    return "udp_recvmmsg";
-  }
-  if (id == 320) {
-    return "tcp_local_port";
-  }
-  if (id == 332) {
-    return "tcp_listen_with";
-  }
-  if (id == 333) {
-    return "tcp_socket_ctl";
-  }
-  if (id == 346) {
-    return "tcp_sendfile";
-  }
-  if (id == 334) {
-    return "udp_bind";
-  }
-  if (id == 442) {
-    return "udp_bind_with";
-  }
-  if (id == 335) {
-    return "udp_connect";
-  }
-  if (id == 336) {
-    return "udp_sendto";
-  }
-  if (id == 337) {
-    return "udp_recvfrom";
-  }
-  if (id == 338) {
-    return "tcp_connect_with";
-  }
-  if (id == 339) {
-    return "unix_listen";
-  }
-  if (id == 340) {
-    return "unix_connect";
-  }
-  if (id == 341) {
-    return "reactor_new";
-  }
-  if (id == 342) {
-    return "reactor_ctl";
-  }
-  if (id == 343) {
-    return "reactor_wait";
-  }
-  if (id == 344) {
-    return "tcp_recv_into";
-  }
-  if (id == 486) {
-    return "tcp_addr_into";
-  }
-  if (id == 345) {
-    return "str_data";
-  }
-  if (id == 202) {
-    return "writer_write";
-  }
-  if (id == 203) {
-    return "open_file";
-  }
-  if (id == 306) {
-    return "buf_push_u64";
-  }
-  if (id == 485) {
-    return "buf_push_decimal";
-  }
-  if (id == 487) {
-    return "buf_push_base64";
-  }
-  if (id == 488) {
-    return "buf_push_base32";
-  }
-  if (id == 489) {
-    return "buf_decode_base32";
-  }
-  if (id == 304) {
-    return "open_reader_with";
-  }
-  if (id == 305) {
-    return "open_writer_with";
-  }
-  if (id == 204) {
-    return "syscall3";
-  }
-  if (id == 205) {
-    return "raw_scratch";
-  }
-  if (id == 206) {
-    return "syscall4";
-  }
-  if (id == 207) {
-    return "raw_environ";
-  }
-  if (id == 331) {
-    return "raw_splice_pipe";
-  }
-  if (id == 287) {
-    return "raw_cover";
-  }
-  if (id == 288) {
-    return "line";
-  }
-  if (id == 367) {
-    return "raw_task_state";
-  }
-  if (id == 443) {
-    return "raw_vdso";
-  }
-  if (id == 444) {
-    return "aes_gcm_seal_into";
-  }
-  if (id == 445) {
-    return "aes_gcm_open_into";
-  }
-  if (id == 380) {
-    return "str_from_bytes_range";
-  }
-  if (id == 211) {
-    return "proc_fork";
-  }
-  if (id == 212) {
-    return "proc_waitpid";
-  }
-  if (id == 213) {
-    return "proc_exec";
-  }
-  if (id == 216) {
-    return "arr_push_shared_count";
-  }
-  if (id == 217) {
-    return "arr_push_shared_bytes";
-  }
-  if (id == 218) {
-    return "const_struct";
-  }
-  if (id == 219) {
-    return "clz";
-  }
-  if (id == 220) {
-    return "ctz";
-  }
-  if (id == 221) {
-    return "popcount";
-  }
-  if (id == 222) {
-    return "map_hash_seed";
-  }
-  if (id == 223) {
-    return "raw_addr";
-  }
-  if (id == 224) {
-    return "raw_arr_box";
-  }
-  if (id == 225) {
-    return "memchr";
-  }
-  if (id == 226) {
-    return "write_file_exec";
-  }
-  return "invalid";
-}
-
-// fern-lint: allow cyclomatic-complexity
-// Each kind has one match arm.
-function kind_name_4b(id: i32): string {
-  if (id == 227) {
-    return "ascii_run";
-  }
-  if (id == 234) {
-    return "rmemchr";
-  }
-  if (id == 235) {
-    return "count_byte";
-  }
-  if (id == 253) {
-    return "sum_bytes";
-  }
-  if (id == 324) {
-    return "scan_set";
-  }
-  if (id == 327) {
-    return "count_runs";
-  }
-  if (id == 329) {
-    return "bsd_sum";
-  }
-  if (id == 325) {
-    return "buf_push_mapped";
-  }
-  if (id == 326) {
-    return "buf_push_filtered";
-  }
-  if (id == 328) {
-    return "buf_push_expanded";
-  }
-  if (id == 322) {
-    return "scale_f64";
-  }
-  if (id == 309) {
-    return "crc32_cksum";
-  }
-  if (id == 228) {
-    return "syscall5";
-  }
-  if (id == 323) {
-    return "syscall6";
-  }
-  if (id == 229) {
-    return "heap_mark";
-  }
-  if (id == 230) {
-    return "heap_release_to";
-  }
-  if (id == 231) {
-    return "create_dir_all";
-  }
-  if (id == 232) {
-    return "isatty";
-  }
-  if (id == 237) {
-    return "access";
-  }
-  if (id == 238) {
-    return "geteuid";
-  }
-  if (id == 239) {
-    return "getegid";
-  }
-  if (id == 240) {
-    return "hostname";
-  }
-  if (id == 241) {
-    return "fd_stat";
-  }
-  if (id == 242) {
-    return "reader_seek";
-  }
-  if (id == 330) {
-    return "reader_splice";
-  }
-  if (id == 407) {
-    return "reader_copy_range";
-  }
-  if (id == 307) {
-    return "fd_flags";
-  }
-  if (id == 308) {
-    return "write_some";
-  }
-  if (id == 243) {
-    return "signal_ignore";
-  }
-  if (id == 244) {
-    return "signal_default";
-  }
-  if (id == 245) {
-    return "mismatch";
-  }
-  if (id == 246) {
-    return "getuid";
-  }
-  if (id == 247) {
-    return "getgid";
-  }
-  if (id == 248) {
-    return "getgroups";
-  }
-  if (id == 249) {
-    return "environ";
-  }
-  if (id == 250) {
-    return "uname_field";
-  }
-  if (id == 251) {
-    return "getcwd";
-  }
-  if (id == 252) {
-    return "cpu_count";
-  }
-  if (id == 260) {
-    return "create_dir";
-  }
-  if (id == 261) {
-    return "remove_dir";
-  }
-  if (id == 262) {
-    return "create_link";
-  }
-  if (id == 263) {
-    return "create_symlink";
-  }
-  if (id == 264) {
-    return "read_link";
-  }
-  if (id == 265) {
-    return "umask";
-  }
-  if (id == 266) {
-    return "sleep_ns";
-  }
-  if (id == 267) {
-    return "rename";
-  }
-  if (id == 268) {
-    return "chmod";
-  }
-  if (id == 269) {
-    return "set_file_times";
-  }
-  if (id == 270) {
-    return "statfs";
-  }
-  if (id == 271) {
-    return "process_alive";
-  }
-  if (id == 272) {
-    return "rlimit_nofile";
-  }
-  if (id == 273) {
-    return "truncate";
-  }
-  if (id == 274) {
-    return "mknod";
-  }
-  if (id == 275) {
-    return "chown_at";
-  }
-  if (id == 321) {
-    return "chmod_at";
-  }
-  if (id == 276) {
-    return "window_size";
-  }
-  if (id == 277) {
-    return "chdir";
-  }
-  if (id == 278) {
-    return "signal_mask";
-  }
-  if (id == 279) {
-    return "signal_disposition";
-  }
-  if (id == 280) {
-    return "proc_exec_as";
-  }
-  if (id == 281) {
-    return "writer_truncate";
-  }
-  if (id == 490) {
-    return "writer_nonblocking";
-  }
-  if (id == 366) {
-    return "fd_drop_cache";
-  }
-  if (id == 282) {
-    return "priority";
-  }
-  if (id == 283) {
-    return "set_priority";
-  }
-  if (id == 284) {
-    return "set_process_group";
-  }
-  if (id == 286) {
-    return "proc_waitpid_nohang";
-  }
-  if (id == 285) {
-    return "signal_send";
-  }
-  if (id >= 291 && id <= 297) {
-    return buf_kind_name(id);
-  }
-  if (id == 298) {
-    return "sync";
-  }
-  if (id == 299) {
-    return "fd_fsync";
-  }
-  if (id == 300) {
-    return "fd_fdatasync";
-  }
-  if (id == 301) {
-    return "fd_syncfs";
-  }
-  if (id == 311) {
-    return "fd_dup_onto";
-  }
-  if (id == 312) {
-    return "termios_get";
-  }
-  if (id == 313) {
-    return "termios_set";
-  }
-  if (id == 314) {
-    return "set_window_size";
-  }
-  if (id == 315) {
-    return "heap_alloc_count";
-  }
-  if (id == 316) {
-    return "chroot";
-  }
-  if (id == 317) {
-    return "setuid";
-  }
-  if (id == 318) {
-    return "setgid";
-  }
-  if (id == 319) {
-    return "setgroups";
-  }
-  if (id == 302) {
-    return "arr_push_owned_i64";
-  }
-  if (id == 303) {
-    return "arr_push_owned_f64";
-  }
-  return "invalid";
-}
-
-function buf_kind_name(id: i32): string {
-  if (id == 291) {
-    return "buf_new";
-  }
-  if (id == 292) {
-    return "buf_push";
-  }
-  if (id == 293) {
-    return "buf_push_range";
-  }
-  if (id == 294) {
-    return "buf_push_byte";
-  }
-  if (id == 295) {
-    return "buf_len";
-  }
-  if (id == 296) {
-    return "buf_take";
-  }
-  return "buf_free";
-}
-
-pub function kind_name(id: i32): string {
-  if (id == K_ALLOC_UNINIT) {
-    return "alloc_uninit";
-  }
-  if (id == K_VEXTRACT_BITS) {
-    return "vextract_bits";
-  }
-  if (id == K_VPERMUTE) {
-    return "vpermute";
-  }
-  if (id == K_VPACK) {
-    return "vpack";
-  }
-  if (is_lane_kind(id)) {
-    return lane_kind_names()[id - LANE_KIND_FIRST];
-  }
-  if (id == 480) {
-    return "crc32_ieee";
-  }
-  if (id == 481) {
-    return "crc32_ieee_array";
-  }
-  if (id == 411) {
-    return "bswap";
-  }
-  if (is_device_kind(id)) {
-    return device_kind_name(id);
-  }
-  if (id == 446) {
-    return "mismatch_bytes_str";
-  }
-  if (id == 410) {
-    return "sha256_hw_blocks";
-  }
-  if (id == 441) {
-    return "sha1_hw_blocks";
-  }
-  if (id == 440) {
-    return "sha1_hw";
-  }
-  if (id == 409) {
-    return "sha256_hw";
-  }
-  if (id >= 420 && id <= 428) {
-    return dir_kind_name(id);
-  }
-  if (id == 430) {
-    return "mulhi_u";
-  }
-  if (id == 484) {
-    return "mulhi_s";
-  }
-  if (id == 431) {
-    return "writer_splice_forever";
-  }
-  if (id == 432) {
-    return "read_dir_ino_all";
-  }
-  if (id == 433) {
-    return "utf8_blocks";
-  }
-  if (id == 434) {
-    return "ring_new";
-  }
-  if (id == 435) {
-    return "ring_ctl";
-  }
-  if (id == 436) {
-    return "ring_wait";
-  }
-  if (id == 437) {
-    return "tcp_ktls";
-  }
-  if (id == 438) {
-    return "ring_recv";
-  }
-  if (id == 439) {
-    return "ring_send_zc";
-  }
-  if (id == 408) {
-    return "pipe";
-  }
-  if (id == 406) {
-    return "set_extproc";
-  }
-  if (id == 405) {
-    return "clone_file";
-  }
-  if (id == 404) {
-    return "ghash";
-  }
-  if (id == 403) {
-    return "aes_ctr32";
-  }
-  if (id == 402) {
-    return "aes_expand_key";
-  }
-  if (id == 401) {
-    return "sysctl";
-  }
-  if (id == 400) {
-    return "vg_request";
-  }
-  if (id == 399) {
-    return "ct_mark";
-  }
-  if (id == 398) {
-    return "mounts";
-  }
-  if (id == 397) {
-    return "proc_waitpid_status";
-  }
-  if (id == 396) {
-    return "disable_core_dumps";
-  }
-  if (id == 395) {
-    return "signal_raise";
-  }
-  if (id == 394) {
-    return "signal_catch_interrupting";
-  }
-  if (id == 393) {
-    return "signal_taken";
-  }
-  if (id == 392) {
-    return "signal_catch";
-  }
-  if (id == 391) {
-    return "read_dir_ino";
-  }
-  if (id == 390) {
-    return "str_hash";
-  }
-  if (id == 389) {
-    return "clock_resolution";
-  }
-  if (id == 388) {
-    return "clock_set";
-  }
-  if (id == 387) {
-    return "tcp_send_buf";
-  }
-  if (id == 386) {
-    return "buf_clear";
-  }
-  if (id == 385) {
-    return "call_word";
-  }
-  if (id == 384) {
-    return "ret_word";
-  }
-  if (id == 383) {
-    return "arr_reserve";
-  }
-  if (id == 381) {
-    return "outer_mul_f64";
-  }
-  if (id == 382) {
-    return "inner_mul_add_f64";
-  }
-  if (id == 377) {
-    return "lsetxattr_bytes";
-  }
-  if (id == 376) {
-    return "setxattr_bytes";
-  }
-  if (id == 375) {
-    return "lgetxattr_bytes";
-  }
-  if (id == 374) {
-    return "getxattr_bytes";
-  }
-  if (id == 373) {
-    return "crc32_cksum_array";
-  }
-  if (id == 370) {
-    return "buf_push_bytes_mapped";
-  }
-  if (id == 371) {
-    return "buf_push_bytes_filtered";
-  }
-  if (id == 372) {
-    return "buf_push_bytes_expanded";
-  }
-  if (id == 355) {
-    return "udp_sendto_bytes";
-  }
-  if (id == 356) {
-    return "rename_noreplace";
-  }
-  if (id == 357) {
-    return "rename_exchange";
-  }
-  if (id == 353) {
-    return "tcp_send_bytes";
-  }
-  if (id == 368) {
-    return "sum_bytes_array";
-  }
-  if (id == 369) {
-    return "bsd_sum_bytes";
-  }
-  if (id == 352) {
-    return "write_file_bytes";
-  }
-  if (id == 347) {
-    return "buf_take_bytes";
-  }
-  if (id == 351) {
-    return "buf_push_bytes_range";
-  }
-  if (id == 359) {
-    return "count_byte_bytes";
-  }
-  if (id == 482) {
-    return "count_below_u64";
-  }
-  if (id == 483) {
-    return "prctl_query";
-  }
-  if (id == 358) {
-    return "memchr_bytes";
-  }
-  if (id == 360) {
-    return "rmemchr_bytes";
-  }
-  if (id == 361) {
-    return "scan_set_bytes";
-  }
-  if (id == 362) {
-    return "getxattr";
-  }
-  if (id == 363) {
-    return "lgetxattr";
-  }
-  if (id == 379) {
-    return "count_runs_bytes";
-  }
-  if (id == 378) {
-    return "mismatch_bytes";
-  }
-  if (id == 364) {
-    return "setxattr";
-  }
-  if (id == 365) {
-    return "lsetxattr";
-  }
-  if (id <= 40) {
-    return kind_name_0(id);
-  }
-  if (id <= 80) {
-    return kind_name_1(id);
-  }
-  if (id <= 120) {
-    return kind_name_2(id);
-  }
-  if (id <= 160) {
-    return kind_name_3(id);
-  }
-  return kind_name_4(id);
+  return id > 0 && id < KIND_NAMES.len() && KIND_NAMES[id] == "";
 }
 
 function pops0(t: i32): boolean {

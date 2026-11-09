@@ -42,6 +42,19 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	if code, out := run(wasmPath); code != 0 {
 		t.Errorf("watbin's module exits %d, want 0: check %d failed\n%s", code, code, out)
 	}
+	for _, spelling := range []string{"+8", "0x8", "0_8", "0008", "+0x08", "0x0000000000000000000000000008"} {
+		wat := strings.ReplaceAll(simdLanesWat, "i8x16.shuffle 8 ", "i8x16.shuffle "+spelling+" ")
+		if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, out := run(watPath); code != 0 {
+			t.Fatalf("independent WAT parser rejects %q: %s", spelling, out)
+		}
+		assembled := assembleWithWatbin(t, wasmtime, asmWatPath, dir, "shuffle_spelling")
+		if code, out := run(assembled); code != 0 {
+			t.Fatalf("shuffle spelling %q: exit %d\n%s", spelling, code, out)
+		}
+	}
 
 	if err := os.WriteFile(watPath, []byte(simdLaneOutOfRangeWat), 0o644); err != nil {
 		t.Fatal(err)
@@ -53,7 +66,7 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	if !strings.Contains(string(out), "lane index out of range: f64x2.extract_lane 2") {
 		t.Errorf("watbin refused the module for another reason\n%s", out)
 	}
-	for _, bad := range []string{"32", "-1", "x"} {
+	for _, bad := range []string{"32", "-1", "x", "-0", "0x20", "0X1", "0x", "0x_1", "1_", "1__0", "+", "184467440737095516160"} {
 		invalid := `(module (memory 1) (func (export "_start")
 f64.const 1.0 f64x2.splat f64.const 2.0 f64x2.splat
 i8x16.shuffle ` + bad + ` 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 drop))`
