@@ -297,12 +297,11 @@ Each is a bound with a test that crosses it.
       steps (`written`, `read_into`). A fifth fewer instructions per
       request with 64 requests in flight per connection
       (`docs/benchmarks/net-h3-2026-10-17.md`).
-    - **What remains per request**, by the x86-64 trace: packet receive
-      and AEAD open, the HTTP/3 request path (each request record bound
-      before it is rebuilt, a field section's partial copied), the AEAD
-      blocks a fused kernel would fold, and `concat`, which builds its
-      result an element at a time; a runtime kernel sizing it once is a
-      compiler change that every program gains from.
+    - **What remains per request**: 50.69 allocations on 2026-11-09. No
+      site costs more than three. HTTP/3 and QPACK cost 21 of them, and
+      the serve loop, the packets and the streams about 9 each.
+      `docs/benchmarks/net-h3-sites-2026-11-09.md` ranks the sites and
+      says how to trace them again.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
       The send side landed with #12516: `udp_sendmmsg(sock, addrs, data,
