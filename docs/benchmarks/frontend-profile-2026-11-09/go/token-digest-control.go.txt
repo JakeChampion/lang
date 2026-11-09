@@ -1,0 +1,62 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/lexer"
+)
+
+type tokenRecord struct {
+	Kind   string
+	Text   string
+	Pos    ast.Position
+	Scalar int32
+	Suffix string
+	FParts []lexer.FStringPart
+}
+
+func main() {
+	root := "/workspace/lang-semantic-base-20261109"
+	files, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	drivers, err := filepath.Glob(filepath.Join(root, "compiler", "drivers", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	files = append(files, drivers...)
+	rows := []map[string]any{}
+	for _, path := range files {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+		tokens, comments, err := lexer.Tokenize(string(source))
+		if err != nil {
+			panic(err)
+		}
+		hash := sha256.New()
+		hash.Write([]byte("Fern-Go-token-stream-v1\n"))
+		encoder := json.NewEncoder(hash)
+		for _, token := range tokens {
+			row := tokenRecord{token.Kind.String(), token.Text, token.Pos, token.Scalar, token.Suffix(), token.FParts()}
+			if err := encoder.Encode(row); err != nil {
+				panic(err)
+			}
+		}
+		if err := encoder.Encode(comments); err != nil {
+			panic(err)
+		}
+		rows = append(rows, map[string]any{"path": path, "source_bytes": len(source), "source_sha256": fmt.Sprintf("%x", sha256.Sum256(source)), "tokens": len(tokens), "comments": len(comments), "token_stream_sha256": fmt.Sprintf("%x", hash.Sum(nil))})
+	}
+	result := map[string]any{"format": "Fern-Go-token-stream-v1", "library_source": "3a296b887ccb1c879743cce8a2a67351c548481f", "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef", "files": rows, "note": "Baseline correctness control, not a performance sample. Token kind/text/position/scalar/suffix/f-string parts and all comments enter each digest."}
+	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+		panic(err)
+	}
+}

@@ -75,6 +75,11 @@ The [corpus census](go/go-corpus.json) retains every file hash and acceptance re
 The parser benchmark processes only `compiler/lexer.fern` and includes tokenization.
 Each benchmark uses `-test.benchtime=10s` and one profiled invocation.
 
+The baseline Go lexer and parser regression suites pass.
+A [correctness control](go/token-digests.json) records 3,706,487 tokens and 4,200 comments across all 391 files.
+The digests include token kind, text, position, scalar, suffix, f-string parts, and comments.
+These digests are baseline correctness data, not performance samples.
+
 The lexer profile attributes 30.00% of cumulative CPU time to `strings.HasPrefix` through its internal helper.
 Its [source annotation](go/go-lexer-next.txt) attributes 9.99 seconds to the operator-prefix test line.
 That is about 37.74% of the profile's 26.47 CPU seconds.
