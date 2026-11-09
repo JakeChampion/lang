@@ -1,8 +1,7 @@
 import "../asmcore";
 import "../asm_ir";
 import "../asm_arm64_ir";
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ssaprepare";
 import "../ssacreditemitted" as emitted;
@@ -37,7 +36,7 @@ function emit(arm: boolean, exiting: boolean, debug: boolean): ssaprepare.Emitte
 }
 
 function emit_source(arm: boolean, src: string, debug: boolean): ssaprepare.Emitted[] {
-  let mod = parser.parse_module(lexer.tokenize(src));
+  let mod = boxed.parsed(src, ["parent", "replace", "handoff"]);
   require(!asmcore.refuse_parse_errors([mod]), 61);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
   let sw = asmcore.Switches { backtrace: false, sanitize: debug, sandbox: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [] };

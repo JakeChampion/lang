@@ -1,5 +1,4 @@
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ircore";
 import "../asmcore";
@@ -188,7 +187,7 @@ function credit(f: ssa.SFunc): ssa.SFunc {
 }
 
 pub function run(source: string, target: string): void {
-  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let driven = semlower.driven(boxed.parsed(source, ["parent", "replace", "handoff"]), target);
   let g = match (ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub)) { Some(g) => g, None => { exit(97); } };
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
   let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache, ssa_lift.kind_table()).leaves;

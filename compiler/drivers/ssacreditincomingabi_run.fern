@@ -1,5 +1,4 @@
-import "../lexer";
-import "../parser";
+import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ircore";
 import "../irtables";
@@ -204,7 +203,7 @@ function emitted_controls(sub: ircore.Sub, mode: i32): ircore.Sub {
 
 function target_checks(target: string): void {
   for generic in [false, true] {
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic))), target).sub;
+    let sub = semlower.driven(boxed.parsed(source(generic), ["parent", "replace", "handoff"]), target).sub;
     expect(sub, "handoff", "replace", "");
     expect(sub, "handoff", "handoff", "missing or ambiguous incoming ABI");
     for subject in ["handoff", "parent", "replace"] {

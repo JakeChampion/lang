@@ -9,6 +9,7 @@ import "../semrecords";
 import "../ssacreditabi" as abi;
 import "../ssacredithelper" as helper;
 import "../util";
+import "./ssacreditboxed" as boxed;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -146,10 +147,10 @@ function changed(sub: ircore.Sub, rename: boolean): ircore.Sub {
 function target_checks(target: string): void {
   for generic in [false, true] {
     let paired = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false, false))), target).sub;
-    check(paired, "handoff", "unsupported caller origin effect");
-    let original = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, true, true))), target).sub;
+    check(paired, "handoff", "origin callee proof refused: unsupported allocation producer effect");
+    let original = semlower.driven(boxed.parsed(source(generic, true, true), ["parent", "replace", "handoff"]), target).sub;
     check(original, "replace", "scalar call may exit with unproved caller obligations");
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false, true))), target).sub;
+    let sub = semlower.driven(boxed.parsed(source(generic, false, true), ["parent", "replace", "handoff"]), target).sub;
     check(sub, "replace", "proved checked-capacity consumer invocation");
     assertion_contracts(sub);
     for name in ["require", "__sem_drop_Parent", "__sem_release_Parent"] {
