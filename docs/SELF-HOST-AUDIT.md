@@ -15,10 +15,9 @@ concrete remediation. Check items off as they land.
 > it does **not** explain most of the duplication below — receiver methods,
 > struct-update spread, sibling imports, and generics (`astwalk.fern:19` takes
 > `[T]`) are all already used in this tree, so a shared sibling `util.fern` /
-> `modload.fern` is fully within the subset. A handful of modules
-> (`watbin`, `x86_native`, `arm64_native`, `elf`, `lexer`) import nothing **by
-> design**; their duplicate helpers are deliberate and are called out where they
-> appear.
+> `modload.fern` is fully within the subset. The modules that import nothing
+> are listed in `self_host_import_free_drift_test.go`, which also checks that
+> their copies of `util` functions stay equal.
 
 ---
 
@@ -56,7 +55,7 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
 
 | Area | Files | Grade | One-line take |
 |---|---|---|---|
-| Machine-code encoders / containers | `x86_native` (pt.1), `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. Import-free by design. |
+| Machine-code encoders / containers | `x86_native` (pt.1), `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. |
 | Optimiser / SSA | `ssa` | B− | Strong algorithms + comments; undermined by an overloaded `imm` field and 2 giant fns. |
 | Literate / printer / constfold | `literate`, `printer`, `constfold` | B | Clean and tested; only duplication + hand-rolled option types. |
 | Frontend | `lexer`, `parser` | B− | Capable; no AST visitor in the rewrite passes, positionless `StmtUnknown`, types-as-strings. |
@@ -99,19 +98,16 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
   every decimal→f64 reader in the self-host is the same correctly-rounding
   kernel — the classic exact decimal-shift algorithm (one digit buffer written
   in place + movable point, grade-school ÷2/×2 to binary-normalize, bit extraction,
-  round-to-nearest ties-to-even, with subnormal/±inf/±0 handling). It exists in
-  FOUR copies: `util.fern:382 parse_f64_bits`, which the IR emitters and the
-  interpreter's literal reader import, and the three the import-free assembler
-  modules keep standalone (`watbin.fern:458`, `x86_native.fern:2141`,
-  `arm64_native.fern:2917`). The reference commentary lives in `util.fern`.
+  round-to-nearest ties-to-even, with subnormal/±inf/±0 handling). It exists
+  once, as `util.parse_f64_bits`. The IR emitters, the interpreter's literal
+  reader, and the three assemblers (`watbin`, `x86_native`, `arm64_native`)
+  import it.
   Pinned bit-exact against `strconv.ParseFloat` by
-  `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` and
+  `TestSelfHostParseF64` and
   `TestSelfHostInterpFloatLiteralBits` on a shared corpus of the compiler's
   libm constant spellings, the hard subnormal/overflow boundary literals
   (`2.4703282292062327e-324` et al.), exact ULP ties written out in full, and
-  17-digit round-trip spellings of seeded random doubles;
-  `TestSelfHostParseF64MirrorsAgree` holds the four copies to identical code,
-  since three of them only run behind a Linux x86-64 toolchain.
+  17-digit round-trip spellings of seeded random doubles.
 
 - [x] **SH-005 — the GAS-text x86 front-end silently dropped unsupported
   mnemonics.** _Done:_ `X86Asm` (`x86_native.fern:1397`) grew an
@@ -173,15 +169,12 @@ findings. Ranked by leverage.
     same names, genuinely different code. See SH-025 for the part of this that
     *is* liftable.
   - **Per-driver `main`** — one per `*_run.fern`. See SH-056.
-  - **Import-free modules.** `watbin.fern`, `x86_native.fern`,
-    `arm64_native.fern`, and `elf.fern` are single self-contained modules by
-    design (each header says so), and `lexer.fern` likewise imports nothing.
-    Their duplicate helpers must stay.
-  - The **`parse_f64_bits` + `pf64_halve` / `pf64_double` / `pf64_top_bit` /
-    `pf64_trim` family and its `PF64_` constants** — 5 functions in 4 copies each (`util.fern:382`,
-    `watbin.fern:458`, `x86_native.fern:2141`, `arm64_native.fern:2917`) — is
-    hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
-    **Not a dedupe target.**
+  - **Assembler modules.** `watbin`, `x86_native` and `arm64_native` import
+    `util`, and the tests load them through `modload`. Their copies of the
+    `parse_f64_bits` family and of `index_of_str` are deleted. `x86_native` and
+    `arm64_native` also import `gas`, which holds the DWARF call-frame encoder
+    and the GAS-text helpers they had in two copies. `elf.fern` imports nothing
+    and shares no function with `util`.
 
   The last candidate was `split_commas` (`irlower`, `printer`).
   The 2026-10 tree no longer contains `irlower.fern`.
@@ -209,15 +202,13 @@ findings. Ranked by leverage.
   half reads values through `quoted_value`, which scans to the closing quote and
   steps over a trailing `\r`.
 
-  **`literate`'s copies cannot be lifted at all**: the Go gates hand
-  `literate.fern` to the compiler as one standalone source with no module
-  staging (`literate.fern:54-56` states the import-free design), so its `trim`
-  and `contains` stay. `ferndoc`'s `split_commas` is likewise excluded — it
+  `literate` imports `util`, so its copies of `trim`, `contains` and
+  `index_of_sub` are deleted. `ferndoc`'s `split_commas` is excluded — it
   annotates its slices `own(...)`, a different ownership contract from the
   `irlower`/`printer` pair.
 
   **Naming hazard — a naive `util.`-qualification sweep binds the wrong
-  function.** `contains` is substring search (`util.fern:342`, `literate.fern:74`)
+  function.** `contains` is substring search (`util.contains`)
   while array membership is the differently-named `contains_str`
   (`ssa.fern:1773`). Check the parameter shape, not the name.
 
@@ -1677,8 +1668,8 @@ appendix §6.)
   They had drifted where it counted: only fern's `should_load` took a `deps`
   param and consulted the manifest dependency list, so a manifest-declared
   import resolved under `fern` and silently did not under the asm loader.
-  Lifted to `util.fern` — which imports nothing, so neither driver's compile
-  closure grows and both already imported it. The shared `should_load` is
+  Lifted to `util.fern`. Both drivers already imported it, so neither driver's
+  compile closure grows. The shared `should_load` is
   fern's three-argument superset; `asm_load_run` passes an empty `deps` because
   it reads no manifest at all (stdlib root on argv, no `fern_toml` dependency),
   so that is the driver's true dependency set rather than a stub. `join_path`

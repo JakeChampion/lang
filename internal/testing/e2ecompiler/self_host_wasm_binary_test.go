@@ -168,14 +168,8 @@ var wantSIMDMnemonics = map[string][]string{
 func buildWatbinAssembler(t *testing.T, gcc string, runner []string, driverBin, dir string) string {
 	t.Helper()
 	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
+	asmSrc.WriteString(assemblerSource(t, "watbin.fern"))
+	asmSrc.WriteByte('\n')
 	asmSrc.WriteString(withPrintInt(asmReadFileDriver))
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
 	if len(asmWat) == 0 {

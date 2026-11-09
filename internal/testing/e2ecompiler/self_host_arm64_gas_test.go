@@ -81,11 +81,11 @@ function main(): i32 {
     // exponent parsing (#4342): arm64_parse_f64 mirrors x86_gas_parse_f64 —
     // a spliced-text .double operand like 1e3 must scale by its exponent,
     // not stop at the 'e'.
-    let pf: f64 = arm64_parse_f64("1e3");
+    let pf: f64 = f64_from_bits(util__parse_f64_bits("1e3"));
     if (pf < 999.9 || pf > 1000.1) { return 13; }
-    let pg: f64 = arm64_parse_f64("1.5e-2");
+    let pg: f64 = f64_from_bits(util__parse_f64_bits("1.5e-2"));
     if (pg < 0.0149 || pg > 0.0151) { return 14; }
-    let ph: f64 = arm64_parse_f64("-2.5e+2");
+    let ph: f64 = f64_from_bits(util__parse_f64_bits("-2.5e+2"));
     if (ph < (0.0 - 250.1) || ph > (0.0 - 249.9)) { return 15; }
     // SH-006: the register decode is STRICT — digit-suffix garbage and
     // out-of-range numbers return -1 instead of a wrong register (x1a

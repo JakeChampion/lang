@@ -41,7 +41,7 @@ function assignment(line: string): boolean {
     i += 1;
   }
   let rest = util.trim(slice_unchecked(line, i, line.len()) + "");
-  return i > 0 && util.str_has_prefix(rest, "=");
+  return i > 0 && rest.starts_with("=");
 }
 
 function lines(text: string): string[] {
@@ -52,7 +52,7 @@ function lines(text: string): string[] {
       return [];
     }
     for directive in [".set", ".equ", ".equiv", ".macro", ".include", ".if", ".rept", ".irp", ".symver", ".weakref", ".code", ".intel_syntax", ".att_syntax", ".arch", ".syntax", ".thumb", ".arm", ".altmacro"] {
-      if (util.str_has_prefix(line, directive)) {
+      if (line.starts_with(directive)) {
         return [];
       }
     }
@@ -68,7 +68,7 @@ function body(all: string[], start: i32): string[] {
   let at = start + 1;
   while (at < all.len()) {
     let line = all[at];
-    if (definition(line) != "" && !util.str_has_prefix(line, ".L")) {
+    if (definition(line) != "" && !line.starts_with(".L")) {
       return out;
     }
     out = out.append(line);
@@ -85,7 +85,7 @@ function program(all: names.Names, code: string[], arm: boolean): Program {
   for line in code {
     let name = definition(line);
     if (name != "") {
-      if (line != name + ":" || !util.str_has_prefix(line, ".L") || names.unique_position(all, name) < 0) {
+      if (line != name + ":" || !line.starts_with(".L") || names.unique_position(all, name) < 0) {
         return Program { ops: [], error: "ambiguous uniqueness branch label" };
       }
       ops = ops.append(flow.Op { kind: 30, target: -1 });
@@ -94,7 +94,7 @@ function program(all: names.Names, code: string[], arm: boolean): Program {
       let target = -1;
       if (decoded.kind >= 20) {
         target = names.unique_position(local, decoded.target);
-        if (target < 0 || !util.str_has_prefix(decoded.target, ".L")) {
+        if (target < 0 || !decoded.target.starts_with(".L")) {
           return Program { ops: [], error: "missing or ambiguous uniqueness branch target" };
         }
       }

@@ -1,6 +1,7 @@
 import "./ir";
 import "./ssa";
 import "./util";
+import "std/string";
 
 pub struct ReturnPos { block: i32, line: i32, col: string }
 
@@ -549,14 +550,14 @@ function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
 }
 
 function unique_push(k: string, op: ir.Op): i32 {
-  if (util.str_has_prefix(k, "arr_push_owned") && op.i32_imm == 1) {
+  if (k.starts_with("arr_push_owned") && op.i32_imm == 1) {
     return 1;
   }
   return 0;
 }
 
 function prod_call_kind(k: string): i32 {
-  if (k == "alloc" || k == "alloc_u8" || k == "alloc_uninit" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) {
+  if (k == "alloc" || k == "alloc_u8" || k == "alloc_uninit" || k == "raw_alloc" || k.starts_with("arr_push")) {
     return 50;
   }
   return 49;
@@ -583,7 +584,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
   if (kt.host[tag]) {
     return lift_prod_host(k, op, lv);
   }
-  if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set" || k == "opt_set_payload") {
+  if (k.starts_with("raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set" || k == "opt_set_payload") {
     return lift_prod_store(k, op, lv);
   }
   if (k == "variant_is") {
@@ -1628,7 +1629,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           let ii = 0;
           while (ii < b.insts.len()) {
             let inst = b.insts[ii];
-            if (ii < nw && inst.kind_tag == 8 && lp_phi[lfrom + ii] == inst.result) {
+            if (ii < nw && inst.kind_tag == ssa.PHI && lp_phi[lfrom + ii] == inst.result) {
               let pargs: i32[] = [lp_pre[lfrom + ii]];
               let qq = 0;
               while (qq < nback) {

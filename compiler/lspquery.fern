@@ -8,6 +8,7 @@ import "./lexical";
 import "./parser";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Program { merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[], view: Option[View] }
 
@@ -348,7 +349,7 @@ function after_dot(fa: ast.ExprFieldAccess, site: Site): boolean {
 
 function names(n: string, name: string): boolean {
   let s = lexical.source_name(n);
-  return s == name || util.str_has_suffix(s, "__" + name);
+  return s == name || s.ends_with("__" + name);
 }
 
 pub struct Found { kind: i32, expr: ast.Expr, fd: i32 }
@@ -879,7 +880,7 @@ function written_name(q: flatten.Qualifiers, name: string): string {
   let k = 0;
   while (k < q.prefixes.len()) {
     let p = q.prefixes[k] + "__";
-    if (util.str_has_prefix(name, p)) {
+    if (name.starts_with(p)) {
       return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
     }
     k += 1;
@@ -893,7 +894,7 @@ function word_byte(b: u8): boolean {
 
 pub function unprefixed(name: string, prefix: string): string {
   let p = prefix + "__";
-  if (prefix.len() > 0 && util.str_has_prefix(name, p)) {
+  if (prefix.len() > 0 && name.starts_with(p)) {
     return slice_unchecked(name, p.len(), name.len()) + "";
   }
   return name;

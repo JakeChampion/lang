@@ -17,11 +17,11 @@ function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
   let out: i32[][] = [];
   for b in f.blocks {
     let t = b.term;
-    if (t.kind_tag == 2) {
+    if (t.kind_tag == ssa.TERM_BR) {
       out = out.append([position(at, t.target)]);
-    } else if (t.kind_tag == 3 && t.t == t.f) {
+    } else if (t.kind_tag == ssa.TERM_BRIF && t.t == t.f) {
       out = out.append([position(at, t.t)]);
-    } else if (t.kind_tag == 3) {
+    } else if (t.kind_tag == ssa.TERM_BRIF) {
       out = out.append([position(at, t.t), position(at, t.f)]);
     } else {
       out = out.append([]);

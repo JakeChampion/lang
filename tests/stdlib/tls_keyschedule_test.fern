@@ -149,7 +149,12 @@ function test_resumption(): test.TestOutcome {
   if (shown(early.secret) != "9b2188e9b2fc6d64d71dc329900e20bb41915000f678aa839cbb797cb7d8332c") {
     return test.fail("early secret " + shown(early.secret));
   }
-  return test.assert_eq(shown(early.binder_key()), "69fe131a3bbad5d63c64eebcc30e395b9d8107726a13d074e389dbc8a4e47256");
+  if (shown(early.binder_key()) != "69fe131a3bbad5d63c64eebcc30e395b9d8107726a13d074e389dbc8a4e47256") {
+    return test.fail("binder key " + shown(early.binder_key()));
+  }
+  // Derive-Secret(early, "c e traffic", SHA-256("fern")), computed with an
+  // HKDF that reproduces the binder key above.
+  return test.assert_eq(shown(early.client_early_traffic(keyschedule.Sha256.digest("fern".bytes()))), "75a3d6f756f60b6a3c9487b7dbe9e465de1bb99eb317e7b8d49f0545c4986bd5");
 }
 
 function aes_keys(secret: u8[]): string {
@@ -293,7 +298,7 @@ function main(): i32 {
   r = r.it("handshake traffic secrets", test_handshake_traffic);
   r = r.it("master secret", test_master_secret);
   r = r.it("application, exporter and resumption secrets", test_application_secrets);
-  r = r.it("resumption PSK and binder key", test_resumption);
+  r = r.it("resumption PSK, binder key and early traffic secret", test_resumption);
   r = r.it("AES-128-GCM traffic keys", test_aes_128_traffic_keys);
   r = r.it("ChaCha20-Poly1305 traffic keys", test_chacha20_poly1305_traffic_keys);
   r = r.it("cipher suite", test_cipher_suite);

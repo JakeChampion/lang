@@ -1,13 +1,16 @@
 import "std/brotli";
 import "std/deflate";
+import "std/dns";
 import "std/hash/crc32";
 import "std/hex";
 import "std/http";
+import "std/jpeg";
 import "std/http/h2";
 import "std/http/h2/frame";
 import "std/http/hpack";
 import "std/http/qpack";
 import "std/json";
+import "std/protobuf";
 import "std/quic/frames";
 import "std/quic/packet";
 import "std/result";
@@ -25,8 +28,9 @@ import "std/zstd";
 // HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
 // and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
 // reader, the TLS record and handshake readers, the X.509 reader, the
-// DEFLATE, gzip, zlib, zstd and Brotli decoders, the JSON parser, or the URL
-// and query parsers. Each refuses malformed bytes with an
+// DEFLATE, gzip, zlib, zstd and Brotli decoders, the DNS message reader, the
+// protobuf reader, the JPEG decoder, the JSON parser, or the URL and query
+// parsers. Each refuses malformed bytes with an
 // error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -616,6 +620,128 @@ function brotli_summary(raw: u8[]): string {
   return "brotli " + decoded + " roundtrip " + trip;
 }
 
+function rdata_text(d: dns.RData): string {
+  match (d) {
+    dns.A(ip) => {
+      return "A " + ip.to_string();
+    },
+    dns.AAAA(ip) => {
+      return "AAAA " + ip.to_string();
+    },
+    dns.CNAME(name) => {
+      return "CNAME " + name;
+    },
+    dns.PTR(name) => {
+      return "PTR " + name;
+    },
+    dns.Raw(b) => {
+      return "raw " + digest(b);
+    }
+  }
+}
+
+function records_text(rs: dns.Record[]): string {
+  let out = "";
+  for r in rs {
+    out = out + " [" + r.name + " " + r.rtype.to_string() + " " + r.rclass.to_string() + " " + r.ttl.to_string() + " " + rdata_text(r.data) + "]";
+  }
+  return out;
+}
+
+// Every field of a message, so two decodes of the same message compare equal.
+function message_text(m: dns.Message): string {
+  let out = m.id.to_string() + " " + m.opcode.to_string() + " " + m.rcode.to_string();
+  if (m.response) {
+    out = out + " qr";
+  }
+  if (m.authoritative) {
+    out = out + " aa";
+  }
+  if (m.truncated) {
+    out = out + " tc";
+  }
+  if (m.recursion_desired) {
+    out = out + " rd";
+  }
+  if (m.recursion_available) {
+    out = out + " ra";
+  }
+  for q in m.questions {
+    out = out + " (" + q.name + " " + q.qtype.to_string() + " " + q.qclass.to_string() + ")";
+  }
+  return out + records_text(m.answers) + records_text(m.authority) + records_text(m.additional);
+}
+
+// Decodes the bytes as a DNS message, then encodes the message and decodes it
+// again. A second decode that differs from the first is a finding.
+function dns_summary(raw: u8[]): string {
+  match (dns.decode(raw)) {
+    Ok(m) => {
+      let counts = m.questions.len().to_string() + " " + m.answers.len().to_string() + " " + m.authority.len().to_string() + " " + m.additional.len().to_string();
+      match (dns.encode(m)) {
+        Ok(b) => {
+          match (dns.decode(b)) {
+            Ok(again) => {
+              if (message_text(again) == message_text(m)) {
+                return "dns ok " + counts + " roundtrip ok";
+              }
+              return "dns ok " + counts + " roundtrip broken";
+            },
+            Err(e) => {
+              return "dns ok " + counts + " roundtrip broken " + e.message();
+            }
+          }
+        },
+        Err(e) => {
+          return "dns ok " + counts + " encode refused " + e.message().len().to_string();
+        }
+      }
+    },
+    Err(e) => {
+      return "dns refused " + e.message().len().to_string();
+    }
+  }
+}
+
+// Decodes the bytes as protobuf fields, and each length-delimited field once
+// more as a nested message.
+function protobuf_summary(raw: u8[]): string {
+  match (protobuf.decode(raw)) {
+    Ok(fields) => {
+      let nested = 0;
+      for f in fields {
+        if (f.wire == 2) {
+          match (protobuf.decode(f.bytes)) {
+            Ok(inner) => {
+              nested += inner.len();
+            },
+            Err(_) => {}
+          }
+        }
+      }
+      return "protobuf ok " + fields.len().to_string() + " nested " + nested.to_string();
+    },
+    Err(e) => {
+      return "protobuf refused " + e.message().len().to_string();
+    }
+  }
+}
+
+// The pixel limit of the JPEG reader. The buffers of an image this large
+// stay inside the memory budget of a fuzz input.
+const JPEG_LIMIT: i64 = 1048576i64;
+
+function jpeg_summary(raw: u8[]): string {
+  match (jpeg.decode_image_limit(raw, JPEG_LIMIT)) {
+    Ok(img) => {
+      return "jpeg ok " + img.width.to_string() + " " + img.height.to_string() + " " + digest(img.pixels);
+    },
+    Err(e) => {
+      return "jpeg refused " + e.message();
+    }
+  }
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -642,7 +768,7 @@ function url_summary(src: string): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|json|url FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -717,6 +843,18 @@ function main(): i32 {
   }
   if (av[1] == "brotli") {
     print(brotli_summary(raw));
+    return 0;
+  }
+  if (av[1] == "dns") {
+    print(dns_summary(raw));
+    return 0;
+  }
+  if (av[1] == "protobuf") {
+    print(protobuf_summary(raw));
+    return 0;
+  }
+  if (av[1] == "jpeg") {
+    print(jpeg_summary(raw));
     return 0;
   }
   if (av[1] == "json") {

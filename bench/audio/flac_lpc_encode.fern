@@ -1,0 +1,93 @@
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/u32";
+import "std/result";
+import "std/string";
+import "std/bench";
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for field in line.split("\t") {
+        for part in field.split(" ") {
+          let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+          if (value > 0) {
+            return value;
+          }
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function warm(input: [i32], format: pcm.Format, output: string, options: encoder.Options): Result[void, pcm.AudioError] {
+  for round in 0..2 {
+    let bytes = encoder.encode(input, format, options, pcm.default_limits())?;
+    if (round == 0) {
+      if let Err(_) = write_file_bytes(output, bytes) {
+        return Err(pcm.Header);
+      }
+    }
+  }
+  return Ok(());
+}
+
+function run(input: [i32], format: pcm.Format, rounds: i32, options: encoder.Options): Result[(u32, i64), pcm.AudioError] {
+  let hash = 2166136261u32;
+  let total = 0i64;
+  for _ in 0..rounds {
+    let bytes = encoder.encode(input, format, options, pcm.default_limits())?;
+    for b in bytes {
+      hash = (hash ^ b as u32) * 16777619u32;
+    }
+    total += bytes.len() as i64;
+  }
+  return Ok((hash, total));
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 7) {
+    return 1;
+  }
+  let Ok(raw) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let input: i32[] = [];
+  for i in 0..raw.len() / 4 {
+    input = input.append(wire.le(raw, i * 4, 4) as i32);
+  }
+  let format = pcm.Format { bits_per_sample: i32.parse_i32_radix(argv[3], 10).unwrap_or(0), channels: i32.parse_i32_radix(argv[4], 10).unwrap_or(0), sample_rate: 48000 };
+  let rounds = i32.parse_i32_radix(argv[5], 10).unwrap_or(0);
+  let order = i32.parse_i32_radix(argv[6], 10).unwrap_or(-1);
+  let options = encoder.Options { ...encoder.default_options(), max_lpc_order: order };
+  if (order < 1 || order > 32 || rounds < 1) {
+    return 3;
+  }
+  if let Err(_) = warm(input, format, argv[2], options) {
+    return 4;
+  }
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok((hash, total)) = run(input, format, rounds, options) else {
+    return 5;
+  };
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocations.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("checksum=" + hash.to_string());
+  print("encoded_bytes=" + total.to_string());
+  print("native_peak_rss_kb=" + peak_rss().to_string());
+  return 0;
+}

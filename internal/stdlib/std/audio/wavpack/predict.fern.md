@@ -101,7 +101,19 @@ pub function samples(input: [u8], channels: i32, own passes: Pass[]): Result[Pas
 }
 
 function apply(weight: i32, source: i32): i32 {
-  return (weight as i64 * (source as i64) + 512i64 >> 10i64) as i32;
+  // The reference split-word path wraps its i32 intermediates before rounding.
+  // A signed 16-bit weight keeps the low-word product in range. The cast
+  // preserves the reference wrap before the final rounding and shift.
+  if (weight == weight << 16 >> 16) {
+    let scaled = (weight as i64 * (source as i64) >> 9i64) as i32;
+    return scaled + 1 >> 1;
+  }
+  if (source == source << 16 >> 16) {
+    return weight * source + 512 >> 10;
+  }
+  let lower = (source & 65535) * weight >> 9;
+  let upper = ((source & -65536) >> 9) * weight;
+  return lower + upper + 1 >> 1;
 }
 
 function update(weight: i32, delta: i32, source: i32, residual: i32, clipped: boolean): i32 {
@@ -120,7 +132,51 @@ function update(weight: i32, delta: i32, source: i32, residual: i32, clipped: bo
   return result;
 }
 
-function positive(own output: i32[], frames: i32, channels: i32, pass: Pass): i32[] {
+function positive_mono(own output: i32[], frames: i32, pass: Pass): i32[] {
+  let shift = if (pass.term == 17) { 0 } else { 1 };
+  let factor = 2 + shift;
+  let a = pass.history[0];
+  let b = pass.history[1];
+  let weight = pass.wa;
+  for i in 0..frames {
+    let source = factor * a - b >> shift;
+    let residual = output[i];
+    let value = residual + apply(weight, source);
+    weight = update(weight, pass.delta, source, residual, false);
+    b = a;
+    a = value;
+    output = output.with(i, value);
+  }
+  return output;
+}
+
+function positive_stereo(own output: i32[], frames: i32, pass: Pass): i32[] {
+  let shift = if (pass.term == 17) { 0 } else { 1 };
+  let a0 = pass.history[0];
+  let a1 = pass.history[1];
+  let b0 = pass.history[8];
+  let b1 = pass.history[9];
+  let wa = pass.wa;
+  let wb = pass.wb;
+  for i in 0..frames {
+    let sa = a0 + (a0 - a1 >> shift);
+    let sb = b0 + (b0 - b1 >> shift);
+    let left = output[i * 2];
+    let right = output[i * 2 + 1];
+    let a = left + apply(wa, sa);
+    let b = right + apply(wb, sb);
+    wa = update(wa, pass.delta, sa, left, false);
+    wb = update(wb, pass.delta, sb, right, false);
+    a1 = a0;
+    a0 = a;
+    b1 = b0;
+    b0 = b;
+    output = output.with(i * 2, a).with(i * 2 + 1, b);
+  }
+  return output;
+}
+
+function positive_delay(own output: i32[], frames: i32, channels: i32, pass: Pass): i32[] {
   let saved = pass.history;
   let wa = pass.wa;
   let wb = pass.wb;
@@ -130,14 +186,6 @@ function positive(own output: i32[], frames: i32, channels: i32, pass: Pass): i3
     for channel in 0..channels {
       let base = channel * 8;
       let source = saved[base + read_at];
-      if (pass.term > 8) {
-        if (pass.term == 17) {
-          source = 2 * saved[base] - saved[base + 1];
-        } else {
-          source = if (channels == 1) { 3 * saved[base] - saved[base + 1] >> 1 } else { saved[base] + (saved[base] - saved[base + 1] >> 1) };
-        }
-        saved = saved.with(base + 1, saved[base]);
-      }
       let residual = output[i * channels + channel];
       let w = if (channel == 0) { wa } else { wb };
       let value = residual + apply(w, source);
@@ -147,15 +195,20 @@ function positive(own output: i32[], frames: i32, channels: i32, pass: Pass): i3
       } else {
         wb = changed;
       }
-      saved = saved.with(base + (if (pass.term > 8) { 0 } else { write_at }), value);
+      saved = saved.with(base + write_at, value);
       output = output.with(i * channels + channel, value);
     }
-    if (pass.term <= 8) {
-      read_at = read_at + 1 & 7;
-      write_at = write_at + 1 & 7;
-    }
+    read_at = read_at + 1 & 7;
+    write_at = write_at + 1 & 7;
   }
   return output;
+}
+
+function positive(own output: i32[], frames: i32, channels: i32, pass: Pass): i32[] {
+  if (pass.term <= 8) {
+    return positive_delay(output, frames, channels, pass);
+  }
+  return if (channels == 1) { positive_mono(output, frames, pass) } else { positive_stereo(output, frames, pass) };
 }
 
 function negative(own output: i32[], frames: i32, pass: Pass): i32[] {

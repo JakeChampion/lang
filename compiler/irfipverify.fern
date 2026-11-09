@@ -1,6 +1,7 @@
 import "./ir";
 import "./irverify";
 import "./util";
+import "std/string";
 
 pub struct FipClaim {
   fn_name: string,
@@ -18,34 +19,34 @@ pub struct FipResult {
 
 pub function fresh_alloc_what(o: ir.Op): string {
   let t = o.kind_tag;
-  if (t == 138) {
+  if (t == ir.K_STRUCT_MAKE) {
     if (o.str.len() > 0) {
       return "struct/enum construction \"" + o.str + "\"";
     }
     return "struct/enum construction";
   }
-  if (t == 142) {
+  if (t == ir.K_TUPLE_MAKE) {
     return "tuple literal";
   }
-  if (t == 87 || ir.is_array_literal_copy(o)) {
+  if (t == ir.K_ARR_MAKE || ir.is_array_literal_copy(o)) {
     return "array literal";
   }
-  if (t == 120) {
+  if (t == ir.K_OPT_MAKE) {
     return "Option construction";
   }
-  if (t == 146) {
+  if (t == ir.K_DYN_BOX) {
     return "dyn box";
   }
-  if (t == 98) {
+  if (t == ir.K_STR_CONCAT) {
     return "string concatenation";
   }
-  if (t == 76) {
+  if (t == ir.K_ALLOC) {
     return "heap allocation";
   }
-  if (t == 77) {
+  if (t == ir.K_ALLOC_U8) {
     return "byte-buffer allocation";
   }
-  if (t == ir.K_CALL_DIRECT && util.str_has_prefix(o.str, "__arrm_map__")) {
+  if (t == ir.K_CALL_DIRECT && o.str.starts_with("__arrm_map__")) {
     return "`map` materialized by the combinator: R7 writes a map in place only over an `own` parameter that dies at the call, with an i64 element it does not change and an element function that captures nothing and reaches no effect";
   }
   return "";

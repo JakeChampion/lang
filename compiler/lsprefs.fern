@@ -7,6 +7,7 @@ import "./lspquery";
 import "./parser";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Ref { line: i32, col: i32, len: i32, decl: boolean }
 
@@ -332,7 +333,7 @@ function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
 }
 
 function names_variant(f: VariantFind, name: string): boolean {
-  return util.str_has_suffix(name, f.name) && lspquery.unprefixed(name, f.prefix) == f.name && checker.variant_enum(f.s, name) == f.owner;
+  return name.ends_with(f.name) && lspquery.unprefixed(name, f.prefix) == f.name && checker.variant_enum(f.s, name) == f.owner;
 }
 
 function variant_stmt(st: ast.Stmt, own f: VariantFind): VariantFind {
@@ -630,13 +631,13 @@ function reads_expr(e: ast.Expr, own f: Reads): Reads {
     ast.ExprIdent(id) => {
       let n = f.out.len();
       let qualifies = n > 0 && !f.out[n - 1].value && f.out[n - 1].line == id.line && f.out[n - 1].col == id.col;
-      if (!qualifies && util.str_has_suffix(id.name, f.name)) {
+      if (!qualifies && id.name.ends_with(f.name)) {
         return Reads { ...f, out: f.out.append(Read { line: id.line, col: id.col, value: true }) };
       }
     },
     ast.ExprFieldAccess(fa) => {
       if let ast.ExprIdent(q) = fa.obj {
-        if (util.str_has_suffix(q.name, f.name)) {
+        if (q.name.ends_with(f.name)) {
           return Reads { ...f, out: f.out.append(Read { line: q.line, col: q.col, value: false }) };
         }
       }

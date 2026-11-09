@@ -1052,7 +1052,7 @@ function main(): i32 {
 	})
 
 	t.Run("check-selfhost-no-e001", func(t *testing.T) {
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "gas.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)

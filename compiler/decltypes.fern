@@ -2,6 +2,7 @@ import "./ast";
 import "./parser";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub function capture_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(retained_type(t));
@@ -22,7 +23,7 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
       for arg in u.args {
         let kept = retained_type(arg);
         if let typeinfo.TypeUnknown(missing) = arg {
-          if (util.str_has_prefix(missing.reason, "unbound ")) {
+          if (missing.reason.starts_with("unbound ")) {
             kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
           }
         }

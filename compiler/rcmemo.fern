@@ -3,6 +3,7 @@ import "./rccertify";
 import "./ssa";
 import "./util";
 import "std/envflag";
+import "std/string";
 
 // stamp is a digest of the compiler's bytes, so an entry another build wrote is not a hit.
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32, stamp: string }
@@ -67,7 +68,7 @@ function build_stamp(dir: string): Option[string] {
   let file = dir + "/certified/stamps-" + version() + ".txt";
   let lines = lines_of(file);
   for line in lines {
-    if (line.len() > meta.len() + 1 && util.str_has_prefix(line, meta + " ")) {
+    if (line.len() > meta.len() + 1 && line.starts_with(meta + " ")) {
       return Some(slice_unchecked(line, meta.len() + 1, line.len()) + "");
     }
   }

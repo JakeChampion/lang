@@ -7,6 +7,7 @@ import "./lspassist";
 import "./lspquery";
 import "./parser";
 import "./util";
+import "std/string";
 
 const T_FUNCTION: i32 = 0;
 
@@ -169,7 +170,7 @@ function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[]
 }
 
 function spells_variant(t: lspquery.Tok, name: string): boolean {
-  return t.ident && (name == t.text || util.str_has_suffix(name, "__" + t.text) || util.str_has_suffix(name, "." + t.text));
+  return t.ident && (name == t.text || name.ends_with("__" + t.text) || name.ends_with("." + t.text));
 }
 
 function qualifier_of(x: Ctx, j: i32): i32 {
@@ -226,7 +227,7 @@ function member_kind(s: checker.Scope, fa: ast.ExprFieldAccess, kind: i32): i32 
 }
 
 function local(name: string): boolean {
-  return util.str_has_prefix(name, "$binding$");
+  return name.starts_with("$binding$");
 }
 
 function local_kind(symbol: string, params: string[]): i32 {

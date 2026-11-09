@@ -73,12 +73,17 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string, window: i64, raw: boolean }
+struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string, window: i64, raw: boolean, tickets: boolean, wall: i64 }
 
 function begin(): Result[Ends, string] {
-  let cc = client_config();
-  let q = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(WALL_MS))?;
-  return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "", window: 0 as i64, raw: false });
+  return begin_at(client_config(), false, WALL_MS);
+}
+
+// begin_at starts a connection at wall time `wall`. With `tickets` the
+// server issues tickets and takes 0-RTT.
+function begin_at(cc: conn.Config, tickets: boolean, wall: i64): Result[Ends, string] {
+  let q = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(wall))?;
+  return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "", window: 0 as i64, raw: false, tickets: tickets, wall: wall });
 }
 
 function to_server(e: Ends, d: u8[]): Ends {
@@ -89,10 +94,13 @@ function to_server(e: Ends, d: u8[]): Ends {
   if (e.window > 0) {
     sc = sc.with_streams(100 as i64, 8 as i64, e.window, 16777216 as i64);
   }
+  if (e.tickets) {
+    sc = sc.with_tickets([7u8]).with_early_data();
+  }
   let Ok(h) = packet.parse(d, 0, 8) else {
     return e;
   };
-  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, at_ns(e.now)) else {
+  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, at_ns(e.now), time.timestamp_from_unix_millis(e.wall + e.now / 1000000)) else {
     return e;
   };
   return Ends { ...e, server: Some(h3q.server(q, h3.config()).receive(d, at_ns(e.now))) };
@@ -177,7 +185,11 @@ function noticed(e: Ends): Ends {
 function event_text(ev: h3q.Event): string {
   match (ev) {
     h3q.Requested(id, req) => {
-      return "request " + id.to_string() + " " + req.method + " " + req.path + " " + req.body.data.len().to_string() + "b host=" + req.headers.get("host").unwrap_or("-");
+      let early = "";
+      if let Some(v) = req.headers.get("early-data") {
+        early = " early-data=" + v;
+      }
+      return "request " + id.to_string() + " " + req.method + " " + req.path + " " + req.body.data.len().to_string() + "b host=" + req.headers.get("host").unwrap_or("-") + early;
     },
     h3q.Responded(id, resp) => {
       let trailer = "";
@@ -256,6 +268,50 @@ function answered(e: Ends, i: i32, resp: HttpResponse): Ends {
 
 function text(status: i32, body: string): HttpResponse {
   return HttpResponse { status: status, body: BodyText(body), headers: headers.new().append("Content-Type", "text/plain"), trailers: headers.new(), background: None };
+}
+
+function post(path: string, body: string): HttpRequest {
+  return HttpRequest { ...get(path), method: "POST", body: ByteStream { data: body.bytes(), pos: 0, source: None } };
+}
+
+// A resumed client sends a GET and a POST in 0-RTT. The server takes the
+// GET, marked Early-Data: 1, and answers the POST 425 Too Early, as a
+// replay of it could change state. A POST sent after the handshake is
+// taken. The same first flight replayed to a server takes the GET again,
+// and the POST again does not reach the handler.
+function test_zero_rtt(): test.TestOutcome {
+  let cc = client_config().with_early_data();
+  let Ok(e0) = begin_at(cc, true, WALL_MS) else {
+    return test.fail("the first connection did not start");
+  };
+  let first = settled(e0, 14);
+  let tickets = first.client.tickets();
+  if (tickets.len() == 0) {
+    return test.fail("no ticket");
+  }
+  let Ok(r0) = begin_at(cc.with_ticket(tickets[0]), true, WALL_MS + 60000 as i64) else {
+    return test.fail("the resumed connection did not start");
+  };
+  let early = r0.client.early().to_string();
+  let Ok(r1) = asked(r0, get("/early")) else {
+    return test.fail("no GET in 0-RTT");
+  };
+  let Ok(r2) = asked(r1, post("/form", "x=1")) else {
+    return test.fail("no POST in 0-RTT");
+  };
+  let flight = r2.client.transmit(at_ns(0)).datagrams();
+  let r3 = settled(r2, 8);
+  let line = early + " " + r3.client.quic.resumed().to_string() + " " + r3.client.ready().to_string() + " | " + r3.log;
+  let Ok(r4) = asked(Ends { ...r3, log: "" }, post("/late", "x=2")) else {
+    return test.fail("no POST after the handshake");
+  };
+  let r5 = settled(answered(r4, 0, text(200, "early hi")), 8);
+  let r6 = settled(answered(r5, 1, text(200, "late hi")), 8);
+  let replay = Ends { ...r2, server: None, log: "" };
+  for d in flight {
+    replay = to_server(replay, d);
+  }
+  return test.assert_eq(line + "| " + r6.log + "| replay: " + noticed(replay).log, "true true true | client response 4 425 Too Early; server request 0 GET /early 0b host=tls.example early-data=1; | client response 0 200 early hi; server request 8 POST /late 3b host=tls.example; client response 8 200 late hi; | replay: server request 0 GET /early 0b host=tls.example early-data=1; ");
 }
 
 function test_get(): test.TestOutcome {
@@ -547,6 +603,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
+  r = r.it("0-RTT takes a GET and answers a POST 425 Too Early", test_zero_rtt);
   r = r.it("a response without a date is sent with the connection's", test_date);
   r = r.it("each response carries the date set when it is sent, and none once it is cleared", test_date_changes);
   r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);

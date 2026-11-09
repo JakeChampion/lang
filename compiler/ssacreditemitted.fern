@@ -49,7 +49,7 @@ function producers(rows: ssaprepare.Emitted[], wrapper: ssaprepare.Emitted, cons
   let functions: ssa.SFunc[] = [];
   for b in wrapper.body.formed.f.blocks {
     for op in b.insts {
-      if (op.kind_tag == 11 && op.str != consumer.label_name && !util.has_str(names, op.str)) {
+      if (op.kind_tag == ssa.CALL && op.str != consumer.label_name && !util.has_str(names, op.str)) {
         names = names.append(op.str);
         let p = producer(rows, op.str, architecture, consumer, d);
         if (p.error != "") {

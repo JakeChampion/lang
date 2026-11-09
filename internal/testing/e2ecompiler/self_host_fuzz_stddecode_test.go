@@ -76,8 +76,9 @@ func goInflate(input []byte) goDecoded {
 	return goDecode(func(r io.Reader) (io.Reader, error) { return flate.NewReader(r), nil }, input)
 }
 
+// goGunzip rejects gzip members with reserved flag bits.
+// RFC 1952 requires zero reserved bits, but compress/gzip accepts them.
 func goGunzip(input []byte) goDecoded {
-	// RFC 1952 section 2.3.1.2 requires zero reserved bits. Go ignores them.
 	cursor := bytes.NewReader(input)
 	var out []byte
 	for cursor.Len() > 0 {

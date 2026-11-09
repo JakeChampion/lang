@@ -5,6 +5,7 @@ import "./lexer";
 import "./parser";
 import "./printer";
 import "./util";
+import "std/string";
 
 pub const COMPLEXITY: string = "cyclomatic-complexity";
 
@@ -403,7 +404,7 @@ function directive_finding(c: lexer.Comment, msg: string, help: string): Finding
 
 function comment_body(text: string): string {
   let t = util.trim(text);
-  if (util.str_has_prefix(t, "//")) {
+  if (t.starts_with("//")) {
     t = util.trim(slice_unchecked(t, 2, t.len()) + "");
   }
   return t;
@@ -414,7 +415,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
   let sup = Suppressions { file_rules: [], lines: [], rules: [], bad: [] };
   for c in comments {
     let text = comment_body(c.text);
-    if (!util.str_has_prefix(text, "fern-lint:")) {
+    if (!text.starts_with("fern-lint:")) {
       continue;
     }
     let body = util.trim(slice_unchecked(text, 10, text.len()) + "");
@@ -529,7 +530,7 @@ pub function cover_of(cover: coverreport.File[], file: string): i32 {
     if (n == file) {
       return i;
     }
-    if ((util.str_has_suffix(n, "/" + file) || util.str_has_suffix(file, "/" + n)) && (best < 0 || n.len() > cover[best].name.len())) {
+    if ((n.ends_with("/" + file) || file.ends_with("/" + n)) && (best < 0 || n.len() > cover[best].name.len())) {
       best = i;
     }
     i += 1;
@@ -732,7 +733,7 @@ function evident_type(e: ast.Expr): string {
       return sl.type_name;
     },
     ast.ExprUnary(u) => {
-      if (util.str_has_prefix(u.op, "as_")) {
+      if (u.op.starts_with("as_")) {
         return slice_unchecked(u.op, 3, u.op.len()) + "";
       }
     },

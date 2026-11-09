@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 pub struct Op { kind: i32, target: i32 }
 
@@ -28,7 +29,7 @@ pub function decode(line: string, arm: boolean): Decoded {
   }
   i = 20;
   for prefix in branches(arm) {
-    if (prefix != "" && util.str_has_prefix(line, prefix)) {
+    if (prefix != "" && line.starts_with(prefix)) {
       return Decoded { kind: i, target: slice_unchecked(line, prefix.len(), line.len()) + "" };
     }
     i += 1;

@@ -1,6 +1,6 @@
 # Native FLAC integer encoding
 
-This module encodes bounded integer PCM with constant, verbatim, and fixed-predictor subframes.
+This module encodes bounded integer PCM with constant, verbatim, fixed-predictor, and LPC subframes.
 It selects exact Rice/Rice2 partition costs and compares all four stereo assignments.
 Common trailing zero bits can reduce the subframe width without changing any sample.
 Residual overflow falls back to verbatim coding.
@@ -10,8 +10,12 @@ Residual overflow falls back to verbatim coding.
 `encode` writes a complete fixed-block stream with the exact total count and PCM MD5.
 Each encoded frame includes its header CRC-8 and frame CRC-16.
 
-The encoder uses no float conversion or quantization.
-This first encoder does not perform LPC analysis or claim a compression or performance lead.
+The default options select fixed predictors without LPC analysis.
+`max_lpc_order` enables linear predictors through order 32 with signed 15-bit coefficients.
+Floating-point analysis selects coefficients only. Integer residuals preserve every PCM bit.
+The planner compares complete subframe costs and retains the smaller fixed or verbatim plan when LPC cannot improve it.
+The encoder does not claim a compression or performance lead.
+
 The encoded byte budget uses `pcm.Limits.max_input_bytes`.
 
 ```fern
@@ -25,7 +29,7 @@ import "std/audio/flac/bitwriter";
 import "std/audio/flac/plan";
 import "std/crypto";
 
-pub struct Options { block_frames: i32, max_fixed_order: i32, max_partition_order: i32, stereo: boolean }
+pub struct Options { block_frames: i32, max_fixed_order: i32, max_partition_order: i32, stereo: boolean, max_lpc_order: i32 }
 
 pub enum Position { FrameNumber(u32), SampleNumber(u64) }
 
@@ -36,7 +40,7 @@ pub struct EncodedFrame { frames: i32, number: u64, variable: boolean, assignmen
 struct Selection { assignment: i32, channels: plan.Channel[], bits: i64 }
 
 pub function default_options(): Options {
-  return Options { block_frames: 4096, max_fixed_order: 4, max_partition_order: 6, stereo: true };
+  return Options { block_frames: 4096, max_fixed_order: 4, max_partition_order: 6, stereo: true, max_lpc_order: 0 };
 }
 
 function valid_format(format: pcm.Format): boolean {
@@ -46,7 +50,8 @@ function valid_format(format: pcm.Format): boolean {
 function valid_options(options: Options): boolean {
   return options.block_frames >= 16 && options.block_frames <= 65535
     && options.max_fixed_order >= 0 && options.max_fixed_order <= 4
-    && options.max_partition_order >= 0 && options.max_partition_order <= 15;
+    && options.max_partition_order >= 0 && options.max_partition_order <= 15
+    && options.max_lpc_order >= 0 && options.max_lpc_order <= 32;
 }
 
 pub function stream_header(info: StreamInfo, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
@@ -116,6 +121,8 @@ function frame_header(frames: i32, assignment: i32, number_value: u64, variable:
   return output.append(checksum.crc(output, false) as u8);
 }
 
+// Compare both predictor families across every bounded stereo assignment.
+// fern-lint: allow cyclomatic-complexity
 function select(input: [i32], format: pcm.Format, options: Options): Result[Selection, pcm.AudioError] {
   let assignments = if (format.channels == 2 && options.stereo) { [1, 8, 9, 10] } else { [format.channels - 1] };
   let selected = Selection { assignment: format.channels - 1, channels: [], bits: 9223372036854775807i64 };
@@ -125,7 +132,7 @@ function select(input: [i32], format: pcm.Format, options: Options): Result[Sele
     let bits = 0i64;
     let constant = true;
     for channel in 0..format.channels {
-      let (chosen, next) = plan.choose(input, format.channels, channel, assignment, format.bits_per_sample, options.max_fixed_order, options.max_partition_order, scratch)?;
+      let (chosen, next) = if (options.max_lpc_order == 0) { plan.choose(input, format.channels, channel, assignment, format.bits_per_sample, options.max_fixed_order, options.max_partition_order, scratch)? } else { plan.choose_lpc(input, format.channels, channel, assignment, format.bits_per_sample, options.max_fixed_order, options.max_partition_order, options.max_lpc_order, scratch)? };
       scratch = next;
       bits += chosen.bit_count();
       constant = constant && chosen.is_constant();

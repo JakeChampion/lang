@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 pub function effect_none(): i32 {
   return 0;
@@ -149,7 +150,7 @@ pub function children_drop_prefix(): string {
 }
 
 function has_prefix(name: string, prefix: string): boolean {
-  return name.len() > prefix.len() && util.str_has_prefix(name, prefix);
+  return name.len() > prefix.len() && name.starts_with(prefix);
 }
 
 pub function is_generated_release(name: string): boolean {
@@ -231,7 +232,7 @@ pub function (t: OpTable) op_lookup(kind: string): Sig {
 }
 
 pub function pushes_element(kind: string): boolean {
-  return util.str_has_prefix(kind, "arr_push") && kind != "arr_push_shared_bytes" && kind != "arr_push_shared_count";
+  return kind.starts_with("arr_push") && kind != "arr_push_shared_bytes" && kind != "arr_push_shared_count";
 }
 
 pub function boxes_operands(kind: string): boolean {
