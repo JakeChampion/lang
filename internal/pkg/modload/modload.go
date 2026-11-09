@@ -1840,6 +1840,9 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 		}
 		mod, prefix, ok := r.importedModule(*armModule)
 		if !ok {
+			if builtinEnumQualifier(*armModule) {
+				return
+			}
 			r.refuse(pos, "unknown module %q in variant pattern", *armModule)
 			return
 		}
@@ -1873,6 +1876,14 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 	if r.ownStructs[*armName] && (braces || !enumVariant) {
 		*armName = r.selfPrefix + *armName
 	}
+}
+
+func builtinEnumQualifier(name string) bool {
+	switch name {
+	case "Option", "Result", "IoError", "Body", "StreamFault":
+		return true
+	}
+	return false
 }
 
 func (r *rewriter) rewritePatElems(payloads []*ast.TuplePatElem, elems []ast.TuplePatElem, pos ast.Position) {

@@ -1,3 +1,4 @@
+# 2026-11-09: the tree-shake fix of #14766 (b1c71641) keeps a primitive's to_string only for a call that reaches it. The nine .text rows that #14756 pinned high fall back on both targets: x86_64 from scripts/perf-bench, aarch64 from the lines of -target arm64-linux assembly, which is what perf-bench counts. Each is pinned at its measured value.
 # 2026-11-09: PR #14797, perf-aarch64 job 128935982726 on 81290273 and perf-x86_64 job 128939680803 on 801b4a44. The eighteen .text rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The same nine x86_64 .text rows rise as on aarch64. The growth is main's at 1c692d87.

@@ -1,3 +1,4 @@
+# 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
 # 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The http_hello and map_string profile rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The five rows moved with the drift of main since the last bank. Each is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The http_hello and map_string profile rows rise with the .text rows, and deflate_decode.minimal.ir falls 2.9%. The changes are main's at 1c692d87.

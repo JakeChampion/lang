@@ -11380,8 +11380,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 	walkStmts = func(stmts []ast.Stmt, moved movedSet) {
+		var locals []*ownedBindingScope
 		for _, st := range stmts {
 			walkStmt(st, moved)
+			if local, ok := st.(*ast.Var); ok && (owned[local.Name] || borrowedParam[local.Name]) {
+				scope := shadowOwnedBindings([]string{local.Name}, owned, borrowedParam, moved, deferMoved)
+				locals = append(locals, scope)
+				scopes = append(scopes, scope)
+			}
+		}
+		for i := len(locals) - 1; i >= 0; i-- {
+			locals[i].restore()
+			scopes = scopes[:len(scopes)-1]
 		}
 	}
 
