@@ -140,6 +140,9 @@ build that names no file. The Docs build lane runs it. With
 `--site URL`, it reads the sitemap of a deployed site and requests each
 internal link. `.github/workflows/site-links.yml` runs that against the
 site every 6 hours, and opens an issue when a link is broken.
+`.github/workflows/preview-links.yml` runs it against the Netlify deploy
+preview of each pull request, when Netlify reports the preview as ready,
+and sets a `site-links/preview` status on the commit.
 
 ## Error codes
 
