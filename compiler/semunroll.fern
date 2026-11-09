@@ -40,7 +40,7 @@ pub function unroll(f: ssasem.Func): Unrolled {
 // exits to, the induction phi, which phi operand comes from the entry edge and
 // which from the body, and the trip count. The test reads `test`, which is the
 // induction variable plus `offset`.
-struct Counted { head: i32, heads: i32[], bodies: i32[], exit: i32, iv: i32, entry: i32, latch: i32, start: i32, step: i32, test: i32, offset: i32, trips: i32 }
+pub struct Counted { head: i32, heads: i32[], bodies: i32[], exit: i32, iv: i32, entry: i32, latch: i32, start: i32, step: i32, test: i32, offset: i32, trips: i32 }
 
 function def_inst(g: ssa.SFunc, d: ssa.DefSites, v: i32): Option[ssa.SInst] {
   if (v < 0 || v >= g.nvals || d.block[v] < 0) {
@@ -117,13 +117,17 @@ function no_loop(): Counted {
   return Counted { head: -1, heads: [], bodies: [], exit: -1, iv: -1, entry: -1, latch: -1, start: 0, step: 0, test: -1, offset: 0, trips: -1 };
 }
 
-function counted_at(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
-  let g = f.graph;
+pub function counted_shape(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
   let shape = loop_shape(f, d, hi);
   if (shape.bodies.len() == 0) {
     return no_loop();
   }
-  let c = induction(f, d, shape);
+  return induction(f, d, shape);
+}
+
+function counted_at(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
+  let g = f.graph;
+  let c = counted_shape(f, d, hi);
   if (c.iv < 0) {
     return no_loop();
   }

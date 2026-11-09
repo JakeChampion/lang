@@ -30,6 +30,7 @@ import "./semcse";
 import "./semthread";
 import "./semunroll";
 import "./semfuse";
+import "./semreserve";
 import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
@@ -9313,10 +9314,13 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
       modes = modes.append(all[at].modes);
       at += 1;
     }
-    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.rewritten) };
+    // Capacity reservations introduce no callbacks.
+    // Only pipeline fusion needs another closure-inline pass.
+    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.pipelines) };
   }
   if (report) {
     semarrayreport.write(sink, semarrayreport.render(out.sites));
+    semarrayreport.write(sink, semreserve.render(out.reserves));
   }
   let result: Produced[] = [];
   let i = 0;

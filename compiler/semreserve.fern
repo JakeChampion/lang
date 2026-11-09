@@ -1,0 +1,286 @@
+import "./ssa";
+import "./ssasem";
+import "./semunroll";
+import "./typeinfo";
+import "./sourcepos";
+import "./semarrayreport";
+import "./util";
+
+pub struct Reserved { f: ssasem.Func, changed: boolean, sites: semarrayreport.Site[] }
+
+struct Plan { counted: semunroll.Counted, phi: i32, bound: i32, before: i32, zero: i32, reason: i32 }
+
+const RESERVED: i32 = 0;
+
+const SHAPE_UNSUPPORTED: i32 = 1;
+
+const NON_SCALAR: i32 = 2;
+
+const ARRAY_OBSERVED: i32 = 3;
+
+const EFFECT_BOUNDARY: i32 = 4;
+
+const DISABLED: i32 = 5;
+
+const BUDGET: i32 = 6;
+
+pub function candidate(f: ssasem.Func): boolean {
+  let header = false;
+  let append = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      header = header || b.preds.len() == 2 && ins.kind_tag == ssa.PHI && is_array(f.values[ins.result]);
+      append = append || ins.kind_tag == ssasem.append();
+    }
+  }
+  return header && append;
+}
+
+pub function reserve(f: ssasem.Func, index: util.NameIndex, bad: boolean[], enabled: boolean, report: boolean, name: string): Reserved {
+  let out = f;
+  let count = 0;
+  let sites: semarrayreport.Site[] = [];
+  if (enabled) {
+    while (count < 8) {
+      let next = first(out, index, bad);
+      if let Some(plan) = next {
+        if (report) {
+          sites = sites.append(site(name, plan, RESERVED));
+        }
+        out = reserved(out, plan);
+        count += 1;
+      } else {
+        break;
+      }
+    }
+  }
+  if (report) {
+    sites = util.append_all(sites, remaining(out, index, bad, name, enabled, count == 8));
+  }
+  return Reserved { f: out, changed: count > 0, sites: sites };
+}
+
+pub function render(sites: semarrayreport.Site[]): string {
+  return semarrayreport.render_kind("counted append capacity", ["reserved", "shape-unsupported", "non-scalar", "array-observed", "effect-boundary", "disabled", "budget"], sites);
+}
+
+function site(name: string, p: Plan, reason: i32): semarrayreport.Site {
+  return semarrayreport.Site { owner: name, stage: "append phi v" + p.phi.to_string(), plan: "counted append capacity", reason: reason, storage: if (reason == RESERVED) { "reserved" } else { "append" } };
+}
+
+function is_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view;
+  }
+  return false;
+}
+
+function scalar_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && (ssasem.is_integer(a.elem) || ssasem.is_float(a.elem) || ssasem.is_bool(a.elem) || ssasem.is_char(a.elem));
+  }
+  return false;
+}
+
+function definition(f: ssasem.Func, d: ssa.DefSites, value: i32): Option[ssa.SInst] {
+  if (value < 0 || value >= f.graph.nvals || d.block[value] < 0) {
+    return None;
+  }
+  return Some(f.graph.blocks[d.block[value]].insts[d.at[value]]);
+}
+
+function empty(f: ssasem.Func, d: ssa.DefSites, value: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
+  }
+  if let Some(ins) = definition(f, d, value) {
+    if (ins.kind_tag == ssa.COPY && ins.args.len() == 1) {
+      return empty(f, d, ins.args[0], depth + 1);
+    }
+    return ins.kind_tag == ssasem.array_new() && ins.args.len() == 0;
+  }
+  return false;
+}
+
+function array_phi(f: ssasem.Func, d: ssa.DefSites, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.PHI && ins.args.len() == 2 && is_array(f.values[ins.result]) && (empty(f, d, ins.args[0], 0) || empty(f, d, ins.args[1], 0));
+}
+
+function first(f: ssasem.Func, index: util.NameIndex, bad: boolean[]): Option[Plan] {
+  let d = ssa.def_sites_of(f.graph);
+  let positions = ssa.block_positions(f.graph);
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
+    if (loop_header(f.graph, positions, bi)) {
+      for ins in b.insts {
+        if (array_phi(f, d, ins)) {
+          let p = checked(f, d, bi, ins, index, bad);
+          if (p.reason == RESERVED) {
+            return Some(p);
+          }
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function remaining(f: ssasem.Func, index: util.NameIndex, bad: boolean[], name: string, enabled: boolean, budget: boolean): semarrayreport.Site[] {
+  let sites: semarrayreport.Site[] = [];
+  let d = ssa.def_sites_of(f.graph);
+  let positions = ssa.block_positions(f.graph);
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
+    if (loop_header(f.graph, positions, bi)) {
+      for ins in b.insts {
+        if (array_phi(f, d, ins)) {
+          let p = checked(f, d, bi, ins, index, bad);
+          let reason = p.reason;
+          if (!enabled) {
+            reason = DISABLED;
+          } else if (reason == RESERVED && budget) {
+            reason = BUDGET;
+          }
+          sites = sites.append(site(name, p, reason));
+        }
+      }
+    }
+  }
+  return sites;
+}
+
+function loop_header(g: ssa.SFunc, positions: i32[], at: i32): boolean {
+  if (g.blocks[at].preds.len() != 2) {
+    return false;
+  }
+  for pred in g.blocks[at].preds {
+    if (pred >= 0 && pred < positions.len() && positions[pred] > at) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function block_at(g: ssa.SFunc, id: i32): i32 {
+  for i in 0..g.blocks.len() {
+    if (g.blocks[i].id == id) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index: util.NameIndex, bad: boolean[]): Plan {
+  let c = semunroll.counted_shape(f, d, hi);
+  let p = Plan { counted: c, phi: phi.result, bound: -1, before: -1, zero: -1, reason: SHAPE_UNSUPPORTED };
+  if (c.iv < 0 || c.start != 0 || c.step != 1 || c.offset != 0 || !empty(f, d, phi.args[c.entry], 0)) {
+    return p;
+  }
+  let test = f.graph.blocks[c.heads[c.heads.len() - 1]];
+  if (test.term.t != f.graph.blocks[c.bodies[0]].id) {
+    return p;
+  }
+  let before = block_at(f.graph, f.graph.blocks[hi].preds[c.entry]);
+  if (before < 0 || f.graph.blocks[before].term.kind_tag != ssa.TERM_BR || f.graph.blocks[before].term.target != f.graph.blocks[hi].id) {
+    return p;
+  }
+  if let Some(compare) = definition(f, d, test.term.cond) {
+    if (compare.kind_tag != ssa.BINARY || compare.str != "<" || compare.args.len() != 2 || compare.args[0] != c.iv) {
+      return p;
+    }
+    let n = compare.args[1];
+    if (d.block[n] < 0 || d.block[n] != before && f.graph.blocks[d.block[n]].id != f.graph.entry || !ssasem.is_i32(f.values[n])) {
+      return p;
+    }
+    if let Some(iv) = definition(f, d, c.iv) {
+      p = Plan { ...p, bound: n, before: before, zero: iv.args[c.entry] };
+    }
+  }
+  if (p.bound < 0 || p.zero < 0 || !exact_append(f, d, c, phi)) {
+    return p;
+  }
+  if (!scalar_array(f.values[phi.result])) {
+    return Plan { ...p, reason: NON_SCALAR };
+  }
+  return Plan { ...p, reason: body_reason(f, c, phi, index, bad) };
+}
+
+function exact_append(f: ssasem.Func, d: ssa.DefSites, c: semunroll.Counted, phi: ssa.SInst): boolean {
+  if let Some(ins) = definition(f, d, phi.args[c.latch]) {
+    return ins.kind_tag == ssasem.append() && ins.args.len() == 2 && ins.args[0] == phi.result && util.index_of_i32(c.bodies, d.block[ins.result]) >= 0;
+  }
+  return false;
+}
+
+function safe_kind(k: i32): boolean {
+  return k >= ssa.CONST_INT && k <= ssa.UNARY || k == ssa.SELECT || k == ssasem.array_get() || k == ssasem.array_lend() || k == ssasem.arr_slice() || k == ssasem.length() || k == ssasem.cast() || k == ssasem.record_get() || k == ssasem.tuple_get() || k == ssasem.zero() || k == ssasem.append() || k == ssasem.array_new() || k == ssasem.bytes_new();
+}
+
+function body_reason(f: ssasem.Func, c: semunroll.Counted, phi: ssa.SInst, index: util.NameIndex, bad: boolean[]): i32 {
+  let appended = phi.args[c.latch];
+  for bi in util.append_all(c.heads, c.bodies) {
+    for ins in f.graph.blocks[bi].insts {
+      if (ins.result != phi.result && ins.result != appended && (util.index_of_i32(ins.args, phi.result) >= 0 || util.index_of_i32(ins.args, appended) >= 0)) {
+        return ARRAY_OBSERVED;
+      }
+      if (ins.kind_tag == ssasem.call()) {
+        let at = index.find(ins.str);
+        if (at < 0 || at >= bad.len() || bad[at]) {
+          return EFFECT_BOUNDARY;
+        }
+      } else if (!safe_kind(ins.kind_tag)) {
+        return EFFECT_BOUNDARY;
+      }
+    }
+  }
+  return RESERVED;
+}
+
+function jump(id: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: id, t: 0, f: 0, value: 0 };
+}
+
+function reserved(f: ssasem.Func, p: Plan): ssasem.Func {
+  let g = f.graph;
+  let next = 0;
+  for b in g.blocks {
+    if (b.id >= next) {
+      next = b.id + 1;
+    }
+  }
+  let value = f.values.len();
+  let h = g.blocks[p.counted.head];
+  let before = g.blocks[p.before];
+  let cond = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [p.bound, p.zero], imm: 0, str: ">" };
+  before = ssa.SBlock { ...before, insts: before.insts.append(cond), term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: value, target: 0, t: next, f: next + 1, value: 0 } };
+  let reserve = ssa.SInst { kind_tag: ssasem.array_reserve(), result: value + 1, args: [p.bound], imm: 0, str: "" };
+  let fresh = ssa.SBlock { id: next, insts: [reserve], term: jump(next + 1), preds: [before.id] };
+  let insts: ssa.SInst[] = [];
+  let original = -1;
+  for ins in h.insts {
+    if (ins.result == p.phi) {
+      original = ins.args[p.counted.entry];
+      ins = ssa.SInst { ...ins, args: ins.args.with(p.counted.entry, value + 2) };
+    }
+    insts = insts.append(ins);
+  }
+  let joined = ssa.SInst { kind_tag: ssa.PHI, result: value + 2, args: [original, value + 1], imm: 0, str: "" };
+  let entry = ssa.SBlock { id: next + 1, insts: [joined], term: jump(h.id), preds: [before.id, next] };
+  h = ssa.SBlock { ...h, insts: insts, preds: h.preds.with(p.counted.entry, entry.id) };
+  let blocks: ssa.SBlock[] = [];
+  for i in 0..g.blocks.len() {
+    if (i == p.counted.head) {
+      blocks = blocks.append(fresh).append(entry).append(h);
+    } else {
+      blocks = blocks.append(if (i == p.before) { before } else { g.blocks[i] });
+    }
+  }
+  let values = f.values.append(typeinfo.TypeBool { tag: 0 }).append(f.values[p.phi]).append(f.values[p.phi]);
+  let source = f.source_positions;
+  if (source.entry.line != 0) {
+    while (source.values.len() < values.len()) {
+      source = sourcepos.SourceInfo { ...source, values: source.values.append(sourcepos.SourcePos { line: 0, col: "0" }) };
+    }
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: values.len() }, values: values, source_positions: source };
+}
