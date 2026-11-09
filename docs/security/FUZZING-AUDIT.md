@@ -114,6 +114,7 @@ Each decoder has an output limit of 1 MiB.
 The DEFLATE, gzip and zlib targets decode every input with Go's `compress` packages too.
 When both accept the input, the length and the CRC-32 of the two outputs must be the same.
 When one accepts the input, the other must accept it too, unless the Go output passes the limit.
+The gzip oracle refuses a member header with a reserved flag bit, as RFC 1952 requires and Go's `compress/gzip` does not.
 Go has no zstd or Brotli decoder, so those targets compress each input with the Fern compressor and decode it back.
 
 The DEFLATE, gzip and zlib seeds are text, random bytes, runs and an empty input, written by Go at four levels.
