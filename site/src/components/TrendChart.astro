@@ -1,0 +1,142 @@
+---
+// TrendChart — a line chart of runs over time, as inline SVG, with a legend,
+// a direct label at the end of each line and a crosshair tooltip. With fewer
+// than two runs it shows a note in place of the chart: one point is not a
+// trend. The table beside each chart has the same numbers.
+//
+// The series colours are the first slots of a categorical palette that
+// passes the data-viz checks on this site's light and dark surfaces.
+
+interface Series {
+  name: string;
+  values: (number | null)[];
+}
+
+interface Props {
+  title: string;
+  dates: string[];
+  series: Series[];
+  unit: string;
+  // A dashed reference line, such as 1 for a speed ratio.
+  reference?: { value: number; label: string };
+  format?: (v: number) => string;
+}
+
+const { title, dates, series, unit, reference } = Astro.props;
+const fmt = Astro.props.format ?? ((v: number) => `${v.toFixed(2)}${unit}`);
+
+const W = 640;
+const H = 260;
+const PAD = { top: 16, right: 120, bottom: 32, left: 72 };
+const plotW = W - PAD.left - PAD.right;
+const plotH = H - PAD.top - PAD.bottom;
+
+const all = series.flatMap((s) => s.values).filter((v): v is number => v !== null);
+// A round tick step (1, 2, 2.5 or 5 times a power of ten) that gives about
+// four intervals, and an axis that ends on a tick.
+const top = Math.max(...all, reference?.value ?? 0) || 1;
+const rough = top / 4;
+const mag = 10 ** Math.floor(Math.log10(rough));
+const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= rough) ?? 10 * mag;
+const yMax = Math.ceil((top * 1.05) / step) * step;
+const x = (i: number) => PAD.left + (dates.length === 1 ? plotW / 2 : (i * plotW) / (dates.length - 1));
+const y = (v: number) => PAD.top + plotH - (v / yMax) * plotH;
+const ticks = Array.from({ length: Math.round(yMax / step) + 1 }, (_, i) => i * step);
+const enough = dates.length >= 2;
+const id = `trend-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+const rows = dates.map((d, i) => ({ d, vals: series.map((s) => s.values[i]) }));
+---
+
+<figure class="fern-trend not-content" id={id}>
+  <figcaption class="fern-label">{title}</figcaption>
+  {!enough && (
+    <p class="fern-trend__note">
+      The chart starts with the second comparable run. Until then, the
+      table below has the numbers.
+    </p>
+  )}
+  {enough && (
+    <div class="fern-trend__plot">
+      <ul class="fern-trend__legend">
+        {series.map((s, i) => <li><span class={`fern-trend__key s${i + 1}`} aria-hidden="true"></span>{s.name}</li>)}
+      </ul>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${title}. The table below has the values.`}>
+        {ticks.map((t) => (
+          <g class="fern-trend__grid">
+            <line x1={PAD.left} x2={PAD.left + plotW} y1={y(t)} y2={y(t)} />
+            <text x={PAD.left - 8} y={y(t) + 4} text-anchor="end">{fmt(t)}</text>
+          </g>
+        ))}
+        {reference && (
+          <g class="fern-trend__ref">
+            <line x1={PAD.left} x2={PAD.left + plotW} y1={y(reference.value)} y2={y(reference.value)} />
+            <text x={PAD.left + 6} y={y(reference.value) - 6}>{reference.label}</text>
+          </g>
+        )}
+        {dates.map((d, i) => (
+          <text class="fern-trend__date" x={x(i)} y={H - 10} text-anchor="middle">{d}</text>
+        ))}
+        {series.map((s, si) => {
+          const pts = s.values.map((v, i) => (v === null ? null : [x(i), y(v)])).filter((p): p is number[] => p !== null);
+          const last = pts[pts.length - 1];
+          return (
+            <g class={`fern-trend__series s${si + 1}`}>
+              <polyline points={pts.map((p) => p.join(",")).join(" ")} />
+              {pts.map((p) => <circle cx={p[0]} cy={p[1]} r="4" />)}
+              {last && <text class="fern-trend__end" x={last[0] + 10} y={last[1] + 4}>{s.name}</text>}
+            </g>
+          );
+        })}
+        <line class="fern-trend__cross" x1="0" x2="0" y1={PAD.top} y2={PAD.top + plotH} visibility="hidden" />
+        {dates.map((_, i) => (
+          <rect class="fern-trend__hit" data-index={i}
+            x={x(i) - (dates.length > 1 ? plotW / (dates.length - 1) / 2 : plotW / 2)}
+            y={PAD.top} width={dates.length > 1 ? plotW / (dates.length - 1) : plotW} height={plotH} />
+        ))}
+      </svg>
+      <div class="fern-trend__tip" role="status" hidden></div>
+      <script type="application/json" class="fern-trend__data" set:html={JSON.stringify({ width: W, names: series.map((s) => s.name), rows: rows.map((r) => ({ d: r.d, vals: r.vals.map((v) => (v === null ? "—" : fmt(v))) })), xs: dates.map((_, i) => x(i)) })}></script>
+    </div>
+  )}
+</figure>
+
+<script>
+  // The crosshair and tooltip of each chart on the page.
+  for (const fig of document.querySelectorAll<HTMLElement>(".fern-trend")) {
+    const json = fig.querySelector<HTMLScriptElement>(".fern-trend__data");
+    const svg = fig.querySelector("svg");
+    const tip = fig.querySelector<HTMLElement>(".fern-trend__tip");
+    const cross = fig.querySelector<SVGLineElement>(".fern-trend__cross");
+    if (!json || !svg || !tip || !cross) continue;
+    const data = JSON.parse(json.textContent ?? "{}");
+    const show = (i: number) => {
+      const r = data.rows[i];
+      cross.setAttribute("x1", data.xs[i]);
+      cross.setAttribute("x2", data.xs[i]);
+      cross.setAttribute("visibility", "visible");
+      // The tooltip opens on the side of the crosshair away from the line
+      // ends, so it does not cover their labels.
+      const at = (Number(data.xs[i]) / data.width) * 100;
+      tip.style.left = at > 50 ? "auto" : `calc(${at}% + 0.75rem)`;
+      tip.style.right = at > 50 ? `calc(${100 - at}% + 0.75rem)` : "auto";
+      tip.replaceChildren();
+      const head = document.createElement("strong");
+      head.textContent = r.d;
+      tip.append(head);
+      data.names.forEach((n: string, k: number) => {
+        const line = document.createElement("div");
+        line.textContent = `${n}: ${r.vals[k]}`;
+        tip.append(line);
+      });
+      tip.hidden = false;
+    };
+    const hide = () => {
+      cross.setAttribute("visibility", "hidden");
+      tip.hidden = true;
+    };
+    for (const hit of svg.querySelectorAll<SVGRectElement>(".fern-trend__hit")) {
+      hit.addEventListener("pointerenter", () => show(Number(hit.dataset.index)));
+    }
+    svg.addEventListener("pointerleave", hide);
+  }
+</script>
