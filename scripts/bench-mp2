@@ -108,10 +108,16 @@ def main():
                     assert pcm == reference, (kind, mode)
                 group = [r for r in rows if (r['name'], r['input'], r['mode']) == (name, kind, mode)]
                 assert len({(r['samples'], r['checksum']) for r in group}) == 1
+                assert all(r['samples'] == len(reference) // 4 * args.rounds for r in group)
                 comparisons.append({'name': name, 'input': kind, 'mode': mode,
                                     'pcm_sha256': sha(output), 'max_absolute_error': error,
                                     'medians': {key: statistics.median(r[key] for r in group)
                                                 for key in group[0] if key not in ['name', 'input', 'mode', 'trial']}})
+        for name in binaries:
+            group = [r for r in rows if r['name'] == name and r['input'] == kind]
+            assert len({(r['samples'], r['checksum']) for r in group}) == 1
+        group = [r for r in rows if r['name'] in ['fern', 'scalar'] and r['input'] == kind]
+        assert len({(r['samples'], r['checksum']) for r in group}) == 1
     report = {'machine': platform.platform(), 'target': target,
               'cpu': Path('/proc/cpuinfo').read_text().splitlines()[4],
               'compiler_sha256': sha(args.compiler), 'stdlib_sha256': tree_hash(ROOT / 'internal/stdlib'),

@@ -91,9 +91,9 @@ function protected_frames(): test.TestOutcome {
     if let Err(pcm.Checksum) = result {} else {
       return test.fail("protected-frame CRC");
     }
-    let (restored, result) = state.decode_frame(input, 0, pcm.default_limits());
+    let (restored, restored_result) = state.decode_frame(input, 0, pcm.default_limits());
     state = restored;
-    let Ok(frame) = result else {
+    let Ok(frame) = restored_result else {
       return test.fail("decode after checksum error");
     };
     if let Err(e) = mp2_check.samples(frame.samples, 1152, expected, 0) {
@@ -120,13 +120,13 @@ function history_and_storage(): test.TestOutcome {
   let Ok(first) = first else {
     return test.fail("first frame");
   };
-  let (next, short) = state.decode_frame_into(input, h.bytes, [], pcm.default_limits());
-  state = next;
+  let (after_short, short) = state.decode_frame_into(input, h.bytes, [], pcm.default_limits());
+  state = after_short;
   if let Err(pcm.Buffer) = short {} else {
     return test.fail("undersized output");
   }
-  let (next, second) = state.decode_frame_into(input, h.bytes, first.samples, pcm.default_limits());
-  state = next;
+  let (after_second, second) = state.decode_frame_into(input, h.bytes, first.samples, pcm.default_limits());
+  state = after_second;
   let Ok(second) = second else {
     return test.fail("retry second frame");
   };
