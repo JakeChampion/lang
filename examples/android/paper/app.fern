@@ -805,7 +805,7 @@ function step(own s: control.App, e: android.Event): control.App {
 }
 
 function app_main(ctx: usize): usize {
-  let first = control.with_density(control.new(device(ctx, asset_bytes(ctx, "wallpaper.jpg")), android.data_dir(ctx), fonts(ctx)), android.density(ctx));
+  let first = control.with_theme(control.with_density(control.new(device(ctx, asset_bytes(ctx, "wallpaper.jpg")), android.data_dir(ctx), fonts(ctx)), android.density(ctx)), android.night_mode(ctx));
   let last = android.run(ctx, first, (own s: control.App, e: android.Event): control.App => step(s, e), (s: control.App): i32 => control.timeout(s, monotonic_ns() / 1000000i64));
   control.close(last);
   return 0 as usize;

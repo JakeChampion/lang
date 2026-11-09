@@ -70,7 +70,7 @@ func TestAndroidGLCanvas(t *testing.T) {
 }
 
 // The GPU painter of Paper draws home, the app list sliding in over home,
-// and a dialog as the CPU draws them.
+// a dialog, and home in the dark theme as the CPU draws them.
 func TestAndroidPaperGPU(t *testing.T) {
-	runGLCheck(t, "examples/android/paper/gpu_test.fern", "111")
+	runGLCheck(t, "examples/android/paper/gpu_test.fern", "1111")
 }
