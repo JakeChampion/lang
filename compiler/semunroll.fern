@@ -711,6 +711,9 @@ pub function fold_constants(f: ssasem.Func): Constants {
     }
     rounds += 1;
   }
+  if (st.changed) {
+    util.report_unsettled("semunroll.fold_constants", rounds, f.graph.name);
+  }
   if (st.folded == 0) {
     return Constants { f: f, folded: 0 };
   }

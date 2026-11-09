@@ -1,4 +1,4 @@
-# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The five rows moved with the drift of main since the last bank. Each is pinned at its measured value.
+# 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The http_hello and map_string profile rows rise with the .text rows, and deflate_decode.minimal.ir falls 2.9%. The changes are main's at 1c692d87.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: nine http_hello rows grow 1.0% to 2.3% and each is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. Every row below moved with the drift of main since the last bank, not with this change. Each is pinned at its measured value.
 # 2026-11-06: PR #14352. Local scripts/profile-costs runs of this change and of main 075aa763, from checkouts
@@ -120,14 +120,14 @@ profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
 profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	127800
-profile/arm64-linux/http_hello.diagnostic.emit	16195
-profile/arm64-linux/http_hello.hardened.bytes	79256
-profile/arm64-linux/http_hello.hardened.emit	17668
-profile/arm64-linux/http_hello.minimal.bytes	60984
-profile/arm64-linux/http_hello.minimal.emit	13056
-profile/arm64-linux/http_hello.safe.bytes	73016
-profile/arm64-linux/http_hello.safe.emit	16098
+profile/arm64-linux/http_hello.diagnostic.bytes	154480
+profile/arm64-linux/http_hello.diagnostic.emit	19191
+profile/arm64-linux/http_hello.hardened.bytes	98136
+profile/arm64-linux/http_hello.hardened.emit	20947
+profile/arm64-linux/http_hello.minimal.bytes	77960
+profile/arm64-linux/http_hello.minimal.emit	15864
+profile/arm64-linux/http_hello.safe.bytes	91512
+profile/arm64-linux/http_hello.safe.emit	19276
 profile/arm64-linux/int_loop.diagnostic.bytes	5312
 profile/arm64-linux/int_loop.diagnostic.emit	565
 profile/arm64-linux/int_loop.hardened.bytes	2744
@@ -136,14 +136,14 @@ profile/arm64-linux/int_loop.minimal.bytes	1992
 profile/arm64-linux/int_loop.minimal.emit	320
 profile/arm64-linux/int_loop.safe.bytes	2248
 profile/arm64-linux/int_loop.safe.emit	381
-profile/arm64-linux/map_string.diagnostic.bytes	139504
-profile/arm64-linux/map_string.diagnostic.emit	10812
-profile/arm64-linux/map_string.hardened.bytes	50200
-profile/arm64-linux/map_string.hardened.emit	11426
-profile/arm64-linux/map_string.minimal.bytes	40968
-profile/arm64-linux/map_string.minimal.emit	9193
-profile/arm64-linux/map_string.safe.bytes	42312
-profile/arm64-linux/map_string.safe.emit	9422
+profile/arm64-linux/map_string.diagnostic.bytes	170432
+profile/arm64-linux/map_string.diagnostic.emit	14220
+profile/arm64-linux/map_string.hardened.bytes	70696
+profile/arm64-linux/map_string.hardened.emit	15112
+profile/arm64-linux/map_string.minimal.bytes	59928
+profile/arm64-linux/map_string.minimal.emit	12476
+profile/arm64-linux/map_string.safe.bytes	62200
+profile/arm64-linux/map_string.safe.emit	12939
 profile/arm64-linux/startup.diagnostic.bytes	4840
 profile/arm64-linux/startup.diagnostic.emit	546
 profile/arm64-linux/startup.hardened.bytes	2664
@@ -213,18 +213,18 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4544
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	116920
-profile/x86-64-linux/http_hello.diagnostic.emit	14803
+profile/x86-64-linux/http_hello.diagnostic.bytes	143568
+profile/x86-64-linux/http_hello.diagnostic.emit	18066
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	39724679
-profile/x86-64-linux/http_hello.hardened.bytes	70208
-profile/x86-64-linux/http_hello.hardened.emit	15649
+profile/x86-64-linux/http_hello.hardened.bytes	88064
+profile/x86-64-linux/http_hello.hardened.emit	18930
 profile/x86-64-linux/http_hello.hardened.ir	29734736
-profile/x86-64-linux/http_hello.minimal.bytes	54192
-profile/x86-64-linux/http_hello.minimal.emit	12595
+profile/x86-64-linux/http_hello.minimal.bytes	70832
+profile/x86-64-linux/http_hello.minimal.emit	15469
 profile/x86-64-linux/http_hello.minimal.ir	23248401
-profile/x86-64-linux/http_hello.safe.bytes	64880
-profile/x86-64-linux/http_hello.safe.emit	15117
+profile/x86-64-linux/http_hello.safe.bytes	82496
+profile/x86-64-linux/http_hello.safe.emit	18368
 profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5480
 profile/x86-64-linux/int_loop.diagnostic.emit	523
@@ -238,17 +238,17 @@ profile/x86-64-linux/int_loop.minimal.ir	12000077
 profile/x86-64-linux/int_loop.safe.bytes	2032
 profile/x86-64-linux/int_loop.safe.emit	292
 profile/x86-64-linux/int_loop.safe.ir	12000077
-profile/x86-64-linux/map_string.diagnostic.bytes	133728
-profile/x86-64-linux/map_string.diagnostic.emit	10880
+profile/x86-64-linux/map_string.diagnostic.bytes	163800
+profile/x86-64-linux/map_string.diagnostic.emit	14347
 profile/x86-64-linux/map_string.diagnostic.ir	59644087
-profile/x86-64-linux/map_string.hardened.bytes	42288
-profile/x86-64-linux/map_string.hardened.emit	10021
+profile/x86-64-linux/map_string.hardened.bytes	61680
+profile/x86-64-linux/map_string.hardened.emit	13525
 profile/x86-64-linux/map_string.hardened.ir	54107043
-profile/x86-64-linux/map_string.minimal.bytes	36288
-profile/x86-64-linux/map_string.minimal.emit	8959
+profile/x86-64-linux/map_string.minimal.bytes	54112
+profile/x86-64-linux/map_string.minimal.emit	12205
 profile/x86-64-linux/map_string.minimal.ir	54757303
-profile/x86-64-linux/map_string.safe.bytes	37056
-profile/x86-64-linux/map_string.safe.emit	9267
+profile/x86-64-linux/map_string.safe.bytes	56224
+profile/x86-64-linux/map_string.safe.emit	12784
 profile/x86-64-linux/map_string.safe.ir	52903035
 profile/x86-64-linux/startup.diagnostic.bytes	5024
 profile/x86-64-linux/startup.diagnostic.emit	500
