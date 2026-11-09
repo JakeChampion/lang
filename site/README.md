@@ -139,6 +139,16 @@ at the domain root: `scripts/netlify-build` sets `SITE_BASE=/`, and
 hero link or a sidebar link as a site path such as `/tutorial/install/`,
 and the build adds the base. Keep the two build recipes in step.
 
+fern-lang.netlify.app is the main site. The Pages build sets
+`CANONICAL_SITE`, so each Pages page names its Netlify page as
+canonical, and search engines list one copy.
+
+`scripts/check-links.mjs --dist dist --base /lang` finds each internal
+link in a build that names no file. The Docs build lane runs it. With
+`--site URL`, it reads the sitemap of a deployed site and requests each
+internal link. `.github/workflows/site-links.yml` runs that against both
+hosts every 6 hours, and opens an issue when a link is broken.
+
 ## Embed a live snippet
 
 ```mdx
