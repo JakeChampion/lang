@@ -697,8 +697,9 @@ pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[S
 pub struct Resumable { place: __Place, ticket: quic.Ticket }
 
 // Alternative is an origin's HTTP/3 endpoint: the UDP port an Alt-Svc field
-// or offer_h3 named. `until` None holds as long as the pool.
-pub struct Alternative { host: string, port: i32, h3_port: i32, until: Option[Instant] }
+// or offer_h3 named. `until` None holds as long as the pool. `answered` is
+// the address whose server last finished a handshake.
+pub struct Alternative { host: string, port: i32, h3_port: i32, until: Option[Instant], answered: Option[net.IpAddr] }
 ```
 
 ### `15 pub function (p: Idle) proxy_env(): ProxyEnv`
@@ -1588,8 +1589,35 @@ pub function (p: Idle) h3_offered(host: string, port: i32, now: Instant): i32 {
 }
 
 function __offer_h3(p: Idle, host: string, port: i32, h3_port: i32, until: Option[Instant]): void {
+  let answered: Option[net.IpAddr] = None;
+  if let Some(a) = __alternative(p, host, port) {
+    if (a.h3_port == h3_port) {
+      answered = a.answered;
+    }
+  }
   __forget_h3(p, host, port);
-  p.alternatives.set(p.alternatives.get().append(Alternative { host: host, port: port, h3_port: h3_port, until: until }));
+  p.alternatives.set(p.alternatives.get().append(Alternative { host: host, port: port, h3_port: h3_port, until: until, answered: answered }));
+}
+
+function __alternative(p: Idle, host: string, port: i32): Option[Alternative] {
+  for a in p.alternatives.get() {
+    if (a.port == port && a.host == host) {
+      return Some(a);
+    }
+  }
+  return None;
+}
+
+// __h3_answered_from records that the server at `addr` finished a
+// handshake for the origin at `host` and `port`.
+function __h3_answered_from(p: Idle, host: string, port: i32, addr: net.IpAddr): void {
+  let rows = p.alternatives.get();
+  for i in 0..rows.len() {
+    if (rows[i].port == port && rows[i].host == host) {
+      p.alternatives.set(rows.with(i, Alternative { ...rows[i], answered: Some(addr) }));
+      return;
+    }
+  }
 }
 
 function __forget_h3(p: Idle, host: string, port: i32): void {
@@ -2638,11 +2666,45 @@ function __h3_due(h: h3q.Conn, now: Instant): boolean {
   return now.cmp(at) >= 0;
 }
 
+// __connect_h3 tries each address of the origin in turn, the one that
+// answered last first. Each attempt has an equal share of the time left.
+// A request goes in 0-RTT only to an address known to answer, because a
+// dead address gives no handshake to fall back from.
 function __connect_h3[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots], port: i32, ticket: Option[quic.Ticket]): Result[__Conn, FetchError] {
   let deadline = time.instant_nanos(tr.now()) + __connect_bound(req.timeouts).as_nanos();
-  let addrs = __resolve(tr, t.host, guard)?;
+  let answered: Option[net.IpAddr] = None;
+  if let Some(a) = __alternative(tr.idle(), t.origin, t.port) {
+    answered = a.answered;
+  }
+  let addrs = __answered_first(__resolve(tr, t.host, guard)?, answered);
+  let cfg = __h3_config(t, roots, ticket)?;
+  let last = Timeout(Connecting);
+  for i in 0..addrs.len() {
+    let now = time.instant_nanos(tr.now());
+    if (now >= deadline) {
+      return Err(last);
+    }
+    let until = now + (deadline - now) / ((addrs.len() - i) as i64);
+    let early = http.method_safe(req.method) && (addrs.len() == 1 || __same_addr(answered, addrs[i]));
+    match (__h3_dialled(tr, addrs[i], port, cfg, early, until)) {
+      Ok(c) => {
+        __h3_answered_from(tr.idle(), t.origin, t.port, addrs[i]);
+        return Ok(c);
+      },
+      Err(e) => {
+        if (__cancelled(e)) {
+          return Err(e);
+        }
+        last = e;
+      }
+    }
+  }
+  return Err(last);
+}
+
+function __h3_dialled[T: Transport](tr: T, addr: net.IpAddr, port: i32, cfg: quic.Config, early: boolean, deadline: i64): Result[__Conn, FetchError] {
   let fd = 0 - 1;
-  match (tr.datagram_open(addrs, port)) {
+  match (tr.datagram_open([addr], port)) {
     Ok(opened) => {
       fd = opened;
     },
@@ -2650,7 +2712,7 @@ function __connect_h3[T: Transport](tr: T, t: __Target, req: Request, guard: boo
       return Err(Connect(e));
     }
   }
-  match (__h3_handshake(tr, fd, __h3_config(t, roots, ticket)?, http.method_safe(req.method), deadline)) {
+  match (__h3_handshake(tr, fd, cfg, early, deadline)) {
     Ok(h) => {
       return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, h3: Some(h), heard: headers.new() });
     },
@@ -2660,6 +2722,29 @@ function __connect_h3[T: Transport](tr: T, t: __Target, req: Request, guard: boo
     }
   }
   return Err(Timeout(Connecting));
+}
+
+function __answered_first(addrs: net.IpAddr[], answered: Option[net.IpAddr]): net.IpAddr[] {
+  let Some(a) = answered else {
+    return addrs;
+  };
+  let first: net.IpAddr[] = [];
+  let rest: net.IpAddr[] = [];
+  for x in addrs {
+    if (x.to_string() == a.to_string()) {
+      first = first.append(x);
+    } else {
+      rest = rest.append(x);
+    }
+  }
+  return first.concat(rest);
+}
+
+function __same_addr(a: Option[net.IpAddr], b: net.IpAddr): boolean {
+  let Some(x) = a else {
+    return false;
+  };
+  return x.to_string() == b.to_string();
 }
 
 // __h3_config resumes with a ticket when the pool keeps one, and sends
