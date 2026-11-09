@@ -8,6 +8,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const site = fileURLToPath(new URL("..", import.meta.url));
+// Where the explanations are on GitHub. A link in one of them that starts
+// with ./ or ../ names a file of the repository, relative to the file.
+const SOURCE_URL = "https://github.com/JakeChampion/lang/blob/main/internal/syntax/diag/explanations/";
 const source = join(site, "../internal/syntax/diag/explanations");
 const out = join(site, "src/content/docs/errors");
 
@@ -29,11 +32,12 @@ export function explanationPage(text) {
     const before = all.slice(0, offset).match(/^```/gm)?.length ?? 0;
     return before % 2 === 0 ? "```fern" : "```";
   });
+  const linked = body.replace(/\]\((\.\.?\/[^)\s]+)\)/g, (_, target) => `](${new URL(target, SOURCE_URL).href})`);
   const plain = title.replace(/`/g, "");
   return {
     code,
     title: plain,
-    markdown: `---\ntitle: "${code}: ${plain.replace(/"/g, '\\"')}"\ndescription: "What ${code} means, an example, and how to fix it."\n---\n\n${body.trim()}\n\nRun \`fern -explain ${code}\` to read this in a terminal.\n`,
+    markdown: `---\ntitle: "${code}: ${plain.replace(/"/g, '\\"')}"\ndescription: "What ${code} means, an example, and how to fix it."\n---\n\n${linked.trim()}\n\nRun \`fern -explain ${code}\` to read this in a terminal.\n`,
   };
 }
 

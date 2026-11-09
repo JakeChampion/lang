@@ -27,3 +27,9 @@ test("groups the index by kind of code", () => {
   assert.match(idx, /## Warnings[\s\S]*\| \[W001\]\(w001\/\) \| unused \|/);
   assert.doesNotMatch(idx, /## Parse errors/);
 });
+
+test("points a link into the repository at GitHub", () => {
+  const p = explanationPage("# E008 — x\n\nSee [the research](../../../../docs/RESEARCH.md) and `f[T](x: T)`.\n");
+  assert.match(p.markdown, /\[the research\]\(https:\/\/github\.com\/JakeChampion\/lang\/blob\/main\/docs\/RESEARCH\.md\)/);
+  assert.match(p.markdown, /`f\[T\]\(x: T\)`/);
+});
