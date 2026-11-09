@@ -439,7 +439,9 @@ Android ARM64 shared libraries compile successfully.
 Native ARM64 CI and device measurements remain necessary.
 These checks do not establish a speed or quality lead over other codecs.
 The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
-Fern takes 3.40 to 3.87 times the decode time of SIMD minimp3 on the measured Linux host.
+Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation counts by 30 to 43 percent.
+The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.
+Fern now takes 3.08 to 3.52 times the decode time of SIMD minimp3 on the measured Linux host.
 
 ## MP3
 
