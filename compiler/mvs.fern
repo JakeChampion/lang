@@ -3,6 +3,7 @@ import "./pkgversion";
 import "./fern_toml";
 import "./docsummary";
 import "core/map";
+import "std/string";
 
 pub struct Source {
   path: string,
@@ -87,7 +88,7 @@ pub function parse_index(src: string): Result[Index, string] {
       if (line[line.len() - 1] != b']') {
         return Err("line " + util.i32_to_string(ln) + ": malformed section header " + docsummary.quote(line));
       }
-      pkg = util.trim(slice_unchecked(line, 1, line.len() - 1) + "");
+      pkg = (slice_unchecked(line, 1, line.len() - 1) + "").trim();
       if (pkg.len() == 0) {
         return Err("line " + util.i32_to_string(ln) + ": empty package name");
       }
@@ -101,7 +102,7 @@ pub function parse_index(src: string): Result[Index, string] {
     if (eq < 0) {
       return Err("line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
     }
-    let key: string = util.trim(slice_unchecked(line, 0, eq) + "");
+    let key: string = (slice_unchecked(line, 0, eq) + "").trim();
     let ver: string = match (fern_toml.parse_quoted(key)) { Ok(value) => value, Err(message) => { return Err("line " + util.i32_to_string(ln) + ": version key: " + message); } };
     match (parse_version(ver)) {
       Ok(_) => {},
@@ -109,7 +110,7 @@ pub function parse_index(src: string): Result[Index, string] {
         return Err("line " + util.i32_to_string(ln) + ": " + message);
       }
     }
-    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
+    let val: string = (slice_unchecked(line, eq + 1, line.len()) + "").trim();
     match (parse_source(val)) {
       Ok(src) => {
         let entry: Entry = Entry { pkg: pkg, ver: ver, src: src };
@@ -135,13 +136,13 @@ pub function parse_index(src: string): Result[Index, string] {
 // A line above the first section: only `serial = N`.
 function index_top_level(line: string, serial: string): Result[string, string] {
   let eq = index_of_char(line, b'=', 0);
-  if (eq < 0 || util.trim(slice_unchecked(line, 0, eq) + "") != "serial") {
+  if (eq < 0 || (slice_unchecked(line, 0, eq) + "").trim() != "serial") {
     return Err("version entry outside a [package] section");
   }
   if (serial.len() > 0) {
     return Err("serial given twice");
   }
-  let v = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
+  let v = (slice_unchecked(line, eq + 1, line.len()) + "").trim();
   if let Err(message) = fern_toml.validate_serial(v) {
     return Err("serial " + message);
   }
@@ -155,10 +156,10 @@ function parse_source(val: string): Result[Source, string] {
   let path = "";
   let url = "";
   let hash = "";
-  let parts = split_char(util.trim(slice_unchecked(val, 1, val.len() - 1) + ""), b',');
+  let parts = split_char((slice_unchecked(val, 1, val.len() - 1) + "").trim(), b',');
   let i = 0;
   while (i < parts.len()) {
-    let part = util.trim(parts[i]);
+    let part = parts[i].trim();
     i += 1;
     if (part.len() == 0) {
       continue;
@@ -167,8 +168,8 @@ function parse_source(val: string): Result[Source, string] {
     if (eq < 0) {
       return Err("expected `key = value`, got " + docsummary.quote(part));
     }
-    let k = util.trim(slice_unchecked(part, 0, eq) + "");
-    let raw = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
+    let k = (slice_unchecked(part, 0, eq) + "").trim();
+    let raw = (slice_unchecked(part, eq + 1, part.len()) + "").trim();
     let v: string = match (fern_toml.parse_quoted(raw)) { Ok(value) => value, Err(message) => { return Err(k + ": " + message); } };
     if (k == "path") {
       path = v;

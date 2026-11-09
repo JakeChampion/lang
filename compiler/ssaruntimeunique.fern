@@ -40,14 +40,14 @@ function assignment(line: string): boolean {
   while (i < line.len() && symbol_byte(line[i])) {
     i += 1;
   }
-  let rest = util.trim(slice_unchecked(line, i, line.len()) + "");
+  let rest = (slice_unchecked(line, i, line.len()) + "").trim();
   return i > 0 && rest.starts_with("=");
 }
 
 function lines(text: string): string[] {
   let out: string[] = [];
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (assignment(line)) {
       return [];
     }

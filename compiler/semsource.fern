@@ -6925,7 +6925,7 @@ function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
     let eq = util.index_of_sub(entry, "=");
     if (eq < 0) {
       positional = positional.append(entry);
-    } else if (!pins_assoc(imp, util.trim(slice_unchecked(entry, 0, eq) + ""), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
+    } else if (!pins_assoc(imp, (slice_unchecked(entry, 0, eq) + "").trim(), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
       return false;
     }
   }

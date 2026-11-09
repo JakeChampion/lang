@@ -1,0 +1,47 @@
+import "std/test";
+import "std/string";
+
+function test_trim_both_ends(): test.TestOutcome {
+  return test.assert_eq("  a b  ".trim(), "a b");
+}
+
+function test_trim_every_ascii_space(): test.TestOutcome {
+  return test.assert_eq(" \t\n\x0b\x0c\rx\r\x0c\x0b\n\t ".trim(), "x");
+}
+
+function test_trim_only_space(): test.TestOutcome {
+  return test.assert_eq(" \n\t ".trim(), "");
+}
+
+function test_trim_unchanged(): test.TestOutcome {
+  return test.assert_eq("a  b".trim(), "a  b");
+}
+
+function test_trim_start(): test.TestOutcome {
+  return test.assert_eq("\n a ".trim_start(), "a ");
+}
+
+function test_trim_start_unchanged(): test.TestOutcome {
+  return test.assert_eq("a ".trim_start(), "a ");
+}
+
+function test_trim_end(): test.TestOutcome {
+  return test.assert_eq(" a \r\n".trim_end(), " a");
+}
+
+function test_trim_end_unchanged(): test.TestOutcome {
+  return test.assert_eq(" a".trim_end(), " a");
+}
+
+function main(): i32 {
+  let r = test.new("std/string trim");
+  r = r.it("trim strips both ends", test_trim_both_ends);
+  r = r.it("trim strips every ASCII space", test_trim_every_ascii_space);
+  r = r.it("trim of only space is empty", test_trim_only_space);
+  r = r.it("trim keeps a trimmed string", test_trim_unchanged);
+  r = r.it("trim_start strips the start", test_trim_start);
+  r = r.it("trim_start keeps a trimmed string", test_trim_start_unchanged);
+  r = r.it("trim_end strips the end", test_trim_end);
+  r = r.it("trim_end keeps a trimmed string", test_trim_end_unchanged);
+  return r.finish();
+}

@@ -598,6 +598,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"tz", langSrcAbs(t, "tests/stdlib/tz_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "tests/stdlib/string_replace_split_test.fern"), ""},
 		{"string_rsplit_once", langSrcAbs(t, "tests/stdlib/string_rsplit_once_test.fern"), ""},
+		{"string_trim", langSrcAbs(t, "tests/stdlib/string_trim_test.fern"), ""},
 		{"string_partition", langSrcAbs(t, "tests/stdlib/string_partition_test.fern"), ""},
 		{"string_parse_radix", langSrcAbs(t, "tests/stdlib/string_parse_radix_test.fern"), ""},
 		{"string_parse_bool", langSrcAbs(t, "tests/stdlib/string_parse_bool_test.fern"), ""},

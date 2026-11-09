@@ -40,7 +40,7 @@ function program(text: string, arm: boolean): Program {
   let ops: isa.Op[] = [];
   let labels: string[] = [];
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "") {
       let name = "";
       let decoded = isa.Op { kind: 30, a: "", b: "", target: "" };

@@ -42,9 +42,9 @@ function address(s: string): Address {
 }
 
 function address_parts(parts: string[], displacement: string): Address {
-  let base = registers.reg(util.trim(parts[0]), false, 64);
-  let index = if (parts.len() > 1) { registers.reg(util.trim(parts[1]), false, 64) } else { -1 };
-  let scale = if (parts.len() > 2) { util.trim(parts[2]) } else { "1" };
+  let base = registers.reg(parts[0].trim(), false, 64);
+  let index = if (parts.len() > 1) { registers.reg(parts[1].trim(), false, 64) } else { -1 };
+  let scale = if (parts.len() > 2) { parts[2].trim() } else { "1" };
   if (base < 0 || parts.len() > 1 && (index < 0 || index == 4)) {
     return invalid_address();
   }
@@ -74,7 +74,7 @@ function operands(s: string): string[] {
       return [];
     }
     if (s[i] == b',' && depth == 0) {
-      result = result.append(util.trim(slice_unchecked(s, start, i) + ""));
+      result = result.append((slice_unchecked(s, start, i) + "").trim());
       start = i + 1;
     }
     i += 1;
@@ -82,7 +82,7 @@ function operands(s: string): string[] {
   if (depth != 0) {
     return [];
   }
-  return result.append(util.trim(slice_unchecked(s, start, s.len()) + ""));
+  return result.append((slice_unchecked(s, start, s.len()) + "").trim());
 }
 
 function literal(s: string): string {
@@ -223,7 +223,7 @@ function decode(line: string, labels: names.Names): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (branch(name)) {
     return Op { ...empty(17), condition: name, target: names.unique_position(labels, rest) };
   }
@@ -305,7 +305,7 @@ function selected_program(body: text.Body, mode: i32): Program {
     let ordinary = decode(line, labels);
     let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
     if (op.kind == 17 && op.target < 0) {
-      let symbol = util.trim(slice_unchecked(line, op.condition.len(), line.len()) + "");
+      let symbol = (slice_unchecked(line, op.condition.len(), line.len()) + "").trim();
       if (mode != 6 && !(mode == 5 && symbol == "__fern_alloc_size_abort.c")) {
         return Program { ops: [], error: "capacity branch target outside selected body" };
       }
@@ -349,7 +349,7 @@ function allocator_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
   if (args.len() == 1) {
     return allocator_stack(name, args[0]);
   }
@@ -418,7 +418,7 @@ function array_box_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (name == "call" && rest == "__fern_alloc") {
     return Op { ...empty(25), symbol: rest };
   }
@@ -476,7 +476,7 @@ function constructor_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (name == "call" && rest == "__fern_arr_box") {
     return Op { ...empty(25), symbol: rest };
   }
@@ -511,7 +511,7 @@ function caller_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (name == "call" && constructor_symbol(rest)) {
     return Op { ...empty(25), symbol: rest };
   }
@@ -538,7 +538,7 @@ function string_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
   return if (args.len() == 2) { string_operands(name, args[0], args[1]) } else { empty(0) };
 }
 
@@ -594,7 +594,7 @@ function array_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
   if (name == "call" && array_dependency(rest)) {
     return Op { ...empty(25), symbol: rest };
   }
@@ -645,14 +645,14 @@ function index_only_lea(name: string, a: string, b: string): Op {
 }
 
 function index_only_parts(parts: string[], displacement: string, dst: i32): Op {
-  if (parts.len() != 3 || util.trim(parts[0]) != "" || !valid_scale(util.trim(parts[2]))) {
+  if (parts.len() != 3 || parts[0].trim() != "" || !valid_scale(parts[2].trim())) {
     return empty(0);
   }
-  let index = registers.reg(util.trim(parts[1]), false, 64);
+  let index = registers.reg(parts[1].trim(), false, 64);
   if (index < 0 || index == 4) {
     return empty(0);
   }
-  return Op { ...empty(15), width: 64, destination: dst, index: index, scale: util.digits_to_i32(util.trim(parts[2])), offset: if (displacement == "") { 0 } else { util.digits_to_i32(displacement) } };
+  return Op { ...empty(15), width: 64, destination: dst, index: index, scale: util.digits_to_i32(parts[2].trim()), offset: if (displacement == "") { 0 } else { util.digits_to_i32(displacement) } };
 }
 
 function large_decode(line: string): Op {
@@ -664,7 +664,7 @@ function large_decode(line: string): Op {
     return empty(0);
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
   if (args.len() != 2) {
     return empty(0);
   }
