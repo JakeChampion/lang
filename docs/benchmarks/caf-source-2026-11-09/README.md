@@ -76,6 +76,29 @@ RSS includes code, input, index arrays, allocator capacity, and small measuremen
 The report takes the RSS read before the first packet decode.
 The measurements cover a warm filesystem cache and one repeated packet, not cold storage or complete-track decode.
 
+## Profiles of the source path
+
+The retained-callback variant supplies the profile workload.
+Allocation mode inspects the 10,000-packet file once and retains 2,349 samples with no drops.
+The systematic interval is one sample per 64 allocation events.
+Weights estimate rounded allocated bytes and include allocator reuse.
+Periodic workloads can bias systematic samples.
+
+The profile attributes 17.3% of estimated bytes to `source.Buffer.ensure` and 16.4% to file-window construction.
+The read callback accounts for 15.3%, and the builder step accounts for 13.6%.
+Configuration reads account for 12.8%, and byte-view construction accounts for 8.2%.
+These labels identify the nearest non-runtime caller in each stack.
+They do not prove the cause of each allocation.
+
+CPU mode repeats index construction of the 100,000-packet file 100 times.
+It retains 648 samples with no drops.
+Read and seek callbacks account for 193 and 102 samples at the nearest non-runtime frame.
+The builder step accounts for 78 samples.
+This profile identifies source I/O and state transitions as priorities for #14871.
+
+The profile executable and its output are separate from the uninstrumented time campaign.
+`alloc.folded`, `cpu.folded`, and `cpu-profile.fern` retain the evidence and repeated driver.
+
 ## Correctness and qualification
 
 All 65 independent CAF cases pass through the source API across four corpus shards.
@@ -92,7 +115,9 @@ They also compare exact independent PCM beyond 4 GiB without reads of the sparse
 Registered Reader tests pass on native x86-64 and WASI with complete, actual sparse, truncated, and missing files.
 The actual sparse CAF file places audio beyond 4 GiB without a large physical allocation.
 The test closes the Reader after success and failure.
-Both interpreters pass the independent smoke.
+
+Both interpreters pass the independent smoke and all six source boundary cases.
+The boundary suite takes 4.8 seconds in Go and 34.3 seconds in the self-host interpreter.
 Complexity limits and source lint pass.
 `qualification.json` and the adjacent logs retain the results.
 

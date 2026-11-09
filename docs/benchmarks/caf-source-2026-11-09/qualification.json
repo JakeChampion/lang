@@ -301,5 +301,19 @@
   "source_lint": "pass 37.409 seconds",
   "native_arm64_execution": "pending CI",
   "full_ci": "pending",
-  "android_device": "not measured"
+  "android_device": "not measured",
+  "interpreter_boundaries": [
+    {
+      "interpreter": "go",
+      "seconds": 4.8356790890102275,
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "interpreter": "selfhost",
+      "seconds": 34.29847364901798,
+      "exit_code": 0,
+      "passed": true
+    }
+  ]
 }
