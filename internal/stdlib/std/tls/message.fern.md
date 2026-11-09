@@ -1033,6 +1033,26 @@ pub function selected_psk(d: [u8]): Result[i32, MsgError] {
   return Ok(__get16(d, 0));
 }
 
+// ext_early_data is the empty early_data extension of a ClientHello or
+// EncryptedExtensions (RFC 8446 section 4.2.10).
+pub function ext_early_data(): Extension {
+  return Extension { kind: EXT_EARLY_DATA, data: [] };
+}
+
+// ext_early_data_max is the early_data extension of a NewSessionTicket: the
+// most early data the ticket allows. QUIC requires 0xffffffff (RFC 9001
+// section 4.6.1).
+pub function ext_early_data_max(max: u32): Extension {
+  return Extension { kind: EXT_EARLY_DATA, data: __u32([], max) };
+}
+
+pub function early_data_max(d: [u8]): Result[u32, MsgError] {
+  if (d.len() != 4) {
+    return Err(__decode_error("early_data"));
+  }
+  return Ok(__get32(d, 0));
+}
+
 pub function ext_psk_modes(modes: i32[]): Extension {
   let list: u8[] = [];
   let i = 0;

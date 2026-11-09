@@ -1,5 +1,6 @@
 import "./ssa";
 import "./util";
+import "std/string";
 
 pub struct FlatChild { offset: i32 }
 
@@ -16,15 +17,15 @@ function unary(op: ssa.SInst, kind: i32, value: i32, name: string): boolean {
 }
 
 function zero(op: ssa.SInst): boolean {
-  return op.kind_tag == 1 && op.args.len() == 0 && op.imm == 0 && op.str == "";
+  return op.kind_tag == ssa.CONST_INT && op.args.len() == 0 && op.imm == 0 && op.str == "";
 }
 
 function parameter(op: ssa.SInst): boolean {
-  return op.kind_tag == 6 && op.args.len() == 0 && op.imm == 0 && op.str == "";
+  return op.kind_tag == ssa.PARAM && op.args.len() == 0 && op.imm == 0 && op.str == "";
 }
 
 function shape(f: ssa.SFunc): boolean {
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 1 || f.takes_env || f.nvals < 1) {
+  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != 1 || f.takes_env || f.nvals < 1) {
     return false;
   }
   let ids: i32[] = [];

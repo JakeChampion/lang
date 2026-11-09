@@ -212,10 +212,10 @@ pub function stand_in(same: i32[], v: i32): i32 {
 }
 
 function renamed_term(t: ssa.STerm, same: i32[]): ssa.STerm {
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa.STerm { ...t, cond: stand_in(same, t.cond) };
   }
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return ssa.STerm { ...t, value: stand_in(same, t.value) };
   }
   return t;

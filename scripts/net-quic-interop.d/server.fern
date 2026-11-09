@@ -101,7 +101,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return s;
   };
-  let Ok(c) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now()) else {
+  let Ok(c) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now(), clock.now()) else {
     return s;
   };
   let step = c.receive(d, now());

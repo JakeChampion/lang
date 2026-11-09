@@ -450,6 +450,9 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: zlib,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdZlib,       wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: zstd,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdZstd,       wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: brotli, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdBrotli,     wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: dns,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdDNS,        wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: protobuf, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdProtobuf,   wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: jpeg,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJPEG,       wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45

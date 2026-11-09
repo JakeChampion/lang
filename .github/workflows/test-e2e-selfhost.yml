@@ -258,13 +258,38 @@ jobs:
   # timed out two workers that each held one of them.
   selfhost-stdtest:
     needs: [driver-sizes]
-    name: selfhost-stdtest-${{ matrix.leg }}
+    name: selfhost-stdtest-${{ matrix.leg }}-${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        leg: [x86-64, x86-64-tls, arm64, arm64-tls, crypto-wasm, interp]
+        include:
+          - { leg: x86-64, shard: 0, count: 8 }
+          - { leg: x86-64, shard: 1, count: 8 }
+          - { leg: x86-64, shard: 2, count: 8 }
+          - { leg: x86-64, shard: 3, count: 8 }
+          - { leg: x86-64, shard: 4, count: 8 }
+          - { leg: x86-64, shard: 5, count: 8 }
+          - { leg: x86-64, shard: 6, count: 8 }
+          - { leg: x86-64, shard: 7, count: 8 }
+          - { leg: arm64, shard: 0, count: 8 }
+          - { leg: arm64, shard: 1, count: 8 }
+          - { leg: arm64, shard: 2, count: 8 }
+          - { leg: arm64, shard: 3, count: 8 }
+          - { leg: arm64, shard: 4, count: 8 }
+          - { leg: arm64, shard: 5, count: 8 }
+          - { leg: arm64, shard: 6, count: 8 }
+          - { leg: arm64, shard: 7, count: 8 }
+          - { leg: interp, shard: 0, count: 4 }
+          - { leg: interp, shard: 1, count: 4 }
+          - { leg: interp, shard: 2, count: 4 }
+          - { leg: interp, shard: 3, count: 4 }
+          - { leg: x86-64-tls, shard: 0, count: 1 }
+          - { leg: arm64-tls, shard: 0, count: 1 }
+          - { leg: crypto-wasm, shard: 0, count: 1 }
+    env:
+      FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -273,7 +298,7 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/oracle-verdict-cache
         with:
-          slot: stdtest-${{ matrix.leg }}
+          slot: stdtest-${{ matrix.leg }}-${{ matrix.shard }}
       - name: aarch64 cross-gcc + qemu
         if: startsWith(matrix.leg, 'arm64')
         uses: ./.github/actions/apt-cross-toolchain
@@ -644,24 +669,24 @@ jobs:
   # CPU, which exceeded 28 minutes on ARM64 in run 40325134038.
   checker-stdlib:
     needs: [driver-sizes]
-    name: checker-stdlib-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
+    name: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
+    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { host: x86_64, runner: ubuntu-24.04 }
-          - { host: aarch64, runner: ubuntu-24.04-arm }
+        host: [x86_64, aarch64]
+        shard: [0, 1, 2, 3]
     env:
       GOMAXPROCS: "4"
+      FERN_CHECK_CORPUS_SHARD: "${{ matrix.shard }}/4"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/oracle-verdict-cache
         with:
-          slot: checker-stdlib-${{ matrix.host }}
+          slot: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
       - uses: ./.github/actions/build-e2e-binaries
       - name: compare every stdlib test with the Go checker
         run: |

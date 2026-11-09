@@ -127,6 +127,49 @@ function test_pool_reuses_the_quic_connection(): test.TestOutcome {
   return test.assert_eq(n.h3_connections(), 1);
 }
 
+// A pool that keeps no connection still keeps the session ticket. The
+// next GET resumes the session and goes in 0-RTT. A POST resumes too, but
+// waits for the handshake, as a replay of it could change state.
+function test_zero_rtt_resumes(): test.TestOutcome {
+  let d = dated(9);
+  let Ok(n) = offering(d, fetch.idle_limited(0, time.duration_seconds(90 as i64))) else {
+    return test.fail("no identity");
+  };
+  let first = fetch.send_on(n, fetch.get("https://tls.example/a"), trusting());
+  let second = fetch.send_on(n, fetch.get("https://tls.example/b"), trusting());
+  let posted = fetch.send_on(n, fetch.request("POST", "https://tls.example/c").with_bytes("x=1".bytes()), trusting());
+  return test.assert_eq(body(first) + "; " + body(second) + "; " + body(posted) + "; connections " + n.h3_connections().to_string() + " early " + n.h3_early_requests().to_string(), "hello /a; hello /b; got 3; connections 3 early 1");
+}
+
+// A server that answers 0-RTT with 425 Too Early gets the GET again once
+// the handshake ends.
+function test_too_early_is_sent_again(): test.TestOutcome {
+  let d = dated(10);
+  let Ok(n0) = offering(d, fetch.idle_limited(0, time.duration_seconds(90 as i64))) else {
+    return test.fail("no identity");
+  };
+  let n = n0.refusing_early();
+  let first = fetch.send_on(n, fetch.get("https://tls.example/a"), trusting());
+  let second = fetch.send_on(n, fetch.get("https://tls.example/b"), trusting());
+  return test.assert_eq(body(first) + "; " + body(second) + "; served " + n.h3_requests().to_string() + " early " + n.h3_early_requests().to_string(), "hello /a; hello /b; served 2 early 1");
+}
+
+// The origin's first address has no server behind it, as ::1 has when the
+// server listens on 127.0.0.1 alone. The handshake moves on to the second
+// address. The next connection starts there, so its GET can go in 0-RTT.
+function test_dead_first_address(): test.TestOutcome {
+  let d = dated(11);
+  let pool = fetch.idle_limited(0, time.duration_seconds(90 as i64));
+  pool.offer_h3(HOST, 443, 443);
+  let Ok(id) = server_identity() else {
+    return test.fail("no identity");
+  };
+  let n = sim_fetch.new(d).pooling(pool).host(HOST, ["192.0.2.99", ORIGIN]).serve_h3(ORIGIN, 443, id, handle).datagram_delay(time.duration_millis(2));
+  let first = fetch.send_on(n, fetch.get("https://tls.example/a"), trusting());
+  let second = fetch.send_on(n, fetch.get("https://tls.example/b"), trusting());
+  return test.assert_eq(body(first) + "; " + body(second) + "; tcp " + n.connects().to_string() + " quic " + n.h3_connections().to_string() + " early " + n.h3_early_requests().to_string(), "hello /a; hello /b; tcp 0 quic 2 early 1");
+}
+
 function test_loss_is_recovered(): test.TestOutcome {
   let d = dated(4);
   let Ok(served) = offering(d, fetch.idle()) else {
@@ -221,6 +264,9 @@ function main(): i32 {
   r = r.it("a POST body and the response's trailers", test_post_with_trailers);
   r = r.it("the pool reuses the QUIC connection", test_pool_reuses_the_quic_connection);
   r = r.it("lost datagrams are recovered", test_loss_is_recovered);
+  r = r.it("a kept ticket resumes the session, and a GET goes in 0-RTT", test_zero_rtt_resumes);
+  r = r.it("a GET refused with 425 Too Early is sent again after the handshake", test_too_early_is_sent_again);
+  r = r.it("a dead first address gives way to the next, which the next connection tries first", test_dead_first_address);
   r = r.it("an alternative that does not answer is forgotten and the request goes over TCP", test_unanswered_alternative_falls_back_to_tcp);
   r = r.it("reads Alt-Svc field values", test_alt_svc_values);
   r = r.it("an Alt-Svc alternative holds for its age", test_alt_svc_noted_and_expired);

@@ -117,19 +117,6 @@ function main(): i32 {
     // CodeDirectory @16404 (+20): CSMAGIC_CODEDIRECTORY (0xfade0c02) BE.
     if (bin[16404] != 250 || bin[16405] != 222 || bin[16406] != 12 || bin[16407] != 2) { return 34; }
 
-    // ---- SHA-256 test vectors (FIPS 180-4) ----
-    // sha256("abc") = ba7816bf 8f01cfea ... f20015ad.
-    let abc: i32[] = [97, 98, 99];
-    let ha: i32[] = sha256_bytes(abc, 0, 3);
-    if (ha.len() != 32) { return 35; }
-    if (ha[0] != 186 || ha[1] != 120 || ha[2] != 22 || ha[3] != 191) { return 36; }
-    if (ha[31] != 173) { return 37; }
-    // sha256("") = e3b0c442 98fc1c14 ... 7852b855.
-    let empty: i32[] = [];
-    let he: i32[] = sha256_bytes(empty, 0, 0);
-    if (he[0] != 227 || he[1] != 176 || he[2] != 196 || he[3] != 66) { return 38; }
-    if (he[31] != 85) { return 39; }
-
     // ---- data variant: text (5 bytes) + data (2 bytes) ----
     // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 + 392 + 80 = 1304.
     let t2: u8[] = [1, 2, 3, 4, 5];

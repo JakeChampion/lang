@@ -4,6 +4,7 @@ import "./flatten";
 import "./util";
 import "./astwalk";
 import "./checker";
+import "std/string";
 
 function import_quals(mod: parser.Module): string[] {
   let out: string[] = [];
@@ -145,7 +146,7 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
 // resolved. A stdlib module belongs to the whole configured library root.
 pub function package_root(ident: string, root: string, owner: string): string {
   let lib = util.clean_path(root);
-  if (util.str_has_prefix(ident, "stdlib://") || root.len() > 0 && (util.str_has_prefix(ident, lib + "/std/") || util.str_has_prefix(ident, lib + "/core/"))) {
+  if (ident.starts_with("stdlib://") || root.len() > 0 && (ident.starts_with(lib + "/std/") || ident.starts_with(lib + "/core/"))) {
     return "(stdlib)";
   }
   return util.clean_path(owner);
@@ -465,7 +466,7 @@ function derived_json_helper(cx: VisCtx, fd: parser.FuncDecl, r: astwalk.QualRef
   }
   let owner = owner_ident(cx.src, r.qual);
   let at = cx.owners.find(owner);
-  return at >= 0 && at < cx.packages.len() && cx.packages[at] == "(stdlib)" && util.str_has_suffix(owner, "/std/json") && util.str_has_prefix(r.name, "from_json_");
+  return at >= 0 && at < cx.packages.len() && cx.packages[at] == "(stdlib)" && owner.ends_with("/std/json") && r.name.starts_with("from_json_");
 }
 
 function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[] {

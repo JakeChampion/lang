@@ -96,7 +96,7 @@ function block_at(g: ssa.SFunc, id: i32): i32 {
 // A block that a loop could branch back to: two predecessors and a phi first.
 function has_loop_head(g: ssa.SFunc): boolean {
   for b in g.blocks {
-    if (b.preds.len() == 2 && b.insts.len() > 0 && b.insts[0].kind_tag == 8) {
+    if (b.preds.len() == 2 && b.insts.len() > 0 && b.insts[0].kind_tag == ssa.PHI) {
       return true;
     }
   }
@@ -223,11 +223,11 @@ function straight_run(f: ssasem.Func, d: ssa.DefSites, bi: i32, head_id: i32): i
 
 // The one block a branch can go to, or -1. A branch on a constant goes to one.
 function jump_target(f: ssasem.Func, d: ssa.DefSites, t: ssa.STerm): i32 {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return t.target;
   }
   if let Some(c) = def_inst(f.graph, d, t.cond) {
-    if (t.kind_tag == 3 && c.kind_tag == 2) {
+    if (t.kind_tag == ssa.TERM_BRIF && c.kind_tag == ssa.CONST_BOOL) {
       if (c.imm != 0) {
         return t.t;
       }
@@ -238,7 +238,7 @@ function jump_target(f: ssasem.Func, d: ssa.DefSites, t: ssa.STerm): i32 {
 }
 
 function straight_after(b: ssa.SBlock, pred_id: i32, head_id: i32): boolean {
-  return b.id != head_id && b.preds.len() == 1 && b.preds[0] == pred_id && (b.insts.len() == 0 || b.insts[0].kind_tag != 8);
+  return b.id != head_id && b.preds.len() == 1 && b.preds[0] == pred_id && (b.insts.len() == 0 || b.insts[0].kind_tag != ssa.PHI);
 }
 
 // The body blocks from the test's successor `id`, when they run straight back
@@ -261,7 +261,7 @@ function body_run(f: ssasem.Func, d: ssa.DefSites, test_id: i32, head_id: i32, i
 function induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted): Counted {
   let g = f.graph;
   if let Some(c) = def_inst(g, d, test_block(g, shape).term.cond) {
-    if (c.kind_tag == 9 && c.args.len() == 2 && util.index_of_i32(shape.heads, d.block[c.result]) >= 0 && compares(c.str)) {
+    if (c.kind_tag == ssa.BINARY && c.args.len() == 2 && util.index_of_i32(shape.heads, d.block[c.result]) >= 0 && compares(c.str)) {
       let first = phi_induction(f, d, shape, c.args[0]);
       if (first.iv >= 0) {
         return first;
@@ -280,7 +280,7 @@ function phi_induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted, test: i3
     offset = st.by;
   }
   if let Some(p) = def_inst(f.graph, d, iv) {
-    if (p.kind_tag != 8 || d.block[iv] != shape.head || p.args.len() != 2 || !ssasem.is_i32(f.values[iv])) {
+    if (p.kind_tag != ssa.PHI || d.block[iv] != shape.head || p.args.len() != 2 || !ssasem.is_i32(f.values[iv])) {
       return no_loop();
     }
     if let Some(s) = constant_of(f, d, p.args[shape.entry]) {
@@ -313,7 +313,7 @@ function stepped(f: ssasem.Func, d: ssa.DefSites, shape: Counted, v: i32): Optio
 
 function header_phi(f: ssasem.Func, d: ssa.DefSites, shape: Counted, v: i32): boolean {
   if let Some(p) = def_inst(f.graph, d, v) {
-    return p.kind_tag == 8 && d.block[v] == shape.head;
+    return p.kind_tag == ssa.PHI && d.block[v] == shape.head;
   }
   return false;
 }

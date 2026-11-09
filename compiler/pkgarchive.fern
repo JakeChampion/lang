@@ -1,6 +1,7 @@
 import "std/deflate";
 import "std/rand";
 import "./util";
+import "std/string";
 
 // Unpacks a package archive, a gzip-compressed tar, into a directory. The
 // bytes come from a registry the program's manifest names, so every entry is
@@ -135,7 +136,7 @@ function write_entry(tmp: string, t: u8[], e: Entry): string {
 }
 
 function escapes(name: string): boolean {
-  return name.len() == 0 || name[0] == b'/' || name == ".." || util.str_has_prefix(name, "../");
+  return name.len() == 0 || name[0] == b'/' || name == ".." || name.starts_with("../");
 }
 
 function made(r: Result[void, IoError], path: string): string {
@@ -210,7 +211,7 @@ function pax_path(t: u8[], at: i32, size: i32): string {
     unsafe {
       rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
     }
-    if (util.str_has_prefix(rec, "path=")) {
+    if (rec.starts_with("path=")) {
       return slice_unchecked(rec, 5, rec.len()) + "";
     }
     i += len;

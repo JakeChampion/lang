@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "core/map";
+import "std/string";
 
 function hex_digit(d: i32): u8 {
   if (d < 10) {
@@ -878,8 +879,8 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
 function print_unary_c(u: ast.ExprUnary, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
   // Both cast forms are written after their operand. The checked form
   // uses the same precedence and parentheses as a plain cast.
-  let checked_cast = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
-  if (checked_cast || u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
+  let checked_cast = u.op.len() > 4 && u.op.starts_with("as?_");
+  if (checked_cast || u.op.len() > 3 && u.op.starts_with("as_")) {
     let (co, cf) = print_expr_c(u.operand, prec_unary(), depth, f);
     let start = 3;
     let cast_op = " as ";
@@ -1338,7 +1339,7 @@ function first_line(e: ast.Expr): i32 {
 }
 
 function is_postfix_unary(op: string): boolean {
-  return util.str_has_prefix(op, "as_") || util.str_has_prefix(op, "as?_") || op == "try_";
+  return op.starts_with("as_") || op.starts_with("as?_") || op == "try_";
 }
 
 function last_line(e: ast.Expr, spans: parser.BlockSpans): i32 {
@@ -2187,7 +2188,7 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
 function expr_is_missing(e: ast.Expr): boolean {
   match (e) {
     ast.ExprUnknown(u) => {
-      return u.kind.len() == 0 || u.kind == parser.BARE_RETURN || util.str_has_prefix(u.kind, "punct:");
+      return u.kind.len() == 0 || u.kind == parser.BARE_RETURN || u.kind.starts_with("punct:");
     },
     _ => {
       return false;
@@ -2464,7 +2465,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
 }
 
 function is_forc_name(name: string): boolean {
-  return name.len() > 7 && util.str_has_prefix(name, "__forc_");
+  return name.len() > 7 && name.starts_with("__forc_");
 }
 
 function expr_is_true(e: ast.Expr): boolean {
@@ -2660,7 +2661,7 @@ function split_commas(csv: string): string[] {
 }
 
 function written_name(name: string): string {
-  if (util.str_has_prefix(name, "__discard_")) {
+  if (name.starts_with("__discard_")) {
     return "_";
   }
   return name;
@@ -2756,7 +2757,7 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
         return "";
       }
       let at = "";
-      if (!util.str_has_prefix(holder, "__ptuple_")) {
+      if (!holder.starts_with("__ptuple_")) {
         at = holder + " @ ";
       }
       if (parser.is_struct_destr_marker(v.type_name)) {
@@ -2952,7 +2953,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     ast.StmtFor(fo) => {
       let fo_body = fo.body;
       let fo_binder = for_binder(fo.var_name);
-      if (util.str_has_prefix(fo.var_name, "$forpat_") && fo.body.len() > 0) {
+      if (fo.var_name.starts_with("$forpat_") && fo.body.len() > 0) {
         match (fo.body[0]) {
           ast.StmtVar(fpv) => {
             fo_binder = destr_at_prefix(fpv.type_name);

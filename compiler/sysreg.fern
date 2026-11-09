@@ -2,6 +2,7 @@
 // register has the encoding that mrs and msr take. An x86-64 register is a
 // control register or a model-specific register.
 import "./util";
+import "std/string";
 
 pub const READ: i32 = 1;
 
@@ -95,7 +96,7 @@ function arm64_generic(name: string): i32 {
 
 // Whether `part` is `prefix` and then a decimal number from lo to hi.
 function field(part: string, prefix: string, lo: i32, hi: i32): boolean {
-  if (!util.str_has_prefix(part, prefix) || part.len() == prefix.len() || part.len() > prefix.len() + 2) {
+  if (!part.starts_with(prefix) || part.len() == prefix.len() || part.len() > prefix.len() + 2) {
     return false;
   }
   for i in prefix.len()..part.len() {
@@ -148,7 +149,7 @@ pub function x86_msr(name: string): i64 {
       return m.index;
     }
   }
-  if (!util.str_has_prefix(name, "msr_") || name.len() == 4 || name.len() > 12) {
+  if (!name.starts_with("msr_") || name.len() == 4 || name.len() > 12) {
     return -1i64;
   }
   let index = 0i64;

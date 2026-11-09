@@ -3,6 +3,7 @@ import "../embed";
 import "../lexer";
 import "../parser";
 import "../util";
+import "std/string";
 
 function tree(): string {
   let dir = "";
@@ -248,7 +249,7 @@ function main(): i32 {
   if (err3.len() != 1) {
     return 50;
   }
-  if (!util.str_has_prefix(err3[0], "E094 1:") || !util.contains(err3[0], "no assets were embedded")) {
+  if (!err3[0].starts_with("E094 1:") || !util.contains(err3[0], "no assets were embedded")) {
     return 51;
   }
 

@@ -189,7 +189,7 @@ pub struct Endpoint { addr: string, port: i32, id: identity.Identity, handler: (
 // back with the time each arrives.
 pub struct Peer { id: i32, endpoint: i32, server: Option[h3q.Parked], inbox: u8[][], due: i64[], open: boolean }
 
-pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle, endpoints: Endpoint[], peers: Cell[Peer[]], delay: Duration, loss: i32, carried: Cell[i32], h3_served: Cell[i32], h3_accepted: Cell[i32] }
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle, endpoints: Endpoint[], peers: Cell[Peer[]], delay: Duration, loss: i32, carried: Cell[i32], h3_served: Cell[i32], h3_accepted: Cell[i32], h3_early: Cell[i32], too_early: boolean }
 ```
 
 ### `7 pub function new(drv: sim.Sim): Net`
@@ -204,7 +204,7 @@ pub function new(drv: sim.Sim): Net {
   let flakes: Flake[] = [];
   let endpoints: Endpoint[] = [];
   let peers: Peer[] = [];
-  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, flakes: flakes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle(), endpoints: endpoints, peers: cell_new(peers), delay: time.DURATION_ZERO, loss: 0, carried: cell_new(0), h3_served: cell_new(0), h3_accepted: cell_new(0) };
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, flakes: flakes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle(), endpoints: endpoints, peers: cell_new(peers), delay: time.DURATION_ZERO, loss: 0, carried: cell_new(0), h3_served: cell_new(0), h3_accepted: cell_new(0), h3_early: cell_new(0), too_early: false };
 }
 
 pub function (n: Net) pooling(pool: fetch.Idle): Net {
@@ -265,6 +265,18 @@ pub function (n: Net) h3_requests(): i32 {
 // h3_connections is how many QUIC connections the HTTP/3 endpoints accepted.
 pub function (n: Net) h3_connections(): i32 {
   return n.h3_accepted.get();
+}
+
+// refusing_early has the HTTP/3 endpoints answer every request that came
+// in 0-RTT with 425 Too Early, as a server that takes no replay risk does.
+pub function (n: Net) refusing_early(): Net {
+  return Net { ...n, too_early: true };
+}
+
+// h3_early_requests is how many of the requests the HTTP/3 endpoints
+// answered came in 0-RTT.
+pub function (n: Net) h3_early_requests(): i32 {
+  return n.h3_early.get();
 }
 
 // datagrams is how many datagrams either side sent, lost ones included.
@@ -562,6 +574,10 @@ function __without_at[T](xs: T[], k: i32): T[] {
   return out;
 }
 
+// TICKET_SECRET seals the session tickets of every HTTP/3 endpoint, as one
+// std/serve key does for its workers.
+const TICKET_SECRET: u8[] = [115u8, 105u8, 109u8];
+
 // __h3_delivered hands a datagram the client sent to the peer's server at
 // `at`, accepting the connection on its first.
 function __h3_delivered(n: Net, p: Peer, data: u8[], at: i64): Peer {
@@ -579,11 +595,11 @@ function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn
   if let Some(parked) = p.server {
     return Some(h3q.unpark(parked));
   }
-  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id));
+  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id).with_tickets(TICKET_SECRET).with_early_data());
   let Ok(h) = packet.parse(data, 0, cfg.cid_len) else {
     return None;
   };
-  let Ok(q) = quic.accept(cfg, __sim_bytes(n, quic.server_entropy(cfg)), h, now) else {
+  let Ok(q) = quic.accept(cfg, __sim_bytes(n, quic.server_entropy(cfg)), h, now, n.wall()) else {
     return None;
   };
   n.h3_accepted.set(n.h3_accepted.get() + 1);
@@ -598,6 +614,13 @@ function __h3_answering(n: Net, endpoint: i32, s: h3q.Conn): h3q.Conn {
   let handle = n.endpoints[endpoint].handler;
   for e in evs {
     if let h3q.Requested(id, req) = e {
+      if (cur.quic().early_stream(id)) {
+        n.h3_early.set(n.h3_early.get() + 1);
+        if (n.too_early) {
+          cur = cur.respond(id, http.text(425, "Too Early"));
+          continue;
+        }
+      }
       n.h3_served.set(n.h3_served.get() + 1);
       cur = cur.respond(id, handle(req));
     }

@@ -360,8 +360,9 @@ function __serve_listener(port: i32, opts: Config): __Listen {
 ```fern
 <<11 struct __Listen>>=
 // h3_key seals the address-validation tokens the HTTP/3 listener's Retry
-// packets carry. One serve.run picks it, so every worker it forks accepts
-// the tokens any of them issued.
+// packets carry, and the session tickets it issues. One serve.run picks
+// it, so every worker it forks accepts the tokens and tickets any of them
+// issued.
 struct __Listen { sock: Socket, inherited: boolean, h3_key: u8[] }
 
 function __listen(sock: Socket, inherited: boolean): __Listen {
@@ -6052,7 +6053,7 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity))), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity).with_tickets(l.h3_key).with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {
@@ -6392,9 +6393,9 @@ function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.Socket
 function __h3_opened(q: __Quic, h: packet.Header, odcid: u8[]): Result[quic.Conn, string] {
   let entropy = random_bytes(quic.server_entropy(q.cfg));
   if (h.token.len() > 0) {
-    return quic.accept_validated(q.cfg, entropy, h, odcid, clock.instant());
+    return quic.accept_validated(q.cfg, entropy, h, odcid, clock.instant(), clock.now());
   }
-  return quic.accept(q.cfg, entropy, h, clock.instant());
+  return quic.accept(q.cfg, entropy, h, clock.instant(), clock.now());
 }
 
 function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst) {

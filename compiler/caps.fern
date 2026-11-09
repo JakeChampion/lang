@@ -3,6 +3,7 @@ import "./astwalk";
 import "./util";
 import "./capvocab";
 import "./treeshake";
+import "std/string";
 
 pub function capabilities(): string[] {
   return capvocab.capabilities();
@@ -539,7 +540,7 @@ pub function source_chain(mod: parser.Module, chain: string[]): string[] {
     let fi = func_index(mod, name);
     if (fi >= 0) {
       let pre = mod.funcs[fi].module + "__";
-      if (mod.funcs[fi].module.len() > 0 && util.str_has_prefix(name, pre)) {
+      if (mod.funcs[fi].module.len() > 0 && name.starts_with(pre)) {
         shown = slice_unchecked(name, pre.len(), name.len()) + "";
       }
     }

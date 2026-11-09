@@ -168,9 +168,9 @@ function first_initial(p: Pair, h: packet.Header, d: u8[]): Pair {
 function accepted(p: Pair, h: packet.Header, odcid: u8[]): Result[conn.Conn, string] {
   let e = entropy(2, conn.server_entropy(p.server_cfg));
   if (h.token.len() > 0) {
-    return conn.accept_validated(p.server_cfg, e, h, odcid, at_ns(p.now));
+    return conn.accept_validated(p.server_cfg, e, h, odcid, at_ns(p.now), wall_at(p));
   }
-  return conn.accept(p.server_cfg, e, h, at_ns(p.now));
+  return conn.accept(p.server_cfg, e, h, at_ns(p.now), wall_at(p));
 }
 
 function wall_at(p: Pair): time.Timestamp {
@@ -322,6 +322,79 @@ function test_handshake(): test.TestOutcome {
       return test.fail(e);
     }
   }
+}
+
+// A server with a ticket key issues a session ticket once the handshake is
+// done. A client that offers it a minute later resumes, and both ends
+// report it. A server with another secret, and a ticket past its lifetime,
+// each give a full handshake instead.
+function test_resumption(): test.TestOutcome {
+  let sc = server_config(["h3"]).with_tickets([7u8, 7u8, 7u8]);
+  let Ok(p0) = start(client_config("tls.example", ["h3"]), sc) else {
+    return test.fail("the first handshake did not start");
+  };
+  let first = settle(p0, 12, 10000 * MS);
+  let tickets = first.client.tickets();
+  if (tickets.len() == 0) {
+    return test.fail("no ticket: " + first.log);
+  }
+  let cc = client_config("tls.example", ["h3"]).with_ticket(tickets[0]);
+  let line = "first " + first.client.connected().to_string() + " " + first.client.resumed().to_string() + " " + tickets.len().to_string();
+  let cases: (conn.Config, i64, string)[] = [(sc, 60000 as i64, "same"), (server_config(["h3"]).with_tickets([8u8]), 60000 as i64, "other"), (sc, 7300000 as i64, "expired")];
+  for (scfg, later, name) in cases {
+    let Ok(q0) = start_at(cc, scfg, WALL_MS + later) else {
+      return test.fail(name + ": did not start");
+    };
+    let q = settle(q0, 12, 10000 * MS);
+    line = line + "; " + name + " " + q.client.connected().to_string() + " " + q.client.resumed().to_string() + " " + server_of(q).resumed().to_string();
+  }
+  return test.assert_eq(line, "first true false 1; same true true true; other true false false; expired true false false");
+}
+
+// A client with a ticket that allows early data writes a stream before any
+// packet moves. A server that takes 0-RTT reads it from the client's first
+// flight, while its own handshake is still open, and the echo comes back. A server without 0-RTT drops the 0-RTT packets, and the client
+// sends the stream again in 1-RTT once the handshake is done.
+function test_zero_rtt(): test.TestOutcome {
+  let (cc0, sc0) = stream_configs();
+  let taking = sc0.with_tickets([5u8]).with_early_data();
+  let cc = cc0.with_early_data();
+  let Ok(p0) = start(cc, taking) else {
+    return test.fail("the first handshake did not start");
+  };
+  let first = settle(p0, 12, 10000 * MS);
+  let tickets = first.client.tickets();
+  if (tickets.len() == 0) {
+    return test.fail("no ticket");
+  }
+  let line = "max " + tickets[0].tls.max_early.to_string();
+  let cases: (conn.Config, string)[] = [(taking, "taken"), (sc0.with_tickets([5u8]), "refused")];
+  for (scfg, name) in cases {
+    let Ok(q0) = start_at(cc.with_ticket(tickets[0]), scfg, WALL_MS + 60000 as i64) else {
+      return test.fail(name + ": did not start");
+    };
+    let Ok(opened) = q0.client.open_stream(false) else {
+      return test.fail(name + ": no stream before the handshake");
+    };
+    let Ok(w) = opened.0.write(opened.1, "ping".bytes(), true) else {
+      return test.fail(name + ": no write before the handshake");
+    };
+    let e = Echo { p: Pair { ...q0, client: w }, size: 4, got: [], fin: false, server_done: false };
+    let early = false;
+    let seen = false;
+    let i = 0;
+    while (i < 40 && !e.fin) {
+      let handshaking = e.p.server.is_some() && !server_of(e.p).connected();
+      e = echo_round(e, e.p.now + 60000 * MS);
+      if (e.server_done && !seen) {
+        seen = true;
+        early = handshaking;
+      }
+      i += 1;
+    }
+    line = line + "; " + name + " " + hex.encode(e.got) + " early " + early.to_string() + " states " + e.p.client.early_state().to_string() + " " + server_of(e.p).early_state().to_string();
+  }
+  return test.assert_eq(line, "max 4294967295; taken 70696e67 early true states 2 2; refused 70696e67 early false states 3 0");
 }
 
 // Over a path that carries the marks, both ends keep marking ECT(0) through
@@ -1187,6 +1260,8 @@ function test_chacha_authentication_limit(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/quic/conn");
   r = r.it("a handshake in memory", test_handshake);
+  r = r.it("resuming a session with a ticket", test_resumption);
+  r = r.it("0-RTT taken and refused", test_zero_rtt);
   r = r.it("the anti-amplification limit", test_amplification);
   r = r.it("a lost datagram, by time threshold", test_lost_datagram);
   r = r.it("a lost flight, by probe timeout", test_lost_flight);

@@ -1,0 +1,11 @@
+import "std/test";
+import "flac_lpc_check";
+import "flac_lpc_vectors";
+
+function main(): i32 {
+  let runner = test.new("FLAC LPC independently qualified bitstreams");
+  for vector in flac_lpc_vectors.all() {
+    runner = runner.it(vector.name, () => flac_lpc_check.reference(vector));
+  }
+  return runner.finish();
+}

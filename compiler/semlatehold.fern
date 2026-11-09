@@ -185,7 +185,7 @@ function used_after(b: ssa.SBlock, k: i32, v: i32): boolean {
 }
 
 function term_reads(t: ssa.STerm, v: i32): boolean {
-  return t.kind_tag == 1 && t.value == v || t.kind_tag == 3 && t.cond == v;
+  return t.kind_tag == ssa.TERM_RET && t.value == v || t.kind_tag == ssa.TERM_BRIF && t.cond == v;
 }
 
 // applied re-reads each candidate's chain before its call and renames the
