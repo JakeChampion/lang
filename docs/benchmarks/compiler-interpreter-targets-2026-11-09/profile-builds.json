@@ -1,0 +1,54 @@
+{
+  "source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "runs": [
+    {
+      "name": "normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T21:40:15.807924+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T21:41:48.201292+00:00",
+      "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc"
+    },
+    {
+      "name": "cpu",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-cpu",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "cpu",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T21:41:48.248829+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T21:43:31.929543+00:00",
+      "binary_sha256": "33ef9cb99cd702019cfa18221211a7c2089ea0f7e0fc217153447fa366c9ae3e"
+    }
+  ],
+  "complete": true
+}

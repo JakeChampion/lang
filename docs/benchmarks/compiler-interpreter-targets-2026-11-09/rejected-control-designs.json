@@ -1,0 +1,17 @@
+[
+  {
+    "name": "receiver",
+    "code": 254,
+    "stderr": "fern: interp: struct make has no field `n`\n"
+  },
+  {
+    "name": "assoc-default",
+    "code": 1,
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/try-assoc-default.fern:7:67: error[E040]: could not infer type parameter T for make \u2014 supply it explicitly at the call site (e.g. make[i32](...)) or annotate the binding\n    function main(): i32 { let p = P { n: 7 }; return P.choose(p, make()).n; }\n                                                                      ^\n"
+  },
+  {
+    "name": "free",
+    "code": 1,
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/try-free.fern:6:65: error[E040]: could not infer type parameter T for make \u2014 supply it explicitly at the call site (e.g. make[i32](...)) or annotate the binding\n    function main(): i32 { let p = P { n: 7 }; return choose(p, make()).n; }\n                                                                    ^\n"
+  }
+]

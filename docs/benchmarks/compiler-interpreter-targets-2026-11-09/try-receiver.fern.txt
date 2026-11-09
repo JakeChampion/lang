@@ -1,0 +1,7 @@
+trait Make { function make(): Self; }
+struct P { n: i32 }
+impl Make for P { function make(): P { return P { n: 42 }; } }
+function make[T: Make](): T { return T.make(); }
+struct Box[T] { item: T }
+function (b: Box[T]) choose(next: T): T { return next; }
+function main(): i32 { let b: Box[P] = Box { item: P { n: 7 } }; return b.choose(make()).n; }

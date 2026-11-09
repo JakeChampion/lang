@@ -9,6 +9,12 @@ The [profiling reference](PROFILING.md) describes the native CPU and allocation 
 
 ## Measurements
 
+The [interpreter target-search experiment](benchmarks/compiler-interpreter-targets-2026-11-09/README.md) avoids declaration searches whose result argument evaluation does not use.
+Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
+Both binaries produce identical TAP output.
+Full-corpus controls remain in progress at this record revision.
+This subset result does not establish a timeout repair or a complete-compilation gain.
+
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |
 | Tokenize and parse | Source bytes per second, allocations, peak memory | Real source corpus and malformed input |

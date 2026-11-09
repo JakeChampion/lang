@@ -1,0 +1,95 @@
+# Interpreter target searches
+
+Status: [experiment] completed diagnostic subset comparison from 2026-11-09.
+
+The baseline compiler source is `ebb50c78c0ca714180704352881da7e39efb570f`.
+The candidate source is `424fe24f`.
+Both use producer `a19e87208c5931d2600fdb75cc966fd179ae8c8f`.
+The fixed input and standard library use the baseline source.
+The builds omit debug variables and embedded source files.
+Ownership certification stays enabled.
+
+## Problem and change
+
+The native interpreter exceeded the existing CI package budget during `opus_delimited`.
+An earlier main run at `d04e79179f` failed with the same active test before the semantic liveness change.
+The stack waits for the native interpreter after the Go oracle returns.
+The two complete CI logs retain these failures.
+The package abort explains the other unknown test outcomes in those logs.
+
+A fresh CPU profile uses the first 32 records from the unchanged reference corpus.
+It contains 571 samples and zero dropped samples.
+`call_target` accounts for 78 exclusive samples, or 13.66%.
+There are 167 stacks at the 64-frame limit.
+Inclusive attribution can overlap and truncate.
+
+The interpreter searches declarations before argument evaluation.
+It uses the result for nested call arguments and implicit type arguments of free calls.
+The candidate omits searches whose result neither path uses.
+The actual dispatch and argument order stay unchanged.
+The two addressability checks retain their declaration searches.
+
+The [implementation patch](implementation.patch) includes five regression cases.
+They cover explicit type arguments, zero arguments, implicit constant type arguments, and nested generic method and associated calls.
+Both normal binaries return the expected results for all five cases.
+They also return identical failures and diagnostics for five negative cases.
+Two earlier test designs failed the baseline and remain as diagnostic records.
+
+## Completed subset comparison
+
+Each sample runs the complete interpreter command on the first reference group.
+This diagnostic input contains 32 packet records, rather than the full 1,896-record corpus.
+The normal binaries disable CPU profiling and allocation counters.
+Five pairs alternate compiler order.
+All ten commands exit zero and produce identical TAP output.
+
+| Measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Median wall time | 18.842584233 s | 17.350765071 s |
+| Wall time range | 17.724580025–28.396457764 s | 15.542478475–23.719385198 s |
+| Median user plus system CPU time | 18.692494 s | 15.842723 s |
+| CPU time range | 17.533600–20.224722 s | 14.897656–17.209412 s |
+| Median peak RSS | 148,164 KiB | 148,168 KiB |
+
+The CPU time decreases in every pair, with reductions from 11.18% to 20.48%.
+The host also runs full-corpus controls, compiler builds, and targeted tests during this comparison.
+The raw samples retain every value.
+The [concurrency note](concurrency-note.json) describes these overlaps.
+These results establish a benefit for this diagnostic subset only.
+They do not establish full-corpus completion, a complete-compilation gain, or an external rank.
+
+The callable-value suite and the complete x86-64 and ARM64 driver suites report passes in [the test log](tests-corrected.log).
+The tool lost that parent session before the last two Go suites finished.
+The [session record](session-loss.json) retains this interruption without an overall suite verdict.
+Both normal binaries also pass those two generic fixtures through direct CLI commands in [the generic controls](generic-controls.json).
+
+A detached retry of all five Go suites remains in progress at this archive revision.
+Full-corpus controls and separate allocation controls also remain in progress.
+The original allocation collector stopped without a build outcome, and its incomplete records remain in this archive.
+The detached full-corpus monitor retains the original deadlines after the parent-session loss.
+The test corpus, exclusions, and 33-minute budget stay unchanged.
+Later records must state each completed outcome explicitly.
+
+## Identities and reproduction
+
+The [identity record](identities.json), [candidate build](build.json), and [baseline builds](profile-builds.json) retain exact sources, hashes, and commands.
+The [comparison collector](run-comparison.py) retains exact commands, environment, budgets, and child resource measurements.
+Its paths refer to the original worktrees.
+Use corresponding isolated worktrees for a new reproduction.
+Retain the same fixed input and standard library for both binaries.
+
+Build the producer through `bootstrap/bootstrap.sh stage0` with the source pin above.
+Build each normal CLI with `FERN_PROFILE=0`, `FERN_LEAKCHECK=0`, `FERN_RC_CERTIFY=1`, and `FERN_RC_CERTIFY_MEMO=0`.
+Use the build arguments in the identity records without `-g` or `-embed`.
+Copy [the diagnostic input](first-group.fern.txt) to `build/interpreter-profile-20261109/first-group.fern` under the fixed input tree.
+This location preserves its relative vector import.
+Run five alternating pairs with each normal CLI and the fixed standard library.
+
+The CPU profile uses a separate executable with `FERN_PROFILE=cpu` at build time.
+Its emitted assembly has zero instruction references to allocation counters.
+The [counter audit](profile-counter-audit.json) retains the assembly hash.
+The assembly itself was not executed for measurement.
+The large assembly and executable files remain outside this archive.
+
+The [manifest](manifest.json) hashes each data file.
+This README and the manifest itself are outside that hash list.

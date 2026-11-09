@@ -1,0 +1,6 @@
+{
+  "assembly_sha256": "c13030dc45afddd3a32c797d51734a274b6f362092f73d0b670f7ba32fae35dd",
+  "assembly_bytes": 141996315,
+  "instruction_counter_refs": 0,
+  "note": "Only the compiler assembly-emitter string literals name __fern_alloc_count. No emitted instruction references it. This assembly was not executed for measurement."
+}

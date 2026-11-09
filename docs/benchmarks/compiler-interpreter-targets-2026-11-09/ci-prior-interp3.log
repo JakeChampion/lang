@@ -1,0 +1,1566 @@
+﻿2026-11-09T17:53:36.4834906Z Current runner version: '2.338.2'
+2026-11-09T17:53:36.4860327Z ##[group]Runner Image Provisioner
+2026-11-09T17:53:36.4861382Z Hosted Compute Agent
+2026-11-09T17:53:36.4861986Z Version: 20261028.624
+2026-11-09T17:53:36.4862659Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-09T17:53:36.4863586Z Build Date: 2026-10-28T21:51:42Z
+2026-11-09T17:53:36.4864294Z Worker ID: {df97770c-1763-41e8-862c-5679f4897036}
+2026-11-09T17:53:36.4865097Z Region: centralus
+2026-11-09T17:53:36.4865668Z Cloud: Azure
+2026-11-09T17:53:36.4866195Z ##[endgroup]
+2026-11-09T17:53:36.4867741Z ##[group]Operating System
+2026-11-09T17:53:36.4868666Z Ubuntu
+2026-11-09T17:53:36.4869327Z 24.04.5
+2026-11-09T17:53:36.4869844Z LTS
+2026-11-09T17:53:36.4870342Z ##[endgroup]
+2026-11-09T17:53:36.4870968Z ##[group]Runner Image
+2026-11-09T17:53:36.4871574Z Image: ubuntu-24.04
+2026-11-09T17:53:36.4872206Z Version: 20261101.360.1
+2026-11-09T17:53:36.4873478Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-09T17:53:36.4875120Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-09T17:53:36.4876097Z ##[endgroup]
+2026-11-09T17:53:36.4877394Z ##[group]GITHUB_TOKEN Permissions
+2026-11-09T17:53:36.4879876Z Contents: read
+2026-11-09T17:53:36.4880567Z Metadata: read
+2026-11-09T17:53:36.4881147Z ##[endgroup]
+2026-11-09T17:53:36.4883597Z Secret source: Actions
+2026-11-09T17:53:36.4884656Z Cache mode: write
+2026-11-09T17:53:36.4885599Z Prepare workflow directory
+2026-11-09T17:53:36.5619688Z Prepare all required actions
+2026-11-09T17:53:36.5693375Z Getting action download info
+2026-11-09T17:53:36.7953448Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-09T17:53:37.0144246Z Uses: JakeChampion/lang/.github/workflows/test-e2e-selfhost.yml@refs/heads/main (d04e79179fda465d5897d25a00f9a2f34c4694ab)
+2026-11-09T17:53:37.0149693Z Complete job name: Validate / Full suite / Test e2e self-host / selfhost-stdtest-interp-3
+2026-11-09T17:53:37.1008552Z ##[group]Run actions/checkout@v7
+2026-11-09T17:53:37.1009493Z with:
+2026-11-09T17:53:37.1009953Z   repository: JakeChampion/lang
+2026-11-09T17:53:37.1013944Z   token: ***
+2026-11-09T17:53:37.1014386Z   ssh-strict: true
+2026-11-09T17:53:37.1014826Z   ssh-user: git
+2026-11-09T17:53:37.1015269Z   persist-credentials: true
+2026-11-09T17:53:37.1015759Z   clean: true
+2026-11-09T17:53:37.1016216Z   sparse-checkout-cone-mode: true
+2026-11-09T17:53:37.1016749Z   fetch-depth: 1
+2026-11-09T17:53:37.1017196Z   fetch-tags: false
+2026-11-09T17:53:37.1017644Z   show-progress: true
+2026-11-09T17:53:37.1018093Z   lfs: false
+2026-11-09T17:53:37.1018683Z   submodules: false
+2026-11-09T17:53:37.1019142Z   set-safe-directory: true
+2026-11-09T17:53:37.1019661Z   allow-unsafe-pr-checkout: false
+2026-11-09T17:53:37.1020440Z env:
+2026-11-09T17:53:37.1020898Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:53:37.1023728Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:53:37.1034931Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:53:37.1044198Z   QUARANTINED_TESTS: 
+2026-11-09T17:53:37.1044668Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:53:37.1045132Z ##[endgroup]
+2026-11-09T17:53:37.3802991Z Syncing repository: JakeChampion/lang
+2026-11-09T17:53:37.3806149Z ##[group]Getting Git version info
+2026-11-09T17:53:37.3807057Z Working directory is '/home/runner/work/lang/lang'
+2026-11-09T17:53:37.3809092Z [command]/usr/bin/git version
+2026-11-09T17:53:37.3891130Z git version 2.56.0
+2026-11-09T17:53:37.3915261Z ##[endgroup]
+2026-11-09T17:53:37.3926902Z Temporarily overriding HOME='/home/runner/work/_temp/749acadf-a582-44c6-a605-b3e69f752674' before making global git config changes
+2026-11-09T17:53:37.3929935Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-09T17:53:37.3933717Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lang/lang
+2026-11-09T17:53:37.3982998Z Deleting the contents of '/home/runner/work/lang/lang'
+2026-11-09T17:53:37.3986774Z ##[group]Determining repository object format
+2026-11-09T17:53:37.3988704Z ##[endgroup]
+2026-11-09T17:53:37.3990328Z ##[group]Initializing the repository
+2026-11-09T17:53:37.3993264Z [command]/usr/bin/git init /home/runner/work/lang/lang
+2026-11-09T17:53:37.4111404Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-09T17:53:37.4113331Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-09T17:53:37.4114750Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-09T17:53:37.4115690Z hint: call:
+2026-11-09T17:53:37.4116461Z hint:
+2026-11-09T17:53:37.4117099Z hint: 	git config --global init.defaultBranch <name>
+2026-11-09T17:53:37.4118038Z hint:
+2026-11-09T17:53:37.4119368Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-09T17:53:37.4121337Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-09T17:53:37.4122895Z hint:
+2026-11-09T17:53:37.4123643Z hint: 	git branch -m <name>
+2026-11-09T17:53:37.4124204Z hint:
+2026-11-09T17:53:37.4124924Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-09T17:53:37.4127046Z Initialized empty Git repository in /home/runner/work/lang/lang/.git/
+2026-11-09T17:53:37.4135255Z [command]/usr/bin/git remote add origin https://github.com/JakeChampion/lang
+2026-11-09T17:53:37.4187436Z ##[endgroup]
+2026-11-09T17:53:37.4188803Z ##[group]Disabling automatic garbage collection
+2026-11-09T17:53:37.4192129Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-09T17:53:37.4226937Z ##[endgroup]
+2026-11-09T17:53:37.4228682Z ##[group]Setting up auth
+2026-11-09T17:53:37.4229511Z Removing SSH command configuration
+2026-11-09T17:53:37.4234199Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-09T17:53:37.4274602Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-09T17:53:37.4695384Z Removing HTTP extra header
+2026-11-09T17:53:37.4703516Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-09T17:53:37.4748886Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-09T17:53:37.4992894Z Removing includeIf entries pointing to credentials config files
+2026-11-09T17:53:37.4998006Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-09T17:53:37.5055133Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-09T17:53:37.5328863Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-09T17:53:37.5388105Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/lang/lang/.git.path /home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T17:53:37.5441795Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/lang/lang/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T17:53:37.5494642Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T17:53:37.5545680Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T17:53:37.5595396Z ##[endgroup]
+2026-11-09T17:53:37.5596316Z ##[group]Fetching the repository
+2026-11-09T17:53:37.5605564Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d04e79179fda465d5897d25a00f9a2f34c4694ab:refs/remotes/origin/main
+2026-11-09T17:53:44.9324330Z From https://github.com/JakeChampion/lang
+2026-11-09T17:53:44.9326436Z  * [new ref]           d04e79179fda465d5897d25a00f9a2f34c4694ab -> origin/main
+2026-11-09T17:53:44.9336319Z [command]/usr/bin/git branch --list --remote origin/main
+2026-11-09T17:53:44.9376061Z   origin/main
+2026-11-09T17:53:44.9385951Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-11-09T17:53:44.9422325Z d04e79179fda465d5897d25a00f9a2f34c4694ab
+2026-11-09T17:53:44.9427108Z ##[endgroup]
+2026-11-09T17:53:44.9427795Z ##[group]Determining the checkout info
+2026-11-09T17:53:44.9429008Z ##[endgroup]
+2026-11-09T17:53:44.9433204Z [command]/usr/bin/git sparse-checkout disable
+2026-11-09T17:53:44.9498235Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-09T17:53:44.9541895Z ##[group]Checking out the ref
+2026-11-09T17:53:44.9546432Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-11-09T17:53:45.9929760Z Updating files:  48% (10592/22046)
+2026-11-09T17:53:46.0036945Z Updating files:  49% (10803/22046)
+2026-11-09T17:53:46.0196616Z Updating files:  50% (11023/22046)
+2026-11-09T17:53:46.0396281Z Updating files:  51% (11244/22046)
+2026-11-09T17:53:46.0532549Z Updating files:  52% (11464/22046)
+2026-11-09T17:53:46.0659298Z Updating files:  53% (11685/22046)
+2026-11-09T17:53:46.0749393Z Updating files:  54% (11905/22046)
+2026-11-09T17:53:46.1052278Z Updating files:  55% (12126/22046)
+2026-11-09T17:53:46.1305017Z Updating files:  56% (12346/22046)
+2026-11-09T17:53:46.1725069Z Updating files:  57% (12567/22046)
+2026-11-09T17:53:46.1876312Z Updating files:  58% (12787/22046)
+2026-11-09T17:53:46.2014389Z Updating files:  59% (13008/22046)
+2026-11-09T17:53:46.2144009Z Updating files:  60% (13228/22046)
+2026-11-09T17:53:46.2255879Z Updating files:  61% (13449/22046)
+2026-11-09T17:53:46.2374373Z Updating files:  62% (13669/22046)
+2026-11-09T17:53:46.2483755Z Updating files:  63% (13889/22046)
+2026-11-09T17:53:46.2605920Z Updating files:  64% (14110/22046)
+2026-11-09T17:53:46.2787110Z Updating files:  65% (14330/22046)
+2026-11-09T17:53:46.2950714Z Updating files:  66% (14551/22046)
+2026-11-09T17:53:46.3991164Z Updating files:  67% (14771/22046)
+2026-11-09T17:53:46.4222966Z Updating files:  68% (14992/22046)
+2026-11-09T17:53:46.5073572Z Updating files:  69% (15212/22046)
+2026-11-09T17:53:46.5221842Z Updating files:  70% (15433/22046)
+2026-11-09T17:53:46.5336031Z Updating files:  71% (15653/22046)
+2026-11-09T17:53:46.5489019Z Updating files:  72% (15874/22046)
+2026-11-09T17:53:46.5764518Z Updating files:  73% (16094/22046)
+2026-11-09T17:53:46.5877417Z Updating files:  74% (16315/22046)
+2026-11-09T17:53:46.6027974Z Updating files:  75% (16535/22046)
+2026-11-09T17:53:46.6152956Z Updating files:  76% (16755/22046)
+2026-11-09T17:53:46.6270436Z Updating files:  77% (16976/22046)
+2026-11-09T17:53:46.6382120Z Updating files:  78% (17196/22046)
+2026-11-09T17:53:46.6498416Z Updating files:  79% (17417/22046)
+2026-11-09T17:53:46.6635599Z Updating files:  80% (17637/22046)
+2026-11-09T17:53:46.6764603Z Updating files:  81% (17858/22046)
+2026-11-09T17:53:46.6915248Z Updating files:  82% (18078/22046)
+2026-11-09T17:53:46.7036357Z Updating files:  83% (18299/22046)
+2026-11-09T17:53:46.7152831Z Updating files:  84% (18519/22046)
+2026-11-09T17:53:46.7271478Z Updating files:  85% (18740/22046)
+2026-11-09T17:53:46.7418846Z Updating files:  86% (18960/22046)
+2026-11-09T17:53:46.7542284Z Updating files:  87% (19181/22046)
+2026-11-09T17:53:46.7675990Z Updating files:  88% (19401/22046)
+2026-11-09T17:53:46.7793411Z Updating files:  89% (19621/22046)
+2026-11-09T17:53:46.7900181Z Updating files:  90% (19842/22046)
+2026-11-09T17:53:46.8018869Z Updating files:  91% (20062/22046)
+2026-11-09T17:53:46.8167132Z Updating files:  92% (20283/22046)
+2026-11-09T17:53:46.8289355Z Updating files:  93% (20503/22046)
+2026-11-09T17:53:46.8411331Z Updating files:  94% (20724/22046)
+2026-11-09T17:53:46.8519453Z Updating files:  95% (20944/22046)
+2026-11-09T17:53:46.8671001Z Updating files:  96% (21165/22046)
+2026-11-09T17:53:46.8969176Z Updating files:  97% (21385/22046)
+2026-11-09T17:53:46.9451574Z Updating files:  98% (21606/22046)
+2026-11-09T17:53:46.9767328Z Updating files:  99% (21826/22046)
+2026-11-09T17:53:46.9814865Z Updating files:  99% (22013/22046)
+2026-11-09T17:53:46.9815369Z Updating files: 100% (22046/22046)
+2026-11-09T17:53:46.9816348Z Updating files: 100% (22046/22046), done.
+2026-11-09T17:53:47.0056277Z Switched to a new branch 'main'
+2026-11-09T17:53:47.0062181Z branch 'main' set up to track 'origin/main'.
+2026-11-09T17:53:47.0191074Z ##[endgroup]
+2026-11-09T17:53:47.0256419Z [command]/usr/bin/git log -1 --format=%H
+2026-11-09T17:53:47.0305101Z d04e79179fda465d5897d25a00f9a2f34c4694ab
+2026-11-09T17:53:47.0796687Z Prepare all required actions
+2026-11-09T17:53:47.0797271Z Getting action download info
+2026-11-09T17:53:47.1781624Z Download action repository 'jdx/mise-action@v4' (SHA:c2a87611a18de5b3828c5652fe268e992400cb5c)
+2026-11-09T17:53:47.6332301Z Download action repository 'actions/cache@v6' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+2026-11-09T17:53:47.7833303Z ##[group]Run ./.github/actions/setup-fern
+2026-11-09T17:53:47.7833592Z with:
+2026-11-09T17:53:47.7833788Z   wasmtime: true
+2026-11-09T17:53:47.7834002Z   compiler-cache: true
+2026-11-09T17:53:47.7834228Z env:
+2026-11-09T17:53:47.7834440Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:53:47.7836095Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:53:47.7843007Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:53:47.7848765Z   QUARANTINED_TESTS: 
+2026-11-09T17:53:47.7849007Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:53:47.7849240Z ##[endgroup]
+2026-11-09T17:53:47.7911718Z ##[start-action display=Install the pinned toolchain (mise.toml, wasm);id=__self.__jdx_mise-action]
+2026-11-09T17:53:47.8020244Z ##[group]Run jdx/mise-action@v4
+2026-11-09T17:53:47.8020535Z with:
+2026-11-09T17:53:47.8020733Z   version: 2026.11.0
+2026-11-09T17:53:47.8023443Z   github_token: ***
+2026-11-09T17:53:47.8023683Z   cache_key_prefix: mise-wasm
+2026-11-09T17:53:47.8023927Z   install: true
+2026-11-09T17:53:47.8024134Z   bootstrap: false
+2026-11-09T17:53:47.8024340Z   cache: true
+2026-11-09T17:53:47.8024538Z   cache_save: true
+2026-11-09T17:53:47.8024771Z   experimental: false
+2026-11-09T17:53:47.8024989Z   log_level: info
+2026-11-09T17:53:47.8025190Z   reshim: false
+2026-11-09T17:53:47.8025393Z   add_shims_to_path: true
+2026-11-09T17:53:47.8025622Z   fetch_from_github: true
+2026-11-09T17:53:47.8025834Z   env: true
+2026-11-09T17:53:47.8026021Z   export_path: true
+2026-11-09T17:53:47.8026224Z   wings_enabled: false
+2026-11-09T17:53:47.8026431Z env:
+2026-11-09T17:53:47.8026639Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:53:47.8028229Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:53:47.8034925Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:53:47.8040254Z   QUARANTINED_TESTS: 
+2026-11-09T17:53:47.8040481Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:53:47.8040704Z ##[endgroup]
+2026-11-09T17:53:47.9429033Z ##[group]Restoring mise cache
+2026-11-09T17:53:47.9476134Z [command]/usr/bin/ldd --version
+2026-11-09T17:53:47.9543790Z ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+2026-11-09T17:53:47.9546360Z Copyright (C) 2024 Free Software Foundation, Inc.
+2026-11-09T17:53:47.9547458Z This is free software; see the source for copying conditions.  There is NO
+2026-11-09T17:53:47.9549480Z warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+2026-11-09T17:53:47.9550547Z Written by Roland McGrath and Ulrich Drepper.
+2026-11-09T17:53:51.2382854Z Cache hit for: mise-wasm-linux-x64-ubuntu24-2026.11.0-ac190900b21641adcf3c937389c844d3d4576cf727b1a024677945921fa2bd6c
+2026-11-09T17:53:52.4109428Z Received 134217728 of 204092034 (65.8%), 124.5 MBs/sec
+2026-11-09T17:53:52.8183791Z Received 204092034 of 204092034 (100.0%), 135.4 MBs/sec
+2026-11-09T17:53:52.8184729Z Cache Size: ~195 MB (204092034 B)
+2026-11-09T17:53:52.8225359Z [command]/usr/bin/tar -xf /home/runner/work/_temp/b0821761-28ba-44c2-a6ee-af67b1024eb6/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:53:54.5882314Z Cache restored successfully
+2026-11-09T17:53:54.5976317Z mise cache restored from key: mise-wasm-linux-x64-ubuntu24-2026.11.0-ac190900b21641adcf3c937389c844d3d4576cf727b1a024677945921fa2bd6c
+2026-11-09T17:53:54.7695095Z mise already installed
+2026-11-09T17:53:54.7699944Z ##[group]Setting env vars
+2026-11-09T17:53:54.7700474Z Setting MISE_LOG_LEVEL=info
+2026-11-09T17:53:54.7706675Z Setting MISE_GITHUB_TOKEN=***
+2026-11-09T17:53:54.7707337Z Setting MISE_TRUSTED_CONFIG_PATHS=/home/runner/work/lang/lang
+2026-11-09T17:53:54.7707954Z Setting MISE_YES=1
+2026-11-09T17:53:54.7708701Z Adding /home/runner/.local/share/mise/shims to PATH
+2026-11-09T17:53:54.7709688Z ##[group]Running mise --version
+2026-11-09T17:53:54.7725720Z [command]/home/runner/.local/share/mise/bin/mise --version
+2026-11-09T17:53:54.7899399Z 2026.11.0 linux-x64 (2026-11-03)
+2026-11-09T17:53:54.7923054Z ##[endgroup]
+2026-11-09T17:53:54.8130063Z Detected a mise lock file, running `mise install --locked`
+2026-11-09T17:53:54.8131251Z ##[group]Running mise install --locked
+2026-11-09T17:53:54.8146762Z [command]/home/runner/.local/share/mise/bin/mise install --locked
+2026-11-09T17:53:54.8379370Z [2mmise[0m [2mby @jdx[0m – installing 8 tools
+2026-11-09T17:53:54.8386860Z [2mmise[0m [38;5;11m⇢[0m go@1.27                   0ms · already installed
+2026-11-09T17:53:54.8390645Z [2mmise[0m [38;5;11m⇢[0m wasmtime@50.0.1           0ms · already installed
+2026-11-09T17:53:54.8393836Z [2mmise[0m [38;5;11m⇢[0m http:wasi-adapter@50.0.1  0ms · already installed
+2026-11-09T17:53:54.8397067Z [2mmise[0m [38;5;11m⇢[0m wasm-tools@1.263.0        0ms · already installed
+2026-11-09T17:53:54.8401026Z [2mmise[0m [38;5;11m⇢[0m actionlint@1.7.12         0ms · already installed
+2026-11-09T17:53:54.8403762Z [2mmise[0m [38;5;11m⇢[0m gotestsum@1.13.0          0ms · already installed
+2026-11-09T17:53:54.8407016Z [2mmise[0m [38;5;11m⇢[0m oha@1.16.0                0ms · already installed
+2026-11-09T17:53:54.8410664Z [2mmise[0m [38;5;11m⇢[0m http:z3@4.15.3            0ms · already installed
+2026-11-09T17:53:54.8411916Z [2mmise[0m [36m████████████████[0m[31m[0m[2m[0m 8/8 · installed 0 tools · 8 already installed in 3ms
+2026-11-09T17:53:54.8412866Z [2mmise[0m all tools are installed
+2026-11-09T17:53:54.8551271Z ##[endgroup]
+2026-11-09T17:53:54.8551724Z ##[group]Running mise ls
+2026-11-09T17:53:54.8569287Z [command]/home/runner/.local/share/mise/bin/mise ls
+2026-11-09T17:53:54.8831587Z actionlint         1.7.12   ~/work/lang/lang/mise.toml  1.7.12
+2026-11-09T17:53:54.8832317Z go                 1.27.3   ~/work/lang/lang/mise.toml  1.27
+2026-11-09T17:53:54.8833000Z gotestsum          1.13.0   ~/work/lang/lang/mise.toml  1.13.0
+2026-11-09T17:53:54.8833697Z http:wasi-adapter  50.0.1   ~/work/lang/lang/mise.toml  50.0.1
+2026-11-09T17:53:54.8834365Z http:z3            4.15.3   ~/work/lang/lang/mise.toml  4.15.3
+2026-11-09T17:53:54.8834976Z oha                1.16.0   ~/work/lang/lang/mise.toml  1.16.0
+2026-11-09T17:53:54.8835420Z wasm-tools         1.263.0  ~/work/lang/lang/mise.toml  1.263.0
+2026-11-09T17:53:54.8835839Z wasmtime           50.0.1   ~/work/lang/lang/mise.toml  50.0.1
+2026-11-09T17:53:54.8854722Z ##[endgroup]
+2026-11-09T17:53:54.8857310Z ##[group]Exporting mise environment variables
+2026-11-09T17:53:54.9178852Z [command]/home/runner/.local/share/mise/bin/mise env --json
+2026-11-09T17:53:54.9438561Z {
+2026-11-09T17:53:54.9438984Z   "FERN_MISE_VERSION": "2026.11.0",
+2026-11-09T17:53:54.9439813Z   "GOBIN": "/home/runner/.local/share/mise/installs/go/1.27.3/bin",
+2026-11-09T17:53:54.9440344Z   "GOROOT": "/home/runner/.local/share/mise/installs/go/1.27.3",
+2026-11-09T17:53:54.9443974Z   "PATH": "/home/runner/.local/share/mise/installs/go/1.27.3/bin:/home/runner/.local/share/mise/installs/wasmtime/50.0.1/wasmtime-v50.0.1-x86_64-linux:/home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1:/home/runner/.local/share/mise/installs/wasm-tools/1.263.0/wasm-tools-1.263.0-x86_64-linux:/home/runner/.local/share/mise/installs/actionlint/1.7.12:/home/runner/.local/share/mise/installs/gotestsum/1.13.0:/home/runner/.local/share/mise/installs/oha/1.16.0:/home/runner/.local/share/mise/installs/http-z3/4.15.3/bin:/home/runner/.local/share/mise/shims:/home/runner/.local/share/mise/bin:/snap/bin:/home/runner/.local/bin:/opt/pipx_bin:/home/runner/.cargo/bin:/home/runner/.config/composer/vendor/bin:/usr/local/.ghcup/bin:/home/runner/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+2026-11-09T17:53:54.9447457Z }
+2026-11-09T17:53:54.9463728Z Adding /home/runner/.local/share/mise/installs/http-z3/4.15.3/bin to PATH
+2026-11-09T17:53:54.9464727Z Adding /home/runner/.local/share/mise/installs/oha/1.16.0 to PATH
+2026-11-09T17:53:54.9465585Z Adding /home/runner/.local/share/mise/installs/gotestsum/1.13.0 to PATH
+2026-11-09T17:53:54.9466222Z Adding /home/runner/.local/share/mise/installs/actionlint/1.7.12 to PATH
+2026-11-09T17:53:54.9466871Z Adding /home/runner/.local/share/mise/installs/wasm-tools/1.263.0/wasm-tools-1.263.0-x86_64-linux to PATH
+2026-11-09T17:53:54.9467558Z Adding /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1 to PATH
+2026-11-09T17:53:54.9468211Z Adding /home/runner/.local/share/mise/installs/wasmtime/50.0.1/wasmtime-v50.0.1-x86_64-linux to PATH
+2026-11-09T17:53:54.9469154Z Adding /home/runner/.local/share/mise/installs/go/1.27.3/bin to PATH
+2026-11-09T17:53:54.9469835Z ##[endgroup]
+2026-11-09T17:53:54.9827720Z ##[end-action id=__self.__jdx_mise-action;outcome=success;conclusion=success;duration_ms=7191]
+2026-11-09T17:53:54.9831912Z ##[start-action display=Install the pinned toolchain (mise.toml, base);id=__self.__jdx_mise-action_2]
+2026-11-09T17:53:54.9842595Z ##[end-action id=__self.__jdx_mise-action_2;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T17:53:54.9844879Z ##[start-action display=Restore Go build cache;id=__self.__actions_cache]
+2026-11-09T17:53:55.1066620Z ##[group]Run actions/cache/restore@v6
+2026-11-09T17:53:55.1066918Z with:
+2026-11-09T17:53:55.1067123Z   path: ~/.cache/go-build
+2026-11-09T17:53:55.1067563Z   key: gobuild-Linux-X64-eba1ccfc92408e798770d4d14447afb9049216002c3b74930307184c5b5c40c0-
+2026-11-09T17:53:55.1068286Z   restore-keys: gobuild-Linux-X64-eba1ccfc92408e798770d4d14447afb9049216002c3b74930307184c5b5c40c0-
+
+2026-11-09T17:53:55.1069535Z   enableCrossOsArchive: false
+2026-11-09T17:53:55.1069810Z   fail-on-cache-miss: false
+2026-11-09T17:53:55.1070058Z   lookup-only: false
+2026-11-09T17:53:55.1070281Z env:
+2026-11-09T17:53:55.1070519Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:53:55.1072222Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:53:55.1079182Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:53:55.1084602Z   QUARANTINED_TESTS: 
+2026-11-09T17:53:55.1084837Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:53:55.1085075Z   MISE_LOG_LEVEL: info
+2026-11-09T17:53:55.1087782Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:53:55.1088087Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:53:55.1088698Z   MISE_YES: 1
+2026-11-09T17:53:55.1089064Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:53:55.1089574Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:53:55.1090257Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:53:55.1090817Z ##[endgroup]
+2026-11-09T17:53:55.3953601Z Cache hit for restore-key: gobuild-Linux-X64-eba1ccfc92408e798770d4d14447afb9049216002c3b74930307184c5b5c40c0-2026-11-09
+2026-11-09T17:53:56.5573895Z Received 104857600 of 196732712 (53.3%), 99.9 MBs/sec
+2026-11-09T17:53:57.1373394Z Received 196732712 of 196732712 (100.0%), 118.7 MBs/sec
+2026-11-09T17:53:57.1375417Z Cache Size: ~188 MB (196732712 B)
+2026-11-09T17:53:57.1492008Z [command]/usr/bin/tar -xf /home/runner/work/_temp/0890d7d2-b3b2-4fca-95e4-d2c26b308cdb/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:53:58.6910011Z Cache restored successfully
+2026-11-09T17:53:58.7082114Z Cache restored from key: gobuild-Linux-X64-eba1ccfc92408e798770d4d14447afb9049216002c3b74930307184c5b5c40c0-2026-11-09
+2026-11-09T17:53:58.7197810Z ##[end-action id=__self.__actions_cache;outcome=success;conclusion=success;duration_ms=3735]
+2026-11-09T17:53:58.7202212Z ##[start-action display=Cache the shipped compiler;id=__self.compiler-cache]
+2026-11-09T17:53:59.7027776Z ##[group]Run actions/cache@v6
+2026-11-09T17:53:59.7028055Z with:
+2026-11-09T17:53:59.7028279Z   path: build/ci-compiler-cache
+2026-11-09T17:53:59.7029182Z   key: fern-cli-v1-Linux-X64-4acdf328436235d53059e62c1c49ecef0c6aeebb3b663a801c8c6fc5d62839c0
+2026-11-09T17:53:59.7029751Z   enableCrossOsArchive: false
+2026-11-09T17:53:59.7030046Z   fail-on-cache-miss: false
+2026-11-09T17:53:59.7030311Z   lookup-only: false
+2026-11-09T17:53:59.7030546Z   save-always: false
+2026-11-09T17:53:59.7030767Z env:
+2026-11-09T17:53:59.7031010Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:53:59.7032793Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:53:59.7039575Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:53:59.7044968Z   QUARANTINED_TESTS: 
+2026-11-09T17:53:59.7045212Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:53:59.7045451Z   MISE_LOG_LEVEL: info
+2026-11-09T17:53:59.7048147Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:53:59.7048602Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:53:59.7048946Z   MISE_YES: 1
+2026-11-09T17:53:59.7049164Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:53:59.7049486Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:53:59.7049897Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:53:59.7050235Z ##[endgroup]
+2026-11-09T17:53:59.9687268Z Cache hit for: fern-cli-v1-Linux-X64-4acdf328436235d53059e62c1c49ecef0c6aeebb3b663a801c8c6fc5d62839c0
+2026-11-09T17:54:00.5975266Z Received 11253029 of 11253029 (100.0%), 22.9 MBs/sec
+2026-11-09T17:54:00.5976131Z Cache Size: ~11 MB (11253029 B)
+2026-11-09T17:54:00.6082239Z [command]/usr/bin/tar -xf /home/runner/work/_temp/6e7ef4a7-cc5b-40e3-b007-fcaae9f322b3/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:54:00.6900854Z Cache restored successfully
+2026-11-09T17:54:00.6983850Z Cache restored from key: fern-cli-v1-Linux-X64-4acdf328436235d53059e62c1c49ecef0c6aeebb3b663a801c8c6fc5d62839c0
+2026-11-09T17:54:00.7090613Z ##[end-action id=__self.compiler-cache;outcome=success;conclusion=success;duration_ms=1988]
+2026-11-09T17:54:00.7095939Z ##[start-action display=Update compiler timestamps after an exact cache restore;id=__self.__run]
+2026-11-09T17:54:00.7135046Z ##[group]Run mkdir -p bin
+2026-11-09T17:54:00.7135382Z [36;1mmkdir -p bin[0m
+2026-11-09T17:54:00.7136006Z [36;1minstall -m 0755 build/ci-compiler-cache/fern-selfhost bin/fern-selfhost[0m
+2026-11-09T17:54:00.7136604Z [36;1minstall -m 0755 build/ci-compiler-cache/fern bin/fern[0m
+2026-11-09T17:54:00.7163489Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:00.7163855Z env:
+2026-11-09T17:54:00.7164105Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:00.7165742Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:00.7172375Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:00.7177795Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:00.7178046Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:00.7178292Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:00.7181237Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:00.7181569Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:00.7181907Z   MISE_YES: 1
+2026-11-09T17:54:00.7182133Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:00.7182461Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:00.7182881Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:00.7183221Z ##[endgroup]
+2026-11-09T17:54:00.7463023Z ##[end-action id=__self.__run;outcome=success;conclusion=success;duration_ms=36]
+2026-11-09T17:54:00.7465975Z ##[start-action display=Cache the launcher's self-host build;id=__self.__actions_cache_2]
+2026-11-09T17:54:01.1383411Z ##[group]Run actions/cache@v6
+2026-11-09T17:54:01.1383690Z with:
+2026-11-09T17:54:01.1383896Z   path: ~/.cache/fern
+2026-11-09T17:54:01.1384381Z   key: fern-launcher-Linux-X64-67512231070c9f643a07b45e39bbf88015b0df11bc9e8f36aa726053c6d4eb5e
+2026-11-09T17:54:01.1384918Z   enableCrossOsArchive: false
+2026-11-09T17:54:01.1385200Z   fail-on-cache-miss: false
+2026-11-09T17:54:01.1385456Z   lookup-only: false
+2026-11-09T17:54:01.1385692Z   save-always: false
+2026-11-09T17:54:01.1385909Z env:
+2026-11-09T17:54:01.1386144Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:01.1387858Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:01.1395112Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:01.1400869Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:01.1401132Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:01.1401378Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:01.1404088Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:01.1404412Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:01.1404750Z   MISE_YES: 1
+2026-11-09T17:54:01.1404985Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:01.1405318Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:01.1405742Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:01.1406083Z ##[endgroup]
+2026-11-09T17:54:01.4326632Z Cache hit for: fern-launcher-Linux-X64-67512231070c9f643a07b45e39bbf88015b0df11bc9e8f36aa726053c6d4eb5e
+2026-11-09T17:54:02.0493318Z Received 6457664 of 6457664 (100.0%), 13.7 MBs/sec
+2026-11-09T17:54:02.0494068Z Cache Size: ~6 MB (6457664 B)
+2026-11-09T17:54:02.0527453Z [command]/usr/bin/tar -xf /home/runner/work/_temp/dbcddc57-531d-4716-95a9-2fe2ae8e18bd/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:54:02.1149142Z Cache restored successfully
+2026-11-09T17:54:02.1228529Z Cache restored from key: fern-launcher-Linux-X64-67512231070c9f643a07b45e39bbf88015b0df11bc9e8f36aa726053c6d4eb5e
+2026-11-09T17:54:02.1319101Z ##[end-action id=__self.__actions_cache_2;outcome=success;conclusion=success;duration_ms=1385]
+2026-11-09T17:54:02.1323371Z ##[start-action display=Run ./.github/actions/stage0;id=__self.__self]
+2026-11-09T17:54:02.1368170Z Prepare all required actions
+2026-11-09T17:54:02.1368995Z Getting action download info
+2026-11-09T17:54:02.2751158Z ##[group]Run ./.github/actions/stage0
+2026-11-09T17:54:02.2751467Z env:
+2026-11-09T17:54:02.2751707Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:02.2753364Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:02.2760003Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:02.2765220Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:02.2765472Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:02.2765725Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:02.2768482Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:02.2768819Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:02.2769165Z   MISE_YES: 1
+2026-11-09T17:54:02.2769400Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:02.2769739Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:02.2770156Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:02.2770509Z ##[endgroup]
+2026-11-09T17:54:02.2775613Z ##[start-action display=Restore the pinned stage0;id=__self.__self.restore]
+2026-11-09T17:54:02.3397660Z ##[group]Run actions/cache/restore@v6
+2026-11-09T17:54:02.3398081Z with:
+2026-11-09T17:54:02.3398761Z   path: build/bootstrap/stage0
+2026-11-09T17:54:02.3399540Z   key: stage0-v1-Linux-X64-8d41bb834a3f265bd987d050f82a24f7dfc25aae03d7502b4489defd3ddb73af
+2026-11-09T17:54:02.3400512Z   enableCrossOsArchive: false
+2026-11-09T17:54:02.3400904Z   fail-on-cache-miss: false
+2026-11-09T17:54:02.3401277Z   lookup-only: false
+2026-11-09T17:54:02.3401602Z env:
+2026-11-09T17:54:02.3401920Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:02.3404532Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:02.3411196Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:02.3416410Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:02.3416663Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:02.3416919Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:02.3420089Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:02.3420427Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:02.3420783Z   MISE_YES: 1
+2026-11-09T17:54:02.3421031Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:02.3421373Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:02.3421803Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:02.3422152Z ##[endgroup]
+2026-11-09T17:54:02.6176593Z Cache hit for: stage0-v1-Linux-X64-8d41bb834a3f265bd987d050f82a24f7dfc25aae03d7502b4489defd3ddb73af
+2026-11-09T17:54:03.3400915Z Received 4231350 of 4231350 (100.0%), 7.5 MBs/sec
+2026-11-09T17:54:03.3401685Z Cache Size: ~4 MB (4231350 B)
+2026-11-09T17:54:03.3437900Z [command]/usr/bin/tar -xf /home/runner/work/_temp/25dd0b82-140f-4ac5-9f12-094596d1bd36/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:54:03.3818660Z Cache restored successfully
+2026-11-09T17:54:03.3896041Z Cache restored from key: stage0-v1-Linux-X64-8d41bb834a3f265bd987d050f82a24f7dfc25aae03d7502b4489defd3ddb73af
+2026-11-09T17:54:03.3981179Z ##[end-action id=__self.__self.restore;outcome=success;conclusion=success;duration_ms=1120]
+2026-11-09T17:54:03.3986333Z ##[start-action display=Resolve the pinned stage0;id=__self.__self.resolve]
+2026-11-09T17:54:03.4018269Z ##[group]Run echo "path=$(bootstrap/bootstrap.sh stage0)" >> "$GITHUB_OUTPUT"
+2026-11-09T17:54:03.4019490Z [36;1mecho "path=$(bootstrap/bootstrap.sh stage0)" >> "$GITHUB_OUTPUT"[0m
+2026-11-09T17:54:03.4052552Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:03.4053206Z env:
+2026-11-09T17:54:03.4053729Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:03.4056828Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:03.4069647Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:03.4080325Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:03.4080784Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:03.4081250Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:03.4086691Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:03.4087344Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:03.4087987Z   MISE_YES: 1
+2026-11-09T17:54:03.4088700Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:03.4089340Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:03.4090111Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:03.4090765Z ##[endgroup]
+2026-11-09T17:54:03.4456264Z stage0: stage0-20261107-38f241c for x86-64-linux (sha256 4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3)
+2026-11-09T17:54:03.4467595Z ##[end-action id=__self.__self.resolve;outcome=success;conclusion=success;duration_ms=48]
+2026-11-09T17:54:03.4470692Z ##[start-action display=Save the pinned stage0;id=__self.__self.__actions_cache]
+2026-11-09T17:54:03.4476441Z ##[end-action id=__self.__self.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T17:54:03.4479846Z ##[start-action display=Give the launcher the same stage0;id=__self.__self.__run]
+2026-11-09T17:54:03.4499306Z ##[group]Run if [ "$RUNNER_OS" = macOS ]; then cache="$HOME/Library/Caches"; else cache="${XDG_CACHE_HOME:-$HOME/.cache}"; fi
+2026-11-09T17:54:03.4500164Z [36;1mif [ "$RUNNER_OS" = macOS ]; then cache="$HOME/Library/Caches"; else cache="${XDG_CACHE_HOME:-$HOME/.cache}"; fi[0m
+2026-11-09T17:54:03.4500763Z [36;1mrelease="$(basename "$(dirname "$STAGE0")")"[0m
+2026-11-09T17:54:03.4501132Z [36;1mdest="$cache/fern/stage0/$release"[0m
+2026-11-09T17:54:03.4501455Z [36;1mmkdir -p "$dest"[0m
+2026-11-09T17:54:03.4501737Z [36;1mcp "$STAGE0" "$dest/"[0m
+2026-11-09T17:54:03.4502113Z [36;1mecho "stage0 for bootstrap.sh and the launcher: $STAGE0"[0m
+2026-11-09T17:54:03.4523219Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:03.4523598Z env:
+2026-11-09T17:54:03.4523851Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:03.4525503Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:03.4532161Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:03.4537606Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:03.4537873Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:03.4538170Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:03.4541074Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:03.4541409Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:03.4541756Z   MISE_YES: 1
+2026-11-09T17:54:03.4542003Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:03.4553022Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:03.4553788Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:03.4554440Z   STAGE0: /home/runner/work/lang/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux
+2026-11-09T17:54:03.4555001Z ##[endgroup]
+2026-11-09T17:54:03.4743563Z stage0 for bootstrap.sh and the launcher: /home/runner/work/lang/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux
+2026-11-09T17:54:03.4753211Z ##[end-action id=__self.__self.__run;outcome=success;conclusion=success;duration_ms=27]
+2026-11-09T17:54:03.4766000Z ##[end-action id=__self.__self;outcome=success;conclusion=success;duration_ms=1344]
+2026-11-09T17:54:03.4769012Z ##[start-action display=Ensure lld (the arm64-darwin cross-link and the linker-agnostic gate);id=__self.__run_2]
+2026-11-09T17:54:03.4821218Z ##[group]Run if command -v ld.lld >/dev/null 2>&1; then
+2026-11-09T17:54:03.4821688Z [36;1mif command -v ld.lld >/dev/null 2>&1; then[0m
+2026-11-09T17:54:03.4822271Z [36;1m  echo "ld.lld already on PATH: $(ld.lld --version | head -1)"[0m
+2026-11-09T17:54:03.4822684Z [36;1m  exit 0[0m
+2026-11-09T17:54:03.4822917Z [36;1mfi[0m
+2026-11-09T17:54:03.4823268Z [36;1m# Newest by version sort, so a runner image carrying several LLVM[0m
+2026-11-09T17:54:03.4823790Z [36;1m# toolchains picks the one its own `lld` package would have.[0m
+2026-11-09T17:54:03.4824324Z [36;1mversioned=$(ls -1 /usr/bin/ld.lld-* 2>/dev/null | sort -V | tail -1 || true)[0m
+2026-11-09T17:54:03.4824790Z [36;1mif [ -n "$versioned" ]; then[0m
+2026-11-09T17:54:03.4825181Z [36;1m  mkdir -p "$HOME/.local/bin"[0m
+2026-11-09T17:54:03.4825575Z [36;1m  ln -sf "$versioned" "$HOME/.local/bin/ld.lld"[0m
+2026-11-09T17:54:03.4825972Z [36;1m  echo "$HOME/.local/bin" >> "$GITHUB_PATH"[0m
+2026-11-09T17:54:03.4826426Z [36;1m  echo "linked $versioned as ld.lld: $("$versioned" --version | head -1)"[0m
+2026-11-09T17:54:03.4826852Z [36;1m  exit 0[0m
+2026-11-09T17:54:03.4827088Z [36;1mfi[0m
+2026-11-09T17:54:03.4827415Z [36;1mecho "no ld.lld-* on this image; falling back to apt" >&2[0m
+2026-11-09T17:54:03.4827935Z [36;1m# A FAILED install is tolerable — the fallback below links with bfd. A[0m
+2026-11-09T17:54:03.4828656Z [36;1m# HUNG one was not: apt stalling on a mirror holds the step until the[0m
+2026-11-09T17:54:03.4829206Z [36;1m# JOB's timeout-minutes kills it, which reports every real step as[0m
+2026-11-09T17:54:03.4829740Z [36;1m# `skipped` and the job as `cancelled` rather than as a test failure.[0m
+2026-11-09T17:54:03.4830265Z [36;1m# `timeout` turns the hang back into the failure this fallback already[0m
+2026-11-09T17:54:03.4830779Z [36;1m# handles. It runs under sudo, not over it, so the signal reaches apt[0m
+2026-11-09T17:54:03.4831360Z [36;1m# rather than the sudo wrapper.[0m
+2026-11-09T17:54:03.4831850Z [36;1msudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq lld || {[0m
+2026-11-09T17:54:03.4832488Z [36;1m  echo "lld install failed or timed out; the tests that need it skip" >&2[0m
+2026-11-09T17:54:03.4832922Z [36;1m  exit 0[0m
+2026-11-09T17:54:03.4833161Z [36;1m}[0m
+2026-11-09T17:54:03.4833512Z [36;1mcommand -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true[0m
+2026-11-09T17:54:03.4854466Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:03.4854829Z env:
+2026-11-09T17:54:03.4855073Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:03.4856705Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:03.4863328Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:03.4868695Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:03.4868955Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:03.4869207Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:03.4871895Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:03.4872220Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:03.4872567Z   MISE_YES: 1
+2026-11-09T17:54:03.4872802Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:03.4873150Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:03.4873577Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:03.4873917Z ##[endgroup]
+2026-11-09T17:54:03.7883191Z linked /usr/bin/ld.lld-18 as ld.lld: Ubuntu LLD 18.1.3 (compatible with GNU linkers)
+2026-11-09T17:54:03.7891624Z ##[end-action id=__self.__run_2;outcome=success;conclusion=success;duration_ms=312]
+2026-11-09T17:54:03.7894153Z ##[start-action display=Wire the WASI adapter;id=__self.__run_3]
+2026-11-09T17:54:03.7915771Z ##[group]Run echo "FERN_WASI_ADAPTER=$(mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
+2026-11-09T17:54:03.7916632Z [36;1mecho "FERN_WASI_ADAPTER=$(mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"[0m
+2026-11-09T17:54:03.7939170Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:03.7939541Z env:
+2026-11-09T17:54:03.7939790Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:03.7941440Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:03.7947970Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:03.7953398Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:03.7953651Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:03.7953909Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:03.7956619Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:03.7956953Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:03.7957304Z   MISE_YES: 1
+2026-11-09T17:54:03.7957544Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:03.7957893Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:03.7958540Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:03.7958922Z ##[endgroup]
+2026-11-09T17:54:03.8150372Z ##[end-action id=__self.__run_3;outcome=success;conclusion=success;duration_ms=25]
+2026-11-09T17:54:03.8152663Z ##[start-action display=Assert the wasm toolchain is actually usable;id=__self.__run_4]
+2026-11-09T17:54:03.8171967Z ##[group]Run set -euo pipefail
+2026-11-09T17:54:03.8172321Z [36;1mset -euo pipefail[0m
+2026-11-09T17:54:03.8172752Z [36;1mfail=0[0m
+2026-11-09T17:54:03.8173034Z [36;1mfor tool in wasmtime wasm-tools; do[0m
+2026-11-09T17:54:03.8173420Z [36;1m  if ! command -v "$tool" >/dev/null 2>&1; then[0m
+2026-11-09T17:54:03.8174146Z [36;1m    echo "::error::$tool was requested (wasmtime: true) but is not on PATH — every wasm e2e test would t.Skip() and the lane would report a false green"[0m
+2026-11-09T17:54:03.8174827Z [36;1m    fail=1[0m
+2026-11-09T17:54:03.8175069Z [36;1m  fi[0m
+2026-11-09T17:54:03.8175293Z [36;1mdone[0m
+2026-11-09T17:54:03.8175644Z [36;1mif [ -n "${FERN_WASI_ADAPTER:-}" ] && [ ! -f "$FERN_WASI_ADAPTER" ]; then[0m
+2026-11-09T17:54:03.8176357Z [36;1m  echo "::error::FERN_WASI_ADAPTER points at $FERN_WASI_ADAPTER, which does not exist — the component tests would skip"[0m
+2026-11-09T17:54:03.8176917Z [36;1m  fail=1[0m
+2026-11-09T17:54:03.8177145Z [36;1mfi[0m
+2026-11-09T17:54:03.8177404Z [36;1mif [ -z "${FERN_WASI_ADAPTER:-}" ]; then[0m
+2026-11-09T17:54:03.8177870Z [36;1m  echo "::error::FERN_WASI_ADAPTER is unset — the component tests would skip"[0m
+2026-11-09T17:54:03.8178297Z [36;1m  fail=1[0m
+2026-11-09T17:54:03.8178800Z [36;1mfi[0m
+2026-11-09T17:54:03.8179031Z [36;1m[ "$fail" -eq 0 ] || exit 1[0m
+2026-11-09T17:54:03.8179463Z [36;1m# The pinned versions matter too: v46 changed the component-model-async[0m
+2026-11-09T17:54:03.8180003Z [36;1m# ABI, and an older wasmtime fails the preview-3 tests with an opaque[0m
+2026-11-09T17:54:03.8180516Z [36;1m# `invalid leading byte (0x43)`. Report them so a version drift is[0m
+2026-11-09T17:54:03.8181027Z [36;1m# visible in the log rather than surfacing as a mystery test failure.[0m
+2026-11-09T17:54:03.8181587Z [36;1mwasmtime --version[0m
+2026-11-09T17:54:03.8181867Z [36;1mwasm-tools --version[0m
+2026-11-09T17:54:03.8202122Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:03.8202503Z env:
+2026-11-09T17:54:03.8202756Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:03.8204394Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:03.8211048Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:03.8216289Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:03.8216556Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:03.8216823Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:03.8220094Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:03.8220442Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:03.8220793Z   MISE_YES: 1
+2026-11-09T17:54:03.8221039Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:03.8221551Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:03.8222005Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:03.8222647Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:03.8223231Z ##[endgroup]
+2026-11-09T17:54:03.8295755Z wasmtime 50.0.1 (c307ec81d 2026-10-29)
+2026-11-09T17:54:03.8321263Z wasm-tools 1.263.0 (7a2fa422c 2026-10-30)
+2026-11-09T17:54:03.8335247Z ##[end-action id=__self.__run_4;outcome=success;conclusion=success;duration_ms=18]
+2026-11-09T17:54:03.8441314Z Prepare all required actions
+2026-11-09T17:54:03.8442298Z Getting action download info
+2026-11-09T17:54:04.0117071Z ##[group]Run ./.github/actions/selfhost-driver-cache
+2026-11-09T17:54:04.0117417Z with:
+2026-11-09T17:54:04.0117636Z   save: false
+2026-11-09T17:54:04.0117853Z env:
+2026-11-09T17:54:04.0118092Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:04.0119984Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:04.0126346Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:04.0132156Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:04.0132438Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:04.0132711Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:04.0135375Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:04.0135728Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:04.0136071Z   MISE_YES: 1
+2026-11-09T17:54:04.0136310Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:04.0136661Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:04.0137099Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:04.0137746Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:04.0138629Z ##[endgroup]
+2026-11-09T17:54:04.0143779Z ##[start-action display=Name the driver cache directory;id=__self_2.dir]
+2026-11-09T17:54:04.0172657Z ##[group]Run dir="$RUNNER_TEMP/selfhost-unicache"
+2026-11-09T17:54:04.0173068Z [36;1mdir="$RUNNER_TEMP/selfhost-unicache"[0m
+2026-11-09T17:54:04.0173422Z [36;1mmkdir -p "$dir"[0m
+2026-11-09T17:54:04.0173765Z [36;1mecho "FERN_SELFHOST_BUILD_CACHE=$dir" >> "$GITHUB_ENV"[0m
+2026-11-09T17:54:04.0174162Z [36;1mecho "dir=$dir" >> "$GITHUB_OUTPUT"[0m
+2026-11-09T17:54:04.0196112Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:04.0196482Z env:
+2026-11-09T17:54:04.0196735Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:04.0198529Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:04.0205149Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:04.0211407Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:04.0211833Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:04.0212102Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:04.0214713Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:04.0215073Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:04.0215426Z   MISE_YES: 1
+2026-11-09T17:54:04.0215676Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:04.0216018Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:04.0216448Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:04.0217090Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:04.0217682Z ##[endgroup]
+2026-11-09T17:54:04.0286287Z ##[end-action id=__self_2.dir;outcome=success;conclusion=success;duration_ms=14]
+2026-11-09T17:54:04.0288703Z ##[start-action display=Restore the stage0-built drivers;id=__self_2.__actions_cache]
+2026-11-09T17:54:04.7907351Z ##[group]Run actions/cache/restore@v6
+2026-11-09T17:54:04.7907905Z with:
+2026-11-09T17:54:04.7908744Z   path: /home/runner/work/_temp/selfhost-unicache/*.driverbin
+2026-11-09T17:54:04.7909563Z   key: selfhost-drivers-v1-Linux-X64-6c8b1e503f829d7a29db58b414a28527d16c941eee18464ef1af6357f6528c4b
+2026-11-09T17:54:04.7910220Z   restore-keys: selfhost-drivers-v1-Linux-X64-
+
+2026-11-09T17:54:04.7910586Z   enableCrossOsArchive: false
+2026-11-09T17:54:04.7910883Z   fail-on-cache-miss: false
+2026-11-09T17:54:04.7911164Z   lookup-only: false
+2026-11-09T17:54:04.7911409Z env:
+2026-11-09T17:54:04.7911653Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:04.7913303Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:04.7920133Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:04.7925354Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:04.7925614Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:04.7925876Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:04.7928927Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:04.7929290Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:04.7929643Z   MISE_YES: 1
+2026-11-09T17:54:04.7929886Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:04.7930240Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:04.7930672Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:04.7931323Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:04.7932278Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:04.7932671Z ##[endgroup]
+2026-11-09T17:54:05.0671107Z Cache hit for: selfhost-drivers-v1-Linux-X64-6c8b1e503f829d7a29db58b414a28527d16c941eee18464ef1af6357f6528c4b
+2026-11-09T17:54:06.2753493Z Received 134217728 of 641674217 (20.9%), 124.4 MBs/sec
+2026-11-09T17:54:07.2741565Z Received 339738624 of 641674217 (52.9%), 159.7 MBs/sec
+2026-11-09T17:54:08.2747336Z Received 536870912 of 641674217 (83.7%), 169.0 MBs/sec
+2026-11-09T17:54:08.8808687Z Received 641674217 of 641674217 (100.0%), 168.3 MBs/sec
+2026-11-09T17:54:08.8812200Z Cache Size: ~612 MB (641674217 B)
+2026-11-09T17:54:08.8867560Z [command]/usr/bin/tar -xf /home/runner/work/_temp/73505851-2f52-4b16-9520-c37b09447641/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:54:12.6909903Z Cache restored successfully
+2026-11-09T17:54:12.7261680Z Cache restored from key: selfhost-drivers-v1-Linux-X64-6c8b1e503f829d7a29db58b414a28527d16c941eee18464ef1af6357f6528c4b
+2026-11-09T17:54:12.7573440Z ##[end-action id=__self_2.__actions_cache;outcome=success;conclusion=success;duration_ms=8728]
+2026-11-09T17:54:12.7576250Z ##[start-action display=Restore the stage0-built drivers, and save them when the job ends;id=__self_2.__actions_cache_2]
+2026-11-09T17:54:12.7581556Z ##[end-action id=__self_2.__actions_cache_2;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T17:54:12.7583655Z ##[start-action display=Drop drivers no run has needed for a week;id=__self_2.__run]
+2026-11-09T17:54:12.8471686Z ##[group]Run dir="/home/runner/work/_temp/selfhost-unicache"
+2026-11-09T17:54:12.8472729Z [36;1mdir="/home/runner/work/_temp/selfhost-unicache"[0m
+2026-11-09T17:54:12.8473660Z [36;1mstale=$(find "$dir" -maxdepth 1 -name '*.driverbin' -mtime +7 -print -delete | wc -l)[0m
+2026-11-09T17:54:12.8474605Z [36;1mkept=$(find "$dir" -maxdepth 1 -name '*.driverbin' | wc -l)[0m
+2026-11-09T17:54:12.8475556Z [36;1mecho "self-host driver cache: $kept driver(s) restored, $stale stale one(s) dropped"[0m
+2026-11-09T17:54:12.8504998Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:12.8505614Z env:
+2026-11-09T17:54:12.8506021Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:12.8509185Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:12.8521189Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:12.8526449Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:12.8526728Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:12.8527134Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:12.8530186Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:12.8530543Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:12.8530911Z   MISE_YES: 1
+2026-11-09T17:54:12.8531160Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:12.8531517Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:12.8531959Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:12.8532611Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:12.8533309Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:12.8533720Z ##[endgroup]
+2026-11-09T17:54:13.0596919Z self-host driver cache: 254 driver(s) restored, 0 stale one(s) dropped
+2026-11-09T17:54:13.0606424Z ##[end-action id=__self_2.__run;outcome=success;conclusion=success;duration_ms=302]
+2026-11-09T17:54:13.0647986Z Prepare all required actions
+2026-11-09T17:54:13.0649100Z Getting action download info
+2026-11-09T17:54:13.3090893Z ##[group]Run ./.github/actions/oracle-verdict-cache
+2026-11-09T17:54:13.3091698Z with:
+2026-11-09T17:54:13.3092211Z   slot: stdtest-interp-3
+2026-11-09T17:54:13.3092654Z env:
+2026-11-09T17:54:13.3093051Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:13.3096009Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:13.3107913Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:13.3117715Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:13.3118166Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:13.3118738Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:13.3123569Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:13.3124547Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:13.3125143Z   MISE_YES: 1
+2026-11-09T17:54:13.3125673Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:13.3126266Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:13.3126992Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:13.3128097Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:13.3129481Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:13.3130159Z ##[endgroup]
+2026-11-09T17:54:13.3139099Z ##[start-action display=Restore the oracle verdicts, and save them when the job ends;id=__self_3.__actions_cache]
+2026-11-09T17:54:13.3207401Z ##[group]Run actions/cache@v6
+2026-11-09T17:54:13.3208100Z with:
+2026-11-09T17:54:13.3208875Z   path: /home/runner/work/_temp/selfhost-unicache/*.verdict
+2026-11-09T17:54:13.3209901Z   key: oracle-verdicts-v1-Linux-stdtest-interp-3-d04e79179fda465d5897d25a00f9a2f34c4694ab
+2026-11-09T17:54:13.3211138Z   restore-keys: oracle-verdicts-v1-Linux-stdtest-interp-3-
+oracle-verdicts-v1-Linux-
+
+2026-11-09T17:54:13.3212045Z   enableCrossOsArchive: false
+2026-11-09T17:54:13.3212564Z   fail-on-cache-miss: false
+2026-11-09T17:54:13.3213050Z   lookup-only: false
+2026-11-09T17:54:13.3213487Z   save-always: false
+2026-11-09T17:54:13.3213910Z env:
+2026-11-09T17:54:13.3214333Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:13.3217851Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:13.3230823Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:13.3241272Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:13.3241739Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:13.3242202Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:13.3247330Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:13.3247938Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:13.3248816Z   MISE_YES: 1
+2026-11-09T17:54:13.3249244Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:13.3249869Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:13.3250639Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:13.3251835Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:13.3253106Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:13.3253832Z ##[endgroup]
+2026-11-09T17:54:13.6275912Z Cache hit for restore-key: oracle-verdicts-v1-Linux-stdtest-crypto-wasm-0-d04e79179fda465d5897d25a00f9a2f34c4694ab
+2026-11-09T17:54:14.1986199Z Received 2156692 of 2156692 (100.0%), 5.1 MBs/sec
+2026-11-09T17:54:14.1987034Z Cache Size: ~2 MB (2156692 B)
+2026-11-09T17:54:14.2020351Z [command]/usr/bin/tar -xf /home/runner/work/_temp/997f30d1-90e4-4d09-adac-3c57bad2f102/cache.tzst -P -C /home/runner/work/lang/lang --use-compress-program unzstd
+2026-11-09T17:54:14.9501547Z Cache restored successfully
+2026-11-09T17:54:14.9578980Z Cache restored from key: oracle-verdicts-v1-Linux-stdtest-crypto-wasm-0-d04e79179fda465d5897d25a00f9a2f34c4694ab
+2026-11-09T17:54:14.9666982Z ##[end-action id=__self_3.__actions_cache;outcome=success;conclusion=success;duration_ms=1651]
+2026-11-09T17:54:14.9670101Z ##[start-action display=Drop oracle verdicts no run has read for a week;id=__self_3.__run]
+2026-11-09T17:54:14.9689867Z ##[group]Run dir="$RUNNER_TEMP/selfhost-unicache"
+2026-11-09T17:54:14.9690336Z [36;1mdir="$RUNNER_TEMP/selfhost-unicache"[0m
+2026-11-09T17:54:14.9690847Z [36;1mstale=$(find "$dir" -maxdepth 1 -name '*.verdict' -mtime +7 -print -delete | wc -l)[0m
+2026-11-09T17:54:14.9691400Z [36;1mkept=$(find "$dir" -maxdepth 1 -name '*.verdict' | wc -l)[0m
+2026-11-09T17:54:14.9691952Z [36;1mecho "oracle verdict cache: $kept verdict(s) restored, $stale stale one(s) dropped"[0m
+2026-11-09T17:54:14.9715193Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:14.9715592Z env:
+2026-11-09T17:54:14.9715862Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:14.9717700Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:14.9724498Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:14.9730123Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:14.9730399Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:14.9730674Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:14.9733394Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:14.9733749Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:14.9734109Z   MISE_YES: 1
+2026-11-09T17:54:14.9734357Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:14.9734714Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:14.9735156Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:14.9735822Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:14.9736558Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:14.9736970Z ##[endgroup]
+2026-11-09T17:54:15.0961448Z oracle verdict cache: 22999 verdict(s) restored, 0 stale one(s) dropped
+2026-11-09T17:54:15.0968996Z ##[end-action id=__self_3.__run;outcome=success;conclusion=success;duration_ms=129]
+2026-11-09T17:54:15.1013747Z Prepare all required actions
+2026-11-09T17:54:15.1049776Z ##[group]Run ./.github/actions/build-e2e-binaries
+2026-11-09T17:54:15.1050130Z with:
+2026-11-09T17:54:15.1050359Z   e2e: false
+2026-11-09T17:54:15.1050593Z env:
+2026-11-09T17:54:15.1050843Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:15.1052494Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:15.1059239Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:15.1064469Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:15.1064740Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:15.1065011Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:15.1067694Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:15.1068045Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:15.1068663Z   MISE_YES: 1
+2026-11-09T17:54:15.1068928Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:15.1069299Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:15.1069746Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:15.1070401Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:15.1071096Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:15.1071507Z ##[endgroup]
+2026-11-09T17:54:15.1074893Z ##[start-action display=compile test binaries (go test -c);id=__self_5.__run]
+2026-11-09T17:54:15.1093063Z ##[group]Run set -euo pipefail
+2026-11-09T17:54:15.1093421Z [36;1mset -euo pipefail[0m
+2026-11-09T17:54:15.1093844Z [36;1mgo test -c -o e2ecompiler.test ./internal/testing/e2ecompiler/[0m
+2026-11-09T17:54:15.1094299Z [36;1mif [ "false" = "true" ]; then[0m
+2026-11-09T17:54:15.1094674Z [36;1m  go test -c -o e2e.test ./internal/testing/e2e/[0m
+2026-11-09T17:54:15.1095032Z [36;1mfi[0m
+2026-11-09T17:54:15.1095393Z [36;1mgo build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers[0m
+2026-11-09T17:54:15.1117191Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-09T17:54:15.1117585Z env:
+2026-11-09T17:54:15.1117864Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:15.1120012Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:15.1126366Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:15.1132023Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:15.1132298Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:15.1132572Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:15.1135167Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:15.1135511Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:15.1135879Z   MISE_YES: 1
+2026-11-09T17:54:15.1136133Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:15.1136505Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:15.1136953Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:15.1137618Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:15.1138561Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:15.1138988Z ##[endgroup]
+2026-11-09T17:54:43.8609201Z ##[end-action id=__self_5.__run;outcome=success;conclusion=success;duration_ms=28753]
+2026-11-09T17:54:43.8720593Z ##[group]Run set -euo pipefail
+2026-11-09T17:54:43.8720969Z [36;1mset -euo pipefail[0m
+2026-11-09T17:54:43.8721283Z [36;1mchmod +x e2ecompiler.test[0m
+2026-11-09T17:54:43.8721623Z [36;1mBIN="$PWD/e2ecompiler.test"[0m
+2026-11-09T17:54:43.8721970Z [36;1mcd internal/testing/e2ecompiler[0m
+2026-11-09T17:54:43.8722393Z [36;1mgotestsum --format standard-verbose --raw-command -- \[0m
+2026-11-09T17:54:43.8723083Z [36;1m  go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestInterp$' -test.v -test.timeout 33m[0m
+2026-11-09T17:54:43.8746146Z shell: /usr/bin/bash -e {0}
+2026-11-09T17:54:43.8746442Z env:
+2026-11-09T17:54:43.8746711Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T17:54:43.8748720Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T17:54:43.8755065Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T17:54:43.8760766Z   QUARANTINED_TESTS: 
+2026-11-09T17:54:43.8761043Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T17:54:43.8761316Z   MISE_LOG_LEVEL: info
+2026-11-09T17:54:43.8763950Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T17:54:43.8764307Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T17:54:43.8764669Z   MISE_YES: 1
+2026-11-09T17:54:43.8764921Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T17:54:43.8765286Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T17:54:43.8765730Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T17:54:43.8766393Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T17:54:43.8767099Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T17:54:43.8767509Z ##[endgroup]
+2026-11-09T17:54:43.9439787Z === RUN   TestSelfHostStdTestInterp
+2026-11-09T17:54:46.3328251Z === RUN   TestSelfHostStdTestInterp/fail_fast
+2026-11-09T17:54:46.3329625Z === PAUSE TestSelfHostStdTestInterp/fail_fast
+2026-11-09T17:54:46.3330817Z === RUN   TestSelfHostStdTestInterp/u8_traits
+2026-11-09T17:54:46.3332278Z === PAUSE TestSelfHostStdTestInterp/u8_traits
+2026-11-09T17:54:46.3333579Z === RUN   TestSelfHostStdTestInterp/fuzz_corpus
+2026-11-09T17:54:46.3335885Z === PAUSE TestSelfHostStdTestInterp/fuzz_corpus
+2026-11-09T17:54:46.3337066Z === RUN   TestSelfHostStdTestInterp/float_math
+2026-11-09T17:54:46.3338179Z === PAUSE TestSelfHostStdTestInterp/float_math
+2026-11-09T17:54:46.3339620Z === RUN   TestSelfHostStdTestInterp/float_log2_log10
+2026-11-09T17:54:46.3341342Z === PAUSE TestSelfHostStdTestInterp/float_log2_log10
+2026-11-09T17:54:46.3342203Z === RUN   TestSelfHostStdTestInterp/i64_intdiv
+2026-11-09T17:54:46.3342974Z === PAUSE TestSelfHostStdTestInterp/i64_intdiv
+2026-11-09T17:54:46.3343835Z === RUN   TestSelfHostStdTestInterp/float_clamp01_absdiff_muladd
+2026-11-09T17:54:46.3344866Z === PAUSE TestSelfHostStdTestInterp/float_clamp01_absdiff_muladd
+2026-11-09T17:54:46.3345766Z === RUN   TestSelfHostStdTestInterp/sort_f64
+2026-11-09T17:54:46.3346493Z === PAUSE TestSelfHostStdTestInterp/sort_f64
+2026-11-09T17:54:46.3347192Z === RUN   TestSelfHostStdTestInterp/array_product_cumsum
+2026-11-09T17:54:46.3347948Z === PAUSE TestSelfHostStdTestInterp/array_product_cumsum
+2026-11-09T17:54:46.3348874Z === RUN   TestSelfHostStdTestInterp/uint_midpoint
+2026-11-09T17:54:46.3349507Z === PAUSE TestSelfHostStdTestInterp/uint_midpoint
+2026-11-09T17:54:46.3350157Z === RUN   TestSelfHostStdTestInterp/assert_at_wider
+2026-11-09T17:54:46.3350853Z === PAUSE TestSelfHostStdTestInterp/assert_at_wider
+2026-11-09T17:54:46.3351555Z === RUN   TestSelfHostStdTestInterp/json_field_eq
+2026-11-09T17:54:46.3352229Z === PAUSE TestSelfHostStdTestInterp/json_field_eq
+2026-11-09T17:54:46.3352936Z === RUN   TestSelfHostStdTestInterp/http_response_bytes
+2026-11-09T17:54:46.3353729Z === PAUSE TestSelfHostStdTestInterp/http_response_bytes
+2026-11-09T17:54:46.3354481Z === RUN   TestSelfHostStdTestInterp/try_inferred_generic
+2026-11-09T17:54:46.3355248Z === PAUSE TestSelfHostStdTestInterp/try_inferred_generic
+2026-11-09T17:54:46.3355982Z === RUN   TestSelfHostStdTestInterp/http_requestid
+2026-11-09T17:54:46.3356681Z === PAUSE TestSelfHostStdTestInterp/http_requestid
+2026-11-09T17:54:46.3357374Z === RUN   TestSelfHostStdTestInterp/quic_frames
+2026-11-09T17:54:46.3358053Z === PAUSE TestSelfHostStdTestInterp/quic_frames
+2026-11-09T17:54:46.3359810Z === RUN   TestSelfHostStdTestInterp/quic_recovery
+2026-11-09T17:54:46.3360896Z === PAUSE TestSelfHostStdTestInterp/quic_recovery
+2026-11-09T17:54:46.3361654Z === RUN   TestSelfHostStdTestInterp/http_cache
+2026-11-09T17:54:46.3362355Z === PAUSE TestSelfHostStdTestInterp/http_cache
+2026-11-09T17:54:46.3363056Z === RUN   TestSelfHostStdTestInterp/caf_linear_boundary
+2026-11-09T17:54:46.3363808Z === PAUSE TestSelfHostStdTestInterp/caf_linear_boundary
+2026-11-09T17:54:46.3364579Z === RUN   TestSelfHostStdTestInterp/flac_encoder_smoke
+2026-11-09T17:54:46.3365295Z === PAUSE TestSelfHostStdTestInterp/flac_encoder_smoke
+2026-11-09T17:54:46.3366265Z === RUN   TestSelfHostStdTestInterp/wav_linear_boundary
+2026-11-09T17:54:46.3366762Z === PAUSE TestSelfHostStdTestInterp/wav_linear_boundary
+2026-11-09T17:54:46.3367288Z === RUN   TestSelfHostStdTestInterp/wavpack_boundary
+2026-11-09T17:54:46.3367908Z === PAUSE TestSelfHostStdTestInterp/wavpack_boundary
+2026-11-09T17:54:46.3368308Z === RUN   TestSelfHostStdTestInterp/alac_smoke
+2026-11-09T17:54:46.3369141Z === PAUSE TestSelfHostStdTestInterp/alac_smoke
+2026-11-09T17:54:46.3369534Z === RUN   TestSelfHostStdTestInterp/vorbis_input_smoke
+2026-11-09T17:54:46.3370048Z === PAUSE TestSelfHostStdTestInterp/vorbis_input_smoke
+2026-11-09T17:54:46.3370560Z === RUN   TestSelfHostStdTestInterp/mp4_alac_smoke
+2026-11-09T17:54:46.3370971Z === PAUSE TestSelfHostStdTestInterp/mp4_alac_smoke
+2026-11-09T17:54:46.3371503Z === RUN   TestSelfHostStdTestInterp/audio
+2026-11-09T17:54:46.3371866Z === PAUSE TestSelfHostStdTestInterp/audio
+2026-11-09T17:54:46.3372234Z === RUN   TestSelfHostStdTestInterp/video_mp4
+2026-11-09T17:54:46.3372752Z === PAUSE TestSelfHostStdTestInterp/video_mp4
+2026-11-09T17:54:46.3373123Z === RUN   TestSelfHostStdTestInterp/android_player
+2026-11-09T17:54:46.3373503Z === PAUSE TestSelfHostStdTestInterp/android_player
+2026-11-09T17:54:46.3374089Z === RUN   TestSelfHostStdTestInterp/mp3_freeformat_smoke
+2026-11-09T17:54:46.3374507Z === PAUSE TestSelfHostStdTestInterp/mp3_freeformat_smoke
+2026-11-09T17:54:46.3375058Z === RUN   TestSelfHostStdTestInterp/mp3_input_smoke
+2026-11-09T17:54:46.3375471Z === PAUSE TestSelfHostStdTestInterp/mp3_input_smoke
+2026-11-09T17:54:46.3376145Z === RUN   TestSelfHostStdTestInterp/flac_file_smoke
+2026-11-09T17:54:46.3376603Z === PAUSE TestSelfHostStdTestInterp/flac_file_smoke
+2026-11-09T17:54:46.3377026Z === RUN   TestSelfHostStdTestInterp/opus_silk_entropy
+2026-11-09T17:54:46.3377592Z === PAUSE TestSelfHostStdTestInterp/opus_silk_entropy
+2026-11-09T17:54:46.3377998Z === RUN   TestSelfHostStdTestInterp/opus_silk_loss
+2026-11-09T17:54:46.3378691Z === PAUSE TestSelfHostStdTestInterp/opus_silk_loss
+2026-11-09T17:54:46.3379077Z === RUN   TestSelfHostStdTestInterp/opus_delimited
+2026-11-09T17:54:46.3379449Z === PAUSE TestSelfHostStdTestInterp/opus_delimited
+2026-11-09T17:54:46.3379983Z === RUN   TestSelfHostStdTestInterp/android_trace
+2026-11-09T17:54:46.3380369Z === PAUSE TestSelfHostStdTestInterp/android_trace
+2026-11-09T17:54:46.3380756Z === RUN   TestSelfHostStdTestInterp/android_property
+2026-11-09T17:54:46.3381319Z === PAUSE TestSelfHostStdTestInterp/android_property
+2026-11-09T17:54:46.3381705Z === RUN   TestSelfHostStdTestInterp/http_accesslog
+2026-11-09T17:54:46.3382244Z === PAUSE TestSelfHostStdTestInterp/http_accesslog
+2026-11-09T17:54:46.3382672Z === RUN   TestSelfHostStdTestInterp/http_sse
+2026-11-09T17:54:46.3383033Z === PAUSE TestSelfHostStdTestInterp/http_sse
+2026-11-09T17:54:46.3383608Z === RUN   TestSelfHostStdTestInterp/http_request_body_stream
+2026-11-09T17:54:46.3384060Z === PAUSE TestSelfHostStdTestInterp/http_request_body_stream
+2026-11-09T17:54:46.3384586Z === RUN   TestSelfHostStdTestInterp/string_prelude_migrated
+2026-11-09T17:54:46.3385089Z === PAUSE TestSelfHostStdTestInterp/string_prelude_migrated
+2026-11-09T17:54:46.3385479Z === RUN   TestSelfHostStdTestInterp/batch8
+2026-11-09T17:54:46.3385962Z === PAUSE TestSelfHostStdTestInterp/batch8
+2026-11-09T17:54:46.3386319Z === RUN   TestSelfHostStdTestInterp/sort_wider
+2026-11-09T17:54:46.3386714Z === PAUSE TestSelfHostStdTestInterp/sort_wider
+2026-11-09T17:54:46.3387227Z === RUN   TestSelfHostStdTestInterp/wide_numerics
+2026-11-09T17:54:46.3387609Z === PAUSE TestSelfHostStdTestInterp/wide_numerics
+2026-11-09T17:54:46.3388110Z === RUN   TestSelfHostStdTestInterp/array_prefix_suffix_subseq
+2026-11-09T17:54:46.3388840Z === PAUSE TestSelfHostStdTestInterp/array_prefix_suffix_subseq
+2026-11-09T17:54:46.3389449Z === RUN   TestSelfHostStdTestInterp/ci_string_and_log_kv
+2026-11-09T17:54:46.3389892Z === PAUSE TestSelfHostStdTestInterp/ci_string_and_log_kv
+2026-11-09T17:54:46.3390549Z === RUN   TestSelfHostStdTestInterp/helpers
+2026-11-09T17:54:46.3390954Z === PAUSE TestSelfHostStdTestInterp/helpers
+2026-11-09T17:54:46.3391366Z === RUN   TestSelfHostStdTestInterp/string_count_and_dir_listing
+2026-11-09T17:54:46.3391974Z === PAUSE TestSelfHostStdTestInterp/string_count_and_dir_listing
+2026-11-09T17:54:46.3392391Z === RUN   TestSelfHostStdTestInterp/path
+2026-11-09T17:54:46.3392771Z === PAUSE TestSelfHostStdTestInterp/path
+2026-11-09T17:54:46.3393239Z === RUN   TestSelfHostStdTestInterp/cli
+2026-11-09T17:54:46.3393582Z === PAUSE TestSelfHostStdTestInterp/cli
+2026-11-09T17:54:46.3393975Z === RUN   TestSelfHostStdTestInterp/csv
+2026-11-09T17:54:46.3394486Z === PAUSE TestSelfHostStdTestInterp/csv
+2026-11-09T17:54:46.3395055Z === RUN   TestSelfHostStdTestInterp/i32_to_string_radix
+2026-11-09T17:54:46.3395828Z === PAUSE TestSelfHostStdTestInterp/i32_to_string_radix
+2026-11-09T17:54:46.3396557Z === RUN   TestSelfHostStdTestInterp/i64_bit_ops
+2026-11-09T17:54:46.3397291Z === PAUSE TestSelfHostStdTestInterp/i64_bit_ops
+2026-11-09T17:54:46.3397980Z === RUN   TestSelfHostStdTestInterp/json_roundtrip
+2026-11-09T17:54:46.3419038Z === PAUSE TestSelfHostStdTestInterp/json_roundtrip
+2026-11-09T17:54:46.3419794Z === RUN   TestSelfHostStdTestInterp/regex
+2026-11-09T17:54:46.3420431Z === PAUSE TestSelfHostStdTestInterp/regex
+2026-11-09T17:54:46.3421092Z === RUN   TestSelfHostStdTestInterp/array_dedup
+2026-11-09T17:54:46.3421759Z === PAUSE TestSelfHostStdTestInterp/array_dedup
+2026-11-09T17:54:46.3422418Z === RUN   TestSelfHostStdTestInterp/array_none
+2026-11-09T17:54:46.3423088Z === PAUSE TestSelfHostStdTestInterp/array_none
+2026-11-09T17:54:46.3423994Z === RUN   TestSelfHostStdTestInterp/array_batch
+2026-11-09T17:54:46.3424700Z === PAUSE TestSelfHostStdTestInterp/array_batch
+2026-11-09T17:54:46.3425388Z === RUN   TestSelfHostStdTestInterp/time_calendar
+2026-11-09T17:54:46.3426072Z === PAUSE TestSelfHostStdTestInterp/time_calendar
+2026-11-09T17:54:46.3426706Z === RUN   TestSelfHostStdTestInterp/pvh
+2026-11-09T17:54:46.3427336Z === PAUSE TestSelfHostStdTestInterp/pvh
+2026-11-09T17:54:46.3427937Z === RUN   TestSelfHostStdTestInterp/tz
+2026-11-09T17:54:46.3428752Z === PAUSE TestSelfHostStdTestInterp/tz
+2026-11-09T17:54:46.3429396Z === RUN   TestSelfHostStdTestInterp/string_partition
+2026-11-09T17:54:46.3430110Z === PAUSE TestSelfHostStdTestInterp/string_partition
+2026-11-09T17:54:46.3430797Z === RUN   TestSelfHostStdTestInterp/string_swap_case
+2026-11-09T17:54:46.3431575Z === PAUSE TestSelfHostStdTestInterp/string_swap_case
+2026-11-09T17:54:46.3432332Z === RUN   TestSelfHostStdTestInterp/string_classify_transform
+2026-11-09T17:54:46.3433150Z === PAUSE TestSelfHostStdTestInterp/string_classify_transform
+2026-11-09T17:54:46.3433936Z === RUN   TestSelfHostStdTestInterp/result_combinators
+2026-11-09T17:54:46.3434754Z === PAUSE TestSelfHostStdTestInterp/result_combinators
+2026-11-09T17:54:46.3435452Z === RUN   TestSelfHostStdTestInterp/crypto
+2026-11-09T17:54:46.3436121Z === PAUSE TestSelfHostStdTestInterp/crypto
+2026-11-09T17:54:46.3436760Z === RUN   TestSelfHostStdTestInterp/digest_sha256
+2026-11-09T17:54:46.3437433Z === PAUSE TestSelfHostStdTestInterp/digest_sha256
+2026-11-09T17:54:46.3438134Z === RUN   TestSelfHostStdTestInterp/digest_sm3
+2026-11-09T17:54:46.3449204Z === PAUSE TestSelfHostStdTestInterp/digest_sm3
+2026-11-09T17:54:46.3449913Z === CONT  TestSelfHostStdTestInterp/fail_fast
+2026-11-09T17:54:46.3450575Z === CONT  TestSelfHostStdTestInterp/android_trace
+2026-11-09T17:54:46.3451240Z === CONT  TestSelfHostStdTestInterp/digest_sm3
+2026-11-09T17:54:46.3451876Z === CONT  TestSelfHostStdTestInterp/digest_sha256
+2026-11-09T17:54:55.5537351Z === CONT  TestSelfHostStdTestInterp/crypto
+2026-11-09T17:54:58.2621694Z === CONT  TestSelfHostStdTestInterp/result_combinators
+2026-11-09T17:55:06.8319047Z === CONT  TestSelfHostStdTestInterp/string_classify_transform
+2026-11-09T17:55:15.2377748Z === CONT  TestSelfHostStdTestInterp/string_swap_case
+2026-11-09T17:55:18.8861618Z === CONT  TestSelfHostStdTestInterp/string_partition
+2026-11-09T17:55:24.0460332Z === CONT  TestSelfHostStdTestInterp/tz
+2026-11-09T17:55:28.2409848Z === CONT  TestSelfHostStdTestInterp/pvh
+2026-11-09T17:55:34.3912790Z === CONT  TestSelfHostStdTestInterp/time_calendar
+2026-11-09T17:55:37.2836386Z === CONT  TestSelfHostStdTestInterp/array_batch
+2026-11-09T17:55:43.2712673Z === CONT  TestSelfHostStdTestInterp/array_none
+2026-11-09T17:55:46.1124203Z === CONT  TestSelfHostStdTestInterp/array_dedup
+2026-11-09T17:55:52.2570882Z === CONT  TestSelfHostStdTestInterp/regex
+2026-11-09T17:55:54.9919954Z === CONT  TestSelfHostStdTestInterp/json_roundtrip
+2026-11-09T17:56:03.0237453Z === CONT  TestSelfHostStdTestInterp/i64_bit_ops
+2026-11-09T17:56:05.0572169Z === CONT  TestSelfHostStdTestInterp/i32_to_string_radix
+2026-11-09T17:56:12.0414206Z === CONT  TestSelfHostStdTestInterp/csv
+2026-11-09T17:56:14.1363576Z === CONT  TestSelfHostStdTestInterp/cli
+2026-11-09T17:56:22.2955007Z === CONT  TestSelfHostStdTestInterp/path
+2026-11-09T17:56:23.5313879Z === CONT  TestSelfHostStdTestInterp/string_count_and_dir_listing
+2026-11-09T17:56:31.2990341Z === CONT  TestSelfHostStdTestInterp/helpers
+2026-11-09T17:56:32.4659677Z === CONT  TestSelfHostStdTestInterp/ci_string_and_log_kv
+2026-11-09T17:56:40.1556402Z === CONT  TestSelfHostStdTestInterp/array_prefix_suffix_subseq
+2026-11-09T17:56:41.4156448Z === CONT  TestSelfHostStdTestInterp/wide_numerics
+2026-11-09T17:56:49.1201963Z === CONT  TestSelfHostStdTestInterp/sort_wider
+2026-11-09T17:56:50.1863291Z === CONT  TestSelfHostStdTestInterp/batch8
+2026-11-09T17:56:59.3393366Z === CONT  TestSelfHostStdTestInterp/string_prelude_migrated
+2026-11-09T17:57:07.9109652Z === CONT  TestSelfHostStdTestInterp/http_request_body_stream
+2026-11-09T17:57:16.9247755Z === CONT  TestSelfHostStdTestInterp/http_sse
+2026-11-09T17:57:31.9825494Z === CONT  TestSelfHostStdTestInterp/http_accesslog
+2026-11-09T17:57:35.7233355Z === CONT  TestSelfHostStdTestInterp/android_property
+2026-11-09T17:57:39.6039661Z === CONT  TestSelfHostStdTestInterp/http_cache
+2026-11-09T17:57:40.8799718Z === CONT  TestSelfHostStdTestInterp/opus_delimited
+2026-11-09T17:57:49.3986494Z === CONT  TestSelfHostStdTestInterp/opus_silk_loss
+2026-11-09T17:57:52.1277814Z === CONT  TestSelfHostStdTestInterp/opus_silk_entropy
+2026-11-09T17:58:25.7598983Z === CONT  TestSelfHostStdTestInterp/flac_file_smoke
+2026-11-09T17:58:35.4200918Z === CONT  TestSelfHostStdTestInterp/mp3_input_smoke
+2026-11-09T17:58:50.6059425Z === CONT  TestSelfHostStdTestInterp/mp3_freeformat_smoke
+2026-11-09T17:59:37.6182954Z === CONT  TestSelfHostStdTestInterp/android_player
+2026-11-09T17:59:46.1564128Z === CONT  TestSelfHostStdTestInterp/video_mp4
+2026-11-09T18:00:12.9064041Z === CONT  TestSelfHostStdTestInterp/audio
+2026-11-09T18:02:29.9158992Z === CONT  TestSelfHostStdTestInterp/mp4_alac_smoke
+2026-11-09T18:02:41.6917614Z === CONT  TestSelfHostStdTestInterp/vorbis_input_smoke
+2026-11-09T18:03:00.1143733Z === CONT  TestSelfHostStdTestInterp/alac_smoke
+2026-11-09T18:03:12.0604653Z === CONT  TestSelfHostStdTestInterp/wavpack_boundary
+2026-11-09T18:04:02.4383404Z === CONT  TestSelfHostStdTestInterp/wav_linear_boundary
+2026-11-09T18:04:13.0083428Z === CONT  TestSelfHostStdTestInterp/flac_encoder_smoke
+2026-11-09T18:04:26.6438200Z === CONT  TestSelfHostStdTestInterp/caf_linear_boundary
+2026-11-09T18:04:38.4624666Z === CONT  TestSelfHostStdTestInterp/uint_midpoint
+2026-11-09T18:04:46.6737249Z === CONT  TestSelfHostStdTestInterp/quic_recovery
+2026-11-09T18:04:55.2211729Z === CONT  TestSelfHostStdTestInterp/quic_frames
+2026-11-09T18:05:47.4034917Z === CONT  TestSelfHostStdTestInterp/http_requestid
+2026-11-09T18:05:55.7147247Z === CONT  TestSelfHostStdTestInterp/try_inferred_generic
+2026-11-09T18:06:03.8985544Z === CONT  TestSelfHostStdTestInterp/http_response_bytes
+2026-11-09T18:06:12.2590241Z === CONT  TestSelfHostStdTestInterp/json_field_eq
+2026-11-09T18:06:20.6950467Z === CONT  TestSelfHostStdTestInterp/assert_at_wider
+2026-11-09T18:06:28.9873425Z === CONT  TestSelfHostStdTestInterp/i64_intdiv
+2026-11-09T18:06:37.1736040Z === CONT  TestSelfHostStdTestInterp/array_product_cumsum
+2026-11-09T18:06:45.3093574Z === CONT  TestSelfHostStdTestInterp/sort_f64
+2026-11-09T18:06:53.5434374Z === CONT  TestSelfHostStdTestInterp/float_clamp01_absdiff_muladd
+2026-11-09T18:07:01.7746479Z === CONT  TestSelfHostStdTestInterp/float_math
+2026-11-09T18:07:10.0396791Z === CONT  TestSelfHostStdTestInterp/float_log2_log10
+2026-11-09T18:07:18.3081870Z === CONT  TestSelfHostStdTestInterp/fuzz_corpus
+2026-11-09T18:07:27.1970127Z === CONT  TestSelfHostStdTestInterp/u8_traits
+2026-11-09T18:27:43.9674145Z panic: test timed out after 33m0s
+2026-11-09T18:27:43.9679504Z 	running tests:
+2026-11-09T18:27:43.9680222Z 		TestSelfHostStdTestInterp/opus_delimited (30m3s)
+2026-11-09T18:27:43.9680820Z 
+2026-11-09T18:27:43.9681213Z goroutine 426 [running]:
+2026-11-09T18:27:43.9681775Z testing.(*M).startAlarm.func1()
+2026-11-09T18:27:43.9682715Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2961 +0x34a
+2026-11-09T18:27:43.9683695Z created by time.goFunc
+2026-11-09T18:27:43.9684531Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/time/sleep.go:182 +0x2d
+2026-11-09T18:27:43.9685247Z 
+2026-11-09T18:27:43.9685571Z goroutine 1 [chan receive, 33 minutes]:
+2026-11-09T18:27:43.9686381Z testing.(*T).Run(0x2b5a7d696908, {0x1785c6d?, 0x2b5a7d583a60?}, 0x32fb080)
+2026-11-09T18:27:43.9687470Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2268 +0x4f2
+2026-11-09T18:27:43.9688584Z testing.runTests.func1(0x2b5a7d696908)
+2026-11-09T18:27:43.9689565Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2744 +0x37
+2026-11-09T18:27:43.9691026Z testing.tRunner(0x2b5a7d696908, 0x2b5a7d583b88)
+2026-11-09T18:27:43.9692032Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2195 +0xea
+2026-11-09T18:27:43.9693543Z testing.runTests({0x179fc23, 0x1c}, {0x184328d, 0x39}, 0x2b5a7d53c018, {0x33cede0, 0x1144, 0x1144}, {0xc2b4a207f835b837, 0x1cd019953dc, ...})
+2026-11-09T18:27:43.9695100Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2742 +0x510
+2026-11-09T18:27:43.9696093Z testing.(*M).Run(0x2b5a7d79eaa0)
+2026-11-09T18:27:43.9697004Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2602 +0x6af
+2026-11-09T18:27:43.9698235Z github.com/jakechampion/lang/internal/testing/e2ecompiler.TestMain(0x2b5a7d79eaa0)
+2026-11-09T18:27:43.9699683Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/main_test.go:16 +0x56
+2026-11-09T18:27:43.9700643Z main.main()
+2026-11-09T18:27:43.9701174Z 	_testmain.go:8950 +0xa5
+2026-11-09T18:27:43.9701561Z 
+2026-11-09T18:27:43.9701878Z goroutine 23 [chan receive, 17 minutes]:
+2026-11-09T18:27:43.9702460Z testing.tRunner.func1()
+2026-11-09T18:27:43.9703305Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2144 +0x425
+2026-11-09T18:27:43.9704312Z testing.tRunner(0x2b5a7d696d88, 0x32fb080)
+2026-11-09T18:27:43.9705269Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2201 +0x123
+2026-11-09T18:27:43.9706262Z created by testing.(*T).Run in goroutine 1
+2026-11-09T18:27:43.9707194Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2260 +0x4d4
+2026-11-09T18:27:43.9707943Z 
+2026-11-09T18:27:43.9708297Z goroutine 84 [syscall, 29 minutes]:
+2026-11-09T18:27:43.9709264Z syscall.Syscall6(0xf7, 0x3, 0x17, 0x2b5a7d991b50, 0x4, 0x2b5a7d5783f0, 0x0)
+2026-11-09T18:27:43.9710315Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/syscall/syscall_linux.go:96 +0x39
+2026-11-09T18:27:43.9711511Z internal/syscall/unix.Waitid(0x2b5a7d991b7e?, 0x2b5a7d991ca8?, 0x5783eb?, 0x18?, 0x3255f38?)
+2026-11-09T18:27:43.9712791Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/syscall/unix/waitid_linux.go:18 +0x39
+2026-11-09T18:27:43.9713767Z os.(*Process).pidfdWait.func1(...)
+2026-11-09T18:27:43.9714570Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/pidfd_linux.go:108
+2026-11-09T18:27:43.9715376Z os.ignoringEINTR(...)
+2026-11-09T18:27:43.9716056Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:263
+2026-11-09T18:27:43.9717152Z os.(*Process).pidfdWait(0x2b5a7d98a040)
+2026-11-09T18:27:43.9718012Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/pidfd_linux.go:107 +0x1cf
+2026-11-09T18:27:43.9719075Z os.(*Process).wait(0x8?)
+2026-11-09T18:27:43.9719841Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec_unix.go:25 +0x1a
+2026-11-09T18:27:43.9720668Z os.(*Process).Wait(...)
+2026-11-09T18:27:43.9721321Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec.go:347
+2026-11-09T18:27:43.9722074Z os/exec.(*Cmd).Wait(0x2b5a7d986000)
+2026-11-09T18:27:43.9722883Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:944 +0x45
+2026-11-09T18:27:43.9723684Z os/exec.(*Cmd).Run(0x2b5a7d986000)
+2026-11-09T18:27:43.9724449Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:643 +0x2d
+2026-11-09T18:27:43.9725286Z os/exec.(*Cmd).Output(0x2b5a7d986000)
+2026-11-09T18:27:43.9726091Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:1040 +0xca
+2026-11-09T18:27:43.9727233Z github.com/jakechampion/lang/internal/testing/e2ecompiler.stdTestOutput.func1()
+2026-11-09T18:27:43.9728627Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:255 +0x25
+2026-11-09T18:27:43.9729961Z github.com/jakechampion/lang/internal/testing/e2eharness.withBuildMemory(0x400, 0x2b5a7d991db8)
+2026-11-09T18:27:43.9731251Z 	/home/runner/work/lang/lang/internal/testing/e2eharness/self_host_membudget.go:61 +0x5f
+2026-11-09T18:27:43.9732442Z github.com/jakechampion/lang/internal/testing/e2eharness.WithBuildMemoryMB(...)
+2026-11-09T18:27:43.9733800Z 	/home/runner/work/lang/lang/internal/testing/e2eharness/self_host_membudget.go:65
+2026-11-09T18:27:43.9735011Z github.com/jakechampion/lang/internal/testing/e2ecompiler.stdTestOutput(0x2b5a7d578090?)
+2026-11-09T18:27:43.9736278Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:253 +0x47
+2026-11-09T18:27:43.9737675Z github.com/jakechampion/lang/internal/testing/e2ecompiler.TestSelfHostStdTestInterp.func1(0x2b5a7d7a1b08)
+2026-11-09T18:27:43.9740682Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:163 +0x172
+2026-11-09T18:27:43.9741693Z testing.tRunner(0x2b5a7d7a1b08, 0x2b5a7d5c9dc0)
+2026-11-09T18:27:43.9742606Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2195 +0xea
+2026-11-09T18:27:43.9743499Z created by testing.(*T).Run in goroutine 23
+2026-11-09T18:27:43.9744361Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2260 +0x4d4
+2026-11-09T18:27:43.9745028Z 
+2026-11-09T18:27:43.9745264Z goroutine 294 [IO wait, 29 minutes]:
+2026-11-09T18:27:43.9745918Z internal/poll.runtime_pollWait(0x7fefec944000, 0x72)
+2026-11-09T18:27:43.9746818Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/runtime/netpoll.go:351 +0x85
+2026-11-09T18:27:43.9747845Z internal/poll.(*pollDesc).wait(0x2b5a7d560240?, 0x2b5a7d633c44?, 0x1)
+2026-11-09T18:27:43.9749161Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:84 +0x27
+2026-11-09T18:27:43.9750060Z internal/poll.(*pollDesc).waitRead(...)
+2026-11-09T18:27:43.9750874Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:89
+2026-11-09T18:27:43.9751906Z internal/poll.(*FD).Read(0x2b5a7d560240, {0x2b5a7d633c44, 0x3bc, 0x3bc})
+2026-11-09T18:27:43.9752861Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_unix.go:170 +0x2a8
+2026-11-09T18:27:43.9753736Z os.(*File).read(...)
+2026-11-09T18:27:43.9754416Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:30
+2026-11-09T18:27:43.9755371Z os.(*File).Read(0x2b5a7d792030, {0x2b5a7d633c44?, 0x2b5a7d919680?, 0xf?})
+2026-11-09T18:27:43.9756311Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:144 +0x4f
+2026-11-09T18:27:43.9757271Z bytes.(*Buffer).ReadFrom(0x2b5a7d9c00c0, {0x32ec678, 0x2b5a7d792030})
+2026-11-09T18:27:43.9758249Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/bytes/buffer.go:229 +0x98
+2026-11-09T18:27:43.9759939Z io.copyBuffer({0x32ec798, 0x2b5a7d9c00c0}, {0x32ec678, 0x2b5a7d792030}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9760988Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:415 +0x151
+2026-11-09T18:27:43.9761755Z io.Copy(...)
+2026-11-09T18:27:43.9762348Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9763264Z os.genericWriteTo(0x2b5a7d792030?, {0x32ec798?, 0x2b5a7d9c00c0?})
+2026-11-09T18:27:43.9764219Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:295 +0x35
+2026-11-09T18:27:43.9765142Z os.(*File).WriteTo(0x2b5a7d792030, {0x32ec798, 0x2b5a7d9c00c0})
+2026-11-09T18:27:43.9766028Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:273 +0x9c
+2026-11-09T18:27:43.9767123Z io.copyBuffer({0x32ec798, 0x2b5a7d9c00c0}, {0x32ec6f8, 0x2b5a7d792030}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9768160Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:411 +0x9d
+2026-11-09T18:27:43.9769407Z io.Copy(...)
+2026-11-09T18:27:43.9770098Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9770896Z os/exec.(*Cmd).writerDescriptor.func1()
+2026-11-09T18:27:43.9771809Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:613 +0x34
+2026-11-09T18:27:43.9772660Z os/exec.(*Cmd).Start.func2(0x0?)
+2026-11-09T18:27:43.9773453Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:768 +0x2c
+2026-11-09T18:27:43.9774682Z created by os/exec.(*Cmd).Start in goroutine 84
+2026-11-09T18:27:43.9776611Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:767 +0x92b
+2026-11-09T18:27:43.9777444Z 
+2026-11-09T18:27:43.9777668Z goroutine 295 [IO wait, 29 minutes]:
+2026-11-09T18:27:43.9778591Z internal/poll.runtime_pollWait(0x7fefec9b6600, 0x72)
+2026-11-09T18:27:43.9779574Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/runtime/netpoll.go:351 +0x85
+2026-11-09T18:27:43.9780569Z internal/poll.(*pollDesc).wait(0x2b5a7d560300?, 0x2b5a7d9f2000?, 0x1)
+2026-11-09T18:27:43.9781611Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:84 +0x27
+2026-11-09T18:27:43.9782535Z internal/poll.(*pollDesc).waitRead(...)
+2026-11-09T18:27:43.9783389Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:89
+2026-11-09T18:27:43.9784405Z internal/poll.(*FD).Read(0x2b5a7d560300, {0x2b5a7d9f2000, 0x8000, 0x8000})
+2026-11-09T18:27:43.9785404Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_unix.go:170 +0x2a8
+2026-11-09T18:27:43.9786232Z os.(*File).read(...)
+2026-11-09T18:27:43.9786876Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:30
+2026-11-09T18:27:43.9787775Z os.(*File).Read(0x2b5a7d792048, {0x2b5a7d9f2000?, 0x31e25a0?, 0x4deb01?})
+2026-11-09T18:27:43.9788895Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:144 +0x4f
+2026-11-09T18:27:43.9789909Z io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec678, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9790914Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:429 +0x190
+2026-11-09T18:27:43.9791640Z io.Copy(...)
+2026-11-09T18:27:43.9792213Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9793061Z os.genericWriteTo(0x2b5a7d792048?, {0x32ecff8?, 0x2b5a7d984050?})
+2026-11-09T18:27:43.9793946Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:295 +0x35
+2026-11-09T18:27:43.9794805Z os.(*File).WriteTo(0x2b5a7d792048, {0x32ecff8, 0x2b5a7d984050})
+2026-11-09T18:27:43.9795685Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:273 +0x9c
+2026-11-09T18:27:43.9796481Z io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec6f8, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9797058Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:411 +0x9d
+2026-11-09T18:27:43.9797492Z io.Copy(...)
+2026-11-09T18:27:43.9797830Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9798930Z os/exec.(*Cmd).writerDescriptor.func1()
+2026-11-09T18:27:43.9799436Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:613 +0x34
+2026-11-09T18:27:43.9799927Z os/exec.(*Cmd).Start.func2(0x0?)
+2026-11-09T18:27:43.9800369Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:768 +0x2c
+2026-11-09T18:27:43.9800845Z created by os/exec.(*Cmd).Start in goroutine 84
+2026-11-09T18:27:43.9801314Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:767 +0x92b
+2026-11-09T18:27:43.9801703Z 
+2026-11-09T18:27:43.9802030Z === [31mFailed[0m
+2026-11-09T18:27:43.9802358Z === [31mFAIL[0m: e2ecompiler  (0.00s)
+2026-11-09T18:27:43.9802744Z panic: test timed out after 33m0s
+2026-11-09T18:27:43.9803045Z 	running tests:
+2026-11-09T18:27:43.9803346Z 		TestSelfHostStdTestInterp/opus_delimited (30m3s)
+2026-11-09T18:27:43.9803596Z 
+2026-11-09T18:27:43.9803791Z goroutine 426 [running]:
+2026-11-09T18:27:43.9804567Z testing.(*M).startAlarm.func1()
+2026-11-09T18:27:43.9805507Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2961 +0x34a
+2026-11-09T18:27:43.9806646Z created by time.goFunc
+2026-11-09T18:27:43.9817788Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/time/sleep.go:182 +0x2d
+2026-11-09T18:27:43.9818631Z 
+2026-11-09T18:27:43.9818851Z goroutine 1 [chan receive, 33 minutes]:
+2026-11-09T18:27:43.9819585Z testing.(*T).Run(0x2b5a7d696908, {0x1785c6d?, 0x2b5a7d583a60?}, 0x32fb080)
+2026-11-09T18:27:43.9820551Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2268 +0x4f2
+2026-11-09T18:27:43.9821442Z testing.runTests.func1(0x2b5a7d696908)
+2026-11-09T18:27:43.9821933Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2744 +0x37
+2026-11-09T18:27:43.9822453Z testing.tRunner(0x2b5a7d696908, 0x2b5a7d583b88)
+2026-11-09T18:27:43.9822942Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2195 +0xea
+2026-11-09T18:27:43.9823732Z testing.runTests({0x179fc23, 0x1c}, {0x184328d, 0x39}, 0x2b5a7d53c018, {0x33cede0, 0x1144, 0x1144}, {0xc2b4a207f835b837, 0x1cd019953dc, ...})
+2026-11-09T18:27:43.9824529Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2742 +0x510
+2026-11-09T18:27:43.9825006Z testing.(*M).Run(0x2b5a7d79eaa0)
+2026-11-09T18:27:43.9825467Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2602 +0x6af
+2026-11-09T18:27:43.9826095Z github.com/jakechampion/lang/internal/testing/e2ecompiler.TestMain(0x2b5a7d79eaa0)
+2026-11-09T18:27:43.9826711Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/main_test.go:16 +0x56
+2026-11-09T18:27:43.9827169Z main.main()
+2026-11-09T18:27:43.9827417Z 	_testmain.go:8950 +0xa5
+2026-11-09T18:27:43.9827591Z 
+2026-11-09T18:27:43.9827723Z goroutine 23 [chan receive, 17 minutes]:
+2026-11-09T18:27:43.9828058Z testing.tRunner.func1()
+2026-11-09T18:27:43.9829125Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2144 +0x425
+2026-11-09T18:27:43.9829646Z testing.tRunner(0x2b5a7d696d88, 0x32fb080)
+2026-11-09T18:27:43.9830123Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2201 +0x123
+2026-11-09T18:27:43.9830607Z created by testing.(*T).Run in goroutine 1
+2026-11-09T18:27:43.9831070Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2260 +0x4d4
+2026-11-09T18:27:43.9831416Z 
+2026-11-09T18:27:43.9831541Z goroutine 84 [syscall, 29 minutes]:
+2026-11-09T18:27:43.9831965Z syscall.Syscall6(0xf7, 0x3, 0x17, 0x2b5a7d991b50, 0x4, 0x2b5a7d5783f0, 0x0)
+2026-11-09T18:27:43.9832554Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/syscall/syscall_linux.go:96 +0x39
+2026-11-09T18:27:43.9833204Z internal/syscall/unix.Waitid(0x2b5a7d991b7e?, 0x2b5a7d991ca8?, 0x5783eb?, 0x18?, 0x3255f38?)
+2026-11-09T18:27:43.9833905Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/syscall/unix/waitid_linux.go:18 +0x39
+2026-11-09T18:27:43.9834456Z os.(*Process).pidfdWait.func1(...)
+2026-11-09T18:27:43.9835077Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/pidfd_linux.go:108
+2026-11-09T18:27:43.9835538Z os.ignoringEINTR(...)
+2026-11-09T18:27:43.9835934Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:263
+2026-11-09T18:27:43.9836389Z os.(*Process).pidfdWait(0x2b5a7d98a040)
+2026-11-09T18:27:43.9836856Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/pidfd_linux.go:107 +0x1cf
+2026-11-09T18:27:43.9837317Z os.(*Process).wait(0x8?)
+2026-11-09T18:27:43.9837723Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec_unix.go:25 +0x1a
+2026-11-09T18:27:43.9838179Z os.(*Process).Wait(...)
+2026-11-09T18:27:43.9838914Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec.go:347
+2026-11-09T18:27:43.9839360Z os/exec.(*Cmd).Wait(0x2b5a7d986000)
+2026-11-09T18:27:43.9839804Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:944 +0x45
+2026-11-09T18:27:43.9840262Z os/exec.(*Cmd).Run(0x2b5a7d986000)
+2026-11-09T18:27:43.9840699Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:643 +0x2d
+2026-11-09T18:27:43.9841162Z os/exec.(*Cmd).Output(0x2b5a7d986000)
+2026-11-09T18:27:43.9841605Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:1040 +0xca
+2026-11-09T18:27:43.9842206Z github.com/jakechampion/lang/internal/testing/e2ecompiler.stdTestOutput.func1()
+2026-11-09T18:27:43.9842871Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:255 +0x25
+2026-11-09T18:27:43.9843587Z github.com/jakechampion/lang/internal/testing/e2eharness.withBuildMemory(0x400, 0x2b5a7d991db8)
+2026-11-09T18:27:43.9844419Z 	/home/runner/work/lang/lang/internal/testing/e2eharness/self_host_membudget.go:61 +0x5f
+2026-11-09T18:27:43.9845072Z github.com/jakechampion/lang/internal/testing/e2eharness.WithBuildMemoryMB(...)
+2026-11-09T18:27:43.9845682Z 	/home/runner/work/lang/lang/internal/testing/e2eharness/self_host_membudget.go:65
+2026-11-09T18:27:43.9846319Z github.com/jakechampion/lang/internal/testing/e2ecompiler.stdTestOutput(0x2b5a7d578090?)
+2026-11-09T18:27:43.9846999Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:253 +0x47
+2026-11-09T18:27:43.9847752Z github.com/jakechampion/lang/internal/testing/e2ecompiler.TestSelfHostStdTestInterp.func1(0x2b5a7d7a1b08)
+2026-11-09T18:27:43.9849215Z 	/home/runner/work/lang/lang/internal/testing/e2ecompiler/self_host_stdtest_test.go:163 +0x172
+2026-11-09T18:27:43.9849806Z testing.tRunner(0x2b5a7d7a1b08, 0x2b5a7d5c9dc0)
+2026-11-09T18:27:43.9850304Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2195 +0xea
+2026-11-09T18:27:43.9850824Z created by testing.(*T).Run in goroutine 23
+2026-11-09T18:27:43.9851311Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/testing/testing.go:2260 +0x4d4
+2026-11-09T18:27:43.9851666Z 
+2026-11-09T18:27:43.9851792Z goroutine 294 [IO wait, 29 minutes]:
+2026-11-09T18:27:43.9852157Z internal/poll.runtime_pollWait(0x7fefec944000, 0x72)
+2026-11-09T18:27:43.9852653Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/runtime/netpoll.go:351 +0x85
+2026-11-09T18:27:43.9853208Z internal/poll.(*pollDesc).wait(0x2b5a7d560240?, 0x2b5a7d633c44?, 0x1)
+2026-11-09T18:27:43.9853805Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:84 +0x27
+2026-11-09T18:27:43.9854321Z internal/poll.(*pollDesc).waitRead(...)
+2026-11-09T18:27:43.9854805Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:89
+2026-11-09T18:27:43.9855382Z internal/poll.(*FD).Read(0x2b5a7d560240, {0x2b5a7d633c44, 0x3bc, 0x3bc})
+2026-11-09T18:27:43.9855961Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_unix.go:170 +0x2a8
+2026-11-09T18:27:43.9856434Z os.(*File).read(...)
+2026-11-09T18:27:43.9856804Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:30
+2026-11-09T18:27:43.9857318Z os.(*File).Read(0x2b5a7d792030, {0x2b5a7d633c44?, 0x2b5a7d919680?, 0xf?})
+2026-11-09T18:27:43.9857859Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:144 +0x4f
+2026-11-09T18:27:43.9858774Z bytes.(*Buffer).ReadFrom(0x2b5a7d9c00c0, {0x32ec678, 0x2b5a7d792030})
+2026-11-09T18:27:43.9859317Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/bytes/buffer.go:229 +0x98
+2026-11-09T18:27:43.9859915Z io.copyBuffer({0x32ec798, 0x2b5a7d9c00c0}, {0x32ec678, 0x2b5a7d792030}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9860486Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:415 +0x151
+2026-11-09T18:27:43.9860906Z io.Copy(...)
+2026-11-09T18:27:43.9861249Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9861743Z os.genericWriteTo(0x2b5a7d792030?, {0x32ec798?, 0x2b5a7d9c00c0?})
+2026-11-09T18:27:43.9862252Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:295 +0x35
+2026-11-09T18:27:43.9862761Z os.(*File).WriteTo(0x2b5a7d792030, {0x32ec798, 0x2b5a7d9c00c0})
+2026-11-09T18:27:43.9863245Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:273 +0x9c
+2026-11-09T18:27:43.9863825Z io.copyBuffer({0x32ec798, 0x2b5a7d9c00c0}, {0x32ec6f8, 0x2b5a7d792030}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9864390Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:411 +0x9d
+2026-11-09T18:27:43.9864807Z io.Copy(...)
+2026-11-09T18:27:43.9865143Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9865563Z os/exec.(*Cmd).writerDescriptor.func1()
+2026-11-09T18:27:43.9866017Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:613 +0x34
+2026-11-09T18:27:43.9866472Z os/exec.(*Cmd).Start.func2(0x0?)
+2026-11-09T18:27:43.9867031Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:768 +0x2c
+2026-11-09T18:27:43.9867511Z created by os/exec.(*Cmd).Start in goroutine 84
+2026-11-09T18:27:43.9867974Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:767 +0x92b
+2026-11-09T18:27:43.9868509Z 
+2026-11-09T18:27:43.9868718Z goroutine 295 [IO wait, 29 minutes]:
+2026-11-09T18:27:43.9869094Z internal/poll.runtime_pollWait(0x7fefec9b6600, 0x72)
+2026-11-09T18:27:43.9869592Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/runtime/netpoll.go:351 +0x85
+2026-11-09T18:27:43.9870140Z internal/poll.(*pollDesc).wait(0x2b5a7d560300?, 0x2b5a7d9f2000?, 0x1)
+2026-11-09T18:27:43.9870719Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:84 +0x27
+2026-11-09T18:27:43.9871233Z internal/poll.(*pollDesc).waitRead(...)
+2026-11-09T18:27:43.9871708Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_poll_runtime.go:89
+2026-11-09T18:27:43.9872286Z internal/poll.(*FD).Read(0x2b5a7d560300, {0x2b5a7d9f2000, 0x8000, 0x8000})
+2026-11-09T18:27:43.9872857Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/internal/poll/fd_unix.go:170 +0x2a8
+2026-11-09T18:27:43.9873329Z os.(*File).read(...)
+2026-11-09T18:27:43.9873695Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:30
+2026-11-09T18:27:43.9874202Z os.(*File).Read(0x2b5a7d792048, {0x2b5a7d9f2000?, 0x31e25a0?, 0x4deb01?})
+2026-11-09T18:27:43.9874716Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:144 +0x4f
+2026-11-09T18:27:43.9875283Z io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec678, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9875845Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:429 +0x190
+2026-11-09T18:27:43.9876247Z io.Copy(...)
+2026-11-09T18:27:43.9876585Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9877064Z os.genericWriteTo(0x2b5a7d792048?, {0x32ecff8?, 0x2b5a7d984050?})
+2026-11-09T18:27:43.9877560Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:295 +0x35
+2026-11-09T18:27:43.9878054Z os.(*File).WriteTo(0x2b5a7d792048, {0x32ecff8, 0x2b5a7d984050})
+2026-11-09T18:27:43.9878841Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:273 +0x9c
+2026-11-09T18:27:43.9879403Z io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec6f8, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+2026-11-09T18:27:43.9880113Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:411 +0x9d
+2026-11-09T18:27:43.9880521Z io.Copy(...)
+2026-11-09T18:27:43.9880842Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+2026-11-09T18:27:43.9881255Z os/exec.(*Cmd).writerDescriptor.func1()
+2026-11-09T18:27:43.9881707Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:613 +0x34
+2026-11-09T18:27:43.9882146Z os/exec.(*Cmd).Start.func2(0x0?)
+2026-11-09T18:27:43.9882589Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:768 +0x2c
+2026-11-09T18:27:43.9883053Z created by os/exec.(*Cmd).Start in goroutine 84
+2026-11-09T18:27:43.9883518Z 	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:767 +0x92b
+2026-11-09T18:27:43.9883846Z 
+2026-11-09T18:27:43.9884203Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/u8_traits (1980.04s)
+2026-11-09T18:27:43.9884525Z 
+2026-11-09T18:27:43.9884835Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/string_swap_case (unknown)
+2026-11-09T18:27:43.9885183Z 
+2026-11-09T18:27:43.9885478Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/uint_midpoint (unknown)
+2026-11-09T18:27:43.9885802Z 
+2026-11-09T18:27:43.9886081Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/quic_frames (unknown)
+2026-11-09T18:27:43.9886514Z 
+2026-11-09T18:27:43.9886825Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/flac_encoder_smoke (unknown)
+2026-11-09T18:27:43.9887168Z 
+2026-11-09T18:27:43.9887452Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/quic_recovery (unknown)
+2026-11-09T18:27:43.9887782Z 
+2026-11-09T18:27:43.9888218Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/array_dedup (unknown)
+2026-11-09T18:27:43.9888818Z 
+2026-11-09T18:27:43.9889136Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/i64_intdiv (unknown)
+2026-11-09T18:27:43.9889458Z 
+2026-11-09T18:27:43.9889745Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/json_field_eq (unknown)
+2026-11-09T18:27:43.9890077Z 
+2026-11-09T18:27:43.9890375Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/mp4_alac_smoke (unknown)
+2026-11-09T18:27:43.9890706Z 
+2026-11-09T18:27:43.9891054Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/array_prefix_suffix_subseq (unknown)
+2026-11-09T18:27:43.9891434Z 
+2026-11-09T18:27:43.9891708Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/float_math (unknown)
+2026-11-09T18:27:43.9892024Z 
+2026-11-09T18:27:43.9892321Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/assert_at_wider (unknown)
+2026-11-09T18:27:43.9892650Z 
+2026-11-09T18:27:43.9892939Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_sse (unknown)
+2026-11-09T18:27:43.9893249Z 
+2026-11-09T18:27:43.9893522Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/sort_wider (unknown)
+2026-11-09T18:27:43.9893837Z 
+2026-11-09T18:27:43.9894095Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/csv (unknown)
+2026-11-09T18:27:43.9894383Z 
+2026-11-09T18:27:43.9894673Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/time_calendar (unknown)
+2026-11-09T18:27:43.9895005Z 
+2026-11-09T18:27:43.9895297Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/digest_sha256 (unknown)
+2026-11-09T18:27:43.9895621Z 
+2026-11-09T18:27:43.9895916Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/flac_file_smoke (unknown)
+2026-11-09T18:27:43.9896243Z 
+2026-11-09T18:27:43.9896581Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/string_classify_transform (unknown)
+2026-11-09T18:27:43.9896956Z 
+2026-11-09T18:27:43.9897228Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/video_mp4 (unknown)
+2026-11-09T18:27:43.9897543Z 
+2026-11-09T18:27:43.9897906Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/float_clamp01_absdiff_muladd (unknown)
+2026-11-09T18:27:43.9898513Z 
+2026-11-09T18:27:43.9898867Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/caf_linear_boundary (unknown)
+2026-11-09T18:27:43.9899213Z 
+2026-11-09T18:27:43.9899525Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/ci_string_and_log_kv (unknown)
+2026-11-09T18:27:43.9900024Z 
+2026-11-09T18:27:43.9900306Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/array_batch (unknown)
+2026-11-09T18:27:43.9900629Z 
+2026-11-09T18:27:43.9900897Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/sort_f64 (unknown)
+2026-11-09T18:27:43.9901225Z 
+2026-11-09T18:27:43.9901519Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/android_player (unknown)
+2026-11-09T18:27:43.9901847Z 
+2026-11-09T18:27:43.9902134Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/opus_silk_loss (unknown)
+2026-11-09T18:27:43.9902457Z 
+2026-11-09T18:27:43.9902724Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/batch8 (unknown)
+2026-11-09T18:27:43.9903030Z 
+2026-11-09T18:27:43.9903309Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/fuzz_corpus (unknown)
+2026-11-09T18:27:43.9903633Z 
+2026-11-09T18:27:43.9903937Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_requestid (unknown)
+2026-11-09T18:27:43.9904269Z 
+2026-11-09T18:27:43.9904569Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/opus_silk_entropy (unknown)
+2026-11-09T18:27:43.9904919Z 
+2026-11-09T18:27:43.9905201Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/opus_delimited (unknown)
+2026-11-09T18:27:43.9905526Z 
+2026-11-09T18:27:43.9905811Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/android_trace (unknown)
+2026-11-09T18:27:43.9906134Z 
+2026-11-09T18:27:43.9906465Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_request_body_stream (unknown)
+2026-11-09T18:27:43.9906842Z 
+2026-11-09T18:27:43.9907268Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/digest_sm3 (unknown)
+2026-11-09T18:27:43.9907592Z 
+2026-11-09T18:27:43.9907856Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/audio (unknown)
+2026-11-09T18:27:43.9908157Z 
+2026-11-09T18:27:43.9908669Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp (unknown)
+2026-11-09T18:27:43.9908978Z 
+2026-11-09T18:27:43.9909307Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/array_product_cumsum (unknown)
+2026-11-09T18:27:43.9909671Z 
+2026-11-09T18:27:43.9910001Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/mp3_input_smoke (unknown)
+2026-11-09T18:27:43.9910331Z 
+2026-11-09T18:27:43.9910684Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/string_count_and_dir_listing (unknown)
+2026-11-09T18:27:43.9911069Z 
+2026-11-09T18:27:43.9911362Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/json_roundtrip (unknown)
+2026-11-09T18:27:43.9911692Z 
+2026-11-09T18:27:43.9911956Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/regex (unknown)
+2026-11-09T18:27:43.9912262Z 
+2026-11-09T18:27:43.9912547Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_accesslog (unknown)
+2026-11-09T18:27:43.9912873Z 
+2026-11-09T18:27:43.9913199Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/string_prelude_migrated (unknown)
+2026-11-09T18:27:43.9913563Z 
+2026-11-09T18:27:43.9913844Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/i64_bit_ops (unknown)
+2026-11-09T18:27:43.9914166Z 
+2026-11-09T18:27:43.9914429Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/crypto (unknown)
+2026-11-09T18:27:43.9914736Z 
+2026-11-09T18:27:43.9915048Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/try_inferred_generic (unknown)
+2026-11-09T18:27:43.9915409Z 
+2026-11-09T18:27:43.9915713Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/android_property (unknown)
+2026-11-09T18:27:43.9916054Z 
+2026-11-09T18:27:43.9916341Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/wide_numerics (unknown)
+2026-11-09T18:27:43.9916666Z 
+2026-11-09T18:27:43.9916918Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/tz (unknown)
+2026-11-09T18:27:43.9917210Z 
+2026-11-09T18:27:43.9917512Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/string_partition (unknown)
+2026-11-09T18:27:43.9917851Z 
+2026-11-09T18:27:43.9918145Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/float_log2_log10 (unknown)
+2026-11-09T18:27:43.9918949Z 
+2026-11-09T18:27:43.9919285Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/wav_linear_boundary (unknown)
+2026-11-09T18:27:43.9919638Z 
+2026-11-09T18:27:43.9919959Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/mp3_freeformat_smoke (unknown)
+2026-11-09T18:27:43.9920311Z 
+2026-11-09T18:27:43.9920561Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/cli (unknown)
+2026-11-09T18:27:43.9920853Z 
+2026-11-09T18:27:43.9921158Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/i32_to_string_radix (unknown)
+2026-11-09T18:27:43.9921503Z 
+2026-11-09T18:27:43.9921811Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_response_bytes (unknown)
+2026-11-09T18:27:43.9922155Z 
+2026-11-09T18:27:43.9922427Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/fail_fast (unknown)
+2026-11-09T18:27:43.9922753Z 
+2026-11-09T18:27:43.9923030Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/http_cache (unknown)
+2026-11-09T18:27:43.9923355Z 
+2026-11-09T18:27:43.9923619Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/helpers (unknown)
+2026-11-09T18:27:43.9923934Z 
+2026-11-09T18:27:43.9924192Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/path (unknown)
+2026-11-09T18:27:43.9924489Z 
+2026-11-09T18:27:43.9924748Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/pvh (unknown)
+2026-11-09T18:27:43.9925046Z 
+2026-11-09T18:27:43.9925353Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/result_combinators (unknown)
+2026-11-09T18:27:43.9925703Z 
+2026-11-09T18:27:43.9926001Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/wavpack_boundary (unknown)
+2026-11-09T18:27:43.9926472Z 
+2026-11-09T18:27:43.9926758Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/alac_smoke (unknown)
+2026-11-09T18:27:43.9927078Z 
+2026-11-09T18:27:43.9927384Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/vorbis_input_smoke (unknown)
+2026-11-09T18:27:43.9927726Z 
+2026-11-09T18:27:43.9928016Z === [31mFAIL[0m: e2ecompiler TestSelfHostStdTestInterp/array_none (unknown)
+2026-11-09T18:27:43.9928561Z 
+2026-11-09T18:27:43.9928693Z DONE 68 tests, 69 failures in 1980.041s
+2026-11-09T18:27:43.9941616Z ##[error]Process completed with exit code 1.
+2026-11-09T18:27:44.0001384Z ##[group]Run scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+2026-11-09T18:27:44.0001926Z [36;1mscripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"[0m
+2026-11-09T18:27:44.0023470Z shell: /usr/bin/bash -e {0}
+2026-11-09T18:27:44.0023770Z env:
+2026-11-09T18:27:44.0024042Z   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+2026-11-09T18:27:44.0025731Z   ISOLATED_DRIVER_TESTS: TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit
+2026-11-09T18:27:44.0032521Z   OWN_JOB_TESTS: TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu
+2026-11-09T18:27:44.0038005Z   QUARANTINED_TESTS: 
+2026-11-09T18:27:44.0038273Z   FERN_STDTEST_SHARD: 3/4
+2026-11-09T18:27:44.0038806Z   MISE_LOG_LEVEL: info
+2026-11-09T18:27:44.0041453Z   MISE_GITHUB_TOKEN: ***
+2026-11-09T18:27:44.0041805Z   MISE_TRUSTED_CONFIG_PATHS: /home/runner/work/lang/lang
+2026-11-09T18:27:44.0042167Z   MISE_YES: 1
+2026-11-09T18:27:44.0042415Z   FERN_MISE_VERSION: 2026.11.0
+2026-11-09T18:27:44.0042777Z   GOBIN: /home/runner/.local/share/mise/installs/go/1.27.3/bin
+2026-11-09T18:27:44.0043232Z   GOROOT: /home/runner/.local/share/mise/installs/go/1.27.3
+2026-11-09T18:27:44.0043907Z   FERN_WASI_ADAPTER: /home/runner/.local/share/mise/installs/http-wasi-adapter/50.0.1/wasi_snapshot_preview1.command.wasm
+2026-11-09T18:27:44.0044613Z   FERN_SELFHOST_BUILD_CACHE: /home/runner/work/_temp/selfhost-unicache
+2026-11-09T18:27:44.0045035Z ##[endgroup]
+2026-11-09T18:27:44.0785361Z ##[error]…l/share/mise/installs/go/1.27.3/src/internal/poll/fd_unix.go:170 +0x2a8
+os.(*File).read(...)
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file_posix.go:30
+os.(*File).Read(0x2b5a7d792048, {0x2b5a7d9f2000?, 0x31e25a0?, 0x4deb01?})
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:144 +0x4f
+io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec678, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:429 +0x190
+io.Copy(...)
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+os.genericWriteTo(0x2b5a7d792048?, {0x32ecff8?, 0x2b5a7d984050?})
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:295 +0x35
+os.(*File).WriteTo(0x2b5a7d792048, {0x32ecff8, 0x2b5a7d984050})
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/file.go:273 +0x9c
+io.copyBuffer({0x32ecff8, 0x2b5a7d984050}, {0x32ec6f8, 0x2b5a7d792048}, {0x0, 0x0, 0x0})
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:411 +0x9d
+io.Copy(...)
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/io/io.go:388
+os/exec.(*Cmd).writerDescriptor.func1()
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:613 +0x34
+os/exec.(*Cmd).Start.func2(0x0?)
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:768 +0x2c
+created by os/exec.(*Cmd).Start in goroutine 84
+	/home/runner/.local/share/mise/installs/go/1.27.3/src/os/exec/exec.go:767 +0x92b
+
+2026-11-09T18:27:44.0871001Z Post job cleanup.
+2026-11-09T18:27:44.0875649Z ##[start-action display=Restore the oracle verdicts, and save them when the job ends;id=__3c89a33f-54d4-4609-a5ef-6b395408dfa9.__actions_cache]
+2026-11-09T18:27:44.0878749Z ##[end-action id=__3c89a33f-54d4-4609-a5ef-6b395408dfa9.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T18:27:44.0950907Z Post job cleanup.
+2026-11-09T18:27:44.1076569Z Post job cleanup.
+2026-11-09T18:27:44.1081385Z ##[start-action display=Cache the launcher's self-host build;id=__aa9494ab-cdcb-4068-b24d-1dccd02758e7.__actions_cache_2]
+2026-11-09T18:27:44.1083772Z ##[end-action id=__aa9494ab-cdcb-4068-b24d-1dccd02758e7.__actions_cache_2;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T18:27:44.1085914Z ##[start-action display=Cache the shipped compiler;id=__aa9494ab-cdcb-4068-b24d-1dccd02758e7.compiler-cache]
+2026-11-09T18:27:44.1088168Z ##[end-action id=__aa9494ab-cdcb-4068-b24d-1dccd02758e7.compiler-cache;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-09T18:27:44.1156632Z Post job cleanup.
+2026-11-09T18:27:44.2469793Z [command]/usr/bin/git version
+2026-11-09T18:27:44.2589278Z git version 2.56.0
+2026-11-09T18:27:44.2780169Z Temporarily overriding HOME='/home/runner/work/_temp/80dad421-ffea-49cc-b97a-0f92121b5fcc' before making global git config changes
+2026-11-09T18:27:44.2809223Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-09T18:27:44.2829559Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lang/lang
+2026-11-09T18:27:44.2879596Z Removing SSH command configuration
+2026-11-09T18:27:44.2880551Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-09T18:27:44.2945561Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-09T18:27:44.3380111Z Removing HTTP extra header
+2026-11-09T18:27:44.3390505Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-09T18:27:44.3462652Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-09T18:27:44.3915005Z Removing includeIf entries pointing to credentials config files
+2026-11-09T18:27:44.3920185Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-09T18:27:44.3965426Z includeif.gitdir:/home/runner/work/lang/lang/.git.path
+2026-11-09T18:27:44.3966794Z includeif.gitdir:/home/runner/work/lang/lang/.git/worktrees/*.path
+2026-11-09T18:27:44.3967896Z includeif.gitdir:/github/workspace/.git.path
+2026-11-09T18:27:44.3969181Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-09T18:27:44.3980721Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/lang/lang/.git.path
+2026-11-09T18:27:44.4028832Z /home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T18:27:44.4039979Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/lang/lang/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-3a98a6a2\-bb63\-409d\-bb88\-77bdbac65b36\.config
+2026-11-09T18:27:44.4107410Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/lang/lang/.git/worktrees/*.path
+2026-11-09T18:27:44.4148055Z /home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T18:27:44.4160229Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/lang/lang/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-3a98a6a2\-bb63\-409d\-bb88\-77bdbac65b36\.config
+2026-11-09T18:27:44.4249752Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-09T18:27:44.4289076Z /github/runner_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T18:27:44.4298333Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-3a98a6a2\-bb63\-409d\-bb88\-77bdbac65b36\.config
+2026-11-09T18:27:44.4348231Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-09T18:27:44.4388754Z /github/runner_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config
+2026-11-09T18:27:44.4397735Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-3a98a6a2\-bb63\-409d\-bb88\-77bdbac65b36\.config
+2026-11-09T18:27:44.4450029Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-09T18:27:44.4754781Z Removing credentials config '/home/runner/work/_temp/git-credentials-3a98a6a2-bb63-409d-bb88-77bdbac65b36.config'
+2026-11-09T18:27:44.4917151Z Cleaning up orphan processes
+2026-11-09T18:27:44.5233287Z Terminate orphan process: pid (3782) (drv-f194a82690d88d246417b4e34a15c173cb02c756e60a817fd2489e9d8775481e-x86-64-linux-7469f3f4fab60c8a)

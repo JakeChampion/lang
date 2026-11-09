@@ -1,0 +1,312 @@
+[
+  {
+    "label": "first-group-0-base",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:05:44.287195+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 28396457764,
+    "cpu_user": 19.867824,
+    "cpu_system": 0.356898,
+    "peak_rss_kib": 148164,
+    "timed_out": false,
+    "finished": "2026-11-09T22:06:12.684199+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-0-candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:06:12.756244+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 23719385198,
+    "cpu_user": 15.784356,
+    "cpu_system": 0.297687,
+    "peak_rss_kib": 148040,
+    "timed_out": false,
+    "finished": "2026-11-09T22:06:36.476032+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-1-candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:06:36.549242+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 18790381197,
+    "cpu_user": 14.71553,
+    "cpu_system": 0.18212599999999998,
+    "peak_rss_kib": 148104,
+    "timed_out": false,
+    "finished": "2026-11-09T22:06:55.340232+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-1-base",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:06:55.374521+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 18833699409,
+    "cpu_user": 17.739032,
+    "cpu_system": 0.237535,
+    "peak_rss_kib": 148164,
+    "timed_out": false,
+    "finished": "2026-11-09T22:07:14.209408+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-2-base",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:07:14.234075+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 19752999620,
+    "cpu_user": 19.116231,
+    "cpu_system": 0.260192,
+    "peak_rss_kib": 148164,
+    "timed_out": false,
+    "finished": "2026-11-09T22:07:33.987321+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-2-candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:07:34.027470+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 17350765071,
+    "cpu_user": 16.966143,
+    "cpu_system": 0.24326899999999999,
+    "peak_rss_kib": 148168,
+    "timed_out": false,
+    "finished": "2026-11-09T22:07:51.379634+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-3-candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:07:51.415519+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 15542478475,
+    "cpu_user": 15.220892,
+    "cpu_system": 0.180114,
+    "peak_rss_kib": 148168,
+    "timed_out": false,
+    "finished": "2026-11-09T22:08:06.958351+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-3-base",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:08:06.999862+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 17724580025,
+    "cpu_user": 17.293769,
+    "cpu_system": 0.239831,
+    "peak_rss_kib": 148164,
+    "timed_out": false,
+    "finished": "2026-11-09T22:08:24.724870+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-4-base",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:08:24.773999+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 18842584233,
+    "cpu_user": 18.430354,
+    "cpu_system": 0.26214,
+    "peak_rss_kib": 148164,
+    "timed_out": false,
+    "finished": "2026-11-09T22:08:43.616849+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "first-group-4-candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+    "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:08:43.654131+00:00",
+    "budget_seconds": 1980,
+    "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test.",
+    "exit_code": 0,
+    "wall_ns": 15934198873,
+    "cpu_user": 15.596727,
+    "cpu_system": 0.245996,
+    "peak_rss_kib": 148168,
+    "timed_out": false,
+    "finished": "2026-11-09T22:08:59.589069+00:00",
+    "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]
