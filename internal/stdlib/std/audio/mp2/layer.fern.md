@@ -151,7 +151,25 @@ function samples(input: [u8], b: bits.Bits, ba: i32, own output: f32[], at: i32)
 }
 
 pub function granule(input: [u8], b: bits.Bits, scale: Scale, part: i32): Result[(bits.Bits, f32[]), pcm.AudioError] {
-  let output = spectral.zeros(1152);
+  return granule_into(input, b, scale, part, spectral.zeros(1152));
+}
+
+function clear_inactive(scale: Scale, own output: f32[]): f32[] {
+  // Synthesis changes every band. Clear inactive bands before the next reuse.
+  for band in 0..32 {
+    for channel in 0..2 {
+      if (band >= scale.bands || scale.allocation[band * 2 + channel] == 0u8) {
+        for i in 0..12 {
+          output = output.with(channel * 576 + band * 18 + i, 0.0f32);
+        }
+      }
+    }
+  }
+  return output;
+}
+
+pub function granule_into(input: [u8], b: bits.Bits, scale: Scale, part: i32, own output: f32[]): Result[(bits.Bits, f32[]), pcm.AudioError] {
+  output = clear_inactive(scale, output);
   for group in 0..4 {
     for band in 0..scale.bands {
       for channel in 0..2 {
