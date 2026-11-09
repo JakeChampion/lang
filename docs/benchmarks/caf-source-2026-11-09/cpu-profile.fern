@@ -141,6 +141,11 @@ function benchmark_once(): i32 {
 }
 
 function main(): i32 {
-  for _ in 0..100 { let code = benchmark_once(); if (code != 0) { return code; } }
+  for _ in 0..100 {
+    let code = benchmark_once();
+    if (code != 0) {
+      return code;
+    }
+  }
   return 0;
 }
