@@ -10,19 +10,19 @@ import (
 )
 
 // checker.is_registered_intrinsic skips the list for a name without the
-// "__" prefix, so every name in registered_intrinsics must carry it.
+// "__" prefix, so every name in REGISTERED_INTRINSICS must carry it.
 func TestSelfHostRegisteredIntrinsicsStartWithUnderscores(t *testing.T) {
 	src, err := os.ReadFile(e2eharness.RepoPath("compiler", "checker.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(src)
-	start := strings.Index(text, "\nfunction registered_intrinsics(): string[] {\n")
+	start := strings.Index(text, "\nconst REGISTERED_INTRINSICS: string[] = [\n")
 	if start < 0 {
-		t.Fatal("compiler/checker.fern has no registered_intrinsics")
+		t.Fatal("compiler/checker.fern has no REGISTERED_INTRINSICS")
 	}
 	body := text[start:]
-	body = body[:strings.Index(body, "\n}\n")]
+	body = body[:strings.Index(body, "\n];\n")]
 	names := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(body, -1)
 	if len(names) < 100 {
 		t.Fatalf("found %d names, want the whole list", len(names))
