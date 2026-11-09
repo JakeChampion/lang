@@ -3,8 +3,8 @@
 The planner now reuses one bounded cache for Rice and Rice2 parameter candidates.
 Only a smaller plan retains a separate parameter array.
 The block divisibility, predictor order, and requested partition limit determine the maximum cache count.
-The cache payload uses eight bytes per permitted partition.
-Array headers and allocator overhead add to that storage.
+The cache retains two scalar slots per permitted partition.
+The native 64-bit targets use 16 payload bytes per parameter pair, plus array headers and allocator overhead.
 The exact search order, cost scans, and tie rules remain unchanged.
 
 The prior allocation profile contains 7,227 samples with no dropped samples.

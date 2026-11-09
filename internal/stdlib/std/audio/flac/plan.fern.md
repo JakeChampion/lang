@@ -20,7 +20,7 @@ The encoder compares those exact costs and the Rice-one parameter cap in one sca
 The complete search also checks raw escapes and every permitted partition order.
 Cost scans reuse one bounded parameter cache.
 Only a smaller plan retains its selected parameter array.
-The cache uses eight bytes per permitted partition.
+The cache retains two scalar slots per permitted partition.
 Block divisibility, predictor order, and the requested partition limit cap that count.
 
 Source samples must fit the declared PCM depth before plan selection.
