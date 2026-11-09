@@ -190,8 +190,8 @@ func FuzzSelfHostArm64Image(f *testing.F) { fuzzImage(f, "arm64", "arm64-linux",
 // compiled program, which shows that the checks accept what a real compile
 // produces. Assembly compiled without -pie gives the static and the -g image,
 // and its -pie link is refused with a cause, not an exit of the driver.
-// Assembly compiled with -pie gives the -pie image. Text with no _start gives
-// no image on either ISA.
+// Assembly compiled with -pie gives all three images. Text with no _start
+// gives no image on either ISA.
 func TestSelfHostImageOfCompiledProgram(t *testing.T) {
 	for _, c := range []struct {
 		which, target string
@@ -219,7 +219,7 @@ func TestSelfHostImageOfCompiledProgram(t *testing.T) {
 				return got
 			}
 			run(compiledAssembly(t, bin, stdlib, c.target), "static", "g")
-			run(compiledAssembly(t, bin, stdlib, c.target, "-pie"), "pie")
+			run(compiledAssembly(t, bin, stdlib, c.target, "-pie"), "static", "pie", "g")
 			run([]byte(".text\nf:\n ret\n"))
 		})
 	}
