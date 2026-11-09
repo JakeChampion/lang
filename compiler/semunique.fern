@@ -158,7 +158,7 @@ function fresh(f: ssasem.Func, v: i32): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result == v) {
-        return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve()
+        return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve() || ins.kind_tag == ssasem.array_zero()
           || ins.kind_tag == ssasem.call() && (ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str));
       }
     }

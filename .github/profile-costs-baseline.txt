@@ -1,3 +1,5 @@
+# 2026-11-09: #14849. Bulk scalar zero fill reduces Deflate instructions.
+# Local Valgrind 3.24.0 measurements bank three x86-64 counts. All tolerances stay fixed.
 # 2026-11-09: PR #14847, perf-x86_64 job 129087018092. profile/x86-64-linux/map_string.hardened.ir rises 1.11%. The PR's compiler emits byte-identical code, so the row moved on main's tree. Pinned at the measured value.
 # 2026-11-09: PR #14829. Local Valgrind 3.24.0 measurements reduce scalar append and deflate instruction counts. The scalar append counts repeat exactly.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
@@ -199,13 +201,13 @@ profile/x86-64-linux/deflate_decode.diagnostic.emit	12743
 profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
 profile/x86-64-linux/deflate_decode.hardened.bytes	55872
 profile/x86-64-linux/deflate_decode.hardened.emit	13293
-profile/x86-64-linux/deflate_decode.hardened.ir	34557387
+profile/x86-64-linux/deflate_decode.hardened.ir	33840579
 profile/x86-64-linux/deflate_decode.minimal.bytes	46688
 profile/x86-64-linux/deflate_decode.minimal.emit	11402
-profile/x86-64-linux/deflate_decode.minimal.ir	40070279
+profile/x86-64-linux/deflate_decode.minimal.ir	39191644
 profile/x86-64-linux/deflate_decode.safe.bytes	51376
 profile/x86-64-linux/deflate_decode.safe.emit	12766
-profile/x86-64-linux/deflate_decode.safe.ir	33826804
+profile/x86-64-linux/deflate_decode.safe.ir	32880607
 profile/x86-64-linux/enum_match.diagnostic.bytes	10960
 profile/x86-64-linux/enum_match.diagnostic.emit	1351
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
