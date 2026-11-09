@@ -175,6 +175,14 @@ pub function ssa_report_on(): boolean {
   return envflag.on("FERN_SSA_REPORT");
 }
 
+// The monotonic clock when a report needs it, and 0 otherwise.
+pub function report_clock(on: boolean): i64 {
+  if (on) {
+    return monotonic_ns();
+  }
+  return 0i64;
+}
+
 pub function ssa_refuse(name: string, why: string): i32 {
   eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it");
   exit(3);

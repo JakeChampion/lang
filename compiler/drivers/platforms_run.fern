@@ -53,8 +53,8 @@ function main(): i32 {
   if (!platforms.for_target("arm64-freestanding").known) {
     return 6;
   }
-  let core = platforms.for_target("arm64-freestanding");
-  if (core.capabilities.len() != 1 || core.capabilities[0] != "mmio") {
+  let bare = platforms.for_target("arm64-freestanding").capabilities;
+  if (bare.len() != 1 || bare[0] != "mmio") {
     return 7;
   }
   if (platforms.entry_shape("arm64-freestanding") != "exports") {

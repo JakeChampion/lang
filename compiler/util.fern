@@ -12,6 +12,16 @@ pub function i32_to_string(n: i32): string {
   return n.to_string();
 }
 
+// A fixed-point loop stopped at its round cap while it still changed the
+// code. The output is correct but depends on the cap.
+pub function report_unsettled(pass: string, rounds: i32, where: string): void {
+  let at = "";
+  if (where != "") {
+    at = " in " + where;
+  }
+  eprint("fern: internal: " + pass + " stopped after " + i32_to_string(rounds) + " rounds before it settled" + at + " (#14583)");
+}
+
 pub function i64_to_string(n: i64): string {
   if (n == 0) {
     return "0";

@@ -1680,6 +1680,8 @@ TestSelfHostKVConfigOrdinaryBoundaries 7
 TestSelfHostKeptCallHolderX86_64 3
 TestSelfHostKeptReadPastUpdate 5
 TestSelfHostKernelImageLayout 5
+TestSelfHostKernelLinuxImageLayout 5
+TestSelfHostKernelLinuxImageRefusals 3
 TestSelfHostKernelPrivilegedOps 3
 TestSelfHostKernelPrivilegedOpsNeedAKernel 4
 TestSelfHostKernelRamFlag 3
