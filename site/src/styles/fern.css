@@ -750,6 +750,10 @@ site-search dialog h2 {
   margin-block: 1.5rem 2rem;
 }
 
+.fern-captured .expressive-code + .expressive-code {
+  margin-top: 0.75rem;
+}
+
 /* --- Measured speed ----------------------------------------------- */
 
 .fern-bench-head {
@@ -800,6 +804,46 @@ site-search dialog h2 {
 
 .fern-bench-head__method a {
   color: var(--sl-color-text-accent);
+}
+
+.fern-startup {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.fern-startup table {
+  width: 100%;
+  margin-top: 0.6rem;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.fern-startup th,
+.fern-startup td {
+  padding: 0.35rem 0.5rem;
+  border-top: var(--fern-rule);
+  text-align: start;
+}
+
+.fern-startup th {
+  font-family: var(--fern-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sl-color-gray-3);
+  border-top: 0;
+}
+
+.fern-startup tr.is-fern td {
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+
+.fern-startup__note {
+  margin: 0.8rem 0 0;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
 }
 
 /* --- Editor features ---------------------------------------------- */
