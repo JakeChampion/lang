@@ -156,6 +156,9 @@ function c_config_from_assets(config: usize, manager: usize): void;
 @import("libandroid.so", "AConfiguration_getDensity")
 function c_config_density(config: usize): i32;
 
+@import("libandroid.so", "AConfiguration_getUiModeNight")
+function c_config_night(config: usize): i32;
+
 @import("libandroid.so", "AConfiguration_delete")
 function c_config_delete(config: usize): void;
 
@@ -1018,6 +1021,21 @@ pub function density(ctx: usize): i32 {
       return 160;
     }
     return dpi;
+  }
+}
+
+// ACONFIGURATION_UI_MODE_NIGHT_YES.
+const UI_MODE_NIGHT_YES: i32 = 2;
+
+// The system uses the dark theme. Android starts an activity again when the
+// theme changes, unless its manifest handles the change of uiMode itself.
+pub function night_mode(ctx: usize): boolean {
+  unsafe {
+    let config: usize = c_config_new();
+    c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
+    let night: i32 = c_config_night(config);
+    c_config_delete(config);
+    return night == UI_MODE_NIGHT_YES;
   }
 }
 
