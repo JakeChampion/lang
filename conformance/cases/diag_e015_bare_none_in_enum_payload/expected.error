@@ -1,0 +1,1 @@
+None is a payload-less variant of enum Option, but a bare name in a payload slot is a binder that matches every value

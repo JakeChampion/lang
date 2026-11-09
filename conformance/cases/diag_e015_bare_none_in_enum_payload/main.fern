@@ -1,0 +1,9 @@
+enum Slot { Count(i32), Maybe(Option[i32]) }
+
+function empty(s: Slot): i32 {
+    return match (s) { Slot.Count(_) => 1, Slot.Maybe(None) => 0 };
+}
+
+function main(): i32 {
+    return empty(Slot.Maybe(Some(5)));
+}

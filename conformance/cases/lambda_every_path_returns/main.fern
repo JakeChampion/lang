@@ -1,0 +1,40 @@
+// A lambda and a local function whose every path returns are accepted:
+// an expression body, an if with both branches, a match, and a loop
+// that only a return leaves.
+import "std/i32";
+
+enum Shade { Dark, Light }
+
+function main(): i32 {
+    let double = (x: i32): i32 => x * 2;
+    let sign = (x: i32): string => {
+        if (x < 0) {
+            return "neg";
+        } else {
+            return "pos";
+        }
+    };
+    let name = (s: Shade): string => {
+        match (s) {
+            Dark => { return "dark"; },
+            Light => { return "light"; }
+        }
+    };
+    function first_even(from: i32): i32 {
+        let n = from;
+        while (true) {
+            if (n % 2 == 0) {
+                return n;
+            }
+            n += 1;
+        }
+    }
+    let quiet = (x: i32): void => {
+        if (x > 0) {
+            print("positive");
+        }
+    };
+    quiet(1);
+    print(double(21).to_string() + " " + sign(-1) + " " + name(Shade.Light) + " " + first_even(7).to_string());
+    return 0;
+}
