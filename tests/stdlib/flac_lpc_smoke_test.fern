@@ -2,6 +2,7 @@ import "std/audio/flac/encoder";
 import "std/audio/flac";
 import "std/audio/pcm";
 import "std/test";
+import "std/bench";
 import "flac_lpc_check";
 import "flac_lpc_vectors";
 
@@ -52,9 +53,37 @@ function budgets(): test.TestOutcome {
   return test.pass();
 }
 
+function partition_storage(): test.TestOutcome {
+  for frames in [17, 31, 32] {
+    let input: i32[] = [];
+    for at in 0..frames {
+      input = input.append(at * 37 - 512);
+    }
+    let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+    let options = encoder.Options { ...encoder.default_options(), block_frames: 32, max_partition_order: 15 };
+    let started = bench.bump_bytes();
+    let Ok(encoded) = encoder.encode(input, format, options, pcm.default_limits()) else {
+      return test.fail("large partition hint");
+    };
+    if (bench.fresh_bytes_after(started) > 65536i64) {
+      return test.fail("partition storage must follow the frame extent");
+    }
+    let Ok(decoded) = flac.decode(encoded, pcm.default_limits()) else {
+      return test.fail("partition stream or MD5");
+    };
+    for at in 0..frames {
+      if (decoded.samples[at] != at * 37 - 512) {
+        return test.fail("partition PCM");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("FLAC LPC small reference controls");
   runner = runner.it("bounded LPC orders", options);
+  runner = runner.it("large partition hints retain bounded frame storage", partition_storage);
   runner = runner.it("LPC compression, exact budgets, checksums, and PCM MD5", budgets);
   runner = runner.it("independent stream, exact PCM, and retained input", () => flac_lpc_check.reference(flac_lpc_vectors.smoke()));
   return runner.finish();
