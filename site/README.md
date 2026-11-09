@@ -152,6 +152,17 @@ prints, into a page under `/errors/`, with an index of the codes.
 `npm run build` runs it first, and the pages are not in git. Edit the
 explanation, not the page.
 
+## Playground short links
+
+The playground's Share button asks `/api/share` for a short link, such
+as `/p/zjxLsMlmJF`. `netlify/functions/share.mjs` is that Netlify
+Function: it stores the playground hash in the `playground-shares`
+Netlify Blobs store, and `/p/ID` redirects to the playground with it.
+The id comes from a hash of the snippet. Where the function is not
+there, as on a local server of `web/`, Share copies the long link.
+`netlify functions:serve --functions site/netlify/functions` runs it
+locally.
+
 ## Social cards and llms.txt
 
 Each docs page except the home page has a social card at
@@ -188,6 +199,15 @@ hash — same codec the standalone playground's Share button uses,
 so URLs are interchangeable. Give `args="…"` and `stdin={`…`}` to
 run the snippet with arguments and standard input. The embed then
 shows its program-input panel, so the reader can change both.
+
+Give `expect={`…`}` to make the snippet an exercise. The embed shows
+the expected output as the goal, and after each run says whether the
+output is the goal. An exercise is not autorun: give `autoRun={false}`.
+
+Every ```` ```fern ```` fence that defines `main` gets an "Open in
+playground" link, from `src/lib/ec-playground-link.mjs`. That rehype
+plugin runs after Expressive Code, and takes the code from the copy
+button of the block.
 
 Code fences and the playground editor take their token colours from
 `web/editor/fern-themes.json`, so a snippet and a fence colour the same

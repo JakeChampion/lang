@@ -297,4 +297,27 @@ completions (`spec.completion("bash")`, `"zsh"` or `"fish"`).
 [cli]: https://github.com/JakeChampion/lang/tree/main/examples/cli
 [coreutils]: https://github.com/JakeChampion/lang/tree/main/coreutils
 
+## Exercise
+
+The program prints its arguments in order. Change it to print them in reverse order. The snippet runs with the arguments `fern frond spore`.
+
+<FernPlayground
+  code={`function main(): i32 {
+    let argv: string[] = args();
+    // argv[0] is the program name. Print the other arguments in
+    // reverse order, one on each line.
+    for i in 1..argv.len() {
+        print(argv[i]);
+    }
+    return 0;
+}`}
+  args="fern frond spore"
+  expect={`spore
+frond
+fern
+`}
+  autoRun={false}
+  height="560px"
+/>
+
 [Next: Build an HTTP handler →](../http-server/)
