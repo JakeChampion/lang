@@ -1,0 +1,11 @@
+==2706== Callgrind, a call-graph generating cache profiler
+==2706== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==2706== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==2706== Command: build/compiler-profile-20261109/fern-candidate -target x86-64-linux -o build/compiler-profile-20261109/checker-native /workspace/lang-compiler-20261109-input/compiler/checker.fern /workspace/lang-compiler-20261109-input/internal/stdlib
+==2706== 
+==2706== For interactive control, run 'callgrind_control -h'.
+==2706== 
+==2706== Events    : Ir
+==2706== Collected : 29478244350
+==2706== 
+==2706== I   refs:      29,478,244,350
