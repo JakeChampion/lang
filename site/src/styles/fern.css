@@ -130,6 +130,24 @@
   border-radius: 2px;
 }
 
+/* The Tutorial and the HTTP guide are read in order, so the sidebar
+ * numbers their pages. The empty alternative text keeps the number out
+ * of each link's accessible name. */
+.sidebar-content ul:has(> li > a[href*="/tutorial/"]),
+.sidebar-content ul:has(> li > a[href*="/http/"]) {
+  counter-reset: fern-step;
+}
+
+.sidebar-content li > a[href*="/tutorial/"]::before,
+.sidebar-content li > a[href*="/http/"]::before {
+  counter-increment: fern-step;
+  content: counter(fern-step, decimal-leading-zero) / "";
+  margin-right: 0.6em;
+  font-family: var(--fern-font-mono);
+  font-size: 0.75em;
+  color: var(--fern-spore);
+}
+
 /* ---------------------------------------------------------------- *
  * 3. Prose
  * ---------------------------------------------------------------- */
