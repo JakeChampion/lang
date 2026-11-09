@@ -534,7 +534,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		case *ast.FieldAccess:
 			q, ok := it.Target.(*ast.Ident)
 			if ok && !lambdaCaptured[q.Name] && !deferBare[q.Name] && !deferField[[2]string{q.Name, it.Field}] && fieldOwner(q.Name) &&
-				!loopRepeats(body, v, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, it.Field) {
+				!loopRepeats(body, v, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, it.Field, nil) {
 				iterOwned[v.Name] = true
 			}
 		default:
@@ -572,7 +572,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, t.Field}] || !fieldOwner(q.Name) {
 				return
 			}
-			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, t.Field) {
+			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, t.Field, nil) {
 				moves[e] = true
 			}
 		}
@@ -884,7 +884,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, bf, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathLastOnPaths(info, bf, c, order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, bf, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -1049,11 +1049,12 @@ func withinLiteralOf(body ast.Node, c *ast.Call, name string) bool {
 // fieldPathIsLast reports whether every later occurrence of q reads a field
 // other than field: the read `q.field` at q is then the last use of that
 // path. A later update `S { ...q, field: v }` replaces the path, so it does
-// not read it.
-func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool, q *ast.Ident, field string) bool {
+// not read it. A non-nil `reach` limits the occurrences to those a path from
+// q can reach.
+func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool, q *ast.Ident, field string, reach map[*ast.Ident]bool) bool {
 	at := order.Idx[q]
 	for id, idx := range order.Idx {
-		if idx <= at || id.Name != q.Name {
+		if idx <= at || id.Name != q.Name || reach != nil && !reach[id] {
 			continue
 		}
 		f, isField := fieldOf[id]
@@ -1063,6 +1064,40 @@ func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates ma
 		return false
 	}
 	return true
+}
+
+// fieldPathLastOnPaths is fieldPathIsLast over the occurrences that a path
+// from c reaches. When a statement from c onwards in an enclosing block
+// returns, and no loop is between, a path from c leaves that block only by
+// that return, so a later occurrence outside the block is not a read.
+func fieldPathLastOnPaths(info *Info, bf *bodyFrames, c *ast.Call, order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool, q *ast.Ident, field string) bool {
+	frames := bf.of(c)
+	for k := len(frames) - 1; k >= 0 && frames[k].loop == nil; k-- {
+		rest := frames[k].stmts[frames[k].idx:]
+		if !slices.ContainsFunc(rest, func(st ast.Stmt) bool { return returnsStmt(info, st) }) {
+			continue
+		}
+		reach := map[*ast.Ident]bool{}
+		for _, st := range rest {
+			ast.Walk(st, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok {
+					reach[id] = true
+				}
+				return true
+			})
+		}
+		return fieldPathIsLast(order, fieldOf, updates, q, field, reach)
+	}
+	return fieldPathIsLast(order, fieldOf, updates, q, field, nil)
+}
+
+// returnsStmt reports a statement that leaves the function on every path: a
+// return, or a call that never returns.
+func returnsStmt(info *Info, st ast.Stmt) bool {
+	if _, ok := st.(*ast.Return); ok {
+		return true
+	}
+	return neverReturns(info, st)
 }
 
 // fieldBaseDead reports that no path after the statement that holds c reads
