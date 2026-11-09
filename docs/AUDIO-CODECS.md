@@ -36,8 +36,8 @@ Integer samples exclude padding in their source containers.
 Raw float reads preserve every source bit, including signed zero and NaN payloads.
 The `f32` convenience API follows [Fern's float contract](FLOAT-SEMANTICS.md) and can quiet signaling NaNs.
 
-The frozen WavPack corpus checks 127 files against WavPack 5.8.1.
-FFmpeg also agrees on 125 files.
+The frozen WavPack corpus checks 132 files against WavPack 5.8.1.
+FFmpeg also agrees on 130 files.
 FFmpeg differs on the two files with the newer integer extension optimization.
 Fern matches WavPack on both files.
 Full CI and matched performance measurements remain required.

@@ -105,7 +105,7 @@ function seeking(): test.TestOutcome {
   if (index.group_count() != 3) {
     return test.fail("group count");
   }
-  for first in [0, 1, 15, 16, 17, 31, 32, 34, 35] {
+  for first in 0..36 {
     if let test.Fail(message) = exact_seek(input, expected, index, first) {
       return test.fail(message);
     }

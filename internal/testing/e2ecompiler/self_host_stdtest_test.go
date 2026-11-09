@@ -94,7 +94,7 @@ var interpSlowStdTests = map[string]bool{
 	"caf_boundary": true,
 	// The full lossless reference corpus uses compiled gates. Exact ALAC smoke stays here.
 	"alac": true,
-	// The WavPack corpus completes four of 127 cases in 75 seconds. Small exact PCM controls stay here.
+	// The WavPack corpus completes four cases in 75 seconds. Small exact PCM controls stay here.
 	"wavpack": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,

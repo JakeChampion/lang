@@ -20,10 +20,10 @@ The parser accepts bounded trailing APEv1, APEv2, and ID3v1 tags.
 Hybrid audio, correction files, and DSD return `Unsupported`.
 The module performs no file or device I/O.
 
-The frozen corpus has 127 independently encoded and decoded files.
+The frozen corpus has 132 independently encoded and decoded files.
 It covers one through eight channels, non-byte bit depths, all compression modes, short final blocks, float exceptions, and tag boundaries.
 WavPack 5.8.1 verifies every PCM sample.
-FFmpeg 7.1.5 also agrees on 125 files.
+FFmpeg 7.1.5 also agrees on 130 files.
 It differs on two files with the newer integer extension optimization.
 Fern matches WavPack on those files.
 
@@ -35,10 +35,10 @@ The standard tests need no reference library or FFmpeg at runtime.
 
 All three suites pass native sanitizers and WASI execution.
 They also compile as Android ARM64 shared libraries.
-The full native corpus reports 102231 allocations, 102231 frees, and zero live bytes.
+The full native corpus reports 103800 allocations, 103800 frees, and zero live bytes.
 The boundary suite covers all truncated prefixes and every corrupt byte of its small fixtures.
 It checks budgets, exact seeks, EOF, preserved output suffixes, and bounded bit fields.
-Four small reference files remain in the self-host interpreter gate.
+Seven small reference files remain in the self-host interpreter gate.
 
 The full interpreter corpus completes four cases in 75 seconds.
 That measured run stops at the timeout, and the full corpus remains in native and WASI qualification.

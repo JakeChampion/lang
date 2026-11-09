@@ -59,6 +59,9 @@ function close_group(groups: Group[], first: i32, blocks: i32, frame: i64, frame
 }
 
 function compatible(input: [u8], value: block.Block, first: pcm.Format, floating: boolean, norm: i32): Result[void, pcm.AudioError] {
+  if (value.frames == 0) {
+    return packet.validate_metadata(value);
+  }
   let rate = config.rate(input, value, first.sample_rate)?;
   let format = config.format(value, rate)?;
   if (format.bits_per_sample != first.bits_per_sample || (value.flags & 128u32) != 0u32 != floating || config.norm(input, value)? != norm) {
@@ -112,7 +115,7 @@ function push_audio(own state: Scan, value: block.Block, limits: Limits): Result
 function push_block(input: [u8], own state: Scan, value: block.Block, format: pcm.Format, floating: boolean, norm: i32, limits: Limits): Result[Scan, pcm.AudioError] {
   compatible(input, value, format, floating, norm)?;
   let layout = config.layout(input, value, state.layout)?;
-  let total = merge_total(state.declared_total, value.total)?;
+  let total = if (value.frames == 0) { state.declared_total } else { merge_total(state.declared_total, value.total)? };
   state = Scan { ...state, layout: layout, declared_total: total };
   if (value.frames != 0) {
     return push_audio(state, value, limits);
@@ -162,22 +165,42 @@ function read_format(input: [u8], first: block.Block): Result[(pcm.Format, i32),
 }
 
 function indexed_block(input: [u8], at: i32, first: block.Block, end: i32, limits: Limits): Result[block.Block, pcm.AudioError] {
-  let value = if (at == 0) { first } else { block.read(input, at, limits.max_metadata, limits.audio)? };
+  let value = if (at == first.at) { first } else { block.read(input, at, limits.max_metadata, limits.audio)? };
   if (value.end > end) {
     return Err(pcm.Truncated);
   }
   return Ok(value);
 }
 
+function audio_header(input: [u8], end: i32, limits: Limits): Result[block.Block, pcm.AudioError] {
+  let at = 0;
+  let count = 0;
+  while (at < end) {
+    if (count >= limits.max_blocks) {
+      return Err(pcm.Limit);
+    }
+    let value = block.read(input, at, limits.max_metadata, limits.audio)?;
+    if (value.end > end) {
+      return Err(pcm.Truncated);
+    }
+    if (value.frames > 0) {
+      return Ok(value);
+    }
+    at = value.end;
+    count += 1;
+  }
+  return Err(pcm.Truncated);
+}
+
 pub function inspect(input: [u8], limits: Limits): Result[Index, pcm.AudioError] {
   check_limits(input, limits)?;
-  let first = block.read(input, 0, limits.max_metadata, limits.audio)?;
+  let end = tags.audio_end(input, limits.max_metadata)?;
+  let first = audio_header(input, end, limits)?;
   let (format, norm) = read_format(input, first)?;
   let floating = (first.flags & 128u32) != 0u32;
   let layout = config.Layout { channels: format.channels, mask: 0u32, identities: [], declared: false };
   let state = Scan { layout: layout, blocks: [], groups: [], group_first: -1, group_frames: 0, group_channels: 0, channels: 0, frame: 0i64, declared_total: -1i64 };
   let at = 0;
-  let end = tags.audio_end(input, limits.max_metadata)?;
   while (at < end) {
     if (state.blocks.len() >= limits.max_blocks) {
       return Err(pcm.Limit);
