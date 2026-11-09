@@ -1,3 +1,6 @@
+# 2026-11-09: PR #14906, perf-x86_64 job 129318795686 on b8cebe345e.
+# The string-count kernel adds 50 text lines and uses 39.5% fewer instructions.
+# Pin both measured values after the merge of main 97af82fcbe.
 # 2026-11-09: PR #14906, perf-aarch64 job 129295354221 on 9f5ed23c4b.
 # array_with.text and record_update.text fall 22.1%. deflate_decode.ir falls 1.72%.
 # Pin these improvements at their measured values.
@@ -284,8 +287,8 @@ x86_64/sort_strings.text	3098
 x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1926
 x86_64/string_build.ir	42886116
-x86_64/string_count_byte.text	1271
-x86_64/string_count_byte.ir	68053368
+x86_64/string_count_byte.text	1321
+x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
