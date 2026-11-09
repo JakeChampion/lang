@@ -1,0 +1,14 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+function first[T](values: T[]): T {
+    for value in values { return value; }
+    return first(values);
+}
+function take(own h: Handle): i32 { return h.close(); }
+function main(): i32 {
+    let values = [Handle { fd: 7 }];
+    let alias = first(values);
+    let n = take(alias);
+    return n + values[0].fd;
+}

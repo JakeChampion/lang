@@ -1,6 +1,7 @@
 import "./ssa";
 import "./ssasem";
 import "./semunroll";
+import "./semzerofill";
 import "./typeinfo";
 import "./sourcepos";
 import "./semarrayreport";
@@ -26,12 +27,14 @@ const DISABLED: i32 = 5;
 
 const BUDGET: i32 = 6;
 
+const ZERO_FILLED: i32 = 7;
+
 pub function candidate(f: ssasem.Func): boolean {
   let header = false;
   let append = false;
   for b in f.graph.blocks {
     for ins in b.insts {
-      header = header || b.preds.len() == 2 && ins.kind_tag == ssa.PHI && is_array(f.values[ins.result]);
+      header = header || b.preds.len() == 2 && ins.kind_tag == ssa.PHI && typeinfo.is_owned_array(f.values[ins.result]);
       append = append || ins.kind_tag == ssasem.append();
     }
   }
@@ -46,10 +49,17 @@ pub function reserve(f: ssasem.Func, index: util.NameIndex, bad: boolean[], enab
     while (count < 8) {
       let next = first(out, index, bad);
       if let Some(plan) = next {
-        if (report) {
-          sites = sites.append(site(name, plan, RESERVED));
+        let fill: Option[ssasem.Func] = if (plan.length_of < 0) { semzerofill.fill(out, plan.counted, plan.phi, plan.bound, plan.before, plan.zero) } else { None };
+        let reason = RESERVED;
+        if let Some(filled) = fill {
+          out = filled;
+          reason = ZERO_FILLED;
+        } else {
+          out = reserved(out, plan);
         }
-        out = reserved(out, plan);
+        if (report) {
+          sites = sites.append(site(name, plan, reason));
+        }
         count += 1;
       } else {
         break;
@@ -63,18 +73,11 @@ pub function reserve(f: ssasem.Func, index: util.NameIndex, bad: boolean[], enab
 }
 
 pub function render(sites: semarrayreport.Site[]): string {
-  return semarrayreport.render_kind("counted append capacity", ["reserved", "shape-unsupported", "non-scalar", "array-observed", "effect-boundary", "disabled", "budget"], sites);
+  return semarrayreport.render_kind("counted append capacity", ["reserved", "shape-unsupported", "non-scalar", "array-observed", "effect-boundary", "disabled", "budget", "zero-filled"], sites);
 }
 
 function site(name: string, p: Plan, reason: i32): semarrayreport.Site {
-  return semarrayreport.Site { owner: name, stage: "append phi v" + p.phi.to_string(), plan: "counted append capacity", reason: reason, storage: if (reason == RESERVED) { "reserved" } else { "append" } };
-}
-
-function is_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
+  return semarrayreport.Site { owner: name, stage: "append phi v" + p.phi.to_string(), plan: "counted append capacity", reason: reason, storage: if (reason == ZERO_FILLED) { "zeroed" } else if (reason == RESERVED) { "reserved" } else { "append" } };
 }
 
 function scalar_array(t: typeinfo.Type): boolean {
@@ -99,13 +102,13 @@ function empty(f: ssasem.Func, d: ssa.DefSites, value: i32, depth: i32): boolean
     if (ins.kind_tag == ssa.COPY && ins.args.len() == 1) {
       return empty(f, d, ins.args[0], depth + 1);
     }
-    return ins.kind_tag == ssasem.array_new() && ins.args.len() == 0;
+    return ins.kind_tag == ssasem.array_new() && ins.args.len() == 0 || ins.kind_tag == ssasem.bytes_new() && ins.imm == 0;
   }
   return false;
 }
 
 function array_phi(f: ssasem.Func, d: ssa.DefSites, ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.PHI && ins.args.len() == 2 && is_array(f.values[ins.result]) && (empty(f, d, ins.args[0], 0) || empty(f, d, ins.args[1], 0));
+  return ins.kind_tag == ssa.PHI && ins.args.len() == 2 && typeinfo.is_owned_array(f.values[ins.result]) && (empty(f, d, ins.args[0], 0) || empty(f, d, ins.args[1], 0));
 }
 
 function first(f: ssasem.Func, index: util.NameIndex, bad: boolean[]): Option[Plan] {

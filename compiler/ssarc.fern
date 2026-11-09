@@ -4,6 +4,7 @@ import "./irtables";
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
+import "./lexer";
 import "./ssalayout";
 import "./ssaunits";
 import "./ssakeepregion";
@@ -50,28 +51,14 @@ function elem_width(t: typeinfo.Type): i32 {
   return 32;
 }
 
-function byte_view(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return a.view && ssasem.is_u8(a.elem);
-  }
-  return false;
-}
-
-function array_view(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return a.view;
-  }
-  return false;
-}
-
 // A view's elements belong to its source, but an untagged view is a box it
 // may hold the last count of.
 function counted_elems_view(t: typeinfo.Type): boolean {
-  return array_view(t) && ssasem.reference(typeinfo.array_elem(t));
+  return typeinfo.is_array_view(t) && ssasem.reference(typeinfo.array_elem(t));
 }
 
 function frame_view_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.arr_slice() && array_view(f.values[ins.result]) && p.frame_views[ins.result];
+  return ins.kind_tag == ssasem.arr_slice() && typeinfo.is_array_view(f.values[ins.result]) && p.frame_views[ins.result];
 }
 
 function contains_view(t: typeinfo.Type): boolean {
@@ -188,7 +175,7 @@ function supported_leaf(t: typeinfo.Type): boolean {
 }
 
 function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return walk_shape(semtypes.cell_elem(t), f, lookup);
   }
 
@@ -215,7 +202,7 @@ function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if let typeinfo.TypeFloat(_) = t {
     return ssasem.is_float(t);
   }
-  if (ssasem.is_lanes(t)) {
+  if (typeinfo.is_lanes(t)) {
     return true;
   }
   if let typeinfo.TypeArray(a) = t {
@@ -245,10 +232,6 @@ function record_name(t: typeinfo.Type): string {
   return "";
 }
 
-function record_fields(t: typeinfo.Type, f: ssasem.Func): semrecords.Field[] {
-  return f.records.list[semrecords.find(f.records, t)].fields;
-}
-
 function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
   return f.enums[semrecords.find_enum(f.enums, t)].variants;
 }
@@ -276,7 +259,7 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (counted_elems_view(t)) {
     return release_helper_name(t);
   }
-  if (array_view(t)) {
+  if (typeinfo.is_array_view(t)) {
     return ssabytes.release_name();
   }
   if (ssasem.is_view(t)) {
@@ -435,7 +418,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  let modes = ssaunits.callee_modes(f, ins);
+  let modes = ssasem.callee_modes(f, ins);
   let i = 0;
   while (i < ins.args.len() && i < modes.len()) {
     let v = ins.args[i];
@@ -482,7 +465,7 @@ function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst,
 
 function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
   if (first == 0) {
-    return ssaunits.callee_modes(f, ins);
+    return ssasem.callee_modes(f, ins);
   }
   let out: i32[] = [ssaunits.borrow_mode()];
   let i = 1;
@@ -623,7 +606,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if let typeinfo.TypeFunc(_) = t {
     return env_records(f, t).len() > 0;
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     for c in dyn_concretes(f, t) {
       if (ssasem.is_string(c) || has_children(c, f)) {
         return true;
@@ -641,7 +624,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
       }
     }
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return ssasem.reference(semtypes.cell_elem(t));
   }
   if (ssasem.is_map(t)) {
@@ -651,7 +634,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     return true;
   }
   if let typeinfo.TypeStruct(_) = t {
-    return fields_have_children(record_fields(t, f));
+    return fields_have_children(ssasem.record_fields(t, f));
   }
   if let typeinfo.TypeUnion(_) = t {
     for v in variants_of(t, f) {
@@ -669,7 +652,7 @@ function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] 
     if (!semtypes.is_env(rec.ty) || !fields_have_children(rec.fields)) {
       continue;
     }
-    if (!serves(f.envs, fn_ty, rec.ty)) {
+    if (!ssasem.has_env_row(f.envs, fn_ty, rec.ty)) {
       continue;
     }
     let at = 0;
@@ -679,15 +662,6 @@ function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] 
     out = inserted_record(out, at, rec);
   }
   return out;
-}
-
-function serves(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
-  for row in rows {
-    if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Record): semrecords.Record[] {
@@ -784,13 +758,13 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     r = drop_dyn(r, slot, t, scratch, f);
   }
   if let typeinfo.TypeArray(a) = t {
     r = drop_elements(r, slot, a.elem, scratch, f);
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f);
   }
   if let typeinfo.TypeTuple(tup) = t {
@@ -1287,7 +1261,7 @@ function null_slots(own r: irtables.LowerState, box: i32, slots: boolean[]): irt
 function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[] {
   let get = defining(f, taken);
   if (get.kind_tag == ssasem.record_get()) {
-    return record_fields(f.values[donor], f);
+    return ssasem.record_fields(f.values[donor], f);
   }
   let owner = f.enums[semrecords.find_enum(f.enums, f.values[donor])];
   return owner.variants[semrecords.find_variant(owner, get.str)].fields;
@@ -1320,7 +1294,7 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
     fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
     shape = member_shape(f, variant_union(f, ins), ins.str);
   } else {
-    fields = record_fields(f.values[ins.result], f);
+    fields = ssasem.record_fields(f.values[ins.result], f);
     shape = record_name(f.values[ins.result]);
   }
   if (at >= 0) {
@@ -1392,7 +1366,7 @@ function field_store(own r: irtables.LowerState, fields: semrecords.Field[], i: 
 }
 
 function reuse_tuple(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, token: i32): irtables.LowerState {
-  let elems = tuple_elements(f.values[ins.result]);
+  let elems = typeinfo.tuple_elements(f.values[ins.result]);
   r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(elems.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
@@ -1412,13 +1386,6 @@ function reuse_tuple(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     i += 1;
   }
   return r;
-}
-
-function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
-  if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements;
-  }
-  return [];
 }
 
 function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32): ssaunits.Step {
@@ -1489,13 +1456,6 @@ function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i
   }
   let whole = f.values[ins.result];
   return irtables.variant_decl_index(structs, ssasem.variant_key(whole, ins.str), ssasem.type_key(whole));
-}
-
-function enum_name(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
 }
 
 function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
@@ -1626,7 +1586,7 @@ function view_of(f: ssasem.Func, own seen: SchemaSeen): ViewStep {
     view = ssaunits.SchemaView { ...view, rec_unit: view.rec_unit.append(seen.rec_unit[k]), rec_walk: view.rec_walk.append(seen.rec_walk[k]) };
   }
   for e in f.enums {
-    let name = enum_name(e.ty);
+    let name = typeinfo.union_name(e.ty);
     let k = enum_seen(seen, name, e.ty);
     if (k < 0) {
       k = seen.enums.len();
@@ -1649,7 +1609,7 @@ function enum_seen(seen: SchemaSeen, name: string, ty: typeinfo.Type): i32 {
 }
 
 function named(t: typeinfo.Type): string {
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return "";
   }
   if let typeinfo.TypeStruct(r) = t {
@@ -1928,7 +1888,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     r = helper(r, 0, finalizer);
   }
   if let typeinfo.TypeStruct(_) = t {
-    r = drop_record_fields(r, 0, record_fields(t, f), 1, f, semtypes.is_env(t));
+    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t));
   }
   if let typeinfo.TypeUnion(_) = t {
     if (self_tail_enum(t, f)) {
@@ -2089,7 +2049,7 @@ function send_parts(t: typeinfo.Type, f: ssasem.Func): typeinfo.Type[] {
   }
   if let typeinfo.TypeStruct(_) = t {
     if (send_refused(t, f) == "") {
-      for field in record_fields(t, f) {
+      for field in ssasem.record_fields(t, f) {
         out = out.append(field.ty);
       }
     }
@@ -2107,16 +2067,16 @@ function send_parts(t: typeinfo.Type, f: ssasem.Func): typeinfo.Type[] {
 
 // Why a type has no copy helper, or "" when it has one.
 function send_refused(t: typeinfo.Type, f: ssasem.Func): string {
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return "a Cell cannot cross a worker boundary";
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return "a dyn value cannot cross a worker boundary";
   }
   if let typeinfo.TypeFunc(_) = t {
     return "a function value cannot cross a worker boundary";
   }
-  if (ssasem.is_view(t) || array_view(t)) {
+  if (ssasem.is_view(t) || typeinfo.is_array_view(t)) {
     return "a view cannot cross a worker boundary";
   }
   return send_refused_shape(t, f);
@@ -2164,7 +2124,7 @@ function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   }
   if let typeinfo.TypeStruct(_) = t {
     r = reserve(r, 2);
-    r = send_record(r, record_fields(t, f), record_name(t), 1, f);
+    r = send_record(r, ssasem.record_fields(t, f), record_name(t), 1, f);
     r = emit(r, ir.op_load_local(1));
     return emit(r, ir.op_return());
   }
@@ -2376,13 +2336,13 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
     } else {
       let pay = fields[0].ty;
       r = emit(r, ir.op_load_local(0));
-      if (wide_payload(pay)) {
+      if (wide_or_float(pay)) {
         r = emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(pay)));
       } else {
         r = emit(r, ir.op_opt_payload());
       }
       r = send_part(r, pay);
-      if (wide_payload(pay)) {
+      if (wide_or_float(pay)) {
         r = emit(r, ir.op_opt_make_w(k, 64, !ssasem.is_float(pay)));
       } else {
         r = emit(r, ir.op_opt_make(k));
@@ -2499,7 +2459,7 @@ function types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
 }
 
 function lane_view_read(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.kind_tag != ssasem.array_get() || ins.result < 0 || !array_view(f.values[ins.args[0]])) {
+  if (ins.kind_tag != ssasem.array_get() || ins.result < 0 || !typeinfo.is_array_view(f.values[ins.args[0]])) {
     return false;
   }
   if let typeinfo.TypeLanes(_) = f.values[ins.result] {
@@ -2559,7 +2519,7 @@ function value_op(k: i32): boolean {
 }
 
 function container_op(k: i32): boolean {
-  return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.tuple_new()
+  return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.array_zero() || k == ssasem.tuple_new()
     || k == ssasem.record_new() || k == ssasem.dyn_box() || k == ssasem.array_get() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
     || k == ssasem.slice() || k == ssasem.str_index() || k == ssasem.str_bytes() || k == ssasem.str_byte_view()
@@ -2588,7 +2548,7 @@ function result_kind(t: typeinfo.Type): i32 {
   if (ssasem.is_float(t)) {
     return irtables.result_f64();
   }
-  if (ssasem.is_lanes(t)) {
+  if (typeinfo.is_lanes(t)) {
     return irtables.result_v128();
   }
   return irtables.result_i32();
@@ -2623,7 +2583,7 @@ function frame(f: ssasem.Func): irtables.LowerState {
     if (ssasem.is_float(f.values[vi])) {
       r = irtables.LowerState { ...r, f64_slots: r.f64_slots.append(vi) };
     }
-    if (ssasem.is_lanes(f.values[vi])) {
+    if (typeinfo.is_lanes(f.values[vi])) {
       r = irtables.LowerState { ...r, v128_slots: r.v128_slots.append(vi) };
     }
     vi += 1;
@@ -2923,9 +2883,9 @@ function text_eq_by_length(own r: irtables.LowerState, f: ssasem.Func, p: ssauni
 
 function float_scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (ins.kind_tag == ssa.UNARY) {
-    return emit(r, ir.op_funary("fneg"));
+    return emit(r, ir.op_float("fneg"));
   }
-  r = emit(r, ir.op_fbin(irtables.map_fbinop(ins.str)));
+  r = emit(r, ir.op_float(irtables.map_fbinop(ins.str)));
   if (ssasem.is_f32(f.values[ins.result])) {
     return round_f32(r);
   }
@@ -2959,7 +2919,7 @@ function overflow_binary(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
     ops = irtables.chk_present_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1]);
   } else if (ins.kind_tag == ssasem.checked_value()) {
     ops = irtables.chk_value_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.args[2], ins.result);
-  } else if (ssasem.saturating(ins.str)) {
+  } else if (lexer.is_saturating_op(ins.str)) {
     ops = irtables.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
   } else {
     ops = irtables.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
@@ -3179,6 +3139,9 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
   if (ins.kind_tag == ssasem.array_reserve()) {
     return emit(r, ir.op_arr_reserve(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   }
+  if (ins.kind_tag == ssasem.array_zero()) {
+    return emit(r, ir.op_alloc_slots(elem_width(typeinfo.array_elem(f.values[ins.result]))));
+  }
   if (variant_op(ins.kind_tag)) {
     return variant(r, f, ins, structs);
   }
@@ -3198,7 +3161,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     if (ssasem.is_text(f.values[ins.args[0]])) {
       return emit(r, ir.op_str_len());
     }
-    if (array_view(f.values[ins.args[0]])) {
+    if (typeinfo.is_array_view(f.values[ins.args[0]])) {
       return emit(r, ssabytes.read(ins.args[0], false, false));
     }
     return emit(r, ir.op_arr_len());
@@ -3230,13 +3193,13 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     if (ins.str == "lane_bytes") {
       return emit(r, ir.Op { ...arr_get_op(f.values[ins.result], false), unsigned: true });
     }
-    if (array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
+    if (typeinfo.is_array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
       return emit(r, ssabytes.check(ins.args[0]));
     }
-    if (byte_view(f.values[ins.args[0]])) {
+    if (ssasem.is_byte_view(f.values[ins.args[0]])) {
       return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
     }
-    if (array_view(f.values[ins.args[0]])) {
+    if (typeinfo.is_array_view(f.values[ins.args[0]])) {
       return emit(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], ins.imm == 1)));
     }
     if (ins.imm == ssasem.check_only()) {
@@ -3688,7 +3651,7 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
   return semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, t)], name);
 }
 
-function wide_payload(t: typeinfo.Type): boolean {
+function wide_or_float(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_float(t);
 }
 
@@ -3699,7 +3662,7 @@ function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
       return emit(r, ir.op_const_option(tag));
     }
     let pay = f.values[ins.args[0]];
-    if (wide_payload(pay)) {
+    if (wide_or_float(pay)) {
       return emit(r, ir.op_opt_make_w(tag, 64, !ssasem.is_float(pay)));
     }
     return emit(r, ir.op_opt_make(tag));
@@ -3710,7 +3673,7 @@ function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     return emit(r, ir.op_bin("eq", 0, false));
   }
   let got = f.values[ins.result];
-  if (wide_payload(got)) {
+  if (wide_or_float(got)) {
     return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got)));
   }
   return emit(r, marked_load(ir.op_opt_payload(), got));
@@ -3758,7 +3721,7 @@ function constant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): i
 }
 
 function negation_zero(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
-  if (ins.kind_tag == ssa.UNARY && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !ssasem.is_lanes(f.values[ins.args[0]])) {
+  if (ins.kind_tag == ssa.UNARY && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !typeinfo.is_lanes(f.values[ins.args[0]])) {
     return emit(r, zero(f.values[ins.args[0]]));
   }
   return r;
@@ -3778,16 +3741,12 @@ function static_box(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
 }
 
-function wide_elem(t: typeinfo.Type): boolean {
-  return ssasem.is_wide(t) || ssasem.is_float(t);
-}
-
 // The constant shape of an array whose elements have this type.
 function array_shape(elem: typeinfo.Type): string {
   if (ssasem.is_u8(elem)) {
     return "&bytes";
   }
-  if (wide_elem(elem)) {
+  if (wide_or_float(elem)) {
     return "&arr64";
   }
   return "&arr";
@@ -3923,7 +3882,7 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ins.kind_tag == ssasem.checked_present() || ins.kind_tag == ssasem.checked_value()
-    || ins.kind_tag == ssa.BINARY && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) {
+    || ins.kind_tag == ssa.BINARY && (lexer.is_saturating_op(ins.str) || ssasem.checked_arith(ins.str))) {
     r = overflow_binary(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
@@ -4046,7 +4005,7 @@ function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   let b = ins.args[1];
   r = emit(r, ir.op_const_i32(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   r = emit(r, ir.op_load_local(b));
-  if (array_view(f.values[b])) {
+  if (typeinfo.is_array_view(f.values[b])) {
     r = emit(r, ssabytes.read(b, false, false));
     r = emit(r, ir.op_load_local(b));
     r = emit(r, ssabytes.read_data(b));
@@ -5110,7 +5069,7 @@ function mark_reference_result(own r: irtables.LowerState, f: ssasem.Func, ins: 
 
 function mark_lane_result(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let last = r.ops.len() - 1;
-  if (last < 0 || ins.result < 0 || ins.result >= f.values.len() || !ssasem.is_lanes(f.values[ins.result])) {
+  if (last < 0 || ins.result < 0 || ins.result >= f.values.len() || !typeinfo.is_lanes(f.values[ins.result])) {
     return r;
   }
   if (r.ops[last].kind_tag != ir.op_call_direct("", 0).kind_tag) {
@@ -5184,7 +5143,7 @@ function array_kernel(name: string): Option[ir.Op] {
 function lent_views(f: ssasem.Func, ins: ssa.SInst): boolean {
   let any = false;
   for a in ins.args {
-    if (byte_view(f.values[a])) {
+    if (ssasem.is_byte_view(f.values[a])) {
       if (defining(f, a).kind_tag != ssasem.array_lend()) {
         return false;
       }
@@ -6254,7 +6213,7 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
 function intrinsic_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   let kind = irtables.f64_math_builtin_kind(ins.str);
   if (kind != "") {
-    return Lowered { found: true, r: emit(r, ir.op_funary(kind)) };
+    return Lowered { found: true, r: emit(r, ir.op_float(kind)) };
   }
   let bits = bit_count_site(r, ins);
   if (bits.found) {
@@ -7158,7 +7117,7 @@ function aligned_rc(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerS
       && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")
       && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t = f.values[before.i32_imm];
-      if (ssasem.reference(t) && !array_view(t)) {
+      if (ssasem.reference(t) && !typeinfo.is_array_view(t)) {
         ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
       }
     }

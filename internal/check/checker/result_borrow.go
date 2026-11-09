@@ -45,9 +45,9 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
-		if !p.Own && p.Type != nil && ast.IsPointerType(p.Type) {
+		if !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
-			if elem := elemType(p.Type); elem != nil && !ast.IsPointerType(elem) {
+			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
 				b.values[p.Name] = true
 			}
 		}
@@ -136,6 +136,12 @@ type borrowScope struct {
 	borrowed, locals, values map[string]bool
 }
 
+// A type parameter can hold a handle after substitution.
+func mayRetainBorrow(t ast.Type) bool {
+	_, parameter := t.(ast.ParamType)
+	return parameter || ast.IsPointerType(t)
+}
+
 func elemType(t ast.Type) ast.Type {
 	switch at := t.(type) {
 	case ast.ArrayType:
@@ -164,7 +170,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		return c.exprBorrows(x.Target, b)
 	case *ast.Index:
 		// Lowered for-each loops index a synthetic iterable alias.
-		if x.ElemType != nil && !ast.IsPointerType(x.ElemType) {
+		if x.ElemType != nil && !mayRetainBorrow(x.ElemType) {
 			return false
 		}
 		if id, ok := x.Array.(*ast.Ident); ok && b.values[id.Name] {
@@ -250,7 +256,7 @@ func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
 }
 
 // paramCanLend reports a parameter of the signature that can lend a handle
-// to the result: a borrowed pointer type that can hold one. A parameter the
+// to the result: a borrowed type that can hold one. A parameter the
 // signature does not know can.
 func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 	if sig == nil || i >= len(sig.Params) || sig.Params[i] == nil {
@@ -260,7 +266,7 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 		return false
 	}
 	pt := sig.Params[i]
-	return ast.IsPointerType(pt) && !c.holdsNoHandle(pt)
+	return mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
@@ -315,7 +321,7 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	}
 	flags := c.ownFuncs[name]
 	for i, pt := range sig.Params {
-		if pt == nil || !ast.IsPointerType(pt) {
+		if pt == nil || !mayRetainBorrow(pt) {
 			continue
 		}
 		// A parameter that cannot hold a handle cannot lend one to the result.
@@ -327,7 +333,7 @@ func (c *checker) signatureResultBorrows(name string) bool {
 }
 
 // A call scrutinee is owned when its result is fresh: a variant, a fresh
-// method, a function with no borrowed pointer parameter that can hold a
+// method, a function with no borrowed parameter that can hold a
 // handle, or a function whose body returns a handle-bearing value with no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {

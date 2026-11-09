@@ -529,10 +529,16 @@ pub function test_word_flow_checks(): i32 {
   let found = returned_words(before, fnames, owners);
   if (!found[0] || !found[1] || found[2]) { print("word flow caller"); return 96; }
   let whole = returned_words(after, fnames, owners);
-  let again = returned_words_since(after, fnames, owners, found, [true, false, true]);
+  let again = returned_words_since(after, fnames, owners, found, [true, false, true], word_callers(all_word_callees(after, fnames)));
   if (whole[0] || whole[1] || !whole[2] || again[0] != whole[0] || again[1] != whole[1] || again[2] != whole[2]) { print("incremental word flow"); return 97; }
-  let kept = returned_words_since(before, fnames, owners, found, [false, false, false]);
+  let kept = returned_words_since(before, fnames, owners, found, [false, false, false], word_callers(all_word_callees(before, fnames)));
   if (!kept[0] || !kept[1] || kept[2]) { print("unchanged word flow"); return 98; }
+  let call_c = word_flow_probe_op(ssasem.call(), 1, [0], "c");
+  let caller_c = word_flow_probe_func([word_flow_probe_block(0, [], [param, call_c], ssa.STerm { ...ret, value: 1 })]);
+  let s1 = current_words(unknown_words(3), [chain, caller, mixed], fnames, owners);
+  let s2 = current_words(changed_words(s1, 1), [chain, caller_c, mixed], fnames, owners);
+  let s3 = current_words(changed_words(s2, 2), [chain, caller_c, chain], fnames, owners);
+  if (!s1.found[1] || s2.found[1] || !s3.found[1] || !s3.found[2]) { print("relinked word flow"); return 99; }
   return 0;
 }
 `

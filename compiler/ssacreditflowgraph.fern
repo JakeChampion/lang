@@ -2,21 +2,6 @@ import "./ssa";
 import "./util";
 import "std/string";
 
-pub function block_index(f: ssa.SFunc, id: i32): i32 {
-  let i = 0;
-  for b in f.blocks {
-    if (b.id == id) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function edge(t: ssa.STerm, id: i32): boolean {
-  return t.kind_tag == ssa.TERM_BR && t.target == id || t.kind_tag == ssa.TERM_BRIF && (t.t == id || t.f == id);
-}
-
 function readable(row: boolean[], values: i32[], id: i32): boolean {
   let slot = util.index_of_i32(values, id);
   return slot >= 0 && row[slot];
@@ -36,7 +21,7 @@ function value_ids(f: ssa.SFunc): i32[] {
 
 pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): Graph {
   let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
-  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || block_index(f, f.entry) < 0) {
+  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || ssa.block_with_id(f, f.entry) < 0) {
     return bad;
   }
   let error = declarations(f, producers, parameter_count);
@@ -77,7 +62,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
     for b in f.blocks {
       let ready = !done[i];
       for p in b.preds {
-        if (!done[block_index(f, p)]) {
+        if (!done[ssa.block_with_id(f, p)]) {
           ready = false;
         }
       }
@@ -92,11 +77,11 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
     let b = f.blocks[chosen];
     let row = empty;
     if (b.preds.len() > 0) {
-      row = rows[block_index(f, b.preds[0])];
+      row = rows[ssa.block_with_id(f, b.preds[0])];
       for p in b.preds {
         i = 0;
         while (i < values.len()) {
-          row = row.with(i, row[i] && rows[block_index(f, p)][i]);
+          row = row.with(i, row[i] && rows[ssa.block_with_id(f, p)][i]);
           i += 1;
         }
       }
@@ -105,7 +90,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
       if (op.kind_tag == ssa.PHI) {
         i = 0;
         for p in b.preds {
-          if (!readable(rows[block_index(f, p)], values, op.args[i])) {
+          if (!readable(rows[ssa.block_with_id(f, p)], values, op.args[i])) {
             return Graph { ...bad, error: "unavailable caller origin phi" };
           }
           i += 1;
@@ -132,8 +117,8 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
 function block_edges(f: ssa.SFunc, b: ssa.SBlock): string {
   let seen: i32[] = [];
   for p in b.preds {
-    let pi = block_index(f, p);
-    if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+    let pi = ssa.block_with_id(f, p);
+    if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !ssa.branches_to(f.blocks[pi].term, b.id)) {
       return "invalid caller origin graph";
     }
     seen = seen.append(p);
@@ -149,7 +134,7 @@ function block_edges(f: ssa.SFunc, b: ssa.SBlock): string {
     targets = [b.term.t, b.term.f];
   }
   for t in targets {
-    let ti = block_index(f, t);
+    let ti = ssa.block_with_id(f, t);
     if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
       return "invalid caller origin graph";
     }

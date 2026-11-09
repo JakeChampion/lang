@@ -332,5 +332,5 @@ pub function stamped_core(core: i32[], sw: asmcore.Switches): i32[] {
   for byte in asmcore.switches_manifest(sw) + "\n" {
     body = body.append(byte as i32);
   }
-  return watbin.wcat(core, watbin.wsection(0, body));
+  return util.append_all(core, watbin.wsection(0, body));
 }

@@ -17,7 +17,7 @@ function failed(why: string): Flow {
 }
 
 pub function position(fl: Flow, id: i32): i32 {
-  return block_index(fl.at, id);
+  return ssa.position_of(fl.at, id);
 }
 
 pub function live_in_has(fl: Flow, bi: i32, v: i32): boolean {
@@ -117,13 +117,6 @@ function bit_set(own rows: i64[], base: i32, v: i32): i64[] {
   return rows.with(w, rows[w] | 1i64 << (v % 64) as i64);
 }
 
-function block_index(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id];
-}
-
 function pred_index(b: ssa.SBlock, id: i32): i32 {
   let i = 0;
   while (i < b.preds.len()) {
@@ -181,7 +174,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
   if (f.nvals < 0) {
     return "dependency dimensions";
   }
-  if (block_index(at, f.entry) < 0) {
+  if (ssa.position_of(at, f.entry) < 0) {
     return "missing entry block";
   }
   if (f.nvals > 0 && f.blocks.len() > 2147483647 / f.nvals) {
@@ -190,7 +183,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
   let bi = 0;
   while (bi < f.blocks.len()) {
     let b = f.blocks[bi];
-    if (b.id < 0 || block_index(at, b.id) != bi) {
+    if (b.id < 0 || ssa.position_of(at, b.id) != bi) {
       return "duplicate or negative block id";
     }
     if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_UNREACHABLE) {
@@ -204,7 +197,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
     }
     let pi = 0;
     while (pi < b.preds.len()) {
-      let pb = block_index(at, b.preds[pi]);
+      let pb = ssa.position_of(at, b.preds[pi]);
       if (pb < 0 || pred_index(b, b.preds[pi]) != pi) {
         return "invalid predecessor";
       }
@@ -231,7 +224,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
     while (si < 2) {
       let target = successor(b.term, si);
       if (target >= 0) {
-        let sb = block_index(at, target);
+        let sb = ssa.position_of(at, target);
         if (sb < 0) {
           return "missing successor";
         }

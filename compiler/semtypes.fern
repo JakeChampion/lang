@@ -323,13 +323,6 @@ function prefixed(name: string, prefix: string): boolean {
   return true;
 }
 
-pub function is_cell(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(s) = t {
-    return s.name == "Cell";
-  }
-  return false;
-}
-
 pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeStruct(s) = t {
     if (s.args.len() == 1) {

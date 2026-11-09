@@ -11,11 +11,8 @@ search trigger working.
 ```bash
 # Build everything the docs depend on first, as pages.yml does.
 cd ../..            # back to site/
-( cd .. && ./web/build.sh )
-mkdir -p public/playground
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
+( cd .. && ./web/build.sh && web/stage.sh site/public/playground )
+scripts/stdlib-docs.sh
 npm install
 npm run build       # → site/dist/
 
@@ -27,9 +24,7 @@ npm test
 ```
 
 `playwright.config.ts` launches `astro preview` against
-`site/dist/` on port 4321, serving the site at the configured
-`base` (`/lang/`). Tests navigate against that prefix via the
-`baseURL` config.
+`site/dist/` on port 4321.
 
 ## What's covered
 
@@ -47,3 +42,13 @@ report.
 
 `.github/workflows/docs-build.yml` runs this suite on every PR
 that touches docs inputs. Failures block merging.
+
+## Lighthouse
+
+`node lighthouse.mjs` builds no site: run it after `npm run build`. It
+serves `site/dist/` with `astro preview`, runs Lighthouse with the
+Playwright Chromium on a few pages, and fails when a score is below its
+threshold or a page shifts its layout by more than 0.1. The pages and
+the thresholds are at the top of the script, and the Docs build lane
+runs it after the suite.
+

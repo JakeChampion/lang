@@ -46,7 +46,7 @@ function surface_resource(w: WorldWired, inst: i32, res: string): (WorldWired, i
     i += 1;
   }
   let rt = w.n_type;
-  let o = watbin.wcat(w.o, watbin.comp_alias_inst_type(inst, res));
+  let o = util.append_all(w.o, watbin.comp_alias_inst_type(inst, res));
   return (WorldWired { ...w, o: o, n_type: rt + 1, res_names: w.res_names.append(res), res_types: w.res_types.append(rt) }, rt);
 }
 
@@ -67,7 +67,7 @@ function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: str
   }
   let plan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
   let o = watbin.component_preamble();
-  o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
+  o = util.append_all(o, wit_decode.wit_emit_world_imports(tbody, plan));
   let w = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], stream_elems: [], stream_types: [], refused: "" };
   w = import_async_ifaces(w, tbody, asy.lowers);
   w = define_stream_types(w, ci);
@@ -103,8 +103,8 @@ function import_async_ifaces(w: WorldWired, tbody: i32[], lowers: watbin.AsyncLo
           mine = mine.append(m);
         }
       }
-      let o = watbin.wcat(w.o, watbin.comp_type_async_instance(mine));
-      o = watbin.wcat(o, watbin.comp_import_instance(l.iface, w.n_type));
+      let o = util.append_all(w.o, watbin.comp_type_async_instance(mine));
+      o = util.append_all(o, watbin.comp_import_instance(l.iface, w.n_type));
       w = WorldWired { ...w, o: o, n_type: w.n_type + 1, n_inst: w.n_inst + 1, async_ifaces: w.async_ifaces.append(l.iface), async_insts: w.async_insts.append(w.n_inst) };
     }
   }
@@ -191,7 +191,7 @@ function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): Worl
       if (vt < 0) {
         return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
       }
-      w = WorldWired { ...w, o: watbin.wcat(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
+      w = WorldWired { ...w, o: util.append_all(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
     }
     k += 1;
   }
@@ -265,8 +265,8 @@ pub function compose_run(tbody: i32[], core: i32[], asy: watbin.AsyncSurface): C
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  let o = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts));
+  let o = util.append_all(w.o, watbin.comp_core_module_section(core));
+  o = util.append_all(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts));
   return Composed { bytes: o, refused: "" };
 }
 
@@ -287,7 +287,7 @@ pub function compose_http(tbody: i32[], core: i32[]): Composed {
   }
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
-  let o = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.n_inst, 0, req_t, out_t));
+  let o = util.append_all(w3.o, watbin.comp_core_module_section(core));
+  o = util.append_all(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.n_inst, 0, req_t, out_t));
   return Composed { bytes: o, refused: "" };
 }

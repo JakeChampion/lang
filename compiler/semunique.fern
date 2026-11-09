@@ -3,6 +3,7 @@ import "./ssasem";
 import "./sourcepos";
 import "./typeinfo";
 import "./rtbytecopy";
+import "./util";
 
 // A loop that writes an array it was handed checks the array's count at
 // every push or with, because the array may be shared on entry. One check
@@ -80,7 +81,7 @@ function jumps_only_to(b: ssa.SBlock, target: i32): boolean {
 }
 
 function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
-  return owned_array(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
+  return typeinfo.is_owned_array(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
 }
 
 // The check consumes its array. An array the function only borrows would
@@ -153,18 +154,11 @@ function def_of(f: ssasem.Func, v: i32): ssa.SInst {
   return ssa.SInst { kind_tag: 0 - 1000, result: -1, args: [], imm: 0, str: "" };
 }
 
-function owned_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
-}
-
 function fresh(f: ssasem.Func, v: i32): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result == v) {
-        return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve()
+        return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve() || ins.kind_tag == ssasem.array_zero()
           || ins.kind_tag == ssasem.call() && (ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str));
       }
     }
@@ -198,20 +192,11 @@ function used_after(g: ssa.SFunc, at: i32[], from: i32, v: i32, phi: i32): boole
 
 function reads(b: ssa.SBlock, v: i32, phi: i32): boolean {
   for ins in b.insts {
-    if (ins.result != phi && has(ins.args, v)) {
+    if (ins.result != phi && util.has_i32(ins.args, v)) {
       return true;
     }
   }
   return b.term.kind_tag == ssa.TERM_RET && b.term.value == v || b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == v;
-}
-
-function has(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Whether a block from the header on grows the phi itself: an append, a

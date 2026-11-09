@@ -1,0 +1,50 @@
+---
+// StartupTable — the newest startup bench log (docs/startup-log/): how
+// long a hello-world program takes from process start to exit, in Fern
+// and in other languages. Renders nothing until the first log exists.
+
+import { loadStartup } from "../lib/startup-bench.mjs";
+
+const bench = loadStartup(
+  import.meta.glob<string>("../../../docs/startup-log/*-bench.md", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+);
+const repo = "https://github.com/JakeChampion/lang/blob/main";
+const bytes = (n: number | null) => (n === null ? "interpreter" : `${n.toLocaleString("en-US")} B`);
+---
+
+{bench && (
+<p>
+  And the cost of starting at all: a program that prints one line and
+  exits, built the usual release way for each language, timed from
+  process start to exit.
+</p>
+)}
+{bench && (
+<div class="fern-panel fern-startup not-content">
+  <span class="fern-label">Hello world, start to exit · {bench.date} · {bench.platform}</span>
+  <table>
+    <thead>
+      <tr><th>Language</th><th>Mean</th><th>σ</th><th>File</th></tr>
+    </thead>
+    <tbody>
+      {bench.rows.map((r) => (
+        <tr class={r.language === "Fern" ? "is-fern" : undefined}>
+          <td title={r.version}>{r.language}</td>
+          <td>{r.mean.toFixed(2)} ms</td>
+          <td>{r.stddev.toFixed(2)} ms</td>
+          <td>{bytes(r.bytes)}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+  <p class="fern-startup__note">
+    {bench.method}{" "}<a href={`${repo}/docs/startup-log/${bench.file}`}>The log</a> ·
+    <a href={`${repo}/scripts/startup-bench`}>the script</a> ·
+    <a href={`${repo}/.github/workflows/startup-bench.yml`}>the workflow</a>
+  </p>
+</div>
+)}

@@ -204,10 +204,23 @@ function execute[const PACKED: i32](p: Plan, re_address: usize, im_address: usiz
       let ps = __f32x4_load_bytes(p.post_sin, 16 * k);
       let left = __f32x4_mul_add(real, pc, -(imag * ps));
       let right = __f32x4_mul_add(real, ps, imag * pc);
-      put_post(address, n, k, __f32x4_lane(left, 0), __f32x4_lane(right, 0), packed);
-      put_post(address, n, k + 2 * quarter, __f32x4_lane(left, 1), __f32x4_lane(right, 1), packed);
-      put_post(address, n, k + quarter, __f32x4_lane(left, 2), __f32x4_lane(right, 2), packed);
-      put_post(address, n, k + 3 * quarter, __f32x4_lane(left, 3), __f32x4_lane(right, 3), packed);
+      if (packed && quarter >= 4) {
+        // Reuse FFT scratch for the two rotations before output transposition.
+        __f32x4_store(re_address + (16 * k) as usize, left);
+        __f32x4_store(im_address + (16 * k) as usize, right);
+      } else {
+        put_post(address, n, k, __f32x4_lane(left, 0), __f32x4_lane(right, 0), packed);
+        put_post(address, n, k + 2 * quarter, __f32x4_lane(left, 1), __f32x4_lane(right, 1), packed);
+        put_post(address, n, k + quarter, __f32x4_lane(left, 2), __f32x4_lane(right, 2), packed);
+        put_post(address, n, k + 3 * quarter, __f32x4_lane(left, 3), __f32x4_lane(right, 3), packed);
+      }
+    }
+    if (packed && quarter >= 4) {
+      let k = 0;
+      while (k < quarter) {
+        packed_post(address, re_address, im_address, quarter, k);
+        k += 4;
+      }
     }
   }
 }
@@ -347,6 +360,49 @@ pub unsafe function dct4_packed(input: usize, output: usize, re_address: usize, 
       __f32x4_store(im_address + (16 * (group + 1)) as usize, i0 - i1);
     }
     execute[1](p, re_address, im_address, output);
+  }
+}
+
+// Four adjacent FFT groups become eight contiguous stores.
+@inline
+unsafe function packed_post(address: usize, re: usize, im: usize, quarter: i32, k: i32): void {
+  unsafe {
+    let l0 = __f32x4_load_ptr(re + (16 * k) as usize);
+    let l1 = __f32x4_load_ptr(re + (16 * (k + 1)) as usize);
+    let l2 = __f32x4_load_ptr(re + (16 * (k + 2)) as usize);
+    let l3 = __f32x4_load_ptr(re + (16 * (k + 3)) as usize);
+    let lt0 = __f32x4_zip_lo(l0, l2);
+    let lt1 = __f32x4_zip_lo(l1, l3);
+    let lt2 = __f32x4_zip_hi(l0, l2);
+    let lt3 = __f32x4_zip_hi(l1, l3);
+    let lv0 = __f32x4_zip_lo(lt0, lt1);
+    let lv1 = __f32x4_zip_hi(lt0, lt1);
+    let lv2 = __f32x4_zip_lo(lt2, lt3);
+    let lv3 = __f32x4_zip_hi(lt2, lt3);
+    let r0 = __f32x4_load_ptr(im + (16 * (quarter - 4 - k)) as usize);
+    let r1 = __f32x4_load_ptr(im + (16 * (quarter - 4 - k + 1)) as usize);
+    let r2 = __f32x4_load_ptr(im + (16 * (quarter - 4 - k + 2)) as usize);
+    let r3 = __f32x4_load_ptr(im + (16 * (quarter - 4 - k + 3)) as usize);
+    let rt0 = __f32x4_zip_lo(r0, r2);
+    let rt1 = __f32x4_zip_lo(r1, r3);
+    let rt2 = __f32x4_zip_hi(r0, r2);
+    let rt3 = __f32x4_zip_hi(r1, r3);
+    let rv0 = __f32x4_zip_lo(rt0, rt1);
+    let rv1 = __f32x4_zip_hi(rt0, rt1);
+    let rv2 = __f32x4_zip_lo(rt2, rt3);
+    let rv3 = __f32x4_zip_hi(rt2, rt3);
+    let v0 = __f32x4_reverse(rv3);
+    __f32x4_store(address + (8 * k) as usize, __f32x4_zip_lo(lv0, v0));
+    __f32x4_store(address + (8 * k + 16) as usize, __f32x4_zip_hi(lv0, v0));
+    let v1 = __f32x4_reverse(rv2);
+    __f32x4_store(address + (8 * (k + 2 * quarter)) as usize, __f32x4_zip_lo(lv1, v1));
+    __f32x4_store(address + (8 * (k + 2 * quarter) + 16) as usize, __f32x4_zip_hi(lv1, v1));
+    let v2 = __f32x4_reverse(rv1);
+    __f32x4_store(address + (8 * (k + quarter)) as usize, __f32x4_zip_lo(lv2, v2));
+    __f32x4_store(address + (8 * (k + quarter) + 16) as usize, __f32x4_zip_hi(lv2, v2));
+    let v3 = __f32x4_reverse(rv0);
+    __f32x4_store(address + (8 * (k + 3 * quarter)) as usize, __f32x4_zip_lo(lv3, v3));
+    __f32x4_store(address + (8 * (k + 3 * quarter) + 16) as usize, __f32x4_zip_hi(lv3, v3));
   }
 }
 

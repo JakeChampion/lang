@@ -1,0 +1,11 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+function identity[T](value: T): T { return value; }
+function take(own h: Handle): i32 { return h.close(); }
+function main(): i32 {
+    let h = Handle { fd: 7 };
+    let alias = identity(h);
+    let n = take(alias);
+    return n + h.close();
+}

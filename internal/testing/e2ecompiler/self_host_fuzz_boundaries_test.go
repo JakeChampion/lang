@@ -226,8 +226,11 @@ func FuzzSelfHostManifest(f *testing.F) {
 // drivers/irverify_fuzz_run.fern. Every stream must come back as a problem
 // count: the verifiers refuse, they never trap.
 func FuzzSelfHostIRVerify(f *testing.F) {
-	driver := fuzzDriver(f, "irverify_fuzz_run")
-	for _, seed := range [][]byte{
+	fuzzReaderTarget(f)
+}
+
+func irSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		{},
 		{1, 3},
 		{1, 3, 0, 0, 0, 0},
@@ -235,77 +238,41 @@ func FuzzSelfHostIRVerify(f *testing.F) {
 		{0, 0, 255, 255, 255, 255},
 		{7, 15, 64, 128, 3, 7, 65, 130, 4, 11, 66, 132, 8, 15},
 		bytes.Repeat([]byte{3, 1, 9, 0}, 200),
-	} {
-		f.Add(seed)
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
-		}
-		path := filepath.Join(work, "ops")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		r := runUnderBudget(exec.Command(driver, path))
-		if failOutsideBudget(t, "irverify_fuzz_run", r, input) {
-			return
-		}
-		if r.code != 0 || !strings.HasPrefix(r.stdout, "ops ") {
-			t.Errorf("exit %d on %d bytes, want 0 with the counts\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-			return
-		}
-		want := 0
-		if len(input) >= 2 {
-			want = (len(input) - 2) / 4
-		}
-		fields := strings.Fields(r.stdout)
-		if n, err := strconv.Atoi(fields[1]); err != nil || n != want {
-			t.Errorf("the driver decoded %q ops from %d bytes, want %d", fields[1], len(input), want)
-		}
-	})
 }
 
-// fuzzAssembler shares the body of the two assembler targets: the text goes
-// to one in-process assembler through drivers/asm_fuzz_run.fern. The
-// assemblers consume the compiler's own output, so on foreign text an exit
-// 0 summary and an abort with a cause line are both documented outcomes; a
-// signal, a hang or a budget breach is not.
-func fuzzAssembler(f *testing.F, which, target string) {
-	bin, stdlib := fuzzCLI(f)
-	driver := fuzzDriver(f, "asm_fuzz_run")
-	for _, seed := range assemblerSeeds(f, bin, stdlib, target) {
-		f.Add(seed)
+// irOpCount checks that the driver decoded one op from each four bytes after
+// the two that choose the counts.
+func irOpCount(r readerRun) string {
+	want := 0
+	if len(r.input) >= 2 {
+		want = (len(r.input) - 2) / 4
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
-		}
-		path := filepath.Join(work, "text.s")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		r := runUnderBudget(exec.Command(driver, which, path))
-		if failOutsideBudget(t, "asm_fuzz_run "+which, r, input) {
-			return
-		}
-		switch {
-		case r.code == 0 && strings.HasPrefix(r.stdout, which+" "):
-		case r.code == 134 && strings.HasPrefix(r.stderr, "fern: "):
-		default:
-			t.Errorf("exit %d on %d bytes, want 0 with a summary or 134 with a cause\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-		}
-	})
+	fields := strings.Fields(r.summary)
+	if len(fields) < 3 || fields[2] != strconv.Itoa(want) {
+		return fmt.Sprintf("the driver gave %q for %d bytes, want %d ops", r.summary, len(r.input), want)
+	}
+	return ""
 }
 
-func FuzzSelfHostX86Assembler(f *testing.F)   { fuzzAssembler(f, "x86", "x86-64-linux") }
-func FuzzSelfHostArm64Assembler(f *testing.F) { fuzzAssembler(f, "arm64", "arm64-linux") }
+// FuzzSelfHostX86Assembler feeds hostile text to the x86-64 assembler through
+// drivers/asm_fuzz_run.fern.
+func FuzzSelfHostX86Assembler(f *testing.F) { fuzzReaderTarget(f) }
 
-// assemblerSeeds gives the assembly of a compiled program and short texts that
-// probe labels, sections and alignment.
-func assemblerSeeds(f testing.TB, bin, stdlib, target string) [][]byte {
-	text := compiledAssembly(f, bin, stdlib, target)
+// FuzzSelfHostArm64Assembler feeds hostile text to the arm64 assembler.
+func FuzzSelfHostArm64Assembler(f *testing.F) { fuzzReaderTarget(f) }
+
+// assemblerSeeds gives the seeds of an assembler for target: the assembly of
+// a compiled program and short texts that probe labels, sections and
+// alignment.
+func assemblerSeeds(target string) func(testing.TB) [][]byte {
+	return func(f testing.TB) [][]byte {
+		bin, stdlib := fuzzCLI(f)
+		return assemblerSeedsOf(compiledAssembly(f, bin, stdlib, target))
+	}
+}
+
+func assemblerSeedsOf(text []byte) [][]byte {
 	if len(text) > 16<<10 {
 		text = text[:16<<10]
 	}

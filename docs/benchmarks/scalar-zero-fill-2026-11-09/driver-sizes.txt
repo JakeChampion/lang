@@ -1,0 +1,14 @@
+drivers/wasm_ir_run.fern	9275488
+drivers/interp_run.fern	2783360
+drivers/checker_codes_run.fern	3639104
+drivers/checker_modload_run.fern	3914000
+fern.fern/stage2	16234128
+drivers/asm_pathprobe_run.fern	5744192
+drivers/wasm_runio_run.fern	9261728
+drivers/wasm_run.fern	9286192
+drivers/asm_modload_run.fern	11091696
+drivers/asm_run.fern	9747008
+drivers/asm_ir_run.fern	10666848
+drivers/runtime_run.fern	16240656
+fern.fern	16241216
+drivers/asm_load_run.fern	12466480

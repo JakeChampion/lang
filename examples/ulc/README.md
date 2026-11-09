@@ -73,6 +73,9 @@ This API provides a numerical reference for the faster packed transform.
 Serial file decode creates each transform plan when its block size first occurs.
 Silent blocks need no transform plan.
 File decode uses packed float buffers and cached float windows.
+PCM8 and PCM16 conversion uses four float lanes for unambiguous integer results.
+Half-integer float results use double-precision reconstruction to preserve rounding at each boundary.
+PCM24 conversion retains double precision and packs four integer samples into three word stores.
 
 The file decoder stores coefficients and overlap samples at a scale of `2^96`.
 This scale keeps tiny noise coefficients in the normal float range.

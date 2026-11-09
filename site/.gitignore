@@ -14,3 +14,6 @@ src/content/docs/stdlib/*.md
 # Embedded playground bundle (copied in from web/ at build time;
 # committing it would duplicate web/playground.wasm under version control).
 public/playground/
+
+# Compiler output captured at build time by scripts/capture.mjs.
+src/generated/

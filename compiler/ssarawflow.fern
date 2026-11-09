@@ -224,7 +224,7 @@ pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: bo
     }
     seen = seen.with(v, true);
     values = values.append(v);
-    if (semtypes.is_cell(f.values[v])) {
+    if (typeinfo.is_cell(f.values[v])) {
       let cell = typeinfo.spelling(f.values[v]);
       if (util.index_of_str(cells, cell) < 0) {
         cells = cells.append(cell);

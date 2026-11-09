@@ -1,10 +1,6 @@
 // Scripted regressions for the lang docs site. Asserts behaviour
 // the build step doesn't catch: navigation, sidebar groups, the
 // embedded playground iframe loading, stdlib pages reachable.
-//
-// page.goto() paths are RELATIVE (no leading slash) so they
-// resolve against the baseURL's `/lang/` prefix. A leading `/`
-// would be absolute and drop the prefix — see playwright.config.ts.
 
 import { test, expect } from "@playwright/test";
 
@@ -64,15 +60,85 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
 }) => {
   await page.goto("tutorial/first-steps/");
   // The <FernPlayground> Astro component renders <figure class="fern-playground">
-  // wrapping an iframe pointing at /lang/playground/?embed=1...#src=…
+  // wrapping an iframe pointing at /playground/?embed=1...#src=…
   const figure = page.locator("figure.fern-playground").first();
   await expect(figure).toBeVisible();
   const iframe = figure.locator("iframe");
   // Embed-mode flag + hash payload — both have to be present.
   await expect(iframe).toHaveAttribute(
-    "src",
-    /\/lang\/playground\/\?[^#]*embed=1[^#]*#src=/,
+    "data-src",
+    /\/playground\/\?[^#]*embed=1[^#]*#src=/,
   );
+});
+
+test("an embed loads once, with the theme, when it nears the viewport", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const docs: import("@playwright/test").Frame[] = [];
+  page.on("request", (r) => {
+    if (r.resourceType() === "document" && r.url().includes("/playground/?")) docs.push(r.frame());
+  });
+  await page.goto("./");
+  const grep = page.locator("figure.fern-playground iframe[data-src*='&args=']");
+  // Far below the first screen, so not loaded yet.
+  await expect(grep).not.toHaveAttribute("src", /./);
+  await grep.scrollIntoViewIfNeeded();
+  await expect(grep).toHaveAttribute("src", /[?&]theme=dark/);
+  const grepFrame = await (await grep.elementHandle())!.contentFrame();
+  await page.waitForTimeout(1500);
+  expect(docs.filter((f) => f === grepFrame).length).toBe(1);
+});
+
+test("the home page grep embed runs with its arguments and stdin", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const iframe = page.locator("figure.fern-playground iframe[data-src*='&args=']");
+  await expect(iframe).toHaveAttribute("data-src", /#src=[^&]+&args=[^&]+&stdin=/);
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&args=']");
+  await expect(frame.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", {
+    timeout: 60_000,
+  });
+});
+
+test("a fern code fence uses the shared token colours", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("./");
+  // web/editor/fern-themes.json gives keywords #24603f in the light theme.
+  const kw = page
+    .locator(".expressive-code span", { hasText: /^function$/ })
+    .first();
+  await expect(kw).toHaveCSS("color", "rgb(36, 96, 63)");
+});
+
+test("the home page install card points at this site's install script", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const card = page.locator(".fern-install");
+  await expect(card.locator(".fern-cmd__text").first()).toHaveText(/^curl -fsSL \S+\/install\.sh \| sh$/);
+  const res = await page.request.get("install.sh");
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toMatch(/^#!\/bin\/sh\n/);
+});
+
+test("the home page shows the captured assembly for both targets", async ({ page }) => {
+  await page.goto("./");
+  const compiled = page.locator(".fern-compiled");
+  await expect(compiled).toContainText("area.fern");
+  await expect(compiled.getByRole("tab", { name: "arm64-linux" })).toBeVisible();
+  await expect(compiled.getByRole("tab", { name: "x86-64-linux" })).toBeVisible();
+  // The folded constant is marked.
+  await expect(compiled.locator("mark").first()).toContainText("75");
+  await expect(compiled).toContainText(/static executable: [\d,]+ bytes/);
+});
+
+test("the home page shows the bench ratios, the usage text and the editor features", async ({ page }) => {
+  await page.goto("./");
+  await expect(page.locator(".fern-bench-head__value").first()).toHaveText(/^\d+\.\d\d×$/);
+  await expect(page.locator(".fern-captured").filter({ hasText: "fern -help" })).toContainText("usage: fern");
+  await expect(page.locator(".fern-editor li")).not.toHaveCount(0);
+  await expect(page.locator(".fern-editor")).toContainText("Go to definition");
 });
 
 test("minimal playground embed is wired read-only + autorun on the home page", async ({
@@ -91,12 +157,12 @@ test("minimal playground embed is wired read-only + autorun on the home page", a
   // Both the minimal flag and the forced autorun must reach the embed
   // URL — minimal snippets have no Run button, so autorun is mandatory.
   await expect(iframe).toHaveAttribute(
-    "src",
-    /\/lang\/playground\/\?[^#]*minimal=1[^#]*#src=/,
+    "data-src",
+    /\/playground\/\?[^#]*minimal=1[^#]*#src=/,
   );
   await expect(iframe).toHaveAttribute(
-    "src",
-    /\/lang\/playground\/\?[^#]*autorun=1[^#]*#src=/,
+    "data-src",
+    /\/playground\/\?[^#]*autorun=1[^#]*#src=/,
   );
 });
 
@@ -111,6 +177,8 @@ test("embedded playground actually boots — the staged bundle is complete", asy
   // and the status hangs forever on "loading runtime…". The other
   // embed tests only inspect the iframe's src attribute and would miss
   // that — this one loads the iframe.
+  // An embed loads when it nears the viewport.
+  await page.locator("figure.fern-playground[data-fern-minimal='1'] iframe").first().scrollIntoViewIfNeeded();
   const frame = page.frameLocator(
     "figure.fern-playground[data-fern-minimal='1'] iframe",
   );
@@ -139,20 +207,13 @@ test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
 });
 
-// Regression guard for the "links 404 on the deployed site"
-// bug: markdown body links written with absolute paths (`/foo/`)
-// emit `href="/foo/"` verbatim, which 404s under the `/lang/`
-// base path. Clicking each link surfaces the issue — the prior
-// suite navigated directly via page.goto so it missed this.
-//
-// Same bug bites Starlight's hero actions: the YAML `link:` is
-// passed verbatim to `<a href>` (no base prefix), so a bare
-// `/tutorial/install/` 404s. The hero-button click tests below
-// cover that path — toBeVisible() alone wouldn't catch it.
+// The tests below click each link, because a link can name a page that
+// page.goto() reaches but the link itself does not. toBeVisible() alone
+// would not find such a link.
 test("home → hero Get started button navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /Get started/i }).first().click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/install\/?$/);
   await expect(page.locator("h1")).toContainText("Install");
 });
 
@@ -164,27 +225,27 @@ test("home → hero Try in browser button targets the playground", async ({
   // The playground bundle is a separate Astro `public/` drop-in,
   // not a Starlight content page — asserting the href is enough
   // (clicking would race the wasm boot and isn't worth the flake).
-  await expect(link).toHaveAttribute("href", /^\/lang\/playground\/?$/);
+  await expect(link).toHaveAttribute("href", /^\/playground\/?$/);
 });
 
 test("home → tutorial link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Tutorial$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/install\/?$/);
   await expect(page.locator("h1")).toContainText("Install");
 });
 
 test("home → why link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Why Fern$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/why\/?$/);
+  await expect(page).toHaveURL(/\/why\/?$/);
   await expect(page.locator("h1")).toContainText("Why Fern");
 });
 
 test("home → cookbook link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Cookbook$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/cookbook\/?$/);
+  await expect(page).toHaveURL(/\/cookbook\/?$/);
   await expect(page.locator("h1")).toContainText("Cookbook");
   // Recipes are Fern code fences; the grammar registration means they
   // render as highlighted <code>, not as plain text.
@@ -213,13 +274,13 @@ test("stdlib sidebar groups modules by purpose", async ({ page }) => {
 test("home → reference link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Reference$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/reference\/syntax\/?$/);
+  await expect(page).toHaveURL(/\/reference\/syntax\/?$/);
 });
 
 test("home → standard library link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /Standard library/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/stdlib\/?$/);
+  await expect(page).toHaveURL(/\/stdlib\/?$/);
 });
 
 test("tutorial install → first-steps next-link navigates", async ({ page }) => {
@@ -231,7 +292,7 @@ test("tutorial install → first-steps next-link navigates", async ({ page }) =>
     .getByRole("link", { name: /Next: First steps/ })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/first-steps\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/first-steps\/?$/);
 });
 
 test("coreutils page sorts, filters and opens a utility's workloads", async ({
@@ -280,4 +341,91 @@ test("the stdlib sidebar nests a module family under its parent", async ({ page 
     return out;
   });
   expect(groups.slice(0, 2)).toEqual(["opus_silk", "opus"]);
+});
+
+test("the favicon link resolves", async ({ page }) => {
+  await page.goto("./");
+  const href = await page.locator('link[rel="shortcut icon"]').getAttribute("href");
+  const res = await page.request.get(new URL(href!, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toContain("<svg");
+});
+
+test("a docs page has its own social card", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  const image = await page.locator('meta[property="og:image"]').getAttribute("content");
+  expect(image).toMatch(/\/og\/tutorial\/install\.png$/);
+  // The card is served from this build, whatever host the meta tag names.
+  const res = await page.request.get(new URL(new URL(image!).pathname, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("image/png");
+});
+
+test("llms.txt indexes the docs, and llms-full.txt has their text", async ({ page }) => {
+  const index = await page.request.get("llms.txt");
+  expect(index.status()).toBe(200);
+  const text = await index.text();
+  expect(text).toMatch(/^# Fern\n\n> /);
+  expect(text).toContain("## Tutorial");
+  const full = await (await page.request.get("llms-full.txt")).text();
+  expect(full).toContain("# Install");
+  expect(full).not.toContain("<FernPlayground");
+});
+
+test("the comparison page has the same program in four languages", async ({ page }) => {
+  await page.goto("compare/");
+  for (const name of ["Fern", "Go", "Rust", "TypeScript"]) {
+    await expect(page.getByRole("tab", { name, exact: true }).first()).toBeVisible();
+  }
+  await expect(page.locator("table")).toContainText("Option[T]");
+});
+
+test("a cookbook recipe runs with its stdin", async ({ page }) => {
+  await page.goto("cookbook/");
+  const iframe = page.locator("figure.fern-playground iframe[data-src*='&stdin=']").first();
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&stdin=']").first();
+  await expect(frame.locator("#out")).toHaveText("fern\nfrond\nspore\n", { timeout: 60_000 });
+});
+
+test("the CLI tutorial grep runs with its arguments and stdin", async ({ page }) => {
+  await page.goto("tutorial/cli-tool/");
+  const sel = "figure.fern-playground iframe[data-src*='&args=']";
+  await page.locator(sel).first().scrollIntoViewIfNeeded();
+  await expect(page.frameLocator(sel).first().locator("#out")).toHaveText("2:two fern\n", { timeout: 60_000 });
+});
+
+test("an MDX page renders its Markdown tables", async ({ page }) => {
+  await page.goto("tutorial/cli-tool/");
+  await expect(page.locator(".sl-markdown-content table").first()).toContainText("args()");
+});
+
+test("the home page shows captured diagnostics with the suggested fix", async ({ page }) => {
+  await page.goto("./");
+  const diag = page.locator(".fern-captured:has(starlight-tabs)").filter({ hasText: "missing-arm.fern" });
+  await expect(diag).toContainText("error[E030]");
+  await diag.getByRole("tab", { name: "A typo" }).click();
+  await expect(diag).toContainText("help: replace `totl` with `total`");
+});
+
+test("the function search finds a declaration and links to its entry", async ({ page }) => {
+  await page.goto("stdlib/functions/");
+  await expect(page.locator("#fn-status")).toContainText("declarations in the index");
+  await page.locator("#fn-query").fill("parse_i32");
+  const first = page.locator("#fn-results a").first();
+  await expect(first).toHaveText("parse_i32");
+  const href = (await first.getAttribute("href"))!;
+  expect(href).toMatch(/\/stdlib\/i32\/#parse_i32$/);
+  await first.click();
+  await expect(page.locator("#parse_i32")).toBeVisible();
+});
+
+test("a stdlib page links each declaration and its edit link to the source", async ({ page }) => {
+  await page.goto("stdlib/json/");
+  const source = page.locator('a:text("Source")').first();
+  await expect(source).toHaveAttribute("href", /\/blob\/main\/internal\/stdlib\/std\/json\.fern\.md\?plain=1#L\d+$/);
+  await expect(page.getByRole("link", { name: /Edit page/ })).toHaveAttribute(
+    "href",
+    "https://github.com/JakeChampion/lang/edit/main/internal/stdlib/std/json.fern.md",
+  );
 });

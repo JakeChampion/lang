@@ -56,7 +56,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
       let previous = -1;
       let active = b.id == f.entry;
       for p in b.preds {
-        let pi = flow_graph.block_index(f, p);
+        let pi = ssa.block_with_id(f, p);
         if (destinations[pi] == b.id) {
           if (active) {
             return refused(f, "ambiguous caller origin flow");

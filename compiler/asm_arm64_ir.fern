@@ -3624,7 +3624,9 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 
 // A cache or TLB op. A TLB op orders the table writes before it with dsb ishst,
 // and waits for the invalidation on every core of the inner-shareable domain.
-// tlbi vaae1is takes the page number, for every ASID.
+// tlbi vaae1is takes the page number, for every ASID. cache_sync_code cleans
+// the data line to the point of unification and then drops the instruction
+// line, so that a fetch on any core reads the new code.
 function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_tlb_flush_all") {
     s = s.write("    dsb ishst\n    tlbi vmalle1is\n    dsb ish\n    isb\n");
@@ -3642,6 +3644,9 @@ function arm64_maintenance_text(op: string): string {
   }
   if (op == "dev_cache_clean") {
     return "    dc cvac, x9\n";
+  }
+  if (op == "dev_cache_sync_code") {
+    return "    dc cvau, x9\n    dsb ish\n    ic ivau, x9\n    dsb ish\n    isb\n";
   }
   return "    dc civac, x9\n";
 }
@@ -3689,6 +3694,11 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   }
   if (ins.str == "dev_irq_pending") {
     s = s.write("    adrp x0, __fern_irq_pending\n    add x0, x0, :lo12:__fern_irq_pending\n");
+    return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+  }
+  if (ins.str == "dev_user_run") {
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    s = s.write("    bl __fern_user_run\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
   }
   for i in 0..ins.args.len() {
@@ -6816,7 +6826,7 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x10, __fern_boot_info\n    str x0, [x10, :lo12:__fern_boot_info]\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
-  if (s.interrupts.len() > 0) {
+  if (s.interrupts.len() > 0 || s.user_mode) {
     s = s.write("    adrp x9, __fern_vectors\n    add x9, x9, :lo12:__fern_vectors\n    msr vbar_el1, x9\n    isb\n");
   }
   s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");
@@ -6849,22 +6859,30 @@ function exit_provider_call(s: asmcore.EmitState, reg: string): string {
 // at the current level with SP_ELx, and go to the trampoline of their handler.
 // Every other slot parks the core.
 function emit_vectors(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.interrupts.len() == 0) {
+  if (s.interrupts.len() == 0 && !s.user_mode) {
     return s;
   }
   s = s.write("    .p2align 11\n__fern_vectors:\n");
   for i in 0..16 {
-    s = s.write("    .p2align 7\n    b " + vector_target(s.interrupts, i) + "\n");
+    s = s.write("    .p2align 7\n    b " + vector_target(s.interrupts, s.user_mode, i) + "\n");
   }
   s = s.write(".Lvector_park:\n    wfe\n    b .Lvector_park\n");
   for entry in s.interrupts {
     let parts = util.split_char(entry, b' ');
     s = emit_vector_trampoline(s, parts[0], parts[1]);
   }
+  if (s.user_mode) {
+    s = emit_user_run(s);
+  }
   return s;
 }
 
-function vector_target(interrupts: string[], slot: i32): string {
+// Slots 4 to 7 take an exception of the current level with SP_ELx, and slots
+// 8 to 11 one from EL0 in AArch64, which returns from __user_run.
+function vector_target(interrupts: string[], user_mode: boolean, slot: i32): string {
+  if (user_mode && slot >= 8 && slot < 12) {
+    return "__fern_user_trap_" + util.i32_to_string(slot - 8);
+  }
   for entry in interrupts {
     let parts = util.split_char(entry, b' ');
     if (4 + util.index_of_str(norc.arm64_slots(), parts[0]) == slot) {
@@ -6883,6 +6901,79 @@ function emit_vector_trampoline(s: asmcore.EmitState, slot: string, handler: str
   s = s.write("    bl " + handler + "\n");
   s = s.write("    ldr x9, [sp, #168]\n    msr fpsr, x9\n    ldr x30, [sp, #160]\n" + vector_pairs("ldp"));
   return s.write("    add sp, sp, #576\n    eret\n");
+}
+
+// The trap frame of __user_run: x0 to x30 at 0, SP_EL0 at 248, the PC at 256,
+// PSTATE at 264, TPIDR_EL0 at 272, FPSR at 280, FPCR at 288, and q0 to q31
+// at 304, 816 bytes in all. __fern_user_ctx holds the frame of the running
+// process, the stack pointer of the kernel and its DAIF.
+function emit_user_run(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .bss\n    .p2align 3\n__fern_user_ctx:\n    .skip 24\n    .text\n");
+  // __user_run(frame): save what the kernel's caller expects kept, mask the
+  // exceptions so that none overwrites ELR_EL1 or SPSR_EL1, and enter EL0.
+  s = s.write("__fern_user_run:\n    sub sp, sp, #160\n");
+  s = s.write(user_callee_pairs("stp"));
+  s = s.write("    adrp x9, __fern_user_ctx\n    add x9, x9, :lo12:__fern_user_ctx\n    mrs x10, daif\n    str x10, [x9, #16]\n    msr daifset, #15\n");
+  s = s.write("    str x0, [x9]\n    mov x10, sp\n    str x10, [x9, #8]\n");
+  s = s.write(user_sysregs("ldr"));
+  s = s.write(user_frame_pairs("ldp") + "    ldp x0, x1, [x0, #0]\n    eret\n");
+  for k in 0..4 {
+    // The exception came from EL0 on SP_EL1, which is the kernel stack below
+    // the saved registers. x0 and x1 park there while x0 takes the frame.
+    s = s.write("__fern_user_trap_" + util.i32_to_string(k) + ":\n    stp x0, x1, [sp, #-16]!\n");
+    s = s.write("    adrp x0, __fern_user_ctx\n    add x0, x0, :lo12:__fern_user_ctx\n    ldr x0, [x0]\n");
+    s = s.write(user_frame_pairs("stp") + "    ldp x2, x3, [sp], #16\n    stp x2, x3, [x0, #0]\n");
+    s = s.write(user_sysregs("str"));
+    s = s.write("    mov x0, #" + util.i32_to_string(k) + "\n    b .Luser_return\n");
+  }
+  s = s.write(".Luser_return:\n    adrp x9, __fern_user_ctx\n    add x9, x9, :lo12:__fern_user_ctx\n    ldr x10, [x9, #8]\n    mov sp, x10\n");
+  s = s.write(user_callee_pairs("ldp"));
+  return s.write("    add sp, sp, #160\n    ldr x10, [x9, #16]\n    msr daif, x10\n    ret\n");
+}
+
+// The registers that a call keeps: x19 to x30 and d8 to d15.
+function user_callee_pairs(op: string): string {
+  let out = "";
+  for i in 0..6 {
+    out = out + "    " + op + " x" + util.i32_to_string(19 + 2 * i) + ", x" + util.i32_to_string(20 + 2 * i) + ", [sp, #" + util.i32_to_string(16 * i) + "]\n";
+  }
+  for i in 0..4 {
+    out = out + "    " + op + " d" + util.i32_to_string(8 + 2 * i) + ", d" + util.i32_to_string(9 + 2 * i) + ", [sp, #" + util.i32_to_string(96 + 16 * i) + "]\n";
+  }
+  return out;
+}
+
+// x2 to x30 and q0 to q31 of the frame in x0. x0 and x1 move on their own.
+function user_frame_pairs(op: string): string {
+  let out = "";
+  for i in 1..15 {
+    out = out + "    " + op + " x" + util.i32_to_string(2 * i) + ", x" + util.i32_to_string(2 * i + 1) + ", [x0, #" + util.i32_to_string(16 * i) + "]\n";
+  }
+  if (op == "ldp") {
+    out = out + "    ldr x30, [x0, #240]\n";
+  } else {
+    out = out + "    str x30, [x0, #240]\n";
+  }
+  for k in 0..16 {
+    out = out + "    " + op + " q" + util.i32_to_string(2 * k) + ", q" + util.i32_to_string(2 * k + 1) + ", [x0, #" + util.i32_to_string(304 + 32 * k) + "]\n";
+  }
+  return out;
+}
+
+// The user system registers of the frame in x0, through x1. A load writes
+// each register from the frame; a store reads it into the frame.
+function user_sysregs(op: string): string {
+  let regs = ["sp_el0", "elr_el1", "spsr_el1", "tpidr_el0", "fpsr", "fpcr"];
+  let out = "";
+  for i in 0..regs.len() {
+    let at = util.i32_to_string(248 + 8 * i);
+    if (op == "ldr") {
+      out = out + "    ldr x1, [x0, #" + at + "]\n    msr " + regs[i] + ", x1\n";
+    } else {
+      out = out + "    mrs x1, " + regs[i] + "\n    str x1, [x0, #" + at + "]\n";
+    }
+  }
+  return out;
 }
 
 function vector_pairs(op: string): string {

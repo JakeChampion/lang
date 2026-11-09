@@ -31,13 +31,13 @@ function c(): ir.Op[] { return [ir.op_load_local(2)]; }
 // check appends: the ops leave an f64; it must equal t or main exits n.
 function check(own ops: ir.Op[], expr: ir.Op[], t: string, n: i32): ir.Op[] {
   for o in expr { ops = ops.append(o); }
-  return ops.append(f(t)).append(ir.op_fbin("fne")).append(ir.op_if(0)).append(ir.op_const_i32(n)).append(ir.op_return()).append(ir.op_end());
+  return ops.append(f(t)).append(ir.op_float("fne")).append(ir.op_if(0)).append(ir.op_const_i32(n)).append(ir.op_return()).append(ir.op_end());
 }
 // held_check is check with the array in local 9 released on the way out, so
 // the emitted-RC certifier finds no unit left held.
 function held_check(own ops: ir.Op[], expr: ir.Op[], t: string, n: i32): ir.Op[] {
   for o in expr { ops = ops.append(o); }
-  ops = ops.append(f(t)).append(ir.op_fbin("fne")).append(ir.op_if(0));
+  ops = ops.append(f(t)).append(ir.op_float("fne")).append(ir.op_if(0));
   ops = ops.append(ir.op_load_local(9)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   return ops.append(ir.op_const_i32(n)).append(ir.op_return()).append(ir.op_end());
 }

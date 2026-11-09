@@ -67,13 +67,6 @@ pub function find_named_enum(list: Enum[], names: util.NameIndex, name: string, 
   return -1;
 }
 
-pub function union_name_of(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
-}
-
 pub function name_of(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
     return s.name;
@@ -133,7 +126,7 @@ function resolved_all(types: typeinfo.Type[], records: Records, enums: Enum[]): 
 }
 
 function resolved(ty: typeinfo.Type, records: Records, enums: Enum[]): boolean {
-  if (semtypes.is_cell(ty)) {
+  if (typeinfo.is_cell(ty)) {
     return resolved(semtypes.cell_elem(ty), records, enums);
   }
   if (semtypes.is_handle(ty)) {

@@ -708,6 +708,242 @@ site-search dialog h2 {
   line-height: 1.5;
 }
 
+/* --- Compiler output and captured text ---------------------------- */
+
+.fern-compiled {
+  display: grid;
+  gap: 1rem;
+  margin-block: 1.5rem 2rem;
+}
+
+@media (min-width: 72rem) {
+  /* Wide enough for the splash layout to give both panes room. */
+  .fern-compiled {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+.fern-compiled__pane {
+  min-width: 0;
+}
+
+/* Starlight's Tabs sit flush on the code frame below them. */
+.fern-compiled__pane starlight-tabs .tablist-wrapper {
+  margin-bottom: 0.5rem;
+}
+
+.fern-compiled__size {
+  margin: 0.6rem 0 0;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-2);
+}
+
+.fern-compiled__note,
+.fern-captured > .fern-label,
+.fern-editor__note {
+  grid-column: 1 / -1;
+  margin: 0.5rem 0 0;
+}
+
+.fern-captured {
+  margin-block: 1.5rem 2rem;
+}
+
+.fern-captured .expressive-code + .expressive-code {
+  margin-top: 0.75rem;
+}
+
+/* --- Measured speed ----------------------------------------------- */
+
+.fern-bench-head {
+  margin-block: 1.5rem 2rem;
+}
+
+.fern-bench-head__tiles {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 44rem) {
+  .fern-bench-head__tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.fern-bench-head__tile {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.fern-bench-head__value {
+  font-family: var(--fern-font-display);
+  font-variation-settings: "SOFT" 30, "WONK" 1;
+  font-size: clamp(2.6rem, 6vw, 3.6rem);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--sl-color-white);
+}
+
+.fern-bench-head__value span {
+  color: var(--fern-spore);
+  margin-left: 0.05em;
+}
+
+.fern-bench-head__what {
+  color: var(--sl-color-gray-2);
+}
+
+.fern-bench-head__method {
+  margin: 0.9rem 0 0;
+  font-size: var(--sl-text-sm);
+  line-height: 1.6;
+  color: var(--sl-color-gray-3);
+}
+
+.fern-bench-head__method a {
+  color: var(--sl-color-text-accent);
+}
+
+.fern-startup {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.fern-startup table {
+  width: 100%;
+  margin-top: 0.6rem;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.fern-startup th,
+.fern-startup td {
+  padding: 0.35rem 0.5rem;
+  border-top: var(--fern-rule);
+  text-align: start;
+}
+
+.fern-startup th {
+  font-family: var(--fern-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sl-color-gray-3);
+  border-top: 0;
+}
+
+.fern-startup tr.is-fern td {
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+
+.fern-startup__note {
+  margin: 0.8rem 0 0;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+/* --- Editor features ---------------------------------------------- */
+
+.fern-editor {
+  display: grid;
+  gap: 1.25rem;
+  margin-block: 1.5rem 2rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+@media (min-width: 44rem) {
+  .fern-editor {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.fern-editor ol {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fern-editor li {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-top: var(--fern-rule);
+  color: var(--sl-color-gray-1);
+}
+
+.fern-editor li:first-child {
+  border-top: 0;
+}
+
+.fern-editor__index {
+  font-family: var(--fern-font-mono);
+  font-size: 0.75rem;
+  color: var(--fern-spore);
+  padding-top: 0.2em;
+}
+
+/* --- Standard-library function search ----------------------------- */
+
+.fern-fn-search {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1.25rem;
+}
+
+.fern-fn-search input {
+  font: inherit;
+  font-family: var(--fern-font-mono);
+  padding: 0.55rem 0.75rem;
+  border: var(--fern-rule);
+  border-radius: 0.4rem;
+  background: var(--sl-color-black);
+  color: var(--sl-color-white);
+}
+
+.fern-fn-status {
+  margin-top: 0.6rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+.fern-fn-results {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fern-fn-results li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-top: var(--fern-rule);
+}
+
+.fern-fn-results a {
+  font-family: var(--fern-font-mono);
+  font-weight: 500;
+  color: var(--sl-color-text-accent);
+}
+
+.fern-fn-module {
+  font-family: var(--fern-font-mono);
+  font-size: 0.75rem;
+  color: var(--fern-spore);
+  align-self: center;
+}
+
+.fern-fn-results code {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  color: var(--sl-color-gray-2);
+  overflow-wrap: anywhere;
+}
+
 /* --- Landing reveal --------------------------------------------- */
 
 .hero .stack,

@@ -705,18 +705,23 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
     left = left - 1 as u64;
   }
   while (true) {
-    let n = chunk.len();
-    while (n > 0) {
-      let nl = __rmemchr_bytes(chunk, s.term, n - 1);
-      if (nl < 0) {
-        break;
+    let found = __count_byte_bytes(chunk, s.term) as u64;
+    if (found <= left) {
+      left -= found;
+    } else {
+      let n = chunk.len();
+      while (n > 0) {
+        let nl = __rmemchr_bytes(chunk, s.term, n - 1);
+        if (nl < 0) {
+          break;
+        }
+        n = nl;
+        if (left == 0 as u64) {
+          out = Copy { ...out, o: gnu.stream_put_bytes_range(out.o, chunk, nl + 1, chunk.len()), pos: pos + chunk.len() as i64 };
+          return dump_rest(out, r, pretty, false, false);
+        }
+        left = left - 1 as u64;
       }
-      n = nl;
-      if (left == 0 as u64) {
-        out = Copy { ...out, o: gnu.stream_put_bytes_range(out.o, chunk, nl + 1, chunk.len()), pos: pos + chunk.len() as i64 };
-        return dump_rest(out, r, pretty, false, false);
-      }
-      left = left - 1 as u64;
     }
     if (pos == start) {
       seek_to(r, start);

@@ -525,19 +525,12 @@ function scope_in_match(m: ast.StmtMatch, s: checker.Scope, site: Site): checker
   return scope_in_expr(m.scrutinee, s, site);
 }
 
-function collect_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  if let ast.ExprLambda(lm) = e {
-    return acc.append(lm);
-  }
-  return acc;
-}
-
 function skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   return acc;
 }
 
 pub function lambdas(e: ast.Expr): ast.ExprLambda[] {
-  return astwalk.fold_expr_nodes(e, [], skip_stmt, collect_lambda, astwalk.not_lambda);
+  return astwalk.fold_expr_nodes(e, [], skip_stmt, astwalk.collect_lambda, astwalk.not_lambda);
 }
 
 function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope {
@@ -569,7 +562,7 @@ pub function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
     return true;
   }
   for st in fd.body {
-    for lm in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_lambda, astwalk.descend_all) {
+    for lm in astwalk.fold_stmt_nodes(st, [], skip_stmt, astwalk.collect_lambda, astwalk.descend_all) {
       if (b.line == lm.line && b.col == lm.col) {
         return true;
       }

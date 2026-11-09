@@ -1,3 +1,4 @@
+# 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
 # 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
 # 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
@@ -34,6 +35,7 @@
 # record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
+# 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_float_literal_array_takes_the_width_of_its_first_use 0
@@ -414,6 +416,7 @@ generic_promotion_ignores_shadowed_names             0
 generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_array_drop                          0
 generic_receiver_methods                             0
+generic_result_owned_and_handle_free                 0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
@@ -1235,6 +1238,7 @@ tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
+tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
