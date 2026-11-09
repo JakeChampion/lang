@@ -21,6 +21,9 @@ pub function thread(f: ssasem.Func, stack_phi_joins: boolean): Threaded {
       changed += r.changed;
       round += 1;
     }
+    if (round == 8) {
+      util.report_unsettled("semthread.thread", round, f.graph.name);
+    }
   }
   let cur = f;
   if (changed > 0) {
@@ -270,7 +273,7 @@ function decide(f: ssasem.Func, facts: Facts, h: i32, path: Facts, q: Test): i32
   }
   let at = h;
   let hops = 0;
-  while (at >= 0 && hops < 64) {
+  while (at >= 0 && hops < facts.up.len()) {
     let d = fact_says(facts, at, q);
     if (d >= 0) {
       return d;
@@ -721,14 +724,16 @@ function branch_from(g: ssa.SFunc, at: i32[], ji: i32, bi: i32): ssa.SFunc {
 function returns_in_predecessors(f: ssasem.Func): Forwarded {
   let g = f.graph;
   let changed = 0;
-  for round in 0..64 {
-    let at = ssa.block_positions(g);
-    let ri = first_returning_join(f, g, at);
-    if (ri < 0) {
-      break;
-    }
+  let at = ssa.block_positions(g);
+  let ri = first_returning_join(f, g, at);
+  while (ri >= 0 && changed < 64) {
     g = return_in_predecessors(g, at, ri);
-    changed = round + 1;
+    changed += 1;
+    at = ssa.block_positions(g);
+    ri = first_returning_join(f, g, at);
+  }
+  if (ri >= 0) {
+    util.report_unsettled("semthread.returns_in_predecessors", changed, f.graph.name);
   }
   if (changed == 0) {
     return Forwarded { g: f.graph, changed: 0 };
