@@ -371,11 +371,11 @@ regression test where the bug lived:
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
 - **Bounds traps in the JPEG decoder** (`FuzzSelfHostStdJPEG`, November 2026).
-  A frame of 65535 by 65535 pixels passed the range of an i32 in its block
-  counts, a segment shorter than its fields was read past the file, and a scan
-  with an undefined Huffman table read the empty table. `std/jpeg` now refuses
-  a frame over its pixel limit, checks each segment length, and decodes such a
-  scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
+  The fuzzer found three traps. A frame of 65535 by 65535 pixels passed the
+  range of an i32 in its block counts. A segment shorter than its fields was
+  read past the file. A scan with an undefined Huffman table read the empty
+  table. `std/jpeg` now refuses a frame over its pixel limit, checks each
+  segment length, and decodes such a scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
 
 Earlier: the closure-dispatch cluster (#5001, #5007, #5009, #5026), the
 `i64[]` narrowing (#5729), the u32 shift that miscompiled SHA-256, the float
