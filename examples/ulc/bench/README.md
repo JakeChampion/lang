@@ -7,6 +7,67 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## SIMD round magnitude
+
+Source `cd731e4f14fd1b2796a409df79922805a8c6b0c6` uses a shorter SIMD round sequence on x86-64 and WebAssembly.
+The baseline source is `b9ba0a1a685d84103abd377440f41217dc3d33b6`.
+The codec sources match, and each codec uses the compiler and standard library from its pinned revision.
+The canonical baseline release reproduces the exact codec bytes from the initial prototype build.
+
+The 2026-11-09 comparison uses the same 24 PCM cases, CPU 0, and one worker as the constant-mask comparison below.
+Every case has thirty repetitions in six balanced execution orders.
+Timing includes process startup and file I/O, with no concurrent local builds or tests.
+All final WAV files match the baseline byte for byte, and every float64 oracle check passes.
+A workspace restart interrupted the last group, so the complete hundred-second PCM24 group ran again.
+The report retains the other five complete groups.
+
+Fern has lower medians than the baseline in 17 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.019 overall and 1.011 without silence.
+The corresponding fixed-suite intervals are 0.995 to 1.046 and 0.994 to 1.037.
+Both intervals include 1, so this sweep does not establish an overall speed gain.
+The report retains all seven baseline regressions.
+
+Fern has lower medians than tuned C in 20 of 24 cases.
+The geometric-mean C/Fern ratio is 1.644 overall and 1.187 without silence.
+The corresponding intervals are 1.609 to 1.690 and 1.165 to 1.223.
+C has lower medians for large-block PCM16 noise and large-block PCM24 tone, noise, and transients.
+The intervals use 2000 paired bootstrap repetitions and seed 417 within these fixed cases.
+These results do not establish a universal speed ranking.
+
+[The complete report](x86-64-round-magnitude.json) retains all timings, errors, hashes, regressions, and release build details.
+
+Build both pinned releases:
+
+```sh
+git worktree add --detach /tmp/ulc-round-source cd731e4f14fd1b2796a409df79922805a8c6b0c6
+git worktree add --detach /tmp/ulc-round-baseline b9ba0a1a685d84103abd377440f41217dc3d33b6
+make -C /tmp/ulc-round-source build
+make -C /tmp/ulc-round-baseline build
+make -C /tmp/ulc-round-source/examples/ulc FERN=/tmp/ulc-round-source/bin/fern build/ulc
+make -C /tmp/ulc-round-baseline/examples/ulc FERN=/tmp/ulc-round-baseline/bin/fern build/ulc
+```
+
+Use the pinned C build from [the FLOAT32/VBR reproduction section](#reproduce-the-float32-and-vbr-suite).
+Use the pinned oracle from [the widening-load reproduction below](#widening-loads-for-pcm24).
+
+```sh
+python3 /tmp/ulc-round-source/examples/ulc/bench/run.py \
+  --fern /tmp/ulc-round-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-round-baseline/examples/ulc/build/ulc \
+  --baseline-source-commit b9ba0a1a685d84103abd377440f41217dc3d33b6 \
+  --compiler /tmp/ulc-round-source/bin/fern \
+  --source-commit cd731e4f14fd1b2796a409df79922805a8c6b0c6 \
+  --oracle /tmp/ulc-load-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM8 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-round-10-PCM8.json
+```
+
+Repeat for PCM16 and PCM24, then for 100 seconds at block size 2048.
+Use separate output paths and summarize all six reports with `summarize.py`.
+
 ## Constant masks and narrow PCM bias
 
 Source `fa46bf036c3a1822289f37ef79ae776d6bb40325` folds constant bitwise masks before branch removal.
