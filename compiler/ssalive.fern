@@ -174,7 +174,13 @@ pub function graph_error(f: ssa.SFunc): string {
   if (f.nvals < 0) {
     return "dependency dimensions";
   }
-  let at = ssa.block_positions(f);
+  return graph_error_at(f, ssa.block_positions(f));
+}
+
+function graph_error_at(f: ssa.SFunc, at: i32[]): string {
+  if (f.nvals < 0) {
+    return "dependency dimensions";
+  }
   if (block_index(at, f.entry) < 0) {
     return "missing entry block";
   }
@@ -386,6 +392,19 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   return compute_checked_kept(f, dependencies, []);
 }
 
+// Block positions and definition sites must describe this unchanged graph.
+// Dependency and graph checks still apply.
+pub function compute_kept_with_sites(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], at: i32[], sites: ssa.DefSites): Flow {
+  let why = dependency_error(f, dependencies);
+  if (why == "") {
+    why = graph_error_at(f, at);
+  }
+  if (why != "") {
+    return failed(why);
+  }
+  return compute_prepared(f, dependencies, keep, at, sites.block, sites.at);
+}
+
 pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
   let nb = f.blocks.len();
   let at = ssa.block_positions(f);
@@ -408,12 +427,17 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
     }
     bi += 1;
   }
+  return compute_prepared(f, dependencies, keep, at, def_b, def_k);
+}
+
+function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], at: i32[], def_b: i32[], def_k: i32[]): Flow {
+  let nb = f.blocks.len();
   let up: i32[] = [];
   let up_from: i32[] = [];
   let named = __alloc_bool(f.nvals);
   let phi_at: i32[] = [];
   let phi_from: i32[] = [];
-  bi = 0;
+  let bi = 0;
   while (bi < nb) {
     let b = f.blocks[bi];
     up_from = up_from.append(up.len());
@@ -447,7 +471,7 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
   }
   let slot = __alloc_i32(f.nvals);
   let slot_value: i32[] = [];
-  v = 0;
+  let v = 0;
   while (v < f.nvals) {
     if (named[v] && (keep.len() == 0 || keep[v])) {
       slot = slot.with(v, slot_value.len());
