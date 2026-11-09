@@ -22944,7 +22944,7 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     i -= 1;
     let local = locals[i];
     m = ow_scope_moves(m, local.moved, [local.name]);
-    ow_arm_finish_ctx(c, local.parent, [local.name]);
+    ow_arm_finish_ctx(c, local.parent, [local.name], local.moved);
     c = local.parent;
   }
   return OwnWalk { moved: m, diags: d };
