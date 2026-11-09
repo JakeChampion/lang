@@ -11390,7 +11390,7 @@ function slit_forges_handle(sl: ast.ExprStructLit, structs: StructTable): boolea
   if let Some(_) = find_struct_sig(structs, sl.type_name) {
     return false;
   }
-  return util.has_str(semtypes.fd_handle_names(), sl.type_name);
+  return semtypes.is_fd_handle_name(sl.type_name);
 }
 
 function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
@@ -23418,7 +23418,7 @@ function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
   while (true) {
     let next: string[] = [];
     for name in yes {
-      if (!dx.consuming.has(name) && !util.has_str(semtypes.fd_handle_names(), name) && ow_decl_holds_no_handle(name, dx, [name])) {
+      if (!dx.consuming.has(name) && !semtypes.is_fd_handle_name(name) && ow_decl_holds_no_handle(name, dx, [name])) {
         next = next.append(name);
       } else {
         no = no.append(name);
@@ -23477,7 +23477,7 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
   if (name == "Option" || name == "Result" || name == "Cell" || util.has_str(seen, name)) {
     return true;
   }
-  if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
+  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
     return false;
   }
   if (dx.no_handle.has(name)) {
