@@ -27,7 +27,7 @@
   "debug": false,
   "certification": true,
   "files_sha256": {
-    "README.md": "8d673e95948d4486ba665aeaf76328cfc95f110a355a486b7aaac041aa0ba16e",
+    "README.md": "07b1db6c07dccab02d3ed4062dcd1a78beded8fd60e89fa93d92269d090ab007",
     "assembly-comparison.json": "23753ceafa2e3add817811de9cf55611e01202e4f841a8ce35019c3059c146c6",
     "base-compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "base-compile.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -43,6 +43,15 @@
     "commands.json": "5a61bc32ba4a4545fbef1c02e139c94c04da531aac6cb392a0c362c82822da2e",
     "guest.log": "6c3af24372eb88c3f69cc939d4cf5249f0b5b555d2a3ac09ab7416334f732b6b",
     "guest.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "native-comparison.json": "4cd2ddc747c3f69a524d20aefe943a7d9e9a5ba5006c57f07f7fbb8dcb948fc1"
+    "native-comparison.json": "4cd2ddc747c3f69a524d20aefe943a7d9e9a5ba5006c57f07f7fbb8dcb948fc1",
+    "reproduction/build-base.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/build-base.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/build-candidate.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/build-candidate.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/emit-base.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/emit-base.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/emit-candidate.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/emit-candidate.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reproduction/reproduction.json": "1b055b909ebfb90755e94bc83bf9baae609ed70d96b44bca16205199e394ed9a"
   }
 }

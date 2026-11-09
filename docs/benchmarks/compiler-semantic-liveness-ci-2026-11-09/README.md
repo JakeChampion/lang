@@ -43,3 +43,12 @@ This record makes no wall-time or external-rank claim.
 The [commands](commands.json) retain the completed invocation details.
 The [manifest](manifest.json) retains producer, compiler, input, and data hashes.
 The performance-gate self-test passes all 22 cases.
+
+## Assembly archive repair
+
+The previous commit omitted two assembly files that the manifest lists.
+On 2026-11-09, we reproduced these files from the exact source revisions and the same producer.
+Both files match the original assembly hash.
+The rebuilt compiler executables also match the original recorded hashes.
+The [reproduction record](reproduction/reproduction.json) retains the new commands and identities.
+No ignored artifact from the previous executor was recovered.

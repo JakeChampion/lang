@@ -1,0 +1,53 @@
+{
+  "baseline_source": "b9ba0a1a685d84103abd377440f41217dc3d33b6",
+  "candidate_source": "20a9a0dbed2d27a06ae61abae93c416e3b034bcd",
+  "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "compiler_binaries": {
+    "base-count": {
+      "sha256": "69a4b916d9ab8bbd80bf6af9d1c9fc2de3fa5651ef439ddb83d820e80948965c"
+    },
+    "candidate-count": {
+      "sha256": "3aa00663c7769304403330f942b2793bc732307c72734f4f7aac21178a475ae6"
+    },
+    "base-native-output": {
+      "sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    },
+    "candidate-native-output": {
+      "sha256": "1b1a53186f7f5c6b3b51b863358ee83c6294b7403a18437e05500c5ec4702461"
+    }
+  },
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "claim": "Cold allocation and output controls only. No new instruction or timing comparison.",
+  "files_sha256": {
+    "README.md": "74111ea371e844a7a2023be814e11a09fd2e1b266900ec4e2fbbe9811652ea39",
+    "archive.py": "b246010b48de6ad6cd41b2a50b73fd7d2f80e6046099623e651c0474ee9c2607",
+    "base-alloc.log": "0259a7b5459b001a585084f379ca07717aa9808a59d8e480357f6ce5a9513f72",
+    "base-alloc.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "base-native-output.log": "2c94dbe8667f620c44b6efdbc7f74e1908478c8b95bcd61a7b2921ad38491ecf",
+    "base-native-output.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build-base-count.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build-base-count.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build-candidate-count.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build-candidate-count.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate-alloc.log": "f72fc016289a25b97d6072adc69f7e0d18307080511061a6ba86d051917a944e",
+    "candidate-alloc.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate-native-output.log": "001aeea2574100bf25bf849e167bc5ac51693fd786c3f26da4e502639575c10f",
+    "candidate-native-output.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ci-selftest.log": "d68e8fc65b2854740cfc7e7a6217eed5b20aeb4f0befa5da02881de7c525fbf8",
+    "measure.py": "a016530b80aba55e2d6e85ec68f3c6e77ca1f57b47cda181008d37d6a9db26d1",
+    "measurements.json": "e2644747df22cfacbbd23469dd66294a1409411dab1a5c3353552a4a11e8b12c",
+    "native-allocation-check.json": "dfe7fc6dc82ac4041f64733fb5775c89936df791fe4f0221cd101baa559a5230",
+    "progress.log": "b5fe6c58d9883de9a4373efb58448e18d4dd78a15cdd6b2f8840176455834b54",
+    "reuse.patch": "7a778b02ad7e762b1d32cdc6729e9e5d7917368665c83695596f69ad873b05c0",
+    "source-check.log": "a4bad702894841598e3be14c5fb3dd1d46ba4a59f7c6576f7fb74eb65de07884",
+    "source-check.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests.log": "ef0d4cb280fbf5b13cfcad5ce5cb66614c2d9523e9c20e46c1f76586b36e41ca",
+    "toolchain.json": "77ed72680857f538c6f3b822ec128c031188208c3b7d6f19f9cbbe41d1f57bd1",
+    "validation-result.json": "ec336af1669f428c8d990fd2cbbb0cf745616baa728504fae05f517b8a7ec8a6",
+    "vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

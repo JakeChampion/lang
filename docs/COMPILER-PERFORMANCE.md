@@ -128,6 +128,15 @@ Median peak RSS decreases by 1,280 KiB cold and 1,152 KiB warm.
 The archive records the overlap of CI self-tests with the first cold baseline sample.
 Stage-2 and stage-3 compiler executables match byte for byte.
 
+The [later allocation controls](benchmarks/compiler-semantic-liveness-postmerge-2026-11-09/README.md) compare baseline `b9ba0a1a68` with candidate `20a9a0dbed`.
+The fixed input remains `12be8f1186`.
+Assembly compilation uses 52,703,024 versus 52,685,747 allocation events.
+Native compilation uses 51,660,258 versus 51,642,981 allocation events.
+Each comparison saves 17,277 events, with balanced frees, zero live bytes, and matching output hashes.
+
+All 67 targeted test and subtest results pass in 275.227 seconds across three targets, with no skips.
+These later controls establish no instruction or timing gain for their source pair.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.
