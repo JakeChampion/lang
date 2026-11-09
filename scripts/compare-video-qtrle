@@ -175,6 +175,23 @@ def verify_loaders(binaries, valid, directory):
             assert result.returncode != 0, "malformed corpus accepted"
 
 
+def baseline(options, manifest):
+    previous = json.loads(options.baseline_report.read_text())
+    assert previous["qualification"], "baseline report must contain full workloads"
+    old = previous["tools"]
+    assert old["fern_compiler_sha256"] == manifest["fern_compiler_sha256"], "variants must use the same compiler"
+    assert old["timing_allocation_instrumented"] is False
+    for source in ("scripts/video-compare/qtrle.fern", "scripts/video-compare/qtrle-count.fern",
+                   "scripts/video-compare/corpus.fern", "scripts/video-compare/ffmpeg-qtrle.c",
+                   "scripts/video-compare/sample.c", "internal/stdlib/std/video/frame.fern.md"):
+        assert old["sources"][source] == manifest["sources"][source], (source, "measurement source differs")
+    binary = options.baseline_binaries.resolve() / "fern-qtrle"
+    counter = options.baseline_binaries.resolve() / "fern-qtrle-count"
+    assert sha(binary) == old["fern_binary_sha256"], "baseline binary does not match its report"
+    assert sha(counter) == old["allocation_probe_binary_sha256"], "baseline counter does not match its report"
+    return previous, binary, counter
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -182,13 +199,21 @@ def main():
     parser.add_argument("--wasi", action="store_true")
     parser.add_argument("--pairs", type=int, default=7)
     parser.add_argument("--pixels", type=int, default=500000000)
+    parser.add_argument("--baseline-report", type=Path)
+    parser.add_argument("--baseline-binaries", type=Path)
     options = parser.parse_args()
     if sys.platform != "linux":
         parser.error("Linux is required for wait4 resource measurements")
     if options.pairs < 1 or options.pixels < 1:
         parser.error("pairs and pixels must be positive")
+    if bool(options.baseline_report) != bool(options.baseline_binaries) or options.smoke and options.baseline_report:
+        parser.error("baseline comparison requires both baseline paths and full workloads")
     os.chdir(ROOT)
     binaries, sampler, sanitized, counter, wasm, manifest = build(options.wasi)
+    previous, baseline_binary, baseline_counter = (None, None, None)
+    if options.baseline_report:
+        previous, baseline_binary, baseline_counter = baseline(options, manifest)
+        binaries = {"fern_before": baseline_binary, **binaries}
     report = {"schema": 1, "qualification": not options.smoke, "platform": platform.platform(),
               "cpu": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines() if line.startswith("model name")), platform.machine()),
               "cpu_affinity": sorted(os.sched_getaffinity(0)), "tools": manifest,
@@ -198,6 +223,8 @@ def main():
               "process_cpu": "wait4 user and system CPU time for the complete measurement process, including setup and warmup",
               "allocation_counts": "Separate instrumented Fern executable; excluded from timing and RSS comparisons; FFmpeg allocations are not instrumented",
               "cases": []}
+    if previous:
+        report["baseline"] = {"tools": previous["tools"], "report_sha256": sha(options.baseline_report)}
     cases = [("rgb24-runs", 512, 288, 24, "runs"), ("argb32-literals", 512, 288, 32, "sparse"),
              ("argb32-hd-sparse", 1920, 1080, 32, "sparse"), ("rgb24-hd-dense", 1920, 1080, 24, "dense")]
     with tempfile.TemporaryDirectory(prefix="fern-qtrle-") as temporary:
@@ -207,7 +234,13 @@ def main():
             if options.smoke:
                 width, height = (257, 3) if number < 2 else (32, 32)
             item, corpus, expected, decoded = write_case(directory, name, width, height, depth, kind)
-            for label, binary in {**binaries, "fern_sanitize": sanitized, "fern_counter": counter}.items():
+            if previous:
+                old = previous["cases"][number]
+                assert old["name"] == name and old["corpus_sha256"] == item["corpus_sha256"] and old["argb_sha256"] == item["argb_sha256"]
+            verification = {**binaries, "fern_sanitize": sanitized, "fern_counter": counter}
+            if baseline_counter:
+                verification["fern_before_counter"] = baseline_counter
+            for label, binary in verification.items():
                 actual = directory / (label + ".argb")
                 with actual.open("wb") as output:
                     subprocess.run([str(binary), "verify", str(corpus)], stdout=output, check=True, timeout=120)
@@ -233,6 +266,10 @@ def main():
                     trials[label].append(value)
             probe = json.loads(run([str(counter), "count", str(corpus), str(frames)]).stdout)
             assert probe["frames"] == frames and probe["checksum"] == expected_sum
+            if baseline_counter:
+                before_probe = json.loads(run([str(baseline_counter), "count", str(corpus), str(frames)]).stdout)
+                assert before_probe["frames"] == frames and before_probe["checksum"] == expected_sum
+                item["baseline_allocation_probe"] = before_probe
             item.update({"frames_per_trial": frames, "full_argb_comparison": True, "wasi_verified": bool(wasm), "sanitizer_verified": True, "trial_order": order})
             if not options.smoke:
                 item["allocation_probe"] = probe
@@ -246,6 +283,9 @@ def main():
                 native = item["summary"]["fern"]
                 item["fern_over_ffmpeg_elapsed"] = native["median_elapsed_ns"] / reference["median_elapsed_ns"]
                 item["fern_over_ffmpeg_peak_rss"] = native["median_peak_rss_bytes"] / reference["median_peak_rss_bytes"]
+                if previous:
+                    item["fern_over_baseline_elapsed"] = native["median_elapsed_ns"] / item["summary"]["fern_before"]["median_elapsed_ns"]
+                    item["fern_over_baseline_peak_rss"] = native["median_peak_rss_bytes"] / item["summary"]["fern_before"]["median_peak_rss_bytes"]
             report["cases"].append(item)
             print(name + ": complete ARGB samples and timed checksums match", flush=True)
     options.output.parent.mkdir(parents=True, exist_ok=True)

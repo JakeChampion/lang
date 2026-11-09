@@ -1,0 +1,9 @@
+{
+  "valid_baseline_accepted": true,
+  "invalid_baselines_rejected": [
+    "compiler",
+    "instrumentation",
+    "client_source",
+    "changed_binary"
+  ]
+}

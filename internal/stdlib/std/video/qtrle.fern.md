@@ -48,8 +48,6 @@ struct Span { at: i32, row: i32, end: i32 }
 
 struct Row { pixels: u32[], at: i32, finished: boolean }
 
-struct Step { pixels: u32[], at: i32, x: i32 }
-
 // The size word: the packet's own length, with the two flag bits clear.
 function decode_size(input: [u8]): Result[void, frame.VideoError] {
   if (input.len() < 4) {
@@ -105,28 +103,39 @@ function write_run(own pixels: u32[], dst: i32, n: i32, input: [u8], at: i32, bp
   return pixels;
 }
 
-// One code of a row: a skip, a literal run or a repeated pixel.
-function decode_code(input: [u8], at: i32, code: i32, row: i32, x: i32, format: frame.Format, bpp: i32, own pixels: u32[]): Result[Step, frame.VideoError] {
+// Validate one code before a pixel write. A positive result is its byte count.
+// -1 means truncated input, and -2 means an invalid row extent.
+function code_bytes(input: [u8], at: i32, code: i32, remaining: i32, bpp: i32): i32 {
   if (code == 0) {
     if (at == input.len()) {
-      return Err(frame.Truncated);
+      return -1;
     }
     let n = input[at] as i32 - 1;
-    if (n < 0 || n > format.width - x) {
-      return Err(frame.Header);
+    if (n < 0 || n > remaining) {
+      return -2;
     }
-    return Ok(Step { pixels: pixels, at: at + 1, x: x + n });
+    return 1;
   }
   let n = if (code < 128) { code } else { 256 - code };
   let bytes = if (code < 128) { n * bpp } else { bpp };
-  if (n > format.width - x) {
-    return Err(frame.Header);
+  if (n > remaining) {
+    return -2;
   }
   if (bytes > input.len() - at) {
-    return Err(frame.Truncated);
+    return -1;
   }
-  let written = write_run(pixels, row * format.width + x, n, input, at, bpp, code < 128);
-  return Ok(Step { pixels: written, at: at + bytes, x: x + n });
+  return bytes;
+}
+
+function code_pixels(input: [u8], at: i32, code: i32): i32 {
+  if (code == 0) {
+    return input[at] as i32 - 1;
+  }
+  return if (code < 128) { code } else { 256 - code };
+}
+
+function code_error(bytes: i32): frame.VideoError {
+  return if (bytes == -1) { frame.Truncated } else { frame.Header };
 }
 
 // One row, from its skip byte to its 255 terminator. A skip byte of zero
@@ -157,10 +166,16 @@ function decode_row(input: [u8], at0: i32, row: i32, format: frame.Format, bpp: 
     if (code == 255) {
       return Ok(Row { pixels: pixels, at: at, finished: false });
     }
-    let step = decode_code(input, at, code, row, x, format, bpp, pixels)?;
-    pixels = step.pixels;
-    at = step.at;
-    x = step.x;
+    let bytes = code_bytes(input, at, code, format.width - x, bpp);
+    if (bytes < 0) {
+      return Err(code_error(bytes));
+    }
+    let n = code_pixels(input, at, code);
+    if (code != 0) {
+      pixels = write_run(pixels, row * format.width + x, n, input, at, bpp, code < 128);
+    }
+    at += bytes;
+    x += n;
   }
 }
 
