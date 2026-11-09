@@ -187,8 +187,11 @@ func FuzzSelfHostX86Image(f *testing.F) { fuzzImage(f, "x86", "x86-64-linux", x8
 func FuzzSelfHostArm64Image(f *testing.F) { fuzzImage(f, "arm64", "arm64-linux", arm64Layout) }
 
 // TestSelfHostImageOfCompiledProgram runs the image mode on the assembly of a
-// compiled program. All three images must be written and keep the layout,
-// which shows that the checks accept what a real compile produces.
+// compiled program, which shows that the checks accept what a real compile
+// produces. Assembly compiled without -pie gives the static and the -g image,
+// and its -pie link is refused with a cause, not an exit of the driver.
+// Assembly compiled with -pie gives the -pie image. Text with no _start gives
+// no image on either ISA.
 func TestSelfHostImageOfCompiledProgram(t *testing.T) {
 	for _, c := range []struct {
 		which, target string
@@ -197,16 +200,27 @@ func TestSelfHostImageOfCompiledProgram(t *testing.T) {
 		t.Run(c.which, func(t *testing.T) {
 			bin, stdlib := fuzzCLI(t)
 			driver := fuzzDriver(t, "asm_fuzz_run")
-			text := compiledAssembly(t, bin, stdlib, c.target)
-			work := t.TempDir()
-			if faults := imageFaults(driver, c.which, c.want, work, text); len(faults) > 0 {
-				t.Fatal(strings.Join(faults, "\n"))
-			}
-			for _, kind := range []string{"static", "pie", "g"} {
-				if _, err := os.Stat(filepath.Join(work, "out", kind)); err != nil {
-					t.Errorf("the %s image of a compiled program was not written: %v", kind, err)
+			run := func(text []byte, kinds ...string) string {
+				t.Helper()
+				work := t.TempDir()
+				if faults := imageFaults(driver, c.which, c.want, work, text); len(faults) > 0 {
+					t.Fatal(strings.Join(faults, "\n"))
 				}
+				var written []string
+				for _, kind := range []string{"static", "pie", "g"} {
+					if _, err := os.Stat(filepath.Join(work, "out", kind)); err == nil {
+						written = append(written, kind)
+					}
+				}
+				got := strings.Join(written, " ")
+				if want := strings.Join(kinds, " "); got != want {
+					t.Errorf("the images written are %q, want %q", got, want)
+				}
+				return got
 			}
+			run(compiledAssembly(t, bin, stdlib, c.target), "static", "g")
+			run(compiledAssembly(t, bin, stdlib, c.target, "-pie"), "pie")
+			run([]byte(".text\nf:\n ret\n"))
 		})
 	}
 }

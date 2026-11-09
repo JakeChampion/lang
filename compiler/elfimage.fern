@@ -50,10 +50,13 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
     return arm64_refusals("arm64-linux", "linker", p.unknown);
   }
   p = arm64_relro_slots(p, tv, dv, pie);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-linux", "linker", p.unknown);
+  }
   let pa2 = p.asm;
   let eoff = arm64_native.arm64_asm_label_off(pa2, "_start");
   if (eoff < 0) {
-    eoff = 0;
+    return arm64_refusals("arm64-linux", "linker", ["no _start symbol"]);
   }
   let bin: u8[] = [];
   if (pie) {
@@ -98,10 +101,13 @@ pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): st
     return arm64_refusals("arm64-android", "linker", p.unknown);
   }
   p = arm64_relro_slots(p, tv, dv, true);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-android", "linker", p.unknown);
+  }
   let pa2 = p.asm;
   let eoff = arm64_native.arm64_asm_label_off(pa2, "_start");
   if (eoff < 0) {
-    eoff = 0;
+    return arm64_refusals("arm64-android", "linker", ["no _start symbol"]);
   }
   unsafe {
     return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden));
@@ -119,8 +125,7 @@ function arm64_relro_slots(own p: arm64_native.Arm64GasProg, tv: i64, dv: i64, r
   let len = arm64_native.arm64_symbol_addr(p, "__fern_relro_len", tv, dv);
   if (begin < 0i64 || len < 0i64) {
     if (p.relro_pad > 0) {
-      eprint("fern: constant data has no startup protection");
-      exit(3);
+      return arm64_native.Arm64GasProg { ...p, unknown: ["constant data has no startup protection"] };
     }
     return p;
   }
@@ -139,8 +144,7 @@ function x86_relro_slots(own a: x86_native.X86Asm, tv: i32, dv: i32, runtime: bo
   let len = x86_native.x86_symbol_addr(a, "__fern_relro_len", tv);
   if (a.unknown.len() > 0 || begin < 0 || len < 0) {
     if (a.unknown.len() == 0 && a.relro_pad > 0) {
-      eprint("fern: constant data has no startup protection");
-      exit(3);
+      return x86_native.X86Asm { ...a, unknown: ["constant data has no startup protection"] };
     }
     return a;
   }

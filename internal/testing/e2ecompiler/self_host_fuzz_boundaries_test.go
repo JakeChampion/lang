@@ -323,10 +323,12 @@ func assemblerSeeds(f testing.TB, bin, stdlib, target string) [][]byte {
 	}
 }
 
-// compiledAssembly is the assembly that the compiler emits for a small program.
-func compiledAssembly(f testing.TB, bin, stdlib, target string) []byte {
+// compiledAssembly is the assembly that the compiler emits for a small program
+// with flags.
+func compiledAssembly(f testing.TB, bin, stdlib, target string, flags ...string) []byte {
 	emitted := filepath.Join(f.TempDir(), "out.s")
-	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", "-target", target, "-emit", "asm", "-o", emitted)
+	args := append([]string{"-target", target, "-emit", "asm", "-o", emitted}, flags...)
+	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", args...)
 	text, err := os.ReadFile(emitted)
 	if err != nil {
 		f.Fatal(err)
