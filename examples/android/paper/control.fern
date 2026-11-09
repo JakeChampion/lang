@@ -863,6 +863,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (!p.active) {
     return s;
   }
+  if (action == 2 && p.group == "index") {
+    return index_drag(s, y as i32);
+  }
   if (action == 2) {
     let y0 = p.y0;
     let moved = p.moved;
@@ -892,6 +895,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (action != 1 || p.fired) {
     return t;
   }
+  if (p.group == "index") {
+    return index_drag(t, y as i32);
+  }
   if (!p.moved) {
     let Some(n) = ui.hit(t.nodes, x as i32, y as i32) else {
       return tapped_empty(t);
@@ -901,13 +907,31 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   return swiped(t, p, x, y, motion.velocity(motion.track(p.samples, sample)));
 }
 
+// The app list at the first app of `letter`.
+function jump(own s: App, letter: string): App {
+  let to = ui.letter_scroll(metrics(s), s.fonts, results(s), letter);
+  return App { ...s, list_scroll: to, fling: no_fling(), dirty: true };
+}
+
+// A press on the letter index goes to the letter at the height `y` as it
+// moves and when it lifts, wherever it drifts across.
+function index_drag(own s: App, y: i32): App {
+  for n in s.nodes {
+    if (n.group == "index" && y >= n.y && y < n.y + n.h) {
+      return jump(s, suffix(n.act, "jump:"));
+    }
+  }
+  return s;
+}
+
 // A tap on no node: it ends typing in the app list.
 function tapped_empty(own s: App): App {
   return s;
 }
 
 // The end of a drag: a flick keeps a list scrolling, and on the home screen
-// a swipe up opens the app list and a swipe down opens the notifications.
+// a swipe up, left or right opens the app list and a swipe down opens the
+// notifications.
 // `v` is the speed of the finger in pixels per second.
 function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
   let m = metrics(s);
@@ -915,6 +939,9 @@ function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
   let dx = x - p.x0;
   let far = ui.dp(m, 64.0) as f32;
   let vertical = abs_f(dy) > abs_f(dx);
+  if (s.sheet.is_none() && s.layer == ui.HOME && !vertical && abs_f(dx) > far) {
+    return open_drawer(s);
+  }
   if (s.sheet.is_none() && s.layer == ui.HOME && vertical && abs_f(dy) > far) {
     let scrolled = p.group == "fav" && scroll_limit(s, "fav") > 0 && (dy < 0.0 && p.scroll0 < scroll_limit(s, "fav") || dy > 0.0 && p.scroll0 > 0);
     if (!scrolled) {

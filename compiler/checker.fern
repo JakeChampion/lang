@@ -21473,7 +21473,7 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_path_is_last(fx, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
+  return lu_path_last_on_paths(fx, site, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
 }
 
 // No path after the statement that holds the call reads q, and the statement
@@ -21661,16 +21661,52 @@ function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): s
 
 // A later update `S { ...q, field: v }` replaces the path, so it does not
 // read it.
-function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
-  for o in fx.facts.occ {
+function lu_path_is_last(facts: LuFacts, q: ast.ExprIdent, field: string): boolean {
+  for o in facts.occ {
     if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
-      let sel = lu_sel_at(fx.facts, o.line, o.col);
-      if (sel.len() == 0 && !lu_replaces(fx.facts, o.line, o.col, field) || sel == field) {
+      let sel = lu_sel_at(facts, o.line, o.col);
+      if (sel.len() == 0 && !lu_replaces(facts, o.line, o.col, field) || sel == field) {
         return false;
       }
     }
   }
   return true;
+}
+
+// lu_path_is_last over the occurrences that a path from the site reaches.
+// When a statement from the site onwards in an enclosing block returns, and
+// no loop is between, a path from the site leaves that block only by that
+// return, so a later occurrence outside the block is not a read.
+function lu_path_last_on_paths(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+  let k = site.frames.len() - 1;
+  while (k >= 0 && !site.frames[k].is_loop) {
+    let f = site.frames[k];
+    if (lu_block_returns(fx, f)) {
+      for i in f.idx..f.stmts.len() {
+        let facts = astwalk.fold_stmt_nodes(f.stmts[i], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+        if (!lu_path_is_last(facts, q, field)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    k -= 1;
+  }
+  return lu_path_is_last(fx.facts, q, field);
+}
+
+// A statement from the frame's own onwards leaves the function on every path:
+// a return, or a call that never returns.
+function lu_block_returns(fx: LuFn, f: LuFrame): boolean {
+  for i in f.idx..f.stmts.len() {
+    if let ast.StmtReturn(_) = f.stmts[i] {
+      return true;
+    }
+    if (lu_never_returns(fx.noret, f.stmts[i])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function lu_replaces(f: LuFacts, line: i32, col: i32, field: string): boolean {

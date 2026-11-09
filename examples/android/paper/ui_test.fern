@@ -168,6 +168,34 @@ function test_dark_wallpaper(): test.TestOutcome {
   return test.assert_eq((lit.pixel(0, 0) == draw.rgb(255, 244, 230)).to_string() + " " + (t.pixel(0, 0) == dark.paper).to_string() + " " + (near < 60).to_string() + " " + (t.pixel(2, 0) == draw.rgb(227, 180, 0)).to_string(), "true true true true");
 }
 
+// The app list has a column of the first letters of the apps on each edge,
+// and none while a search filters the list.
+function test_letter_index(): test.TestOutcome {
+  let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "", typing: true };
+  let f = draw_view(v, "drawer-index");
+  let ns = ui.nodes(fonts(), v);
+  let left = "";
+  let right = "";
+  for n in ns {
+    if (n.group == "index") {
+      if (n.x == 0) {
+        left += n.act.drop(5);
+      } else if (n.x + n.w == W) {
+        right += n.act.drop(5);
+      }
+    }
+  }
+  let searching = 0;
+  for n in ui.nodes(fonts(), ui.View { ...v, query: "m" }) {
+    if (n.group == "index") {
+      searching += 1;
+    }
+  }
+  let row = ui.list_row(v.m, fonts());
+  let maps = ui.letter_scroll(v.m, fonts(), v.results, "M");
+  return test.assert_eq(left + " " + right + " " + searching.to_string() + " " + (maps == 2 * row || maps == ui.list_scroll_limit(v.m, fonts(), v.results.len())).to_string() + " " + ui.letter_of("whatsApp") + ui.letter_of("1Password"), "CEMPSW CEMPSW 0 true W#");
+}
+
 function test_drawer_search(): test.TestOutcome {
   let apps = sample_apps();
   let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "chrome", typing: true, results: paper.search(apps, "chrome", []) };
@@ -321,6 +349,7 @@ function main(): i32 {
   r = r.it("app list lists Paper", test_drawer);
   r = r.it("the app list in the dark theme", test_dark_drawer);
   r = r.it("the wallpaper in the dark theme", test_dark_wallpaper);
+  r = r.it("the letter index of the app list", test_letter_index);
   r = r.it("app list search", test_drawer_search);
   r = r.it("app menu sheet", test_sheet);
   r = r.it("rename sheet above the keyboard", test_rename_sheet);
