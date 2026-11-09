@@ -7,6 +7,7 @@ import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
 import "./byteconst";
+import "std/string";
 
 // writes is false only for a finalizer that cannot write a cell
 // (mark_cell_writers).
@@ -291,10 +292,10 @@ function uses_of(f: Func): Uses {
 }
 
 function term_operand(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;
@@ -739,6 +740,10 @@ pub function is_char(t: typeinfo.Type): boolean {
     return i.is_char;
   }
   return false;
+}
+
+pub function is_scalar(t: typeinfo.Type): boolean {
+  return is_integer(t) || is_float(t) || is_bool(t) || is_char(t);
 }
 
 // owned_shape says ownership inference can count a parameter of type t:
@@ -2459,7 +2464,7 @@ pub function send_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_send_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_send_");
+  return name.starts_with("__sem_send_");
 }
 
 // The per-type helper that `__send_adopt` calls: it returns the address it
@@ -2469,7 +2474,7 @@ pub function adopt_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_adopt_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_adopt_");
+  return name.starts_with("__sem_adopt_");
 }
 
 // The per-type helper that `__send_root` calls: it takes its value and
@@ -2479,7 +2484,7 @@ pub function release_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_release_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_release_");
+  return name.starts_with("__sem_release_");
 }
 
 pub function root_helper_name(t: typeinfo.Type): string {
@@ -2487,7 +2492,7 @@ pub function root_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_root_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_root_");
+  return name.starts_with("__sem_root_");
 }
 
 pub function type_key(t: typeinfo.Type): string {
@@ -3073,19 +3078,19 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   if (kind == checked_present() || kind == checked_value()) {
     return checked_scalar_error(ins, f, result);
   }
-  if (kind == 6) {
+  if (kind == ssa.PARAM) {
     return parameter_error(ins, f, result);
   }
-  if (kind == 7 || kind == 8) {
+  if (kind == ssa.COPY || kind == ssa.PHI) {
     return copy_error(ins, f, result);
   }
-  if (kind == 1 || kind == 2 || kind == 5) {
+  if (kind == ssa.CONST_INT || kind == ssa.CONST_BOOL || kind == ssa.CONST_STR) {
     return constant_error(ins, result);
   }
   if (scalar_op(kind)) {
     return scalar_error(ins, f, result);
   }
-  if (kind == 35) {
+  if (kind == ssa.LINE) {
     return line_error(ins, result);
   }
   return composite_error(ins, f, result);
@@ -3325,25 +3330,25 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     }
   }
   let d = defs[v];
-  if (d.kind_tag == 6) {
+  if (d.kind_tag == ssa.PARAM) {
     if (util.index_of_i32(out.params, d.imm) < 0) {
       out = ViewSources { ...out, params: out.params.append(d.imm) };
     }
     return out;
   }
-  if (d.kind_tag == 5) {
+  if (d.kind_tag == ssa.CONST_STR) {
     return out;
   }
   if (d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return out;
   }
-  if (d.kind_tag == 8) {
+  if (d.kind_tag == ssa.PHI) {
     for a in d.args {
       out = view_sources(f, defs, anchors, names, a, kind, out);
     }
     return out;
   }
-  if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
+  if (d.kind_tag != ssa.PHI && gathers_views(d.kind_tag)) {
     if (!holds_view(f, f.values[v])) {
       return ViewSources { ...out, escapes: true, escape_kind: kind };
     }
@@ -3667,7 +3672,7 @@ function guard_error(f: Func): string {
 }
 
 function projects(kind: i32): boolean {
-  return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
+  return kind == ssa.COPY || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
     || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as();
 }
@@ -3691,7 +3696,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (!holds_view(f, f.values[v])) {
     return [v];
   }
-  if (d.kind_tag == 5 || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
+  if (d.kind_tag == ssa.CONST_STR || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return [];
   }
   if (projects(d.kind_tag) && d.args.len() > 0) {
@@ -3722,7 +3727,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   }
   let roots: i32[] = [];
   for a in d.args {
-    if (a < 0 || d.kind_tag != 8 && !holds_view(f, f.values[a])) {
+    if (a < 0 || d.kind_tag != ssa.PHI && !holds_view(f, f.values[a])) {
       continue;
     }
     if (counted_view(f, defs, a, next)) {
@@ -3761,13 +3766,13 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
     return true;
   }
   let d = defs[v];
-  if (d.kind_tag == 5) {
+  if (d.kind_tag == ssa.CONST_STR) {
     return true;
   }
   if (d.kind_tag == str_as() && d.args.len() == 1) {
     return !is_view(f.values[d.args[0]]);
   }
-  if (d.kind_tag != 8) {
+  if (d.kind_tag != ssa.PHI) {
     return false;
   }
   let next = seen.with(v, true);
@@ -3780,7 +3785,7 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
 }
 
 function gathers_views(kind: i32): boolean {
-  return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
+  return kind == ssa.PHI || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
     || kind == append() || kind == with() || kind == map_new() || kind == map_insert() || kind == dyn_box();
 }
 
@@ -5076,7 +5081,7 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
     return plan;
   }
   let home = m.home[consumer];
-  let edge = defs[consumer].kind_tag == 8;
+  let edge = defs[consumer].kind_tag == ssa.PHI;
   let at = home;
   if (edge) {
     let preds = f.graph.blocks[home].preds;
@@ -5303,10 +5308,10 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
 
 pub function reorderable(ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return ins.str != "/" && ins.str != "%";
   }
-  return k == 1 || k == 2 || k == 5 || k == 7 || k == 10 || k == zero() || k == cast()
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssa.COPY || k == ssa.UNARY || k == zero() || k == cast()
     || k == variant_get() || k == variant_is() || k == record_get() || k == tuple_get() || k == length();
 }
 
@@ -5358,10 +5363,10 @@ pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
 }
 
 function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return ssa.STerm { ...t, value: mapped(map, t.value) };
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa.STerm { ...t, cond: mapped(map, t.cond) };
   }
   return t;

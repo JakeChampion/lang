@@ -21,22 +21,6 @@ pub function contracts(row: ssaprepare.Emitted): ssasem.Contract[] {
   return found;
 }
 
-function scalar(t: typeinfo.Type): boolean {
-  if (!semtypes.concrete(t, false)) {
-    return false;
-  }
-  if let typeinfo.TypeI32(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeFloat(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeBool(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function ordinary(m: physicalbody.Metadata, t: typeinfo.Type): boolean {
   if (!semtypes.concrete(t, false) || semtypes.is_env(t)) {
     return false;
@@ -86,7 +70,7 @@ function compatible_fields(a: physicalbody.Metadata, b: physicalbody.Metadata, f
     if (field.name != other.name || !semtypes.equal(field.ty, other.ty)) {
       return false;
     }
-    if (!scalar(field.ty) && !compatible(a, b, field.ty, depth - 1)) {
+    if (!semtypes.concrete_scalar(field.ty) && !compatible(a, b, field.ty, depth - 1)) {
       return false;
     }
     i += 1;
@@ -104,7 +88,7 @@ pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
     if (i > 268435454) {
       return [];
     }
-    if (!scalar(field.ty)) {
+    if (!semtypes.concrete_scalar(field.ty)) {
       offsets = offsets.append((i + 1) * 8);
     }
     i += 1;

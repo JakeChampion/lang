@@ -3,6 +3,7 @@ import "./pkgversion";
 import "./capvocab";
 import "./docsummary";
 import "core/map";
+import "std/string";
 
 pub struct Dep {
   name: string,
@@ -520,7 +521,7 @@ function with_dep_string(d: Dep, k: string, s: string): Result[Dep, string] {
     return Ok(Dep { ...d, path: s });
   }
   if (k == "url") {
-    if (!util.str_has_prefix(s, "https://") && !util.str_has_prefix(s, "http://")) {
+    if (!s.starts_with("https://") && !s.starts_with("http://")) {
       return Err("url must be http(s), got " + docsummary.quote(s));
     }
     return Ok(Dep { ...d, url: s });

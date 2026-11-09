@@ -3,6 +3,7 @@ import "./irtables";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Set { rows: util.NameIndex, classes: string[], indirect: boolean, on: boolean }
 
@@ -169,7 +170,7 @@ function result_class(funcs: ssasem.Func[], i: i32): string {
 }
 
 function trampoline(key: string): boolean {
-  return util.str_has_prefix(key, "async__run_task");
+  return key.starts_with("async__run_task");
 }
 
 function is_lifted(key: string): boolean {
@@ -203,10 +204,10 @@ function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
 }
 
 function is_site(o: ir.Op, set: Set): boolean {
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == ir.K_CALL_DIRECT) {
     return o.str == "__task_park" || o.str == "__fern_task_park" || o.str == "__task_park_until" || o.str == "__fern_task_park_until" || set.rows.has(o.str);
   }
-  if (o.kind_tag == 150 || o.kind_tag == 151 || o.kind_tag == 147) {
+  if (o.kind_tag == ir.K_CALL_INDIRECT || o.kind_tag == ir.K_CALL_CLOSURE_DIRECT || o.kind_tag == ir.K_DYN_DISPATCH) {
     return set.indirect;
   }
   return false;
@@ -384,7 +385,7 @@ function site_free(t: Tx, ops: ir.Op[], at: i32): boolean {
   }
   for j in at..end + 1 {
     let k = ops[j].kind_tag;
-    if ((k == 152 || k == 153 || k == 154) && ops[j].i32_imm != 0) {
+    if ((k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) && ops[j].i32_imm != 0) {
       return false;
     }
   }
@@ -398,7 +399,7 @@ function guarded(seg: ir.Op[]): ir.Op[] {
   let depth = 0;
   for o in seg {
     let k = o.kind_tag;
-    if ((k == 157 || k == 158) && o.i32_imm >= depth) {
+    if ((k == ir.K_BR || k == ir.K_BRIF) && o.i32_imm >= depth) {
       out = out.append(ir.Op { ...o, i32_imm: o.i32_imm + 1 });
     } else {
       out = out.append(o);
@@ -552,11 +553,11 @@ function from_word(class: string): ir.Op[] {
 }
 
 function group_end(ops: ir.Op[], at: i32): i32 {
-  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
+  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != ir.K_STORE_LOCAL && ops[at + 1].kind_tag != ir.K_DROP) {
     return -1;
   }
   let end = at + 2;
-  while (end + 1 < ops.len() && ops[end].kind_tag == 385 && ops[end + 1].kind_tag == 19) {
+  while (end + 1 < ops.len() && ops[end].kind_tag == ir.K_CALL_WORD && ops[end + 1].kind_tag == ir.K_STORE_LOCAL) {
     end += 2;
   }
   return end;
@@ -608,7 +609,7 @@ function read_count(o: ir.Op): i32 {
   if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return 1;
   }
-  if (o.kind_tag == 147) {
+  if (o.kind_tag == ir.K_DYN_DISPATCH) {
     return o.width;
   }
   return 0;
@@ -683,9 +684,9 @@ function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
     next = next.append(next_op(ops, i, open, end_of));
     jump = jump.append(jump_op(ops, i, open, else_of, end_of));
     let k = ops[i].kind_tag;
-    if (k == 152 || k == 153 || k == 154) {
+    if (k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) {
       open = open.append(i);
-    } else if (k == 156) {
+    } else if (k == ir.K_END) {
       open = sub_i32(open, 0, open.len() - 1);
     }
     i += 1;
@@ -695,13 +696,13 @@ function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
 
 function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
   let k = ops[at].kind_tag;
-  if (k == 157) {
+  if (k == ir.K_BR) {
     return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
   }
   if (k == ir.K_RETURN || k == ir.K_EXIT) {
     return ops.len();
   }
-  if (k == 155) {
+  if (k == ir.K_ELSE) {
     return end_of[open[open.len() - 1]];
   }
   return at + 1;
@@ -709,10 +710,10 @@ function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
 
 function jump_op(ops: ir.Op[], at: i32, open: i32[], else_of: i32[], end_of: i32[]): i32 {
   let k = ops[at].kind_tag;
-  if (k == 158) {
+  if (k == ir.K_BRIF) {
     return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
   }
-  if (k != 154) {
+  if (k != ir.K_IF) {
     return -1;
   }
   if (else_of[at] >= 0) {
@@ -726,7 +727,7 @@ function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: 
     return n;
   }
   let opener = open[open.len() - 1 - depth];
-  if (ops[opener].kind_tag == 153) {
+  if (ops[opener].kind_tag == ir.K_LOOP) {
     return opener;
   }
   return end_of[opener];
@@ -795,14 +796,14 @@ function value_class(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): string 
   if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return slot_class(t, r, o.i32_imm);
   }
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == ir.K_CALL_DIRECT) {
     let row = set.rows.find(o.str);
     if (row >= 0) {
       return set.classes[row];
     }
     return "";
   }
-  if (o.kind_tag == ir.K_ARR_MAKE || o.kind_tag == 138 || o.kind_tag == 142 || o.kind_tag == ir.K_STR_CONCAT) {
+  if (o.kind_tag == ir.K_ARR_MAKE || o.kind_tag == ir.K_STRUCT_MAKE || o.kind_tag == ir.K_TUPLE_MAKE || o.kind_tag == ir.K_STR_CONCAT) {
     return "w";
   }
   return "";

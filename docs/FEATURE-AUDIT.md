@@ -379,10 +379,9 @@ everything after them shifted, and the literal then truncated at the length the
 emitter recorded, so it read back as `A`, NUL, `0`. `arm64_gas_data_asciz` also
 had no `\r` case at all, turning a carriage return into the letter `r`.
 
-Each assembler grew a `*_gas_escape` helper decoding one to three octal digits
-the way GAS does, shared by that file's decoders. The two remain hand-mirrored
-copies — the assemblers are deliberately import-free — which is why the arm64
-half is now pinned against the retired Go ARM64 assembler rather than against its twin.
+The assemblers grew a `gas.escape` helper that decodes one to three octal digits
+the way GAS does. Both assemblers import it from `gas.fern`. The arm64 half is
+pinned against the retired Go ARM64 assembler.
 
 Nothing caught it because nothing in the corpus puts a control byte in a
 literal: the three common ones have single-letter escapes, and a high byte like

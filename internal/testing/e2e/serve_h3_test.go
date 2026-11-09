@@ -142,6 +142,9 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
     let n: i32 = i32.parse_i32(req.path.drop(10)).unwrap_or(0);
     return http.chunks(200, (i: i32): Option[u8[]] => piece(n, i));
   }
+  if (req.headers.has("early-data")) {
+    return http.ok("hello " + req.path + " early");
+  }
   return http.ok("hello " + req.path);
 }
 

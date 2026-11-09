@@ -136,10 +136,10 @@ function pred_index(b: ssa.SBlock, id: i32): i32 {
 }
 
 function successor(t: ssa.STerm, which: i32): i32 {
-  if (t.kind_tag == 2 && which == 0) {
+  if (t.kind_tag == ssa.TERM_BR && which == 0) {
     return t.target;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     if (which == 0) {
       return t.t;
     }
@@ -348,10 +348,10 @@ function marked_live(own out: boolean[], live: boolean[], seen: i32[]): boolean[
 
 // The value a terminator reads, or -1.
 function term_use(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;

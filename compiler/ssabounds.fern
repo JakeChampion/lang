@@ -199,10 +199,10 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
     return g;
   }
   let c = g.defs[cond];
-  if (c.kind_tag == 10 && c.str == "!" && c.args.len() == 1) {
+  if (c.kind_tag == ssa.UNARY && c.str == "!" && c.args.len() == 1) {
     return learn(g, c.args[0], !truth, hops - 1);
   }
-  if (c.kind_tag != 9 || c.args.len() != 2) {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2) {
     return g;
   }
   let x = c.args[0];
@@ -322,7 +322,7 @@ function def_of(g: Graph, v: i32): ssa.SInst {
 
 function is_const(g: Graph, v: i32): boolean {
   let r = ssa.copy_root(g.defs, v);
-  return g.defs[r].kind_tag == 1 && g.i32s[r];
+  return g.defs[r].kind_tag == ssa.CONST_INT && g.i32s[r];
 }
 
 function const_value(g: Graph, v: i32): i32 {
@@ -357,7 +357,7 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   if (d.kind_tag == ssasem.with() && d.args.len() == 3) {
     return built_len(g, d.args[0], assume, steps - 1);
   }
-  if (d.kind_tag != 8 || d.args.len() == 0) {
+  if (d.kind_tag != ssa.PHI || d.args.len() == 0) {
     return -1;
   }
   if (assumed(assume, base)) {
@@ -389,7 +389,7 @@ function sized_alloc(name: string): boolean {
 }
 
 function binary(d: ssa.SInst, op: string): boolean {
-  return d.kind_tag == 9 && d.str == op && d.args.len() == 2;
+  return d.kind_tag == ssa.BINARY && d.str == op && d.args.len() == 2;
 }
 
 function assumed(assume: i32[], v: i32): boolean {
@@ -420,7 +420,7 @@ function masked(g: Graph, x: i32): i32 {
 
 function mask_const(g: Graph, v: i32): i32 {
   let d = def_of(g, v);
-  if (d.kind_tag != 1) {
+  if (d.kind_tag != ssa.CONST_INT) {
     let n = folded(g, v, 4);
     if (n == NOT_FOLDED || n < 0i64) {
       return -1;
@@ -473,7 +473,7 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
       return true;
     }
   }
-  if (d.kind_tag == 8 && g.i32s[x]) {
+  if (d.kind_tag == ssa.PHI && g.i32s[x]) {
     if (assumed(assume, x)) {
       return true;
     }
@@ -553,7 +553,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
       return true;
     }
   }
-  if (d.kind_tag == 8 && g.i32s[x]) {
+  if (d.kind_tag == ssa.PHI && g.i32s[x]) {
     if (assumed(assume, x)) {
       return true;
     }
@@ -600,7 +600,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
 function counts_up_from(g: Graph, x: i32, y: i32, assume: i32[], steps: i32): boolean {
   y = ssa.copy_root(g.defs, y);
   let d = g.defs[y];
-  if (steps <= 0 || d.kind_tag != 8 || !g.i32s[y] || d.args.len() == 0 || assumed(assume, x)) {
+  if (steps <= 0 || d.kind_tag != ssa.PHI || !g.i32s[y] || d.args.len() == 0 || assumed(assume, x)) {
     return false;
   }
   let inner = assume.append(x);
@@ -720,7 +720,7 @@ function folded(g: Graph, v: i32, steps: i32): i64 {
     return const_value(g, v) as i64;
   }
   let d = g.defs[v];
-  if (steps <= 0 || d.kind_tag != 9 || d.args.len() != 2 || !g.i32s[v]) {
+  if (steps <= 0 || d.kind_tag != ssa.BINARY || d.args.len() != 2 || !g.i32s[v]) {
     return NOT_FOLDED;
   }
   let a = folded(g, d.args[0], steps - 1);
@@ -874,7 +874,7 @@ function small_const(g: Graph, v: i32): i32 {
   if (is_const(g, r) && const_value(g, r) >= 0) {
     return const_value(g, r);
   }
-  if (d.kind_tag == 1 && g.i64s[r] && d.str.len() > 0 && d.str.len() < 10 && util.is_all_digits(d.str)) {
+  if (d.kind_tag == ssa.CONST_INT && g.i64s[r] && d.str.len() > 0 && d.str.len() < 10 && util.is_all_digits(d.str)) {
     return util.digits_to_i32(d.str);
   }
   return -1;
@@ -1080,18 +1080,18 @@ function offset_of(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
 }
 
 function constant_index(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
-  return defs[v].kind_tag == 1 && ssasem.is_i32(f.values[v]);
+  return defs[v].kind_tag == ssa.CONST_INT && ssasem.is_i32(f.values[v]);
 }
 
 function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   let d = defs[v];
-  if (d.kind_tag != 9 || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
+  if (d.kind_tag != ssa.BINARY || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
     return -1;
   }
   let k = 0;
   while (k < 2) {
     let a = defs[d.args[k]];
-    if (a.kind_tag == 1 && ssasem.is_i32(f.values[d.args[k]])) {
+    if (a.kind_tag == ssa.CONST_INT && ssasem.is_i32(f.values[d.args[k]])) {
       return k;
     }
     k += 1;
@@ -1105,7 +1105,7 @@ function scalar(f: ssasem.Func, v: i32): boolean {
 
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == 35 || k == ssasem.param()) {
+  if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.param()) {
     return true;
   }
   if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
@@ -1115,10 +1115,10 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   let t = f.values[ins.result];
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return ins.str != "/" && ins.str != "%" && scalar(f, ins.result);
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return scalar(f, ins.result);
   }
   if (k == ssasem.cast()) {
@@ -1247,7 +1247,7 @@ function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] 
       continue;
     }
     let d = defs[v];
-    let part: boolean = d.kind_tag == 1 || d.kind_tag == ssasem.cast() || d.kind_tag == 9 && (d.str == "|" || d.str == "<<" || d.str == "+")
+    let part: boolean = d.kind_tag == ssa.CONST_INT || d.kind_tag == ssasem.cast() || d.kind_tag == ssa.BINARY && (d.str == "|" || d.str == "<<" || d.str == "+")
       || d.kind_tag == ssasem.array_get() && d.imm == 1;
     if (part) {
       acc = word_parts(defs, d.args, w, acc.append(v));
@@ -1399,7 +1399,7 @@ function word_width(t: typeinfo.Type): i32 {
 
 function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinfo.Type, acc: i32[]): i32[] {
   let d = defs[v];
-  if (d.kind_tag == 9 && d.str == "|" && typeinfo.spelling(values[v]) == typeinfo.spelling(t) && acc.len() < 8) {
+  if (d.kind_tag == ssa.BINARY && d.str == "|" && typeinfo.spelling(values[v]) == typeinfo.spelling(t) && acc.len() < 8) {
     return or_terms(defs, values, d.args[1], t, or_terms(defs, values, d.args[0], t, acc));
   }
   return acc.append(v);
@@ -1408,7 +1408,7 @@ function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinf
 function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): Option[WordByte] {
   let d = defs[v];
   let shift = 0;
-  if (d.kind_tag == 9 && d.str == "<<") {
+  if (d.kind_tag == ssa.BINARY && d.str == "<<") {
     shift = const_through_cast(defs, d.args[1]);
     if (shift <= 0) {
       return None;
@@ -1425,12 +1425,12 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   let x = g.args[1];
   let off = 0;
   let a = defs[x];
-  if (a.kind_tag == 1) {
+  if (a.kind_tag == ssa.CONST_INT) {
     return Some(WordByte { arr: g.args[0], x: -1, off: a.imm, shift: shift });
   }
-  if (a.kind_tag == 9 && a.str == "+") {
+  if (a.kind_tag == ssa.BINARY && a.str == "+") {
     let c = defs[a.args[1]];
-    if (c.kind_tag == 1) {
+    if (c.kind_tag == ssa.CONST_INT) {
       x = a.args[0];
       off = c.imm;
     }
@@ -1443,14 +1443,14 @@ function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1) {
     d = defs[d.args[0]];
   }
-  if (d.kind_tag == 1 && d.str.len() > 0) {
+  if (d.kind_tag == ssa.CONST_INT && d.str.len() > 0) {
     let n = util.lit_to_i64(d.str);
     if (n > 0i64 && n < 64i64) {
       return n as i32;
     }
     return -1;
   }
-  if (d.kind_tag == 1) {
+  if (d.kind_tag == ssa.CONST_INT) {
     return d.imm;
   }
   return -1;

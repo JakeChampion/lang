@@ -70,20 +70,20 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
       if (active) {
         for op in b.insts {
           let value = Value { kind: 0, identity: 0, words: 0 };
-          if (op.kind_tag == 8) {
+          if (op.kind_tag == ssa.PHI) {
             let pos = util.index_of_i32(b.preds, f.blocks[previous].id);
             value = rows[previous][util.index_of_i32(checked.values, op.args[pos])];
-          } else if (op.kind_tag == 6) {
+          } else if (op.kind_tag == ssa.PARAM) {
             if (op.imm == 0) {
               value = Value { ...value, identity: input };
             } else {
               value = Value { kind: 1, identity: op.imm - 1, words: 0 };
             }
-          } else if (op.kind_tag == 1) {
+          } else if (op.kind_tag == ssa.CONST_INT) {
             value = Value { ...value, identity: op.imm };
-          } else if (op.kind_tag == 7) {
+          } else if (op.kind_tag == ssa.COPY) {
             value = row[util.index_of_i32(checked.values, op.args[0])];
-          } else if (op.kind_tag == 11) {
+          } else if (op.kind_tag == ssa.CALL) {
             for arg in op.args {
               let child = row[util.index_of_i32(checked.values, arg)];
               if (child.kind != 1 || child.identity < 0 || child.identity > 1 || child.words != 0 || balance[child.identity] != 1) {

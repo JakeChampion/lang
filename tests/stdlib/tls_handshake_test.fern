@@ -935,7 +935,7 @@ function test_resumption(): test.TestOutcome {
     }
   }
   let offering = handshake.ClientConfig { ...cc, resume: Some(r) };
-  let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk });
+  let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "" });
   if (resumed_pair(offering, sc, taken) != "resumed example.com http/1.1 ping pong") {
     return test.fail("resumed: " + resumed_pair(offering, sc, taken));
   }
@@ -948,10 +948,10 @@ function test_resumption(): test.TestOutcome {
   }
   let wrong = r.psk;
   wrong = wrong.with(0, (wrong[0] as i32 ^ 1) as u8);
-  if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })) != "51 tls handshake: the peer's Finished does not verify") {
-    return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })));
+  if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "" })) != "51 tls handshake: the peer's Finished does not verify") {
+    return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "" })));
   }
-  return test.assert_eq(resumed_pair(offering, sc, Some(handshake.Resumed { index: 1, psk: r.psk })), "80 tls handshake: resume called out of turn");
+  return test.assert_eq(resumed_pair(offering, sc, Some(handshake.Resumed { index: 1, psk: r.psk, early: false, alpn: "" })), "80 tls handshake: resume called out of turn");
 }
 
 function test_resumption_refusals(): test.TestOutcome {
@@ -1088,7 +1088,7 @@ function test_client_certificate_resumed(): test.TestOutcome {
     Ok(t) => {
       match (ticketed(t.pair)) {
         Ok(r) => {
-          return test.assert_eq(resumed_pair(handshake.ClientConfig { ...cc, resume: Some(r) }, sc, Some(handshake.Resumed { index: 0, psk: r.psk })), "resumed example.com  ping pong");
+          return test.assert_eq(resumed_pair(handshake.ClientConfig { ...cc, resume: Some(r) }, sc, Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "" })), "resumed example.com  ping pong");
         },
         Err(e) => {
           return test.fail(e.message());
@@ -1192,6 +1192,67 @@ function cat_events(a: handshake.Event[], b: handshake.Event[]): handshake.Event
     out = out.append(e);
   }
   return out;
+}
+
+function quic_resumed(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): Result[QuicPair, handshake.HandshakeError] {
+  let start = handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(4, handshake.server_entropy(sc)))?;
+  let s1 = server.read_crypto(0, crypto_at(start.events, 0))?;
+  if (event_names(s1.events) != " resume") {
+    return Err(handshake.Misuse("resume event:" + event_names(s1.events)));
+  }
+  let s2 = s1.server.resume(answer)?;
+  let c1 = start.client.read_crypto(0, crypto_at(s2.events, 0))?;
+  let c2 = c1.client.read_crypto(1, crypto_at(s2.events, 1))?;
+  let s3 = s2.server.read_crypto(1, crypto_at(c2.events, 1))?;
+  if (!c2.client.connected() || !s3.server.connected()) {
+    return Err(handshake.Misuse("not connected"));
+  }
+  let ce = cat_events(cat_events(start.events, c1.events), c2.events);
+  let se = cat_events(cat_events(s1.events, s2.events), s3.events);
+  return Ok(QuicPair { client: c2.client, server: s3.server, client_events: ce, server_events: se, output: 0 });
+}
+
+// A QUIC client resuming with a ticket that allows early data derives the
+// early write secret as it sends its ClientHello, and a server that takes
+// the early data derives the same read secret. A server that does not take
+// early data, a ticket that does not allow it, and another ALPN each reject
+// it, and a client that does not ask offers none.
+function test_quic_early_data(): test.TestOutcome {
+  let cc = quic_client(["h3"], [transport_parameters([1 as u8])]);
+  let sc = handshake.ServerConfig { ...quic_server(["h3"], [transport_parameters([9 as u8])]), early_data: true };
+  let Ok(first) = quic_between(cc, sc) else {
+    return test.fail("the first handshake failed");
+  };
+  let t = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 1 as u32, nonce: [0 as u8], ticket: "early-1".bytes(), extensions: [message.ext_early_data_max(0xffffffff as u32)] };
+  let Ok(st) = first.server.ticket(t) else {
+    return test.fail("ticket");
+  };
+  let Ok(ct) = first.client.read_crypto(2, crypto_at(st.events, 2)) else {
+    return test.fail("the client refused the ticket");
+  };
+  let Ok(psk) = ct.client.resumption_psk(t.nonce) else {
+    return test.fail("psk");
+  };
+  let r = handshake.Resumption { identity: t.ticket, psk: psk, suite: ct.client.cipher_suite(), obfuscated_age: 2 as u32 };
+  let asking = handshake.ClientConfig { ...cc, resume: Some(r), early_data: true };
+  let allowed = handshake.Resumed { index: 0, psk: psk, early: true, alpn: "h3" };
+  let cases: (handshake.ClientConfig, handshake.ServerConfig, handshake.Resumed, string)[] = [(asking, sc, allowed, "taken"), (asking, handshake.ServerConfig { ...sc, early_data: false }, allowed, "server"), (asking, sc, handshake.Resumed { ...allowed, early: false }, "ticket"), (asking, sc, handshake.Resumed { ...allowed, alpn: "h2" }, "alpn"), (handshake.ClientConfig { ...asking, early_data: false }, sc, allowed, "unasked")];
+  let line = "";
+  for (c, s, answer, name) in cases {
+    match (quic_resumed(c, s, Some(answer))) {
+      Ok(p) => {
+        let wrote = secret_at(p.client_events, handshake.EARLY_LEVEL, true);
+        let read = secret_at(p.server_events, handshake.EARLY_LEVEL, false);
+        let same = wrote.len() == 32 && hex.encode(wrote) == hex.encode(read);
+        line = line + name + " " + p.client.early_state().to_string() + " " + p.server.early_accepted().to_string() + " " + same.to_string() + " " + read.len().to_string() + "; ";
+      },
+      Err(e) => {
+        line = line + name + " " + e.message() + "; ";
+      }
+    }
+  }
+  return test.assert_eq(line, "taken 2 true true 32; server 3 false false 0; ticket 3 false false 0; alpn 3 false false 0; unasked 0 false false 0; ");
 }
 
 function test_quic_handshake(): test.TestOutcome {
@@ -1321,6 +1382,7 @@ function main(): i32 {
   r = r.it("client certificate", test_client_certificate);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
   r = r.it("the handshake under QUIC", test_quic_handshake);
+  r = r.it("early data under QUIC", test_quic_early_data);
   r = r.it("QUIC refusals", test_quic_refusals);
   return r.finish();
 }

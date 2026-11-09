@@ -38,6 +38,7 @@ import "./semreach";
 import "./flatten";
 import "./treeshake";
 import "std/envflag";
+import "std/string";
 
 pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32, dropped: boolean }
 
@@ -94,60 +95,12 @@ struct Value { s: State, id: i32 }
 
 struct Narrowing { id: i32, scrut: i32, member: string }
 
-function t_i32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
-}
-
-function t_u8(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
-}
-
-function t_u32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
-}
-
-function t_u64(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false, polymorphic: false };
-}
-
-function t_i64(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
-}
-
-function t_usize(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
-}
-
-function t_bool(): typeinfo.Type {
-  return typeinfo.TypeBool { tag: 0 };
-}
-
-function t_string(): typeinfo.Type {
-  return typeinfo.TypeString { tag: 0 };
-}
-
-function t_str(): typeinfo.Type {
-  return typeinfo.TypeString { tag: 1 };
-}
-
-function t_f64(): typeinfo.Type {
-  return typeinfo.TypeFloat { width: 64, polymorphic: false };
-}
-
-function t_f32(): typeinfo.Type {
-  return typeinfo.TypeFloat { width: 32, polymorphic: false };
-}
-
-function t_void(): typeinfo.Type {
-  return typeinfo.TypeVoid { tag: 0 };
-}
-
 function is_i32(t: typeinfo.Type): boolean {
-  return semtypes.equal(t, t_i32());
+  return semtypes.equal(t, typeinfo.t_i32());
 }
 
 function is_bool(t: typeinfo.Type): boolean {
-  return semtypes.equal(t, t_bool());
+  return semtypes.equal(t, typeinfo.t_bool());
 }
 
 function is_void(t: typeinfo.Type): boolean {
@@ -778,25 +731,25 @@ function integer_literal(text: string): boolean {
 
 function literal_type(suffix: string): typeinfo.Type {
   if (suffix == "u8") {
-    return t_u8();
+    return typeinfo.t_u8();
   }
   if (suffix == "char") {
     return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
   }
   if (suffix == "u32") {
-    return t_u32();
+    return typeinfo.t_u32();
   }
   if (suffix == "i64") {
-    return t_i64();
+    return typeinfo.t_i64();
   }
   if (suffix == "u64") {
-    return t_u64();
+    return typeinfo.t_u64();
   }
   if (suffix == "usize") {
-    return t_usize();
+    return typeinfo.t_usize();
   }
   if (suffix == "" || suffix == "i32") {
-    return t_i32();
+    return typeinfo.t_i32();
   }
   return typeinfo.unchecked();
 }
@@ -809,14 +762,14 @@ function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Val
     }
   }
   if (narrow) {
-    return define(s, ssa.CONST_INT, [], 0, n.text, t_f32());
+    return define(s, ssa.CONST_INT, [], 0, n.text, typeinfo.t_f32());
   }
-  return define(s, ssa.CONST_INT, [], 0, n.text, t_f64());
+  return define(s, ssa.CONST_INT, [], 0, n.text, typeinfo.t_f64());
 }
 
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (parser.is_unit_literal(n)) {
-    return define(s, ssa.CONST_INT, [], 0, "", t_void());
+    return define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_void());
   }
   if (n.is_float || n.suffix == "" && ssasem.is_float(expected)) {
     return float_number(n, s, expected);
@@ -828,7 +781,7 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (n.suffix == "" && ssasem.is_integer(expected)) {
     ty = expected;
   } else if (n.suffix == "" && parser.literal_is_i64(n.text)) {
-    ty = t_i64();
+    ty = typeinfo.t_i64();
   }
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "unsupported literal width");
@@ -1187,7 +1140,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
   if (container.s.ok && semtypes.is_env(container.s.values[container.id])) {
     return environment_read(ix, container.id, container.s);
   }
-  let at = expr(ix.index, container.s, t_i32());
+  let at = expr(ix.index, container.s, typeinfo.t_i32());
   if (!at.s.ok) {
     return at;
   }
@@ -1201,7 +1154,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
     unchecked = 1;
   }
   if (ssasem.is_text(s.values[container.id])) {
-    return define(s, ssasem.str_index(), [container.id, at.id], unchecked, "", t_u8());
+    return define(s, ssasem.str_index(), [container.id, at.id], unchecked, "", typeinfo.t_u8());
   }
   let elem = element_type(s.values[container.id]);
   if (!semtypes.concrete(elem, false)) {
@@ -1219,12 +1172,12 @@ function index_operand(v: Value): Value {
   if (!ssasem.is_integer(source)) {
     return refused(s, "array projection contract");
   }
-  let narrowed = define(s, ssasem.cast(), [v.id], 0, "", t_i32());
+  let narrowed = define(s, ssasem.cast(), [v.id], 0, "", typeinfo.t_i32());
   if (ssasem.is_u8(source)) {
     return narrowed;
   }
   let back = define(narrowed.s, ssasem.cast(), [narrowed.id], 0, "", source);
-  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", t_bool());
+  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", typeinfo.t_bool());
   s = fits.s;
   let pred = s.cur.id;
   let hit = s.next_block;
@@ -1233,9 +1186,9 @@ function index_operand(v: Value): Value {
   s = State { ...s, next_block: join + 1 };
   s = terminate(s, t_brif(fits.id, hit, miss));
   s = terminate(open(s, hit, [pred]), t_br(join));
-  let outside = define(open(s, miss, [pred]), 1, [], -1, "", t_i32());
+  let outside = define(open(s, miss, [pred]), 1, [], -1, "", typeinfo.t_i32());
   s = terminate(outside.s, t_br(join));
-  return define(open(s, join, [hit, miss]), 8, [narrowed.id, outside.id], 0, "", t_i32());
+  return define(open(s, join, [hit, miss]), 8, [narrowed.id, outside.id], 0, "", typeinfo.t_i32());
 }
 
 struct SliceTree { s: State, preds: i32[] }
@@ -1250,20 +1203,20 @@ function slice_probe(t: SliceTree, src: i32, at: i32, len: i32, sink: i32): Slic
   let ok = lead + 1;
   s = State { ...s, next_block: ok + 1 };
 
-  let zero = define(s, ssa.CONST_INT, [], 0, "", t_i32());
-  let after_start = define(zero.s, ssa.BINARY, [at, zero.id], 0, ">", t_bool());
+  let zero = define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_i32());
+  let after_start = define(zero.s, ssa.BINARY, [at, zero.id], 0, ">", typeinfo.t_bool());
   s = terminate(after_start.s, t_brif(after_start.id, below, ok));
 
-  let inside = define(open(s, below, [interior]), 9, [at, len], 0, "<", t_bool());
+  let inside = define(open(s, below, [interior]), 9, [at, len], 0, "<", typeinfo.t_bool());
   s = terminate(inside.s, t_brif(inside.id, byte, ok));
 
-  let b = define(open(s, byte, [below]), ssasem.str_index(), [src, at], 0, "", t_u8());
-  let low = define(b.s, ssa.CONST_INT, [], 128, "", t_u8());
-  let ascii = define(low.s, ssa.BINARY, [b.id, low.id], 0, "<", t_bool());
+  let b = define(open(s, byte, [below]), ssasem.str_index(), [src, at], 0, "", typeinfo.t_u8());
+  let low = define(b.s, ssa.CONST_INT, [], 128, "", typeinfo.t_u8());
+  let ascii = define(low.s, ssa.BINARY, [b.id, low.id], 0, "<", typeinfo.t_bool());
   s = terminate(ascii.s, t_brif(ascii.id, ok, lead));
 
-  let first = define(open(s, lead, [byte]), 1, [], 192, "", t_u8());
-  let starts = define(first.s, ssa.BINARY, [b.id, first.id], 0, ">=", t_bool());
+  let first = define(open(s, lead, [byte]), 1, [], 192, "", typeinfo.t_u8());
+  let starts = define(first.s, ssa.BINARY, [b.id, first.id], 0, ">=", typeinfo.t_bool());
   s = terminate(starts.s, t_brif(starts.id, ok, sink));
 
   return SliceTree { s: open(s, ok, [interior, below, byte, lead]), preds: preds.append(lead) };
@@ -1275,20 +1228,20 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
   let from = s.cur.id;
   let next = s.next_block;
   s = State { ...s, next_block: next + 1 };
-  let held = define(s, ssa.BINARY, [left, right], 0, op, t_bool());
+  let held = define(s, ssa.BINARY, [left, right], 0, op, typeinfo.t_bool());
   s = terminate(held.s, t_brif(held.id, next, sink));
   return SliceTree { s: open(s, next, [from]), preds: preds.append(from) };
 }
 
 function array_slice(sl: ast.ExprSlice, src: i32, elem: typeinfo.Type, s: State): Value {
-  let lo = expr(sl.start, s, t_i32());
+  let lo = expr(sl.start, s, typeinfo.t_i32());
   s = lo.s;
   if (!s.ok) {
     return lo;
   }
-  let hi = define(s, ssasem.length(), [src], 0, "", t_i32());
+  let hi = define(s, ssasem.length(), [src], 0, "", typeinfo.t_i32());
   if (!sl.open_end) {
-    hi = expr(sl.end, s, t_i32());
+    hi = expr(sl.end, s, typeinfo.t_i32());
   }
   s = hi.s;
   if (!s.ok) {
@@ -1320,19 +1273,19 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   let Some(shape) = literal_payloads(s, whole, "Some", layout) else {
     return refused(s, "unsupported slice result");
   };
-  if (shape.types.len() != 1 || !semtypes.equal(shape.types[0], t_str())) {
+  if (shape.types.len() != 1 || !semtypes.equal(shape.types[0], typeinfo.t_str())) {
     return refused(s, "unsupported slice result");
   }
-  let len = define(s, ssasem.length(), [src.id], 0, "", t_i32());
+  let len = define(s, ssasem.length(), [src.id], 0, "", typeinfo.t_i32());
   s = len.s;
-  let lo = expr(sl.start, s, t_i32());
+  let lo = expr(sl.start, s, typeinfo.t_i32());
   s = lo.s;
   if (!s.ok) {
     return lo;
   }
   let hi = len.id;
   if (!sl.open_end) {
-    let end = expr(sl.end, s, t_i32());
+    let end = expr(sl.end, s, typeinfo.t_i32());
     s = end.s;
     if (!s.ok) {
       return end;
@@ -1346,7 +1299,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   let sink = s.next_block;
   let join = sink + 1;
   s = State { ...s, next_block: join + 1 };
-  let floor = define(s, ssa.CONST_INT, [], 0, "", t_i32());
+  let floor = define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_i32());
   s = floor.s;
 
   let t = SliceTree { s: s, preds: [] };
@@ -1358,7 +1311,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   s = t.s;
   let sink_preds = t.preds;
 
-  let view = define(s, ssasem.slice(), [src.id, lo.id, hi], 0, "", t_str());
+  let view = define(s, ssasem.slice(), [src.id, lo.id, hi], 0, "", typeinfo.t_str());
   let some = define(view.s, ssasem.variant_new(), [view.id], 0, "Some", whole);
   let from_some = some.s.cur.id;
   s = terminate(some.s, t_br(join));
@@ -1444,7 +1397,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     return container;
   }
   if (fa.field == "fd" && semtypes.is_fd_handle(s.values[container.id])) {
-    return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
+    return define(s, ssasem.cast(), [container.id], 0, "", typeinfo.t_i32());
   }
   let Some(sig) = record_sig(s.values[container.id], s) else {
     return refused(s, "unsupported projection");
@@ -1464,7 +1417,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
   let i = 0;
   while (i < sl.field_values.len()) {
     let slot = field_slot(sig, sl.field_names[i]);
-    if (slot < 0 || index_of_i32(at, slot) >= 0) {
+    if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
       return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] };
     }
     let v = expr(sl.field_values[i], s, sig.field_types[slot]);
@@ -1492,7 +1445,7 @@ function place_fields(w: Written, sig: checker.StructSig, base: i32): Written {
   let ids: i32[] = [];
   let d = 0;
   while (d < sig.field_names.len()) {
-    let found = index_of_i32(w.at, d);
+    let found = util.index_of_i32(w.at, d);
     if (found >= 0) {
       ids = ids.append(w.ids[found]);
     } else {
@@ -1544,17 +1497,6 @@ function field_slot(sig: checker.StructSig, name: string): i32 {
   return -1;
 }
 
-function index_of_i32(xs: i32[], v: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == v) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sl.has_base) {
     return record_update(e, sl, s);
@@ -1589,7 +1531,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
   };
   let args = written;
   if (shape.unit && written.len() == 1 && is_void(checked(written[0], s))) {
-    let unit = expr(written[0], s, t_void());
+    let unit = expr(written[0], s, typeinfo.t_void());
     s = unit.s;
     if (!s.ok) {
       return unit;
@@ -1839,7 +1781,7 @@ function wide_at(s: State, at: i32): Option[Wide] {
 }
 
 function widened_constant(s: State, src: ssa.SInst, cast: ssa.SInst): Option[Wide] {
-  if (src.result != cast.args[0] || src.kind_tag != 1 || src.args.len() != 0) {
+  if (src.result != cast.args[0] || src.kind_tag != ssa.CONST_INT || src.args.len() != 0) {
     return None;
   }
   if (src.str == "" && ssasem.is_i32(s.values[src.result])) {
@@ -1899,7 +1841,7 @@ function literal_operand(e: ast.Expr): boolean {
       return !n.is_float;
     },
     ast.ExprUnary(u) => {
-      return (u.op == "-" || util.str_has_prefix(u.op, "as_")) && literal_operand(u.operand);
+      return (u.op == "-" || u.op.starts_with("as_")) && literal_operand(u.operand);
     },
     ast.ExprBinary(b) => {
       return (b.op == "+" || b.op == "-" || b.op == "*") && literal_operand(b.left) && literal_operand(b.right);
@@ -2033,19 +1975,19 @@ function composite_compare(b: ast.ExprBinary, left: i32, key: string, s: State):
     return call;
   }
   if (comparison_verb(b.op) == "eq") {
-    if (!semtypes.equal(s.values[call.id], t_bool())) {
+    if (!semtypes.equal(s.values[call.id], typeinfo.t_bool())) {
       return refused(s, "operator contract: " + key + " answers " + typeinfo.spelling(s.values[call.id]));
     }
     if (b.op == "==") {
       return call;
     }
-    return define(s, ssa.UNARY, [call.id], 0, "!", t_bool());
+    return define(s, ssa.UNARY, [call.id], 0, "!", typeinfo.t_bool());
   }
   if (!ssasem.is_integer(s.values[call.id])) {
     return refused(s, "operator contract: " + key + " answers " + typeinfo.spelling(s.values[call.id]));
   }
   let zero = define(s, ssa.CONST_INT, [], 0, "", s.values[call.id]);
-  return define(zero.s, ssa.BINARY, [call.id, zero.id], 0, b.op, t_bool());
+  return define(zero.s, ssa.BINARY, [call.id, zero.id], 0, b.op, typeinfo.t_bool());
 }
 
 function shift_count(op: string, count: i32, s: State, value: typeinfo.Type): Value {
@@ -2222,7 +2164,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   let good = s.next_block;
   let leave = good + 1;
   s = State { ...s, next_block: leave + 1 };
-  let test = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], t_bool());
+  let test = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], typeinfo.t_bool());
   s = terminate(test.s, t_brif(test.id, good, leave));
 
   let entry = s;
@@ -2253,7 +2195,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope, replaying: entry.replaying };
 
   if (unit_good) {
-    return define(open(s, good, [pred]), 1, [], 0, "", t_void());
+    return define(open(s, good, [pred]), 1, [], 0, "", typeinfo.t_void());
   }
   return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
 }
@@ -2320,7 +2262,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   let miss = hit + 1;
   let join = hit + 2;
   s = State { ...s, next_block: join + 1 };
-  let test = define(s, ssasem.dyn_is(), [v.id], 0, target, t_bool());
+  let test = define(s, ssasem.dyn_is(), [v.id], 0, target, typeinfo.t_bool());
   s = terminate(test.s, t_brif(test.id, hit, miss));
 
   let narrowed = define(open(s, hit, [pred]), ssasem.dyn_as(), [v.id], 0, target, some.types[0]);
@@ -2344,7 +2286,7 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
   let names = variant_names(s, whole, semrecords.layout_option());
   let t = define(s, ssasem.cast(), [v.id], 0, "", target);
   let back = define(t.s, ssasem.cast(), [t.id], 0, "", source);
-  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", t_bool());
+  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", typeinfo.t_bool());
   s = fits.s;
   let signed: i32 = -1;
   if (!ssasem.is_unsigned_int(source) && ssasem.is_unsigned_int(target)) {
@@ -2374,7 +2316,7 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
       text = "0";
     }
     let zero = define(open(s, sign, [pred]), 1, [], 0, text, st);
-    let nonneg = define(zero.s, ssa.BINARY, [signed, zero.id], 0, ">=", t_bool());
+    let nonneg = define(zero.s, ssa.BINARY, [signed, zero.id], 0, ">=", typeinfo.t_bool());
     hit_pred = nonneg.s.cur.id;
     miss_preds = miss_preds.append(hit_pred);
     s = terminate(nonneg.s, t_brif(nonneg.id, hit, miss));
@@ -2462,7 +2404,7 @@ function cond(e: ast.Expr, s: State, yes: i32, no: i32): Cond {
       return Cond { s: n.s, yes: n.no, no: n.yes };
     }
   }
-  let v = expr(e, s, t_bool());
+  let v = expr(e, s, typeinfo.t_bool());
   s = v.s;
   if (!s.ok) {
     return Cond { s: s, yes: [], no: [] };
@@ -2483,7 +2425,7 @@ function concat_ids(a: i32[], b: i32[]): i32[] {
 }
 
 function logical(b: ast.ExprBinary, s: State): Value {
-  let left = expr(b.left, s, t_bool());
+  let left = expr(b.left, s, typeinfo.t_bool());
   s = left.s;
   if (!s.ok) {
     return left;
@@ -2501,7 +2443,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
   } else {
     s = terminate(s, t_brif(left.id, skip, rhs));
   }
-  let right = expr(b.right, open(s, rhs, [pred]), t_bool());
+  let right = expr(b.right, open(s, rhs, [pred]), typeinfo.t_bool());
   s = right.s;
   if (!s.ok) {
     return right;
@@ -2511,9 +2453,9 @@ function logical(b: ast.ExprBinary, s: State): Value {
   }
   let rhs_end = s.cur.id;
   s = terminate(s, t_br(join));
-  let short = define(open(s, skip, [pred]), 2, [], boolean_value(b.op == "||"), "", t_bool());
+  let short = define(open(s, skip, [pred]), 2, [], boolean_value(b.op == "||"), "", typeinfo.t_bool());
   s = terminate(short.s, t_br(join));
-  return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", t_bool());
+  return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", typeinfo.t_bool());
 }
 
 function builtin_length(recv: i32, s: State): Value {
@@ -2525,7 +2467,7 @@ function builtin_length(recv: i32, s: State): Value {
   if (!sized) {
     return refused(s, "unsupported call target");
   }
-  return define(s, ssasem.length(), [recv], 0, "", t_i32());
+  return define(s, ssasem.length(), [recv], 0, "", typeinfo.t_i32());
 }
 
 function builtin_append(c: ast.ExprCall, recv: i32, s: State): Value {
@@ -2552,12 +2494,12 @@ function builtin_with(c: ast.ExprCall, recv: i32, s: State): Value {
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "unsupported call target");
   }
-  let at = expr(c.args[0], s, t_i32());
+  let at = expr(c.args[0], s, typeinfo.t_i32());
   s = at.s;
   if (!s.ok) {
     return at;
   }
-  if (!semtypes.equal(s.values[at.id], t_i32())) {
+  if (!semtypes.equal(s.values[at.id], typeinfo.t_i32())) {
     return refused(s, "with index type");
   }
   let v = expr(c.args[1], s, elem);
@@ -2577,11 +2519,11 @@ function builtin_truncate(c: ast.ExprCall, recv: i32, s: State): Value {
   if (!semtypes.concrete(element_type(t), false)) {
     return refused(s, "unsupported call target");
   }
-  let n = expr(c.args[0], s, t_i32());
+  let n = expr(c.args[0], s, typeinfo.t_i32());
   if (!n.s.ok) {
     return n;
   }
-  if (!semtypes.equal(n.s.values[n.id], t_i32())) {
+  if (!semtypes.equal(n.s.values[n.id], typeinfo.t_i32())) {
     return refused(n.s, "truncate length type");
   }
   return define(n.s, ssasem.truncate(), [recv, n.id], 0, "", t);
@@ -2595,7 +2537,7 @@ function is_string_array(t: typeinfo.Type): boolean {
 }
 
 function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  if (c.args.len() != 2 || !util.str_has_prefix(name, "__arrm_concat__")) {
+  if (c.args.len() != 2 || !name.starts_with("__arrm_concat__")) {
     return false;
   }
   let t = checked(c.args[0], s);
@@ -2640,7 +2582,7 @@ function folded_join(c: ast.ExprCall, s: State): Value {
 }
 
 function builtin_join(c: ast.ExprCall, recv: i32, s: State): Value {
-  let sep = expr(c.args[0], s, t_string());
+  let sep = expr(c.args[0], s, typeinfo.t_string());
   s = sep.s;
   if (!s.ok) {
     return sep;
@@ -2648,7 +2590,7 @@ function builtin_join(c: ast.ExprCall, recv: i32, s: State): Value {
   if (!ssasem.is_text(s.values[sep.id])) {
     return refused(s, "join separator type");
   }
-  return define(s, ssasem.arr_join(), [recv, sep.id], 0, "", t_string());
+  return define(s, ssasem.arr_join(), [recv, sep.id], 0, "", typeinfo.t_string());
 }
 
 function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
@@ -2673,7 +2615,7 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Sta
   if (!semtypes.equal(s.values[v.id], elem)) {
     return refused(s, "cell element type");
   }
-  return define(s, ssasem.cell_set(), [recv, v.id], 0, "", t_void());
+  return define(s, ssasem.cell_set(), [recv, v.id], 0, "", typeinfo.t_void());
 }
 
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State): Value {
@@ -2682,13 +2624,13 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
     return refused(s, "unsupported map shape: " + typeinfo.spelling(t));
   }
   if (fa.field == "len" && c.args.len() == 0) {
-    return define(s, ssasem.map_len(), [recv], 0, "", t_i32());
+    return define(s, ssasem.map_len(), [recv], 0, "", typeinfo.t_i32());
   }
   if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
     return map_write(c, recv, s, t);
   }
   if (fa.field == "contains" && c.args.len() == 1) {
-    return map_read(c, recv, s, t, ssasem.map_has(), t_bool());
+    return map_read(c, recv, s, t, ssasem.map_has(), typeinfo.t_bool());
   }
   if (fa.field == "get_or" && c.args.len() == 2) {
     return map_read(c, recv, s, t, ssasem.map_get_or(), ssasem.map_value(t));
@@ -2741,7 +2683,7 @@ function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean)
       return refused(k.s, "view element escapes its source");
     }
     if (stored) {
-      k = lend(k, t_string(), ssaunits.borrow_mode(), true);
+      k = lend(k, typeinfo.t_string(), ssaunits.borrow_mode(), true);
     }
     return k;
   }
@@ -2898,11 +2840,11 @@ function boolean_text(recv: i32, s: State): Value {
   let join = yes + 2;
   s = State { ...s, next_block: join + 1 };
   s = terminate(s, t_brif(recv, yes, no));
-  let t = define(open(s, yes, [pred]), 5, [], 0, "true", t_string());
+  let t = define(open(s, yes, [pred]), 5, [], 0, "true", typeinfo.t_string());
   s = terminate(t.s, t_br(join));
-  let f = define(open(s, no, [pred]), 5, [], 0, "false", t_string());
+  let f = define(open(s, no, [pred]), 5, [], 0, "false", typeinfo.t_string());
   s = terminate(f.s, t_br(join));
-  return define(open(s, join, [yes, no]), 8, [t.id, f.id], 0, "", t_string());
+  return define(open(s, join, [yes, no]), 8, [t.id, f.id], 0, "", typeinfo.t_string());
 }
 
 function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
@@ -2920,9 +2862,9 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: St
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv])) {
     if (fa.field == "as_bytes") {
-      return define(s, ssasem.str_byte_view(), [recv], 0, "", typeinfo.TypeArray { elem: t_u8(), view: true });
+      return define(s, ssasem.str_byte_view(), [recv], 0, "", typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true });
     }
-    return define(s, ssasem.str_bytes(), [recv], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
+    return define(s, ssasem.str_bytes(), [recv], 0, "", typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -3066,14 +3008,14 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if (arms.len() == 0 && !any_implementer(s.impls, traits)) {
     let ty = checked(c, s);
     if (statement) {
-      ty = t_void();
+      ty = typeinfo.t_void();
     }
     return unreachable_value(terminate(s, t_unreachable()), ty);
   }
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
   }
-  let shape = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
+  let shape = ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.t_void() };
   for arm in arms {
     let at = ssasem.find_contract(s.contracts, arm);
     if (at < 0) {
@@ -3185,7 +3127,7 @@ function map_construction(e: ast.Expr, c: ast.ExprCall, s: State, expected: type
     }
     return refused(s, "unsupported map shape: " + typeinfo.spelling(expected));
   }
-  let cap = expr(c.args[0], s, t_i32());
+  let cap = expr(c.args[0], s, typeinfo.t_i32());
   s = cap.s;
   if (!s.ok) {
     return cap;
@@ -3201,7 +3143,7 @@ function string_slice(c: ast.ExprCall, s: State): Value {
   if (!p.hi.s.ok) {
     return p.hi;
   }
-  return define(p.hi.s, ssasem.slice(), [p.src, p.lo, p.hi.id], 0, "", t_str());
+  return define(p.hi.s, ssasem.slice(), [p.src, p.lo, p.hi.id], 0, "", typeinfo.t_str());
 }
 
 struct SliceParts { src: i32, lo: i32, hi: Value }
@@ -3215,12 +3157,12 @@ function slice_parts(c: ast.ExprCall, s: State): SliceParts {
   if (!ssasem.is_text(s.values[src.id])) {
     return SliceParts { src: -1, lo: -1, hi: refused(s, "unsupported call target") };
   }
-  let lo = expr(c.args[1], s, t_i32());
+  let lo = expr(c.args[1], s, typeinfo.t_i32());
   s = lo.s;
   if (!s.ok) {
     return SliceParts { src: -1, lo: -1, hi: lo };
   }
-  let hi = expr(c.args[2], s, t_i32());
+  let hi = expr(c.args[2], s, typeinfo.t_i32());
   s = hi.s;
   if (!s.ok) {
     return SliceParts { src: -1, lo: -1, hi: hi };
@@ -3236,7 +3178,7 @@ function range_append(left: i32, c: ast.ExprCall, s: State): Value {
   if (!p.hi.s.ok) {
     return p.hi;
   }
-  return define(p.hi.s, ssasem.append_range(), [left, p.src, p.lo, p.hi.id], 0, "", t_string());
+  return define(p.hi.s, ssasem.append_range(), [left, p.src, p.lo, p.hi.id], 0, "", typeinfo.t_string());
 }
 
 function builtin_slice(e: ast.Expr, s: State): Option[ast.ExprCall] {
@@ -3801,8 +3743,8 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
       if let ast.ExprIdent(id) = copy.callee {
         if (id.name == "__bytes_owned" && copy.args.len() == 1 && lookup(s, id.name) < 0) {
           let contract: ssasem.Contract = ssasem.Contract {
-            name: ssabytes.string_name(), params: [typeinfo.TypeArray { elem: t_u8(), view: true }],
-            modes: [ssaunits.borrow_mode()], result: t_string(),
+            name: ssabytes.string_name(), params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }],
+            modes: [ssaunits.borrow_mode()], result: typeinfo.t_string(),
           };
           return invoke(copy.args, contract, s, ssasem.unbound(), ssasem.unbound());
         }
@@ -3849,7 +3791,7 @@ function socket_from_fd(c: ast.ExprCall, s: State): Value {
   if (c.args.len() != 1) {
     return refused(s, "call arity");
   }
-  let fd = expr(c.args[0], s, t_i32());
+  let fd = expr(c.args[0], s, typeinfo.t_i32());
   if (!fd.s.ok) {
     return fd;
   }
@@ -3885,7 +3827,7 @@ function send_release(c: ast.ExprCall, s: State): Value {
   if (!ssasem.reference(t)) {
     return refused(s, "__send_release takes a counted value");
   }
-  return per_type_call(v, ssasem.Contract { name: ssasem.release_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: t_void() });
+  return per_type_call(v, ssasem.Contract { name: ssasem.release_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: typeinfo.t_void() });
 }
 
 // `__send_copy(v)` is a call to the per-type copy helper. The helper borrows
@@ -3918,11 +3860,11 @@ function send_adopt(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
   if (!semtypes.concrete(expected, false)) {
     return refused(s, "__send_adopt needs the declared type of its binding");
   }
-  let v = expr(c.args[0], s, t_usize());
+  let v = expr(c.args[0], s, typeinfo.t_usize());
   if (!v.s.ok) {
     return v;
   }
-  return per_type_call(v, ssasem.Contract { name: ssasem.adopt_helper_name(expected), params: [t_usize()], modes: [ssaunits.value_mode()], result: expected });
+  return per_type_call(v, ssasem.Contract { name: ssasem.adopt_helper_name(expected), params: [typeinfo.t_usize()], modes: [ssaunits.value_mode()], result: expected });
 }
 
 // `__send_root(v)` consumes a value and returns its word. The helper keeps
@@ -3938,7 +3880,7 @@ function send_root(c: ast.ExprCall, s: State): Value {
   if (!ssasem.reference(t)) {
     return refused(s, "__send_root takes a counted value");
   }
-  return per_type_call(v, ssasem.Contract { name: ssasem.root_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: t_usize() });
+  return per_type_call(v, ssasem.Contract { name: ssasem.root_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: typeinfo.t_usize() });
 }
 
 // The builtin exit never returns, so the block it ends has no successor.
@@ -3963,7 +3905,7 @@ function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
   if (!semtypes.equal(xs.s.values[xs.id], arr)) {
     return refused(xs.s, "lane array type");
   }
-  let at = expr(c.args[1], xs.s, t_i32());
+  let at = expr(c.args[1], xs.s, typeinfo.t_i32());
   if (!at.s.ok || !is_i32(at.s.values[at.id])) {
     return refused(at.s, "lane index type");
   }
@@ -4260,7 +4202,7 @@ function string_literal(st: ast.ExprString, s: State, expected: typeinfo.Type): 
   if (ssasem.is_view(expected)) {
     return define(s, ssa.CONST_STR, [], 0, st.value, expected);
   }
-  return define(s, ssa.CONST_STR, [], 0, st.value, t_string());
+  return define(s, ssa.CONST_STR, [], 0, st.value, typeinfo.t_string());
 }
 
 function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
@@ -4269,7 +4211,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return number(n, s, expected);
     },
     ast.ExprBool(b) => {
-      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", t_bool());
+      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", typeinfo.t_bool());
     },
     ast.ExprString(st) => {
       return string_literal(st, s, expected);
@@ -4523,9 +4465,9 @@ function kept_view(v: Value): Value {
 }
 
 function fresh_view(v: Value): Value {
-  let zero = define(v.s, ssa.CONST_INT, [], 0, "", t_i32());
-  let n = define(zero.s, ssasem.length(), [v.id], 0, "", t_i32());
-  return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
+  let zero = define(v.s, ssa.CONST_INT, [], 0, "", typeinfo.t_i32());
+  let n = define(zero.s, ssasem.length(), [v.id], 0, "", typeinfo.t_i32());
+  return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", typeinfo.t_str());
 }
 
 // A phi of views lent from arm-local storage cannot keep that storage alive
@@ -4842,7 +4784,7 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
   }
   if (fields.len() == 0) {
-    let unit = define(s, ssa.CONST_INT, [], 0, "", t_void());
+    let unit = define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_void());
     if (util.index_of_str(unit.s.names, pv.binding) >= 0) {
       return replace(unit.s, pv.binding, unit.id);
     }
@@ -4873,7 +4815,7 @@ function guard_gate(a: ast.MatchArm, s: State, next: i32): Gate {
   if (!a.has_guard) {
     return Gate { s: s, from: -1 };
   }
-  let g = expr(a.guard, s, t_bool());
+  let g = expr(a.guard, s, typeinfo.t_bool());
   s = g.s;
   if (!s.ok) {
     return Gate { s: s, from: -1 };
@@ -4923,7 +4865,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let id = s.next_block;
   let next = id + 1;
   s = State { ...s, next_block: next + 1 };
-  let test = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
+  let test = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, typeinfo.t_bool());
   s = terminate(test.s, t_brif(test.id, id, next));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
   opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
@@ -4992,7 +4934,7 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
     return ScalarGate { s: low.s, hit: [], miss: [] };
   }
   let op: string = if (literal.has_range) { ">=" } else { "==" };
-  let test = define(low.s, ssa.BINARY, [scrut, low.id], 0, op, t_bool());
+  let test = define(low.s, ssa.BINARY, [scrut, low.id], 0, op, typeinfo.t_bool());
   let pred = test.s.cur.id;
   if (!literal.has_range) {
     return ScalarGate { s: terminate(test.s, t_brif(test.id, hit, miss)), hit: [pred], miss: [pred] };
@@ -5004,7 +4946,7 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
     return ScalarGate { s: high.s, hit: [], miss: [] };
   }
   let upper_op: string = if (literal.range_inclusive) { "<=" } else { "<" };
-  let test_high = define(high.s, ssa.BINARY, [scrut, high.id], 0, upper_op, t_bool());
+  let test_high = define(high.s, ssa.BINARY, [scrut, high.id], 0, upper_op, typeinfo.t_bool());
   let upper_pred = test_high.s.cur.id;
   return ScalarGate { s: terminate(test_high.s, t_brif(test_high.id, hit, miss)), hit: [upper_pred], miss: [pred, upper_pred] };
 }
@@ -5407,7 +5349,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   let text = ssasem.is_text(s.values[it]);
   let elem = element_type(s.values[it]);
   if (text) {
-    elem = t_u8();
+    elem = typeinfo.t_u8();
   }
   let vals: i32 = -1;
   let vtype = typeinfo.unchecked();
@@ -5435,7 +5377,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let before = s.names.len();
   let outer = s.scope;
-  let start = define(s, ssa.CONST_INT, [], 0, "", t_i32());
+  let start = define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_i32());
   s = bind(start.s, index_name(), start.id);
 
   let pred = s.cur.id;
@@ -5451,8 +5393,8 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   s = State { ...s, loops: s.loops.append(Loop { label: fo.label, header: header, next: step_id, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
 
   let at = lookup(s, index_name());
-  let n = define(s, ssasem.length(), [it], 0, "", t_i32());
-  let test = define(n.s, ssa.BINARY, [at, n.id], 0, "<", t_bool());
+  let n = define(s, ssasem.length(), [it], 0, "", typeinfo.t_i32());
+  let test = define(n.s, ssa.BINARY, [at, n.id], 0, "<", typeinfo.t_bool());
   s = test.s;
   if (!s.ok) {
     return s;
@@ -5519,8 +5461,8 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
   if (!s.live) {
     return s;
   }
-  let one = define(s, ssa.CONST_INT, [], 1, "", t_i32());
-  let step = define(one.s, ssa.BINARY, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
+  let one = define(s, ssa.CONST_INT, [], 1, "", typeinfo.t_i32());
+  let step = define(one.s, ssa.BINARY, [lookup(one.s, index_name()), one.id], 0, "+", typeinfo.t_i32());
   s = replace(step.s, index_name(), step.id);
   let back = Exit { block: s.cur.id, env: prefix(s.vals, count) };
   s = terminate(s, t_br(header));
@@ -5546,10 +5488,10 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
-    if (parser.is_value_block(c) && is_void(block_type(e, c, s, t_void()))) {
+    if (parser.is_value_block(c) && is_void(block_type(e, c, s, typeinfo.t_void()))) {
       return stmts(parser.vb_body(c), s);
     }
-    return call(e, c, s, true, t_void()).s;
+    return call(e, c, s, true, typeinfo.t_void()).s;
   }
   return expr(e, s, typeinfo.unchecked()).s;
 }
@@ -5602,7 +5544,7 @@ function stmt(st: ast.Stmt, s: State): State {
 }
 
 function line_mark(st: ast.Stmt, s: State): State {
-  let v = define(s, ssa.LINE, [], ast.stmt_line(st), util.i32_to_string(ast.stmt_col(st)), t_void());
+  let v = define(s, ssa.LINE, [], ast.stmt_line(st), util.i32_to_string(ast.stmt_col(st)), typeinfo.t_void());
   return v.s;
 }
 
@@ -5672,10 +5614,10 @@ function mapped_args(args: i32[], map: i32[]): i32[] {
 }
 
 function mapped_term(t: ssa.STerm, map: i32[]): ssa.STerm {
-  if (t.kind_tag == 1 && t.value >= 0) {
+  if (t.kind_tag == ssa.TERM_RET && t.value >= 0) {
     return ssa.STerm { ...t, value: resolve(map, t.value) };
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa.STerm { ...t, cond: resolve(map, t.cond) };
   }
   return t;
@@ -5775,7 +5717,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
+  let f = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5850,7 +5792,7 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
   let (returned, at) = checker.first_returned(fd.body, scope);
   if (parser.bare_return(returned)) {
-    return t_void();
+    return typeinfo.t_void();
   }
   if (calls_synthesised(returned)) {
     return called_synthesised_result(returned, contracts, b);
@@ -5966,7 +5908,7 @@ function synthesised(fd: parser.FuncDecl): boolean {
 }
 
 function synthesised_name(name: string): boolean {
-  return util.str_has_prefix(name, "__lam_") || util.contains(name, "$iife");
+  return name.starts_with("__lam_") || util.contains(name, "$iife");
 }
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
@@ -6030,7 +5972,7 @@ function env_captures(fd: parser.FuncDecl, scope: checker.Scope, template: boole
 function env_type(fd: parser.FuncDecl, scope: checker.Scope, template: boolean, b: ssasem.Binding, name: string): typeinfo.Type {
   let caps = env_captures(fd, scope, template, b);
   if (caps.len() == 0) {
-    return typeinfo.TypeArray { elem: t_i32(), view: false };
+    return typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   }
   return ssasem.env_type(name, caps);
 }
@@ -6062,7 +6004,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6408,7 +6350,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (ssasem.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
-        if (v == n || util.str_has_prefix(v, n + "__")) {
+        if (v == n || v.starts_with(n + "__")) {
           return true;
         }
       }
@@ -6618,7 +6560,7 @@ function fields_of(sig: checker.StructSig, scope: checker.Scope): semrecords.Fie
 }
 
 function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], out: Schemas): Schemas {
-  let fields: semrecords.Field[] = [semrecords.Field { name: "code", ty: t_i32() }];
+  let fields: semrecords.Field[] = [semrecords.Field { name: "code", ty: typeinfo.t_i32() }];
   let i = 0;
   for cap in semtypes.env_captures(t) {
     i += 1;
@@ -6831,7 +6773,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for n in dyn_impl_names(t, s.impls) {
     if (n == "string") {
-      out = out.append(t_string());
+      out = out.append(typeinfo.t_string());
     } else if (checker.union_type_params(s.scope, n).len() > 0 || checker.struct_type_params(s.scope, n).len() > 0) {
       for c in generic_clones(n, s) {
         out = out.append(c);
@@ -6876,13 +6818,13 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
   let prefix = base + "__";
   for sig in s.scope.structs.structs {
     let t: typeinfo.Type = typeinfo.TypeStruct { name: sig.name, args: [] };
-    if (util.str_has_prefix(sig.name, prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
+    if (sig.name.starts_with(prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
       out = out.append(t);
     }
   }
   for u in s.scope.unions.unions {
     let t: typeinfo.Type = typeinfo.TypeUnion { name: u.name, args: [] };
-    if (util.str_has_prefix(u.name, prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) {
+    if (u.name.starts_with(prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) {
       out = out.append(t);
     }
   }
@@ -7156,7 +7098,7 @@ function prebind(s: State): State {
 }
 
 function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): ssasem.Contract {
-  let none = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
+  let none = ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.t_void() };
   let result = result_type(fd, scope, ssasem.unbound(), contracts);
   if (!semtypes.shaped(result, true)) {
     return none;
@@ -7419,26 +7361,26 @@ function handle_contracts(): ssasem.Contract[] {
   let path_flags: i32[] = [ssaunits.borrow_mode(), ssaunits.value_mode()];
   let reader = t_handle("Reader");
   let writer = t_handle("Writer");
-  let done = t_io_result(t_void());
+  let done = t_io_result(typeinfo.t_void());
   let out = handle_metadata_contracts(reader, writer);
   let opens: ssasem.Contract[] = [
     ssasem.Contract { name: "stdin", params: [], modes: [], result: reader },
     ssasem.Contract { name: "stdout", params: [], modes: [], result: writer },
     ssasem.Contract { name: "stderr", params: [], modes: [], result: writer },
-    ssasem.Contract { name: "open_reader", params: [t_string()], modes: path, result: t_io_result(reader) },
-    ssasem.Contract { name: "open_writer", params: [t_string()], modes: path, result: t_io_result(writer) },
-    ssasem.Contract { name: "open_appender", params: [t_string()], modes: path, result: t_io_result(writer) },
-    ssasem.Contract { name: "open_exclusive", params: [t_string()], modes: path, result: t_io_result(writer) },
-    ssasem.Contract { name: "open_reader_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(reader) },
-    ssasem.Contract { name: "open_writer_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(writer) },
-    ssasem.Contract { name: "Reader.read_chunk", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
+    ssasem.Contract { name: "open_reader", params: [typeinfo.t_string()], modes: path, result: t_io_result(reader) },
+    ssasem.Contract { name: "open_writer", params: [typeinfo.t_string()], modes: path, result: t_io_result(writer) },
+    ssasem.Contract { name: "open_appender", params: [typeinfo.t_string()], modes: path, result: t_io_result(writer) },
+    ssasem.Contract { name: "open_exclusive", params: [typeinfo.t_string()], modes: path, result: t_io_result(writer) },
+    ssasem.Contract { name: "open_reader_with", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: path_flags, result: t_io_result(reader) },
+    ssasem.Contract { name: "open_writer_with", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: path_flags, result: t_io_result(writer) },
+    ssasem.Contract { name: "Reader.read_chunk", params: [reader, typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
     ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: done },
     ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: done },
-    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
-    ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(t_i64()) },
-    ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
-    ssasem.Contract { name: "Writer.splice_forever", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
+    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
+    ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(typeinfo.t_i64()) },
+    ssasem.Contract { name: "Writer.write", params: [writer, typeinfo.t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
+    ssasem.Contract { name: "Writer.splice_forever", params: [writer, typeinfo.t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
   ];
   for c in opens {
     out = out.append(c);
@@ -7448,8 +7390,8 @@ function handle_contracts(): ssasem.Contract[] {
 
 function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type): ssasem.Contract[] {
   let v = ssaunits.value_mode();
-  let done = t_io_result(t_void());
-  let seek: typeinfo.Type[] = [t_i64(), t_i32()];
+  let done = t_io_result(typeinfo.t_void());
+  let seek: typeinfo.Type[] = [typeinfo.t_i64(), typeinfo.t_i32()];
   let out: ssasem.Contract[] = [];
   let handles: typeinfo.Type[] = [reader, writer];
   let owners: string[] = ["Reader", "Writer"];
@@ -7458,62 +7400,62 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type)
     let h = handles[i];
     let o = owners[i];
     out = out.append(ssasem.Contract { name: o + ".stat", params: [h], modes: [v], result: t_io_result(t_file_stat()) });
-    out = out.append(ssasem.Contract { name: o + ".flags", params: [h], modes: [v], result: t_io_result(t_i64()) });
-    out = out.append(ssasem.Contract { name: o + ".seek", params: [h, seek[0], seek[1]], modes: [v, v, v], result: t_io_result(t_i64()) });
+    out = out.append(ssasem.Contract { name: o + ".flags", params: [h], modes: [v], result: t_io_result(typeinfo.t_i64()) });
+    out = out.append(ssasem.Contract { name: o + ".seek", params: [h, seek[0], seek[1]], modes: [v, v, v], result: t_io_result(typeinfo.t_i64()) });
     out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: done });
     out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: done });
     out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: done });
-    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, t_i64(), t_i64()], modes: [v, v, v], result: done });
-    out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: t_bool() });
-    out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: done });
+    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v], result: done });
+    out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: typeinfo.t_bool() });
+    out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, typeinfo.t_i32()], modes: [v, v], result: done });
     i += 1;
   }
-  out = out.append(ssasem.Contract { name: "Reader.splice_to", params: [reader, writer, t_i32()], modes: [v, v, v], result: t_io_result(t_i64()) });
-  out = out.append(ssasem.Contract { name: "Reader.copy_range_to", params: [reader, writer, t_i32()], modes: [v, v, v], result: t_io_result(t_i64()) });
+  out = out.append(ssasem.Contract { name: "Reader.splice_to", params: [reader, writer, typeinfo.t_i32()], modes: [v, v, v], result: t_io_result(typeinfo.t_i64()) });
+  out = out.append(ssasem.Contract { name: "Reader.copy_range_to", params: [reader, writer, typeinfo.t_i32()], modes: [v, v, v], result: t_io_result(typeinfo.t_i64()) });
   out = out.append(ssasem.Contract { name: "Reader.window_size", params: [reader], modes: [v], result: t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] }) });
-  let termios: typeinfo.Type = typeinfo.TypeArray { elem: t_i64(), view: false };
-  out = out.append(ssasem.Contract { name: "Reader.set_window_size", params: [reader, t_i32(), t_i32()], modes: [v, v, v], result: done });
+  let termios: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
+  out = out.append(ssasem.Contract { name: "Reader.set_window_size", params: [reader, typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: done });
   out = out.append(ssasem.Contract { name: "Reader.termios_get", params: [reader], modes: [v], result: t_io_result(termios) });
-  out = out.append(ssasem.Contract { name: "Reader.set_extproc", params: [reader, t_bool()], modes: [v, v], result: done });
-  out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
-  out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
-  out = out.append(ssasem.Contract { name: "Writer.set_nonblocking", params: [writer, t_bool()], modes: [v, v], result: done });
-  out = out.append(ssasem.Contract { name: "Writer.set_times", params: [writer, t_i64(), t_i64(), t_i64(), t_i64(), t_i32()], modes: [v, v, v, v, v, v], result: done });
-  return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: done });
+  out = out.append(ssasem.Contract { name: "Reader.set_extproc", params: [reader, typeinfo.t_bool()], modes: [v, v], result: done });
+  out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, typeinfo.t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
+  out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, typeinfo.t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(typeinfo.t_i64()) });
+  out = out.append(ssasem.Contract { name: "Writer.set_nonblocking", params: [writer, typeinfo.t_bool()], modes: [v, v], result: done });
+  out = out.append(ssasem.Contract { name: "Writer.set_times", params: [writer, typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i32()], modes: [v, v, v, v, v, v], result: done });
+  return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, typeinfo.t_i64()], modes: [v, v], result: done });
 }
 
 function os_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
-  let done = t_io_result(t_void());
-  let strs: typeinfo.Type = typeinfo.TypeArray { elem: t_string(), view: false };
+  let done = t_io_result(typeinfo.t_void());
+  let strs: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_string(), view: false };
   let out: ssasem.Contract[] = [
-    ssasem.Contract { name: "getcwd", params: [], modes: [], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "hostname", params: [], modes: [], result: t_string() },
-    ssasem.Contract { name: "cpu_count", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "geteuid", params: [], modes: [], result: t_u32() },
-    ssasem.Contract { name: "getegid", params: [], modes: [], result: t_u32() },
-    ssasem.Contract { name: "getuid", params: [], modes: [], result: t_u32() },
-    ssasem.Contract { name: "getgid", params: [], modes: [], result: t_u32() },
+    ssasem.Contract { name: "getcwd", params: [], modes: [], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "hostname", params: [], modes: [], result: typeinfo.t_string() },
+    ssasem.Contract { name: "cpu_count", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "geteuid", params: [], modes: [], result: typeinfo.t_u32() },
+    ssasem.Contract { name: "getegid", params: [], modes: [], result: typeinfo.t_u32() },
+    ssasem.Contract { name: "getuid", params: [], modes: [], result: typeinfo.t_u32() },
+    ssasem.Contract { name: "getgid", params: [], modes: [], result: typeinfo.t_u32() },
     ssasem.Contract { name: "environ", params: [], modes: [], result: strs },
-    ssasem.Contract { name: "proc_fork", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "isatty", params: [t_i32()], modes: [v], result: t_bool() },
-    ssasem.Contract { name: "process_alive", params: [t_i32()], modes: [v], result: t_bool() },
-    ssasem.Contract { name: "rlimit_nofile", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "disable_core_dumps", params: [], modes: [], result: t_bool() },
-    ssasem.Contract { name: "prctl_query", params: [t_i32()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "uname_field", params: [t_i32()], modes: [v], result: t_string() },
-    ssasem.Contract { name: "umask", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "proc_waitpid", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "proc_waitpid_nohang", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "proc_waitpid_status", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "temp_dir", params: [t_string()], modes: [b], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "read_link", params: [t_string()], modes: [b], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "read_link_bytes", params: [t_string()], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
-    ssasem.Contract { name: "remove_dir", params: [t_string()], modes: [b], result: done },
-    ssasem.Contract { name: "statfs", params: [t_string()], modes: [b], result: t_io_result(typeinfo.TypeStruct { name: "FsStat", args: [] }) },
+    ssasem.Contract { name: "proc_fork", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "isatty", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "process_alive", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "rlimit_nofile", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "disable_core_dumps", params: [], modes: [], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "prctl_query", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "uname_field", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_string() },
+    ssasem.Contract { name: "umask", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_waitpid", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_waitpid_nohang", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_waitpid_status", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "temp_dir", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "read_link", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "read_link_bytes", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
+    ssasem.Contract { name: "remove_dir", params: [typeinfo.t_string()], modes: [b], result: done },
+    ssasem.Contract { name: "statfs", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.TypeStruct { name: "FsStat", args: [] }) },
     ssasem.Contract { name: "mounts", params: [], modes: [], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "MountEntry", args: [] }, view: false }) },
-    ssasem.Contract { name: "sysctl", params: [typeinfo.TypeArray { elem: t_i32(), view: false }], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
+    ssasem.Contract { name: "sysctl", params: [typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false }], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
   ];
   for c in fs_op_contracts(done, strs) {
     out = out.append(c);
@@ -7527,78 +7469,78 @@ function os_contracts(): ssasem.Contract[] {
 function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
-  let gids: typeinfo.Type = typeinfo.TypeArray { elem: t_i64(), view: false };
-  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
-  let fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
+  let gids: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
+  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
+  let fds: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   let win = t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] });
   return [
-    ssasem.Contract { name: "set_file_times", params: [t_string(), t_i64(), t_i64(), t_i64(), t_i64(), t_i32()], modes: [b, v, v, v, v, v], result: done },
-    ssasem.Contract { name: "mknod", params: [t_string(), t_i32(), t_i32(), t_i32()], modes: [b, v, v, v], result: done },
-    ssasem.Contract { name: "chmod_at", params: [t_string(), t_i32(), t_bool()], modes: [b, v, v], result: done },
-    ssasem.Contract { name: "chdir", params: [t_string()], modes: [b], result: done },
-    ssasem.Contract { name: "chroot", params: [t_string()], modes: [b], result: done },
-    ssasem.Contract { name: "set_process_group", params: [t_i32(), t_i32()], modes: [v, v], result: done },
+    ssasem.Contract { name: "set_file_times", params: [typeinfo.t_string(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i32()], modes: [b, v, v, v, v, v], result: done },
+    ssasem.Contract { name: "mknod", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [b, v, v, v], result: done },
+    ssasem.Contract { name: "chmod_at", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: done },
+    ssasem.Contract { name: "chdir", params: [typeinfo.t_string()], modes: [b], result: done },
+    ssasem.Contract { name: "chroot", params: [typeinfo.t_string()], modes: [b], result: done },
+    ssasem.Contract { name: "set_process_group", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: done },
     ssasem.Contract { name: "setgroups", params: [gids], modes: [b], result: done },
     ssasem.Contract { name: "getgroups", params: [], modes: [], result: gids },
-    ssasem.Contract { name: "priority", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "sync", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
-    ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_send_bytes", params: [t_handle("Socket"), bytes], modes: [v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_socket_ctl", params: [t_handle("Socket"), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_sendfile", params: [t_handle("Socket"), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_send_buf", params: [t_handle("Socket"), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "udp_bind_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "udp_connect", params: [t_handle("Socket"), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
-    ssasem.Contract { name: "udp_sendto", params: [t_handle("Socket"), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_sendto_bytes", params: [t_handle("Socket"), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_sendmmsg", params: [t_handle("Socket"), bytes, bytes, fds], modes: [v, b, b, b], result: t_i32() },
-    ssasem.Contract { name: "udp_recvmmsg", params: [t_handle("Socket"), bytes, bytes, fds], modes: [v, b, b, b], result: t_i32() },
-    ssasem.Contract { name: "udp_recvfrom", params: [t_handle("Socket"), bytes, bytes], modes: [v, b, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "unix_connect", params: [t_string()], modes: [b], result: t_handle("Socket") },
-    ssasem.Contract { name: "reactor_new", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "reactor_ctl", params: [t_i32(), t_i32(), t_i32(), t_i32()], modes: [v, v, v, v], result: t_i32() },
-    ssasem.Contract { name: "reactor_wait", params: [t_i32(), typeinfo.TypeArray { elem: t_i32(), view: false }, t_i32()], modes: [v, b, v], result: t_i32() },
-    ssasem.Contract { name: "ring_new", params: [t_i32()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "ring_ctl", params: [t_i64(), t_i32(), t_i32(), t_i32()], modes: [v, v, v, v], result: t_i32() },
-    ssasem.Contract { name: "ring_wait", params: [t_i64(), typeinfo.TypeArray { elem: t_i32(), view: false }, t_i32()], modes: [v, b, v], result: t_i32() },
-    ssasem.Contract { name: "ring_recv", params: [t_i64(), t_i32(), bytes], modes: [v, v, b], result: t_i32() },
-    ssasem.Contract { name: "ring_send_zc", params: [t_i64(), t_i32(), bytes, t_i32()], modes: [v, v, b, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_recv_into", params: [t_handle("Socket"), bytes], modes: [v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_addr_into", params: [t_handle("Socket"), t_bool(), bytes], modes: [v, v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_ktls", params: [t_handle("Socket"), t_i32(), t_i32(), bytes], modes: [v, v, v, b], result: t_i32() },
-    ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_catch", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_catch_interrupting", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_raise", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_taken", params: [t_i32()], modes: [v], result: t_bool() },
-    ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },
-    ssasem.Contract { name: "proc_exec", params: [t_string(), strs], modes: [b, b], result: t_i32() },
-    ssasem.Contract { name: "proc_exec_as", params: [t_string(), strs, strs], modes: [b, b, b], result: t_i32() },
+    ssasem.Contract { name: "priority", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "sync", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "poll", params: [fds, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "timer_fd", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_send_bytes", params: [t_handle("Socket"), bytes], modes: [v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_pollable", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_listen_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "tcp_socket_ctl", params: [t_handle("Socket"), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_sendfile", params: [t_handle("Socket"), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_send_buf", params: [t_handle("Socket"), typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_bind", params: [bytes, typeinfo.t_i32()], modes: [b, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "udp_bind_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "udp_connect", params: [t_handle("Socket"), bytes, typeinfo.t_i32()], modes: [v, b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_sendto", params: [t_handle("Socket"), bytes, typeinfo.t_i32(), typeinfo.t_string()], modes: [v, b, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_sendto_bytes", params: [t_handle("Socket"), bytes, typeinfo.t_i32(), bytes], modes: [v, b, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_sendmmsg", params: [t_handle("Socket"), bytes, bytes, fds], modes: [v, b, b, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_recvmmsg", params: [t_handle("Socket"), bytes, bytes, fds], modes: [v, b, b, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "udp_recvfrom", params: [t_handle("Socket"), bytes, bytes], modes: [v, b, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_connect_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "unix_listen", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "unix_connect", params: [typeinfo.t_string()], modes: [b], result: t_handle("Socket") },
+    ssasem.Contract { name: "reactor_new", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "reactor_ctl", params: [typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "reactor_wait", params: [typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false }, typeinfo.t_i32()], modes: [v, b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "ring_new", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "ring_ctl", params: [typeinfo.t_i64(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "ring_wait", params: [typeinfo.t_i64(), typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false }, typeinfo.t_i32()], modes: [v, b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "ring_recv", params: [typeinfo.t_i64(), typeinfo.t_i32(), bytes], modes: [v, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "ring_send_zc", params: [typeinfo.t_i64(), typeinfo.t_i32(), bytes, typeinfo.t_i32()], modes: [v, v, b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_recv_into", params: [t_handle("Socket"), bytes], modes: [v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_addr_into", params: [t_handle("Socket"), typeinfo.t_bool(), bytes], modes: [v, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "tcp_ktls", params: [t_handle("Socket"), typeinfo.t_i32(), typeinfo.t_i32(), bytes], modes: [v, v, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_ignore", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_default", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_catch", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_catch_interrupting", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_raise", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_taken", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "signal_disposition", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_mask", params: [typeinfo.t_i32(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "proc_exec", params: [typeinfo.t_string(), strs], modes: [b, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_exec_as", params: [typeinfo.t_string(), strs, strs], modes: [b, b, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "pipe", params: [], modes: [], result: t_io_result(typeinfo.TypeStruct { name: "Pipe", args: [] }) },
-    ssasem.Contract { name: "wasm_timer_pollable", params: [t_i64()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "wasm_pollable_drop", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "wasm_block", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "wasm_poll", params: [fds], modes: [b], result: t_i32() },
-    ssasem.Contract { name: "window_size", params: [t_i32()], modes: [v], result: win },
-    ssasem.Contract { name: "set_window_size", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: done },
-    ssasem.Contract { name: "termios_get", params: [t_i32()], modes: [v], result: t_io_result(gids) },
-    ssasem.Contract { name: "termios_set", params: [t_i32(), t_i32(), gids], modes: [v, v, b], result: done },
-    ssasem.Contract { name: "set_extproc", params: [t_i32(), t_bool()], modes: [v, v], result: done },
-    ssasem.Contract { name: "tcp_close", params: [t_handle("Socket")], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__tcp_close_unchecked", params: [t_handle("Socket")], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__fd_close", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
-    ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
-    ssasem.Contract { name: "set_priority", params: [t_i32()], modes: [v], result: done },
-    ssasem.Contract { name: "clock_set", params: [t_i64(), t_i64()], modes: [v, v], result: done },
+    ssasem.Contract { name: "wasm_timer_pollable", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "wasm_pollable_drop", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "wasm_block", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "wasm_poll", params: [fds], modes: [b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "window_size", params: [typeinfo.t_i32()], modes: [v], result: win },
+    ssasem.Contract { name: "set_window_size", params: [typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: done },
+    ssasem.Contract { name: "termios_get", params: [typeinfo.t_i32()], modes: [v], result: t_io_result(gids) },
+    ssasem.Contract { name: "termios_set", params: [typeinfo.t_i32(), typeinfo.t_i32(), gids], modes: [v, v, b], result: done },
+    ssasem.Contract { name: "set_extproc", params: [typeinfo.t_i32(), typeinfo.t_bool()], modes: [v, v], result: done },
+    ssasem.Contract { name: "tcp_close", params: [t_handle("Socket")], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__tcp_close_unchecked", params: [t_handle("Socket")], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__fd_close", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "setuid", params: [typeinfo.t_i64()], modes: [v], result: done },
+    ssasem.Contract { name: "setgid", params: [typeinfo.t_i64()], modes: [v], result: done },
+    ssasem.Contract { name: "set_priority", params: [typeinfo.t_i32()], modes: [v], result: done },
+    ssasem.Contract { name: "clock_set", params: [typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v], result: done },
   ];
 }
 
@@ -7606,31 +7548,31 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
   return [
-    ssasem.Contract { name: "create_dir", params: [t_string(), t_i32()], modes: [b, v], result: done },
-    ssasem.Contract { name: "chmod", params: [t_string(), t_i32()], modes: [b, v], result: done },
-    ssasem.Contract { name: "access", params: [t_string(), t_i32()], modes: [b, v], result: done },
-    ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "rename_noreplace", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "getxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "getxattr_bytes", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
-    ssasem.Contract { name: "lgetxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
-    ssasem.Contract { name: "lgetxattr_bytes", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
-    ssasem.Contract { name: "setxattr", params: [t_string(), t_string(), t_string()], modes: [b, b, b], result: done },
-    ssasem.Contract { name: "setxattr_bytes", params: [t_string(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b, b, b], result: done },
-    ssasem.Contract { name: "lsetxattr", params: [t_string(), t_string(), t_string()], modes: [b, b, b], result: done },
-    ssasem.Contract { name: "lsetxattr_bytes", params: [t_string(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b, b, b], result: done },
-    ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "clone_file", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_handle("Socket") },
+    ssasem.Contract { name: "create_dir", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: done },
+    ssasem.Contract { name: "chmod", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: done },
+    ssasem.Contract { name: "access", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: done },
+    ssasem.Contract { name: "rename", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "rename_noreplace", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "getxattr", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "getxattr_bytes", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
+    ssasem.Contract { name: "lgetxattr", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "lgetxattr_bytes", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
+    ssasem.Contract { name: "setxattr", params: [typeinfo.t_string(), typeinfo.t_string(), typeinfo.t_string()], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "setxattr_bytes", params: [typeinfo.t_string(), typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "lsetxattr", params: [typeinfo.t_string(), typeinfo.t_string(), typeinfo.t_string()], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "lsetxattr_bytes", params: [typeinfo.t_string(), typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "rename_exchange", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "create_link", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "clone_file", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "create_symlink", params: [typeinfo.t_string(), typeinfo.t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "tcp_listen", params: [typeinfo.t_i32()], modes: [v], result: t_handle("Socket") },
     ssasem.Contract { name: "tcp_accept", params: [t_handle("Socket")], modes: [v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_accept_with", params: [t_handle("Socket"), t_bool()], modes: [v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_local_port", params: [t_handle("Socket")], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
-    ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },
-    ssasem.Contract { name: "truncate", params: [t_string(), t_i64()], modes: [b, v], result: done },
-    ssasem.Contract { name: "subprocess", params: [t_string(), strs, t_string()], modes: [b, b, b], result: typeinfo.TypeStruct { name: "ProcessResult", args: [] } },
+    ssasem.Contract { name: "tcp_accept_with", params: [t_handle("Socket"), typeinfo.t_bool()], modes: [v, v], result: t_handle("Socket") },
+    ssasem.Contract { name: "tcp_local_port", params: [t_handle("Socket")], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "signal_send", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: done },
+    ssasem.Contract { name: "chown_at", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v, v], result: done },
+    ssasem.Contract { name: "truncate", params: [typeinfo.t_string(), typeinfo.t_i64()], modes: [b, v], result: done },
+    ssasem.Contract { name: "subprocess", params: [typeinfo.t_string(), strs, typeinfo.t_string()], modes: [b, b, b], result: typeinfo.TypeStruct { name: "ProcessResult", args: [] } },
   ];
 }
 
@@ -7654,37 +7596,37 @@ function dir_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
   let dir = t_handle("Dir");
-  let done = t_io_result(t_void());
+  let done = t_io_result(typeinfo.t_void());
   let stat = t_io_result(t_file_stat());
   return [
-    ssasem.Contract { name: "open_dir", params: [t_string()], modes: [b], result: t_io_result(dir) },
-    ssasem.Contract { name: "Dir.open_dir", params: [dir, t_string()], modes: [v, b], result: t_io_result(dir) },
-    ssasem.Contract { name: "Dir.open_reader", params: [dir, t_string()], modes: [v, b], result: t_io_result(t_handle("Reader")) },
-    ssasem.Contract { name: "Dir.open_writer", params: [dir, t_string()], modes: [v, b], result: t_io_result(t_handle("Writer")) },
-    ssasem.Contract { name: "Dir.open_reader_with", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Reader")) },
-    ssasem.Contract { name: "Dir.open_writer_with", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Writer")) },
-    ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
-    ssasem.Contract { name: "Dir.entries_bytes", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: t_u8(), view: false }, view: false }) },
-    ssasem.Contract { name: "Dir.stat", params: [dir, t_string()], modes: [v, b], result: stat },
-    ssasem.Contract { name: "Dir.lstat", params: [dir, t_string()], modes: [v, b], result: stat },
-    ssasem.Contract { name: "Dir.access", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: done },
-    ssasem.Contract { name: "Dir.remove_file", params: [dir, t_string()], modes: [v, b], result: done },
-    ssasem.Contract { name: "Dir.remove_dir", params: [dir, t_string()], modes: [v, b], result: done },
-    ssasem.Contract { name: "Dir.chmod", params: [dir, t_string(), t_i32(), t_bool()], modes: [v, b, v, v], result: done },
-    ssasem.Contract { name: "Dir.chown", params: [dir, t_string(), t_i32(), t_i32(), t_bool()], modes: [v, b, v, v, v], result: done },
+    ssasem.Contract { name: "open_dir", params: [typeinfo.t_string()], modes: [b], result: t_io_result(dir) },
+    ssasem.Contract { name: "Dir.open_dir", params: [dir, typeinfo.t_string()], modes: [v, b], result: t_io_result(dir) },
+    ssasem.Contract { name: "Dir.open_reader", params: [dir, typeinfo.t_string()], modes: [v, b], result: t_io_result(t_handle("Reader")) },
+    ssasem.Contract { name: "Dir.open_writer", params: [dir, typeinfo.t_string()], modes: [v, b], result: t_io_result(t_handle("Writer")) },
+    ssasem.Contract { name: "Dir.open_reader_with", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Reader")) },
+    ssasem.Contract { name: "Dir.open_writer_with", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Writer")) },
+    ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_string(), view: false }) },
+    ssasem.Contract { name: "Dir.entries_bytes", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, view: false }) },
+    ssasem.Contract { name: "Dir.stat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
+    ssasem.Contract { name: "Dir.lstat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
+    ssasem.Contract { name: "Dir.access", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: done },
+    ssasem.Contract { name: "Dir.remove_file", params: [dir, typeinfo.t_string()], modes: [v, b], result: done },
+    ssasem.Contract { name: "Dir.remove_dir", params: [dir, typeinfo.t_string()], modes: [v, b], result: done },
+    ssasem.Contract { name: "Dir.chmod", params: [dir, typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_bool()], modes: [v, b, v, v], result: done },
+    ssasem.Contract { name: "Dir.chown", params: [dir, typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_bool()], modes: [v, b, v, v, v], result: done },
     ssasem.Contract { name: "Dir.close", params: [dir], modes: [v], result: done },
   ];
 }
 
 function byte_copy_contracts(): ssasem.Contract[] {
-  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let bytes = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   let counted = ssaunits.counted_mode();
   let borrow = ssaunits.borrow_mode();
   let value = ssaunits.value_mode();
   return [
-    ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, t_i32(), t_i32()], modes: [counted, borrow, value, value], result: bytes },
-    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, t_i32(), bytes, t_i32(), t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
-    ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, t_i32(), t_i32()], modes: [counted, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, typeinfo.t_i32(), bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, value], result: bytes },
   ];
 }
 
@@ -7726,14 +7668,14 @@ function string_method_contracts(): ssasem.Contract[] {
   let fresh: string[] = ["to_ascii_upper", "to_ascii_lower", "trim"];
   let out: ssasem.Contract[] = [];
   for n in fresh {
-    out = out.append(ssasem.Contract { name: "string." + n, params: [t_string()], modes: lent, result: t_string() });
+    out = out.append(ssasem.Contract { name: "string." + n, params: [typeinfo.t_string()], modes: lent, result: typeinfo.t_string() });
   }
-  out = out.append(ssasem.Contract { name: "string.lines", params: [t_string()], modes: lent, result: typeinfo.TypeArray { elem: t_string(), view: false } });
-  out = out.append(ssasem.Contract { name: "string.split", params: [t_string(), t_string()], modes: two, result: typeinfo.TypeArray { elem: t_string(), view: false } });
-  out = out.append(ssasem.Contract { name: "string.repeat", params: [t_string(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode()], result: t_string() });
+  out = out.append(ssasem.Contract { name: "string.lines", params: [typeinfo.t_string()], modes: lent, result: typeinfo.TypeArray { elem: typeinfo.t_string(), view: false } });
+  out = out.append(ssasem.Contract { name: "string.split", params: [typeinfo.t_string(), typeinfo.t_string()], modes: two, result: typeinfo.TypeArray { elem: typeinfo.t_string(), view: false } });
+  out = out.append(ssasem.Contract { name: "string.repeat", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode()], result: typeinfo.t_string() });
   return out.append(ssasem.Contract {
-    name: "string.replace", params: [t_string(), t_string(), t_string()],
-    modes: [ssaunits.borrow_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_string(),
+    name: "string.replace", params: [typeinfo.t_string(), typeinfo.t_string(), typeinfo.t_string()],
+    modes: [ssaunits.borrow_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_string(),
   });
 }
 
@@ -7817,16 +7759,16 @@ function c_call_contracts(): ssasem.Contract[] {
 function word_load_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
-  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
   return [
-    ssasem.Contract { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b], result: t_usize() },
-    ssasem.Contract { name: "__raw_data", params: [t_string()], modes: [b], result: t_usize() },
-    ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: ssabytes.word_name(4), params: [view, t_i32()], modes: [b, v], result: t_i32() },
-    ssasem.Contract { name: ssabytes.word_name(8), params: [view, t_i32()], modes: [b, v], result: t_i64() },
-    ssasem.Contract { name: ssabytes.swap_name(4), params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: ssabytes.swap_name(8), params: [t_i64()], modes: [v], result: t_i64() },
+    ssasem.Contract { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [b], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__raw_data", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__load_i32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__load_i64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: ssabytes.word_name(4), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: ssabytes.word_name(8), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: ssabytes.swap_name(4), params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: ssabytes.swap_name(8), params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_i64() },
   ];
 }
 
@@ -7849,19 +7791,19 @@ function raw_floor_contracts(): ssasem.Contract[] {
 function rc_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   return [
-    ssasem.Contract { name: "__fern_rc_inc", params: [t_usize()], modes: [v], result: t_usize() },
-    ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__fern_rc_is_unique", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__fern_rc_dec", params: [t_usize()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__fern_box_free", params: [t_usize(), t_i32()], modes: [v, v], result: t_usize() },
-    ssasem.Contract { name: "__rc_dec", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "__rc_inc", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
-    ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() },
+    ssasem.Contract { name: "__fern_rc_inc", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__fern_str_dec", params: [typeinfo.t_string()], modes: [ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__fern_drop_arr_ptr", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__fern_arr_dec", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__fern_rc_is_unique", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__fern_rc_dec", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__fern_box_free", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__rc_dec", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__rc_inc", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
+    ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: typeinfo.t_i64() },
   ];
 }
 
@@ -7873,7 +7815,7 @@ function float_primitive_contracts(): ssasem.Contract[] {
   let value: i32[] = [ssaunits.value_mode()];
   let out: ssasem.Contract[] = [];
   for n in names {
-    out = out.append(ssasem.Contract { name: n, params: [t_f64()], modes: value, result: t_f64() });
+    out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_f64()], modes: value, result: typeinfo.t_f64() });
   }
   return out;
 }
@@ -7884,52 +7826,52 @@ function bit_count_contracts(): ssasem.Contract[] {
   let value: i32[] = [ssaunits.value_mode()];
   let out: ssasem.Contract[] = [];
   for n in narrow {
-    out = out.append(ssasem.Contract { name: n, params: [t_u32()], modes: value, result: t_i32() });
+    out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_u32()], modes: value, result: typeinfo.t_i32() });
   }
   for n in wide {
-    out = out.append(ssasem.Contract { name: n, params: [t_u64()], modes: value, result: t_i32() });
+    out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_u64()], modes: value, result: typeinfo.t_i32() });
   }
-  return out.append(ssasem.Contract { name: "__mulhi_u64", params: [t_u64(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_u64() });
+  return out.append(ssasem.Contract { name: "__mulhi_u64", params: [typeinfo.t_u64(), typeinfo.t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_u64() });
 }
 
 function memory_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
-  let fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
+  let fds: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   let out: ssasem.Contract[] = [
-    ssasem.Contract { name: "__alloc", params: [t_i32()], modes: [v], result: t_usize() },
-    ssasem.Contract { name: "__alloc_u8", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
-    ssasem.Contract { name: "__alloc_u8_uninit", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
-    ssasem.Contract { name: "__alloc_i32", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_i32(), view: false } },
-    ssasem.Contract { name: "__alloc_i64", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_i64(), view: false } },
-    ssasem.Contract { name: "__alloc_f64", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
-    ssasem.Contract { name: "__alloc_bool", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_bool(), view: false } },
-    ssasem.Contract { name: "__free", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__ptr_width", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__heap_bump_bytes", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "__heap_release_to", params: [t_i64()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__heap_adopt", params: [t_i64(), t_i64()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__worker_region", params: [t_i64()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "__worker_exit", params: [t_i64(), t_usize()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__worker_reap", params: [t_i64()], modes: [v], result: t_usize() },
-    ssasem.Contract { name: "__worker_unmap", params: [t_i64(), t_i64(), t_bool()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "__task_new", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__task_free", params: [t_i32()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__task_cur", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__task_enter", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__task_leave", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__task_park", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
-    ssasem.Contract { name: "__task_park_until", params: [fds, t_i64()], modes: [b, v], result: t_i32() },
-    ssasem.Contract { name: "__task_wait", params: [t_i32()], modes: [v], result: fds },
-    ssasem.Contract { name: "__task_timeout", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__task_until", params: [t_i32()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "__task_set_ready", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__task_set_cancelled", params: [t_i32()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },
-    ssasem.Contract { name: "__memset", params: [t_usize(), t_i32(), t_i32()], modes: [v, v, v], result: t_void() },
+    ssasem.Contract { name: "__alloc", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__alloc_u8", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
+    ssasem.Contract { name: "__alloc_u8_uninit", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
+    ssasem.Contract { name: "__alloc_i32", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false } },
+    ssasem.Contract { name: "__alloc_i64", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false } },
+    ssasem.Contract { name: "__alloc_f64", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false } },
+    ssasem.Contract { name: "__alloc_bool", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_bool(), view: false } },
+    ssasem.Contract { name: "__free", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__ptr_width", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__heap_bump_bytes", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__heap_release_to", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__heap_adopt", params: [typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__worker_region", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__worker_exit", params: [typeinfo.t_i64(), typeinfo.t_usize()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__worker_reap", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__worker_unmap", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_bool()], modes: [v, v, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_new", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_free", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__task_cur", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_enter", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__task_leave", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_park", params: [fds, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_park_until", params: [fds, typeinfo.t_i64()], modes: [b, v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_wait", params: [typeinfo.t_i32()], modes: [v], result: fds },
+    ssasem.Contract { name: "__task_timeout", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_until", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__task_set_ready", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__task_set_cancelled", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__memcpy", params: [typeinfo.t_usize(), typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__memset", params: [typeinfo.t_usize(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_void() },
   ];
   for c in load_store_contracts() {
     out = out.append(c);
@@ -7944,84 +7886,84 @@ function load_store_contracts(): ssasem.Contract[] {
   let v = ssaunits.value_mode();
   let b = ssaunits.borrow_mode();
   return [
-    ssasem.Contract { name: "__load_u8", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__account_entry", params: [t_i32(), t_usize()], modes: [v, v], result: t_usize() },
-    ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "__load_ptr", params: [t_usize()], modes: [v], result: t_usize() },
-    ssasem.Contract { name: "__store_u8", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__str_bytes", params: [t_string(), t_usize()], modes: [b, v], result: t_usize() },
-    ssasem.Contract { name: "__bytes_data", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_usize() },
-    ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [b, v], result: t_void() },
-    ssasem.Contract { name: "__store_i32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__store_i64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__store_ptr", params: [t_usize(), t_usize()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mmio_load8", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mmio_load16", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mmio_load32", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mmio_load64", params: [t_usize()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "__mmio_store8", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mmio_store16", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mmio_store32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mmio_store64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mem_load8", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mem_load16", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mem_load32", params: [t_usize()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__mem_load64", params: [t_usize()], modes: [v], result: t_i64() },
-    ssasem.Contract { name: "__mem_store8", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mem_store16", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mem_store32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__mem_store64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__fence", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__wfi", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__boot_info", params: [], modes: [], result: t_usize() },
-    ssasem.Contract { name: "__sysreg_read", params: [t_string()], modes: [b], result: t_i64() },
-    ssasem.Contract { name: "__sysreg_write", params: [t_string(), t_i64()], modes: [b, v], result: t_void() },
-    ssasem.Contract { name: "__cache_clean", params: [t_usize()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__cache_flush", params: [t_usize()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__tlb_flush", params: [t_usize()], modes: [v], result: t_void() },
-    ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__breakpoint", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__irq_mask", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__irq_unmask", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__irq_wait", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "__irq_pending", params: [], modes: [], result: t_usize() },
-    ssasem.Contract { name: "__hvc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
-    ssasem.Contract { name: "__smc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
-    ssasem.Contract { name: "__port_in8", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__port_in16", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__port_in32", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__port_out8", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__port_out16", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__port_out32", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
-    ssasem.Contract { name: "__ct_secret", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
-    ssasem.Contract { name: "__ct_public", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
+    ssasem.Contract { name: "__load_u8", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__account_entry", params: [typeinfo.t_i32(), typeinfo.t_usize()], modes: [v, v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__load_i32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__load_i64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__load_ptr", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__store_u8", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__str_bytes", params: [typeinfo.t_string(), typeinfo.t_usize()], modes: [b, v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__bytes_data", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [b], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__store_i32", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__store_i64", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__store_ptr", params: [typeinfo.t_usize(), typeinfo.t_usize()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mmio_load8", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mmio_load16", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mmio_load32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mmio_load64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__mmio_store8", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mmio_store16", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mmio_store32", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mmio_store64", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mem_load8", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mem_load16", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mem_load32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mem_load64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__mem_store8", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mem_store16", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mem_store32", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__mem_store64", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__fence", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__wfi", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__boot_info", params: [], modes: [], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__sysreg_read", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__sysreg_write", params: [typeinfo.t_string(), typeinfo.t_i64()], modes: [b, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__cache_clean", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__cache_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__tlb_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__breakpoint", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__irq_mask", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__irq_unmask", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__irq_wait", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__irq_pending", params: [], modes: [], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__hvc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__smc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__port_in8", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__port_in16", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__port_in32", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__port_out8", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__port_out16", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__port_out32", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__ct_secret", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [b], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__ct_public", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [b], result: typeinfo.t_void() },
   ];
 }
 
 function aes_gcm_contracts(): ssasem.Contract[] {
   let b = ssaunits.borrow_mode();
-  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
-  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
+  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   return [
     ssasem.Contract { name: "__bytes_owned", params: [view], modes: [b], result: bytes },
-    ssasem.Contract { name: "__bytes_range", params: [view, t_i32(), t_i32()], modes: [b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
-    ssasem.Contract { name: "__bytes_into", params: [bytes, t_i32(), view, t_i32(), t_i32()], modes: [ssaunits.counted_mode(), ssaunits.value_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
+    ssasem.Contract { name: "__bytes_range", params: [view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
+    ssasem.Contract { name: "__bytes_into", params: [bytes, typeinfo.t_i32(), view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.counted_mode(), ssaunits.value_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
     ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__aes_gcm_seal_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__aes_gcm_open_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
-    ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: t_bool() },
+    ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: typeinfo.t_bool() },
     ssasem.Contract { name: "__sha256_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
-    ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: t_bool() },
+    ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: typeinfo.t_bool() },
     ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
   ];
 }
 
 function aes_gcm_into_params(): typeinfo.Type[] {
-  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
-  return [view, view, view, t_u64(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), t_i32(), t_i32()];
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
+  return [view, view, view, typeinfo.t_u64(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()];
 }
 
 function aes_gcm_into_modes(): i32[] {
@@ -8034,34 +7976,34 @@ function byte_scan_contracts(): ssasem.Contract[] {
   let lent = ssaunits.borrow_mode();
   let value = ssaunits.value_mode();
   return [
-    ssasem.Contract { name: "__sum_bytes", params: [t_string()], modes: [lent], result: t_i32() },
-    ssasem.Contract { name: "__scale_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, t_f64()], modes: [lent, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
-    ssasem.Contract { name: "__outer_mul_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }], modes: [lent, lent], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
-    ssasem.Contract { name: "__inner_mul_add_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }, t_i32(), t_i32(), t_i32(), t_f64()], modes: [lent, lent, value, value, value, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
-    ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
-    ssasem.Contract { name: "__crc32_cksum_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [value, lent], result: t_i32() },
-    ssasem.Contract { name: "__crc32_ieee_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [value, lent], result: t_i32() },
-    ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__scan_set", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
-    ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
-    ssasem.Contract { name: "__bsd_sum", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__str_hash", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__count_runs", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
-    ssasem.Contract { name: "__count_runs_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
-    ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__count_byte_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__count_below_u64", params: [typeinfo.TypeArray { elem: t_u64(), view: false }, t_u64()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__sum_bytes_array", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [lent], result: t_i32() },
-    ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__memchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__rmemchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__mismatch_bytes_str", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_string(), t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },
-    ssasem.Contract { name: "__rmemchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
+    ssasem.Contract { name: "__sum_bytes", params: [typeinfo.t_string()], modes: [lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__scale_f64", params: [typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false }, typeinfo.t_f64()], modes: [lent, value], result: typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false } },
+    ssasem.Contract { name: "__outer_mul_f64", params: [typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false }, typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false }], modes: [lent, lent], result: typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false } },
+    ssasem.Contract { name: "__inner_mul_add_f64", params: [typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false }, typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_f64()], modes: [lent, lent, value, value, value, value], result: typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false } },
+    ssasem.Contract { name: "__crc32_cksum", params: [typeinfo.t_i32(), typeinfo.t_string()], modes: [value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__crc32_cksum_array", params: [typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__crc32_ieee_array", params: [typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__ascii_run", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__scan_set", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__bsd_sum", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__str_hash", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__count_runs", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__count_runs_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__count_byte", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__memchr", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__count_byte_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__count_below_u64", params: [typeinfo.TypeArray { elem: typeinfo.t_u64(), view: false }, typeinfo.t_u64()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__sum_bytes_array", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }, typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__memchr_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__rmemchr_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, lent, value, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__mismatch_bytes_str", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, lent, value, value], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__rmemchr", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [lent, value, value], result: typeinfo.t_i32() },
     ssasem.Contract {
-      name: "__mismatch", params: [t_string(), t_i32(), t_string(), t_i32(), t_i32()],
-      modes: [lent, value, lent, value, value], result: t_i32(),
+      name: "__mismatch", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()],
+      modes: [lent, value, lent, value, value], result: typeinfo.t_i32(),
     },
   ];
 }
@@ -8070,44 +8012,44 @@ function builder_contracts(): ssasem.Contract[] {
   let handle: i32[] = [ssaunits.value_mode()];
   let push: i32[] = [ssaunits.value_mode(), ssaunits.borrow_mode()];
   return [
-    ssasem.Contract { name: "buf_new", params: [t_i32()], modes: handle, result: t_usize() },
-    ssasem.Contract { name: "buf_push", params: [t_usize(), t_string()], modes: push, result: t_void() },
-    ssasem.Contract { name: "buf_push_range", params: [t_usize(), t_string(), t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_bytes_range", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_mapped", params: [t_usize(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_bytes_mapped", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_filtered", params: [t_usize(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_bytes_filtered", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_expanded", params: [t_usize(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_bytes_expanded", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_decimal", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_base64", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_push_base32", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "buf_decode_base32", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_i32() },
-    ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
-    ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
-    ssasem.Contract { name: "buf_take_bytes", params: [t_usize()], modes: handle, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
-    ssasem.Contract { name: "buf_clear", params: [t_usize()], modes: handle, result: t_void() },
-    ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() },
+    ssasem.Contract { name: "buf_new", params: [typeinfo.t_i32()], modes: handle, result: typeinfo.t_usize() },
+    ssasem.Contract { name: "buf_push", params: [typeinfo.t_usize(), typeinfo.t_string()], modes: push, result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_range", params: [typeinfo.t_usize(), typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_bytes_range", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_mapped", params: [typeinfo.t_usize(), typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_bytes_mapped", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_filtered", params: [typeinfo.t_usize(), typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_bytes_filtered", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_expanded", params: [typeinfo.t_usize(), typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_bytes_expanded", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_byte", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_u64", params: [typeinfo.t_usize(), typeinfo.t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_decimal", params: [typeinfo.t_usize(), typeinfo.t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_base64", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_push_base32", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_decode_base32", params: [typeinfo.t_usize(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "buf_len", params: [typeinfo.t_usize()], modes: handle, result: typeinfo.t_i32() },
+    ssasem.Contract { name: "buf_take", params: [typeinfo.t_usize()], modes: handle, result: typeinfo.t_string() },
+    ssasem.Contract { name: "buf_take_bytes", params: [typeinfo.t_usize()], modes: handle, result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
+    ssasem.Contract { name: "buf_clear", params: [typeinfo.t_usize()], modes: handle, result: typeinfo.t_void() },
+    ssasem.Contract { name: "buf_free", params: [typeinfo.t_usize()], modes: handle, result: typeinfo.t_void() },
   ];
 }
 
 function union_result_contracts(): ssasem.Contract[] {
   let path: i32[] = [ssaunits.borrow_mode()];
   let out: ssasem.Contract[] = [
-    ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
-    ssasem.Contract { name: "config_get", params: [t_string()], modes: path, result: t_option(t_string()) },
-    ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
-    ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
-    ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
-    ssasem.Contract { name: "read_dir_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: t_u8(), view: false }, view: false }) },
-    ssasem.Contract { name: "read_dir_all", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
-    ssasem.Contract { name: "read_dir_ino", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
-    ssasem.Contract { name: "read_dir_ino_all", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
-    ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
-    ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
+    ssasem.Contract { name: "env", params: [typeinfo.t_string()], modes: path, result: t_option(typeinfo.t_string()) },
+    ssasem.Contract { name: "config_get", params: [typeinfo.t_string()], modes: path, result: t_option(typeinfo.t_string()) },
+    ssasem.Contract { name: "read_file", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.t_string()) },
+    ssasem.Contract { name: "read_file_bytes", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
+    ssasem.Contract { name: "read_dir", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_string(), view: false }) },
+    ssasem.Contract { name: "read_dir_bytes", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, view: false }) },
+    ssasem.Contract { name: "read_dir_all", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_string(), view: false }) },
+    ssasem.Contract { name: "read_dir_ino", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
+    ssasem.Contract { name: "read_dir_ino_all", params: [typeinfo.t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
+    ssasem.Contract { name: "stat", params: [typeinfo.t_string()], modes: path, result: t_io_result(t_file_stat()) },
+    ssasem.Contract { name: "lstat", params: [typeinfo.t_string()], modes: path, result: t_io_result(t_file_stat()) },
   ];
   for c in outcome_contracts() {
     out = out.append(c);
@@ -8118,49 +8060,49 @@ function union_result_contracts(): ssasem.Contract[] {
 function outcome_contracts(): ssasem.Contract[] {
   let path: i32[] = [ssaunits.borrow_mode()];
   let written: i32[] = [ssaunits.borrow_mode(), ssaunits.borrow_mode()];
-  let done = t_io_result(t_void());
+  let done = t_io_result(typeinfo.t_void());
   return [
-    ssasem.Contract { name: "write_file", params: [t_string(), t_string()], modes: written, result: done },
-    ssasem.Contract { name: "write_file_bytes", params: [t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: written, result: done },
-    ssasem.Contract { name: "write_file_exec", params: [t_string(), t_string()], modes: written, result: done },
-    ssasem.Contract { name: "create_dir_all", params: [t_string()], modes: path, result: done },
-    ssasem.Contract { name: "remove_dir_all", params: [t_string()], modes: path, result: done },
-    ssasem.Contract { name: "remove_file", params: [t_string()], modes: path, result: done },
+    ssasem.Contract { name: "write_file", params: [typeinfo.t_string(), typeinfo.t_string()], modes: written, result: done },
+    ssasem.Contract { name: "write_file_bytes", params: [typeinfo.t_string(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: written, result: done },
+    ssasem.Contract { name: "write_file_exec", params: [typeinfo.t_string(), typeinfo.t_string()], modes: written, result: done },
+    ssasem.Contract { name: "create_dir_all", params: [typeinfo.t_string()], modes: path, result: done },
+    ssasem.Contract { name: "remove_dir_all", params: [typeinfo.t_string()], modes: path, result: done },
+    ssasem.Contract { name: "remove_file", params: [typeinfo.t_string()], modes: path, result: done },
   ];
 }
 
 function value_contracts(): ssasem.Contract[] {
   let value: i32[] = [ssaunits.value_mode()];
-  let strs: typeinfo.Type = typeinfo.TypeArray { elem: t_string(), view: false };
+  let strs: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_string(), view: false };
   return [
     ssasem.Contract { name: "args", params: [], modes: [], result: strs },
-    ssasem.Contract { name: "set_args", params: [strs], modes: [ssaunits.borrow_mode()], result: t_void() },
-    ssasem.Contract { name: "random_bytes", params: [t_i32()], modes: value, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
-    ssasem.Contract { name: "random_i32", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "now_unix_ms", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "now_ns", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "monotonic_ns", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "clock_resolution", params: [], modes: [], result: t_i64() },
-    ssasem.Contract { name: "sleep_ms", params: [t_i64()], modes: value, result: t_void() },
-    ssasem.Contract { name: "sleep_ns", params: [t_i64()], modes: value, result: t_void() },
-    ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
-    ssasem.Contract { name: "f32_bits", params: [t_f32()], modes: value, result: t_i32() },
-    ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f32() },
+    ssasem.Contract { name: "set_args", params: [strs], modes: [ssaunits.borrow_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "random_bytes", params: [typeinfo.t_i32()], modes: value, result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
+    ssasem.Contract { name: "random_i32", params: [], modes: [], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "now_unix_ms", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "now_ns", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "monotonic_ns", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "clock_resolution", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "sleep_ms", params: [typeinfo.t_i64()], modes: value, result: typeinfo.t_void() },
+    ssasem.Contract { name: "sleep_ns", params: [typeinfo.t_i64()], modes: value, result: typeinfo.t_void() },
+    ssasem.Contract { name: "putchar", params: [typeinfo.t_i32()], modes: value, result: typeinfo.t_void() },
+    ssasem.Contract { name: "f32_bits", params: [typeinfo.t_f32()], modes: value, result: typeinfo.t_i32() },
+    ssasem.Contract { name: "f32_from_bits", params: [typeinfo.t_i32()], modes: value, result: typeinfo.t_f32() },
   ];
 }
 
 function string_contracts(): ssasem.Contract[] {
   let writer: i32[] = [ssaunits.borrow_mode()];
   return [
-    ssasem.Contract { name: "print", params: [t_string()], modes: writer, result: t_void() },
-    ssasem.Contract { name: "eprint", params: [t_string()], modes: writer, result: t_void() },
-    ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_i32() },
-    ssasem.Contract { name: "write", params: [t_string()], modes: writer, result: t_void() },
-    ssasem.Contract { name: "exit", params: [t_i32()], modes: [ssaunits.value_mode()], result: t_void() },
-    ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: writer, result: t_string() },
-    ssasem.Contract { name: "string_from_bytes_range_unchecked", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_string() },
-    ssasem.Contract { name: "f64_bits", params: [t_f64()], modes: [ssaunits.value_mode()], result: t_i64() },
-    ssasem.Contract { name: "f64_from_bits", params: [t_i64()], modes: [ssaunits.value_mode()], result: t_f64() },
+    ssasem.Contract { name: "print", params: [typeinfo.t_string()], modes: writer, result: typeinfo.t_void() },
+    ssasem.Contract { name: "eprint", params: [typeinfo.t_string()], modes: writer, result: typeinfo.t_void() },
+    ssasem.Contract { name: "__memchr", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "write", params: [typeinfo.t_string()], modes: writer, result: typeinfo.t_void() },
+    ssasem.Contract { name: "exit", params: [typeinfo.t_i32()], modes: [ssaunits.value_mode()], result: typeinfo.t_void() },
+    ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: writer, result: typeinfo.t_string() },
+    ssasem.Contract { name: "string_from_bytes_range_unchecked", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_string() },
+    ssasem.Contract { name: "f64_bits", params: [typeinfo.t_f64()], modes: [ssaunits.value_mode()], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "f64_from_bits", params: [typeinfo.t_i64()], modes: [ssaunits.value_mode()], result: typeinfo.t_f64() },
   ];
 }
 
@@ -9190,7 +9132,7 @@ function lowered_names(): util.NameIndex {
 }
 
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
+  if (p.template || p.bodyless || !p.ok || name == "main" || name.starts_with("__") || util.contains(name, ".")) {
     return false;
   }
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
@@ -9282,7 +9224,7 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
 function kernel_calls(all: Produced[], names: string[], mod: parser.Module): string[] {
   let out = stdlib_names(all, names, mod.funcs, "std/ndarray");
   for name in stdlib_names(all, names, mod.funcs, "std/array") {
-    if (util.str_has_prefix(name, "__arrm_map__")) {
+    if (name.starts_with("__arrm_map__")) {
       out = out.append(name);
     }
   }

@@ -10,7 +10,7 @@ After the last scan, the decoder multiplies the coefficients by the quantization
 
 ## Contracts
 
-The decoder accepts 8-bit Huffman-coded files with one or three components: baseline (SOF0), extended (SOF1) and progressive (SOF2), with any sampling factors and with restart intervals. It refuses lossless and arithmetic-coded files with `Unsupported`. Data that ends early gives `Truncated`. A scan with corrupt data gives an image with wrong pixels in the blocks after the fault, not an error. The pixels are RGBA, and each alpha is 255.
+The decoder accepts 8-bit Huffman-coded files with one or three components: baseline (SOF0), extended (SOF1) and progressive (SOF2), with any sampling factors and with restart intervals. It refuses lossless and arithmetic-coded files with `Unsupported`. It also refuses with `Unsupported` a frame with more pixels than the limit, before it allocates for the image. `decode_image_limit` takes the limit, and `decode_image` uses `MAX_PIXELS`, the most pixels that the buffers of an image can hold. Data that ends early gives `Truncated`. A scan with corrupt data gives an image with wrong pixels in the blocks after the fault, not an error. A scan that uses a Huffman table that the file does not define is corrupt data in the same way. The pixels are RGBA, and each alpha is 255.
 
 ## Executable example
 
@@ -159,6 +159,7 @@ struct Decoder {
   mcux: i32,
   mcuy: i32,
   frame: boolean,
+  max_pixels: i64,
 }
 
 function u16_at(b: [u8], at: i32): i32 {
@@ -206,6 +207,9 @@ function extend(v: i32, n: i32): i32 {
 
 function decode(b: [u8], own s: Bits, t: Huffman): (Bits, i32) {
   let st = s;
+  if (!t.ok) {
+    return (st, 0);
+  }
   let code = 0;
   for len in 0..16 {
     let (next, bit) = bits(b, st, 1);
@@ -227,13 +231,22 @@ function decode(b: [u8], own s: Bits, t: Huffman): (Bits, i32) {
 
 ```fern
 <<segments>>=
+// The most pixels that the four bytes of each pixel of an image can hold.
+pub const MAX_PIXELS: i64 = 536870911i64;
+
 // The image in the JPEG file `data`, or an error.
 pub function decode_image(data: [u8]): Result[Image, DecodeError] {
+  return decode_image_limit(data, MAX_PIXELS);
+}
+
+// The image in the JPEG file `data`, or an error for a frame of more than
+// `max_pixels` pixels.
+pub function decode_image_limit(data: [u8], max_pixels: i64): Result[Image, DecodeError] {
   let b = copy(data);
   if (!starts_jpeg(b)) {
     return Err(NotJpeg);
   }
-  let d = Decoder { data: b, width: 0, height: 0, progressive: false, comps: [], quant: [[], [], [], []], dc_tables: [no_table(), no_table(), no_table(), no_table()], ac_tables: [no_table(), no_table(), no_table(), no_table()], restart: 0, hmax: 1, vmax: 1, mcux: 0, mcuy: 0, frame: false };
+  let d = Decoder { data: b, width: 0, height: 0, progressive: false, comps: [], quant: [[], [], [], []], dc_tables: [no_table(), no_table(), no_table(), no_table()], ac_tables: [no_table(), no_table(), no_table(), no_table()], restart: 0, hmax: 1, vmax: 1, mcux: 0, mcuy: 0, frame: false, max_pixels: max_pixels };
   let coef: i32[] = [];
   let at = next_marker(d.data, 2);
   while (at >= 0) {
@@ -243,9 +256,15 @@ pub function decode_image(data: [u8]): Result[Image, DecodeError] {
     if (end > d.data.len()) {
       return Err(Truncated);
     }
+    if (end < seg) {
+      return Err(Corrupt("a segment shorter than its length field"));
+    }
     if (marker == 218) {
       if (!d.frame) {
         return Err(Corrupt("a scan before the frame"));
+      }
+      if let Some(e) = scan_header_fault(d.data, seg, end) {
+        return Err(e);
       }
       let (next, after) = scan(d, seg, coef);
       coef = next;
@@ -327,17 +346,20 @@ function other_frame(marker: i32): boolean {
 // The decoder after the segment of `marker` from `seg` to `end`.
 function segment(own d: Decoder, marker: i32, seg: i32, end: i32): Result[Decoder, DecodeError] {
   if (marker == 219) {
-    return Ok(quant_tables(d, seg, end));
+    return quant_tables(d, seg, end);
   }
   if (marker == 196) {
     return Ok(huffman_tables(d, seg, end));
   }
   if (marker == 221) {
+    if (end - seg < 2) {
+      return Err(Truncated);
+    }
     let restart = u16_at(d.data, seg);
     return Ok(Decoder { ...d, restart: restart });
   }
   if (huffman_frame(marker)) {
-    return frame(d, seg, marker == 194);
+    return frame(d, seg, end, marker == 194);
   }
   if (other_frame(marker)) {
     return Err(Unsupported("lossless or arithmetic coding"));
@@ -361,7 +383,7 @@ function total_blocks(d: Decoder): i32 {
   return n;
 }
 
-function quant_tables(own d: Decoder, seg: i32, end: i32): Decoder {
+function quant_tables(own d: Decoder, seg: i32, end: i32): Result[Decoder, DecodeError] {
   let p = seg;
   let tables = d.quant;
   let zz = zigzag();
@@ -369,6 +391,10 @@ function quant_tables(own d: Decoder, seg: i32, end: i32): Decoder {
     let pq = d.data[p] as i32 >> 4;
     let tq = d.data[p] as i32 & 3;
     p += 1;
+    let width = if (pq == 0) { 1 } else { 2 };
+    if (p + 64 * width > end) {
+      return Err(Truncated);
+    }
     let t: i32[] = [];
     for k in 0..64 {
       t = t.append(0);
@@ -386,7 +412,7 @@ function quant_tables(own d: Decoder, seg: i32, end: i32): Decoder {
     }
     tables = tables.with(tq, t);
   }
-  return Decoder { ...d, quant: tables };
+  return Ok(Decoder { ...d, quant: tables });
 }
 
 function huffman_tables(own d: Decoder, seg: i32, end: i32): Decoder {
@@ -420,8 +446,14 @@ function huffman_tables(own d: Decoder, seg: i32, end: i32): Decoder {
   return Decoder { ...d, dc_tables: dcs, ac_tables: acs };
 }
 
-function frame(own d: Decoder, seg: i32, progressive: boolean): Result[Decoder, DecodeError] {
+function frame(own d: Decoder, seg: i32, end: i32, progressive: boolean): Result[Decoder, DecodeError] {
   let b = d.data;
+  if (d.frame) {
+    return Err(Corrupt("a second frame"));
+  }
+  if (end - seg < 6 || end - seg < 6 + 3 * (b[seg + 5] as i32)) {
+    return Err(Truncated);
+  }
   if (b[seg] != 8u8) {
     return Err(Unsupported("a precision other than 8 bits"));
   }
@@ -437,7 +469,27 @@ function frame(own d: Decoder, seg: i32, progressive: boolean): Result[Decoder, 
   let Some(comps) = components(b, seg, n, mcux, mcuy) else {
     return Err(Corrupt("a sampling factor of 0"));
   };
+  if (width as i64 * (height as i64) > min_i64(d.max_pixels, MAX_PIXELS) || coefficients(comps) > 2147483647i64) {
+    return Err(Unsupported("an image of more pixels than the limit"));
+  }
   return Ok(Decoder { ...d, width: width, height: height, progressive: progressive, comps: comps, hmax: hmax, vmax: vmax, mcux: mcux, mcuy: mcuy, frame: true });
+}
+
+// The count of the coefficients of all the blocks of `comps`, which can be
+// more than an i32 holds.
+function coefficients(comps: [Component]): i64 {
+  let n = 0i64;
+  for c in comps {
+    n += c.bw as i64 * (c.bh as i64) * 64i64;
+  }
+  return n;
+}
+
+function min_i64(a: i64, b: i64): i64 {
+  if (a < b) {
+    return a;
+  }
+  return b;
 }
 
 // The largest horizontal and vertical sampling factors of the frame.
@@ -528,6 +580,31 @@ function scan(d: Decoder, seg: i32, own coef: i32[]): (i32[], i32) {
 
 // The parameters of the scan whose header starts at `seg`, and the offset
 // of its data.
+// The fault of the scan header at `seg`, a segment that ends at `end`: a
+// header longer than its segment, a table selector past the four tables of
+// each class, or a spectral selection outside the 64 coefficients.
+function scan_header_fault(b: [u8], seg: i32, end: i32): Option[DecodeError] {
+  if (end - seg < 1) {
+    return Some(Truncated);
+  }
+  let n = b[seg] as i32;
+  if (end - seg < 1 + 2 * n + 3) {
+    return Some(Truncated);
+  }
+  for i in 0..n {
+    let tables = b[seg + 2 + 2 * i] as i32;
+    if (tables >> 4 > 3 || (tables & 15) > 3) {
+      return Some(Corrupt("a Huffman table selector past 3"));
+    }
+  }
+  let ss = b[seg + 1 + 2 * n] as i32;
+  let se = b[seg + 2 + 2 * n] as i32;
+  if (ss > 63 || se > 63 || ss > se) {
+    return Some(Corrupt("a spectral selection outside 0 to 63"));
+  }
+  return None;
+}
+
 function scan_header(d: Decoder, seg: i32): (Scan, i32) {
   let b = d.data;
   let n = b[seg] as i32;

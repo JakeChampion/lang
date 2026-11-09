@@ -1,3 +1,5 @@
+import "./util";
+
 function is_backtick(b: u8): boolean {
   return b == b'`';
 }
@@ -17,42 +19,6 @@ function ends_with(s: string, suffix: string): boolean {
     return false;
   }
   return slice_unchecked(s, n - sn, n) == suffix;
-}
-
-function contains(haystack: string, needle: string): boolean {
-  return index_of_sub(haystack, needle) >= 0;
-}
-
-function index_of_sub(haystack: string, needle: string): i32 {
-  let n = needle.len();
-  if (n == 0) {
-    return 0;
-  }
-  let last = haystack.len() - n;
-  let first = needle[0] as i32;
-  let i = __memchr(haystack, first, 0);
-  while (i >= 0 && i <= last) {
-    if (__mismatch(haystack, i, needle, 0, n) == n) {
-      return i;
-    }
-    i = __memchr(haystack, first, i + 1);
-  }
-  return -1;
-}
-
-pub function trim(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
-    b -= 1;
-  }
-  if (a == 0 && b == s.len()) {
-    return s;
-  }
-  return slice_unchecked(s, a, b) + "";
 }
 
 pub function leading_ws(s: string): string {
@@ -115,7 +81,7 @@ function fence_lang(line: string): string {
   while (i < n && is_backtick(line[i])) {
     i += 1;
   }
-  let info = trim(slice_unchecked(line, i, n));
+  let info = util.trim(slice_unchecked(line, i, n));
   let j = 0;
   let m = info.len();
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
@@ -147,7 +113,7 @@ function fence_info(line: string): string {
   while (i < n && is_backtick(line[i])) {
     i += 1;
   }
-  return trim(slice_unchecked(line, i, n));
+  return util.trim(slice_unchecked(line, i, n));
 }
 
 function split_ws(s: string): string[] {
@@ -200,7 +166,7 @@ function trim_quotes(s: string): string {
 }
 
 function is_fence_close(line: string, open_len: i32): boolean {
-  let t = trim(line);
+  let t = util.trim(line);
   let n = t.len();
   if (n < open_len) {
     return false;
@@ -220,14 +186,14 @@ function is_header(t: string): boolean {
     return false;
   }
   let inner = slice_unchecked(t, 2, t.len() - 3);
-  if (contains(inner, ">>")) {
+  if (util.contains(inner, ">>")) {
     return false;
   }
-  return trim(inner).len() > 0;
+  return util.trim(inner).len() > 0;
 }
 
 function header_name(t: string): string {
-  return trim(slice_unchecked(t, 2, t.len() - 3));
+  return util.trim(slice_unchecked(t, 2, t.len() - 3));
 }
 
 pub function is_ref(t: string): boolean {
@@ -238,14 +204,14 @@ pub function is_ref(t: string): boolean {
   if (inner.len() == 0) {
     return false;
   }
-  if (contains(inner, "<<") || contains(inner, ">>")) {
+  if (util.contains(inner, "<<") || util.contains(inner, ">>")) {
     return false;
   }
   return true;
 }
 
 pub function ref_name(t: string): string {
-  return trim(slice_unchecked(t, 2, t.len() - 2));
+  return util.trim(slice_unchecked(t, 2, t.len() - 2));
 }
 
 pub function de_escape(text: string): string {
@@ -275,7 +241,7 @@ pub struct Doc { blocks: Block[], lines: string[] }
 function header_index(lines: string[], first: i32, count: i32): i32 {
   let i = 0;
   while (i < count) {
-    let t = trim(lines[first + i]);
+    let t = util.trim(lines[first + i]);
     if (t.len() == 0) {
       i += 1;
     } else {
@@ -317,7 +283,7 @@ function fence_block(lines: string[], open: i32, count: i32, raw: string): Block
   if (h < 0) {
     return Block { ...b, kind: DISPLAY };
   }
-  return Block { ...b, kind: CHUNK, name: header_name(trim(lines[open + 1 + h])), first: open + 2 + h, count: count - h - 1 };
+  return Block { ...b, kind: CHUNK, name: header_name(util.trim(lines[open + 1 + h])), first: open + 2 + h, count: count - h - 1 };
 }
 
 pub function parse(src: string): Doc {
@@ -465,7 +431,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
       let text = pieces[i].text;
-      let t = trim(text);
+      let t = util.trim(text);
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(pieces, rn)) {
@@ -542,8 +508,8 @@ pub function unused_chunks(src: string): string[] {
   let fp = parse_file_pieces(src);
   let i = 0;
   while (i < fp.len()) {
-    if (is_ref(trim(fp[i].text))) {
-      todo = todo.append(ref_name(trim(fp[i].text)));
+    if (is_ref(util.trim(fp[i].text))) {
+      todo = todo.append(ref_name(util.trim(fp[i].text)));
     }
     i += 1;
   }
@@ -556,8 +522,8 @@ pub function unused_chunks(src: string): string[] {
       reached = reached.append(n);
       let k = 0;
       while (k < pieces.len()) {
-        if (pieces[k].chunk == n && is_ref(trim(pieces[k].text))) {
-          todo = todo.append(ref_name(trim(pieces[k].text)));
+        if (pieces[k].chunk == n && is_ref(util.trim(pieces[k].text))) {
+          todo = todo.append(ref_name(util.trim(pieces[k].text)));
         }
         k += 1;
       }
@@ -664,7 +630,7 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
   while (i < fp.len()) {
     if (fp[i].path == path) {
       let text = fp[i].text;
-      let t = trim(text);
+      let t = util.trim(text);
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(chunks, rn)) {
@@ -922,7 +888,7 @@ function check_chunks(): i32 {
   if (tangle_code(s5) != "fn main() {}") {
     return 5;
   }
-  if (contains(tangle_code(s5), "illustrative")) {
+  if (util.contains(tangle_code(s5), "illustrative")) {
     return 6;
   }
 

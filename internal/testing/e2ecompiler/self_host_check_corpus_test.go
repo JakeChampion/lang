@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/testing/corpus"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -16,7 +17,15 @@ func TestSelfHostCheckAgreesWithGoOnConformance(t *testing.T) {
 }
 
 func TestSelfHostCheckAgreesWithGoOnStdlibTests(t *testing.T) {
-	checkAgreesWithGo(t, treeCorpus(t, filepath.Join("tests", "stdlib"), ""), 200)
+	progs := treeCorpus(t, filepath.Join("tests", "stdlib"), "")
+	if len(progs) < 200 {
+		t.Fatalf("found only %d stdlib programs", len(progs))
+	}
+	progs, err := corpus.Shard(progs, os.Getenv("FERN_CHECK_CORPUS_SHARD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAgreesWithGo(t, progs, 1)
 }
 
 func TestSelfHostCheckAgreesWithGoOnTests(t *testing.T) {

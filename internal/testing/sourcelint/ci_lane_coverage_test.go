@@ -157,7 +157,7 @@ func unitLane(t *testing.T, root string) lane {
 		t.Fatalf("%s no longer runs $(scripts/unit-test-packages); this gate reads the "+
 			"unit lane's package set from that script and cannot model the lane without it", file)
 	}
-	for _, line := range strings.Split(src, "\n") {
+	for _, line := range strings.Split(jobBlocks(src)["test"], "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}

@@ -2270,8 +2270,7 @@ TestSelfHostParityCorpusArm64IR 2
 TestSelfHostParityCorpusWasmIR 2
 TestSelfHostParityCorpusX86_64IR 2
 TestSelfHostParseErrorPositions 14
-TestSelfHostParseF64Arm64 3
-TestSelfHostParseF64Watbin 2
+TestSelfHostParseF64 3
 TestSelfHostParseUnknownDiagSequence 8
 TestSelfHostParserArm64 7
 TestSelfHostParserX86_64 8

@@ -946,10 +946,8 @@ smallest → largest:
   assembler must resolve against (the parity of the Go `SegmentAddrs`).
   Apple Silicon refuses unsigned binaries, so the ad-hoc
   `CSMAGIC_EMBEDDED_SIGNATURE` SuperBlob + `CSMAGIC_CODEDIRECTORY` is
-  mandatory — its per-4 KiB-page hashes need **SHA-256**, which has no
-  stdlib home yet, so a self-contained FIPS 180-4 implementation
-  (`sha256_bytes`, words carried in `[0, 2^32)` i64s masked with
-  `& 0xffffffff`) lives in the module. Big-endian for the signing blobs,
+  mandatory. Its per-4 KiB-page hashes come from `std/crypto`'s
+  `sha256`. Big-endian for the signing blobs,
   little-endian for the Mach-O header/load-commands; the same
   `i32[]`-of-0..255 byte-buffer convention as `elf.fern`. Gated by
   `internal/testing/e2e/self_host_macho_emit_test.go` (`TestSelfHostMachO`),

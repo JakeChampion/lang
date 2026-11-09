@@ -1,11 +1,14 @@
-# FLAC fixed-predictor frame plans
+# FLAC frame plans
 
-This module selects constant, verbatim, or fixed-predictor subframes by their exact bit cost.
+This module selects constant, verbatim, fixed-predictor, or LPC subframes by their exact bit cost.
 It compares Rice and Rice2 partitions with optional raw residual escape codes.
 Residuals obey the signed 32-bit limit that excludes the most negative integer.
 Verbatim coding remains available when a predictor exceeds that limit.
 Fixed predictors reuse successive wide integer differences instead of repeated source predictions.
 The temporary difference array uses eight bytes per frame, up to 524,280 bytes.
+
+Optional LPC analysis uses one wide sample array and one float window.
+Its integer residuals retain the same overflow checks and verbatim fallback.
 
 For folded residuals, the Rice cost at parameter `k` is `n*(k+1) + sum(value >> k)`.
 Its adjacent difference is `n - sum(ceil((value >> k)/2))`.
@@ -15,6 +18,10 @@ A zero integer mean uses parameter zero.
 
 The encoder compares those exact costs and the Rice-one parameter cap in one scan.
 The complete search also checks raw escapes and every permitted partition order.
+Cost scans reuse one bounded parameter cache.
+Only a smaller plan retains its selected parameter array.
+The cache retains two scalar slots per permitted partition.
+Block divisibility, predictor order, and the requested partition limit cap that count.
 
 Source samples must fit the declared PCM depth before plan selection.
 The public encoder validates that range before it constructs any plan.
@@ -24,14 +31,15 @@ Stereo transforms use wide integer arithmetic and preserve all source bits.
 
 ```fern
 <<*>>=
-// Select exact fixed-predictor and Rice costs for one FLAC channel.
+// Select exact predictor and Rice costs for one FLAC channel.
 
 import "std/audio/flac/bitwriter";
+import "std/audio/flac/lpc";
 import "std/audio/pcm";
 import "std/u32";
 import "std/u64";
 
-pub opaque struct Channel { frames: i32, channels: i32, channel: i32, assignment: i32, kind: i32, wasted: i32, bits: i32, cost: i64, partition: i32, rice2: boolean, parameters: i32[] }
+pub opaque struct Channel { frames: i32, channels: i32, channel: i32, assignment: i32, kind: i32, wasted: i32, bits: i32, cost: i64, partition: i32, rice2: boolean, parameters: i32[], model: Option[lpc.Model] }
 
 struct Rice { first_cost: i64, second_cost: i64, first: i32, second: i32 }
 
@@ -148,8 +156,36 @@ function rice(values: [u32], start: i32, end: i32): Rice {
   return Rice { first_cost: first_cost, second_cost: second_cost, first: first, second: second };
 }
 
+function predictor_cost(base: Channel, order: i32): i64 {
+  return 8i64 + base.wasted as i64 + order as i64 * ((base.bits - base.wasted) as i64)
+    + (if (base.kind >= 32) { 9i64 + order as i64 * 15i64 } else { 0i64 });
+}
+
+function partition_parameters(candidates: [i32], partition: i32, wide: boolean): i32[] {
+  let count = 1 << partition;
+  let method = if (wide) { 1 } else { 0 };
+  let output: i32[] = [];
+  for part in 0..count {
+    output = output.append(candidates[part * 2 + method]);
+  }
+  return output;
+}
+
+function partition_capacity(frames: i32, order: i32, maximum: i32): i32 {
+  let power = (frames as u32).trailing_zeros();
+  if (power > maximum) {
+    power = maximum;
+  }
+  let count = 1 << power;
+  while (frames / count < order) {
+    count >>= 1;
+  }
+  return count * 2;
+}
+
 function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Channel {
   let best = base;
+  let candidates = __alloc_i32(partition_capacity(base.frames, order, maximum));
   let p = 0;
   while (p <= maximum) {
     let count = 1 << p;
@@ -157,23 +193,19 @@ function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Cha
       break;
     }
     let per = base.frames / count;
-    let first: i32[] = [];
-    let second: i32[] = [];
     let first_cost = 6i64;
     let second_cost = 6i64;
     for part in 0..count {
       let start = part * per + (if (part == 0) { order } else { 0 });
       let selected = rice(values, start, (part + 1) * per);
-      first = first.append(selected.first);
-      second = second.append(selected.second);
+      candidates = candidates.with(part * 2, selected.first).with(part * 2 + 1, selected.second);
       first_cost += selected.first_cost;
       second_cost += selected.second_cost;
     }
     let wide = second_cost < first_cost;
-    let cost = 8i64 + base.wasted as i64 + order as i64 * ((base.bits - base.wasted) as i64)
-      + (if (wide) { second_cost } else { first_cost });
+    let cost = predictor_cost(base, order) + (if (wide) { second_cost } else { first_cost });
     if (cost < best.cost) {
-      best = Channel { ...base, kind: 8 + order, cost: cost, partition: p, rice2: wide, parameters: if (wide) { second } else { first } };
+      best = Channel { ...base, kind: if (base.kind >= 32) { base.kind } else { 8 + order }, cost: cost, partition: p, rice2: wide, parameters: partition_parameters(candidates, p, wide) };
     }
     p += 1;
   }
@@ -220,7 +252,39 @@ function predictors(input: [i32], base: Channel, max_order: i32, max_partition: 
   return (best, scratch);
 }
 
-// Validate source extents and transform selectors before every indexed sample read.
+function linear(input: [i32], base: Channel, maximum: i32, max_partition: i32, own scratch: u32[]): (Channel, u32[]) {
+  let values = __alloc_i64(base.frames);
+  for at in 0..base.frames {
+    values = values.with(at, sample(input, base.channels, at, base.channel, base.assignment) >> base.wasted as i64);
+  }
+  let best = base;
+  for model in lpc.models(values, maximum) {
+    let order = model.coefficients.len();
+    let valid = true;
+    for at in order..base.frames {
+      let sum = 0i64;
+      for j in 0..order {
+        sum += model.coefficients[j] as i64 * values[at - j - 1];
+      }
+      let value = values[at] - (sum >> model.shift as i64);
+      if (value <= -2147483648i64 || value >= 2147483648i64) {
+        valid = false;
+        break;
+      }
+      scratch = scratch.with(at, folded(value));
+    }
+    if (valid) {
+      let candidate = Channel { ...base, kind: 31 + order, model: Some(model), cost: best.cost };
+      let selected = partitions(scratch, candidate, order, max_partition);
+      if (selected.cost < best.cost) {
+        best = selected;
+      }
+    }
+  }
+  return (best, scratch);
+}
+
+// Validate all source extents and predictor bounds before plan construction.
 // fern-lint: allow cyclomatic-complexity
 pub function choose(input: [i32], channels: i32, channel: i32, assignment: i32, depth: i32, max_order: i32, max_partition: i32, own scratch: u32[]): Result[(Channel, u32[]), pcm.AudioError] {
   if (channels < 1 || channels > 8 || channel < 0 || channel >= channels || input.len() % channels != 0
@@ -233,7 +297,7 @@ pub function choose(input: [i32], channels: i32, channel: i32, assignment: i32, 
     return Err(pcm.Header);
   }
   let bits = depth + (if (assignment == 8 && channel == 1 || assignment == 9 && channel == 0 || assignment == 10 && channel == 1) { 1 } else { 0 });
-  let best = Channel { frames: frames, channels: channels, channel: channel, assignment: assignment, kind: 1, wasted: 0, bits: bits, cost: 8i64 + frames as i64 * (bits as i64), partition: 0, rice2: false, parameters: [] };
+  let best = Channel { frames: frames, channels: channels, channel: channel, assignment: assignment, kind: 1, wasted: 0, bits: bits, cost: 8i64 + frames as i64 * (bits as i64), partition: 0, rice2: false, parameters: [], model: None };
   let first = sample(input, channels, 0, channel, assignment);
   let constant = true;
   let union_bits = 0u64;
@@ -266,12 +330,53 @@ pub function choose(input: [i32], channels: i32, channel: i32, assignment: i32, 
   return Ok((best, scratch));
 }
 
+// Preserve the fixed plan while LPC compares both valid wasted-bit widths.
+// fern-lint: allow cyclomatic-complexity
+pub function choose_lpc(input: [i32], channels: i32, channel: i32, assignment: i32, depth: i32, max_order: i32, max_partition: i32, max_lpc_order: i32, own scratch: u32[]): Result[(Channel, u32[]), pcm.AudioError] {
+  if (max_lpc_order < 0 || max_lpc_order > 32) {
+    return Err(pcm.Header);
+  }
+  let (best, fixed_scratch) = choose(input, channels, channel, assignment, depth, max_order, max_partition, scratch)?;
+  scratch = fixed_scratch;
+  if (max_lpc_order == 0 || best.kind == 0) {
+    return Ok((best, scratch));
+  }
+  let union_bits = 0u64;
+  for at in 0..best.frames {
+    union_bits |= sample(input, channels, at, channel, assignment) as u64;
+  }
+  let wasted = union_bits.trailing_zeros();
+  if (wasted >= best.bits) {
+    wasted = best.bits - 1;
+  }
+  for shift in if (wasted > 0) { [0, wasted] } else { [0] } {
+    let base = Channel { ...best, kind: 1, wasted: shift, model: None };
+    let (selected, next) = linear(input, base, max_lpc_order, max_partition, scratch);
+    scratch = next;
+    if (selected.cost < best.cost) {
+      best = selected;
+    }
+  }
+  return Ok((best, scratch));
+}
+
 pub function (plan: Channel) bit_count(): i64 {
   return plan.cost;
 }
 
 pub function (plan: Channel) is_constant(): boolean {
   return plan.kind == 0;
+}
+
+function planned_residual(input: [i32], plan: Channel, at: i32, order: i32): i64 {
+  if let Some(model) = plan.model {
+    let sum = 0i64;
+    for j in 0..order {
+      sum += model.coefficients[j] as i64 * (sample(input, plan.channels, at - j - 1, plan.channel, plan.assignment) >> plan.wasted as i64);
+    }
+    return (sample(input, plan.channels, at, plan.channel, plan.assignment) >> plan.wasted as i64) - (sum >> model.shift as i64);
+  }
+  return residual(input, plan.channels, at, plan.channel, plan.assignment, order, plan.wasted);
 }
 
 // Emit the selected subframe, warm-up samples, and bounded residual partitions.
@@ -292,9 +397,15 @@ pub function (plan: Channel) write(input: [i32], own output: bitwriter.BitWriter
     }
     return Ok(output);
   }
-  let order = plan.kind - 8;
+  let order = if (plan.kind >= 32) { plan.kind - 31 } else { plan.kind - 8 };
   for at in 0..order {
     output = output.put((sample(input, plan.channels, at, plan.channel, plan.assignment) >> plan.wasted as i64) as u64, bits);
+  }
+  if let Some(model) = plan.model {
+    output = output.put(14u64, 4).put(model.shift as u64, 5);
+    for coefficient in model.coefficients {
+      output = output.put(coefficient as u64, 15);
+    }
   }
   output = output.put(if (plan.rice2) { 1u64 } else { 0u64 }, 2).put(plan.partition as u64, 4);
   let width = if (plan.rice2) { 5 } else { 4 };
@@ -306,12 +417,12 @@ pub function (plan: Channel) write(input: [i32], own output: bitwriter.BitWriter
       let raw = -1 - param;
       output = output.put(((1 << width) - 1) as u64, width).put(raw as u64, 5);
       for at in start..(part + 1) * per {
-        output = output.put(residual(input, plan.channels, at, plan.channel, plan.assignment, order, plan.wasted) as u64, raw);
+        output = output.put(planned_residual(input, plan, at, order) as u64, raw);
       }
     } else {
       output = output.put(param as u64, width);
       for at in start..(part + 1) * per {
-        let value = folded(residual(input, plan.channels, at, plan.channel, plan.assignment, order, plan.wasted));
+        let value = folded(planned_residual(input, plan, at, order));
         output = output.zeros((value >> param as u32) as u64).put(1u64, 1).put(value as u64, param);
       }
     }

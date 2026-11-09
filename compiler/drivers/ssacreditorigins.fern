@@ -7,6 +7,7 @@ import "../util";
 import "./ssacreditenums" as enums;
 import "./ssacredithelpertypes" as helper_types;
 import "./ssacredithelperorigins" as helper_origins;
+import "std/string";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -69,7 +70,7 @@ function instances(target: string): void {
   require(sub.physical_origins.producers.len() == 1, 160);
   let found = 0;
   for origin in sub.physical_origins.extra {
-    if (util.str_has_prefix(origin.symbol, "identity")) {
+    if (origin.symbol.starts_with("identity")) {
       require(origin.producer == 0, 161);
       found += 1;
     }

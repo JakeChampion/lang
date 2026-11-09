@@ -44,7 +44,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 const TICKET_AAD: string>>
 
-<<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>
+<<14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>
 
 <<15 function __same(a: [u8], b: [u8]): boolean>>
 
@@ -92,6 +92,7 @@ import "std/tls/ktls";
 import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
+import "std/utf8";
 ```
 
 ### `3 pub struct Config`
@@ -106,7 +107,12 @@ pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolea
 ```fern
 <<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
 pub function config(id: identity.Identity, ticket_key: [u8]): Config {
-  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: crypto.sha256_new().update(ticket_key).finish(), client_roots: None };
+  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: ticket_key_of(ticket_key), client_roots: None };
+}
+
+// ticket_key_of is the key that seals tickets for the caller's secret.
+pub function ticket_key_of(secret: [u8]): u8[] {
+  return crypto.sha256_new().update(secret).finish();
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
@@ -381,7 +387,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
       }
     },
     handshake.ResumeOffered(offer) => {
-      return __failed(srv, srv.resume(__lookup(s.config, offer, now)));
+      return __failed(srv, srv.resume(lookup_ticket(s.config.ticket_key, offer, now)));
     },
     handshake.VerifyClient(v) => {
       match (__client_trusted(s.config, v, now)) {
@@ -396,7 +402,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
     },
     handshake.Connected => {
       if (s.config.tickets) {
-        return __failed(srv, srv.ticket(__issue(s.config, srv, s.ticket_entropy, now)));
+        return __failed(srv, srv.ticket(issue_ticket(s.config.ticket_key, s.config.ticket_lifetime, srv, s.ticket_entropy, now, false)));
       }
     },
     _ => {}
@@ -464,23 +470,30 @@ function __client_alert(e: tls.TlsError): handshake.HandshakeError {
 <<13 const TICKET_AAD: string>>=
 const TICKET_AAD: string = "fern tls ticket";
 
-const TICKET_VERSION: i32 = 1;
+const TICKET_VERSION: i32 = 2;
 
 // A ticket's obfuscated-age addend (4 bytes) and its sealing nonce (12).
-const TICKET_ENTROPY: i32 = 16;
+pub const TICKET_ENTROPY: i32 = 16;
 ```
 
-### `14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket`
+### `14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket`
 
 ```fern
-<<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>=
-function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket {
+<<14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>=
+pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket {
   let nonce = [0 as u8];
-  let lifetime = config.ticket_lifetime.as_millis() / (1000 as i64);
+  let seconds = lifetime.as_millis() / (1000 as i64);
   let body = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);
-  body = __u16(__i64(body, lifetime), srv.server_name.bytes().len());
+  body = __i64(body, seconds);
+  let flags = 0;
+  if (early) {
+    flags = 1;
+  }
+  body = body.append(flags as u8).append(srv.alpn.bytes().len() as u8);
+  body = __cat(body, srv.alpn.bytes());
+  body = __u16(body, srv.server_name.bytes().len());
   body = __cat(body, srv.server_name.bytes());
   match (srv.resumption_psk(nonce)) {
     Ok(psk) => {
@@ -490,7 +503,7 @@ function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64)
   }
   let ticket_nonce = __copy(entropy[4:16]);
   let sealed: u8[] = [];
-  match (chacha20poly1305.key(config.ticket_key)) {
+  match (chacha20poly1305.key(key)) {
     Ok(k) => {
       match (k.seal(ticket_nonce, body, TICKET_AAD.bytes())) {
         Ok(b) => {
@@ -501,15 +514,26 @@ function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64)
     },
     Err(_) => {}
   }
-  return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(entropy), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
+  return message.NewSessionTicket { lifetime: seconds as u32, age_add: __u32_of(entropy), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: __ticket_extensions(early) };
 }
 
-function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
+// A ticket that allows early data says so with the largest size, as QUIC
+// requires (RFC 9001 section 4.6.1).
+function __ticket_extensions(early: boolean): message.Extension[] {
+  if (early) {
+    return [message.ext_early_data_max(0xffffffff as u32)];
+  }
+  return [];
+}
+
+// lookup_ticket is the PSK of the first identity in `offer` that is a ticket
+// sealed under `key`, unexpired at `now` and issued for the offer's name.
+pub function lookup_ticket(key: [u8], offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
   let i = 0;
   while (i < offer.identities.len()) {
-    match (__open_ticket(config, offer, offer.identities[i].identity, now)) {
-      Some(psk) => {
-        return Some(handshake.Resumed { index: i, psk: psk });
+    match (__open_ticket(key, offer, offer.identities[i].identity, now)) {
+      Some(r) => {
+        return Some(handshake.Resumed { ...r, index: i });
       },
       None => {}
     }
@@ -518,11 +542,11 @@ function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[hand
   return None;
 }
 
-function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i64): Option[u8[]] {
+function __open_ticket(key: [u8], offer: handshake.Offer, id: [u8], now: i64): Option[handshake.Resumed] {
   if (id.len() < 12) {
     return None;
   }
-  let Ok(k) = chacha20poly1305.key(config.ticket_key) else {
+  let Ok(k) = chacha20poly1305.key(key) else {
     return None;
   };
   match (k.open(__copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
@@ -536,13 +560,20 @@ function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i6
   return None;
 }
 
-function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u8[]] {
+// A ticket's body: version, suite, issue time and lifetime, the early data
+// flag, the ALPN, the server name, and the PSK.
+function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
   let size = offer.suite.hash().size();
-  if (body.len() < 21 || body[0] as i32 != TICKET_VERSION) {
+  if (body.len() < 23 || body[0] as i32 != TICKET_VERSION) {
     return None;
   }
-  let name_len = body[19] as i32 << 8 | body[20] as i32;
-  if (body.len() != 21 + name_len + size) {
+  let alpn_len = body[20] as i32;
+  if (body.len() < 23 + alpn_len) {
+    return None;
+  }
+  let name_at = 21 + alpn_len;
+  let name_len = body[name_at] as i32 << 8 | body[name_at + 1] as i32;
+  if (body.len() != name_at + 2 + name_len + size) {
     return None;
   }
   match (keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32)) {
@@ -560,10 +591,13 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u
   if (now < issued || now >= issued + lifetime * (1000 as i64)) {
     return None;
   }
-  if (!__same(body[21:21 + name_len], offer.server_name.bytes())) {
+  if (!__same(body[name_at + 2:name_at + 2 + name_len], offer.server_name.bytes())) {
     return None;
   }
-  return Some(__copy(body[21 + name_len:body.len()]));
+  let Ok(alpn) = utf8.from_bytes(__copy(body[21:21 + alpn_len])) else {
+    return None;
+  };
+  return Some(handshake.Resumed { index: 0, psk: __copy(body[name_at + 2 + name_len:body.len()]), early: (body[19] as i32 & 1) == 1, alpn: alpn });
 }
 
 function __u16(own out: u8[], v: i32): u8[] {
