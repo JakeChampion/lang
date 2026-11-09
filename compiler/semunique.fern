@@ -51,7 +51,7 @@ pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
     return Hoisted { func: f, changed: false };
   }
   let graph = ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() };
-  return Hoisted { func: ssasem.Func { ...f, values: values, calls: calls, graph: graph, source_positions: padded(f.source_positions, values.len()) }, changed: true };
+  return Hoisted { func: ssasem.Func { ...f, values: values, calls: calls, graph: graph, source_positions: sourcepos.pad_values(f.source_positions, values.len()) }, changed: true };
 }
 
 // The one predecessor placed before a loop header, when every other
@@ -229,15 +229,4 @@ function grown_in_loop(g: ssa.SFunc, phi: i32, hi: i32): boolean {
 
 function grows(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.truncate() || ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str);
-}
-
-function padded(source: sourcepos.SourceInfo, n: i32): sourcepos.SourceInfo {
-  if (source.entry.line == 0) {
-    return source;
-  }
-  let values = source.values;
-  while (values.len() < n) {
-    values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
-  }
-  return sourcepos.SourceInfo { ...source, values: values };
 }

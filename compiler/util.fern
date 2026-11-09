@@ -516,6 +516,19 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
+// path_base is the part of path after its last slash.
+pub function path_base(path: string): string {
+  let start = 0;
+  let i = 0;
+  while (i < path.len()) {
+    if (path[i] == b'/') {
+      start = i + 1;
+    }
+    i += 1;
+  }
+  return slice_unchecked(path, start, path.len()) + "";
+}
+
 pub function same_i32s(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;

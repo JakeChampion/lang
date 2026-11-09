@@ -8196,25 +8196,6 @@ function func_scope_tparams(fd: parser.FuncDecl): string[] {
   return parser.type_str_vars(fd.receiver_type, fd.type_params);
 }
 
-function split_fn_param_spellings(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
-      start = i + 1;
-    } else if (csv[i] == b'(' || csv[i] == b'[') {
-      depth += 1;
-    } else if (csv[i] == b')' || csv[i] == b']') {
-      depth -= 1;
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function param_decl_type(p: ast.ParamDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   let t = fn_param_decl_type(p, tparams, subst, tn);
   if (is_unknown(t)) {
@@ -8242,7 +8223,7 @@ function declared_callable_type(name: string, ret: string, params: string, tpara
   let pts: typeinfo.Type[] = [];
   let powns: boolean[] = [];
   if (params.len() > 0) {
-    for seg in split_fn_param_spellings(params) {
+    for seg in parser.split_type_list(params) {
       powns = powns.append(parser.spelling_is_own(seg));
       pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
     }
@@ -24119,17 +24100,10 @@ function ow_result_has_methods(body: ast.Stmt[]): boolean {
   return false;
 }
 
-function ow_result_receiver_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
-}
-
 function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast.Expr {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
-      let tag = ow_result_receiver_tag(fa.obj);
+      let tag = ast.receiver_tag(fa.obj);
       let key = ow_receiver_ns(tag) + "." + fa.field;
       let cell_handle = tag == "Cell" && fa.field == "get" && !ow_holds_no_handle(c.ty, dx);
       if (tag.len() > 0 && !tag.starts_with("dyn ") && !methods.has(key) && !cell_handle) {

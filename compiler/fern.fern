@@ -4427,7 +4427,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   if (entry_diags.len() > 0) {
     return Checked { findings: entry_diags, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
-  let mt = checker.check_module_with_file(merged, modloader.base_name(entry_display(entry_path)));
+  let mt = checker.check_module_with_file(merged, util.path_base(entry_display(entry_path)));
   let bounds = errors_of(platforms.provider_diags(merged));
   if (target_given) {
     bounds = errors_of(capability_diags(merged, target));
@@ -6606,7 +6606,7 @@ function apk_flag_name(a: string): string {
 
 // The library name of the app: the base name of FILE, as a C identifier.
 function apk_lib_name(entry_path: string): string {
-  let base = modloader.base_name(entry_path);
+  let base = util.path_base(entry_path);
   let out = "";
   for i in 0..base.len() {
     let c = base[i];
@@ -7046,7 +7046,7 @@ function interpret_bundle(st: DiagStyle, b: Bundle, entry_path: string, target: 
   if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
     return 1;
   }
-  if (eprint_findings(st, interp_findings_with_file(merged, b.pkgs, modloader.base_name(entry_display(entry_path))), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, interp_findings_with_file(merged, b.pkgs, util.path_base(entry_display(entry_path))), entry_path, b.files, b.maps)) {
     return 1;
   }
   let argv: string[] = [entry_path];
@@ -7490,7 +7490,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 2;
   }
   merged = bound;
-  if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(gate(merged, util.path_base(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
   if (eprint_findings(st, errors_of(executable_entry_diags(merged, target, shared, emit)), entry_path, b.files, b.maps)) {

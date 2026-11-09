@@ -361,18 +361,6 @@ function is_in(name: string, list: string[]): boolean {
   return false;
 }
 
-function basename(path: string): string {
-  let start = 0;
-  let i = 0;
-  while (i < path.len()) {
-    if (path[i] == b'/') {
-      start = i + 1;
-    }
-    i += 1;
-  }
-  return slice_unchecked(path, start, path.len()) + "";
-}
-
 // The parser's range desugar qualifies its call with the import path
 // `parser.RANGE_MODULE`, so that path resolves like the import's own name.
 function range_import_at(mod: parser.Module): i32 {
@@ -609,7 +597,7 @@ function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
   if (error_pfx.len() == 0) {
     return false;
   }
-  return strip_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
+  return parser.strip_type_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
 }
 
 function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
@@ -632,12 +620,12 @@ function path_is(p: string, want: string): boolean {
 }
 
 function result_of_response(t: string): boolean {
-  let s = strip_spaces(t);
+  let s = parser.strip_type_spaces(t);
   return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
 }
 
 function tuple_halves(t: string): (string, string) {
-  let s = strip_spaces(t);
+  let s = parser.strip_type_spaces(t);
   if (s.len() < 4 || s[0] != b'(' || s[s.len() - 1] != b')') {
     return ("", "");
   }
@@ -659,18 +647,6 @@ function tuple_halves(t: string): (string, string) {
   return ("", "");
 }
 
-function strip_spaces(t: string): string {
-  let out = "";
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] != b' ') {
-      out += slice_unchecked(t, i, i + 1);
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
@@ -689,7 +665,7 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
     if (k >= 0) {
       out = out.append(pfxs[k]);
     } else {
-      out = out.append(util.mangle_prefix(basename(mod.imports[i].path)));
+      out = out.append(util.mangle_prefix(util.path_base(mod.imports[i].path)));
     }
     i += 1;
   }
@@ -715,7 +691,7 @@ pub function assign_prefixes(imports: LoadedModule[]): string[] {
   for k in order {
     let base = imports[k].name;
     if (imports[k].ident.len() > 0) {
-      base = basename(imports[k].ident);
+      base = util.path_base(imports[k].ident);
     }
     let pf = unique_prefix(util.mangle_prefix(base), used);
     used = used.append(pf);
@@ -1785,7 +1761,7 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
       k = util.index_of_str(ids, mod.imports[i].resolved);
     }
     if (k < 0) {
-      k = loaded_index_by_name(imports, basename(mod.imports[i].path));
+      k = loaded_index_by_name(imports, util.path_base(mod.imports[i].path));
     }
     if (k >= 0) {
       for t in imports[k].mod.trait_decls {
@@ -2023,7 +1999,7 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
         if (imps[j].resolved.len() > 0) {
           ok = util.index_of_str(ids, imps[j].resolved);
         }
-        let origin = util.mangle_prefix(basename(imps[j].path));
+        let origin = util.mangle_prefix(util.path_base(imps[j].path));
         if (ok >= 0) {
           origin = pfxs[ok];
         }

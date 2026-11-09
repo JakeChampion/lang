@@ -70,3 +70,15 @@ function grow_values(own out: SourceInfo, map: i32[]): SourceInfo {
   }
   return out;
 }
+
+// pad_values pads the value positions of a source with empty ones up to n.
+pub function pad_values(source: SourceInfo, n: i32): SourceInfo {
+  if (source.entry.line == 0) {
+    return source;
+  }
+  let values = source.values;
+  while (values.len() < n) {
+    values = values.append(SourcePos { line: 0, col: "0" });
+  }
+  return SourceInfo { ...source, values: values };
+}
