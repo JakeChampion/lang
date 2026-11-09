@@ -23,7 +23,8 @@ The final force-stop also preserves an active playback failure.
 If playback succeeds, a failed force-stop still fails the check.
 
 The log includes the last 160 platform lines when playback fails.
-All playback, PCM, timeline, and screenshot assertions remain in place.
+All playback, timeline, and screenshot assertions remain in place.
+The AudioFlinger capture supplies platform diagnostics. It does not compare decoded PCM samples.
 
 Python compilation passes.
 Host regression controls reproduce and prevent the loss of the playback failure during cleanup.
