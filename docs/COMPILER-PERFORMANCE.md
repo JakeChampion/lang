@@ -12,8 +12,10 @@ The [profiling reference](PROFILING.md) describes the native CPU and allocation 
 The [interpreter target-search experiment](benchmarks/compiler-interpreter-targets-2026-11-09/README.md) avoids declaration searches whose result argument evaluation does not use.
 Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
 Both binaries produce identical TAP output.
-Full-corpus controls remain in progress at this record revision.
-This subset result does not establish a timeout repair or a complete-compilation gain.
+Both full-corpus controls reach their 33-minute diagnostic limit without completion.
+The shortcut does not repair that timeout.
+Complete cold and warm compilation controls produce identical native output, with variable timings that establish no performance change.
+The candidate diagnostic profile still attributes 49.43% of exclusive samples to `call_target`.
 
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |

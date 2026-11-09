@@ -1,0 +1,22 @@
+{
+  "label": "full-candidate",
+  "args": [
+    "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+    "-stdlib",
+    "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+    "-interp",
+    "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+  "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+  "environment": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "started": "2026-11-09T22:05:45.781200+00:00",
+  "budget_seconds": 1980,
+  "note": "Concurrent full-corpus control and targeted Go tests may be active. Retain every sample. Diagnostic subsets do not replace the full test."
+}

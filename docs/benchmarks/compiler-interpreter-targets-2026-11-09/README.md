@@ -70,6 +70,20 @@ The larger profile remains diagnostic evidence, rather than a paired time compar
 Its first collector stopped before execution because it read an incomplete monitor record.
 The archive retains that failure and the complete retry separately.
 
+Three further pairs alternate compiler order on that second group with both normal binaries.
+All six commands exit zero and produce identical TAP output.
+The [larger comparison](larger-comparison/second-group-summary.json) retains every sample.
+CPU time decreases in each pair, by 29.67%, 43.62%, and 7.02%.
+The baseline median wall time is 164.218644072 seconds, and the candidate median is 103.929773325 seconds.
+Concurrent workloads and wide time ranges limit these results to the measured subset.
+
+The [candidate profile](candidate-profile/breakdown.json) records 5,675 samples and zero drops on the same larger diagnostic group.
+There are 3,957 samples at the 64-frame limit.
+`call_target` still accounts for 2,805 exclusive samples, or 49.43%.
+`runtime_method_name` accounts for 959 exclusive samples, or 16.90%.
+These diagnostics identify further lookup work to investigate.
+They do not measure a further optimization.
+
 The callable-value suite and the complete x86-64 and ARM64 driver suites report passes in [the test log](tests-corrected.log).
 The tool lost that parent session before the last two Go suites finished.
 The [session record](session-loss.json) retains this interruption without an overall suite verdict.
@@ -92,7 +106,8 @@ The original allocation collector stopped without a build outcome, and its incom
 
 The unchanged normal baseline reaches the full-corpus deadline without completion.
 The [completion record](full-baseline-procfs-control.json) retains the timeout and exit status after the parent-session loss.
-The full candidate control remains active at this archive revision.
+The full candidate also reaches its diagnostic deadline without completion.
+The [full-corpus controls](full-corpus-controls/orphan-controls.json) retain both timeout outcomes and the status of each orphan process.
 The different concurrent workloads prevent a paired full-corpus time comparison.
 The detached full-corpus monitor retains the original deadlines after the parent-session loss.
 
@@ -100,6 +115,10 @@ The direct full-corpus controls use a 33-minute diagnostic limit.
 The test corpus, exclusions, and CI package budget stay unchanged.
 Exact-head CI must still validate the package budget with its other work.
 Later records must state each completed outcome explicitly.
+
+The unused-search shortcut improves both measured subsets but does not repair the full-corpus timeout.
+The current investigation retains this result and examines an immutable function-name index.
+No index implementation or performance result is present in this archive revision.
 
 ## Complete compilation controls
 
