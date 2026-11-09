@@ -27,6 +27,7 @@ import "./semhelperreach";
 import "./rtmodule";
 import "./keyhelpers";
 import "std/envflag";
+import "std/string";
 
 struct Rows {
   body: Result[Option[irtables.Lowered], irtables.LowerState][],
@@ -125,7 +126,7 @@ function dump_if_asked(p: semsource.Produced): void {
   match (env("FERN_SEM_DUMP")) {
     Some(want) => {
       let name = p.func.graph.name;
-      if (want == name || util.str_has_suffix(want, "*") && util.str_has_prefix(name, slice_unchecked(want, 0, want.len() - 1))) {
+      if (want == name || want.ends_with("*") && name.starts_with(slice_unchecked(want, 0, want.len() - 1))) {
         let modes = "";
         for m in p.modes {
           modes = modes + " " + util.i32_to_string(m);
@@ -324,7 +325,7 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
         } else if (ins.kind_tag == ssasem.call()) {
           callee = rows.find(ins.str);
           if (effects.has(ins.str) && util.index_of_str(funcs[i].shadows, ins.str) < 0
-            || callee < 0 && !util.str_has_prefix(ins.str, "__")) {
+            || callee < 0 && !ins.str.starts_with("__")) {
             bad = bad.with(i, true);
           }
         }
@@ -342,7 +343,7 @@ function any_map_call(funcs: ssasem.Func[]): boolean {
   for f in funcs {
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")) {
+        if (ins.kind_tag == ssasem.call() && ins.str.starts_with("__arrm_map__")) {
           return true;
         }
       }
@@ -929,7 +930,7 @@ pub function target_substitution(typed: parser.Module, target: string, opts: sem
 }
 
 function is_wasm(target: string): boolean {
-  return util.str_has_prefix(target, "wasm");
+  return target.starts_with("wasm");
 }
 
 function wasm_gated(typed: parser.Module): parser.Module {
@@ -1058,7 +1059,7 @@ pub function verdict_text(v: Verdict): string {
   let out = "";
   if (v.errors.len() > 0) {
     out = util.format_diags(v.errors);
-    if (!util.str_has_suffix(out, "\n")) {
+    if (!out.ends_with("\n")) {
       out += "\n";
     }
   }

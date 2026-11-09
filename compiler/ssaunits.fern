@@ -12,6 +12,7 @@ import "./typeinfo";
 import "./util";
 import "./optbisect";
 import "std/envflag";
+import "std/string";
 
 pub function value_mode(): i32 {
   return ssasem.value_mode();
@@ -5432,7 +5433,7 @@ function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: b
         if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, step_of(p, idx, b.id, pos, -1), ins)) {
           root = -1;
         }
-      } else if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
+      } else if (ins.kind_tag == ssasem.call() && ins.str.starts_with(sempair.word_as_prefix())) {
         root = pair_call_root(f, p, idx, b, pos, state, roots, ins);
       } else if (ins.kind_tag == ssasem.call()) {
         root = call_root(f, step_of(p, idx, b.id, pos, -1), state, roots, ins);
@@ -5570,7 +5571,7 @@ function linked_supply(f: ssasem.Func, p: Plan, at: i32[], state: i32[], step: S
 // ends its link there.
 pub function constructs(ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.call()) {
-    return util.str_has_prefix(ins.str, "__pair_set");
+    return ins.str.starts_with("__pair_set");
   }
   return ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
 }

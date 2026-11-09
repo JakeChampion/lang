@@ -1,6 +1,7 @@
 import "./ssa";
 import "./ssacredithelper" as helper;
 import "./util";
+import "std/string";
 
 function refused(f: ssa.SFunc, why: string): helper.Proof {
   return helper.Proof { ok: false, function_name: f.name, message: why };
@@ -26,7 +27,7 @@ function input_error(f: ssa.SFunc): string {
   for b in f.blocks {
     count += b.insts.len();
   }
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 2 || f.takes_env || f.nvals < 2 || f.nvals > count || at(f, f.entry) < 0) {
+  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != 2 || f.takes_env || f.nvals < 2 || f.nvals > count || at(f, f.entry) < 0) {
     return "invalid scalar helper boundary";
   }
   let blocks: i32[] = [];

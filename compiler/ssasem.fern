@@ -7,6 +7,7 @@ import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
 import "./byteconst";
+import "std/string";
 
 // writes is false only for a finalizer that cannot write a cell
 // (mark_cell_writers).
@@ -2463,7 +2464,7 @@ pub function send_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_send_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_send_");
+  return name.starts_with("__sem_send_");
 }
 
 // The per-type helper that `__send_adopt` calls: it returns the address it
@@ -2473,7 +2474,7 @@ pub function adopt_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_adopt_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_adopt_");
+  return name.starts_with("__sem_adopt_");
 }
 
 // The per-type helper that `__send_root` calls: it takes its value and
@@ -2483,7 +2484,7 @@ pub function release_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_release_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_release_");
+  return name.starts_with("__sem_release_");
 }
 
 pub function root_helper_name(t: typeinfo.Type): string {
@@ -2491,7 +2492,7 @@ pub function root_helper_name(t: typeinfo.Type): string {
 }
 
 pub function is_root_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_root_");
+  return name.starts_with("__sem_root_");
 }
 
 pub function type_key(t: typeinfo.Type): string {

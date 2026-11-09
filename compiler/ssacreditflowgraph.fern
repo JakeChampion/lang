@@ -1,5 +1,6 @@
 import "./ssa";
 import "./util";
+import "std/string";
 
 pub function block_index(f: ssa.SFunc, id: i32): i32 {
   let i = 0;
@@ -35,7 +36,7 @@ function value_ids(f: ssa.SFunc): i32[] {
 
 pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): Graph {
   let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || block_index(f, f.entry) < 0) {
+  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || block_index(f, f.entry) < 0) {
     return bad;
   }
   let error = declarations(f, producers, parameter_count);

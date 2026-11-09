@@ -1,13 +1,14 @@
 import "./ssa";
 import "./ssacredithelper" as helper;
 import "./util";
+import "std/string";
 
 function refused(f: ssa.SFunc, why: string): helper.Proof {
   return helper.Proof { ok: false, function_name: f.name, message: why };
 }
 
 pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name: string): helper.Proof {
-  if (shape_name == "" || f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.name == drop.name || f.name == release.name) {
+  if (shape_name == "" || f.name == "" || f.name.starts_with("__fern_") || f.name == drop.name || f.name == release.name) {
     return refused(f, "invalid replacement identity");
   }
   let summary = helper.release_body(release, drop, helper.FlatChild { offset: 8 });

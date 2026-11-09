@@ -204,14 +204,14 @@ function scan_mode(text: string, native: boolean): Scan {
       return Scan { lines: [], sections: [], error: "unsupported decrement control byte" };
     }
     let line = util.trim(raw);
-    if (line != "" && !util.str_has_prefix(line, "#")) {
+    if (line != "" && !line.starts_with("#")) {
       let name = definition(line);
       let tail = if (name == "") { line } else { util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "") };
       if (!literal_data(tail, section) && ambiguous_syntax(tail)) {
         return Scan { lines: [], sections: [], error: "unsupported decrement assembly syntax" };
       }
       let here = section;
-      if (util.str_has_prefix(tail, ".")) {
+      if (tail.starts_with(".")) {
         section = scan_directive(tail, section, native);
         if (section < 0) {
           return Scan { lines: [], sections: [], error: "unsupported decrement assembly directive: " + tail };
@@ -226,14 +226,14 @@ function scan_mode(text: string, native: boolean): Scan {
 
 function ends_body(line: string, name: string, entry: string): boolean {
   if (name != "") {
-    return (entry == "" || name != entry + ".r" && name != entry + ".u") && !util.str_has_prefix(name, ".L");
+    return (entry == "" || name != entry + ".r" && name != entry + ".u") && !name.starts_with(".L");
   }
-  return one_of(line, [".text", ".data", ".bss"]) || util.str_has_prefix(line, ".section");
+  return one_of(line, [".text", ".data", ".bss"]) || line.starts_with(".section");
 }
 
 function body_error(s: Scan, ix: names.Names, at: i32, name: string): string {
   let line = s.lines[at];
-  if (s.sections[at] != 1 || name == "" && util.str_has_prefix(line, ".")) {
+  if (s.sections[at] != 1 || name == "" && line.starts_with(".")) {
     return "unsupported decrement body directive";
   }
   if (name != "" && (line != name + ":" || names.unique_position(ix, name) != at)) {
@@ -316,7 +316,7 @@ function writable_declarations(s: Scan): boolean {
         if (!allocation(tail)) {
           return false;
         }
-      } else if (!util.str_has_prefix(line, ".")) {
+      } else if (!line.starts_with(".")) {
         return false;
       }
     }
@@ -536,7 +536,7 @@ function retained_line_error(line: string, name: string, section: i32, position:
   if (ended || section != 1 || name != "" && line != name + ":") {
     return "invalid retained function extent";
   }
-  if (name == "" && util.str_has_prefix(line, ".")) {
+  if (name == "" && line.starts_with(".")) {
     return retained_directive_error(line, position);
   }
   return "";
@@ -545,7 +545,7 @@ function retained_line_error(line: string, name: string, section: i32, position:
 function retained_directive_error(line: string, position: i32): string {
   let op = word(line);
   let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
-  if (!metadata(line, op, arg, 1) || !util.str_has_prefix(line, ".cfi_")) {
+  if (!metadata(line, op, arg, 1) || !line.starts_with(".cfi_")) {
     return "unsupported retained function directive";
   }
   if (line == ".cfi_startproc" && position != 1) {
@@ -562,7 +562,7 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
   while (at < s.lines.len()) {
     let line = s.lines[at];
     let name = definition(line);
-    if (ends_body(line, name, entry) || util.str_has_prefix(line, ".globl ")) {
+    if (ends_body(line, name, entry) || line.starts_with(".globl ")) {
       break;
     }
     let error = retained_line_error(line, name, s.sections[at], code.len(), ended);
@@ -583,7 +583,7 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
 }
 
 pub function native_body(text: string, entry: string): Body {
-  if (!util.str_has_prefix(entry, "__fn_") || entry.len() <= 5 || !symbol(entry)) {
+  if (!entry.starts_with("__fn_") || entry.len() <= 5 || !symbol(entry)) {
     return failure("unsupported retained function name");
   }
   let s = scan_mode(text, true);

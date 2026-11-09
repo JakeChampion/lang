@@ -3,6 +3,7 @@ import "./irtables";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Set { rows: util.NameIndex, classes: string[], indirect: boolean, on: boolean }
 
@@ -169,7 +170,7 @@ function result_class(funcs: ssasem.Func[], i: i32): string {
 }
 
 function trampoline(key: string): boolean {
-  return util.str_has_prefix(key, "async__run_task");
+  return key.starts_with("async__run_task");
 }
 
 function is_lifted(key: string): boolean {

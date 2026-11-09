@@ -3,6 +3,7 @@ import "./astwalk";
 import "./lexer";
 import "./parser";
 import "./util";
+import "std/string";
 
 function ts_op_method(op: string): string {
   let named = ast.operator_method(op);
@@ -223,7 +224,7 @@ function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]
   let tag = ts_recv_tag(fa.obj);
   let ft = util.base_type_name(tag);
   let m = ts_arity_root(fa.field, arity);
-  if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
+  if (ts_named_tag(ft) && !tag.ends_with("[]")) {
     return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m));
   }
   return acc.append(m).append(ts_call_root(fa.field));
@@ -249,7 +250,7 @@ function ts_widened(names: string[], open: RefSet, fd: parser.FuncDecl): string[
     let bar = util.index_of_sub(n, "|");
     if (bar > 0) {
       let tag = slice_unchecked(n, 0, bar) + "";
-      if (refset_has(open, tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || util.str_has_prefix(tag, "impl ")) {
+      if (refset_has(open, tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || tag.starts_with("impl ")) {
         out = out.append(slice_unchecked(n, bar + 1, n.len()) + "");
       }
     }
@@ -411,7 +412,7 @@ function lt_bind(own lt: LocalTypes, name: string, ty0: string): LocalTypes {
   // A generic `Vec[N, T]` is a lane type the instance picks, so its methods
   // keep the bare method root.
   let ty = ty0;
-  if (util.str_has_prefix(ty, "Vec[") && util.str_has_suffix(ty, "]")) {
+  if (ty.starts_with("Vec[") && ty.ends_with("]")) {
     ty = "";
   }
   let k = util.index_of_str(lt.names, name);
@@ -497,7 +498,7 @@ function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
 }
 
 function builtin_len(tag: string, field: string): boolean {
-  return field == "len" && (tag == "string" || tag == "str" || util.str_has_suffix(tag, "[]") || util.str_has_prefix(tag, "["));
+  return field == "len" && (tag == "string" || tag == "str" || tag.ends_with("[]") || tag.starts_with("["));
 }
 
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
@@ -519,14 +520,14 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalType
     let k = util.index_of_str(lt.names, id.name);
     if (k >= 0) {
       let spelled = lt.types[k];
-      if (util.str_has_prefix(spelled, "impl ")) {
+      if (spelled.starts_with("impl ")) {
         for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
           acc = acc.append(ts_qualified_root(ts_impl_tag(b), m));
         }
         return acc;
       }
       let base = util.base_type_name(spelled);
-      if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
+      if (ts_named_tag(base) && !spelled.ends_with("[]")) {
         return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m));
       }
     }
@@ -538,7 +539,7 @@ pub function free_names(br: BodyRefs): string[] {
   let out: string[] = [];
   let root = ts_free_root("");
   for n in br.any.names {
-    if (util.str_has_prefix(n, root)) {
+    if (n.starts_with(root)) {
       out = out.append(slice_unchecked(n, root.len(), n.len()) + "");
     }
   }
@@ -628,7 +629,7 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   }
   // Primitive method syntax can dispatch to a private free runtime body.
   // Unknown generic receivers contribute the bare method root until bound.
-  if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
+  if (fd.receiver_type.len() == 0 && fd.name.starts_with("__primitive_") && fd.name.ends_with("_to_string")) {
     let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
     if (refset_has(refs, ts_arity_root("to_string", 0)) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
       return true;

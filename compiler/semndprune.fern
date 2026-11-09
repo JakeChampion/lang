@@ -1,6 +1,7 @@
 import "./parser";
 import "./irtables";
 import "./util";
+import "std/string";
 
 pub struct Result { bodies: irtables.LowerResult[], extra: irtables.LowerResult[] }
 
@@ -39,7 +40,7 @@ function referenced(all: irtables.LowerResult[], at: i32): boolean {
 }
 
 function ordinary_candidate(mod: parser.Module, r: irtables.LowerResult): boolean {
-  return r.ok && !r.superseded && util.str_has_prefix(r.name, "ndarray__")
+  return r.ok && !r.superseded && r.name.starts_with("ndarray__")
     && !util.contains(r.name, ".") && !parser.named_outside(mod, r.name);
 }
 

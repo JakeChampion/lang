@@ -17,6 +17,7 @@ import "./physicalbody";
 import "./wasmlocals";
 import "./rtbytecopy";
 import "./wasm_abort";
+import "std/string";
 
 pub function fl_cells(): i32 {
   return 65536;
@@ -4492,7 +4493,7 @@ function wasm_lane_verb(k: string, sh: string): string {
   let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "veq", "vne", "vlt", "vle", "vgt", "vge", "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore"];
   let verbs: string[] = ["add", "sub", "mul", "div", "pmin", "pmax", "sqrt", "abs", "neg", "floor", "ceil", "trunc", "eq", "ne", "lt", "le", "gt", "ge", "v128.and", "v128.or", "v128.xor", "v128.andnot", "v128.bitselect", "v128.load", "v128.store"];
   let v = verbs[util.index_of_str(names, k)];
-  if (util.str_has_prefix(v, "v128.")) {
+  if (v.starts_with("v128.")) {
     return v;
   }
   return sh + "." + v;

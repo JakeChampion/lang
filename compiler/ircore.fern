@@ -19,6 +19,7 @@ import "./semrecords";
 import "./physicalbody";
 import "./ssaprepare";
 import "std/envflag";
+import "std/string";
 
 pub function release_entry(r: irtables.Lowered, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
   if (debug || !counted_release_body(r)) {
@@ -36,7 +37,7 @@ pub function release_entry(r: irtables.Lowered, architecture: string, debug: boo
 
 pub function counted_release_body(r: irtables.Lowered): boolean {
   let n = r.ops.len();
-  if (r.n_params != 1 || n < 5 || !util.str_has_prefix(r.name, "__sem_release_")) {
+  if (r.n_params != 1 || n < 5 || !r.name.starts_with("__sem_release_")) {
     return false;
   }
   return r.ops[n - 5].kind_tag == ir.op_load_local(0).kind_tag && r.ops[n - 5].i32_imm == 0
@@ -60,7 +61,7 @@ pub function nominal_release_drop(r: irtables.Lowered): string {
   if (o[1].kind_tag != k_call || o[1].str != "__fern_rc_is_unique" || o[2].kind_tag != ir.op_if(0).kind_tag) {
     return "";
   }
-  if (o[4].kind_tag != k_call || o[4].i32_imm != 1 || !util.str_has_prefix(o[4].str, "__sem_drop_")) {
+  if (o[4].kind_tag != k_call || o[4].i32_imm != 1 || !o[4].str.starts_with("__sem_drop_")) {
     return "";
   }
   if (o[5].kind_tag != ir.op_drop().kind_tag || o[6].kind_tag != ir.op_end().kind_tag) {
@@ -78,7 +79,7 @@ function is_array_type(t: string): boolean {
 }
 
 pub function is_task_runtime_fn(name: string): boolean {
-  return util.str_has_prefix(name, "__fern_task_");
+  return name.starts_with("__fern_task_");
 }
 
 pub function is_fern_helper(name: string): boolean {
@@ -283,7 +284,7 @@ pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
 function stdlib_array_maps(funcs: parser.FuncDecl[]): string[] {
   let names: string[] = [];
   for fd in funcs {
-    if (fd.stdlib == "std/array" && util.str_has_prefix(fd.name, "__arrm_map__")) {
+    if (fd.stdlib == "std/array" && fd.name.starts_with("__arrm_map__")) {
       names = names.append(fd.name);
     }
   }
@@ -439,7 +440,7 @@ pub function eprint_ir_ineligible(): void {
 
 // The host-call name of a cache or TLB op.
 pub function maintenance_op(name: string): boolean {
-  return util.str_has_prefix(name, "dev_cache_") || util.str_has_prefix(name, "dev_tlb_");
+  return name.starts_with("dev_cache_") || name.starts_with("dev_tlb_");
 }
 
 // A register that the checker knows, but that belongs to another ISA.
@@ -843,7 +844,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
   let k = 0;
   while (k < names.len()) {
     let fd = mod.funcs[at[k]];
-    dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !parser.named_outside(mod, fd.name));
+    dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !fd.name.starts_with("__") && fd.import_iface == "" && !parser.named_outside(mod, fd.name));
     k += 1;
   }
   let reg = irtables.sig_reg_of(names);

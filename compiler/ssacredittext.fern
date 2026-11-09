@@ -16,7 +16,7 @@ function normalized(fragment: string): string {
   let lines: string[] = [];
   for raw in fragment.split("\n") {
     let line = util.trim(raw);
-    if (line != "" && !util.str_has_prefix(line, "#")) {
+    if (line != "" && !line.starts_with("#")) {
       lines = lines.append(line);
     }
   }

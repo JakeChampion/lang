@@ -5,6 +5,7 @@ import "./ssalive";
 import "./rcsigs";
 import "./rcccompact";
 import "./util";
+import "std/string";
 
 pub function value_mode(): i32 {
   return 1;
@@ -50,7 +51,7 @@ pub function abis_of(names: string[], modes: i32[][], results: boolean[], firsts
 }
 
 function env_abi(name: string): Abi {
-  if (util.str_has_prefix(name, "__sem_key")) {
+  if (name.starts_with("__sem_key")) {
     return abi([borrow_mode(), borrow_mode(), borrow_mode()], false);
   }
   if (name == "__sem_scalar_release$env" || name == "__sem_cell_release$env") {
@@ -91,7 +92,7 @@ pub function (a: Abis) lookup(name: string): Abi {
 
 function env_closure(name: string): boolean {
   let n = name.len();
-  return n > 4 && slice_unchecked(name, n - 4, n) == "$env" && util.str_has_prefix(name, "__sem_");
+  return n > 4 && slice_unchecked(name, n - 4, n) == "$env" && name.starts_with("__sem_");
 }
 
 pub struct Finding { kind: string, value: i32, block: i32, defined: string, message: string }
@@ -1571,7 +1572,7 @@ function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean 
   let i = from;
   while (i < to && i < insts.len()) {
     let d = insts[i];
-    if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == ssa.CALL && util.str_has_prefix(d.str, "__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
+    if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == ssa.CALL && d.str.starts_with("__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
       return true;
     }
     i += 1;

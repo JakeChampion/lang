@@ -3,6 +3,7 @@
 
 import "./util";
 import "./sysreg";
+import "std/string";
 
 // One row for each builtin, sorted by name: the name, the parameter types
 // and the result type.
@@ -305,7 +306,7 @@ pub function builtin_row(name: string): string {
       hi = mid;
     }
   }
-  if (lo < rows.len() && util.str_has_prefix(rows[lo], head)) {
+  if (lo < rows.len() && rows[lo].starts_with(head)) {
     return rows[lo];
   }
   return "";
@@ -351,7 +352,7 @@ pub function privileged_intrinsic(name: string): boolean {
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
 // other name.
 pub function mmio_width(name: string): i32 {
-  if (!util.str_has_prefix(name, "__mmio_")) {
+  if (!name.starts_with("__mmio_")) {
     return 0;
   }
   if (name == "__mmio_load8" || name == "__mmio_store8") {
@@ -374,7 +375,7 @@ pub function mmio_width(name: string): i32 {
 // which only a kernel or a driver owns, so the `privileged` capability gates
 // it (E066).
 pub function mem_width(name: string): i32 {
-  if (!util.str_has_prefix(name, "__mem_")) {
+  if (!name.starts_with("__mem_")) {
     return 0;
   }
   if (name == "__mem_load8" || name == "__mem_store8") {
@@ -403,7 +404,7 @@ pub function access_width(name: string): i32 {
 
 // Whether an MMIO or raw memory access is a store.
 pub function access_store(name: string): boolean {
-  return util.str_has_prefix(name, "__mmio_store") || util.str_has_prefix(name, "__mem_store");
+  return name.starts_with("__mmio_store") || name.starts_with("__mem_store");
 }
 
 // A task intrinsic, which lowers to a call of the runtime's `__fern_task_*`

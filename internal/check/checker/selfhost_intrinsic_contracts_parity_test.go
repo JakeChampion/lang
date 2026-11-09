@@ -331,7 +331,7 @@ func TestSelfHostRawFloorLookupReachesEveryRow(t *testing.T) {
 		t.Fatal("checker.fern has no raw_floor_at — point this test at the lookup that replaced it")
 	}
 	var prefixes []string
-	for _, m := range regexp.MustCompile(`str_has_prefix\(name, "([^"]+)"\)`).FindAllStringSubmatch(lookup, -1) {
+	for _, m := range regexp.MustCompile(`name\.starts_with\("([^"]+)"\)`).FindAllStringSubmatch(lookup, -1) {
 		prefixes = append(prefixes, m[1])
 	}
 	if len(rows) == 0 || len(prefixes) == 0 {

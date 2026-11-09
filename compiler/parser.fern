@@ -7573,11 +7573,11 @@ pub function pp_marker(rest: string): string {
 }
 
 pub function is_param_prelude_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;");
+  return type_name.starts_with("@pp;");
 }
 
 pub function strip_pp_marker(marker: string): string {
-  if (!util.str_has_prefix(marker, "@pp;")) {
+  if (!marker.starts_with("@pp;")) {
     return marker;
   }
   return slice_unchecked(marker, 4, marker.len()) + "";
@@ -7586,11 +7586,11 @@ pub function strip_pp_marker(marker: string): string {
 pub function destr_marker_split(marker0: string): DestrMarker {
   let at = "";
   let m = strip_pp_marker(marker0);
-  let struct_match = util.str_has_prefix(m, "@sm;");
+  let struct_match = m.starts_with("@sm;");
   if (struct_match) {
     m = slice_unchecked(m, 4, m.len()) + "";
   }
-  if (util.str_has_prefix(m, "@at:")) {
+  if (m.starts_with("@at:")) {
     let i = 4;
     while (i < m.len()) {
       if (m[i] == b';') {
@@ -7602,7 +7602,7 @@ pub function destr_marker_split(marker0: string): DestrMarker {
     }
   }
   let rest_written = false;
-  if (util.str_has_prefix(m, "@rest;")) {
+  if (m.starts_with("@rest;")) {
     rest_written = true;
     m = slice_unchecked(m, 6, m.len()) + "";
   }
@@ -7610,16 +7610,16 @@ pub function destr_marker_split(marker0: string): DestrMarker {
 }
 
 pub function is_struct_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(destr_marker_split(type_name).tag, "@sd:");
+  return destr_marker_split(type_name).tag.starts_with("@sd:");
 }
 
 pub function is_destr_marker(type_name: string): boolean {
   return type_name.len() > 0 && type_name[0] == b'@'
-    && (util.str_has_prefix(type_name, "@pp;")
-    || util.str_has_prefix(type_name, "@sm;")
-    || util.str_has_prefix(type_name, "@at:")
-    || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:"));
+    && (type_name.starts_with("@pp;")
+    || type_name.starts_with("@sm;")
+    || type_name.starts_with("@at:")
+    || type_name.starts_with("@rest;")
+    || type_name.starts_with("@sd:"));
 }
 
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
@@ -9508,7 +9508,7 @@ pub function parse_type_ref(sin: string): TypeRef {
 
 // canon_vec spells a `Vec[N, T]` of the portable tier as its lane type.
 pub function canon_vec(spelling: string): string {
-  if (!util.str_has_prefix(spelling, "Vec[")) {
+  if (!spelling.starts_with("Vec[")) {
     return spelling;
   }
   let ref = parse_type_ref(spelling);
@@ -10156,7 +10156,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     let pbase = slice_unchecked(pattern, 0, pb);
     let mpfx = pbase + "__";
-    if (concrete.len() > mpfx.len() && util.str_has_prefix(concrete, mpfx)) {
+    if (concrete.len() > mpfx.len() && concrete.starts_with(mpfx)) {
       let pp = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       let ckey = slice_unchecked(concrete, mpfx.len(), concrete.len());
       let cp = split_key(ckey + "", pp.len(), funcs.structs, funcs.enums);
@@ -13012,7 +13012,7 @@ pub function concrete_array_method_name(receiver: string, method: string): strin
 
 function is_concrete_array_fold(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0
-    && (util.str_has_prefix(fd.name, "__carrm_") || util.str_has_prefix(fd.name, "__cviewm_"));
+    && (fd.name.starts_with("__carrm_") || fd.name.starts_with("__cviewm_"));
 }
 
 function concrete_array_method_at(funcs: MFns, receiver: string, method: string): i32 {
@@ -13964,11 +13964,11 @@ function lane_fusable(name: string, types: string[], funcs: MFns, seen: string[]
     if (r.len() == 0) {
       return false;
     }
-    if (util.str_has_prefix(r, "!")) {
+    if (r.starts_with("!")) {
       if (bg_find(funcs, slice_unchecked(r, 1, r.len()) + "") < 0) {
         return false;
       }
-    } else if (util.str_has_prefix(r, "@")) {
+    } else if (r.starts_with("@")) {
       if (!std_methods(slice_unchecked(r, 1, r.len()) + "", types, funcs)) {
         return false;
       }
@@ -14322,7 +14322,7 @@ function on_call_request(fa: ast.ExprFieldAccess, env: MEnv, gstructs: StructDec
   }
   let sfx = "." + fa.field;
   for name in funcs.on_call {
-    if (util.str_has_suffix(name, sfx)) {
+    if (name.ends_with(sfx)) {
       let base = slice_unchecked(name, 0, name.len() - sfx.len()) + "";
       let rt = mg_ty(mono_infer(fa.obj, env, funcs), gstructs, ins);
       if (is_clone_of(rt.ty, base)) {
@@ -14461,7 +14461,7 @@ function member_lit_dest(dest: string, name: string, funcs: MFns): string {
     let cts: string[] = [];
     if (first_bracket(dest) >= 0 && strip_struct_base(dest) == ed.name) {
       cts = type_args_of(dest);
-    } else if (util.str_has_prefix(dest, ed.name + "__")) {
+    } else if (dest.starts_with(ed.name + "__")) {
       cts = split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()) + "", ed.type_params.len(), funcs.structs, funcs.enums);
     }
     if (cts.len() != ed.type_params.len()) {
@@ -14565,7 +14565,7 @@ function lit_field_decl_type(structs: StructDecl[], name: string, field: string)
 
 function is_clone_of(mangled: string, base: string): boolean {
   let pfx = base + "__";
-  return mangled.len() > pfx.len() && util.str_has_prefix(mangled, pfx);
+  return mangled.len() > pfx.len() && mangled.starts_with(pfx);
 }
 
 function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
@@ -14780,7 +14780,7 @@ function retype_assoc_call(init: ast.Expr, base: string, dest: string, funcs: MF
     if let ast.ExprFieldAccess(fa) = c.callee {
       let concrete = assoc_ctor_concrete(base, fa.field, dest, funcs);
       if let ast.ExprIdent(oid) = fa.obj {
-        if (concrete.len() > base.len() + 2 && util.str_has_prefix(concrete, base + "__")) {
+        if (concrete.len() > base.len() + 2 && concrete.starts_with(base + "__")) {
           let obj: ast.Expr = ast.ExprIdent { ...oid, name: concrete, ty: "" };
           return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj } };
         }
@@ -16898,7 +16898,7 @@ function folds_method(name: string, verb: string): boolean {
     return true;
   }
   let sfx = "_" + verb;
-  return util.str_has_prefix(name, "__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
+  return name.starts_with("__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
 }
 
 struct BgStep { funcs: FuncDecl[], ins: Insts }
@@ -23266,7 +23266,7 @@ function fj_text_name(json_alias: string): string {
 }
 
 function fj_local_prefix(json_alias: string): string {
-  if (util.str_has_prefix(json_alias, "__fj_")) {
+  if (json_alias.starts_with("__fj_")) {
     return "__fja_";
   }
   return "__fj_";
@@ -25063,7 +25063,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         let method_body: ast.Stmt[] = [];
         for st in fr_func.body {
           if let ast.StmtUnknown(u) = st {
-            if (util.str_has_prefix(u.kind, "decl:")) {
+            if (u.kind.starts_with("decl:")) {
               trait_bad = trait_bad.append(st);
               continue;
             }

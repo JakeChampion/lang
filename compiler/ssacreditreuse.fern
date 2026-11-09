@@ -5,6 +5,7 @@ import "./ssacredithelper" as helper;
 import "./ssacreditscalar" as scalar_effect;
 import "./ssacreditincoming" as incoming_capacity;
 import "./util";
+import "std/string";
 
 struct State { path: i32, parents: i32[], children: i32[], contents: i32[], credits: i32[], shapes: i32[], allocated: i32 }
 
@@ -739,7 +740,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
     }
     seen = seen.append(field);
   }
-  if (shape == "" || f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.name == drop.name || f.name == release.name) {
+  if (shape == "" || f.name == "" || f.name.starts_with("__fern_") || f.name == drop.name || f.name == release.name) {
     return helper.Proof { ok: false, function_name: f.name, message: "invalid reuse identity" };
   }
   let summary = helper.release_body_many(release, drop, helper.FlatChildren { offsets: [8, 16] });

@@ -6,6 +6,7 @@ import "./decltypes";
 import "./astwalk";
 import "./platforms";
 import "./builtinsigs";
+import "std/string";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
@@ -80,7 +81,7 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
 }
 
 pub function is_runtime_helper_name(name: string): boolean {
-  if (util.str_has_prefix(name, "__primitive_")) {
+  if (name.starts_with("__primitive_")) {
     return true;
   }
   if (name == "map_new_impl") {
@@ -190,7 +191,7 @@ function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs
 }
 
 function is_stdlib_ident(ident: string): boolean {
-  return util.str_has_prefix(ident, "std/") || util.str_has_prefix(ident, "core/") || util.index_of_sub(ident, "/std/") >= 0 || util.index_of_sub(ident, "/core/") >= 0;
+  return ident.starts_with("std/") || ident.starts_with("core/") || util.index_of_sub(ident, "/std/") >= 0 || util.index_of_sub(ident, "/core/") >= 0;
 }
 
 pub function import_cycle(entry: parser.Module, entry_ident: string, imports: LoadedModule[], root: string): Option[parser.Import] {
@@ -789,10 +790,10 @@ function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string 
 }
 
 function rewrite_unary_op(op: string, ctx: RewriteCtx): string {
-  if (util.str_has_prefix(op, "as?_")) {
+  if (op.starts_with("as?_")) {
     return "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()), ctx);
   }
-  if (util.str_has_prefix(op, "as_")) {
+  if (op.starts_with("as_")) {
     return "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()), ctx);
   }
   return op;
@@ -977,7 +978,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
           if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
             let mangled = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
             // Primitive display bodies share the compiler's canonical ABI.
-            if (util.str_has_prefix(fa.field, "__primitive_")) {
+            if (fa.field.starts_with("__primitive_")) {
               mangled = fa.field;
             }
             // `ty: ""` and not `id.ty`: the result names a module-qualified

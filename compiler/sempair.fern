@@ -5,6 +5,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./semscalarreturn";
+import "std/string";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
@@ -1199,10 +1200,10 @@ function pair_set_prefix(slot: i32): string {
 
 // The pair word a callee's set names, or -1.
 pub function pair_set_slot(name: string): i32 {
-  if (util.str_has_prefix(name, pair_set_prefix(0))) {
+  if (name.starts_with(pair_set_prefix(0))) {
     return 0;
   }
-  if (util.str_has_prefix(name, pair_set_prefix(1))) {
+  if (name.starts_with(pair_set_prefix(1))) {
     return 1;
   }
   return -1;

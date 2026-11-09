@@ -4,6 +4,7 @@ import "./astwalk";
 import "./util";
 import "./ssafixed";
 import "./ir";
+import "std/string";
 
 pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string }
 
@@ -452,7 +453,7 @@ pub function never_returns(ins: SInst): boolean {
 }
 
 pub function cold_call(ins: SInst): boolean {
-  return ins.kind_tag == RT_CALL && ins.result >= 0 && util.str_has_prefix(ins.str, "arr_push");
+  return ins.kind_tag == RT_CALL && ins.result >= 0 && ins.str.starts_with("arr_push");
 }
 
 // A back-reference copy calls only when its inline copy cannot run.
@@ -1329,7 +1330,7 @@ function float_def(ins: SInst): boolean {
     return float_arith(ins.str);
   }
   if (k == UNARY) {
-    return float_math(ins.str) || util.str_has_prefix(ins.str, "i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
+    return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
   return false;
 }
@@ -3430,7 +3431,7 @@ function mergeable(ins: SInst): boolean {
   }
   if (ins.kind_tag == UNARY) {
     return ins.str == "!" || ins.str == "u32_wrap" || ins.str == "int_wrap" || ins.str == "int_extend"
-      || util.str_has_prefix(ins.str, "int_cast:") || util.str_has_prefix(ins.str, "rotr:");
+      || ins.str.starts_with("int_cast:") || ins.str.starts_with("rotr:");
   }
   return false;
 }
@@ -4144,7 +4145,7 @@ function int_unary(op: string): boolean {
     return true;
   }
   for pre in ["int_cast:", "rotr:", "bswap:", "clz:", "ctz:", "popcount:"] {
-    if (util.str_has_prefix(op, pre)) {
+    if (op.starts_with(pre)) {
       return true;
     }
   }
@@ -4951,7 +4952,7 @@ function narrowed_facts(f: SFunc, def_b: i32[], def_k: i32[], count: i32): i32 {
 }
 
 function compare_op(op: string): boolean {
-  return op == "eq" || op == "ne" || util.str_has_prefix(op, "lt_") || util.str_has_prefix(op, "le_") || util.str_has_prefix(op, "gt_") || util.str_has_prefix(op, "ge_");
+  return op == "eq" || op == "ne" || op.starts_with("lt_") || op.starts_with("le_") || op.starts_with("gt_") || op.starts_with("ge_");
 }
 
 // An and with a byte is a byte, and one with a non-negative i32 is one.
@@ -4994,7 +4995,7 @@ function unary_facts(ins: SInst, held: i32): i32 {
     }
     return EXT_U32;
   }
-  if (ins.str == "int_cast:u8" || util.str_has_prefix(ins.str, "ctz:") || util.str_has_prefix(ins.str, "clz:") || util.str_has_prefix(ins.str, "popcount:")) {
+  if (ins.str == "int_cast:u8" || ins.str.starts_with("ctz:") || ins.str.starts_with("clz:") || ins.str.starts_with("popcount:")) {
     return EXT_BYTE;
   }
   return 0;
@@ -5304,7 +5305,7 @@ function reads_low_half(ins: SInst, k: i32): boolean {
     return k == 1 && (ins.str == "shr_s" || ins.str == "shr_u");
   }
   if (ins.kind_tag == UNARY) {
-    if (util.str_has_prefix(ins.str, "rotr:")) {
+    if (ins.str.starts_with("rotr:")) {
       return rotr_width(ins.str) == 32;
     }
     if (ins.str == "bswap:32") {
@@ -5793,7 +5794,7 @@ function const_value(defs: SInst[], v: i32): i64 {
 }
 
 pub function rotr_width(what: string): i32 {
-  if (util.str_has_prefix(what, "rotr:64:")) {
+  if (what.starts_with("rotr:64:")) {
     return 64;
   }
   return 32;

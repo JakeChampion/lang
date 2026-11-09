@@ -2,6 +2,7 @@ import "./sysreg";
 import "./util";
 import "./gas";
 import "std/crypto";
+import "std/string";
 
 function arm64_x0(): i32 {
   return 0;
@@ -6796,7 +6797,7 @@ function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   }
   let rest = slice_unchecked(mnem, 3, mnem.len()) + "";
   gas.push_arr(a.code, arm64_swap(
-    [], arm64_gas_excl_size(mnem, ops[1]), util.str_has_prefix(rest, "a"), util.index_of_sub(rest, "l") >= 0,
+    [], arm64_gas_excl_size(mnem, ops[1]), rest.starts_with("a"), util.index_of_sub(rest, "l") >= 0,
     arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
   ));
   return a;
@@ -6806,13 +6807,13 @@ function arm64_gas_emit_lse(own a: Arm64Asm, mnem: string, ops: string[], lm: Ar
   if (ops.len() < 3) {
     return a;
   }
-  let cas = util.str_has_prefix(mnem, "cas");
+  let cas = mnem.starts_with("cas");
   let rest = slice_unchecked(mnem, 5, mnem.len()) + "";
   if (cas) {
     rest = slice_unchecked(mnem, 3, mnem.len()) + "";
   }
   gas.push_arr(a.code, arm64_lse(
-    [], cas, arm64_gas_excl_size(mnem, ops[1]), util.str_has_prefix(rest, "a"), util.index_of_sub(rest, "l") >= 0,
+    [], cas, arm64_gas_excl_size(mnem, ops[1]), rest.starts_with("a"), util.index_of_sub(rest, "l") >= 0,
     arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
   ));
   return a;
@@ -7191,7 +7192,7 @@ function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: A
     }
     gas.push_arr(a.code, arm64_excl_store(
       [], arm64_gas_excl_size(mnem, ops[1]),
-      util.str_has_prefix(mnem, "stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
+      mnem.starts_with("stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
     ));
     return a;
   }
@@ -7202,10 +7203,10 @@ function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   let rt = arm64_gas_reg(ops[0]);
   let rn = arm64_gas_mem_at(ops, 1, lm).base;
   if (arm64_gas_family(mnem) == arm64_fam_acqrel()) {
-    gas.push_arr(a.code, arm64_acqrel([], size, util.str_has_prefix(mnem, "ld"), rt, rn));
+    gas.push_arr(a.code, arm64_acqrel([], size, mnem.starts_with("ld"), rt, rn));
     return a;
   }
-  gas.push_arr(a.code, arm64_excl_load([], size, util.str_has_prefix(mnem, "lda"), rt, rn));
+  gas.push_arr(a.code, arm64_excl_load([], size, mnem.starts_with("lda"), rt, rn));
   return a;
 }
 
@@ -8454,9 +8455,9 @@ function arm64_gas_page_gp(tok: string, base: boolean): boolean {
     return false;
   }
   if (base) {
-    return tok == "sp" || r < 31 && (util.str_has_prefix(tok, "x") || tok == "fp" || tok == "lr");
+    return tok == "sp" || r < 31 && (tok.starts_with("x") || tok == "fp" || tok == "lr");
   }
-  return util.str_has_prefix(tok, "x") || util.str_has_prefix(tok, "w") || tok == "fp" || tok == "lr";
+  return tok.starts_with("x") || tok.starts_with("w") || tok == "fp" || tok == "lr";
 }
 
 function arm64_gas_page_load_symbol(ops: string[]): string {
@@ -8650,7 +8651,7 @@ function arm64_gas_alignment(line: string): i32 {
   if (n <= 0) {
     return 1;
   }
-  if (util.str_has_prefix(line, ".balign")) {
+  if (line.starts_with(".balign")) {
     if (n > 65536) {
       return 0;
     }
@@ -8676,7 +8677,7 @@ function arm64_gas_data_align(own p: Arm64GasProg, a: i32): Arm64GasProg {
 }
 
 function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
-  if (util.str_has_prefix(line, ".skip") || util.str_has_prefix(line, ".zero") || util.str_has_prefix(line, ".space")) {
+  if (line.starts_with(".skip") || line.starts_with(".zero") || line.starts_with(".space")) {
     let sp = util.index_of_sub(line, " ");
     if (sp >= 0) {
       return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()))) };
@@ -8687,7 +8688,7 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
   if (width > 0) {
     return Arm64GasProg { ...p, bss_size: p.bss_size + width * arm64_gas_values(line).len() };
   }
-  if (util.str_has_prefix(line, ".align") || util.str_has_prefix(line, ".p2align") || util.str_has_prefix(line, ".balign")) {
+  if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
     let sp2 = util.index_of_sub(line, " ");
     if (sp2 >= 0) {
       let a = arm64_gas_alignment(line);
@@ -8717,7 +8718,7 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 }
 
 function arm64_gas_data_directive(own p: Arm64GasProg, line: string, sec: i32): Arm64GasProg {
-  if (!util.str_has_prefix(line, ".double")) {
+  if (!line.starts_with(".double")) {
     let width = arm64_gas_data_width(line);
     if (width > 0) {
       let vals = arm64_gas_values(line);
@@ -8733,16 +8734,16 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string, sec: i32): 
       return p;
     }
   }
-  if (util.str_has_prefix(line, ".asciz") || util.str_has_prefix(line, ".string")) {
+  if (line.starts_with(".asciz") || line.starts_with(".string")) {
     return arm64_gas_data_asciz(p, line);
   }
-  if (util.str_has_prefix(line, ".ascii")) {
+  if (line.starts_with(".ascii")) {
     return arm64_gas_data_ascii(p, line);
   }
-  if (util.str_has_prefix(line, ".double")) {
+  if (line.starts_with(".double")) {
     return arm64_gas_data_le(p, util.parse_f64_bits(arm64_gas_trim(slice_unchecked(line, 7, line.len()))), 8);
   }
-  if (util.str_has_prefix(line, ".align") || util.str_has_prefix(line, ".p2align") || util.str_has_prefix(line, ".balign")) {
+  if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
     return arm64_gas_data_align_directive(p, line);
   }
   return p;
@@ -8819,7 +8820,7 @@ function arm64_section_kind(line: string): i32 {
 // byte modulo a page, or -1 when the caller does not know it. The result is a
 // refusal, or "".
 function arm64_gas_text_directive(code: usize, line: string, origin: i32): string {
-  if (util.str_has_prefix(line, ".align") || util.str_has_prefix(line, ".p2align") || util.str_has_prefix(line, ".balign")) {
+  if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
     return arm64_gas_text_align(code, arm64_gas_alignment(line), origin, line);
   }
   if (arm64_gas_data_width(line) == 4) {
@@ -8844,13 +8845,13 @@ function arm64_gas_text_align(code: usize, a: i32, origin: i32, line: string): s
 }
 
 function arm64_gas_data_width(line: string): i32 {
-  if (util.str_has_prefix(line, ".quad") || util.str_has_prefix(line, ".double")) {
+  if (line.starts_with(".quad") || line.starts_with(".double")) {
     return 8;
   }
-  if (util.str_has_prefix(line, ".4byte") || util.str_has_prefix(line, ".word") || util.str_has_prefix(line, ".long")) {
+  if (line.starts_with(".4byte") || line.starts_with(".word") || line.starts_with(".long")) {
     return 4;
   }
-  if (util.str_has_prefix(line, ".byte")) {
+  if (line.starts_with(".byte")) {
     return 1;
   }
   return 0;
@@ -9148,13 +9149,13 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
       }
     }
     if (line[0] == b'.') {
-      if (util.str_has_prefix(line, ".loc ")) {
+      if (line.starts_with(".loc ")) {
         a = arm64_loc_row(a, line);
-      } else if (util.str_has_prefix(line, ".fern_var ")) {
+      } else if (line.starts_with(".fern_var ")) {
         a = Arm64Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
-      } else if (util.str_has_prefix(line, ".file ")) {
+      } else if (line.starts_with(".file ")) {
         a = arm64_file_entry(a, line);
-      } else if (util.str_has_prefix(line, ".cfi_")) {
+      } else if (line.starts_with(".cfi_")) {
         if (section != 0) {
           p = Arm64GasProg { ...p, unknown: p.unknown.append(line + " outside .text") };
         } else {
@@ -9176,11 +9177,11 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
       } else if (line == ".bss") {
         p = arm64_enter_section(p, section, 2);
         section = 2;
-      } else if (util.str_has_prefix(line, ".section")) {
+      } else if (line.starts_with(".section")) {
         let to = arm64_section_kind(line);
         p = arm64_enter_section(p, section, to);
         section = to;
-      } else if (util.str_has_prefix(line, ".data")) {
+      } else if (line.starts_with(".data")) {
         p = arm64_enter_section(p, section, 1);
         section = 1;
       } else if (section == 2) {

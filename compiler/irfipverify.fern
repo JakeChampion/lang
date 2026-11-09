@@ -1,6 +1,7 @@
 import "./ir";
 import "./irverify";
 import "./util";
+import "std/string";
 
 pub struct FipClaim {
   fn_name: string,
@@ -45,7 +46,7 @@ pub function fresh_alloc_what(o: ir.Op): string {
   if (t == ir.K_ALLOC_U8) {
     return "byte-buffer allocation";
   }
-  if (t == ir.K_CALL_DIRECT && util.str_has_prefix(o.str, "__arrm_map__")) {
+  if (t == ir.K_CALL_DIRECT && o.str.starts_with("__arrm_map__")) {
     return "`map` materialized by the combinator: R7 writes a map in place only over an `own` parameter that dies at the call, with an i64 element it does not change and an element function that captures nothing and reaches no effect";
   }
   return "";

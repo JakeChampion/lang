@@ -4,6 +4,7 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
+import "std/string";
 
 pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
 
@@ -87,7 +88,7 @@ function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_tr
 }
 
 function verb_of(name: string): string {
-  if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
+  if (!name.starts_with("__arrm_") && !name.starts_with("array__")) {
     return "";
   }
   let v = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
@@ -103,8 +104,8 @@ function iter_verb_of(name: string): string {
   if (n == "iter__range") {
     return "range";
   }
-  if (util.str_has_prefix(n, "iter__of")) {
-    if (n.len() == 8 || util.str_has_prefix(slice_unchecked(n, 8, n.len()) + "", "__")) {
+  if (n.starts_with("iter__of")) {
+    if (n.len() == 8 || (slice_unchecked(n, 8, n.len()) + "").starts_with("__")) {
       return "of";
     }
     return "";
@@ -117,7 +118,7 @@ function iter_verb_of(name: string): string {
     }
     return "";
   }
-  if (!util.str_has_prefix(n, "__smm_")) {
+  if (!n.starts_with("__smm_")) {
     return "";
   }
   return smm_verb(n, verbs);

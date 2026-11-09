@@ -6,6 +6,7 @@ import "./sempair";
 import "./semthread";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[], ok: boolean }
 
@@ -199,7 +200,7 @@ function moves_option(k: i32): boolean {
 }
 
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
-  if (ssasem.is_dyn_call(ins.str) || util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
+  if (ssasem.is_dyn_call(ins.str) || ins.str.starts_with(sempair.word_as_prefix())) {
     return false;
   }
   let g = ix.find(ins.str);

@@ -3,6 +3,7 @@ import "./ssacreditflowgraph" as graph;
 import "./ssacreditorigin" as origin;
 import "./ssacredithelper" as helper;
 import "./util";
+import "std/string";
 
 pub struct Site {
   input: i32,
@@ -30,7 +31,7 @@ function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[]
     return "incoming boundary binding";
   }
   let c = consumers[0];
-  if (c.name == "" || util.str_has_prefix(c.name, "__fern_") || c.nparams != 2 || c.takes_env || c.blocks.len() == 0) {
+  if (c.name == "" || c.name.starts_with("__fern_") || c.nparams != 2 || c.takes_env || c.blocks.len() == 0) {
     return "incoming boundary consumer binding";
   }
   if (c.name == caller) {

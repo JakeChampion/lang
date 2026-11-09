@@ -2,6 +2,7 @@ import "./ast";
 import "./parser";
 import "./util";
 import "./sysreg";
+import "std/string";
 
 // A `@norc` function allocates nothing and does no RC operation, so it can run
 // before the heap exists, in the top half of an interrupt handler, or on DMA
@@ -265,7 +266,7 @@ function check_expr(e: ast.Expr, cx: Ctx, own out: util.Diag[]): util.Diag[] {
       return check_expr(b.right, cx, out);
     },
     ast.ExprUnary(u) => {
-      if (util.str_has_prefix(u.op, "as") && !scalar(u.ty)) {
+      if (u.op.starts_with("as") && !scalar(u.ty)) {
         out = bad(cx, "casts to " + util.demangle(u.ty) + ", which is not a scalar", u.line, u.col, out);
       }
       return check_expr(u.operand, cx, out);

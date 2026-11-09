@@ -14,6 +14,7 @@ import "./interpheap";
 import "std/utf8";
 import "std/f64";
 import "std/rand";
+import "std/string";
 
 pub struct VInt { v: i32, is_char: boolean, is_byte: boolean }
 
@@ -435,7 +436,7 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     out = out.bind(dm.at, val);
   }
   let binds = split_binding_names(names);
-  if (util.str_has_prefix(dm.tag, "@sd:")) {
+  if (dm.tag.starts_with("@sd:")) {
     let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()) + "", ":");
     let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()) + "");
     if let VStruct(sv) = val {
@@ -452,7 +453,7 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     }
     return (env, v_err("destructuring `" + names + "`: initialiser is not a struct"));
   }
-  if (binds.len() == 1 && !util.str_has_prefix(names, "(")) {
+  if (binds.len() == 1 && !names.starts_with("(")) {
     return (out.bind(names, val), v_void());
   }
   if let VTuple(tv) = val {
@@ -462,7 +463,7 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     let i = 0;
     while (i < binds.len()) {
       let b = binds[i];
-      if (util.str_has_prefix(b, "(")) {
+      if (b.starts_with("(")) {
         let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1) + "", "", tv.elements[i]);
         if (is_err(err)) {
           return (env, err);
@@ -3601,7 +3602,7 @@ function dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]):
   if (name == "open_dir") {
     return dir_result_value(d.open_dir(entry));
   }
-  if (util.str_has_prefix(name, "open_")) {
+  if (name.starts_with("open_")) {
     return dir_file_method(d, name, entry, args);
   }
   if (name == "entries_bytes") {
@@ -7537,7 +7538,7 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
   if (name == "__ptr_width") {
     want = 0;
   }
-  if (name == "__free" || util.str_has_prefix(name, "__store_")) {
+  if (name == "__free" || name.starts_with("__store_")) {
     want = 2;
   }
   if (name == "__memcpy" || name == "__memset") {
@@ -7564,7 +7565,7 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
       return v_err(name + ": size " + util.i64_to_string(n) + " is below zero");
     }
   }
-  if (util.str_has_prefix(name, "__load_")) {
+  if (name.starts_with("__load_")) {
     return raw_mem_load(name, w[0] as usize);
   }
   return raw_mem_effect(heap, name, w);
@@ -9526,7 +9527,7 @@ function struct_text(sv: VStruct): string {
   if (sv.field_names.len() == 0) {
     return sv.type_name;
   }
-  if (util.str_has_prefix(sv.field_names[0], "_")) {
+  if (sv.field_names[0].starts_with("_")) {
     return sv.type_name + "(" + payloads + ")";
   }
   return sv.type_name + " { " + fields + " }";

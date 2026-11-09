@@ -1,5 +1,6 @@
 import "./ssa";
 import "./util";
+import "std/string";
 
 pub struct FlatChild { offset: i32 }
 
@@ -24,7 +25,7 @@ function parameter(op: ssa.SInst): boolean {
 }
 
 function shape(f: ssa.SFunc): boolean {
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 1 || f.takes_env || f.nvals < 1) {
+  if (f.name == "" || f.name.starts_with("__fern_") || f.nparams != 1 || f.takes_env || f.nvals < 1) {
     return false;
   }
   let ids: i32[] = [];

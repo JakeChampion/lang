@@ -38,6 +38,7 @@ import "./semreach";
 import "./flatten";
 import "./treeshake";
 import "std/envflag";
+import "std/string";
 
 pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32, dropped: boolean }
 
@@ -1840,7 +1841,7 @@ function literal_operand(e: ast.Expr): boolean {
       return !n.is_float;
     },
     ast.ExprUnary(u) => {
-      return (u.op == "-" || util.str_has_prefix(u.op, "as_")) && literal_operand(u.operand);
+      return (u.op == "-" || u.op.starts_with("as_")) && literal_operand(u.operand);
     },
     ast.ExprBinary(b) => {
       return (b.op == "+" || b.op == "-" || b.op == "*") && literal_operand(b.left) && literal_operand(b.right);
@@ -2536,7 +2537,7 @@ function is_string_array(t: typeinfo.Type): boolean {
 }
 
 function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  if (c.args.len() != 2 || !util.str_has_prefix(name, "__arrm_concat__")) {
+  if (c.args.len() != 2 || !name.starts_with("__arrm_concat__")) {
     return false;
   }
   let t = checked(c.args[0], s);
@@ -5907,7 +5908,7 @@ function synthesised(fd: parser.FuncDecl): boolean {
 }
 
 function synthesised_name(name: string): boolean {
-  return util.str_has_prefix(name, "__lam_") || util.contains(name, "$iife");
+  return name.starts_with("__lam_") || util.contains(name, "$iife");
 }
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
@@ -6349,7 +6350,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (ssasem.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
-        if (v == n || util.str_has_prefix(v, n + "__")) {
+        if (v == n || v.starts_with(n + "__")) {
           return true;
         }
       }
@@ -6817,13 +6818,13 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
   let prefix = base + "__";
   for sig in s.scope.structs.structs {
     let t: typeinfo.Type = typeinfo.TypeStruct { name: sig.name, args: [] };
-    if (util.str_has_prefix(sig.name, prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
+    if (sig.name.starts_with(prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
       out = out.append(t);
     }
   }
   for u in s.scope.unions.unions {
     let t: typeinfo.Type = typeinfo.TypeUnion { name: u.name, args: [] };
-    if (util.str_has_prefix(u.name, prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) {
+    if (u.name.starts_with(prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) {
       out = out.append(t);
     }
   }
@@ -9130,7 +9131,7 @@ function lowered_names(): util.NameIndex {
 }
 
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
+  if (p.template || p.bodyless || !p.ok || name == "main" || name.starts_with("__") || util.contains(name, ".")) {
     return false;
   }
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
@@ -9222,7 +9223,7 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
 function kernel_calls(all: Produced[], names: string[], mod: parser.Module): string[] {
   let out = stdlib_names(all, names, mod.funcs, "std/ndarray");
   for name in stdlib_names(all, names, mod.funcs, "std/array") {
-    if (util.str_has_prefix(name, "__arrm_map__")) {
+    if (name.starts_with("__arrm_map__")) {
       out = out.append(name);
     }
   }

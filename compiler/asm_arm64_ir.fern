@@ -22,6 +22,7 @@ import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
 import "std/envflag";
+import "std/string";
 
 function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): asmcore.EmitState {
   if (imm <= 4095) {
@@ -1546,7 +1547,7 @@ function ssa_needs_frame(text: string): boolean {
       end += 1;
     }
     let line = slice_unchecked(text, start, end) + "";
-    if (util.str_has_prefix(line, "    ") && !util.str_has_prefix(line, ssa_exit_mark()) && ssa_line_needs_frame(line)) {
+    if (line.starts_with("    ") && !line.starts_with(ssa_exit_mark()) && ssa_line_needs_frame(line)) {
       return true;
     }
     start = end + 1;
@@ -1586,7 +1587,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
       end += 1;
     }
     let line = slice_unchecked(text, start, end) + "";
-    if (util.str_has_prefix(line, ssa_exit_mark())) {
+    if (line.starts_with(ssa_exit_mark())) {
       let tail = slice_unchecked(line, ssa_exit_mark().len(), line.len()) + "";
       if (framed) {
         s = ssa_emit_unwind(saved, 0, s, tail);
@@ -1595,7 +1596,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
       } else {
         s = s.write("    b " + tail + "\n");
       }
-    } else if (!framed && util.str_has_prefix(line, "    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()) + "")) {
+    } else if (!framed && line.starts_with("    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()) + "")) {
       s = s.write(line + "_leaf\n");
     } else {
       s = s.write(line + "\n");
@@ -2404,7 +2405,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return util.str_has_prefix(what, "rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+  return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -2457,7 +2458,7 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   if (what == "!") {
     return "    cmp " + d + ", #0\n    cset " + d + ", eq\n";
   }
-  if (util.str_has_prefix(what, "rotr:")) {
+  if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
       return "    ror " + d + ", " + d + ", #" + n + "\n";
@@ -2500,7 +2501,7 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + src + ", #255\n";
   }
-  if (util.str_has_prefix(what, "rotr:")) {
+  if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
       return "    ror " + d + ", " + src + ", #" + n + "\n";
@@ -2915,7 +2916,7 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_load(reg_of, ins.args[0], a, s);
   let b = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  if (util.str_has_suffix(ins.str, ":bytes")) {
+  if (ins.str.ends_with(":bytes")) {
     s = s.need("heap");
     s = ssa_ldst0(s, true, "x6", a);
     s = ssa_cmp_rr(s, b, "x6");
@@ -3580,7 +3581,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 // next instruction, as a write to a control register does on x86-64.
 function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
-  if (util.str_has_prefix(ins.str, "dev_sysreg_read")) {
+  if (ins.str.starts_with("dev_sysreg_read")) {
     if (sysreg.arm64_encoding(name, sysreg.READ) < 0) {
       ircore.sysreg_refuse(name, "arm64");
     }
@@ -3646,7 +3647,7 @@ function arm64_no_operand(op: string): boolean {
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
 // convention. boot_info reads the x0 that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
+  if (ins.str.starts_with("dev_sysreg_")) {
     return ssa_sysreg(ins, reg_of, s);
   }
   if (ircore.maintenance_op(ins.str)) {
@@ -3684,14 +3685,14 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = s.write("    dsb sy\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
   }
-  if (util.str_has_prefix(ins.str, "dev_port_")) {
+  if (ins.str.starts_with("dev_port_")) {
     ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, util.index_of_sub(ins.str, ":")) + ""), "arm64");
   }
-  if (!util.str_has_prefix(ins.str, "dev_mmio_")) {
+  if (!ins.str.starts_with("dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }
   let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
-  if (util.str_has_prefix(ins.str, "dev_mmio_load")) {
+  if (ins.str.starts_with("dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "x9", s);
     let ld = "ldr x0";
     if (w == 8) {
@@ -3721,10 +3722,10 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
-  if (util.str_has_prefix(ins.str, "dev_")) {
+  if (ins.str.starts_with("dev_")) {
     return ssa_device(ins, reg_of, s);
   }
-  if (util.str_has_prefix(ins.str, "syscall")) {
+  if (ins.str.starts_with("syscall")) {
     let i = 0;
     while (i < ins.args.len()) {
       s = ssa_push_operand(reg_of, ins.args[i], i * 16, s);
@@ -3794,7 +3795,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (s.shared && ins.str == "__fern_envp" && ins.imm == 1) {
     return ssa_shared_environ(ins, reg_of, s);
   }
-  if (util.str_has_prefix(ins.str, "__fern_arr_push_")) {
+  if (ins.str.starts_with("__fern_arr_push_")) {
     s = s.need("heap");
   }
   if (sym_addr_need(ins.str) != "") {
@@ -3856,10 +3857,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "map_hash_seed") {
     s = s.need("random_i32").need("map_hash_seed");
     sym = "__fern_map_hash_seed";
-  } else if (util.str_has_prefix(ins.str, "arr_push_owned")) {
+  } else if (ins.str.starts_with("arr_push_owned")) {
     s = s.need("arr_push");
     sym = "__fern_arr_push_owned";
-  } else if (util.str_has_prefix(ins.str, "arr_push")) {
+  } else if (ins.str.starts_with("arr_push")) {
     s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
@@ -3872,9 +3873,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     sym = asmcore.raw_alloc_sym(s);
     s = lc_rt_req_alloc(s);
   }
-  if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
+  if (ins.str.ends_with("_u8") && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
-  } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
+  } else if (ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
   } else {
     s = ssa_bl_saving(s, sym, saves);
@@ -7052,10 +7053,10 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
   if (s.shared) {
     s = s.write(busy_take_arm64());
   }
-  if (util.str_has_suffix(variant, "_f32")) {
+  if (variant.ends_with("_f32")) {
     s = s.write("    fcvt d0, s0\n");
   }
-  if (util.str_has_suffix(variant, "_f32") || util.str_has_suffix(variant, "_f64")) {
+  if (variant.ends_with("_f32") || variant.ends_with("_f64")) {
     s = s.write("    fmov x0, d0\n");
   }
   s = s.write(rt_unframe(s) + "    ret\n");
@@ -8964,7 +8965,7 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   if (util.has_str(leaf_aborts(), label)) {
     s = s.write(label + "_leaf:\n" + rt_frame(s) + "    mov x29, sp\n");
   }
-  let sym = !util.str_has_prefix(label, ".L");
+  let sym = !label.starts_with(".L");
   if (sym) {
     s = s.write(".globl " + label + "\n");
     s = s.write(".type " + label + ", %function\n");
@@ -12886,7 +12887,7 @@ function darwin_retarget_locals(line: string): string {
 }
 
 function darwin_is_reg_entry(line: string, i: i32): boolean {
-  if (!util.str_has_prefix(slice_unchecked(line, i, line.len()), "__fn_")) {
+  if (!slice_unchecked(line, i, line.len()).starts_with("__fn_")) {
     return false;
   }
   let j = i;
@@ -12919,7 +12920,7 @@ function darwin_feeds_svc(asm: string, from: i32): boolean {
       if (body == "svc #0") {
         return true;
       }
-      if (darwin_ends_flow(body) || util.str_has_prefix(body, "mov x8,") || util.str_has_prefix(body, "ldr x8,") || darwin_writes_x8(body)) {
+      if (darwin_ends_flow(body) || body.starts_with("mov x8,") || body.starts_with("ldr x8,") || darwin_writes_x8(body)) {
         return false;
       }
       start = i + 1;
@@ -12933,10 +12934,10 @@ function darwin_ends_flow(body: string): boolean {
   if (body.len() > 0 && body[body.len() - 1] == 58) {
     return true;
   }
-  if (util.str_has_prefix(body, "b.") || util.str_has_prefix(body, "b ") || util.str_has_prefix(body, "bl ") || util.str_has_prefix(body, "br ") || util.str_has_prefix(body, "blr ") || body == "ret") {
+  if (body.starts_with("b.") || body.starts_with("b ") || body.starts_with("bl ") || body.starts_with("br ") || body.starts_with("blr ") || body == "ret") {
     return true;
   }
-  return util.str_has_prefix(body, "cbz ") || util.str_has_prefix(body, "cbnz ") || util.str_has_prefix(body, "tbz ") || util.str_has_prefix(body, "tbnz ");
+  return body.starts_with("cbz ") || body.starts_with("cbnz ") || body.starts_with("tbz ") || body.starts_with("tbnz ");
 }
 
 function darwin_writes_x8(body: string): boolean {
@@ -12945,11 +12946,11 @@ function darwin_writes_x8(body: string): boolean {
     return false;
   }
   let op = slice_unchecked(body, 0, sp);
-  if (util.str_has_prefix(op, "st") || op == "cmp" || op == "cmn" || op == "tst") {
+  if (op.starts_with("st") || op == "cmp" || op == "cmn" || op == "tst") {
     return false;
   }
   let rest = slice_unchecked(body, sp + 1, body.len());
-  return util.str_has_prefix(rest, "x8,") || util.str_has_prefix(rest, "w8,");
+  return rest.starts_with("x8,") || rest.starts_with("w8,");
 }
 
 pub function darwinize(asm: string): string {
@@ -12967,11 +12968,11 @@ pub function darwinize(asm: string): string {
       let keep = true;
       let out_line = line + "";
 
-      if (util.str_has_prefix(body, ".type ") || util.str_has_prefix(body, ".size ")) {
+      if (body.starts_with(".type ") || body.starts_with(".size ")) {
         keep = false;
-      } else if ((util.str_has_prefix(body, ".globl ") || util.str_has_prefix(body, ".weak ")) && darwin_is_reg_entry(body, darwin_index_of_unquoted(body, " ") + 1)) {
+      } else if ((body.starts_with(".globl ") || body.starts_with(".weak ")) && darwin_is_reg_entry(body, darwin_index_of_unquoted(body, " ") + 1)) {
         keep = false;
-      } else if (util.str_has_prefix(body, ".note.GNU-stack")) {
+      } else if (body.starts_with(".note.GNU-stack")) {
         keep = false;
       } else if (body == ".section .rodata") {
         out_line = "    .section __TEXT,__const";
@@ -12985,7 +12986,7 @@ pub function darwinize(asm: string): string {
         out_line = "    .globl _main";
       } else if (line == "_start:") {
         out_line = "_main:";
-      } else if (util.str_has_prefix(body, "adrp ")) {
+      } else if (body.starts_with("adrp ")) {
         out_line = line + "@PAGE";
       } else if (darwin_index_of_unquoted(line, ":lo12:") >= 0) {
         let idx = darwin_index_of_unquoted(line, ":lo12:");
@@ -12993,7 +12994,7 @@ pub function darwinize(asm: string): string {
       } else if (body == "ldr x8, [sp], #16" && darwin_feeds_svc(asm, i + 1)) {
         out_line = "    ldr x16, [sp], #16";
         pend_sys = 0;
-      } else if (util.str_has_prefix(body, "mov x8, #") && darwin_feeds_svc(asm, i + 1)) {
+      } else if (body.starts_with("mov x8, #") && darwin_feeds_svc(asm, i + 1)) {
         let num = util.digits_to_i32(slice_unchecked(body, 9, body.len()));
         let m = darwin_sysno(num);
         pend_sys = m;

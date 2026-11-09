@@ -13,6 +13,7 @@ import "./stdlib_methods";
 import "./consteval";
 import "./sysreg";
 import "std/option";
+import "std/string";
 
 function is_usize(t: typeinfo.Type): boolean {
   match (t) {
@@ -240,7 +241,7 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
 
 pub function unbound_enum_argument(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(u) = t {
-    return util.str_has_prefix(u.reason, "unbound ");
+    return u.reason.starts_with("unbound ");
   }
   return false;
 }
@@ -783,7 +784,7 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
   if (is_method) {
     return cell_method_type(recv, name, argc);
   }
-  if ((util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall"))
+  if ((name.starts_with("__raw_") || name.starts_with("__syscall"))
     && (s.defines(name) || s.has_sig(name))) {
     return t_unknown("a declared callable shadows the raw floor");
   }
@@ -1072,7 +1073,7 @@ function privileged_sig(name: string): DeviceSig {
 }
 
 function port_sig(name: string): DeviceSig {
-  if (util.str_has_prefix(name, "__port_out")) {
+  if (name.starts_with("__port_out")) {
     return DeviceSig { params: [typeinfo.t_i32(), typeinfo.t_i32()], result: typeinfo.t_void() };
   }
   return DeviceSig { params: [typeinfo.t_i32()], result: typeinfo.t_i32() };
@@ -1136,7 +1137,7 @@ function raw_floor_allowed(t: SigTable, name: string): boolean {
 }
 
 function raw_floor_at(t: SigTable, name: string): i32 {
-  if (!util.str_has_prefix(name, "__raw_") && !util.str_has_prefix(name, "__syscall") && !util.str_has_prefix(name, "__fern_")) {
+  if (!name.starts_with("__raw_") && !name.starts_with("__syscall") && !name.starts_with("__fern_")) {
     return -1;
   }
   let i = 0;
@@ -2726,7 +2727,7 @@ function is_resolvable_value(name: string, s: Scope): boolean {
     return true;
   }
   let floor = raw_floor_at(s.sigs, name);
-  if (floor >= 0 || util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall")) {
+  if (floor >= 0 || name.starts_with("__raw_") || name.starts_with("__syscall")) {
     return floor >= 0 && raw_floor_allowed(s.sigs, name);
   }
   return is_resolvable_raw_name(name) || parser.is_builtin_function(name);
@@ -2738,7 +2739,7 @@ function is_resolvable_raw_name(name: string): boolean {
   if (name == "__range" || name == "__range_incl" || name == "__set_field" || name == "__set_index") {
     return true;
   }
-  if (util.str_has_prefix(name, "__fern_")) {
+  if (name.starts_with("__fern_")) {
     return true;
   }
   return is_registered_intrinsic(name);
@@ -3317,7 +3318,7 @@ function bound_import_unloaded(base: string, imports: string[], reqs: parser.Tra
     }
   }
   for path in imports {
-    if (path == q || util.str_has_suffix(path, "/" + q)) {
+    if (path == q || path.ends_with("/" + q)) {
       return true;
     }
   }
@@ -4739,7 +4740,7 @@ function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, uni
 
 function callable_slot_open(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(u) = t {
-    return !util.str_has_prefix(u.reason, TPARAM_MARK) && !util.str_has_prefix(u.reason, UNRESOLVED_MARK);
+    return !u.reason.starts_with(TPARAM_MARK) && !u.reason.starts_with(UNRESOLVED_MARK);
   }
   return false;
 }
@@ -4913,7 +4914,7 @@ pub function builtin_sig(name: string): typeinfo.Type {
 
 // Primitive display signatures are completed by private runtime source bodies.
 function is_primitive_display_builtin(name: string): boolean {
-  return util.str_has_prefix(name, "__primitive_") && builtinsigs.builtin_row(name).len() > 0;
+  return name.starts_with("__primitive_") && builtinsigs.builtin_row(name).len() > 0;
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -7804,10 +7805,10 @@ const TPARAM_MARK: string = "type parameter ";
 const UNRESOLVED_MARK: string = "unrecognised type name: ";
 
 pub function typevar_reason_name(reason: string): string {
-  if (reason.len() > TPARAM_MARK.len() && util.str_has_prefix(reason, TPARAM_MARK)) {
+  if (reason.len() > TPARAM_MARK.len() && reason.starts_with(TPARAM_MARK)) {
     return slice_unchecked(reason, TPARAM_MARK.len(), reason.len()) + "";
   }
-  if (reason.len() > UNRESOLVED_MARK.len() && util.str_has_prefix(reason, UNRESOLVED_MARK)) {
+  if (reason.len() > UNRESOLVED_MARK.len() && reason.starts_with(UNRESOLVED_MARK)) {
     return slice_unchecked(reason, UNRESOLVED_MARK.len(), reason.len()) + "";
   }
   return "";
@@ -13984,7 +13985,7 @@ function payload_count_message(variant: string, want: i32, got: i32): string {
 function arg_subject(c: ast.ExprCall, n: i32): string {
   let arg = "argument " + util.i32_to_string(n);
   if let ast.ExprIdent(id) = c.callee {
-    if (!util.str_has_prefix(id.name, "__") || util.str_has_prefix(id.name, util.ENTRY_SHADOW_PREFIX)) {
+    if (!id.name.starts_with("__") || id.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
       return arg + " to \"" + util.demangle(id.name) + "\"";
     }
   }
@@ -14719,7 +14720,7 @@ function type_param_method_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv
     let tph = tp_assoc_req(s, tpn, mfa.field);
     if (tph.found) {
       out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
-    } else if (!tp_bound_provides(s, tpn, mfa.field) && util.str_has_prefix(tpn, "Vec[")) {
+    } else if (!tp_bound_provides(s, tpn, mfa.field) && tpn.starts_with("Vec[")) {
       out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on " + tpn + ": no trait that every lane type it can be implements provides it", c.line, c.col));
     } else if (!tp_bound_provides(s, tpn, mfa.field)) {
       out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
@@ -15133,7 +15134,7 @@ function pointer_cast_diags(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.
 function unresolved_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
   if let typeinfo.TypeUnknown(tu) = tgt {
     let name = typevar_reason_name(tu.reason);
-    if (util.str_has_prefix(tu.reason, UNRESOLVED_MARK) && !util.has_str(s.tparams, name) && cast_pointer_int(cot) && !is_usize(cot)) {
+    if (tu.reason.starts_with(UNRESOLVED_MARK) && !util.has_str(s.tparams, name) && cast_pointer_int(cot) && !is_usize(cot)) {
       return [e069_cast(u, cot, t_struct(name))];
     }
   }
@@ -16626,7 +16627,7 @@ function pattern_cover(p: ast.Pattern): CoverPat {
           a = pattern_cover(pv.nested[i]);
         } else if (named == "__tupslot") {
           a = tuple_cover(pv.tup_kinds, pv.tup_lits, pv.tup_pats);
-        } else if (util.str_has_prefix(named, "__pl")) {
+        } else if (named.starts_with("__pl")) {
           a = slot_literal_cover(pv.lit_cond, named);
         }
         args = args.append(a);
@@ -16786,7 +16787,7 @@ function slot_tests_only(e: ast.Expr): boolean {
       return slot_tests_only(b.left) && slot_tests_only(b.right);
     }
     if let ast.ExprIdent(id) = b.left {
-      return util.str_has_prefix(id.name, "__pl");
+      return id.name.starts_with("__pl");
     }
   }
   return false;
@@ -16801,7 +16802,7 @@ function rows_cover(rows: CoverPat[][], t: typeinfo.Type, ctor: string, s: Scope
 }
 
 function names_ctor(written: string, ctor: string): boolean {
-  return written == ctor || written.len() > 0 && util.str_has_suffix(ctor, "__" + written);
+  return written == ctor || written.len() > 0 && ctor.ends_with("__" + written);
 }
 
 function cover_arity(rows: CoverPat[][], ctor: string): i32 {
@@ -17792,7 +17793,7 @@ function const_literal(e: ast.Expr): boolean {
 }
 
 function const_unary_err(u: ast.ExprUnary, earlier: string[]): string {
-  if (util.str_has_prefix(u.op, "as_")) {
+  if (u.op.starts_with("as_")) {
     return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
   }
   return const_expr_err(u.operand, earlier);
@@ -18116,7 +18117,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 
 // Every intrinsic name starts with "__", so other names skip the list.
 function is_registered_intrinsic(name: string): boolean {
-  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
+  return name.starts_with("__") && util.has_str(registered_intrinsics(), name);
 }
 
 function registered_intrinsics(): string[] {
@@ -18304,7 +18305,7 @@ function impl_type_is_local(mod: parser.Module, im: parser.ImplInfo): boolean {
   if (im.module.len() == 0) {
     return !util.contains(base, "__");
   }
-  return util.str_has_prefix(base, im.module + "__");
+  return base.starts_with(im.module + "__");
 }
 
 function declares_nominal(mod: parser.Module, name: string): boolean {
@@ -18419,7 +18420,7 @@ function reserved_name_diags(mod: parser.Module): util.Diag[] {
     }
   }
   for sd in mod.structs {
-    let user_struct = sd.enum_owner.len() == 0 && !util.str_has_prefix(sd.name, "__");
+    let user_struct = sd.enum_owner.len() == 0 && !sd.name.starts_with("__");
     if (user_struct && sd.line > 0 && (parser.is_reserved_struct_name(sd.name) || parser.is_reserved_enum_name(sd.name))) {
       out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
     }
@@ -24233,7 +24234,7 @@ function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast
       let tag = ow_result_receiver_tag(fa.obj);
       let key = ow_receiver_ns(tag) + "." + fa.field;
       let cell_handle = tag == "Cell" && fa.field == "get" && !ow_holds_no_handle(c.ty, dx);
-      if (tag.len() > 0 && !util.str_has_prefix(tag, "dyn ") && !methods.has(key) && !cell_handle) {
+      if (tag.len() > 0 && !tag.starts_with("dyn ") && !methods.has(key) && !cell_handle) {
         return e;
       }
       let args: ast.Expr[] = [fa.obj];
@@ -24879,7 +24880,7 @@ function plain_ident(name: string): boolean {
 // unknown_type_diag reports a type spelling that names nothing: E096 for a
 // `Vec[N, T]` with no lane type on the portable tier, E064 otherwise.
 function unknown_type_diag(name: string, traits: string[], line: i32, col: i32): util.Diag {
-  if (util.str_has_prefix(name, "Vec[")) {
+  if (name.starts_with("Vec[")) {
     return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
   }
   return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
@@ -25257,7 +25258,7 @@ function handle_leaves(tr: parser.TypeRef, own acc: string[]): string[] {
 }
 
 function without_slot_marker(slot: parser.TypeRef): parser.TypeRef {
-  if (util.str_has_prefix(slot.base, "own ")) {
+  if (slot.base.starts_with("own ")) {
     return parser.TypeRef { ...slot, base: slice_unchecked(slot.base, 4, slot.base.len()) + "" };
   }
   return slot;
@@ -25265,7 +25266,7 @@ function without_slot_marker(slot: parser.TypeRef): parser.TypeRef {
 
 function handle_not_resource_message(leaf: string): string {
   let name = util.demangle(handle_resource(leaf));
-  if (util.str_has_prefix(leaf, "borrow ")) {
+  if (leaf.starts_with("borrow ")) {
     return "`" + name + "` is not a resource, so `borrow " + name + "` is not a handle type; a parameter borrows by default, written `name: " + name + "`";
   }
   return "`" + name + "` is not a resource, so `own " + name + "` is not a handle type; a consuming parameter is written `own name: " + name + "`";
@@ -27773,10 +27774,10 @@ function imported_decl_names(mod: parser.Module): string[] {
 }
 
 function with_mangled(out: string[], name: string, prefix: string): string[] {
-  if (util.str_has_prefix(name, util.ENTRY_SHADOW_PREFIX)) {
+  if (name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
     return out.append(name);
   }
-  if (prefix.len() == 0 || !util.str_has_prefix(name, prefix + "__")) {
+  if (prefix.len() == 0 || !name.starts_with(prefix + "__")) {
     return out;
   }
   return out.append(name);
@@ -28502,7 +28503,7 @@ pub function builtin_method_names(recv: string): string[] {
   let out: string[] = [];
   for row in builtinsigs.builtin_sigs() {
     let open = util.index_of_sub(row, "(");
-    if (open > head.len() && util.str_has_prefix(row, head)) {
+    if (open > head.len() && row.starts_with(head)) {
       out = out.append(slice_unchecked(row, head.len(), open) + "");
     }
   }

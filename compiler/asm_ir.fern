@@ -22,6 +22,7 @@ import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
 import "std/envflag";
+import "std/string";
 
 function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_map_hash_seed:\n");
@@ -56,10 +57,10 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   if (s.shared) {
     s = s.write(busy_take_x86());
   }
-  if (util.str_has_suffix(variant, "_f32")) {
+  if (variant.ends_with("_f32")) {
     s = s.write("    cvtss2sd %xmm0, %xmm0\n");
   }
-  if (util.str_has_suffix(variant, "_f32") || util.str_has_suffix(variant, "_f64")) {
+  if (variant.ends_with("_f32") || variant.ends_with("_f64")) {
     s = s.write("    movq %xmm0, %rax\n");
   }
   s = s.write("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
@@ -5900,7 +5901,7 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
 function ssa_integer_unary(what: string): boolean {
   return what == "!" || what == "int_extend" || what == "int_wrap"
     || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32"
-    || util.str_has_prefix(what, "rotr:");
+    || what.starts_with("rotr:");
 }
 
 function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
@@ -7151,7 +7152,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return util.str_has_prefix(what, "rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -7206,7 +7207,7 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   if (what == "!") {
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
-  if (util.str_has_prefix(what, "rotr:")) {
+  if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
       return "    rorq $" + n + ", " + d + "\n";
@@ -7232,7 +7233,7 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
 }
 
 function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
-  if (util.str_has_prefix(what, "rotr:")) {
+  if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
       return "    rorxq $" + n + ", " + src + ", " + d + "\n";
@@ -7758,7 +7759,7 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_load(reg_of, ins.args[0], a, s);
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  if (util.str_has_suffix(ins.str, ":bytes")) {
+  if (ins.str.ends_with(":bytes")) {
     s = s.need("heap");
     s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
     s = s.write("    movq (" + a + "), %rdx\n    subq " + b + ", %rdx\n    cmpq $16, %rdx\n");
@@ -8393,7 +8394,7 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     sfx = "w";
     acc = "%ax";
   }
-  if (util.str_has_prefix(ins.str, "dev_port_in")) {
+  if (ins.str.starts_with("dev_port_in")) {
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
     s = s.write("    in" + sfx + " %dx, " + acc + "\n");
     if (w == 8) {
@@ -8415,7 +8416,7 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // %edx:%eax.
 function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
-  let read = util.str_has_prefix(ins.str, "dev_sysreg_read");
+  let read = ins.str.starts_with("dev_sysreg_read");
   let cr = sysreg.x86_control(name);
   let msr = sysreg.x86_msr(name);
   if (cr < 0 && msr < 0i64) {
@@ -8455,7 +8456,7 @@ function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 
 // A privileged op. boot_info reads the %ebx that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
+  if (ins.str.starts_with("dev_sysreg_")) {
     return ssa_sysreg(ins, reg_of, s);
   }
   if (ircore.maintenance_op(ins.str)) {
@@ -8508,14 +8509,14 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = s.write("    mfence\n    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
-  if (util.str_has_prefix(ins.str, "dev_port_")) {
+  if (ins.str.starts_with("dev_port_")) {
     return ssa_port(ins, reg_of, s);
   }
-  if (!util.str_has_prefix(ins.str, "dev_mmio_")) {
+  if (!ins.str.starts_with("dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }
   let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
-  if (util.str_has_prefix(ins.str, "dev_mmio_load")) {
+  if (ins.str.starts_with("dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "%rcx", s);
     let ld = "movq (%rcx), %rax";
     if (w == 8) {
@@ -8545,10 +8546,10 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
-  if (util.str_has_prefix(ins.str, "dev_")) {
+  if (ins.str.starts_with("dev_")) {
     return ssa_device(ins, reg_of, s);
   }
-  if (util.str_has_prefix(ins.str, "syscall")) {
+  if (ins.str.starts_with("syscall")) {
     let i = 0;
     while (i < ins.args.len()) {
       s = ssa_push_operand(reg_of, ins.args[i], s);
@@ -8839,7 +8840,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (s.shared && ins.str == "__fern_envp" && ins.imm == 1) {
     return ssa_shared_environ(ins, reg_of, s);
   }
-  if (util.str_has_prefix(ins.str, "__fern_arr_push_")) {
+  if (ins.str.starts_with("__fern_arr_push_")) {
     s = s.need("heap");
   }
   if (sym_addr_need(ins.str) != "") {
@@ -8901,10 +8902,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "map_hash_seed") {
     s = s.need("random_i32").need("map_hash_seed");
     sym = "__fern_map_hash_seed";
-  } else if (util.str_has_prefix(ins.str, "arr_push_owned")) {
+  } else if (ins.str.starts_with("arr_push_owned")) {
     s = s.need("arr_push_owned");
     sym = "__fern_arr_push_owned";
-  } else if (util.str_has_prefix(ins.str, "arr_push")) {
+  } else if (ins.str.starts_with("arr_push")) {
     s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
@@ -8925,9 +8926,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     sym = asmcore.raw_alloc_sym(s);
     s = lc_rt_req_alloc(s);
   }
-  if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
+  if (ins.str.ends_with("_u8") && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
-  } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
+  } else if (ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
   } else {
     s = ssa_call_saving(s, sym, saves);
@@ -9555,7 +9556,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     let src = "";
     if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
-    } else if (reg_of[ins.args[0]] < 0 && util.str_has_prefix(ins.str, "rotr:")) {
+    } else if (reg_of[ins.args[0]] < 0 && ins.str.starts_with("rotr:")) {
       src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
     }
     let from = "";
@@ -10533,7 +10534,7 @@ function ssa_needs_frame(text: string): boolean {
       end += 1;
     }
     let line = slice_unchecked(text, start, end) + "";
-    if (util.str_has_prefix(line, "    ") && ssa_line_needs_frame(line)) {
+    if (line.starts_with("    ") && ssa_line_needs_frame(line)) {
       return true;
     }
     start = end + 1;
@@ -10543,7 +10544,7 @@ function ssa_needs_frame(text: string): boolean {
 
 function ssa_line_needs_frame(line: string): boolean {
   for m in ["    call", "    push", "    pop"] {
-    if (util.str_has_prefix(line, m)) {
+    if (line.starts_with(m)) {
       return true;
     }
   }

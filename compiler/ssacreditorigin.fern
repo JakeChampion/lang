@@ -1,6 +1,7 @@
 import "./ssa";
 import "./ssacredithelper" as helper;
 import "./util";
+import "std/string";
 
 pub struct Origin { proof: helper.Proof, words: i32 }
 
@@ -9,7 +10,7 @@ function refused(f: ssa.SFunc, why: string): Origin {
 }
 
 pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origin {
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || shape == "" || references.len() < 1 || references.len() > 2 || f.nparams != references.len() || f.takes_env || f.blocks.len() != 1) {
+  if (f.name == "" || f.name.starts_with("__fern_") || shape == "" || references.len() < 1 || references.len() > 2 || f.nparams != references.len() || f.takes_env || f.blocks.len() != 1) {
     return refused(f, "unsupported allocation producer boundary");
   }
   let b = f.blocks[0];
