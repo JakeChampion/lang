@@ -1,0 +1,63 @@
+{
+  "format": "Concatenate archive parts in filename order to reconstruct the original gzip tar archive. No data or compression changed.",
+  "archive": "2026-11-09-listing-columns-data.tar.gz",
+  "bytes": 2211574,
+  "sha256": "8ac8e2651c4cc454a1f44ae1e5836200b269cb2dccc8e5a78067af3b3db08497",
+  "parts": [
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-00",
+      "bytes": 262144,
+      "sha256": "93c0a2e207d298614b1eb6e10a4c89b824973d4b122978f797ad29bf43114390",
+      "git_blob": "c2b1439bf3d243f4dfe225dfd54d570f1061104e"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-01",
+      "bytes": 262144,
+      "sha256": "4be4cec2a06a7e8f0ec7f828fcd413ff9876d8e28a0b5830d66de8af79563db9",
+      "git_blob": "2769a110ca8845941f93098320c5df01d82c17bd"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-02",
+      "bytes": 262144,
+      "sha256": "0bc70fbfb3909c858e9193510c188e8f3e709a8095205d3cc685ddc11d11edfd",
+      "git_blob": "1ab3fabe74cd6054cbd6a4cd1f0ddd17f066b6b9"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-03",
+      "bytes": 262144,
+      "sha256": "583e0803cf26e51e518f265bfa3e4ed87ad82d34a0037ca3ebd1177de6ecc244",
+      "git_blob": "1d6d534b6bf66a6af5e3c2aa1c2137074a6f4900"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-04",
+      "bytes": 262144,
+      "sha256": "92cdbafe17af5beb25f8d0db18db148d2d6b40c4e80a771e58208362168a7612",
+      "git_blob": "d1ee5ff9a56cea9373758536d67eea547be66a91"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-05",
+      "bytes": 262144,
+      "sha256": "a8d5ef5784616a5f0440601d4907d12c037d37b57867d56153652e0b0132df9f",
+      "git_blob": "bc2297fa8f2d8440ff6c3261de7e22f6ac0d233c"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-06",
+      "bytes": 262144,
+      "sha256": "956e2512c53300821bcfadd67d06ed4040237d37dd454b69dc8f5f6c8e71410d",
+      "git_blob": "7cfe225274e485726ee90ad59d4b144ca8c8ea79"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-07",
+      "bytes": 262144,
+      "sha256": "84bb9444f2350021a38b9c3ae97e6021106a452e7f34d1eda2edf22de5114272",
+      "git_blob": "1968bf57ba13aa605644e5f4edb37016cdeea218"
+    },
+    {
+      "file": "2026-11-09-listing-columns-data.tar.gz.part-08",
+      "bytes": 114422,
+      "sha256": "a98c094fcec2ffc3e4497098b3e5a7be87aad4bfc4106fbd8d71ad48a2892d13",
+      "git_blob": "1e3ef5e5a4fb746133fec7c1709996ce7b618b6c"
+    }
+  ],
+  "upload_limitation": "The single-blob upload did not complete and its wait was cancelled. A later public API check returned404 for the expected blob. These bounded parts preserve the original archive exactly."
+}
