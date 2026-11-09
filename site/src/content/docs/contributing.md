@@ -19,9 +19,7 @@ cd site
 npm install
 
 # Build the in-browser playground and stage it under public/.
-( cd .. && ./web/build.sh )
-mkdir -p public/playground
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && ./web/build.sh && web/stage.sh site/public/playground )
 
 # Generate the standard-library reference pages (see below).
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std

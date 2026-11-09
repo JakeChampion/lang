@@ -11,6 +11,7 @@ site/
 ├── astro.config.mjs            Starlight + sidebar + meta config
 ├── package.json
 ├── scripts/
+│   ├── capture.mjs             Record compiler output for the home page
 │   ├── fetch-fonts.mjs         Refresh the self-hosted webfonts
 │   └── render-og.mjs           Render the social card to public/og.png
 ├── src/
@@ -87,11 +88,7 @@ npm install
 # build.sh needs bin/fern-selfhost and runs `make selfhost-cli` when it
 # is missing (or set FERN_SELFHOST to a compiler you already have).
 ( cd .. && ./web/build.sh )
-mkdir -p public/playground
-# Copy every .html/.js/.wasm, as pages.yml does: index.html statically
-# imports both wasi shims, so a missing one breaks the whole ES module
-# and the playground hangs on "loading runtime…".
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && web/stage.sh site/public/playground )
 
 # Generate the stdlib reference pages.
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
@@ -113,6 +110,18 @@ configured `base`).
 ```bash
 npm run build    # → site/dist/
 ```
+
+`npm run build` runs `scripts/capture.mjs` first. The script runs the
+compiler (`$FERN_SELFHOST`, else `../bin/fern-selfhost`) and records its
+output in `src/generated/captures.json`, which is not in git. The home
+page shows that output: the assembly for `src/captures/area.fern`, the
+size of the executable, the `fern -help` usage text, and the
+capabilities of `fern -lsp`. The script stops the build when `main` no
+longer loads the folded constant that the home page names.
+
+`public/install.sh` is the install script that the home page and the
+install tutorial give. `test/install.test.mjs` runs it against a fake
+release.
 
 The GitHub Actions `Pages` workflow runs this on every push to
 main that touches the site, the playground, the compiler, anything
@@ -147,7 +156,13 @@ import FernPlayground from "../../components/FernPlayground.astro";
 
 The component base64-URL-encodes the snippet into the iframe's
 hash — same codec the standalone playground's Share button uses,
-so URLs are interchangeable.
+so URLs are interchangeable. Give `args="…"` and `stdin={`…`}` to
+run the snippet with arguments and standard input. The embed then
+shows its program-input panel, so the reader can change both.
+
+Code fences and the playground editor take their token colours from
+`web/editor/fern-themes.json`, so a snippet and a fence colour the same
+token the same way.
 
 ## Add a new tutorial / reference page
 

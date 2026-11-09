@@ -28,6 +28,9 @@
 //              content (the `height` prop becomes just the initial
 //              size before the first height report).
 //   title    — accessibility title for the iframe.
+//   args     — the program's arguments after its name, split on spaces.
+//   stdin    — the program's standard input.
+//              With either one the embed shows its program-input panel.
 
 interface Props {
   code: string;
@@ -35,6 +38,8 @@ interface Props {
   autoRun?: boolean;
   minimal?: boolean;
   title?: string;
+  args?: string;
+  stdin?: string;
 }
 
 const {
@@ -43,6 +48,8 @@ const {
   autoRun = true,
   minimal = false,
   title = "Fern playground",
+  args = "",
+  stdin = "",
 } = Astro.props;
 
 // Minimal embeds auto-grow, so they only need a small initial height
@@ -52,7 +59,8 @@ const resolvedHeight = height ?? (minimal ? "180px" : "420px");
 
 // URL-safe base64 (RFC 4648 §5), '=' padding stripped — matches
 // the encodeHash() helper in web/index.html so a copy-pasted hash
-// is interchangeable between embed and standalone playground.
+// is interchangeable between embed and standalone playground. The
+// hash fields are the ones writeHash() in web/index.html writes.
 function encodeHash(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
@@ -64,15 +72,19 @@ function encodeHash(s: string): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+let hash = `#src=${encodeHash(code)}`;
+if (args) hash += `&args=${encodeHash(args)}`;
+if (stdin) hash += `&stdin=${encodeHash(stdin)}`;
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fullSrc = `${base}/playground/#src=${encodeHash(code)}`;
+const fullSrc = `${base}/playground/${hash}`;
 const params = new URLSearchParams();
 params.set("embed", "1");
 if (minimal) params.set("minimal", "1");
 // Minimal snippets must autorun (there's no Run button), so force it
 // even if autoRun={false} was passed.
 if (autoRun || minimal) params.set("autorun", "1");
-const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code)}`;
+const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
 ---
 
 <figure
@@ -86,19 +98,20 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
     </a>
   </header>
   <iframe
-    src={embedSrc}
+    data-src={embedSrc}
     title={title}
-    style={`height: ${resolvedHeight};`}
-    loading="lazy"></iframe>
+    style={`height: ${resolvedHeight};`}></iframe>
 </figure>
 
 <script is:inline>
-  // Sync the embedded playground's theme with Starlight's. We
-  // append `?theme=…` to the iframe src on first paint (so the
-  // playground boots with the right palette), then postMessage
-  // on every Starlight theme-pref change so the iframe re-themes
-  // live without a reload.
+  // Load each embed when it comes near the viewport, with the page's
+  // theme in its URL, so the playground boots once and with the right
+  // palette. A later Starlight theme change goes to the running embed
+  // as a message. Astro emits this script once for each embed, so the
+  // first copy does the work for all of them.
   (function () {
+    if (window.__fernEmbeds) return;
+    window.__fernEmbeds = true;
     function currentTheme() {
       // Starlight stores its setting on <html data-theme="…">. Fall
       // back to prefers-color-scheme when the attribute hasn't been
@@ -110,36 +123,40 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
         ? "dark"
         : "light";
     }
-    function applyToFrame(iframe, theme) {
-      // Patch the iframe src ONCE on first paint so reloads /
-      // fresh viewers boot with the right palette.
-      if (!iframe.dataset.themeApplied) {
-        const u = new URL(iframe.src, location.href);
-        u.searchParams.set("theme", theme);
-        iframe.src = u.toString();
-        iframe.dataset.themeApplied = "1";
+    function load(iframe) {
+      if (iframe.getAttribute("src")) return;
+      const u = new URL(iframe.dataset.src, location.href);
+      u.searchParams.set("theme", currentTheme());
+      iframe.src = u.toString();
+    }
+    function start() {
+      const frames = document.querySelectorAll("[data-fern-playground] iframe[data-src]");
+      if (!("IntersectionObserver" in window)) {
+        frames.forEach(load);
         return;
       }
-      // Subsequent flips don't need a reload — postMessage tells
-      // the running playground to re-theme.
-      try {
-        iframe.contentWindow.postMessage({ type: "fern:theme", theme }, "*");
-      } catch (e) { /* iframe not yet ready; next observer tick will catch it */ }
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          io.unobserve(e.target);
+          load(e.target);
+        }
+      }, { rootMargin: "200px 0px" });
+      frames.forEach((f) => io.observe(f));
     }
-    function syncAll() {
-      const theme = currentTheme();
-      document
-        .querySelectorAll("[data-fern-playground] iframe")
-        .forEach((f) => applyToFrame(f, theme));
-    }
-    // First paint.
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", syncAll);
+      document.addEventListener("DOMContentLoaded", start);
     } else {
-      syncAll();
+      start();
     }
-    // Watch Starlight's data-theme attribute for changes.
-    new MutationObserver(syncAll).observe(document.documentElement, {
+    new MutationObserver(() => {
+      const theme = currentTheme();
+      document.querySelectorAll("[data-fern-playground] iframe[src]").forEach((f) => {
+        try {
+          f.contentWindow.postMessage({ type: "fern:theme", theme }, "*");
+        } catch (e) { /* the embed has not loaded; it reads the theme from its URL */ }
+      });
+    }).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
