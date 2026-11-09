@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**135 of 138** claims are pinned by a conformance case. The remaining
+**136 of 139** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -124,6 +124,7 @@ of them.
 | `CC-01` | `docs/CLOSURE-CAPTURE.md` | A mutation of a captured scalar inside a closure is visible outside | `closure_capture_shared_cell` |
 | `CC-02` | `docs/CLOSURE-CAPTURE.md` | A write to the outer variable is visible inside the closure | `closure_capture_shared_cell` |
 | `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |
+| `CE-01` | `docs/CELL-TYPE-PLAN.md` | A Cell snapshot retains native descriptor values and nested cycle-free data without duplicating the OS resource | `cell_native_descriptor_snapshots` |
 | `DI-01` | `docs/INITIALIZATION.md` | Every local scalar declaration requires an initializer | `init_missing_scalar` |
 | `DI-02` | `docs/INITIALIZATION.md` | A local binding is unavailable in its own initializer (`E001`) | `init_self_reference` |
 | `DI-03` | `docs/INITIALIZATION.md` | A branch-local binding cannot escape its block (`E001`) | `init_branch_scope_escape` |

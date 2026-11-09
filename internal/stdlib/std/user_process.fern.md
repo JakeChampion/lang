@@ -35,13 +35,15 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 ## Files
 
-`with_root` gives a process a read-only root filesystem: a `std/cpio` archive, such as the initrd. The process then opens, reads, seeks, stats and lists its entries with the Linux calls, and the kernel copies the bytes from the archive. A process has no current directory but the root, so a relative path starts at `/`. A path resolves `.` and `..`, and a symbolic link resolves to its target, for at most 8 links.
+`with_root` gives a process a root filesystem: a `std/cpio` archive, such as the initrd, with a layer in memory above it. The process then opens, reads, seeks, stats and lists its entries with the Linux calls, and the kernel copies the bytes from the archive. A process has no current directory but the root, so a relative path starts at `/`. A path resolves `.` and `..`, and a symbolic link resolves to its target, for at most 8 links.
 
-The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, and a closed descriptor is used again. A call that can change the filesystem gives `EROFS`.
+The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, and a closed descriptor is used again.
+
+The process can make directories and files in memory, write them, rename them, change their modes and remove them. The archive stays read-only: a write, a rename or a removal of an entry of the archive gives `EROFS`. A new file in memory can go in a directory of the archive. A file in memory keeps its bytes as a list of chunks, so a long run of writes at the end copies each byte once. `written` gives the kernel the bytes of a file in memory, for example the output of a compile, after the process ends.
 
 | Call | Number | What the kernel does |
 |---|---|---|
-| `openat` | 56 | Opens an entry for reading. `ENOENT` for a path that is not in the archive, `ENOTDIR` for `O_DIRECTORY` on a file, and `EROFS` for a write access, `O_TRUNC`, or `O_CREAT` of a new file |
+| `openat` | 56 | Opens an entry. `O_CREAT` makes a file in memory, and `O_EXCL` gives `EEXIST` for one that exists. `ENOENT` for a missing path, `ENOTDIR` for `O_DIRECTORY` on a file, and `EROFS` for a write access to the archive |
 | `close` | 57 | Closes a descriptor |
 | `read` | 63 | Copies at most `READ_LIMIT` bytes from the offset, and 0 at the end. `EISDIR` for a directory |
 | `lseek` | 62 | Sets the offset from the start, the offset or the end |
@@ -50,6 +52,12 @@ The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, an
 | `statx` | 291 | Gives the basic stats: the type, the mode, the link count, the owner, the times, the inode, the size and the blocks |
 | `readlinkat` | 78 | Gives the target of a symbolic link, with no NUL |
 | `getcwd` | 17 | Gives `/` |
+| `mkdirat` | 34 | Makes a directory in memory. `EEXIST` for a path that exists, and `ENOENT` or `ENOTDIR` for a parent that is not a directory |
+| `write`, `writev` | 64, 66 | For a descriptor of 3 or more, writes at the offset of a file in memory that was opened for writing |
+| `renameat`, `renameat2` | 38, 276 | Moves a file or a directory in memory, and replaces a file in memory at the target |
+| `unlinkat` | 35 | Removes a file, or with `AT_REMOVEDIR` an empty directory, in memory |
+| `fchmod`, `fchmodat` | 52, 53 | Sets the mode of a file or directory in memory |
+| `fsync`, `fdatasync` | 82, 83 | Gives 0, because the files are in memory |
 
 `with_exe` names the path of the program in the root. `/proc/self/exe` is then a symbolic link to it. Thus a program can read its own image, as the compiler does for the key of its cache.
 
@@ -161,7 +169,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]] }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[] }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
 
@@ -325,7 +333,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [] };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -530,10 +538,10 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   let a1 = reg(f, 1);
   let a2 = reg(f, 2);
   if (n == 64 as u64) {
-    return (p, p.write(a0, p.copy_in(a1 as usize, limit(a2 as usize))));
+    return p.write_to(a0, p.copy_in(a1 as usize, limit(a2 as usize)));
   }
   if (n == 66 as u64) {
-    return (p, p.write(a0, p.gather(a1 as usize, a2 as usize)));
+    return p.write_to(a0, p.gather(a1 as usize, a2 as usize));
   }
   if (n == 93 as u64 || n == 94 as u64) {
     return (p, Some(Exited((a0 & 255 as u64) as i32)));
@@ -546,6 +554,9 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   }
   if (is_file_call(n)) {
     return p.file_call(n, a0, a1, a2, reg(f, 3));
+  }
+  if (is_write_call(n)) {
+    return p.write_call(n, a0, a1, a2, reg(f, 3));
   }
   return (p, p.signal_call(n, a0, a1, a2));
 }
@@ -602,6 +613,17 @@ function (p: Process) answer(ok: boolean, v: i64): Option[Stop] {
 function (p: Process) fail(errno: i64): Option[Stop] {
   set_reg(p.frame, 0, -errno);
   return None;
+}
+
+// fd 1 and 2 are the console, and a higher fd a file the process made.
+function (p: Process) write_to(fd: u64, bytes: Option[u8[]]): (Process, Option[Stop]) {
+  if (fd >= FIRST_FD) {
+    let Some(b) = bytes else {
+      return (p, p.fail(EFAULT));
+    };
+    return p.file_write(fd, b);
+  }
+  return (p, p.write(fd, bytes));
 }
 
 function (p: Process) write(fd: u64, bytes: Option[u8[]]): Option[Stop] {
@@ -697,7 +719,11 @@ An open file holds its entry and its offset. For a directory the offset is the i
 
 ```fern
 <<files>>=
-pub struct OpenFile { path: string, entry: cpio.Entry, offset: usize, open: boolean }
+pub struct OpenFile { path: string, entry: cpio.Entry, offset: usize, open: boolean, memory: boolean, writable: boolean }
+
+// A file or a directory that the process made, in memory. The entry holds its
+// kind, mode, inode and size, as for an entry of the archive.
+pub struct Node { path: string, entry: cpio.Entry, chunks: u8[][] }
 
 // openat and newfstatat take this as the directory of a relative path.
 const AT_FDCWD: u64 = 0xffffffffffffff9c;
@@ -886,7 +912,7 @@ function is_file_call(n: u64): boolean {
 
 function (p: Process) file_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
   if (n == 56 as u64) {
-    return p.openat(a0, a1 as usize, a2);
+    return p.openat(a0, a1 as usize, a2, a3);
   }
   if (n == 57 as u64) {
     return p.close(a0);
@@ -982,32 +1008,63 @@ function root_entry(): cpio.Entry {
 // The entry at path, through at most 8 symbolic links, and the path of the
 // entry. follow false keeps a link at the end of the path.
 function (p: Process) lookup(path: string, follow: boolean): Result[OpenFile, i64] {
-  let Some(a) = p.root else {
-    return Err(ENOENT);
-  };
   let at = path;
   for hops in 0..9 {
-    if (at == "") {
-      return Ok(OpenFile { path: "", entry: root_entry(), offset: ZERO, open: true });
-    }
-    if (at == SELF_EXE && p.exe != "") {
-      if (!follow) {
-        return Ok(OpenFile { path: at, entry: p.exe_link(), offset: ZERO, open: true });
+    match (p.hop(at, follow)) {
+      Found(f) => {
+        return Ok(f);
+      },
+      Next(next) => {
+        at = next;
+      },
+      Missing => {
+        return Err(ENOENT);
       }
-      at = resolve("", p.exe);
-      continue;
-    }
-    let Some(e) = a.find(at) else {
-      return Err(ENOENT);
-    };
-    if (!e.is_symlink() || !follow) {
-      return Ok(OpenFile { path: at, entry: e, offset: ZERO, open: true });
-    }
-    unsafe {
-      at = resolve(parent_of(at), string_from_bytes_unchecked(a.read(e)));
     }
   }
   return Err(ELOOP);
+}
+
+// One step of a lookup: the entry at path, or the path that a link at path
+// points to.
+enum Hop { Found(OpenFile), Next(string), Missing }
+
+function (p: Process) hop(at: string, follow: boolean): Hop {
+  let Some(a) = p.root else {
+    return Missing;
+  };
+  if (at == "") {
+    return Found(archive_file("", root_entry()));
+  }
+  if (at == SELF_EXE && p.exe != "") {
+    if (follow) {
+      return Next(resolve("", p.exe));
+    }
+    return Found(archive_file(at, p.exe_link()));
+  }
+  if let Some(f) = p.node_file(at) {
+    return Found(f);
+  }
+  let Some(e) = a.find(at) else {
+    return Missing;
+  };
+  if (!e.is_symlink() || !follow) {
+    return Found(archive_file(at, e));
+  }
+  unsafe {
+    return Next(resolve(parent_of(at), string_from_bytes_unchecked(a.read(e))));
+  }
+}
+
+function (p: Process) node_file(path: string): Option[OpenFile] {
+  let Some(i) = p.node_index(path) else {
+    return None;
+  };
+  return Some(OpenFile { path: path, entry: p.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: false });
+}
+
+function archive_file(path: string, e: cpio.Entry): OpenFile {
+  return OpenFile { path: path, entry: e, offset: ZERO, open: true, memory: false, writable: false };
 }
 
 function parent_of(path: string): string {
@@ -1059,24 +1116,33 @@ function (p: Process) find_at(dirfd: u64, va: usize, follow: boolean): Result[Op
   }
 }
 
-function (p: Process) openat(dirfd: u64, va: usize, flags: u64): (Process, Option[Stop]) {
-  if ((flags & 3 as u64) != 0 as u64 || (flags & O_TRUNC) != 0 as u64) {
-    return p.failed(EROFS);
-  }
+function (p: Process) openat(dirfd: u64, va: usize, flags: u64, mode: u64): (Process, Option[Stop]) {
+  let write = (flags & 3 as u64) != 0 as u64;
   match (p.find_at(dirfd, va, true)) {
     Ok(f) => {
-      if ((flags & O_DIRECTORY) != 0 as u64 && !f.entry.is_dir()) {
-        return p.failed(ENOTDIR);
-      }
-      return p.add_file(f);
+      return p.open_found(f, flags, write);
     },
     Err(errno) => {
-      if (errno == ENOENT && (flags & O_CREAT) != 0 as u64) {
-        return p.failed(EROFS);
+      if (errno != ENOENT || (flags & O_CREAT) == 0 as u64) {
+        return p.failed(errno);
       }
-      return p.failed(errno);
+      return p.create_at(dirfd, va, mode);
     }
   }
+}
+
+// Opens an entry that exists. Only a file in memory can be written.
+function (p: Process) open_found(f: OpenFile, flags: u64, write: boolean): (Process, Option[Stop]) {
+  let trunc = (flags & O_TRUNC) != 0 as u64;
+  let errno = open_errno(f, flags, write || trunc);
+  if (errno != 0i64) {
+    return p.failed(errno);
+  }
+  let q = p;
+  if (trunc) {
+    q = p.set_node(f.path, [], 0);
+  }
+  return q.add_file(OpenFile { ...f, entry: q.entry_of(f), writable: write });
 }
 
 // Gives f the lowest free descriptor.
@@ -1119,10 +1185,7 @@ function (p: Process) read(fd: u64, va: usize, len: usize): (Process, Option[Sto
   if (f.entry.is_dir()) {
     return p.failed(EISDIR);
   }
-  let Some(a) = p.root else {
-    return p.failed(EBADF);
-  };
-  let size = f.entry.size as usize;
+  let size = p.size_of(f);
   let n = ZERO;
   if (f.offset < size) {
     n = size - f.offset;
@@ -1133,8 +1196,7 @@ function (p: Process) read(fd: u64, va: usize, len: usize): (Process, Option[Sto
   if (n > READ_LIMIT) {
     n = READ_LIMIT;
   }
-  let at = f.entry.start + f.offset as i32;
-  if (!p.copy_out(va, array.slice(a.bytes, at, at + n as i32))) {
+  if (!p.copy_out(va, p.bytes_of(f, f.offset, n))) {
     return p.failed(EFAULT);
   }
   let q = p.set_file(fd, OpenFile { ...f, offset: f.offset + n });
@@ -1153,7 +1215,7 @@ function (p: Process) lseek(fd: u64, offset: i64, whence: u64): (Process, Option
   if (whence == 1 as u64) {
     from = f.offset as i64;
   } else if (whence == 2 as u64) {
-    from = f.entry.size as i64;
+    from = p.size_of(f) as i64;
   } else if (whence != 0 as u64) {
     return p.failed(EINVAL);
   }
@@ -1171,7 +1233,13 @@ function (p: Process) listing(f: OpenFile): cpio.Entry[] {
   };
   let dot = cpio.Entry { ...f.entry, name: "." };
   let up = cpio.Entry { ...root_entry(), name: ".." };
-  return [dot, up].concat(a.children(f.path));
+  let out = [dot, up].concat(a.children(f.path));
+  for n in p.nodes {
+    if (parent_of(n.path) == f.path) {
+      out = out.append(n.entry);
+    }
+  }
+  return out;
 }
 
 // A linux_dirent64 record: the inode, the offset of the next record, the
@@ -1257,5 +1325,351 @@ function (p: Process) stat_to(f: Option[OpenFile], buf: usize): Option[Stop] {
 
 function u32_bytes(v: u32): u8[] {
   return array.slice(u64_bytes(v as u64), 0, 4);
+}
+
+// The writable files and directories of a process, in memory.
+
+const O_EXCL: u64 = 0x80;
+
+const AT_REMOVEDIR: u64 = 0x200;
+
+const EEXIST: i64 = 17;
+
+const ENOTEMPTY: i64 = 39;
+
+const S_IFDIR: u32 = 0x4000;
+
+const S_IFREG: u32 = 0x8000;
+
+// The inodes of the nodes start here, above those of an archive.
+const NODE_INODE: u32 = 0x40000000;
+
+// The bytes of the file in memory at path, for the kernel to read after the
+// process ends.
+pub function (p: Process) written(path: string): Option[u8[]] {
+  let Some(i) = p.node_index(resolve("", path)) else {
+    return None;
+  };
+  return Some(join_chunks(p.nodes[i].chunks));
+}
+
+function join_chunks(chunks: u8[][]): u8[] {
+  let out: u8[] = [];
+  for c in chunks {
+    out = out.concat(c);
+  }
+  return out;
+}
+
+function (p: Process) node_index(path: string): Option[i32] {
+  for i in 0..p.nodes.len() {
+    if (p.nodes[i].path == path) {
+      return Some(i);
+    }
+  }
+  return None;
+}
+
+// The entry of f as it is now: a node can change after the open.
+function (p: Process) entry_of(f: OpenFile): cpio.Entry {
+  if (!f.memory) {
+    return f.entry;
+  }
+  let Some(i) = p.node_index(f.path) else {
+    return f.entry;
+  };
+  return p.nodes[i].entry;
+}
+
+function (p: Process) size_of(f: OpenFile): usize {
+  return p.entry_of(f).size as usize;
+}
+
+// n bytes of f from offset.
+function (p: Process) bytes_of(f: OpenFile, offset: usize, n: usize): u8[] {
+  if (!f.memory) {
+    let Some(a) = p.root else {
+      return [];
+    };
+    let at = f.entry.start + offset as i32;
+    return array.slice(a.bytes, at, at + n as i32);
+  }
+  let Some(i) = p.node_index(f.path) else {
+    return [];
+  };
+  let all = join_chunks(p.nodes[i].chunks);
+  return array.slice(all, offset as i32, (offset + n) as i32);
+}
+
+// Gives the node at path the chunks and the size.
+function (p: Process) set_node(path: string, chunks: u8[][], size: i32): Process {
+  let Some(i) = p.node_index(path) else {
+    return p;
+  };
+  let n = p.nodes[i];
+  let entry = cpio.Entry { ...n.entry, size: size };
+  return Process { ...p, nodes: p.nodes.with(i, Node { ...n, entry: entry, chunks: chunks }) };
+}
+
+function (p: Process) add_node(path: string, mode: u32, links: u32): Process {
+  let entry = cpio.Entry { name: path, inode: NODE_INODE + p.nodes.len() as u32, mode: mode, uid: 0 as u32, gid: 0 as u32, links: links, mtime: 0 as u32, start: 0, size: 0 };
+  return Process { ...p, nodes: p.nodes.append(Node { path: path, entry: entry, chunks: [] }) };
+}
+
+// The path at va from dirfd, and whether its parent is a directory.
+function (p: Process) new_path(dirfd: u64, va: usize): Result[string, i64] {
+  match (p.path_in(va)) {
+    Ok(path) => {
+      match (p.base_of(dirfd, path)) {
+        Ok(base) => {
+          let full = resolve(base, path);
+          if (full == "") {
+            return Err(EEXIST);
+          }
+          return p.parent_dir(full);
+        },
+        Err(errno) => {
+          return Err(errno);
+        }
+      }
+    },
+    Err(errno) => {
+      return Err(errno);
+    }
+  }
+}
+
+function (p: Process) parent_dir(full: string): Result[string, i64] {
+  match (p.lookup(parent_of(full), true)) {
+    Ok(dir) => {
+      if (!dir.entry.is_dir()) {
+        return Err(ENOTDIR);
+      }
+      return Ok(full);
+    },
+    Err(errno) => {
+      return Err(errno);
+    }
+  }
+}
+
+// Why f cannot be opened with flags, or 0. change is a write or a truncation.
+function open_errno(f: OpenFile, flags: u64, change: boolean): i64 {
+  if ((flags & O_CREAT) != 0 as u64 && (flags & O_EXCL) != 0 as u64) {
+    return EEXIST;
+  }
+  if ((flags & O_DIRECTORY) != 0 as u64 && !f.entry.is_dir()) {
+    return ENOTDIR;
+  }
+  if (change && f.entry.is_dir()) {
+    return EISDIR;
+  }
+  if (change && !f.memory) {
+    return EROFS;
+  }
+  return 0i64;
+}
+
+function (p: Process) create_at(dirfd: u64, va: usize, mode: u64): (Process, Option[Stop]) {
+  match (p.new_path(dirfd, va)) {
+    Ok(path) => {
+      let q = p.add_node(path, S_IFREG | (mode & 0xfff as u64) as u32, 1 as u32);
+      let Some(i) = q.node_index(path) else {
+        return q.failed(EIO);
+      };
+      return q.add_file(OpenFile { path: path, entry: q.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: true });
+    },
+    Err(errno) => {
+      return p.failed(errno);
+    }
+  }
+}
+
+function (p: Process) mkdirat(dirfd: u64, va: usize, mode: u64): (Process, Option[Stop]) {
+  if let Ok(found) = p.find_at(dirfd, va, false) {
+    return p.failed(EEXIST);
+  }
+  match (p.new_path(dirfd, va)) {
+    Ok(path) => {
+      let q = p.add_node(path, S_IFDIR | (mode & 0xfff as u64) as u32, 2 as u32);
+      return q.done(0i64);
+    },
+    Err(errno) => {
+      return p.failed(errno);
+    }
+  }
+}
+
+// Writes b at the offset of fd. A write at the end adds a chunk, so a long
+// run of writes copies each byte once.
+function (p: Process) file_write(fd: u64, b: u8[]): (Process, Option[Stop]) {
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  if (!f.writable) {
+    return p.failed(EBADF);
+  }
+  let Some(i) = p.node_index(f.path) else {
+    return p.failed(EBADF);
+  };
+  let n = p.nodes[i];
+  let size = n.entry.size as usize;
+  let chunks = n.chunks;
+  if (f.offset == size) {
+    chunks = chunks.append(b);
+  } else {
+    chunks = [overwrite(join_chunks(chunks), f.offset, b)];
+  }
+  let end = f.offset + b.len() as usize;
+  if (end < size) {
+    end = size;
+  }
+  let q = p.set_node(f.path, chunks, end as i32).set_file(fd, OpenFile { ...f, offset: f.offset + b.len() as usize });
+  return q.done(b.len() as i64);
+}
+
+// all with b written at offset, and zeros before offset past the end.
+function overwrite(all: u8[], offset: usize, b: u8[]): u8[] {
+  let out = all;
+  while (out.len() as usize < offset) {
+    out = out.append(0 as u8);
+  }
+  for i in 0..b.len() {
+    let at = offset as i32 + i;
+    if (at < out.len()) {
+      out = out.with(at, b[i]);
+    } else {
+      out = out.append(b[i]);
+    }
+  }
+  return out;
+}
+
+function (p: Process) set_mode(path: string, mode: u64): (Process, Option[Stop]) {
+  let Some(i) = p.node_index(path) else {
+    return p.failed(EROFS);
+  };
+  let n = p.nodes[i];
+  let kind = n.entry.mode & 0xf000 as u32;
+  let entry = cpio.Entry { ...n.entry, mode: kind | (mode & 0xfff as u64) as u32 };
+  let q = Process { ...p, nodes: p.nodes.with(i, Node { ...n, entry: entry }) };
+  return q.done(0i64);
+}
+
+function (p: Process) fchmod(fd: u64, mode: u64): (Process, Option[Stop]) {
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  return p.set_mode(f.path, mode);
+}
+
+function (p: Process) fchmodat(dirfd: u64, va: usize, mode: u64): (Process, Option[Stop]) {
+  match (p.find_at(dirfd, va, true)) {
+    Ok(f) => {
+      return p.set_mode(f.path, mode);
+    },
+    Err(errno) => {
+      return p.failed(errno);
+    }
+  }
+}
+
+// Moves the node at from, and each node below it, to to. An existing file at
+// to goes away, as with rename.
+function (p: Process) renameat(olddir: u64, oldva: usize, newdir: u64, newva: usize): (Process, Option[Stop]) {
+  let Ok(from) = p.find_at(olddir, oldva, false) else {
+    return p.failed(ENOENT);
+  };
+  if (!from.memory) {
+    return p.failed(EROFS);
+  }
+  match (p.new_path(newdir, newva)) {
+    Ok(to) => {
+      if let Ok(old) = p.lookup(to, false) {
+        if (!old.memory) {
+          return p.failed(EROFS);
+        }
+      }
+      let kept = p.without(to);
+      return kept.moved(from.path, to).done(0i64);
+    },
+    Err(errno) => {
+      return p.failed(errno);
+    }
+  }
+}
+
+function (p: Process) without(path: string): Process {
+  let kept: Node[] = [];
+  for n in p.nodes {
+    if (n.path != path) {
+      kept = kept.append(n);
+    }
+  }
+  return Process { ...p, nodes: kept };
+}
+
+function (p: Process) moved(from: string, to: string): Process {
+  let out: Node[] = [];
+  for n in p.nodes {
+    let path = n.path;
+    if (path == from) {
+      path = to;
+    } else if (path.starts_with(from + "/")) {
+      path = to + slice_unchecked(path, from.len(), path.len());
+    }
+    out = out.append(Node { ...n, path: path, entry: cpio.Entry { ...n.entry, name: path } });
+  }
+  return Process { ...p, nodes: out };
+}
+
+function (p: Process) unlinkat(dirfd: u64, va: usize, flags: u64): (Process, Option[Stop]) {
+  let Ok(f) = p.find_at(dirfd, va, false) else {
+    return p.failed(ENOENT);
+  };
+  if (!f.memory) {
+    return p.failed(EROFS);
+  }
+  let dir = (flags & AT_REMOVEDIR) != 0 as u64;
+  if (dir != f.entry.is_dir()) {
+    if (dir) {
+      return p.failed(ENOTDIR);
+    }
+    return p.failed(EISDIR);
+  }
+  for n in p.nodes {
+    if (parent_of(n.path) == f.path) {
+      return p.failed(ENOTEMPTY);
+    }
+  }
+  return p.without(f.path).done(0i64);
+}
+
+// The calls that change the filesystem in memory.
+function is_write_call(n: u64): boolean {
+  return n == 34 as u64 || n == 35 as u64 || n == 38 as u64 || n == 52 as u64 || n == 53 as u64 || n == 82 as u64 || n == 83 as u64 || n == 276 as u64;
+}
+
+function (p: Process) write_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  if (n == 34 as u64) {
+    return p.mkdirat(a0, a1 as usize, a2);
+  }
+  if (n == 35 as u64) {
+    return p.unlinkat(a0, a1 as usize, a2);
+  }
+  if (n == 38 as u64 || n == 276 as u64) {
+    return p.renameat(a0, a1 as usize, a2, a3 as usize);
+  }
+  if (n == 52 as u64) {
+    return p.fchmod(a0, a1);
+  }
+  if (n == 53 as u64) {
+    return p.fchmodat(a0, a1 as usize, a2);
+  }
+  // fsync and fdatasync: the files are in memory, so there is nothing to write.
+  if (p.open_file(a0).is_none()) {
+    return p.failed(EBADF);
+  }
+  return p.done(0i64);
 }
 ```

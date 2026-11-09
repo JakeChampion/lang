@@ -36,7 +36,7 @@ The `std parse limits` suite runs natively on x86-64 and on arm64 under QEMU, an
 
 ## Remaining limits
 
-- The iteration count and the seed set bound the fuzz loops in the suite. `FuzzSelfHostStdJSON` and `FuzzSelfHostStdURL` run the JSON and URL parsers under `go test -fuzz` ([FUZZING-AUDIT.md](FUZZING-AUDIT.md)), with no coverage feedback across the process boundary. `utf8.from_bytes` has no such target.
+- The iteration count and the seed set bound the fuzz loops in the suite. `FuzzSelfHostStdJSON` and `FuzzSelfHostStdURL` run the JSON and URL parsers under `go test -fuzz` ([FUZZING-AUDIT.md](FUZZING-AUDIT.md)). `FuzzSelfHostStdUTF8` runs `utf8.from_bytes`, `utf8.is_valid` and `utf8.from_bytes_lossy` against Go's `unicode/utf8`. `TestSelfHostReaderCoverageGuidedFuzz` steers all three by the coverage of the Fern process.
 - The JSON depth limit is fixed at 128, and the PEG depth limit at 2048. A caller cannot lower them.
 - A format width of one million still allocates one megabyte per placeholder. A caller that formats untrusted specifications bounds them itself.
 - CSV and the header map are flat parsers with no limit of their own beyond the string ceiling. The HTTP parser bounds its request line, header block, header count and body (`HttpLimits`).

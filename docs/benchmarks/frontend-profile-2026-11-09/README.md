@@ -92,6 +92,32 @@ The text reports filter low-cost nodes for display.
 Those display filters do not remove data from the raw profiles.
 Inclusive percentages overlap and are not additive.
 
+## Static token projection check
+
+The [assembly audit](native/static-parser-box-audit.json) finds no direct `__fern_arr_box` call in the `Par.peek` functions.
+`Par.peek` loads a token pointer and increments its reference count when necessary.
+This diagnostic assembly was not the executed profile binary.
+Static call sites do not establish dynamic costs.
+The `peek` samples do not establish a cause for the separate array-box samples.
+
+## Isolated operator matcher probe
+
+A [matcher probe](go/operator-probe-results.json) compares the current linear table scan with first-byte buckets.
+It preserves the order of the same 35 operator strings.
+Both matchers agree on 28,673 prefix controls and 2,033,495 punctuation positions from all 391 corpus files.
+The controls include every operator prefix and every next-byte value, plus empty input.
+
+Five alternating pairs process each punctuation position 20 times per sample.
+Median matcher time per lookup is 144.825 ns for the linear scan and 11.361 ns for the buckets.
+The [raw results](go/operator-probe-results.json) retain every sample and checksum.
+The [manifest](go/operator-probe-manifest.json) records commands and source and binary identities.
+
+This probe changes no production lexer implementation.
+Both matchers use an indirect call.
+Corpus construction, bucket initialization, startup costs, and complete lexer work are outside the timed section.
+These matcher observations establish no lexer, parser, or compiler speedup.
+A production experiment still needs complete regression, malformed-input, digest, allocation, memory, and timing controls.
+
 ## Controls and reproduction
 
 A separate Callgrind compiler comparison was active during profile collection.

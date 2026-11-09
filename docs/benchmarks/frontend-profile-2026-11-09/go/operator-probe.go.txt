@@ -1,0 +1,197 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	goast "go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jakechampion/lang/internal/syntax/lexer"
+)
+
+var patterns []string
+var buckets [256][]string
+var sink int64
+
+func linear(src string) string {
+	for _, p := range patterns {
+		if strings.HasPrefix(src, p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func bucketed(src string) string {
+	if len(src) == 0 {
+		return ""
+	}
+	for _, p := range buckets[src[0]] {
+		if strings.HasPrefix(src, p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func readPatterns(path string) {
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		panic(err)
+	}
+	goast.Inspect(f, func(n goast.Node) bool {
+		v, ok := n.(*goast.ValueSpec)
+		if !ok || len(v.Names) != 1 || v.Names[0].Name != "multiPunct" {
+			return true
+		}
+		literal := v.Values[0].(*goast.CompositeLit)
+		for _, element := range literal.Elts {
+			value, err := strconv.Unquote(element.(*goast.BasicLit).Value)
+			if err != nil {
+				panic(err)
+			}
+			patterns = append(patterns, value)
+			buckets[value[0]] = append(buckets[value[0]], value)
+		}
+		return false
+	})
+	if len(patterns) != 35 {
+		panic("unexpected operator table")
+	}
+}
+
+func measure(match func(string) string, cases []string, loops int) (int64, int64) {
+	var sum int64
+	start := time.Now()
+	for repeat := 0; repeat < loops; repeat++ {
+		for _, src := range cases {
+			sum += int64(len(match(src)))
+		}
+	}
+	elapsed := time.Since(start).Nanoseconds()
+	sink = sum
+	return elapsed, sum
+}
+
+func main() {
+	if len(os.Args) != 3 {
+		panic("need fixed source root and output path")
+	}
+	root, output := os.Args[1], os.Args[2]
+	readPatterns("internal/syntax/lexer/lexer.go")
+	checks := 0
+	for _, p := range patterns {
+		for k := 0; k <= len(p); k++ {
+			for suffix := 0; suffix < 256; suffix++ {
+				src := p[:k] + string([]byte{byte(suffix)}) + "tail"
+				if linear(src) != bucketed(src) {
+					panic("prefix control differs")
+				}
+				checks++
+			}
+		}
+	}
+	if linear("") != bucketed("") {
+		panic("empty input differs")
+	}
+	files, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	drivers, err := filepath.Glob(filepath.Join(root, "compiler", "drivers", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	files = append(files, drivers...)
+	cases := []string{}
+	rows := []map[string]any{}
+	var checksum int64
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+		source := string(data)
+		tokens, _, err := lexer.Tokenize(source)
+		if err != nil {
+			panic(err)
+		}
+		starts := []int{0}
+		for i := 0; i < len(source); i++ {
+			if source[i] == '\n' {
+				starts = append(starts, i+1)
+			}
+		}
+		punct, multi := 0, 0
+		for _, tok := range tokens {
+			if tok.Kind != lexer.Punct {
+				continue
+			}
+			offset := starts[tok.Pos.Line-1] + tok.Pos.Col - 1
+			tail := source[offset:]
+			if !strings.HasPrefix(tail, tok.Text) {
+				panic("source position differs")
+			}
+			a, b := linear(tail), bucketed(tail)
+			if a != b {
+				panic("corpus match differs")
+			}
+			if len(tok.Text) > 1 && a != tok.Text || len(tok.Text) == 1 && a != "" {
+				panic("token match differs")
+			}
+			cases = append(cases, tail)
+			checksum += int64(len(a))
+			punct++
+			if a != "" {
+				multi++
+			}
+		}
+		rows = append(rows, map[string]any{"path": path, "bytes": len(data), "sha256": fmt.Sprintf("%x", sha256.Sum256(data)), "punctuation_positions": punct, "multi_positions": multi})
+	}
+	_, warmup := measure(linear, cases, 1)
+	if warmup != checksum {
+		panic("warmup checksum differs")
+	}
+	_, warmup = measure(bucketed, cases, 1)
+	if warmup != checksum {
+		panic("bucket warmup checksum differs")
+	}
+	runtime.GC()
+	const loops = 20
+	samples := make([]map[string]any, 0, 10)
+	for pair := 0; pair < 5; pair++ {
+		order := []string{"linear", "bucketed"}
+		if pair%2 != 0 {
+			order = []string{"bucketed", "linear"}
+		}
+		for _, name := range order {
+			match := linear
+			if name == "bucketed" {
+				match = bucketed
+			}
+			ns, sum := measure(match, cases, loops)
+			if sum != checksum*loops {
+				panic("sample checksum differs")
+			}
+			samples = append(samples, map[string]any{"pair": pair + 1, "matcher": name, "elapsed_ns": ns, "checksum": sum, "lookups": len(cases) * loops})
+		}
+	}
+	result := map[string]any{"purpose": "Isolated matcher feasibility probe. This is not an implementation or an end-to-end lexer benchmark. Do not extrapolate a lexer or compiler speedup.", "library_source": "3a296b887ccb1c879743cce8a2a67351c548481f", "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef", "go_version": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "patterns": patterns, "prefix_controls": checks + 1, "cases": len(cases), "checksum_per_batch": checksum, "loops_per_sample": loops, "files": rows, "samples": samples, "limitations": "Both matchers use an indirect call. Corpus construction and bucket initialization are outside timing. Startup costs and complete lexer performance are not measured. Shared host. No production source change."}
+	f, err := os.Create(output)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	if err = json.NewEncoder(f).Encode(result); err != nil {
+		panic(err)
+	}
+	fmt.Println("Validated", checks+1, "prefix controls and", len(cases), "punctuation positions. Matcher samples complete.")
+}

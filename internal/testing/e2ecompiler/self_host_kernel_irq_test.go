@@ -437,11 +437,16 @@ func writeTickProgram(t *testing.T, board, main string) string {
 // exit error, or fails the test when the VM does not stop.
 func bootQemu(t *testing.T, qemu string, args ...string) ([]byte, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	return bootQemuFor(t, 90*time.Second, qemu, args...)
+}
+
+func bootQemuFor(t *testing.T, limit time.Duration, qemu string, args ...string) ([]byte, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	console, err := exec.CommandContext(ctx, qemu, args...).CombinedOutput()
 	if ctx.Err() != nil {
-		t.Fatalf("the VM did not stop in 90s; console:\n%s", console)
+		t.Fatalf("the VM did not stop in %v; console:\n%s", limit, console)
 	}
 	return console, err
 }

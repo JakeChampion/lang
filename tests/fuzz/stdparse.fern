@@ -22,6 +22,7 @@ import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
 import "std/url";
+import "std/utf8";
 import "std/zstd";
 
 // Feeds a file to one network-facing parser of the standard library: the
@@ -765,10 +766,28 @@ function url_summary(src: string): string {
   }
 }
 
+// The validator and the lossy decoder of std/utf8, on the same bytes.
+function utf8_summary(raw: u8[]): string {
+  let lossy = utf8.from_bytes_lossy(raw);
+  let agree = utf8.is_valid(text_of(raw));
+  match (utf8.from_bytes(raw)) {
+    Ok(s) => {
+      let same = "differs";
+      if (lossy == s) {
+        same = "same";
+      }
+      return "utf8 ok " + s.len().to_string() + " " + s.chars().len().to_string() + " lossy " + same + " valid " + agree.to_string();
+    },
+    Err(e) => {
+      return "utf8 refused " + e.offset.to_string() + " lossy " + utf8.is_valid(lossy).to_string() + " valid " + agree.to_string();
+    }
+  }
+}
+
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|json|url|utf8 FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -863,6 +882,10 @@ function main(): i32 {
   }
   if (av[1] == "url") {
     print(url_summary(text_of(raw)));
+    return 0;
+  }
+  if (av[1] == "utf8") {
+    print(utf8_summary(raw));
     return 0;
   }
   eprint("stdparse: unknown reader " + av[1]);

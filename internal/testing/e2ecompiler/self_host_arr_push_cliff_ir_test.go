@@ -69,7 +69,7 @@ func TestSelfHostArrPushCliffIR(t *testing.T) {
 const arrPushRecycledProg = `function fill(n: i32): i64[] {
     let out: i64[] = [];
     let i: i32 = 0;
-    while (i < n) { out = out.append(0 as i64); i = i + 1; }
+    while (i < n) { out = out.append(i as i64); i = i + 1; }
     return out;
 }
 function churn(k: i32): i32 {
