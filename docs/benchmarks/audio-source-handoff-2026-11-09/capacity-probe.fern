@@ -1,6 +1,7 @@
 import "std/i32";
 import "std/string";
 import "std/result";
+
 function rss(): i32 {
   let Ok(status) = read_file("/proc/self/status") else {
     return 0;
@@ -19,21 +20,32 @@ function rss(): i32 {
 }
 
 import "std/audio/source";
-@noinline function chunk(_: i32): Result[u8[], IoError] {
+
+@noinline
+function chunk(_: i32): Result[u8[], IoError] {
   let bytes = __alloc_u8(8388608);
   bytes = bytes.with(0, 7u8);
   return Ok(bytes.truncate(1));
 }
+
 function main(): i32 {
   let before = __heap_bump_bytes();
   let held: source.Buffer[] = [];
   for _ in 0..16 {
-    let Ok(buffer) = source.create(source.Limits { chunk_size: 1, max_buffer_bytes: 1 }) else { return 1; };
-    let Ok((ready, true)) = buffer.ensure(1, chunk) else { return 2; };
+    let Ok(buffer) = source.create(source.Limits { chunk_size: 1, max_buffer_bytes: 1 }) else {
+      return 1;
+    };
+    let Ok((ready, true)) = buffer.ensure(1, chunk) else {
+      return 2;
+    };
     held = held.append(ready);
   }
   print(__heap_bump_bytes() - before);
   print(rss());
-  for buffer in held { if (buffer.available() != 1 || buffer.view()[0] != 7u8) { return 3; } }
+  for buffer in held {
+    if (buffer.available() != 1 || buffer.view()[0] != 7u8) {
+      return 3;
+    }
+  }
   return 0;
 }
