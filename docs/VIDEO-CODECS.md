@@ -107,6 +107,14 @@ This check does not bound memory that MediaCodec allocates before its format eve
 Absent color identifiers remain zero. The adapter does not invent a color profile.
 
 `std/video/nal` converts MP4 length prefixes to Annex B start codes.
+It also reads NAL ranges from a complete Annex B byte view and converts them to length prefixes.
+The iterator borrows its input and excludes start codes and surrounding zero bytes.
+It preserves emulation-prevention bytes inside each unit.
+The converter checks complete input and output budgets, plus the capacity of each length prefix.
+
+Both functions inspect packet framing without a platform codec.
+They do not identify access units or supply timestamps. A muxer still needs packet boundaries and timing from the caller.
+
 It reads version-one AVC and HEVC configuration records for Android codec configuration data.
 AVC includes SPS, PPS, and optional SPS extensions.
 
