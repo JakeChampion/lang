@@ -149,6 +149,20 @@ link in a build that names no file. The Docs build lane runs it. With
 internal link. `.github/workflows/site-links.yml` runs that against both
 hosts every 6 hours, and opens an issue when a link is broken.
 
+## Social cards and llms.txt
+
+Each docs page except the home page has a social card at
+`/og/PAGE.png`, which `src/pages/og/[...slug].png.ts` renders during
+the build. `src/lib/og-card.mjs` draws the text as SVG paths from the
+static TTFs in `src/assets/fonts/card/`, so a card does not depend on
+the fonts of the build machine. The home page keeps `public/og.png`.
+
+`/llms.txt` is an index of the docs in the llmstxt.org format.
+`/llms-full.txt` holds the text of every guide and reference page, and
+`/llms-stdlib.txt` holds every standard-library module.
+`src/lib/llms.mjs` makes them from the Markdown sources, and changes
+MDX components to plain Markdown.
+
 ## Embed a live snippet
 
 ```mdx
