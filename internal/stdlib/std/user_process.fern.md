@@ -33,6 +33,34 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 `write` gives at most `WRITE_LIMIT` bytes for each call, which the Linux ABI allows. A program then writes the rest in a second call.
 
+## Files
+
+`with_root` gives a process a read-only root filesystem: a `std/cpio` archive, such as the initrd. The process then opens, reads, seeks, stats and lists its entries with the Linux calls, and the kernel copies the bytes from the archive. A process has no current directory but the root, so a relative path starts at `/`. A path resolves `.` and `..`, and a symbolic link resolves to its target, for at most 8 links.
+
+The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, and a closed descriptor is used again. A call that can change the filesystem gives `EROFS`.
+
+| Call | Number | What the kernel does |
+|---|---|---|
+| `openat` | 56 | Opens an entry for reading. `ENOENT` for a path that is not in the archive, `ENOTDIR` for `O_DIRECTORY` on a file, and `EROFS` for a write access, `O_TRUNC`, or `O_CREAT` of a new file |
+| `close` | 57 | Closes a descriptor |
+| `read` | 63 | Copies at most `READ_LIMIT` bytes from the offset, and 0 at the end. `EISDIR` for a directory |
+| `lseek` | 62 | Sets the offset from the start, the offset or the end |
+| `getdents64` | 61 | Lists `.`, `..` and the children of a directory, as many as the buffer holds |
+| `fstat`, `newfstatat` | 80, 79 | Gives the mode, the size, the inode and the link count of an entry |
+| `statx` | 291 | Gives the basic stats: the type, the mode, the link count, the owner, the times, the inode, the size and the blocks |
+| `readlinkat` | 78 | Gives the target of a symbolic link, with no NUL |
+| `getcwd` | 17 | Gives `/` |
+
+`with_exe` names the path of the program in the root. `/proc/self/exe` is then a symbolic link to it. Thus a program can read its own image, as the compiler does for the key of its cache.
+
+## Randomness
+
+`with_random` gives the process a source of random bytes, for example a `std/virtio_rng` device. `getrandom` (278) then copies at most `WRITE_LIMIT` bytes from it for each call. A process with no source gets `ENOSYS`, because a kernel must not give bytes that are not random.
+
+## Time
+
+`clock_gettime` (113) reads the generic timer's counter. The monotonic clocks give the counter time since the counter started. `with_clock` sets the wall clock, for example from a real-time clock, and `CLOCK_REALTIME` adds it to the counter time. Without `with_clock` the wall clock starts at 0, in 1970. The kernel gives no vDSO, so the runtime makes the system call.
+
 ## Scheduling
 
 An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, because the exception entry masks it. `__user_run` then gives back the DAIF of the kernel, and the top half takes the IRQ at EL1 before `run` returns. A scheduler thus calls `run` of the next process at each `Interrupted`. The top half touches no RC value, so the kernel heap is never preempted.
@@ -58,6 +86,8 @@ An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, b
 <<run>>
 
 <<system calls>>
+
+<<files>>
 ```
 
 ### `module introduction`
@@ -72,11 +102,13 @@ An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, b
 ```fern
 <<dependencies>>=
 import "std/array";
+import "std/cpio";
 import "std/elf";
 import "std/frames";
 import "std/option";
 import "std/pagetable";
 import "std/raw";
+import "std/string";
 ```
 
 ### `constants`
@@ -129,7 +161,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]] }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
 
@@ -293,7 +325,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -512,11 +544,21 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   if (n == 226 as u64) {
     return p.mprotect(a0 as usize, a1 as usize, a2);
   }
+  if (is_file_call(n)) {
+    return p.file_call(n, a0, a1, a2, reg(f, 3));
+  }
   return (p, p.signal_call(n, a0, a1, a2));
 }
 
-// The signal calls, ioctl, and ENOSYS for each other call.
+// The signal calls, ioctl, clock_gettime, getrandom, and ENOSYS for each
+// other call.
 function (p: Process) signal_call(n: u64, a0: u64, a1: u64, a2: u64): Option[Stop] {
+  if (n == 113 as u64) {
+    return p.clock_gettime(a0, a1 as usize);
+  }
+  if (n == 278 as u64) {
+    return p.getrandom(a0 as usize, a1 as usize, a2);
+  }
   if (n == 132 as u64) {
     // An old stack_t: no stack, with ss_flags SS_DISABLE.
     return p.answer(a1 == 0 as u64 || p.copy_out(a1 as usize, zeros(8).concat(u64_bytes(2 as u64)).concat(zeros(8))), 0i64);
@@ -646,5 +688,574 @@ function (p: Process) mprotect(va: usize, len: usize, prot: u64): (Process, Opti
   let q = p.add_region(va, va + size, read, write, exec);
   set_reg(q.frame, 0, 0i64);
   return (q, None);
+}
+```
+
+### `files`
+
+An open file holds its entry and its offset. For a directory the offset is the index of the next name in the listing. The root directory has no entry in an archive, so `root_entry` stands for it.
+
+```fern
+<<files>>=
+pub struct OpenFile { path: string, entry: cpio.Entry, offset: usize, open: boolean }
+
+// openat and newfstatat take this as the directory of a relative path.
+const AT_FDCWD: u64 = 0xffffffffffffff9c;
+
+const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
+
+const AT_EMPTY_PATH: u64 = 0x1000;
+
+const O_CREAT: u64 = 0x40;
+
+const O_TRUNC: u64 = 0x200;
+
+const O_DIRECTORY: u64 = 0x4000;
+
+const FIRST_FD: u64 = 3;
+
+const MAX_FILES: i32 = 256;
+
+const PATH_MAX: usize = 4096;
+
+pub const READ_LIMIT: usize = 1048576;
+
+const ENOENT: i64 = 2;
+
+const ENOTDIR: i64 = 20;
+
+const EISDIR: i64 = 21;
+
+const EMFILE: i64 = 24;
+
+const ESPIPE: i64 = 29;
+
+const EROFS: i64 = 30;
+
+const ERANGE: i64 = 34;
+
+const ENAMETOOLONG: i64 = 36;
+
+const ELOOP: i64 = 40;
+
+// Gives the process the archive as its root filesystem.
+pub function (p: Process) with_root(a: cpio.Archive): Process {
+  return Process { ...p, root: Some(a) };
+}
+
+// The time of the generic timer's counter, in nanoseconds since it started.
+pub function counter_ns(): i64 {
+  unsafe {
+    let c = __sysreg_read("cntvct_el0");
+    let f = __sysreg_read("cntfrq_el0");
+    return c / f * 1000000000i64 + c % f * 1000000000i64 / f;
+  }
+}
+
+// Sets the wall clock of the process: unix_ns is the Unix time now, in
+// nanoseconds, for example from a real-time clock.
+pub function (p: Process) with_clock(unix_ns: i64): Process {
+  return Process { ...p, epoch_ns: unix_ns - counter_ns() };
+}
+
+// CLOCK_REALTIME and its coarse form, 0 and 5, add the wall clock to the
+// counter. CLOCK_MONOTONIC, its raw and coarse forms and CLOCK_BOOTTIME, 1, 4,
+// 6 and 7, are the counter.
+function (p: Process) clock_gettime(clock: u64, va: usize): Option[Stop] {
+  let now = counter_ns();
+  if (clock == 0 as u64 || clock == 5 as u64) {
+    now += p.epoch_ns;
+  } else if (clock != 1 as u64 && clock != 4 as u64 && clock != 6 as u64 && clock != 7 as u64) {
+    return p.fail(EINVAL);
+  }
+  let ts = u64_bytes((now / 1000000000i64) as u64).concat(u64_bytes((now % 1000000000i64) as u64));
+  return p.answer(p.copy_out(va, ts), 0i64);
+}
+
+// Gives the process a source of random bytes for getrandom: source(n) gives n
+// bytes, or None when it fails.
+pub function (p: Process) with_random(source: (i32) => Option[u8[]]): Process {
+  return Process { ...p, random: Some(source) };
+}
+
+const EIO: i64 = 5;
+
+// GRND_NONBLOCK, GRND_RANDOM and GRND_INSECURE are the flags. A source never
+// blocks, so each flag gives the same bytes.
+function (p: Process) getrandom(va: usize, len: usize, flags: u64): Option[Stop] {
+  if ((flags & ~(7 as u64)) != 0 as u64) {
+    return p.fail(EINVAL);
+  }
+  let Some(source) = p.random else {
+    return p.fail(ENOSYS);
+  };
+  let n = limit(len);
+  let Some(bytes) = source(n as i32) else {
+    return p.fail(EIO);
+  };
+  return p.answer(p.copy_out(va, bytes), bytes.len() as i64);
+}
+
+// Names the path of the program in the root, which /proc/self/exe links to.
+pub function (p: Process) with_exe(path: string): Process {
+  return Process { ...p, exe: path };
+}
+
+const SELF_EXE: string = "proc/self/exe";
+
+// The symbolic link at /proc/self/exe.
+function (p: Process) exe_link(): cpio.Entry {
+  return cpio.Entry { ...root_entry(), name: SELF_EXE, mode: 0xa1ff as u32, links: 1 as u32, size: p.exe.len() };
+}
+
+// The path that the link at f points to.
+function (p: Process) link_target(f: OpenFile): u8[] {
+  if (f.path == SELF_EXE) {
+    return p.exe.bytes();
+  }
+  let Some(a) = p.root else {
+    return [];
+  };
+  return a.read(f.entry);
+}
+
+function (p: Process) readlinkat(dirfd: u64, va: usize, buf: usize, len: usize): Option[Stop] {
+  match (p.find_at(dirfd, va, false)) {
+    Ok(f) => {
+      if (!f.entry.is_symlink()) {
+        return p.fail(EINVAL);
+      }
+      let target = p.link_target(f);
+      if (target.len() as usize > len) {
+        target = array.slice(target, 0, len as i32);
+      }
+      return p.answer(p.copy_out(buf, target), target.len() as i64);
+    },
+    Err(errno) => {
+      return p.fail(errno);
+    }
+  }
+}
+
+// STATX_BASIC_STATS: the type, the mode, the link count, the owner, the
+// three times, the inode, the size and the blocks.
+const STATX_BASIC_STATS: u32 = 0x7ff;
+
+function (p: Process) statx(dirfd: u64, va: usize, flags: u64, buf: usize): Option[Stop] {
+  let path = match (p.path_in(va)) {
+    Ok(s) => s,
+    Err(errno) => {
+      return p.fail(errno);
+    },
+  };
+  let found: Option[OpenFile] = None;
+  if (path == "" && (flags & AT_EMPTY_PATH) != 0 as u64) {
+    found = p.open_file(dirfd);
+  } else {
+    match (p.find_at(dirfd, va, (flags & AT_SYMLINK_NOFOLLOW) == 0 as u64)) {
+      Ok(f) => {
+        found = Some(f);
+      },
+      Err(errno) => {
+        return p.fail(errno);
+      }
+    }
+  }
+  let Some(f) = found else {
+    return p.fail(EBADF);
+  };
+  return p.answer(p.copy_out(buf, statx_bytes(f.entry)), 0i64);
+}
+
+// A struct statx of 256 bytes.
+function statx_bytes(e: cpio.Entry): u8[] {
+  let out = u32_bytes(STATX_BASIC_STATS).concat(u32_bytes(PAGE as u32)).concat(zeros(8));
+  out = out.concat(u32_bytes(e.links)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid));
+  out = out.concat(array.slice(u32_bytes(e.mode), 0, 2)).concat(zeros(2));
+  out = out.concat(u64_bytes(e.inode as u64)).concat(u64_bytes(e.size as u64)).concat(u64_bytes(((e.size + 511) / 512) as u64));
+  out = out.concat(zeros(8));
+  for i in 0..4 {
+    out = out.concat(u64_bytes(e.mtime as u64)).concat(zeros(8));
+  }
+  return out.concat(zeros(256 - out.len()));
+}
+
+function is_file_call(n: u64): boolean {
+  return n == 17 as u64 || n == 56 as u64 || n == 57 as u64 || n == 61 as u64 || n == 62 as u64 || n == 63 as u64 || n == 78 as u64 || n == 79 as u64 || n == 80 as u64 || n == 291 as u64;
+}
+
+function (p: Process) file_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  if (n == 56 as u64) {
+    return p.openat(a0, a1 as usize, a2);
+  }
+  if (n == 57 as u64) {
+    return p.close(a0);
+  }
+  if (n == 63 as u64) {
+    return p.read(a0, a1 as usize, a2 as usize);
+  }
+  if (n == 62 as u64) {
+    return p.lseek(a0, a1 as i64, a2);
+  }
+  if (n == 61 as u64) {
+    return p.getdents(a0, a1 as usize, a2 as usize);
+  }
+  if (n == 80 as u64) {
+    return (p, p.stat_to(p.open_file(a0), a1 as usize));
+  }
+  if (n == 79 as u64) {
+    return (p, p.fstatat(a0, a1 as usize, a2 as usize, a3));
+  }
+  if (n == 291 as u64) {
+    return (p, p.statx(a0, a1 as usize, a2, reg(p.frame, 4) as usize));
+  }
+  if (n == 78 as u64) {
+    return (p, p.readlinkat(a0, a1 as usize, a2 as usize, a3 as usize));
+  }
+  return p.getcwd(a0 as usize, a1 as usize);
+}
+
+function (p: Process) getcwd(va: usize, len: usize): (Process, Option[Stop]) {
+  if (len < 2 as usize) {
+    return p.failed(ERANGE);
+  }
+  return (p, p.answer(p.copy_out(va, "/".bytes().append(0 as u8)), 2i64));
+}
+
+function (p: Process) done(v: i64): (Process, Option[Stop]) {
+  set_reg(p.frame, 0, v);
+  return (p, None);
+}
+
+function (p: Process) failed(errno: i64): (Process, Option[Stop]) {
+  return p.done(-errno);
+}
+
+// The NUL-terminated path at va.
+function (p: Process) path_in(va: usize): Result[string, i64] {
+  let out: u8[] = [];
+  while (out.len() as usize < PATH_MAX) {
+    let at = va + out.len() as usize;
+    let Some(chunk) = p.copy_in(at, PAGE - at % PAGE) else {
+      return Err(EFAULT);
+    };
+    for b in chunk {
+      if (b == 0 as u8) {
+        return utf8_path(out);
+      }
+      out = out.append(b);
+    }
+  }
+  return Err(ENAMETOOLONG);
+}
+
+function utf8_path(b: u8[]): Result[string, i64] {
+  unsafe {
+    return Ok(string_from_bytes_unchecked(b));
+  }
+}
+
+// The path of `path` from the directory `base`, with no leading "/", and with
+// "." and ".." resolved.
+pub function resolve(base: string, path: string): string {
+  let full = path;
+  if (!path.starts_with("/")) {
+    full = base + "/" + path;
+  }
+  let parts: string[] = [];
+  for part in full.split("/") {
+    if (part == "..") {
+      if (parts.len() > 0) {
+        parts = array.slice(parts, 0, parts.len() - 1);
+      }
+    } else if (part != "" && part != ".") {
+      parts = parts.append(part);
+    }
+  }
+  return parts.join("/");
+}
+
+function root_entry(): cpio.Entry {
+  return cpio.Entry { name: "", inode: 1 as u32, mode: 0x41ed as u32, uid: 0 as u32, gid: 0 as u32, links: 2 as u32, mtime: 0 as u32, start: 0, size: 0 };
+}
+
+// The entry at path, through at most 8 symbolic links, and the path of the
+// entry. follow false keeps a link at the end of the path.
+function (p: Process) lookup(path: string, follow: boolean): Result[OpenFile, i64] {
+  let Some(a) = p.root else {
+    return Err(ENOENT);
+  };
+  let at = path;
+  for hops in 0..9 {
+    if (at == "") {
+      return Ok(OpenFile { path: "", entry: root_entry(), offset: ZERO, open: true });
+    }
+    if (at == SELF_EXE && p.exe != "") {
+      if (!follow) {
+        return Ok(OpenFile { path: at, entry: p.exe_link(), offset: ZERO, open: true });
+      }
+      at = resolve("", p.exe);
+      continue;
+    }
+    let Some(e) = a.find(at) else {
+      return Err(ENOENT);
+    };
+    if (!e.is_symlink() || !follow) {
+      return Ok(OpenFile { path: at, entry: e, offset: ZERO, open: true });
+    }
+    unsafe {
+      at = resolve(parent_of(at), string_from_bytes_unchecked(a.read(e)));
+    }
+  }
+  return Err(ELOOP);
+}
+
+function parent_of(path: string): string {
+  let parts = path.split("/");
+  return array.slice(parts, 0, parts.len() - 1).join("/");
+}
+
+// The open file of descriptor fd.
+function (p: Process) open_file(fd: u64): Option[OpenFile] {
+  if (fd < FIRST_FD || fd - FIRST_FD >= p.files.len() as u64) {
+    return None;
+  }
+  let f = p.files[(fd - FIRST_FD) as i32];
+  if (!f.open) {
+    return None;
+  }
+  return Some(f);
+}
+
+// The directory that a relative path starts from.
+function (p: Process) base_of(dirfd: u64, path: string): Result[string, i64] {
+  if (path.starts_with("/") || dirfd == AT_FDCWD) {
+    return Ok("");
+  }
+  let Some(f) = p.open_file(dirfd) else {
+    return Err(EBADF);
+  };
+  if (!f.entry.is_dir()) {
+    return Err(ENOTDIR);
+  }
+  return Ok(f.path);
+}
+
+function (p: Process) find_at(dirfd: u64, va: usize, follow: boolean): Result[OpenFile, i64] {
+  match (p.path_in(va)) {
+    Ok(path) => {
+      match (p.base_of(dirfd, path)) {
+        Ok(base) => {
+          return p.lookup(resolve(base, path), follow);
+        },
+        Err(errno) => {
+          return Err(errno);
+        }
+      }
+    },
+    Err(errno) => {
+      return Err(errno);
+    }
+  }
+}
+
+function (p: Process) openat(dirfd: u64, va: usize, flags: u64): (Process, Option[Stop]) {
+  if ((flags & 3 as u64) != 0 as u64 || (flags & O_TRUNC) != 0 as u64) {
+    return p.failed(EROFS);
+  }
+  match (p.find_at(dirfd, va, true)) {
+    Ok(f) => {
+      if ((flags & O_DIRECTORY) != 0 as u64 && !f.entry.is_dir()) {
+        return p.failed(ENOTDIR);
+      }
+      return p.add_file(f);
+    },
+    Err(errno) => {
+      if (errno == ENOENT && (flags & O_CREAT) != 0 as u64) {
+        return p.failed(EROFS);
+      }
+      return p.failed(errno);
+    }
+  }
+}
+
+// Gives f the lowest free descriptor.
+function (p: Process) add_file(f: OpenFile): (Process, Option[Stop]) {
+  for i in 0..p.files.len() {
+    if (!p.files[i].open) {
+      let q = Process { ...p, files: p.files.with(i, f) };
+      return q.done(FIRST_FD as i64 + i as i64);
+    }
+  }
+  if (p.files.len() >= MAX_FILES) {
+    return p.failed(EMFILE);
+  }
+  let q = Process { ...p, files: p.files.append(f) };
+  return q.done(FIRST_FD as i64 + p.files.len() as i64);
+}
+
+function (p: Process) set_file(fd: u64, f: OpenFile): Process {
+  return Process { ...p, files: p.files.with((fd - FIRST_FD) as i32, f) };
+}
+
+function (p: Process) close(fd: u64): (Process, Option[Stop]) {
+  if (fd < FIRST_FD) {
+    return p.done(0i64);
+  }
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  let q = p.set_file(fd, OpenFile { ...f, open: false });
+  return q.done(0i64);
+}
+
+function (p: Process) read(fd: u64, va: usize, len: usize): (Process, Option[Stop]) {
+  if (fd == 0 as u64) {
+    return p.done(0i64);
+  }
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  if (f.entry.is_dir()) {
+    return p.failed(EISDIR);
+  }
+  let Some(a) = p.root else {
+    return p.failed(EBADF);
+  };
+  let size = f.entry.size as usize;
+  let n = ZERO;
+  if (f.offset < size) {
+    n = size - f.offset;
+  }
+  if (n > len) {
+    n = len;
+  }
+  if (n > READ_LIMIT) {
+    n = READ_LIMIT;
+  }
+  let at = f.entry.start + f.offset as i32;
+  if (!p.copy_out(va, array.slice(a.bytes, at, at + n as i32))) {
+    return p.failed(EFAULT);
+  }
+  let q = p.set_file(fd, OpenFile { ...f, offset: f.offset + n });
+  return q.done(n as i64);
+}
+
+// SEEK_SET is 0, SEEK_CUR 1 and SEEK_END 2.
+function (p: Process) lseek(fd: u64, offset: i64, whence: u64): (Process, Option[Stop]) {
+  if (fd < FIRST_FD) {
+    return p.failed(ESPIPE);
+  }
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  let from = 0i64;
+  if (whence == 1 as u64) {
+    from = f.offset as i64;
+  } else if (whence == 2 as u64) {
+    from = f.entry.size as i64;
+  } else if (whence != 0 as u64) {
+    return p.failed(EINVAL);
+  }
+  if (from + offset < 0i64) {
+    return p.failed(EINVAL);
+  }
+  let q = p.set_file(fd, OpenFile { ...f, offset: (from + offset) as usize });
+  return q.done(from + offset);
+}
+
+// The names of a directory listing: ".", ".." and the children.
+function (p: Process) listing(f: OpenFile): cpio.Entry[] {
+  let Some(a) = p.root else {
+    return [];
+  };
+  let dot = cpio.Entry { ...f.entry, name: "." };
+  let up = cpio.Entry { ...root_entry(), name: ".." };
+  return [dot, up].concat(a.children(f.path));
+}
+
+// A linux_dirent64 record: the inode, the offset of the next record, the
+// length of this one, the type, and the name with a NUL, padded to 8 bytes.
+function dirent(e: cpio.Entry, next: usize): u8[] {
+  let name = e.name.split("/");
+  let bytes = name[name.len() - 1].bytes().append(0 as u8);
+  let len = (19 + bytes.len() + 7) / 8 * 8;
+  let kind = 8;
+  if (e.is_dir()) {
+    kind = 4;
+  } else if (e.is_symlink()) {
+    kind = 10;
+  }
+  let out = u64_bytes(e.inode as u64).concat(u64_bytes(next as u64));
+  out = out.append((len & 255) as u8).append((len >> 8) as u8).append(kind as u8).concat(bytes);
+  return out.concat(zeros(len - out.len()));
+}
+
+function (p: Process) getdents(fd: u64, va: usize, len: usize): (Process, Option[Stop]) {
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  if (!f.entry.is_dir()) {
+    return p.failed(ENOTDIR);
+  }
+  let names = p.listing(f);
+  let out: u8[] = [];
+  let i = f.offset;
+  while (i < names.len() as usize) {
+    let record = dirent(names[i as i32], i + 1 as usize);
+    if (out.len() as usize + record.len() as usize > len) {
+      break;
+    }
+    out = out.concat(record);
+    i += 1 as usize;
+  }
+  if (out.len() == 0 && i < names.len() as usize) {
+    return p.failed(EINVAL);
+  }
+  if (!p.copy_out(va, out)) {
+    return p.failed(EFAULT);
+  }
+  let q = p.set_file(fd, OpenFile { ...f, offset: i });
+  return q.done(out.len() as i64);
+}
+
+function (p: Process) fstatat(dirfd: u64, va: usize, buf: usize, flags: u64): Option[Stop] {
+  let path = match (p.path_in(va)) {
+    Ok(s) => s,
+    Err(errno) => {
+      return p.fail(errno);
+    },
+  };
+  if (path == "" && (flags & AT_EMPTY_PATH) != 0 as u64) {
+    return p.stat_to(p.open_file(dirfd), buf);
+  }
+  match (p.find_at(dirfd, va, (flags & AT_SYMLINK_NOFOLLOW) == 0 as u64)) {
+    Ok(f) => {
+      return p.stat_to(Some(f), buf);
+    },
+    Err(errno) => {
+      return p.fail(errno);
+    }
+  }
+}
+
+// Writes the stat of f to buf: an arm64 struct stat of 128 bytes.
+function (p: Process) stat_to(f: Option[OpenFile], buf: usize): Option[Stop] {
+  let Some(file) = f else {
+    return p.fail(EBADF);
+  };
+  let e = file.entry;
+  let out = u64_bytes(1 as u64).concat(u64_bytes(e.inode as u64));
+  out = out.concat(u32_bytes(e.mode)).concat(u32_bytes(e.links)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid));
+  out = out.concat(zeros(16)).concat(u64_bytes(e.size as u64)).concat(u32_bytes(PAGE as u32)).concat(zeros(4));
+  out = out.concat(u64_bytes(((e.size + 511) / 512) as u64));
+  for i in 0..3 {
+    out = out.concat(u64_bytes(e.mtime as u64)).concat(zeros(8));
+  }
+  return p.answer(p.copy_out(buf, out.concat(zeros(8))), 0i64);
+}
+
+function u32_bytes(v: u32): u8[] {
+  return array.slice(u64_bytes(v as u64), 0, 4);
 }
 ```
