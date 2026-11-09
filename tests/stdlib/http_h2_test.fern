@@ -643,6 +643,62 @@ function test_client_goaway_and_push(): test.TestOutcome {
   return test.assert_eq(got, "goaway 0\ngoing_away 1\nrefused -1\nanswered 1 200 content-type=- body=late trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nclosed 1\nrequest 1 GET /four host=example.test body= trailer=-\nreset 1 8\nopen 0");
 }
 
+function with_pseudo(method: string, scheme: string, path: string, authority: string, more: hpack.Field[]): hpack.Field[] {
+  let out: hpack.Field[] = [hpack.field(":method", method), hpack.field(":scheme", scheme), hpack.field(":path", path), hpack.field(":authority", authority)];
+  for f in more {
+    out = out.append(f);
+  }
+  return out;
+}
+
+// What one request on stream 1 of a new connection gives.
+function one_request(fields: hpack.Field[]): string {
+  let o = opened(h2.config());
+  let (cl, bytes) = request(o.client, 1, fields, true);
+  let step = o.conn.read(bytes);
+  return shown(cl, step.output).text + events_text(step.events);
+}
+
+function test_pseudo_header_values(): test.TestOutcome {
+  let none: hpack.Field[] = [];
+  let cases: hpack.Field[][] = [
+    with_pseudo("GET", "http", "/", "a.test\r\nx-inj: 1", none),
+    with_pseudo("GET", "http", "/", "user@a.test", none),
+    with_pseudo("GET", "http", "/", "a.test /x", none),
+    with_pseudo("GET / HTTP/1.1\r\nx: y\r\n\r\nGET", "http", "/", "a.test", none),
+    with_pseudo("ge t", "http", "/", "a.test", none),
+    with_pseudo("GET", "ht tp\r\n", "/", "a.test", none),
+    with_pseudo("GET", "http", "/", "good.test", [hpack.field("host", "evil.test")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("host", "a.test"), hpack.field("host", "a.test")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("content-length", "+0")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("content-length", "-0")]),
+  ];
+  let i = 0;
+  for fields in cases {
+    let got = one_request(fields);
+    if (got != "RST_STREAM 1 1\n") {
+      return test.fail("case " + i.to_string() + ": " + got);
+    }
+    i += 1;
+  }
+  let same = one_request(with_pseudo("GET", "http", "/", "a.test:8080", [hpack.field("host", "a.test:8080"), hpack.field("content-length", "0")]));
+  return test.assert_eq(same, "request 1 GET / host=a.test:8080 body= trailer=-\n");
+}
+
+function test_trailer_fields_are_checked(): test.TestOutcome {
+  let got = "";
+  for bad in [hpack.field("Bad Name", "a"), hpack.field("x-a", "a\r\nb"), hpack.field("connection", "close")] {
+    let o = opened(h2.config());
+    let (cl, head) = request(o.client, 1, post("/upload", "3"), false);
+    let trailers = cl.enc.encode([bad]);
+    let cl2 = Client { ...cl, enc: trailers.encoder };
+    let bytes = head.concat(data(1, "abc", false)).concat(frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: trailers.bytes, padding: 0 })));
+    let step = o.conn.read(bytes);
+    got = got + shown(cl2, step.output).text + events_text(step.events);
+  }
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 1 1\nRST_STREAM 1 1\n");
+}
+
 function main(): i32 {
   let r = test.new("std/http/h2");
   r = r.it("the preface and settings", test_preface_and_settings);
@@ -657,6 +713,8 @@ function main(): i32 {
   r = r.it("the reset and empty-DATA budgets", test_reset_budgets);
   r = r.it("malformed requests and connections", test_malformed);
   r = r.it("the field names and values HTTP/2 admits", test_field_rules);
+  r = r.it("pseudo-header values, host and content-length are checked", test_pseudo_header_values);
+  r = r.it("trailer fields are checked", test_trailer_fields_are_checked);
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
   r = r.it("HEADERS on a stream that has closed", test_headers_on_closed_streams);
   r = r.it("control frames", test_control_frames);
