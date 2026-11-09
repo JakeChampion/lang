@@ -1000,7 +1000,11 @@ and three `mmap` reservations at start.
      of another node, and that each page-in flushed the whole TLB.
    - `TestSelfHostKernelSelfCompilesOnQemu` runs in `fernos-nightly.yml`,
      because it takes about 30 minutes.
-25. Beside those: the panic scope is decided (#14257, see the north-star
+25. **Two cores run on arm64** (#14258). The four atomics are intrinsics, and
+   a second core starts at the `@secondary` entry through PSCI `CPU_ON`
+   ("5. Atomics" above). The two cores add to one word, and the total is
+   exact. The second core runs only `@norc` code.
+26. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
