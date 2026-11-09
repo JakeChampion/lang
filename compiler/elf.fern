@@ -484,7 +484,11 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_phdr(buf, 1, 6, data_off, data_off as i64, data.len(), data.len() + bss, page);
   buf = elf_phdr(buf, 1, 6, tab_file, (tab_file + slide) as i64, end - tab_file, tab_mem, page);
   buf = elf_phdr(buf, 2, 6, dyn_off, (dyn_off + slide) as i64, dyn_sz, dyn_sz, 8);
-  buf = elf_phdr(buf, 1685382482, 4, tab_file, (tab_file + slide) as i64, tab_mem, tab_mem, 1);
+  let tab_in_file = tab_mem;
+  if (tab_in_file > end - tab_file) {
+    tab_in_file = end - tab_file;
+  }
+  buf = elf_phdr(buf, 1685382482, 4, tab_file, (tab_file + slide) as i64, tab_in_file, tab_mem, 1);
   if (has_unwind) {
     let ho = elf_eh_hdr_off_so(text.len(), note);
     buf = elf_phdr(buf, 1685382480, 4, ho, ho as i64, hdr.len(), hdr.len(), 4);
@@ -840,12 +844,16 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
       protected = relro - (data_vaddr as i32 + relro) % elf_relro_page();
     }
   }
+  let protected_file = protected;
+  if (protected_file > readonly) {
+    protected_file = readonly;
+  }
   buf = elf_le32(buf, 1685382482);
   buf = elf_le32(buf, 4);
   buf = elf_le64(buf, data_off as i64);
   buf = elf_le64(buf, data_vaddr);
   buf = elf_le64(buf, data_vaddr);
-  buf = elf_le64(buf, protected as i64);
+  buf = elf_le64(buf, protected_file as i64);
   buf = elf_le64(buf, protected as i64);
   buf = elf_le64(buf, 1 as i64);
 
