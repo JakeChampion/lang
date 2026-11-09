@@ -871,13 +871,13 @@ function wit_def_refs(tbody: i32[], q: i32): i32[] {
 
 function wit_func_vals(f: WitFunc): i32[] {
   if (f.named == 1) {
-    return wit_cat_vals(f.p_vals, f.r_vals);
+    return util.append_all(f.p_vals, f.r_vals);
   }
   return f.p_vals.append(f.result);
 }
 
 function wit_def_vals(d: WitDef): i32[] {
-  let vals = wit_cat_vals(wit_cat_vals(d.rec_vals, d.tup_elems), wit_variant_vals(d));
+  let vals = util.append_all(util.append_all(d.rec_vals, d.tup_elems), wit_variant_vals(d));
   if (d.tag == 112 || d.tag == 107) {
     vals = vals.append(d.elem);
   }
@@ -913,15 +913,6 @@ function wit_variant_vals(d: WitDef): i32[] {
     i += 1;
   }
   return out;
-}
-
-function wit_cat_vals(a: i32[], b: i32[]): i32[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
 }
 
 function wit_decl_refs(tbody: i32[], p: i32): i32[] {

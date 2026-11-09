@@ -572,16 +572,7 @@ function cfi_cie(p: CfiProfile): i32[] {
     i += 1;
   }
   b = cfi_pad4(b);
-  return cfi_cat(util.le32([], b.len()), b);
-}
-
-function cfi_cat(own a: i32[], b: i32[]): i32[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
+  return util.append_all(util.le32([], b.len()), b);
 }
 
 function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
@@ -633,9 +624,9 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
   cie = cfi_uleb(cie, p.code_align);
   cie = cfi_sleb(cie, p.data_align);
   cie = cfi_uleb(cie, p.ra_column);
-  cie = cfi_cat(cie, p.initial);
+  cie = util.append_all(cie, p.initial);
   cie = cfi_pad_entry(cie, 0, 8);
-  let out = cfi_cat(util.le32([], cie.len()), cie);
+  let out = util.append_all(util.le32([], cie.len()), cie);
   let k = 0;
   while (k < s.fde_start.len()) {
     let b = util.le32([], 0);
@@ -643,7 +634,7 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
     b = cfi_fde_rules(b, s, p, k);
     b = cfi_pad_entry(b, out.len(), 8);
-    out = cfi_cat(util.le32(out, b.len()), b);
+    out = util.append_all(util.le32(out, b.len()), b);
     k += 1;
   }
   return out;
@@ -662,9 +653,9 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
   while (k < n) {
     let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
     if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
-      pl = cfi_cat(pl, [0, 0, 0, 0]);
+      pl = util.append_all(pl, [0, 0, 0, 0]);
     }
-    payloads = cfi_cat(payloads, pl);
+    payloads = util.append_all(payloads, pl);
     lens = lens.append(pl.len());
     at = at + 4 + pl.len();
     k += 1;
@@ -681,7 +672,7 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
     pos += lens[k];
     k += 1;
   }
-  out = cfi_cat(out, [0, 0, 0, 0]);
+  out = util.append_all(out, [0, 0, 0, 0]);
   return out;
 }
 
