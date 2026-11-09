@@ -503,6 +503,13 @@ function packed_output_tests(): void {
     unsafe {
       packed_transform.dct4_packed(input as usize + 12 as usize, output as usize + 12 as usize, re as usize + 12 as usize, im as usize + 12 as usize, packed_transform.plan(n));
     }
+    // The unsafe FFT borrows addresses. Keep the input owner alive through the call.
+    for i in 0..n {
+      let bits = f32_bits(precise[i] as f32) as u32;
+      for byte in 0..4 {
+        require(input[4 + 4 * i + byte] == (bits >> (8 * byte) as u32) as u8, "packed FFT preserves its input bytes");
+      }
+    }
     let peak = 1.0;
     let error = 0.0;
     for i in 0..n {
@@ -511,6 +518,7 @@ function packed_output_tests(): void {
       }
       unsafe {
         let value = f32_from_bits(__load_i32(output as usize + 12 as usize + (4 * i) as usize)) as f64;
+        require(value.is_finite(), "packed FFT output stays finite");
         if ((expected[i] - value).abs() > error) {
           error = (expected[i] - value).abs();
         }
