@@ -1,0 +1,92 @@
+name: FernOS nightly
+
+# The second "done when" item of bare-metal milestone 6 (#14265): the
+# arm64-linux compiler compiles itself on the arm64 kernel, and the result
+# has the size and the FNV-1a hash of the result on Linux.
+#
+# NIGHTLY, NOT PER PULL REQUEST: the test builds the compiler, compiles it
+# again under qemu-aarch64 for the Linux result (about 6 minutes), and then
+# boots a VM of 6 GiB in which the compile takes about 23 minutes. The
+# kernel-boot job of each pull request runs the small compile instead
+# (TestSelfHostKernelCompilesOnQemu), which uses the same system calls.
+on:
+  schedule:
+    # 02:41 UTC, off the hour like the other nightlies, since scheduled runs
+    # across GitHub queue at :00.
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fernos-nightly
+  cancel-in-progress: false
+
+env:
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
+jobs:
+  self-compile:
+    # Forks inherit the schedule but not the runners anyone wants to spend.
+    if: github.repository == 'JakeChampion/lang'
+    name: self-compile-on-fernos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: qemu-system-aarch64
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-system
+          cross-gcc: "false"
+      - name: qemu-aarch64
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "false"
+      - uses: ./.github/actions/build-e2e-binaries
+      - name: the compiler compiles itself on the kernel
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+          FERN_REQUIRE_ARM64_TOOLING: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelSelfCompilesOnQemu$' -test.v -test.timeout 70m
+
+  # Failures land on one long-lived issue, so a week of the same break is a
+  # thread and not seven issues.
+  report:
+    needs: [self-compile]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const title = 'FernOS nightly failures'
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const body = [
+              `Nightly run failed: ${url}`,
+              ``,
+              `Reproduce with qemu-system-aarch64 and qemu-aarch64 on PATH:`,
+              `\`FERN_REQUIRE_QEMU_SYSTEM=1 go test -run '^TestSelfHostKernelSelfCompilesOnQemu$' -timeout 70m ./internal/testing/e2ecompiler/\``,
+            ].join('\n')
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: 'open', per_page: 100,
+            })
+            const existing = open.find(i => !i.pull_request && i.title === title)
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: existing.number, body,
+              })
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body })
+            }
