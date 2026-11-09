@@ -348,7 +348,7 @@ function magic(b: u8[], at: i32, want: string): boolean {
 // Field `index` of the header at `at`: 8 hexadecimal digits after the magic.
 function field(b: u8[], at: i32, index: i32): Result[u32, CpioError] {
   let start = at + 6 + index * 8;
-  let v: u32 = 0 as u32;
+  let v = 0u32;
   for i in 0..8 {
     let Some(d) = hex_digit(b[start + i]) else {
       return Err(CpioError { offset: start + i, reason: "a header field is not hexadecimal" });
@@ -378,7 +378,7 @@ function align4(n: i32): i32 {
 
 // The 32-bit sum of the bytes from start to end: the checksum of 070702.
 function sum(b: u8[], start: i32, end: i32): u32 {
-  let s: u64 = 0 as u64;
+  let s = 0u64;
   for i in start..end {
     s = s + b[i] as u64 & 0xffffffff as u64;
   }
