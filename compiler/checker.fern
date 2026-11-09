@@ -1432,7 +1432,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeStruct(an) => {
       match (b) {
         typeinfo.TypeStruct(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1495,7 +1495,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeUnion(an) => {
       match (b) {
         typeinfo.TypeUnion(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1551,6 +1551,30 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     }
   }
   return false;
+}
+
+// The type arguments of two uses of one generic name agree unless both are
+// written and some pair that is known on both sides differs. A bare name and
+// an argument that holds an unknown, an unbound one included, stay open.
+function type_args_agree(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() == 0 || b.len() == 0) {
+    return true;
+  }
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (!holds_any_unknown(a[i]) && !holds_any_unknown(b[i]) && !type_eq(a[i], b[i])) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function holds_any_unknown(t: typeinfo.Type): boolean {
+  return is_unknown(t) || typeinfo.any_child(t, holds_any_unknown);
 }
 
 function is_unknown(t: typeinfo.Type): boolean {
@@ -4597,8 +4621,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (nominal_args_clash(from, to, unions)) {
     return false;
   }
-  // type_eq ignores nominal arguments, so an aggregate checks its components below.
-  if (type_eq(from, to) && !is_tuple_or_array(to)) {
+  // nominal_args_clash above checks the arguments of one generic name, and
+  // an aggregate checks its components below.
+  if ((same_nominal(from, to) || type_eq(from, to)) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -10635,6 +10660,9 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeStruct(sa) => {
       match (b.t) {
         typeinfo.TypeStruct(sb) => {
+          if (sa.name == sb.name) {
+            return type_args_agree(sa.args, sb.args);
+          }
           return mx_same_enum_family(sa.name, sb.name, enums);
         },
         _ => {
