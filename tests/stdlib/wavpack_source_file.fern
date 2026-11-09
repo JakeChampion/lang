@@ -1,0 +1,100 @@
+import "std/audio/wavpack/input";
+import "std/audio/wavpack/file";
+import "aac_kernel_check" as ref;
+import "wavpack_smoke_vectors";
+
+function expected(): Result[u8[], string] {
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == "seek-24-2-35") {
+      return ref.unpack(vector.pcm);
+    }
+  }
+  return Err("missing reference PCM");
+}
+
+function sequential(reader: Reader, expected: [u8]): Result[void, string] {
+  let state = match (input.create(input.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let samples: i32[] = [];
+  let at = 0;
+  while (true) {
+    let input.Progress { state: next, event, samples: output } = match (state.next_into(reader, samples)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    match (event) {
+      input.Output(input.Samples(audio)) => {
+        if (audio.position * 2i64 != at as i64) {
+          return Err("sequential position");
+        }
+        for i in 0..audio.frames * 2 {
+          if (at * 4 >= expected.len() || output[i] != ref.word(expected, at * 4)) {
+            return Err("sequential PCM");
+          }
+          at += 1;
+        }
+      },
+      input.Output(input.End(summary)) => {
+        if (summary.frames != 35i64 || at * 4 != expected.len()) {
+          return Err("sequential completion");
+        }
+        return Ok(());
+      },
+      _ => {}
+    }
+    state = next;
+    samples = output;
+  }
+}
+
+function indexed(reader: Reader, expected: [u8]): Result[void, string] {
+  let index = match (file.inspect(reader, file.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let state = match (file.reader(index).seek(17i64)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let samples: i32[] = [];
+  let at = 34;
+  while (true) {
+    let file.Progress { state: next, event, samples: output } = match (state.next_into(reader, samples)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    match (event) {
+      file.Output(audio) => {
+        if (audio.position * 2i64 != at as i64) {
+          return Err("file seek position");
+        }
+        for i in 0..audio.frames * 2 {
+          if (at * 4 >= expected.len() || output[i] != ref.word(expected, at * 4)) {
+            return Err("file seek PCM");
+          }
+          at += 1;
+        }
+      },
+      file.Finished => {
+        if (at * 4 != expected.len()) {
+          return Err("file seek completion");
+        }
+        return Ok(());
+      },
+      file.Pending => {}
+    }
+    state = next;
+    samples = output;
+  }
+}
+
+function decode(path: string): Result[void, string] {
+  let expected = expected()?;
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = sequential(reader, expected);
+  if let Ok(_) = result {
+    result = indexed(reader, expected);
+  }
+  let closed = reader.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  if let Err(message) = decode(argv[1]) {
+    eprint(message);
+    return 1;
+  }
+  return 0;
+}

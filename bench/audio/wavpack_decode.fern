@@ -1,0 +1,89 @@
+import "std/audio/wavpack";
+import "std/audio/pcm";
+import "std/bench";
+import "std/io";
+import "std/i32";
+import "std/string";
+
+function hash(samples: [i32], count: i32, value: u32): u32 {
+  for i in 0..count {
+    value = (value ^ samples[i] as u32) * 16777619u32;
+  }
+  return value;
+}
+
+function consume(own state: wavpack.FileReader, input: [u8], own storage: i32[], rounds: i32): Result[(wavpack.FileReader, i32[], u32, i64), pcm.AudioError] {
+  let checksum = 2166136261u32;
+  let samples = 0i64;
+  for _ in 0..rounds {
+    state = state.seek(0i64)?;
+    while (true) {
+      let (next, frame) = state.read(input, storage)?;
+      state = next;
+      let count = frame.frames * frame.info.format.channels;
+      checksum = hash(frame.samples, count, checksum);
+      samples += count as i64;
+      storage = frame.samples;
+      if (frame.frames == 0) {
+        break;
+      }
+    }
+  }
+  return Ok((state, storage, checksum, samples));
+}
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 1;
+  }
+  let rounds = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+  if (rounds < 1 || rounds > 100000) {
+    return 1;
+  }
+  let Ok(encoded) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let index = match (wavpack.inspect(encoded, wavpack.default_limits())) { Ok(value) => value, Err(e) => { eprint(e.message()); return 3; } };
+  let info = index.information();
+  let Ok((state, storage, _, _)) = consume(wavpack.reader(index), encoded, [], 4) else {
+    return 4;
+  };
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok((_, _, checksum, samples)) = consume(state, encoded, storage, rounds) else {
+    return 5;
+  };
+  let elapsed = monotonic_ns() - started;
+  let allocated = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  if (samples != info.total_frames * (info.format.channels as i64) * (rounds as i64)) {
+    return 6;
+  }
+  let resident = peak_rss();
+  print("samples=" + samples.to_string());
+  print("checksum=" + checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocated.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("native_peak_rss_kb=" + resident.to_string());
+  return 0;
+}

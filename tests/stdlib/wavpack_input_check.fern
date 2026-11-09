@@ -1,0 +1,119 @@
+import "std/audio/wavpack/input";
+import "std/audio/source";
+import "std/audio/wire";
+import "std/test";
+import "wavpack_check";
+import "aac_kernel_check" as ref;
+
+struct Seen { stage: i32, frames: i64, groups: i64 }
+
+pub function bytes_reader(bytes: u8[], position: Cell[i32], calls: Cell[i32], partial: boolean): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    let sizes = [1, 3, 17, 255, 4096];
+    let count = if (partial && requested > sizes[calls.get() % sizes.len()]) { sizes[calls.get() % sizes.len()] } else { requested };
+    count = if (count < bytes.len() - position.get()) { count } else { bytes.len() - position.get() };
+    let output: u8[] = [];
+    for i in position.get()..position.get() + count {
+      output = output.append(bytes[i]);
+    }
+    position.set(position.get() + count);
+    calls.set(calls.get() + 1);
+    return Ok(output);
+  };
+}
+
+function samples(audio: input.Audio, output: [i32], expected: [u8], seen: Seen): Result[Seen, string] {
+  if (seen.stage != 1 || audio.position != seen.frames || audio.frames < 1 || audio.bytes < 32) {
+    return Err("sample order or extent");
+  }
+  let count = audio.frames * audio.info.format.channels;
+  let at = audio.position * (audio.info.format.channels as i64);
+  if (count > output.len() || at + count as i64 > (expected.len() / 4) as i64) {
+    return Err("extra samples");
+  }
+  for i in 0..count {
+    if (output[i] != ref.word(expected, (at as i32 + i) * 4)) {
+      return Err("PCM sample " + (at + i as i64).to_string());
+    }
+  }
+  return Ok(Seen { ...seen, frames: seen.frames + audio.frames as i64, groups: seen.groups + 1i64 });
+}
+
+function event(value: input.ReadEvent, output: [i32], expected: [u8], vector: wavpack_check.Vector, seen: Seen, bytes: i32): Result[Seen, string] {
+  match (value) {
+    input.Output(input.Begin(info)) => {
+      if (seen.stage != 0 || info.format.channels != vector.channels || info.format.sample_rate != vector.rate || info.format.bits_per_sample != vector.depth || info.floating != vector.floating || info.channel_mask != vector.mask) {
+        return Err("identification");
+      }
+      return Ok(Seen { ...seen, stage: 1 });
+    },
+    input.Output(input.Samples(audio)) => {
+      return samples(audio, output, expected, seen);
+    },
+    input.Output(input.End(summary)) => {
+      if (seen.stage != 1 || seen.frames != vector.frames as i64 || summary.frames != seen.frames || summary.info.total_frames != seen.frames || summary.groups != seen.groups || summary.bytes_read != bytes as i64) {
+        return Err("complete source extent");
+      }
+      return Ok(Seen { ...seen, stage: 2 });
+    },
+    input.Finished => {
+      if (seen.stage != 2) {
+        return Err("missing end event");
+      }
+    },
+    input.Pending => {}
+  }
+  return Ok(seen);
+}
+
+pub function run(vector: wavpack_check.Vector, chunk: i32, partial: boolean): Result[void, string] {
+  let bytes = ref.unpack(vector.encoded)?;
+  let expected = ref.unpack(vector.pcm)?;
+  let limits = input.default_limits();
+  limits = input.Limits { ...limits, input: source.Limits { chunk_size: chunk, max_buffer_bytes: 65536 } };
+  let state = match (input.create(limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let calls = cell_new(0);
+  let position = cell_new(0);
+  let read = bytes_reader(bytes, position, calls, partial);
+  let output: i32[] = [];
+  let seen = Seen { stage: 0, frames: 0i64, groups: 0i64 };
+  let turns = 0;
+  while (true) {
+    let before = calls.get();
+    let input.Progress { state: next, event: value, samples: decoded } = match (state.step_into_with(read, output)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if (calls.get() - before > 1 || next.buffered_bytes() > 65536) {
+      return Err("cooperative read or byte window bound");
+    }
+    let finished = match (value) { input.Finished => true, _ => false };
+    seen = event(value, decoded, expected, vector, seen, bytes.len())?;
+    state = next;
+    output = decoded;
+    if (finished) {
+      if (position.get() != bytes.len()) {
+        return Err("source does not reach EOF");
+      }
+      let before = calls.get();
+      let again = match (state.next_into_with(read, output)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      if (calls.get() != before) {
+        return Err("read after completion");
+      }
+      if let input.Finished = again.event {
+        return Ok(());
+      }
+      return Err("completion is not stable");
+    }
+    turns += 1;
+    if (turns > bytes.len() * 4 + 128) {
+      return Err("source does not advance");
+    }
+  }
+}
+
+pub function reference(vector: wavpack_check.Vector): test.TestOutcome {
+  for chunk in [1, 17, 16384] {
+    if let Err(message) = run(vector, chunk, chunk != 1) {
+      return test.fail(chunk.to_string() + ": " + message);
+    }
+  }
+  return test.pass();
+}

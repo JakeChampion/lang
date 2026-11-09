@@ -21,12 +21,30 @@ The Opus packet API reuses the Fern CELT implementation.
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF and M4A supply file playback. Compressed stereo requires at most 32 predictor bits. |
 | CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
-| HE-AAC, WavPack | No | No | No implementation in these modules. |
+| WavPack | Yes | No | Native lossless blocks, 1 through 32 integer bits, exact IEEE float, and one through eight channels. Bounded byte-view, sequential source, and indexed file playback with exact seeks. APE and ID3v1 trailing tags. Hybrid, correction files, and DSD remain unsupported. |
+| HE-AAC | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
 It uses approximately 3.2 bits per sample plus frame headers.
 The codec favors simple, fast decode over the compression efficiency of Opus.
 It is lossy. FLAC and integer PCM WAVE preserve every sample.
+
+The WavPack reader uses `std/audio/wavpack`.
+Its sequential source reader uses `std/audio/wavpack/input`.
+Its file index and exact source seeks use `std/audio/wavpack/file`.
+Both source readers retain one encoded group and reusable PCM storage.
+They validate group checksums before sample output and trailing tags before completion.
+Its index retains metadata and byte offsets without an encoded input copy.
+The reader reuses caller output and one packet scratch array.
+Integer samples exclude padding in their source containers.
+Raw float reads preserve every source bit, including signed zero and NaN payloads.
+The `f32` convenience API follows [Fern's float contract](FLOAT-SEMANTICS.md) and can quiet signaling NaNs.
+
+The frozen WavPack corpus checks 132 files against WavPack 5.8.1.
+FFmpeg also agrees on 130 files.
+FFmpeg differs on the two files with the newer integer extension optimization.
+Fern matches WavPack on both files.
+Full CI and matched performance measurements remain required.
 
 The [ULC2 example library](../examples/ulc/README.md) has its own block API and WAV tools.
 Its documentation includes reference checks and a separate performance report.
