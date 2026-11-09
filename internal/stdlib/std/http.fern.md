@@ -205,12 +205,12 @@ import "core/cmp";
 pub function status_text(code: i32): string {
   let codes: i32[] = [
     100, 101, 200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 307, 308,
-    400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421, 422, 426, 428, 429, 431,
+    400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421, 422, 425, 426, 428, 429, 431,
     500, 501, 502, 503, 504, 505, 511,
   ];
   let phrases: string[] = [
     "Continue", "Switching Protocols", "OK", "Created", "Accepted", "Non-Authoritative Information", "No Content", "Reset Content", "Partial Content", "Multiple Choices", "Moved Permanently", "Found", "See Other", "Not Modified", "Use Proxy", "Temporary Redirect", "Permanent Redirect",
-    "Bad Request", "Unauthorized", "Payment Required", "Forbidden", "Not Found", "Method Not Allowed", "Not Acceptable", "Proxy Authentication Required", "Request Timeout", "Conflict", "Gone", "Length Required", "Precondition Failed", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Range Not Satisfiable", "Expectation Failed", "I'm a teapot", "Misdirected Request", "Unprocessable Entity", "Upgrade Required", "Precondition Required", "Too Many Requests", "Request Header Fields Too Large",
+    "Bad Request", "Unauthorized", "Payment Required", "Forbidden", "Not Found", "Method Not Allowed", "Not Acceptable", "Proxy Authentication Required", "Request Timeout", "Conflict", "Gone", "Length Required", "Precondition Failed", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Range Not Satisfiable", "Expectation Failed", "I'm a teapot", "Misdirected Request", "Unprocessable Entity", "Too Early", "Upgrade Required", "Precondition Required", "Too Many Requests", "Request Header Fields Too Large",
     "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported", "Network Authentication Required",
   ];
   let i = 0;
@@ -3275,6 +3275,11 @@ function __str_is_token(s: string): boolean {
 <<75 pub function method_idempotent(method: string): boolean>>=
 pub function method_idempotent(method: string): boolean {
   return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS" || method == "TRACE";
+}
+
+// method_safe says a method only reads (RFC 9110 section 9.2.1).
+pub function method_safe(method: string): boolean {
+  return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE";
 }
 
 pub function target_ok(target: string): boolean {

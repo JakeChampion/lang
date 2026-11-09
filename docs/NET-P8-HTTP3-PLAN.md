@@ -1,6 +1,6 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
-Status: [plan] in progress. Slices 1 to 7 and the h3spec half of 8 landed. Open: 4b, the rest of 8 (more interop peers), 9 (the client), the rest of 10 (speed) and 0-RTT.
+Status: [plan] in progress. Slices 1 to 7 and the h3spec half of 8 landed. Open: 4b, the rest of 8 (more interop peers), 9 (the client), the rest of 10 (speed) and the h3spec case of 0-RTT.
 
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
@@ -348,6 +348,19 @@ ticket allows early data. The client then writes its first streams in
 0-RTT under the limits it remembered. The server reads them before its own
 handshake completes, and it can answer in 1-RTT at once. A server that
 refuses the early data drops the 0-RTT packets, and the client sends their
-frames again in 1-RTT. What remains is the HTTP/3 half. `std/serve` and
-`std/fetch` do not turn tickets on yet. A server must refuse a request that
-is not safe to replay with 425 (RFC 8470).
+frames again in 1-RTT.
+
+The HTTP/3 half uses this. `std/serve` issues tickets sealed with the key
+of its Retry tokens, and takes 0-RTT. A connection records each stream that
+carried data in 0-RTT (`Conn.early_stream`), because an attacker can replay
+that data. `h3q` answers a request on such a stream with 425 Too Early when
+its method is not safe (RFC 8470 section 5.2). It gives a safe request to
+the handler with the field `Early-Data: 1`.
+
+`std/fetch` keeps the last ticket of each origin in its pool and uses each
+ticket one time. On a resumed connection, it sends a safe method in 0-RTT
+and any other method after the handshake. It sends a request again after the
+handshake when the server answers its 0-RTT copy with 425.
+
+Two items stay open. h3spec's 0-RTT case has not run against the server
+yet. No test makes a TCP and a QUIC server take each other's tickets.

@@ -307,8 +307,10 @@ pub struct Conn {
   tickets: Ticket[],
   // zero_rtt says a client sends application packets as 0-RTT, and
   // early_recv holds the keys a server opens 0-RTT packets with.
+  // early_streams are the streams that carried data in 0-RTT.
   zero_rtt: boolean,
   early_recv: Option[packet.Keys],
+  early_streams: i64[],
 }
 
 // Cid is one connection ID with its sequence number and the stateless reset
@@ -375,7 +377,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None, ecn_in: 0, held_ecn: [], ecn_failed: false, ticket_entropy: [], tickets: [], zero_rtt: false, early_recv: None };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None, ecn_in: 0, held_ecn: [], ecn_failed: false, ticket_entropy: [], tickets: [], zero_rtt: false, early_recv: None, early_streams: [] };
 }
 ```
 
@@ -578,6 +580,18 @@ pub function (c: Conn) tickets(): Ticket[] {
   return c.tickets;
 }
 
+// tickets_taken is the connection without the tickets it received, once
+// the caller keeps them.
+pub function (c: Conn) tickets_taken(): Conn {
+  return Conn { ...c, tickets: [] };
+}
+
+// sending_early says a client sends application data in 0-RTT, before the
+// handshake ends.
+pub function (c: Conn) sending_early(): boolean {
+  return c.zero_rtt;
+}
+
 // resumed says the handshake resumed a session with a ticket.
 pub function (c: Conn) resumed(): boolean {
   match (c.tls) {
@@ -589,6 +603,17 @@ pub function (c: Conn) resumed(): boolean {
     },
     TlsNone => {
       return false;
+    }
+  }
+  return false;
+}
+
+// early_stream says stream id carried data in 0-RTT, which an attacker
+// can replay (RFC 9001 section 9.2).
+pub function (c: Conn) early_stream(id: i64): boolean {
+  for s in c.early_streams {
+    if (s == id) {
+      return true;
     }
   }
   return false;
@@ -1401,6 +1426,9 @@ function (c: Conn) __frames(payload: u8[], space: i32, kind: i32, now: i64): Con
     }
     if (!cur.reader.permitted(kind)) {
       return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a frame not allowed in this packet type", now);
+    }
+    if (kind == frames.IN_ZERO_RTT && cur.reader.is_stream() && !cur.early_stream(cur.reader.stream)) {
+      cur = Conn { ...cur, early_streams: cur.early_streams.append(cur.reader.stream) };
     }
     cur = cur.__frame_read(payload, space, now);
   }
