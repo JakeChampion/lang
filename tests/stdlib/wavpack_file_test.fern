@@ -1,0 +1,11 @@
+import "std/test";
+import "wavpack_vectors";
+import "wavpack_file_check";
+
+function main(): i32 {
+  let runner = test.new("WavPack indexed source reference corpus");
+  for vector in wavpack_vectors.all() {
+    runner = runner.it(vector.name, (): test.TestOutcome => wavpack_file_check.reference(vector));
+  }
+  return runner.finish();
+}
