@@ -3,7 +3,9 @@
 // told it, then two GETs of /hello ride one QUIC connection and a POST of
 // SIZE bytes to /upload dials its own, as a POST does over TCP; each
 // response is printed with its trailers, then how many connections the
-// pool keeps. Exits 0 when all three were answered.
+// pool keeps. Then the kept connections close, and a last GET of /hello
+// dials a new connection, which resumes with a ticket the pool kept when
+// the server issued one. Exits 0 when all four were answered.
 //   fetch_h3 PORT NAME CA.pem SIZE
 import "std/i32";
 import "std/fetch";
@@ -67,7 +69,10 @@ function main(): i32 {
   print(shown("POST /upload", posted));
   print(f"fern fetch: h3 connections kept {kept_h3(pool)}");
   fetch.close_idle(tr);
-  if (first.is_ok() && again.is_ok() && posted.is_ok()) {
+  let resumed = fetch.send_on(tr, fetch.get(base + "/hello").with_timeouts(bounds), policy);
+  print(shown("GET /hello resumed", resumed));
+  fetch.close_idle(tr);
+  if (first.is_ok() && again.is_ok() && posted.is_ok() && resumed.is_ok()) {
     return 0;
   }
   return 1;

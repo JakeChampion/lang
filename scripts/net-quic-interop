@@ -17,7 +17,13 @@
 # between the two. Then std/fetch against aioquic's HTTP/3 server
 # (scripts/net-quic-interop.d/fetch_h3.fern): the pool told the origin
 # offers HTTP/3, two GETs ride one QUIC connection the pool keeps, and the
-# POST dials a connection of its own, as a POST does over TCP.
+# POST dials a connection of its own, as a POST does over TCP. A last GET
+# dials a new connection after the pool closes its kept ones.
+#
+# Then std/fetch against h2o's HTTP/3 server, which runs quicly, a second
+# QUIC implementation, built by scripts/net-bench.d/h3tools at its pins. The
+# last GET resumes the session with a ticket h2o issued and goes in 0-RTT,
+# and h2o's access log records both.
 #
 # Usage: net-quic-interop
 #
@@ -59,6 +65,7 @@ bin/fern -target "$TARGET" -o "$work/server" "$d/server.fern"
 bin/fern -target "$TARGET" -o "$work/h3_client" "$d/h3_client.fern"
 bin/fern -target "$TARGET" -o "$work/h3_server" "$d/h3_server.fern"
 bin/fern -target "$TARGET" -o "$work/fetch_h3" "$d/fetch_h3.fern"
+h3tools="$(scripts/net-bench.d/h3tools)"
 
 # await_line LOG TEXT — once LOG holds TEXT, or the run fails with LOG.
 await_line() {
@@ -161,7 +168,48 @@ fern_fetch() {
   sleep 0.5
   stop_server
   cat "$work/aioquic-h3-server-fetch.log" >> "$log"
-  expect "fern fetch, aioquic h3 server" "$log" "fern fetch: GET /hello -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: GET /hello again -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: POST /upload -> 200 POST /upload $SIZE | x-served-by=aioquic" "fern fetch: h3 connections kept 2"
+  expect "fern fetch, aioquic h3 server" "$log" "fern fetch: GET /hello -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: GET /hello again -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: POST /upload -> 200 POST /upload $SIZE | x-served-by=aioquic" "fern fetch: h3 connections kept 2" "fern fetch: GET /hello resumed -> 200 GET /hello 0 | x-served-by=aioquic"
+}
+
+# fern_fetch_h2o — std/fetch over HTTP/3 against h2o's HTTP/3 server.
+fern_fetch_h2o() {
+  local port log="$work/fern-fetch-h2o.log" access="$work/h2o-access.log"
+  port="$(free_port)"
+  printf 'h2o hello' > "$work/h2o-hello.txt"
+  rm -f "$access"
+  cat > "$work/h2o.conf" <<CONF
+listen: &tls
+  host: 127.0.0.1
+  port: $port
+  ssl:
+    certificate-file: $certs/leaf.pem
+    key-file: $certs/leaf.key
+    min-version: TLSv1.3
+listen:
+  <<: *tls
+  type: quic
+num-threads: 1
+access-log:
+  path: $access
+  format: "h2o: %m %U %s session-reused=%{ssl.session-reused}x %{http3.quic-stats}x"
+hosts:
+  default:
+    paths:
+      /:
+        file.file: $work/h2o-hello.txt
+CONF
+  start_server "$work/h2o-server.log" "$h3tools/bin/h2o" -c "$work/h2o.conf"
+  await_port h2o "$port" "$work/h2o-server.log"
+  "$work/fetch_h3" "$port" localhost "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "fern fetch: exit $?" >> "$log"
+  sleep 0.5
+  stop_server
+  # Each access-log line, cut to whether the session resumed and whether
+  # any 0-RTT packet arrived on its connection.
+  sed -E -e 's/ num-packets\.received=.*num-packets\.zero-rtt-received=0,.*/ early-data=no/' \
+    -e 's/ num-packets\.received=.*num-packets\.zero-rtt-received=[1-9][0-9]*,.*/ early-data=yes/' "$access" >> "$log" 2>/dev/null || true
+  # The POST gets 405, as h2o's file handler takes no POST, after its body
+  # of $SIZE bytes went over QUIC.
+  expect "fern fetch, h2o h3 server" "$log" "fern fetch: GET /hello -> 200 h2o hello |" "fern fetch: GET /hello again -> 200 h2o hello |" "fern fetch: POST /upload -> 405 method not allowed |" "fern fetch: h3 connections kept 2" "fern fetch: GET /hello resumed -> 200 h2o hello |" "h2o: GET /hello 200 session-reused=0 early-data=no" "h2o: GET /hello 200 session-reused=1 early-data=yes"
 }
 
 echo "== aioquic $("$venv/bin/python" -c 'import aioquic; print(aioquic.__version__)'), $ARCH"
@@ -174,6 +222,7 @@ fern_h3_client
 aioquic_h3_client plain
 aioquic_h3_client retry
 fern_fetch
+fern_fetch_h2o
 if [ "$failed" -ne 0 ]; then
   echo "net-quic-interop: a case failed" >&2
   exit 1
