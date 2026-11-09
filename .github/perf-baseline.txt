@@ -517,7 +517,7 @@ aarch64/array_index.text	1403
 aarch64/array_index.ir	18388238
 aarch64/array_scale_f64.text	1500
 aarch64/array_scale_f64.ir	25340945
-aarch64/array_with.text	1561
+aarch64/array_with.text	1216
 aarch64/array_with.ir	34494442
 aarch64/ascii_scan.text	1702
 aarch64/ascii_scan.ir	68639570
@@ -531,7 +531,7 @@ aarch64/closure_call.text	1201
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
-aarch64/deflate_decode.ir	35506094
+aarch64/deflate_decode.ir	34895281
 aarch64/deflate_decode.text	13575
 aarch64/deflate_encode.ir	43566583
 aarch64/deflate_encode.text	7818
@@ -557,7 +557,7 @@ aarch64/pmap_insert.text	3251
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3213
 aarch64/pvec_with.ir	58556365
-aarch64/record_update.text	1561
+aarch64/record_update.text	1216
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1727
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
@@ -619,3 +619,5 @@ x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6027
 aarch64/video_qtrle.ir 1662057925
+# 2026-11-09: PR #14904, perf-aarch64 job 129289189456 on a main base of 180c8416.
+# array_with.text and record_update.text are 22.1% lower, and deflate_decode.ir 1.7% lower. Pin the measured values.
