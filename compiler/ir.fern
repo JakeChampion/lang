@@ -4631,6 +4631,18 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
   let i = 0;
   while (i < ops.len()) {
     let kt = ops[i].kind_tag;
+    if ((kt == K_F32_BITS || kt == K_F32_FROM_BITS) && i + 2 < ops.len()
+      && ops[i + 1].kind_tag == (if (kt == K_F32_BITS) { K_F32_FROM_BITS } else { K_F32_BITS })
+      && ops[i + 2].kind_tag == kt) {
+      if (!changed) {
+        out = fold_prefixed(ops, i, []);
+      }
+      // Keep the first required precision conversion.
+      out = out.append(ops[i]);
+      changed = true;
+      i += 3;
+      continue;
+    }
     if ((kt == k_i32 || kt == k_i32_text) && i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
       match (strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1])) {
         Some(repl) => {
