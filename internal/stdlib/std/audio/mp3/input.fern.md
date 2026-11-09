@@ -270,8 +270,7 @@ function discover(own state: Input, read: (i32) => Result[u8[], IoError]): Resul
 function discovered_frame(own state: Input, base: i32): Result[(Input, ReadEvent), source.ReadError] {
   let h = match (header.parse(state.buffer.view(), 0)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
   h = match (framing.sized(h, base, state.limits.audio.max_input_bytes)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
-  let codec = mp3.Decoder { ...state.codec, free_bytes: base };
-  return framed(Input { ...state, codec: codec }, h);
+  return framed(Input { ...state, codec: mp3.Decoder { ...state.codec, free_bytes: base } }, h);
 }
 
 function discovery_end(state: Input): Result[i32, source.ReadError] {

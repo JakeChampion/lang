@@ -657,7 +657,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !isCall {
 				return true
 			}
-			for _, a := range c.Args {
+			for _, a := range argParts(c) {
 				if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
 					site = c
 				}
@@ -705,7 +705,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 					return false
 				}
 				if c, isCall := m.(*ast.Call); isCall {
-					for _, a := range c.Args {
+					for _, a := range argParts(c) {
 						if aid, ok := a.(*ast.Ident); ok {
 							markOnce(st.Value, aid.Name)
 						}
@@ -767,7 +767,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !ok || repeating[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			aid, ok := a.(*ast.Ident)
 			if !ok || !isParam[aid.Name] || occurrences[aid.Name] != 1 {
 				continue
@@ -797,7 +797,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !ok || inLambda[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			aid, ok := a.(*ast.Ident)
 			if !ok || escaping[aid.Name] || !admitted(aid.Name) && declCount[aid.Name] == 0 {
 				continue
@@ -822,7 +822,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !isCall || repeating[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			aid, ok := a.(*ast.Ident)
 			if !ok || lambdaCaptured[aid.Name] || !admitted(aid.Name) || declCount[aid.Name] > 1 {
 				continue
@@ -847,7 +847,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !isCall || repeating[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			fa, ok := a.(*ast.FieldAccess)
 			if !ok {
 				continue
@@ -872,7 +872,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !ok || inLambda[c] || deferred[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			fa, ok := a.(*ast.FieldAccess)
 			if !ok {
 				continue
@@ -901,7 +901,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !ok || inLambda[c] {
 			return true
 		}
-		for _, a := range c.Args {
+		for _, a := range argParts(c) {
 			aid, ok := a.(*ast.Ident)
 			if !ok || escaping[aid.Name] || lambdaCaptured[aid.Name] {
 				continue
@@ -923,6 +923,31 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 	}
 	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound, Unadmitted: unadmitted}
+}
+
+// argParts lists the arguments of c, with each struct literal argument
+// replaced by its base and its field values, at any depth. The literal takes
+// each part, so a part is an argument position for the last-use facts.
+func argParts(c *ast.Call) []ast.Expr {
+	var out []ast.Expr
+	var add func(e ast.Expr)
+	add = func(e ast.Expr) {
+		sl, ok := e.(*ast.StructLit)
+		if !ok {
+			out = append(out, e)
+			return
+		}
+		if sl.Base != nil {
+			add(sl.Base)
+		}
+		for _, f := range sl.Fields {
+			add(f.Value)
+		}
+	}
+	for _, a := range c.Args {
+		add(a)
+	}
+	return out
 }
 
 // mentionsBesideFields counts the mentions of name in c that are not reads
@@ -1440,9 +1465,10 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 		if !isCall {
 			return true
 		}
-		for k, a := range c.Args {
+		parts := argParts(c)
+		for k, a := range parts {
 			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
-				for _, before := range c.Args[:k] {
+				for _, before := range parts[:k] {
 					fa, isField := before.(*ast.FieldAccess)
 					if !isField || !scalar[before] {
 						continue
@@ -1715,7 +1741,7 @@ func lastUseArgsOf(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if nested[call] {
 			continue
 		}
-		for _, a := range call.Args {
+		for _, a := range argParts(call) {
 			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && (local[id.Name] || d.Bound[id.Name]) && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
 				if d.Unadmitted[id.Name] {

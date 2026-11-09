@@ -151,7 +151,8 @@ function parse(own scan: Scanner): Result[(Scanner, Event), source.ReadError] {
   }
   let (tag, range) = chunk_header(current.view(), current.offset, scan.bytes)?;
   let recorded = record(scan, tag, range)?;
-  return next(Scanner { ...recorded, count: recorded.count + 1 }, range.end);
+  let count = recorded.count + 1;
+  return next(Scanner { ...recorded, count: count }, range.end);
 }
 
 pub function (own scan: Scanner) step_with(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[(Scanner, Event), source.ReadError] {

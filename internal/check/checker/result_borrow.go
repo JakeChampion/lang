@@ -377,6 +377,40 @@ func (c *checker) holdsNoHandle(t ast.Type) bool {
 	return c.noHandleIn(t, nil, map[string]bool{})
 }
 
+// structLitOwned says a struct literal owns what it holds: each
+// field value is owned or holds no handle, and each field that the literal
+// keeps from a base that is not owned holds no handle.
+func (c *checker) structLitOwned(sl *ast.StructLit, owned func(ast.Expr) bool) bool {
+	decl := c.info.Structs[sl.TypeName]
+	if decl == nil {
+		return false
+	}
+	st, _ := c.litTypes[sl].(ast.StructType)
+	sub := declArgs(decl.TypeParams, st.Args)
+	fieldType := map[string]ast.Type{}
+	for _, f := range decl.Fields {
+		fieldType[f.Name] = substituteType(f.Type, sub)
+	}
+	noHandle := func(t ast.Type) bool {
+		return t != nil && c.holdsNoHandle(t)
+	}
+	written := map[string]bool{}
+	for _, f := range sl.Fields {
+		written[f.Name] = true
+		if !owned(f.Value) && !noHandle(fieldType[f.Name]) {
+			return false
+		}
+	}
+	if sl.Base != nil && !owned(sl.Base) {
+		for _, f := range decl.Fields {
+			if !written[f.Name] && !noHandle(fieldType[f.Name]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // arrayUpdateOwned says call is `with`, `append` or `truncate` on an array,
 // and the result owns its elements: they hold no handle, or the receiver
 // and the new element are owned.

@@ -1,3 +1,4 @@
+# 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
 # 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
 # 2026-11-09: own_takes_replaced_field_of_owned_base is clean under RC trace.
 # 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
@@ -1214,6 +1215,7 @@ struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
 struct_field_subpattern                              0
 struct_field_wide_array_append                       0
+struct_literal_parts_move_into_own                   0
 struct_nested                                        0
 struct_nested_field_identity_rebind                  0
 struct_producer_returns_local                        0

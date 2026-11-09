@@ -5863,8 +5863,10 @@ type checker struct {
 	numericTypes   map[ast.Expr]ast.Type
 	numericCasts   map[ast.Expr]*ast.CastExpr
 	noRCIdentTypes map[*ast.Ident]ast.Type
-	callee         ast.Expr
-	funcSources    map[string]string
+	// litTypes holds the type each struct literal checked to.
+	litTypes    map[*ast.StructLit]ast.Type
+	callee      ast.Expr
+	funcSources map[string]string
 	// publicFreeFuncs lists the public free functions under the name their
 	// module declares, so a method call can name a function of that name.
 	publicFreeFuncs map[string][]publicFreeFunc
@@ -10693,7 +10695,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		}
 		switch x := e.(type) {
-		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
+		case *ast.StructLit:
+			return c.structLitOwned(x, isOwnedExpr)
+		case *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
@@ -14274,6 +14278,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	if sl, ok := e.(*ast.StructLit); ok && t != nil {
+		if c.litTypes == nil {
+			c.litTypes = map[*ast.StructLit]ast.Type{}
+		}
+		c.litTypes[sl] = t
+	}
 	if c.current != nil && c.current.NoRC {
 		if id, ok := e.(*ast.Ident); ok {
 			if c.noRCIdentTypes == nil {
