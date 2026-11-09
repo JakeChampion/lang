@@ -44,6 +44,12 @@ func HeadTailByteCases(utility string) []HeadTailByteCase {
 			HeadTailByteCase{Name: "raw from line", Input: data, Args: []string{"-n", "+3"}},
 			HeadTailByteCase{Name: "raw from byte", Input: data, Args: []string{"-c", "+257"}},
 			HeadTailByteCase{Name: "raw from NUL", Input: data, Args: []string{"-z", "-n", "+2"}},
+			HeadTailByteCase{Name: "whole blocks exact lines", Input: strings.Repeat("a\n", 4096) + strings.Repeat("b\n", 4096) + "c\n", Args: []string{"-n", "4097"}},
+			HeadTailByteCase{Name: "whole blocks fewer lines", Input: strings.Repeat("a\n", 4096) + strings.Repeat("b\n", 4096) + "c\n", Args: []string{"-n", "4096"}},
+			HeadTailByteCase{Name: "whole blocks extra line", Input: strings.Repeat("a\n", 4096) + strings.Repeat("b\n", 4096) + "c\n", Args: []string{"-n", "4098"}},
+			HeadTailByteCase{Name: "whole blocks unfinished line", Input: strings.Repeat("a\n", 4096) + strings.Repeat("b\n", 4096) + "c", Args: []string{"-n", "4097"}},
+			HeadTailByteCase{Name: "whole blocks NUL records", Input: strings.Repeat("a\x00", 4096) + strings.Repeat("b\x00", 4096) + "c\x00", Args: []string{"-z", "-n", "4097"}},
+			HeadTailByteCase{Name: "whole blocks without delimiter", Input: "a\n" + strings.Repeat("q", 24576) + "\nlast\n", Args: []string{"-n", "2"}},
 		)
 	}
 	stream := append([]HeadTailByteCase(nil), cases...)
