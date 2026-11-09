@@ -59,8 +59,8 @@ The full catalogue still requires fresh measurements.
 ## Correctness
 
 All six measured workloads match GNU stdout, stderr, and exit status.
-All 199 `TestWcParity` cases pass against GNU 9.12.
-The byte-input suite and help/version checks also pass.
+All 159 `TestWcParity` cases pass against GNU 9.12.
+The 40 byte-input cases and help/version checks also pass.
 The expanded byte-count corpus passes through the interpreter, native x86-64, Wasm modules, and WASI components.
 
 The corpus checks vector boundaries, invalid search bytes, retained aliases, and allocation counts.
