@@ -20655,11 +20655,13 @@ function retag_type_arg_indexes(mod: Module): Module {
   if (generics.len() == 0) {
     return mod;
   }
-  let any_site = rta_has_index_call(mod.top_stmts);
+  let top_site = rta_has_index_call(mod.top_stmts);
+  let sites: boolean[] = [];
+  let any_site = top_site;
   for fd in mod.funcs {
-    if (!any_site && rta_has_index_call(fd.body)) {
-      any_site = true;
-    }
+    let site = rta_has_index_call(fd.body);
+    sites = sites.append(site);
+    any_site = any_site || site;
   }
   if (!any_site) {
     return mod;
@@ -20680,8 +20682,9 @@ function retag_type_arg_indexes(mod: Module): Module {
     }
   }
   let funcs: FuncDecl[] = [];
-  for fd in mod.funcs {
-    if (!rta_has_index_call(fd.body)) {
+  for k in 0..mod.funcs.len() {
+    let fd = mod.funcs[k];
+    if (!sites[k]) {
       funcs = funcs.append(fd);
       continue;
     }
@@ -20703,7 +20706,7 @@ function retag_type_arg_indexes(mod: Module): Module {
     }
     funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
   }
-  if (!rta_has_index_call(mod.top_stmts)) {
+  if (!top_site) {
     return Module { ...mod, funcs: funcs };
   }
   let top_shadow = astwalk.collect_bound_stmts(mod.top_stmts, consts);
@@ -25892,6 +25895,7 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   if (t.names.len() == 0) {
     return mod;
   }
+  let named = util.name_index(t.names);
   let funcs: FuncDecl[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
@@ -25909,6 +25913,10 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
     }
     if (fd.receiver_name.len() > 0) {
       bound = bound.append(fd.receiver_name);
+    }
+    if (!astwalk.names_any(fd.body, named)) {
+      funcs = funcs.append(FuncDecl { ...fd, params: params });
+      continue;
     }
     funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
   }

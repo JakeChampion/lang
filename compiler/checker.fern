@@ -11390,7 +11390,7 @@ function slit_forges_handle(sl: ast.ExprStructLit, structs: StructTable): boolea
   if let Some(_) = find_struct_sig(structs, sl.type_name) {
     return false;
   }
-  return util.has_str(semtypes.fd_handle_names(), sl.type_name);
+  return semtypes.is_fd_handle_name(sl.type_name);
 }
 
 function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
@@ -23418,7 +23418,7 @@ function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
   while (true) {
     let next: string[] = [];
     for name in yes {
-      if (!dx.consuming.has(name) && !util.has_str(semtypes.fd_handle_names(), name) && ow_decl_holds_no_handle(name, dx, [name])) {
+      if (!dx.consuming.has(name) && !semtypes.is_fd_handle_name(name) && ow_decl_holds_no_handle(name, dx, [name])) {
         next = next.append(name);
       } else {
         no = no.append(name);
@@ -23477,7 +23477,7 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
   if (name == "Option" || name == "Result" || name == "Cell" || util.has_str(seen, name)) {
     return true;
   }
-  if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
+  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
     return false;
   }
   if (dx.no_handle.has(name)) {
@@ -31150,20 +31150,27 @@ function use_ret_typed(lm: ast.ExprLambda, cbt: typeinfo.Type): ast.ExprLambda {
   return lm;
 }
 
+// The bodies a rewrite pass changes: hits.funcs[k] for mod.funcs[k], and
+// hits.top for the top-level statements.
+struct BodyHits { funcs: boolean[], top: boolean, any: boolean }
+
 pub function pretype_module(mod: parser.Module): parser.Module {
-  let coll = colliding_variant_names(mod);
-  if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
-    return pretype_module_in(mod, module_env(mod), whole_focus(mod));
+  let hits = pretype_hits(mod, whole_focus(mod));
+  if (!hits.any) {
+    return mod;
   }
-  for fd in mod.funcs {
-    if (needs_pretype_or_rescope(fd.body, coll)) {
-      return pretype_module_in(mod, module_env(mod), whole_focus(mod));
-    }
-  }
-  return mod;
+  return pretyped(mod, module_env(mod), hits);
 }
 
 function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = pretype_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return pretyped(mod, env, hits);
+}
+
+function pretype_hits(mod: parser.Module, focus: Focus): BodyHits {
   let coll = colliding_variant_names(mod);
   let top_hit = focus.top && needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
@@ -31177,14 +31184,15 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
       any = true;
     }
   }
-  if (!any) {
-    return mod;
-  }
+  return BodyHits { funcs: hits, top: top_hit, any: any };
+}
+
+function pretyped(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
   let nfuncs: parser.FuncDecl[] = [];
   let i = 0;
   while (i < mod.funcs.len()) {
     let func = mod.funcs[i];
-    if (hits[i]) {
+    if (hits.funcs[i]) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: pretype_stmts(func.body, fs) });
     } else {
@@ -31193,7 +31201,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
     i += 1;
   }
   let ntop = mod.top_stmts;
-  if (top_hit) {
+  if (hits.top) {
     ntop = pretype_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
@@ -34146,25 +34154,43 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
 }
 
 pub function settle_literal_locals(mod: parser.Module): parser.Module {
-  let generics = generic_fn_names(mod.funcs);
-  let any = needs_lit_settle(mod.top_stmts, generics);
-  for fd in mod.funcs {
-    if (!any && needs_lit_settle(fd.body, generics)) {
-      any = true;
-    }
-  }
-  if (!any) {
+  let hits = lit_settle_hits(mod, whole_focus(mod));
+  if (!hits.any) {
     return mod;
   }
-  return settle_literal_locals_in(mod, module_env(mod), whole_focus(mod));
+  return lit_settled(mod, module_env(mod), hits);
 }
 
 function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = lit_settle_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return lit_settled(mod, env, hits);
+}
+
+function lit_settle_hits(mod: parser.Module, focus: Focus): BodyHits {
   let generics = generic_fn_names(mod.funcs);
-  let nfuncs: parser.FuncDecl[] = [];
+  let top = focus.top && needs_lit_settle(mod.top_stmts, generics);
+  let funcs: boolean[] = [];
+  let any = top;
   let k = 0;
   for func in mod.funcs {
     let hit = focus.funcs[k] && needs_lit_settle(func.body, generics);
+    k += 1;
+    funcs = funcs.append(hit);
+    if (hit) {
+      any = true;
+    }
+  }
+  return BodyHits { funcs: funcs, top: top, any: any };
+}
+
+function lit_settled(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
+  let nfuncs: parser.FuncDecl[] = [];
+  let k = 0;
+  for func in mod.funcs {
+    let hit = hits.funcs[k];
     k += 1;
     if (hit) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -34174,7 +34200,7 @@ function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Foc
     }
   }
   let ntop = mod.top_stmts;
-  if (focus.top && needs_lit_settle(mod.top_stmts, generics)) {
+  if (hits.top) {
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };

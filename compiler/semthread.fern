@@ -462,12 +462,17 @@ struct Forwarded { g: ssa.SFunc, changed: i32 }
 // phi. Wider joins keep their chains so the allocator can coalesce them.
 // Wasm forwards them without that register constraint. Each read becomes
 // the phi's operand on that edge.
+// Forwarding keeps each block at its position and leaves dominance between
+// the other blocks as it was, so one dominator tree serves every round.
 function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded {
   let g = g0;
   let changed = 0;
+  let dom = ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] };
   for round in 0..64 {
     let at = ssa.block_positions(g);
-    let yi = first_forwardable(g, at, ssa.use_counts(g), stack_phi_joins);
+    let found = first_forwardable(g, at, ssa.use_counts(g), stack_phi_joins, dom);
+    dom = found.dom;
+    let yi = found.at;
     if (yi < 0) {
       break;
     }
@@ -482,23 +487,24 @@ function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded
 }
 
 // A block with phis is not forwarded into a loop header it is the latch of.
-function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins: boolean): i32 {
-  let dom = ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] };
+struct Forwardable { at: i32, dom: ssadeps.Dom }
+
+function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins: boolean, own dom: ssadeps.Dom): Forwardable {
   for yi in 0..g.blocks.len() {
     if (forwardable(g, at, uses, yi, stack_phi_joins)) {
       let y = g.blocks[yi];
       if (y.insts.len() == 0) {
-        return yi;
+        return Forwardable { at: yi, dom: dom };
       }
       if (dom.pre.len() == 0) {
         dom = ssadeps.dominates(g);
       }
       if (!ssadeps.dom_holds(dom, yi, at[y.term.target])) {
-        return yi;
+        return Forwardable { at: yi, dom: dom };
       }
     }
   }
-  return -1;
+  return Forwardable { at: -1, dom: dom };
 }
 
 function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_joins: boolean): boolean {
@@ -836,14 +842,19 @@ function split_round(f: ssasem.Func): Joined {
   let at = ssa.block_positions(g);
   let uses = ssa.use_counts(g);
   let defs = ssa.inst_defs(g);
-  let dom = ssadeps.dominates(g);
+  let dom = ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] };
   for ji in 0..g.blocks.len() {
     if (!has_phi(g.blocks[ji])) {
       continue;
     }
-    let c = constant_join(g, at, uses, defs, dom, ji);
+    let c = constant_join(g, at, uses, defs, ji);
     if (c.ok) {
-      return Joined { f: split_join(f, at, dom, c), changed: 1 };
+      if (dom.pre.len() == 0) {
+        dom = ssadeps.dominates(g);
+      }
+      if (dominance_allows(g, at, dom, c)) {
+        return Joined { f: split_join(f, at, dom, c), changed: 1 };
+      }
     }
   }
   return Joined { f: f, changed: 0 };
@@ -858,7 +869,9 @@ function movable_constant(ins: ssa.SInst): boolean {
   return ins.args.len() == 0 && ins.result >= 0 && (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.CONST_STR || k == ssasem.zero());
 }
 
-function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], dom: ssadeps.Dom, ji: i32): Join {
+// The shape of a join that can be split, before the dominance tests of
+// dominance_allows.
+function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], ji: i32): Join {
   let jb = g.blocks[ji];
   if (jb.id == g.entry || jb.preds.len() == 0) {
     return no_join(ji);
@@ -934,7 +947,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
     }
     let qi = at[q];
     let qb = g.blocks[qi];
-    if (qi == ji || qb.term.kind_tag != ssa.TERM_BR || qb.term.target != jb.id || ssadeps.dom_holds(dom, qi, ji)) {
+    if (qi == ji || qb.term.kind_tag != ssa.TERM_BR || qb.term.target != jb.id) {
       return no_join(ji);
     }
   }
@@ -946,11 +959,18 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   if (!plain_arm(g, ti, bb.id, ji, chain) || !plain_arm(g, fi, bb.id, ji, chain)) {
     return no_join(ji);
   }
-  let c = Join { ok: true, j: ji, chain: chain, b: bi, picks: picks, t: ti, f: fi };
-  if (!reads_under_arms(g, at, dom, c)) {
-    return no_join(ji);
+  return Join { ok: true, j: ji, chain: chain, b: bi, picks: picks, t: ti, f: fi };
+}
+
+// No predecessor of the join is dominated by it, and each read under the
+// arms passes reads_under_arms.
+function dominance_allows(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): boolean {
+  for q in g.blocks[c.j].preds {
+    if (ssadeps.dom_holds(dom, at[q], c.j)) {
+      return false;
+    }
   }
-  return c;
+  return reads_under_arms(g, at, dom, c);
 }
 
 function phi_of(b: ssa.SBlock, v: i32): ssa.SInst {
