@@ -78,9 +78,11 @@ pub enum Resend {
   Again(frames.Frame),
 }
 
-pub struct Sent { pn: i64, at: Instant, size: i32, ack_eliciting: boolean, in_flight: boolean, resend: Resend[] }
+// ect is whether the packet left marked ECT(0).
+pub struct Sent { pn: i64, at: Instant, size: i32, ack_eliciting: boolean, in_flight: boolean, ect: boolean, resend: Resend[] }
 
-struct Space { sent: Sent[], largest_acked: i64, loss_time: i64, last_ack_eliciting: i64 }
+// ce is the largest ECN-CE count the peer has reported for the space.
+struct Space { sent: Sent[], largest_acked: i64, loss_time: i64, last_ack_eliciting: i64, ce: i64 }
 
 pub struct Recovery {
   spaces: Space[],
@@ -113,7 +115,7 @@ pub struct Recovery {
 ```fern
 <<4 pub function new(max_datagram: i32, server: boolean): Recovery>>=
 pub function new(max_datagram: i32, server: boolean): Recovery {
-  let empty = Space { sent: [], largest_acked: -1i64, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 };
+  let empty = Space { sent: [], largest_acked: -1i64, loss_time: 0 as i64, last_ack_eliciting: 0 as i64, ce: 0 as i64 };
   let md = max_datagram as i64;
   let window = 14720;
   if (window < 2 * md) {
@@ -192,12 +194,32 @@ function (r: Recovery) __on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now
   if (newest.pn == largest && __any_eliciting(acked)) {
     cur = cur.__rtt_sample(now - time.instant_nanos(newest.at), ack_delay, space);
   }
+  cur = cur.__ecn_marks(space, ack, time.instant_nanos(newest.at), now);
   cur = cur.__on_acked(acked).__detect_lost(space, now);
   cur = cur.__on_lost(cur.lost, now);
   if (!(space == INITIAL && !cur.peer_validated)) {
     cur = Recovery { ...cur, pto_count: 0 };
   }
   return cur;
+}
+
+// __ecn_marks reacts to a rise in the peer's ECN-CE count as to a loss of
+// the newest packet the ACK acknowledges (RFC 9002 section B.7).
+function (r: Recovery) __ecn_marks(space: i32, ack: frames.Ack, sent: i64, now: i64): Recovery {
+  let Some(e) = ack.ecn else {
+    return r;
+  };
+  let s = r.spaces[space];
+  if (e.ce <= s.ce) {
+    return r;
+  }
+  return Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, ce: e.ce }) }.__congestion_event(sent, now);
+}
+
+// largest_acked is the largest packet number the peer has acknowledged in
+// the space, or -1.
+pub function (r: Recovery) largest_acked(space: i32): i64 {
+  return r.spaces[space].largest_acked;
 }
 
 pub function (r: Recovery) outcome_taken(): Recovery {
@@ -385,18 +407,24 @@ function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery {
       newest = time.instant_nanos(p.at);
     }
   }
-  let cur = Recovery { ...r, bytes_in_flight: flight };
-  if (newest > cur.recovery_start) {
-    let half = cur.cwnd / 2;
-    if (half < 2 * cur.max_datagram) {
-      half = 2 * cur.max_datagram;
-    }
-    cur = Recovery { ...cur, recovery_start: now, ssthresh: half, cwnd: half };
-  }
+  let cur = Recovery { ...r, bytes_in_flight: flight }.__congestion_event(newest, now);
   if (cur.__persistent(lost)) {
     cur = Recovery { ...cur, cwnd: 2 * cur.max_datagram, recovery_start: -1i64 };
   }
   return cur;
+}
+
+// __congestion_event halves the window, once per round trip: a packet sent
+// before the current recovery period began starts no new one.
+function (r: Recovery) __congestion_event(sent: i64, now: i64): Recovery {
+  if (sent <= r.recovery_start) {
+    return r;
+  }
+  let half = r.cwnd / 2;
+  if (half < 2 * r.max_datagram) {
+    half = 2 * r.max_datagram;
+  }
+  return Recovery { ...r, recovery_start: now, ssthresh: half, cwnd: half };
 }
 
 function (r: Recovery) __persistent(lost: Sent[]): boolean {
@@ -544,7 +572,7 @@ pub function (r: Recovery) discard(space: i32): Recovery {
       flight -= p.size as i64;
     }
   }
-  return Recovery { ...r, spaces: r.spaces.with(space, Space { sent: [], largest_acked: s.largest_acked, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 }), bytes_in_flight: flight, pto_count: 0 };
+  return Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: [], loss_time: 0 as i64, last_ack_eliciting: 0 as i64 }), bytes_in_flight: flight, pto_count: 0 };
 }
 
 pub function (r: Recovery) smoothed(): Duration {

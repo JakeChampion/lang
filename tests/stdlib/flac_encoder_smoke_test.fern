@@ -1,0 +1,38 @@
+import "std/audio/flac";
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/test";
+
+// Verify each field in one bounded conformance campaign.
+// fern-lint: allow cyclomatic-complexity
+function roundtrip(): test.TestOutcome {
+  for depth in [16, 24, 32] {
+    for channels in [1, 2] {
+      let format = pcm.Format { sample_rate: 48000, channels: channels, bits_per_sample: depth };
+      let input: i32[] = [];
+      for at in 0..17 {
+        for ch in 0..channels {
+          input = input.append((at * at + ch * 11) % 13 - 6 << depth - 4);
+        }
+      }
+      let options = encoder.Options { block_frames: 16, max_fixed_order: 4, max_partition_order: 4, stereo: true };
+      let encoded = match (encoder.encode(input, format, options, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("encode: " + e.message()); } };
+      let decoded = match (flac.decode(encoded, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode: " + e.message()); } };
+      if (decoded.samples.len() != input.len() || decoded.format.bits_per_sample != depth || decoded.format.channels != channels || decoded.format.sample_rate != format.sample_rate) {
+        return test.fail("encoded stream format or length");
+      }
+      for i in 0..input.len() {
+        if (decoded.samples[i] != input[i]) {
+          return test.fail("lossless sample " + i.to_string());
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Native FLAC encoder smoke");
+  runner = runner.it("fixed predictors, Rice partitions, stereo transforms, final short blocks, and MD5", roundtrip);
+  return runner.finish();
+}

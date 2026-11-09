@@ -137,122 +137,6 @@ function t_brif(cond: i32, t: i32, f: i32): STerm {
   return STerm { kind_tag: TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
-function buf_kind_name(id: i32): string {
-  if (id == 28) {
-    return "buf_new";
-  }
-  if (id == 29) {
-    return "buf_push";
-  }
-  if (id == 30) {
-    return "buf_push_range";
-  }
-  if (id == 31) {
-    return "buf_push_byte";
-  }
-  if (id == 32) {
-    return "buf_len";
-  }
-  if (id == 33) {
-    return "buf_take";
-  }
-  return "buf_free";
-}
-
-pub function kind_name(id: i32): string {
-  if (id < 0) {
-    return semantic_kind_name(id);
-  }
-  if (id == 35) {
-    return "line";
-  }
-  if (id == 36) {
-    return "select";
-  }
-  if (id == 37) {
-    return "carry";
-  }
-  if (id == 1) {
-    return "const_int";
-  }
-  if (id == 2) {
-    return "const_bool";
-  }
-  if (id == 3) {
-    return "const_i64";
-  }
-  if (id == 4) {
-    return "const_float";
-  }
-  if (id == 5) {
-    return "const_str";
-  }
-  if (id == 6) {
-    return "param";
-  }
-  if (id == 7) {
-    return "copy";
-  }
-  if (id == 8) {
-    return "phi";
-  }
-  if (id == 9) {
-    return "binary";
-  }
-  if (id == 10) {
-    return "unary";
-  }
-  if (id == 11) {
-    return "call";
-  }
-  if (id == 12) {
-    return "call_indirect";
-  }
-  if (id == 13) {
-    return "funcaddr";
-  }
-  if (id == 14) {
-    return "alloc";
-  }
-  if (id == 15) {
-    return "load_elem";
-  }
-  if (id == 16) {
-    return "store_elem";
-  }
-  if (id == 17) {
-    return "concat";
-  }
-  if (id == 18) {
-    return "streq";
-  }
-  if (id == 19) {
-    return "print";
-  }
-  if (id == 20) {
-    return "write";
-  }
-  if (id == 21) {
-    return "exit";
-  }
-  if (id == 22) {
-    return "args";
-  }
-  if (id == 26) {
-    return "read_file";
-  }
-  if (id == 27) {
-    return "write_file";
-  }
-  if (id >= 28 && id <= 34) {
-    return buf_kind_name(id);
-  }
-  if (id >= 40 && id <= 62) {
-    return prod_kind_name(id);
-  }
-  return "invalid";
-}
-
 function semantic_names_symbol(id: i32): boolean {
   return id == -7 || id == -8 || id == -9 || id == -10
     || id == -11 || id == -12 || id == -20;
@@ -336,163 +220,174 @@ pub function print_func(f: SFunc): string {
   return out + "}\n";
 }
 
-function prod_kind_name(id: i32): string {
-  let names: string[] = [
-    "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
-    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch", "lane3", "lane_store",
-  ];
-  return names[id - 40];
-}
+// The name of each SSA instruction kind, indexed by its id. An empty name
+// marks an id that names no kind.
+const KIND_NAMES: string[] = [
+  "",  // 0
+  "const_int",  // 1
+  "const_bool",  // 2
+  "const_i64",  // 3
+  "const_float",  // 4
+  "const_str",  // 5
+  "param",  // 6
+  "copy",  // 7
+  "phi",  // 8
+  "binary",  // 9
+  "unary",  // 10
+  "call",  // 11
+  "call_indirect",  // 12
+  "funcaddr",  // 13
+  "alloc",  // 14
+  "load_elem",  // 15
+  "store_elem",  // 16
+  "concat",  // 17
+  "streq",  // 18
+  "print",  // 19
+  "write",  // 20
+  "exit",  // 21
+  "args",  // 22
+  "",  // 23
+  "",  // 24
+  "",  // 25
+  "read_file",  // 26
+  "write_file",  // 27
+  "buf_new",  // 28
+  "buf_push",  // 29
+  "buf_push_range",  // 30
+  "buf_push_byte",  // 31
+  "buf_len",  // 32
+  "buf_take",  // 33
+  "buf_free",  // 34
+  "line",  // 35
+  "select",  // 36
+  "carry",  // 37
+  "",  // 38
+  "",  // 39
+  "ld_at",  // 40
+  "st_at",  // 41
+  "arr_at",  // 42
+  "arr_st",  // 43
+  "str_at",  // 44
+  "fn_addr",  // 45
+  "shape_addr",  // 46
+  "str_lit",  // 47
+  "arr_box",  // 48
+  "str_call",  // 49
+  "rt_call",  // 50
+  "str_view",  // 51
+  "ld_idx",  // 52
+  "st_idx",  // 53
+  "ld_byte",  // 54
+  "st_byte",  // 55
+  "call_ind",  // 56
+  "agg_lit",  // 57
+  "sym_addr",  // 58
+  "flat_op",  // 59
+  "dyn_dispatch",  // 60
+  "lane3",  // 61
+  "lane_store",  // 62
+];
 
-// run from -1 downward. Retired slots name invalid. The index is -id - 1.
-// An id outside the table is invalid.
-function semantic_kind_names(): string[] {
-  return [
-    "array_new", "tuple_new", "array_get", "tuple_get",
-    "record_new", "record_get", "call", "variant_new", "variant_is",
-    "variant_get", "variant_up", "variant_as", "length", "append", "slice",
-    "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
-    "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
-    "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
-    "arr_join", "arr_slice", "invalid", "invalid",
-    "invalid", "invalid", "invalid", "dyn_up", "dyn_box",
-    "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view", "append_range",
-    "array_reserve", "arr_concat", "bytes_new", "truncate", "checked_present", "checked_value",
-  ];
-}
+// The name of each semantic kind. Semantic ids run from -1 downward, so the
+// kind -k is at index k - 1. An empty name marks a retired id.
+const SEMANTIC_KIND_NAMES: string[] = [
+  "array_new",  // -1
+  "tuple_new",  // -2
+  "array_get",  // -3
+  "tuple_get",  // -4
+  "record_new",  // -5
+  "record_get",  // -6
+  "call",  // -7
+  "variant_new",  // -8
+  "variant_is",  // -9
+  "variant_get",  // -10
+  "variant_up",  // -11
+  "variant_as",  // -12
+  "length",  // -13
+  "append",  // -14
+  "slice",  // -15
+  "str_index",  // -16
+  "cast",  // -17
+  "str_as",  // -18
+  "with",  // -19
+  "closure_new",  // -20
+  "call_value",  // -21
+  "cell_new",  // -22
+  "cell_get",  // -23
+  "cell_set",  // -24
+  "map_new",  // -25
+  "map_insert",  // -26
+  "map_has",  // -27
+  "map_get_or",  // -28
+  "map_len",  // -29
+  "map_get",  // -30
+  "map_keys",  // -31
+  "map_values",  // -32
+  "map_delete",  // -33
+  "map_cleared",  // -34
+  "zero",  // -35
+  "str_bytes",  // -36
+  "arr_join",  // -37
+  "arr_slice",  // -38
+  "",  // -39
+  "",  // -40
+  "",  // -41
+  "",  // -42
+  "",  // -43
+  "dyn_up",  // -44
+  "dyn_box",  // -45
+  "dyn_is",  // -46
+  "dyn_as",  // -47
+  "hole_at",  // -48
+  "hole_fill",  // -49
+  "array_lend",  // -50
+  "str_byte_view",  // -51
+  "append_range",  // -52
+  "array_reserve",  // -53
+  "arr_concat",  // -54
+  "bytes_new",  // -55
+  "truncate",  // -56
+  "checked_present",  // -57
+  "checked_value",  // -58
+];
 
-pub function semantic_kind_count(): i32 {
-  return semantic_kind_names().len();
-}
-
-function semantic_kind_name(id: i32): string {
-  let names = semantic_kind_names();
-  let at = -id - 1;
-  if (at < 0 || at >= names.len()) {
+pub function kind_name(id: i32): string {
+  if (id < 0) {
+    let at = -id - 1;
+    if (at < SEMANTIC_KIND_NAMES.len() && SEMANTIC_KIND_NAMES[at] != "") {
+      return SEMANTIC_KIND_NAMES[at];
+    }
     return "invalid";
   }
-  return names[at];
+  if (id == 0 || id >= KIND_NAMES.len() || KIND_NAMES[id] == "") {
+    return "invalid";
+  }
+  return KIND_NAMES[id];
+}
+
+// The id of an instruction kind name, or 0. Semantic names are not looked up.
+pub function kind_id(name: string): i32 {
+  if (name == "") {
+    return 0;
+  }
+  for id in 1..KIND_NAMES.len() {
+    if (KIND_NAMES[id] == name) {
+      return id;
+    }
+  }
+  return 0;
 }
 
 pub function kind_count(): i32 {
-  return 37;
+  return KIND_NAMES.len() - 1;
 }
 
 pub function kind_retired(id: i32): boolean {
-  return id >= 23 && id <= 25;
+  return id > 0 && id < KIND_NAMES.len() && KIND_NAMES[id] == "";
 }
 
-pub function kind_id(name: string): i32 {
-  if (name == "const_int") {
-    return 1;
-  }
-  if (name == "line") {
-    return 35;
-  }
-  if (name == "select") {
-    return 36;
-  }
-  if (name == "carry") {
-    return 37;
-  }
-  if (name == "const_bool") {
-    return 2;
-  }
-  if (name == "const_i64") {
-    return 3;
-  }
-  if (name == "const_float") {
-    return 4;
-  }
-  if (name == "const_str") {
-    return 5;
-  }
-  if (name == "param") {
-    return 6;
-  }
-  if (name == "copy") {
-    return 7;
-  }
-  if (name == "phi") {
-    return 8;
-  }
-  if (name == "binary") {
-    return 9;
-  }
-  if (name == "unary") {
-    return 10;
-  }
-  if (name == "call") {
-    return 11;
-  }
-  if (name == "call_indirect") {
-    return 12;
-  }
-  if (name == "funcaddr") {
-    return 13;
-  }
-  if (name == "alloc") {
-    return 14;
-  }
-  if (name == "load_elem") {
-    return 15;
-  }
-  if (name == "store_elem") {
-    return 16;
-  }
-  if (name == "concat") {
-    return 17;
-  }
-  if (name == "streq") {
-    return 18;
-  }
-  if (name == "print") {
-    return 19;
-  }
-  if (name == "write") {
-    return 20;
-  }
-  if (name == "exit") {
-    return 21;
-  }
-  if (name == "args") {
-    return 22;
-  }
-  if (name == "read_file") {
-    return 26;
-  }
-  if (name == "write_file") {
-    return 27;
-  }
-  if (name.len() >= 7 && name[0] == b'b') {
-    return buf_kind_id(name);
-  }
-  return 0;
-}
-
-function buf_kind_id(name: string): i32 {
-  if (name == "buf_new") {
-    return 28;
-  }
-  if (name == "buf_push") {
-    return 29;
-  }
-  if (name == "buf_push_range") {
-    return 30;
-  }
-  if (name == "buf_push_byte") {
-    return 31;
-  }
-  if (name == "buf_len") {
-    return 32;
-  }
-  if (name == "buf_take") {
-    return 33;
-  }
-  if (name == "buf_free") {
-    return 34;
-  }
-  return 0;
+pub function semantic_kind_count(): i32 {
+  return SEMANTIC_KIND_NAMES.len();
 }
 
 pub function term_count(): i32 {

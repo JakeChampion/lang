@@ -13,6 +13,97 @@ spec.loader.exec_module(check)
 
 
 class ContentSourceTests(unittest.TestCase):
+    def test_content_fixture_uses_the_platform_media_permission(self):
+        for sdk in (26, 32, 33, 35):
+            def device(*args, **kwargs):
+                if args == ("shell", "getprop", "ro.build.version.sdk"):
+                    return str(sdk)
+                if args[:3] == ("logcat", "-d", "-v") and len(args) > 4:
+                    return "playertest: FAIL fixture sentinel\n"
+                return ""
+
+            with self.subTest(sdk=sdk), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(check, "adb", side_effect=device) as calls:
+                with self.assertRaisesRegex(AssertionError, "fixture sentinel"):
+                    check.run_playback("content://media/external/video/media/42", "http://missing", Path(directory))
+                permission = "READ_MEDIA_VIDEO" if sdk >= 33 else "READ_EXTERNAL_STORAGE"
+                grant = ("shell", "pm", "grant", check.PACKAGE, "android.permission." + permission)
+                calls.assert_any_call(*grant)
+                commands = [call.args for call in calls.call_args_list]
+                start = next(command for command in commands if command[:3] == ("shell", "am", "start"))
+                self.assertLess(commands.index(grant), commands.index(start))
+                self.assertNotIn("--grant-read-uri-permission", start)
+
+    def test_permission_failure_prevents_content_launch(self):
+        def device(*args, **kwargs):
+            if args == ("shell", "getprop", "ro.build.version.sdk"):
+                return "34\n"
+            if args[:3] == ("shell", "pm", "grant"):
+                raise subprocess.CalledProcessError(1, "permission grant")
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(check, "adb", side_effect=device) as calls:
+            with self.assertRaises(subprocess.CalledProcessError):
+                check.run_playback("content://media/external/video/media/42", "http://missing", Path(directory))
+            self.assertFalse(any(call.args[:3] == ("shell", "am", "start") for call in calls.call_args_list))
+
+    def test_diagnostic_and_cleanup_failures_preserve_the_playback_failure(self):
+        stops = 0
+
+        def device(*args, **kwargs):
+            nonlocal stops
+            if args == ("shell", "getprop", "ro.build.version.sdk"):
+                return "34\n"
+            if args[:3] == ("shell", "am", "force-stop"):
+                stops += 1
+                if stops == 2:
+                    raise subprocess.CalledProcessError(1, "force-stop")
+            if args == ("shell", "dumpsys", "activity", "permissions"):
+                raise OSError("permission diagnostic unavailable")
+            if args == ("logcat", "-d", "-v", "time"):
+                return "platform source details\n"
+            if args[:3] == ("logcat", "-d", "-v"):
+                return "playertest: FAIL source\n"
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(check, "adb", side_effect=device):
+            out = Path(directory)
+            with self.assertRaisesRegex(AssertionError, "playertest: FAIL source"):
+                check.run_playback("content://media/external/video/media/42", "http://missing", out)
+            self.assertEqual(stops, 2)
+            self.assertEqual((out / "logcat.txt").read_text(), "playertest: FAIL source\n")
+            self.assertEqual((out / "logcat-all.txt").read_text(), "platform source details\n")
+            self.assertTrue((out / "media-player-final.txt").exists())
+
+    def test_cleanup_failure_after_success_remains_a_failure(self):
+        stops = 0
+        logs = iter(("playertest: paused position_ms=1\nplayertest: seeked\n", "\n".join(
+            "playertest: " + marker for marker in (
+                "opened", "prepared round=0", "paused position_ms=1", "pause stable",
+                "seeked position_ms=1", "timestamp media_us=1", "completed round=0",
+                "prepared round=1", "completed round=1", "expected error", "passed"))))
+
+        def device(*args, **kwargs):
+            nonlocal stops
+            if args[:3] == ("shell", "am", "force-stop"):
+                stops += 1
+                if stops == 2:
+                    raise subprocess.CalledProcessError(1, "force-stop")
+            if args == ("exec-out", "screencap", "-p"):
+                return b"screen"
+            if args[:3] == ("logcat", "-d", "-v") and len(args) > 4:
+                return next(logs)
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(check, "adb", side_effect=device), \
+                patch.object(check, "verify_screen") as screen, \
+                patch.object(check.time, "sleep"):
+            with self.assertRaises(subprocess.CalledProcessError):
+                check.run_playback("http://source", "http://missing", Path(directory))
+            screen.assert_called_once_with(b"screen")
+            self.assertEqual(stops, 2)
+
     def test_insert_accepts_only_a_created_video_item(self):
         with patch.object(check, "adb", side_effect=["", "Row: 0 _id=42\n"]):
             self.assertEqual(check.insert_media(), "content://media/external/video/media/42")

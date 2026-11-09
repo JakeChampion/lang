@@ -1,25 +1,25 @@
 function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i32 {
-  let n = lens.len() / 2;
+  let n = lens.len() / 3;
   if (n == 0) {
     return 0;
   }
   let total = data.len();
   let named = addrs.len();
   // The table: one 64-byte mmsghdr per message, then per message a 16-byte
-  // iovec, a 32-byte sockaddr and a 24-byte control block, then the bytes
+  // iovec, a 32-byte sockaddr and a 48-byte control block, then the bytes
   // and the addresses packed. The box becomes an array only after the call,
   // because an array is released at its last use, and the kernel reads the
   // table during the call.
-  let slots = 17 * n + (total + 7) / 8 + (named + 7) / 8 + 1;
+  let slots = 20 * n + (total + 7) / 8 + (named + 7) / 8 + 1;
   let p = __raw_arr_box(slots + 1);
   __store_i64(p, slots as i64);
   let base = p + 8;
   let z = 0;
-  while (z < 17 * n) {
+  while (z < 20 * n) {
     __raw_store_ptr(base, z, 0 as usize);
     z += 1;
   }
-  let bytes = base + (136 * n) as usize;
+  let bytes = base + (160 * n) as usize;
   let j = 0;
   while (j < total) {
     __raw_store8(bytes, j, data[j]);
@@ -34,16 +34,18 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
   let extra = base + 64 * n;
   let lp = __raw_arr_ptr(lens);
   let off = 0;
+  let v4 = -1;
   let i = 0;
   while (i < n) {
-    let size = __raw_load_ptr(lp, 2 * i + 1) as i32;
-    let seg = __raw_load_ptr(lp, 2 * i + 2) as i32;
+    let size = __raw_load_ptr(lp, 3 * i + 1) as i32;
+    let seg = __raw_load_ptr(lp, 3 * i + 2) as i32;
+    let tos = __raw_load_ptr(lp, 3 * i + 3) as i32;
     if (size < 0 || off + size > total) {
       let dropped: i32[] = __raw_array(p);
       return -22;
     }
     let hdr = base + 64 * i;
-    let iov = extra + 72 * i;
+    let iov = extra + 96 * i;
     let sa = iov + 16;
     let cm = sa + 32;
     __raw_store_ptr(iov, 0, bytes + off as usize);
@@ -73,13 +75,31 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
       __raw_store_ptr(hdr, 0, sa);
       __raw_store_ptr(hdr, 1, salen as usize);
     }
+    let clen = 0;
     if (seg > 0) {
       __raw_store_ptr(cm, 0, 18 as usize);
       __raw_store_ptr(cm, 1, (17 as i64 | 103 as i64 << 32) as usize);
       __raw_store8(cm, 16, seg & 255);
       __raw_store8(cm, 17, seg >> 8 & 255);
+      clen = 24;
+    }
+    if (tos > 0) {
+      if (v4 < 0 || named >= 19 * (i + 1)) {
+        v4 = __fern_udp_v4_peer(fd, named >= 19 * (i + 1), ap + (19 * i) as usize, sa);
+      }
+      let t = cm + clen as usize;
+      __raw_store_ptr(t, 0, 20 as usize);
+      if (v4 == 1) {
+        __raw_store_ptr(t, 1, (1 as i64 << 32) as usize);
+      } else {
+        __raw_store_ptr(t, 1, (41 as i64 | 67 as i64 << 32) as usize);
+      }
+      __raw_store_ptr(t, 2, (tos & 255) as usize);
+      clen += 24;
+    }
+    if (clen > 0) {
       __raw_store_ptr(hdr, 4, cm);
-      __raw_store_ptr(hdr, 5, 24 as usize);
+      __raw_store_ptr(hdr, 5, clen as usize);
     }
     off += size;
     i += 1;

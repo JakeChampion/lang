@@ -111,7 +111,11 @@ def run_playback(uri, error_uri, out):
         command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
                    "--es", "uri", uri, "--es", "error_uri", error_uri]
         if uri.startswith("content://"):
-            command += ["--grant-read-uri-permission", "-d", uri]
+            # The shell owns the MediaStore fixture and cannot grant its URI.
+            sdk = int(adb("shell", "getprop", "ro.build.version.sdk").strip())
+            permission = "READ_MEDIA_VIDEO" if sdk >= 33 else "READ_EXTERNAL_STORAGE"
+            adb("shell", "pm", "grant", PACKAGE, "android.permission." + permission)
+            command += ["-d", uri]
         adb(*command)
         # Two playback rounds take about 12 seconds. The error round waits for
         # the retries of the platform's HTTP source, about 30 seconds more.
@@ -143,8 +147,27 @@ def run_playback(uri, error_uri, out):
         (out / "meminfo.txt").write_text(adb("shell", "dumpsys", "meminfo", PACKAGE))
         (out / "device.txt").write_text(adb("shell", "getprop", "ro.build.fingerprint"))
     finally:
+        playback_failed = sys.exc_info()[0] is not None
         (out / "logcat.txt").write_text(log)
-        adb("shell", "am", "force-stop", PACKAGE)
+        # Keep platform errors and URI grants before force-stop removes them.
+        for name, command in (
+            ("logcat-all.txt", ("logcat", "-d", "-v", "time")),
+            ("activity-permissions.txt", ("shell", "dumpsys", "activity", "permissions")),
+            ("media-player-final.txt", ("shell", "dumpsys", "media.player")),
+        ):
+            try:
+                details = adb(*command)
+                (out / name).write_text(details)
+                if name == "logcat-all.txt" and "playertest: FAIL" in log:
+                    print("\n".join(details.splitlines()[-160:]), flush=True)
+            except (OSError, subprocess.SubprocessError) as error:
+                print("Player diagnostic failed: " + name + ": " + str(error), flush=True)
+        try:
+            adb("shell", "am", "force-stop", PACKAGE)
+        except (OSError, subprocess.SubprocessError) as error:
+            if not playback_failed:
+                raise
+            print("Player cleanup failed: " + str(error), flush=True)
 
 
 def insert_media():
