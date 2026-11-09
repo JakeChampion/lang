@@ -1,0 +1,82 @@
+import "std/f64";
+
+function verify(a: i32, b: i32, c: i32, d: i32): boolean {
+  let lo = __f64x2_splat(0.0);
+  let hi = __f64x2_splat(0.0);
+  unsafe {
+    let p = __alloc(17);
+    __store_i32(p + 1 as usize, a);
+    __store_i32(p + 5 as usize, b);
+    __store_i32(p + 9 as usize, c);
+    __store_i32(p + 13 as usize, d);
+    lo = __f64x2_load_f32_ptr(p + 1 as usize);
+    hi = __f64x2_load_f32_ptr(p + 9 as usize);
+    let unchanged = __load_i32(p + 1 as usize) == a && __load_i32(p + 5 as usize) == b && __load_i32(p + 9 as usize) == c && __load_i32(p + 13 as usize) == d;
+    __free(p, 17);
+    if (!unchanged) {
+      return false;
+    }
+  }
+  let got: f64[] = [__f64x2_lane(lo, 0), __f64x2_lane(lo, 1), __f64x2_lane(hi, 0), __f64x2_lane(hi, 1)];
+  let want: f64[] = [f32_from_bits(a) as f64, f32_from_bits(b) as f64, f32_from_bits(c) as f64, f32_from_bits(d) as f64];
+  for i in 0..4 {
+    if (want[i].is_nan()) {
+      if (!got[i].is_nan()) {
+        return false;
+      }
+    } else if (f64_bits(got[i]) != f64_bits(want[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function changed_memory(): boolean {
+  unsafe {
+    let p = __alloc(8);
+    __store_i32(p, f32_bits(1.0 as f32));
+    __store_i32(p + 4 as usize, f32_bits(2.0 as f32));
+    let before = __f64x2_load_f32_ptr(p);
+    __store_i32(p, f32_bits(3.0 as f32));
+    __store_i32(p + 4 as usize, f32_bits(4.0 as f32));
+    let after = __f64x2_load_f32_ptr(p);
+    __free(p, 8);
+    return __f64x2_lane(before, 0) == 1.0 && __f64x2_lane(before, 1) == 2.0 && __f64x2_lane(after, 0) == 3.0 && __f64x2_lane(after, 1) == 4.0;
+  }
+}
+
+function main(): i32 {
+  if (!changed_memory()) {
+    return 3;
+  }
+  let edges: i32[] = [0, -2147483648, 1, -2147483647, 8388607, -2139095041, 8388608, -2139095040, 1065353216, -1082130432, 2139095039, -8388609, 2139095040, -8388608, 2143289344, -4194304, 2139095041, -8388607];
+  for i in 0..edges.len() {
+    if (!verify(edges[i], edges[(i + 1) % edges.len()], edges[(i + 2) % edges.len()], edges[(i + 3) % edges.len()])) {
+      return 1;
+    }
+  }
+  let seed = 1234567u32;
+  for i in 0..16384 {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    let a = seed;
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    let b = seed;
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    let c = seed;
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    let d = seed;
+    if (!verify(a as i32, b as i32, c as i32, d as i32)) {
+      return 2;
+    }
+  }
+  print("ok - exact eight-byte widening loads across IEEE edge cases and 65536 random lanes");
+  return 0;
+}

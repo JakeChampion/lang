@@ -1,6 +1,6 @@
 # Parser performance
 
-Status: [record] measurements from 2026-11-07.
+Status: [record] measurements from 2026-11-07 and diagnostic profiles from 2026-11-09.
 
 This change applies techniques from [Making Parsers Go Brr](https://howenyap.com/writings/making-parsers-go-brr/).
 The comparison base is `bb853ddd010dd12a8bc2aee8dcaf8383e0ae1705`.
@@ -126,6 +126,25 @@ On the fixed five-file corpus, the lexer decreases from 2,019,615,638 to 2,001,3
 The combined lexer and parser decrease from 5,403,658,355 to 5,386,513,375 instructions.
 These reductions are 0.9% and 0.3%, respectively.
 These runs use Valgrind 3.24.0 and the same native benchmark binaries.
+
+## Fresh diagnostic profiles
+
+The [frontend profiles](benchmarks/frontend-profile-2026-11-09/README.md) use library source `3a296b887c` and fixed input `12be8f1186`.
+The native harness processes five real compiler files 100 times per mode.
+The counter-free lexer and parser profiles contain 492 and 3,802 samples, respectively, with zero dropped samples.
+The emitted-assembly audit confirms that the allocation counter symbol is absent.
+Some parser stacks reach the 64-frame limit, which limits inclusive attribution.
+
+The counter-free parser profile attributes 19.86% of exclusive samples to boxed array reads.
+Lookahead calls also appear, but these samples do not prove that lookahead causes all boxing.
+The archive retains the earlier counter-enabled profiles with their instrumentation correction.
+Those profiles do not represent the counter-free allocator paths.
+
+The Go lexer profile covers 391 compiler and driver files, with 15,281,580 bytes and no excluded file.
+The parser profile covers `compiler/lexer.fern` and includes tokenization.
+The operator-prefix test line accounts for about 37.74% of cumulative CPU time in the lexer profile.
+Dispatch on the first byte is a candidate for a later experiment with longest-match, position, and error controls.
+These diagnostic profiles establish no speedup or external rank.
 
 ## Reproduction
 

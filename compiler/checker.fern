@@ -496,7 +496,7 @@ function is_lane_builtin(name: string): boolean {
   let names: string[] = [
     "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
-    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
@@ -5132,6 +5132,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   }
   if (!is_method && name == "cell_new") {
     return cell_new_type(c, s);
+  }
+  if (!is_method && name == "share_unchecked" && c.args.len() == 1) {
+    return check_expr(c.args[0], s);
   }
   if (!is_method && parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin_type(name, c, s);
@@ -10002,13 +10005,13 @@ pub function unsafe_intrinsics(): string[] {
   return [
     "__alloc", "__alloc_reuse", "__alloc_u8_uninit", "__free",
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
-    "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr",
+    "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
     "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
     "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__user_run",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
-    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
+    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "share_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
     "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
@@ -17965,7 +17968,7 @@ function registered_intrinsics(): string[] {
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
     "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
-    "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
+    "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
   ];
 }
@@ -18832,6 +18835,26 @@ function ow_is_fresh_literal(e: ast.Expr): boolean {
   }
 }
 
+// The value of `unsafe { e }`, a value block of one value in an unsafe block.
+function ow_unsafe_value(c: ast.ExprCall): Option[ast.Expr] {
+  let ast.ExprLambda(lm) = c.callee else {
+    return None;
+  };
+  if (lm.origin != parser.ORIGIN_BLOCK || c.args.len() != 0 || lm.body.len() != 1) {
+    return None;
+  }
+  let ast.StmtIf(block) = lm.body[0] else {
+    return None;
+  };
+  if (block.origin != "unsafe" || block.then_body.len() != 1) {
+    return None;
+  }
+  let ast.StmtReturn(r) = block.then_body[0] else {
+    return None;
+  };
+  return Some(r.value);
+}
+
 // `with`, `append` or `truncate` on an array owns its elements when they hold
 // no handle, or when the receiver and the new element are owned.
 function ow_array_update_owned(c: ast.ExprCall, mfa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
@@ -19041,9 +19064,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {
+      if let Some(tail) = ow_unsafe_value(c) {
+        return ow_is_owned_expr(tail, ctx);
+      }
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
+          return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
           if (ow_array_update_owned(c, mfa, ctx)) {

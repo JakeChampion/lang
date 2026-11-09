@@ -7760,7 +7760,7 @@ function ssa_vselect(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 }
 
 function ssa_lane_memory(ins: ssa.SInst, reg_of: i32[], b: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (b == "vload") {
+  if (b == "vload" || b == "vload_f32") {
     return ssa_vload(ins, reg_of, s);
   }
   if (b == "vstore") {
@@ -7772,7 +7772,8 @@ function ssa_lane_memory(ins: ssa.SInst, reg_of: i32[], b: string, s: asmcore.Em
 function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_read(reg_of, ins.args[0], "%rcx", s);
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    movupd (" + ssa_src(reg_of, ins.args[0], "%rcx") + "), " + d + "\n");
+  let mnemonic = if (ins.str == "vload_f32") { "cvtps2pd" } else { "movupd" };
+  s = s.write("    " + mnemonic + " (" + ssa_src(reg_of, ins.args[0], "%rcx") + "), " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 

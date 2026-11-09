@@ -1154,7 +1154,7 @@ pub function lane_param_mark(): string {
 }
 
 pub function lane_memory(b: string): boolean {
-  return util.has_str(["vload", "vstore", "vget", "vset"], b);
+  return util.has_str(["vload", "vload_f32", "vstore", "vget", "vset"], b);
 }
 
 pub function lane_result(ins: SInst): boolean {

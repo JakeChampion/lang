@@ -12,6 +12,8 @@ The name follows the header and ends with a NUL, and the name size counts that N
 
 A path in an archive has no `/` at its start, and a tool can write it with `./` at its start. `find` and `file` compare the paths without these prefixes, so `/init`, `./init` and `init` name the same entry.
 
+`children` gives the entries directly in a directory, in the order of the archive. The empty path and `/` are the root. Thus a writer must put each directory in the archive, as `find | cpio` does. A directory with no entry of its own is not in the listing of its parent.
+
 ## Contracts
 
 `parse` refuses an archive with a bad magic, or with a field that is not 8 hexadecimal digits. It refuses a name that is empty, that does not end with a NUL, or that is not UTF-8. It also refuses an entry that ends past the bytes, and an archive with no trailer.
@@ -222,6 +224,34 @@ pub function (a: Archive) find(path: string): Option[Entry] {
     }
   }
   return None;
+}
+
+// The entries directly in the directory `dir`.
+pub function (a: Archive) children(dir: string): Entry[] {
+  let want = clean(dir);
+  while (want.ends_with("/")) {
+    want = slice_unchecked(want, 0, want.len() - 1) + "";
+  }
+  let out: Entry[] = [];
+  for e in a.entries {
+    if (parent(clean(e.name)) == want && clean(e.name) != want) {
+      out = out.append(e);
+    }
+  }
+  return out;
+}
+
+// The path before the last "/", or "" for a path with no "/".
+function parent(path: string): string {
+  let b = path.as_bytes();
+  let i = b.len() - 1;
+  while (i >= 0) {
+    if (b[i] == 47 as u8) {
+      return slice_unchecked(path, 0, i) + "";
+    }
+    i -= 1;
+  }
+  return "";
 }
 
 // A copy of the bytes of `e`.

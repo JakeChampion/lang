@@ -664,11 +664,11 @@ const x86LabelsSelfTestMain = `
 function main(): i32 {
     // forward conditional: cmp then jge done (placeholder, resolved later).
     let a: X86Asm = x86_asm_new();
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 42));
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rcx(), 17));
-    gas__push_arr(a.code, x86_cmp_r64_r64([], x86_rax(), x86_rcx()));
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rax(), 42));
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rcx(), 17));
+    util__push_bytes(a.code, x86_cmp_r64_r64([], x86_rax(), x86_rcx()));
     a = x86_jcc_label(a, x86_cc_ge(), "done");
-    gas__push_arr(a.code, x86_mov_r64_r64([], x86_rax(), x86_rcx()));
+    util__push_bytes(a.code, x86_mov_r64_r64([], x86_rax(), x86_rcx()));
     a = x86_label(a, "done");
     a = x86_resolve(a);
     if (a.text.len() != 22 || a.text[13] as i32 != 15 || a.text[14] as i32 != 141) { return 1; }
@@ -677,7 +677,7 @@ function main(): i32 {
     // backward conditional: label loop, body, jne loop, resolve.
     let b: X86Asm = x86_asm_new();
     b = x86_label(b, "loop");
-    gas__push_arr(b.code, x86_add_r64_imm32([], x86_rax(), 6));
+    util__push_bytes(b.code, x86_add_r64_imm32([], x86_rax(), 6));
     b = x86_jcc_label(b, x86_cc_ne(), "loop");
     b = x86_resolve(b);
     if (b.text.len() != 13 || b.text[7] as i32 != 15 || b.text[8] as i32 != 133) { return 3; }
@@ -686,7 +686,7 @@ function main(): i32 {
     // forward call: call sub, ret, label sub, resolve.
     let c: X86Asm = x86_asm_new();
     c = x86_call_label(c, "sub");
-    gas__push_arr(c.code, x86_ret([]));
+    util__push_bytes(c.code, x86_ret([]));
     c = x86_label(c, "sub");
     c = x86_resolve(c);
     if (c.text.len() != 6 || c.text[0] as i32 != 232 || c.text[1] as i32 != 1 || c.text[2] as i32 != 0) { return 5; }
@@ -700,7 +700,7 @@ function main(): i32 {
     // disp32 = 16 - (3+4) = 9.
     let d: X86Asm = x86_asm_new();
     d = x86_lea_rip_label(d, x86_rax(), "S0");
-    gas__push_arr(d.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0));
+    util__push_bytes(d.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0));
     d = x86_rodata_label(d, "S0", 1);
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
@@ -722,9 +722,9 @@ function main(): i32 {
     // with the second one — so this pins the insertion-order walk, not a
     // property of the input.
     let f: X86Asm = x86_asm_new();
-    gas__push_arr(f.code, x86_ret([]));
+    util__push_bytes(f.code, x86_ret([]));
     f = x86_label(f, "dup");
-    gas__push_arr(f.code, x86_ret([]));
+    util__push_bytes(f.code, x86_ret([]));
     f = x86_label(f, "dup");
     if (x86_label_off(f, "dup") != 1) { return 15; }
 
@@ -758,18 +758,18 @@ const x86ElfLabelDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();
     a = x86_call_label(a, "compute");              // forward call
-    gas__push_arr(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax())); // exit code = result
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
-    gas__push_arr(a.code, x86_syscall([]));
+    util__push_bytes(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax())); // exit code = result
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
+    util__push_bytes(a.code, x86_syscall([]));
     a = x86_label(a, "compute");
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 0)); // acc = 0
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rcx(), 7)); // counter = 7
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rax(), 0)); // acc = 0
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rcx(), 7)); // counter = 7
     a = x86_label(a, "loop");
-    gas__push_arr(a.code, x86_add_r64_imm32([], x86_rax(), 6)); // acc += 6
-    gas__push_arr(a.code, x86_sub_r64_imm32([], x86_rcx(), 1)); // counter -= 1
-    gas__push_arr(a.code, x86_cmp_r64_imm32([], x86_rcx(), 0));
+    util__push_bytes(a.code, x86_add_r64_imm32([], x86_rax(), 6)); // acc += 6
+    util__push_bytes(a.code, x86_sub_r64_imm32([], x86_rcx(), 1)); // counter -= 1
+    util__push_bytes(a.code, x86_cmp_r64_imm32([], x86_rcx(), 0));
     a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
-    gas__push_arr(a.code, x86_ret([]));
+    util__push_bytes(a.code, x86_ret([]));
     a = x86_resolve(a);
     let bin: i32[] = elf_static_executable_x86(elf_cat_u8([], a.text));
     write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });
@@ -802,10 +802,10 @@ const x86ElfRodataDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();
     a = x86_lea_rip_label(a, x86_rax(), "answer");          // rax = &answer
-    gas__push_arr(a.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0)); // rax = *answer
-    gas__push_arr(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax()));  // exit code = answer
-    gas__push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
-    gas__push_arr(a.code, x86_syscall([]));
+    util__push_bytes(a.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0)); // rax = *answer
+    util__push_bytes(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax()));  // exit code = answer
+    util__push_bytes(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
+    util__push_bytes(a.code, x86_syscall([]));
     a = x86_rodata_label(a, "answer", 1);
     a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);

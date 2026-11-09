@@ -8809,7 +8809,7 @@ pub function builtin_function_names(): string[] {
     "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
     "clock_resolution", "clock_set",
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
-    "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
+    "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked", "share_unchecked",
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
     "cell_new", "__send_copy", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",

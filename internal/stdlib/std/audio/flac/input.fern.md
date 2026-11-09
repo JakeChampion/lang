@@ -144,7 +144,8 @@ function metadata_header(own state: Input, read: (i32) => Result[u8[], IoError])
   }
   let last = (bytes[0] as i32 & 128) != 0;
   let next = consume(ready, 4)?;
-  return pending(Input { ...next, remaining: remaining, last_metadata: last, metadata_bytes: next.metadata_bytes + total, stage: SkipMetadata });
+  let seen = next.metadata_bytes + total;
+  return pending(Input { ...next, remaining: remaining, last_metadata: last, metadata_bytes: seen, stage: SkipMetadata });
 }
 
 function skip_metadata(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {

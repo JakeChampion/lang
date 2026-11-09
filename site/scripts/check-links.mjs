@@ -70,8 +70,21 @@ function checkDist(dist) {
   return { checked, broken };
 }
 
+// A network error is not a broken link, so it gets two more attempts.
+// An HTTP status, such as a 404, is the answer and gets none.
+export async function fetchRetry(url, init, attempts = 3, fetchImpl = fetch) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fetchImpl(url, init);
+    } catch (e) {
+      if (i >= attempts) throw e;
+      await new Promise((r) => setTimeout(r, 250 * i));
+    }
+  }
+}
+
 async function fetchText(url) {
-  const res = await fetch(url, { redirect: "follow" });
+  const res = await fetchRetry(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   return res.text();
 }
@@ -106,7 +119,7 @@ async function checkSite(site) {
   const urls = [...firstSeen.keys()];
   for (let i = 0; i < urls.length; i += 16) {
     await Promise.all(urls.slice(i, i + 16).map(async (url) => {
-      const res = await fetch(url, { method: "HEAD", redirect: "follow" }).catch((e) => ({ status: String(e) }));
+      const res = await fetchRetry(url, { method: "HEAD", redirect: "follow" }).catch((e) => ({ status: String(e) }));
       if (res.status !== 200) broken.set(`${url} (${res.status})`, firstSeen.get(url));
     }));
   }

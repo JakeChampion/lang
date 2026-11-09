@@ -356,16 +356,18 @@ unsafe function store_pcm_narrow[const CONFIG: i32](destination: usize, samples:
       let right = if (stereo) { a - b } else { a };
       let l = __f32x4_min(__f32x4_max(left * multiplier, lower), upper);
       let r = __f32x4_min(__f32x4_max(right * multiplier, lower), upper);
-      let rounded_l = __f32x4_round(l);
-      let rounded_r = __f32x4_round(r);
+      // The bias packs nearest-even integers within the PCM8 and PCM16 bounds.
+      // Exact half-integers use the double-precision fallback.
+      let lwords = l + bias;
+      let rwords = r + bias;
+      let rounded_l = lwords - bias;
+      let rounded_r = rwords - bias;
       // A float sum can change integer rounding only at an exact half-integer.
       let unambiguous = __f32x4_bitmask(__f32x4_ne(__f32x4_abs(l - rounded_l), half)) == 15
         && __f32x4_bitmask(__f32x4_ne(__f32x4_abs(r - rounded_r), half)) == 15;
       let finite = __f32x4_bitmask(__f32x4_lt(__f32x4_abs(a), infinity)) == 15
         && __f32x4_bitmask(__f32x4_lt(__f32x4_abs(b), infinity)) == 15;
       if (unambiguous && finite) {
-        let lwords = rounded_l + bias;
-        let rwords = rounded_r + bias;
         if (stereo) {
           store_narrow4[CONFIG](out, __f32x4_zip_lo(lwords, rwords));
           store_narrow4[CONFIG](out + (bits / 2) as usize, __f32x4_zip_hi(lwords, rwords));
@@ -398,8 +400,8 @@ unsafe function store_pcm24_tiled[const CONFIG: i32](destination: usize, samples
     let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
     let out = destination;
     while (first < end) {
-      let a = __f64x2_of(get(first, 0), get(first, 1));
-      let b = __f64x2_of(get(second, 0), get(second, 1));
+      let a = __f64x2_load_f32_ptr(first);
+      let b = __f64x2_load_f32_ptr(second);
       valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(a), infinity));
       valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(b), infinity));
       let left = if (stereo) { a + b } else { a };

@@ -1,0 +1,62 @@
+{
+  "recorded_at": "2026-11-09T18:16:20.050513+00:00",
+  "go_library_source": "3a296b887ccb1c879743cce8a2a67351c548481f",
+  "fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "toolchain": "go version go1.27.3 linux/amd64",
+  "binary_sha256": {
+    "go-lexer.test": "1a985320f0b92434ddb5ec559fdecfe512ea9fd75b219e6e29be2bd21ff2a181",
+    "go-parser.test": "26572aaffc00bab11acb8b9563df789d28446f89eaf2e74abce3be6f1ce67391"
+  },
+  "build_commands": [
+    {
+      "args": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/workspace/lang/build/parser-research-20261109/go-lexer.test",
+        "./internal/syntax/lexer"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109"
+    },
+    {
+      "args": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/workspace/lang/build/parser-research-20261109/go-parser.test",
+        "./internal/syntax/parser"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109"
+    }
+  ],
+  "profile_commands": [
+    {
+      "args": [
+        "/workspace/lang/build/parser-research-20261109/go-lexer.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkTokenizeSelfHostCorpus$",
+        "-test.benchtime=10s",
+        "-test.count=1",
+        "-test.benchmem",
+        "-test.cpuprofile=/workspace/lang/build/parser-research-20261109/go-lexer.cpu.pprof"
+      ],
+      "cwd": "/workspace/lang-semantic-base-20261109/internal/syntax/lexer"
+    },
+    {
+      "args": [
+        "/workspace/lang/build/parser-research-20261109/go-parser.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkParseCompilerLexer$",
+        "-test.benchtime=10s",
+        "-test.count=1",
+        "-test.benchmem",
+        "-test.cpuprofile=/workspace/lang/build/parser-research-20261109/go-parser.cpu.pprof"
+      ],
+      "cwd": "/workspace/lang-semantic-base-20261109/internal/syntax/parser"
+    }
+  ],
+  "note": "CPU profiles include benchmark setup and calibration. Raw benchmark rates are diagnostic shared-host observations, not comparison results. The native and Go corpora differ.",
+  "concurrency": "A separate Callgrind compiler comparison was active."
+}

@@ -71,6 +71,7 @@ var stdModuleReach = map[string]string{
 	"std/virtio":        "mmio,privileged",
 	"std/virtio_net":    "mmio,privileged",
 	"std/virtio_blk":    "mmio,privileged",
+	"std/virtio_rng":    "mmio,privileged",
 	"std/ordmap":        "",
 	"std/ordset":        "",
 	"std/pagetable":     "privileged",

@@ -1,0 +1,76 @@
+import "std/video/ivf";
+import "std/video/ivf/input";
+import "std/video/frame";
+
+pub struct Counts { calls: i32, largest: i32, position: i32 }
+
+pub struct Memory { read: (i32) => Result[u8[], IoError], counts: () => Counts }
+
+pub struct Run { header: Option[ivf.Header], packets: input.Packet[], offset: i64, calls: i32, largest: i32 }
+
+pub function copy(bytes: [u8]): u8[] {
+  let output: u8[] = [];
+  for byte in bytes {
+    output = output.append(byte);
+  }
+  return output;
+}
+
+pub function memory(bytes: u8[], short: i32): Memory {
+  let at = cell_new(0);
+  let calls = cell_new(0);
+  let largest = cell_new(0);
+  let read = (requested: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    if (requested > largest.get()) {
+      largest.set(requested);
+    }
+    let count = requested;
+    if (short > 0 && count > short) {
+      count = short;
+    }
+    if (count > bytes.len() - at.get()) {
+      count = bytes.len() - at.get();
+    }
+    let start = at.get();
+    at.set(start + count);
+    return Ok(copy(bytes[start:start + count]));
+  };
+  return Memory { read: read, counts: (): Counts => Counts { calls: calls.get(), largest: largest.get(), position: at.get() } };
+}
+
+pub function run(bytes: u8[], short: i32, limits: input.Limits): Result[Run, input.ReadError] {
+  let source = memory(bytes, short);
+  let stream = input.create(limits)?;
+  let header: Option[ivf.Header] = None;
+  let packets: input.Packet[] = [];
+  loop {
+    let before = source.counts();
+    let step = stream.step_with(source.read)?;
+    stream = step.stream;
+    if (source.counts().calls - before.calls > 1 || stream.buffer.bytes.len() > limits.input.max_buffer_bytes) {
+      return Err(input.ReadVideo(frame.State));
+    }
+    match (step.event) {
+      input.Header(value) => {
+        header = Some(value);
+      },
+      input.PacketReady(value) => {
+        packets = packets.append(value);
+      },
+      input.Waiting => {},
+      input.End => {
+        break;
+      }
+    }
+  }
+  let before = source.counts();
+  let step = stream.step_with(source.read)?;
+  if let input.End = step.event {} else {
+    return Err(input.ReadVideo(frame.State));
+  }
+  if (source.counts().calls != before.calls || step.stream.operations != before.calls) {
+    return Err(input.ReadVideo(frame.State));
+  }
+  return Ok(Run { header: header, packets: packets, offset: step.stream.offset, calls: before.calls, largest: before.largest });
+}

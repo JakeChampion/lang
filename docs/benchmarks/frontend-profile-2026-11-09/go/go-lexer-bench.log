@@ -1,0 +1,6 @@
+goos: linux
+goarch: amd64
+pkg: github.com/jakechampion/lang/internal/syntax/lexer
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkTokenizeSelfHostCorpus-4   	      19	 618356022 ns/op	  24.71 MB/s	256013330 B/op	   33304 allocs/op
+PASS

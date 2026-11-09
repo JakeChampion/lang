@@ -1,0 +1,106 @@
+{
+  "lex": {
+    "allocator_samples": 119,
+    "observed_parent": [
+      [
+        "__fn_lexer__tokenize",
+        71
+      ],
+      [
+        "__fn_main",
+        47
+      ],
+      [
+        "__fern_arr_box",
+        1
+      ]
+    ],
+    "lookahead_inclusive_allocator_samples": []
+  },
+  "parse": {
+    "allocator_samples": 997,
+    "observed_parent": [
+      [
+        "__fn_main",
+        299
+      ],
+      [
+        "__fn_lexer__tokenize",
+        256
+      ],
+      [
+        "__fn_parser__parse_primary_nested",
+        141
+      ],
+      [
+        "__fn_parser__settle_expr",
+        42
+      ],
+      [
+        "__fn_parser__settle_stmt",
+        31
+      ],
+      [
+        "__fn_parser__parse_stmt_at",
+        23
+      ],
+      [
+        "__fn_parser__parse_binary_nested",
+        22
+      ],
+      [
+        "__fn_parser__settle_block",
+        18
+      ],
+      [
+        "__fn_parser__parse_primary",
+        15
+      ],
+      [
+        "__fn_parser__parse_stmt_nested",
+        14
+      ],
+      [
+        "__fn_parser__parse_module_flagged",
+        12
+      ],
+      [
+        "__fn_parser__parse_block_body_mode",
+        12
+      ],
+      [
+        "__fern_arr_push_owned",
+        12
+      ],
+      [
+        "__fn_parser__parse_let_stmt",
+        11
+      ],
+      [
+        "__fn_parser__parse_func_decl",
+        11
+      ],
+      [
+        "__fn_parser__parse_type_name",
+        10
+      ],
+      [
+        "__fn_parser__parse_pattern",
+        9
+      ],
+      [
+        "__fn_parser__parse_expression_stmt",
+        8
+      ],
+      [
+        "__fn_parser__parse_binary",
+        7
+      ],
+      [
+        "__fn_parser__parse_if_stmt",
+        7
+      ]
+    ],
+    "lookahead_inclusive_allocator_samples": []
+  }
+}

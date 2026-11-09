@@ -328,7 +328,7 @@ selfhost/x86-64-linux/sort_inplace.emit	1534
 selfhost/x86-64-linux/sort_ints.emit	1774
 selfhost/x86-64-linux/sort_strings.emit	3098
 selfhost/x86-64-linux/string_build.emit	1926
-selfhost/x86-64-linux/string_count_byte.emit	1271
+selfhost/x86-64-linux/string_count_byte.emit	1321
 selfhost/x86-64-linux/string_find_byte.emit	1593
 selfhost/x86-64-linux/string_rfind_byte.emit	1737
 selfhost/x86-64-linux/string_scan.emit	2166
@@ -361,3 +361,6 @@ selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 selfhost/x86-64-linux/video_qtrle.emit 5680
 selfhost/arm64-linux/video_qtrle.emit 6027
 selfhost/wasm32-wasi/video_qtrle.emit 6814
+# 2026-11-09: PR #14917, CI job 129321185181. The byte-count kernel from
+# merged #14910 emits 1321 x86-64 lines on both parent 97af82fc and IVF head
+# cbed65e0. Pin the measured value without a tolerance change.

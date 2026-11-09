@@ -1,4 +1,4 @@
-// Unit tests for the build mode of scripts/check-links.mjs.
+// Unit tests for scripts/check-links.mjs.
 
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { fileFor, linksIn, pagePathOf, sitePath } from "../scripts/check-links.mjs";
+import { fetchRetry, fileFor, linksIn, pagePathOf, sitePath } from "../scripts/check-links.mjs";
 
 test("reads href and src values without the fragment or query", () => {
   assert.deepEqual(
@@ -42,4 +42,32 @@ test("gives the path a build file serves", () => {
 
 test("does not read links out of a script", () => {
   assert.deepEqual(linksIn('<a href="/a/">a</a><script>x = \'<a href="\' + url + \'">\';</script>'), ["/a/"]);
+});
+
+test("tries a request again after a network error", async () => {
+  let calls = 0;
+  const flaky = async () => {
+    calls++;
+    if (calls < 3) throw new TypeError("fetch failed");
+    return { status: 200 };
+  };
+  assert.equal((await fetchRetry("u", {}, 3, flaky)).status, 200);
+  assert.equal(calls, 3);
+});
+
+test("stops after the last attempt, and does not try an HTTP status again", async () => {
+  let calls = 0;
+  const down = async () => {
+    calls++;
+    throw new TypeError("fetch failed");
+  };
+  await assert.rejects(fetchRetry("u", {}, 2, down), /fetch failed/);
+  assert.equal(calls, 2);
+  calls = 0;
+  const missing = async () => {
+    calls++;
+    return { status: 404 };
+  };
+  assert.equal((await fetchRetry("u", {}, 3, missing)).status, 404);
+  assert.equal(calls, 1);
 });

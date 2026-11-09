@@ -1,0 +1,193 @@
+Total: 26.47s
+ROUTINE ======================== github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).next in /workspace/lang-semantic-liveness-20261109/internal/syntax/lexer/lexer.go
+     6.63s     18.12s (flat, cum) 68.45% of Total
+     180ms      180ms    369:func (l *lexer) next() (Token, error) {
+         .      710ms    370:	l.skipTrivia()
+      90ms       90ms    371:	if l.i >= len(l.src) {
+         .          .    372:		return Token{Kind: EOF, Pos: l.pos()}, nil
+         .          .    373:	}
+         .          .    374:
+         .       70ms    375:	start := l.pos()
+         .       20ms    376:	r, _ := l.peek()
+         .          .    377:
+      20ms       20ms    378:	if r == 'f' && l.i+1 < len(l.src) && l.src[l.i+1] == '"' {
+         .          .    379:		l.advance()
+         .          .    380:		parts, err := l.scanFString(start)
+         .          .    381:		if err != nil {
+         .          .    382:			return Token{}, err
+         .          .    383:		}
+         .          .    384:		return Token{Kind: FString, Pos: start, fparts: &parts}, nil
+         .          .    385:	}
+         .          .    386:
+      20ms       20ms    387:	if r == 'b' && l.i+1 < len(l.src) && l.src[l.i+1] == '\'' {
+         .          .    388:		return l.scanQuoted(start, true)
+         .          .    389:	}
+         .          .    390:
+         .          .    391:	if r == '\'' {
+         .          .    392:		return l.scanQuoted(start, false)
+         .          .    393:	}
+         .          .    394:
+         .      110ms    395:	if asciiIdentStart(r) {
+         .          .    396:		begin := l.i
+     380ms      770ms    397:		for l.i < len(l.src) && asciiIdentCont(rune(l.src[l.i])) {
+     100ms      470ms    398:			l.advance()
+         .          .    399:		}
+      70ms       70ms    400:		text := l.src[begin:l.i]
+         .          .    401:		kind := Ident
+      30ms      1.14s    402:		if keywords[text] {
+         .          .    403:			kind = Keyword
+         .          .    404:		}
+      70ms       70ms    405:		return Token{Kind: kind, Text: text, Pos: start}, nil
+         .          .    406:	}
+         .          .    407:
+         .       10ms    408:	if asciiDigit(r) {
+         .          .    409:		begin := l.i
+         .          .    410:		prefixed := false
+      60ms       60ms    411:		if l.src[l.i] == '0' && l.i+1 < len(l.src) && (l.src[l.i+1] == 'x' || l.src[l.i+1] == 'X') {
+         .          .    412:			prefixed = true
+         .          .    413:			l.advance()
+         .          .    414:			l.advance()
+         .          .    415:			hexDigits := l.i
+         .          .    416:			if err := l.scanDigits(start, 16); err != nil {
+         .          .    417:				return Token{}, err
+         .          .    418:			}
+         .          .    419:			if l.i == hexDigits {
+         .          .    420:				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x", Numeric: true}
+         .          .    421:			}
+      20ms       30ms    422:		} else if base := radixPrefix(l.src, l.i); base != 0 {
+         .          .    423:			prefixed = true
+         .          .    424:			prefix := l.src[l.i : l.i+2]
+         .          .    425:			l.advance()
+         .          .    426:			l.advance()
+         .          .    427:			digits := l.i
+         .          .    428:			if err := l.scanDigits(start, base); err != nil {
+         .          .    429:				return Token{}, err
+         .          .    430:			}
+         .          .    431:			if l.i == digits {
+         .          .    432:				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer literal needs at least one digit after %s", prefix), Numeric: true}
+         .          .    433:			}
+         .          .    434:			if l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
+         .          .    435:				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid digit %q in a %s literal", l.src[l.i], prefix), Numeric: true}
+         .          .    436:			}
+         .      150ms    437:		} else if err := l.scanDigits(start, 10); err != nil {
+         .          .    438:			return Token{}, err
+         .          .    439:		}
+         .          .    440:		isFloat := false
+      20ms       20ms    441:		if !prefixed && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && asciiDigit(rune(l.src[l.i+1])) {
+         .          .    442:			isFloat = true
+         .          .    443:			l.advance()
+         .          .    444:			if err := l.scanDigits(start, 10); err != nil {
+         .          .    445:				return Token{}, err
+         .          .    446:			}
+         .          .    447:		}
+      10ms       10ms    448:		if !prefixed && !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
+         .          .    449:			j := l.i + 1
+         .          .    450:			if j < len(l.src) && (l.src[j] == '+' || l.src[j] == '-') {
+         .          .    451:				j++
+         .          .    452:			}
+         .          .    453:			if j < len(l.src) && asciiDigit(rune(l.src[j])) {
+         .          .    454:				isFloat = true
+         .          .    455:				l.advance()
+         .          .    456:				if l.src[l.i] == '+' || l.src[l.i] == '-' {
+         .          .    457:					l.advance()
+         .          .    458:				}
+         .          .    459:				if err := l.scanDigits(start, 10); err != nil {
+         .          .    460:					return Token{}, err
+         .          .    461:				}
+         .          .    462:			}
+         .          .    463:		}
+         .          .    464:		text := l.src[begin:l.i]
+         .          .    465:		suffix := ""
+         .          .    466:		var suffixID uint8
+         .          .    467:		if l.i < len(l.src) {
+         .          .    468:			ch := l.src[l.i]
+      20ms       20ms    469:			if ch == 'i' || ch == 'u' || ch == 'f' {
+         .          .    470:				sBegin := l.i
+         .          .    471:				l.advance()
+      20ms       20ms    472:				if strings.HasPrefix(l.src[sBegin:], "usize") {
+         .          .    473:					for l.i < sBegin+len("usize") {
+         .          .    474:						l.advance()
+         .          .    475:					}
+         .          .    476:				}
+         .          .    477:				for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
+         .          .    478:					l.advance()
+         .          .    479:				}
+         .          .    480:				suffix = l.src[sBegin:l.i]
+         .          .    481:				suffixID = numericSuffixIndex(suffix)
+         .          .    482:				if suffixID == 0 {
+         .          .    483:					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown numeric suffix %q on %q", suffix, text), Numeric: true}
+         .          .    484:				}
+         .          .    485:				if isFloat && suffix[0] != 'f' {
+         .          .    486:					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer suffix %q on float literal %q", suffix, text), Numeric: true}
+         .          .    487:				}
+         .          .    488:			}
+         .          .    489:		}
+         .          .    490:		if !isFloat && suffix != "" && suffix[0] == 'f' {
+         .          .    491:			isFloat = true
+         .          .    492:		}
+         .          .    493:		kind := Number
+         .          .    494:		if isFloat {
+         .          .    495:			kind = Float
+         .          .    496:		}
+      20ms       20ms    497:		return Token{Kind: kind, Text: text, Pos: start, suffix: suffixID}, nil
+         .          .    498:	}
+         .          .    499:
+      10ms       10ms    500:	if r == '"' {
+         .       20ms    501:		l.advance()
+      10ms       10ms    502:		begin := l.i
+         .          .    503:		var b strings.Builder
+         .          .    504:		escaped := false
+     150ms      150ms    505:		for l.i < len(l.src) && rune(l.src[l.i]) != '"' {
+         .          .    506:			c := rune(l.src[l.i])
+      20ms       20ms    507:			if c == '\n' {
+         .          .    508:				return Token{}, &Error{Pos: start, Msg: "newline inside string literal"}
+         .          .    509:			}
+         .          .    510:			if c == '\\' {
+         .          .    511:				if !escaped {
+         .       60ms    512:					b.WriteString(l.src[begin:l.i])
+         .          .    513:					escaped = true
+         .          .    514:				}
+      10ms       20ms    515:				v, err := l.scanQuotedEscape(start, false, "string")
+         .          .    516:				if err != nil {
+         .          .    517:					return Token{}, err
+         .          .    518:				}
+         .       20ms    519:				b.WriteRune(rune(v))
+         .          .    520:				continue
+         .          .    521:			}
+         .          .    522:			if escaped {
+         .       50ms    523:				b.WriteByte(l.src[l.i])
+         .          .    524:			}
+         .      100ms    525:			l.advance()
+         .          .    526:		}
+         .          .    527:		if l.i >= len(l.src) {
+         .          .    528:			return Token{}, &Error{Pos: start, Msg: "unterminated string literal"}
+         .          .    529:		}
+      10ms       10ms    530:		text := l.src[begin:l.i]
+         .          .    531:		if escaped {
+         .          .    532:			text = b.String()
+         .          .    533:		}
+         .          .    534:		l.advance()
+         .          .    535:		return Token{Kind: String, Text: text, Pos: start}, nil
+         .          .    536:	}
+         .          .    537:
+        2s      2.03s    538:	for _, p := range multiPunct {
+     1.94s      9.99s    539:		if strings.HasPrefix(l.src[l.i:], p) {
+     300ms      300ms    540:			for range p {
+         .       10ms    541:				l.advance()
+         .          .    542:			}
+      10ms       10ms    543:			return Token{Kind: Punct, Text: p, Pos: start}, nil
+         .          .    544:		}
+         .          .    545:	}
+         .          .    546:
+     320ms      320ms    547:	switch r {
+     500ms      510ms    548:	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '~', '&', '|', '^', '?', '.', '@':
+         .      170ms    549:		l.advance()
+     180ms      190ms    550:		return Token{Kind: Punct, Text: l.src[l.i-1 : l.i], Pos: start}, nil
+         .          .    551:	}
+         .          .    552:
+      40ms       40ms    553:	return Token{}, l.badCharError(start)
+         .          .    554:}
+         .          .    555:
+         .          .    556:func (l *lexer) badCharError(start ast.Position) error {
+         .          .    557:	r, _ := utf8.DecodeRuneInString(l.src[l.i:])
+         .          .    558:	if unicode.IsLetter(r) || unicode.IsDigit(r) {

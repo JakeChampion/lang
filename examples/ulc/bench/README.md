@@ -1,11 +1,175 @@
 # ULC benchmarks
 
-Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
+These FLOAT32/VBR measurements date from 2026-11-08 on an Intel Xeon Platinum 8573C with a four-CPU container quota.
 The FLOAT32/VBR suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
 The geometric mean of C/Fern ratios is 1.374×, with equal weights for all cases.
 Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
+
+## Constant masks and narrow PCM bias
+
+Source `fa46bf036c3a1822289f37ef79ae776d6bb40325` folds constant bitwise masks before branch removal.
+PCM8 and PCM16 conversion uses the existing float bias directly to pack integers.
+Exact half-integers retain the double-precision fallback, and PCM24 retains double-precision conversion.
+The baseline source is `93ef6fb03b1863fac6f1ef155bd8af47a9322f82`.
+Each codec uses the release compiler and standard library from its own pinned revision.
+The report compares the compiler and codec changes together.
+
+The 2026-11-09 comparison uses CPU 0 of the Xeon Platinum 8573C and one worker.
+Its 24 cases cover silence, tone, noise, and transients in all three PCM depths.
+Ten-second inputs use block size 32768, and hundred-second inputs use block size 2048.
+Every case has thirty repetitions in six balanced execution orders.
+Timing includes process startup and file I/O, with no other local builds or tests.
+Every final WAV equals the baseline byte for byte, and all six float64 oracle checks pass.
+
+Fern has lower medians than the baseline in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.055× overall and 1.076× without silence.
+The corresponding fixed-suite intervals are 1.023× to 1.086× and 1.053× to 1.105×.
+The raw report retains all five baseline regressions.
+
+Fern has lower medians than tuned C in 21 of 24 cases.
+The geometric-mean C/Fern ratio is 1.654× overall and 1.193× without silence.
+The corresponding intervals are 1.619× to 1.696× and 1.170× to 1.225×.
+C remains faster in the three large-block noise cases.
+Their C/Fern ratios are 0.958× for PCM8, 0.968× for PCM16, and 0.891× for PCM24.
+These results do not establish a universal speed ranking.
+
+The intervals use 2000 paired bootstrap repetitions and seed 417.
+They cover repetition uncertainty within these fixed cases, without claims for other inputs or machines.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM8 | 0.970 | 1.554 |
+| 10 | 32768 | PCM16 | 1.087 | 1.527 |
+| 10 | 32768 | PCM24 | 1.004 | 1.360 |
+| 100 | 2048 | PCM8 | 1.051 | 2.092 |
+| 100 | 2048 | PCM16 | 1.175 | 1.980 |
+| 100 | 2048 | PCM24 | 1.057 | 1.534 |
+
+[The complete report](x86-64-mask-bias.json) retains every repetition, regression, executable hash, compiler hash, and oracle error.
+Its `build_provenance` identifies both release compilers and the independent oracle.
+
+Build both pinned releases:
+
+```sh
+git worktree add --detach /tmp/ulc-mask-source fa46bf036c3a1822289f37ef79ae776d6bb40325
+git worktree add --detach /tmp/ulc-mask-baseline 93ef6fb03b1863fac6f1ef155bd8af47a9322f82
+make -C /tmp/ulc-mask-source build
+make -C /tmp/ulc-mask-baseline build
+make -C /tmp/ulc-mask-source/examples/ulc FERN=/tmp/ulc-mask-source/bin/fern build/ulc
+make -C /tmp/ulc-mask-baseline/examples/ulc FERN=/tmp/ulc-mask-baseline/bin/fern build/ulc
+```
+
+Use the pinned C build from [the FLOAT32/VBR reproduction section](#reproduce-the-float32-and-vbr-suite).
+Use the pinned oracle from [the widening-load reproduction below](#widening-loads-for-pcm24).
+
+```sh
+python3 /tmp/ulc-mask-source/examples/ulc/bench/run.py \
+  --fern /tmp/ulc-mask-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-mask-baseline/examples/ulc/build/ulc \
+  --baseline-source-commit 93ef6fb03b1863fac6f1ef155bd8af47a9322f82 \
+  --compiler /tmp/ulc-mask-source/bin/fern \
+  --source-commit fa46bf036c3a1822289f37ef79ae776d6bb40325 \
+  --oracle /tmp/ulc-load-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM8 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-mask-10-PCM8.json
+```
+
+Repeat for PCM16 and PCM24, then for 100 seconds at block size 2048.
+Use separate output paths and summarize all six reports with `summarize.py`.
+
+## Widening loads for PCM24
+
+Source `9f5ed23c4bf793684d1611ae9171a3eee87c3780` loads two packed floats directly into double lanes during PCM24 conversion.
+The same double-precision reconstruction, clipping, rounding, and output bytes apply.
+Both codec builds use compiler `9f5ed23c4bf793684d1611ae9171a3eee87c3780` and its standard library.
+The baseline codec source is `78971d38d86deaeba246990a4ee00108fc84df33`.
+
+The measurements date from 2026-11-09 on CPU 0 of the Xeon Platinum 8573C.
+The suite uses one worker, stereo PCM16 input at 44.1 kHz, and four fixtures: silence, tone, noise, and transients.
+Ten-second inputs use block size 32768, and hundred-second inputs use block size 2048.
+
+All three PCM output depths have thirty repetitions, with six balanced execution orders for C, Fern, and the baseline.
+Timing includes process startup and file I/O.
+No other local builds or tests run during measurement.
+
+PCM24 has lower medians than the baseline in all eight cases.
+Its geometric-mean baseline/Fern ratio is 1.061×, or 1.069× across the six non-silent cases.
+The corresponding fixed-suite intervals are 1.011× to 1.114× and 1.034× to 1.118×.
+
+The complete 24-case comparison has fifteen lower Fern medians than the baseline.
+Its geometric-mean baseline/Fern ratio is 1.028×, with an interval of 1.000× to 1.054×.
+The raw report retains nine baseline regressions in PCM8 or PCM16.
+
+Fern has lower medians than tuned C in 18 of 24 cases.
+The geometric-mean C/Fern ratio is 1.592× overall and 1.115× without silence.
+The corresponding fixed-suite intervals are 1.558× to 1.630× and 1.094× to 1.148×.
+All nine long non-silent cases favor Fern.
+Six large-block cases still favor C, so these results do not establish a universal speed ranking.
+
+The calculations use 2000 paired bootstrap repetitions and seed 417.
+The intervals cover repetition uncertainty within these fixed cases.
+They do not quantify other inputs, machines, or runs.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM8 | 0.999 | 1.659 |
+| 10 | 32768 | PCM16 | 1.025 | 1.436 |
+| 10 | 32768 | PCM24 | 1.057 | 1.260 |
+| 100 | 2048 | PCM8 | 1.027 | 2.065 |
+| 100 | 2048 | PCM16 | 0.994 | 1.784 |
+| 100 | 2048 | PCM24 | 1.065 | 1.474 |
+
+[The complete report](x86-64-widen-loads.json) includes every repetition, regression, executable hash, compiler hash, and oracle error.
+Every final WAV matches the baseline byte for byte, and all six float64 oracle checks pass.
+
+Build the pinned compiler, decoder, and oracle:
+
+```sh
+git worktree add --detach /tmp/ulc-load-source 9f5ed23c4bf793684d1611ae9171a3eee87c3780
+make -C /tmp/ulc-load-source build
+make -C /tmp/ulc-load-source/examples/ulc \
+  FERN=/tmp/ulc-load-source/bin/fern build/ulc build/reference64
+git worktree add --detach /tmp/ulc-load-baseline 78971d38d86deaeba246990a4ee00108fc84df33
+make -C /tmp/ulc-load-baseline/examples/ulc \
+  FERN=/tmp/ulc-load-source/bin/fern \
+  FERNFLAGS="-stdlib /tmp/ulc-load-source/internal/stdlib" build/ulc
+```
+
+Use the pinned C build in [the FLOAT32/VBR reproduction section](#reproduce-the-float32-and-vbr-suite).
+Run each output format at both durations:
+
+```sh
+python3 /tmp/ulc-load-source/examples/ulc/bench/run.py \
+  --fern /tmp/ulc-load-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-load-baseline/examples/ulc/build/ulc \
+  --baseline-source-commit 78971d38d86deaeba246990a4ee00108fc84df33 \
+  --compiler /tmp/ulc-load-source/bin/fern \
+  --source-commit 9f5ed23c4bf793684d1611ae9171a3eee87c3780 \
+  --oracle /tmp/ulc-load-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM24 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-load-10-PCM24.json
+```
+
+Repeat for PCM8 and PCM16, then for 100 seconds at block size 2048.
+Use separate output paths for each configuration.
+Summarize the complete suite and the PCM24 baseline comparison:
+
+```sh
+python3 examples/ulc/bench/summarize.py \
+  --output /tmp/ulc-load-c.json /tmp/ulc-load-[0-9]*-PCM*.json
+python3 examples/ulc/bench/summarize.py --comparison Baseline \
+  --output /tmp/ulc-load-baseline.json /tmp/ulc-load-[0-9]*-PCM*.json
+python3 examples/ulc/bench/summarize.py --comparison Baseline \
+  --output /tmp/ulc-load-pcm24.json /tmp/ulc-load-[0-9]*-PCM24.json
+```
 
 ## Final decoder comparison
 

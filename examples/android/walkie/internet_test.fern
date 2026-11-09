@@ -112,7 +112,41 @@ function owner_of(s: Sim, a: net.SocketAddr): i32 {
   return -1;
 }
 
-function deliver(s0: Sim): Sim {
+// The node at index i of nodes, and nodes with a new node in its place.
+function take(own nodes: node.Node[], i: i32): (node.Node, node.Node[]) {
+  return nodes.swap_at(i, node.new(0i64, [], 0i64));
+}
+
+// The Sim after node f.to receives flight f.
+function received(own s: Sim, f: Flight): Sim {
+  let (cur, rest) = take(s.nodes, f.to);
+  return Sim { ...s, nodes: rest.with(f.to, node.receive(cur, f.data, f.data.len(), f.from, s.now)) };
+}
+
+// Node i after one step of the script: the cues of the users, a tick, and a
+// start again in the room after a lost transport.
+function stepped(own s: Sim, i: i32, sc: Script, users_confirm: boolean, voice: [i32]): Sim {
+  let (n, rest) = take(s.nodes, i);
+  if (users_confirm && shows_code(n)) {
+    n = node.confirm(n, s.now);
+  }
+  if (i == 0 && sc.press.contains(s.now)) {
+    n = node.press(n, s.now);
+  }
+  if (i == 0 && sc.release.contains(s.now)) {
+    n = node.release(n, s.now);
+  }
+  n = node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice);
+  let resumed = s.resumed;
+  if (node.reconnecting(n)) {
+    n = node.resume(n, 0i64, seed(i + 3), s.now);
+    n = node.in_room(n, s.rooms[i].lead, 15i64 + 4i64 * (i as i64), s.now);
+    resumed += 1;
+  }
+  return Sim { ...s, nodes: rest.with(i, n), resumed: resumed };
+}
+
+function deliver(own s0: Sim): Sim {
   let s = s0;
   let left: Flight[] = [];
   let later: Flight[] = [];
@@ -130,7 +164,7 @@ function deliver(s0: Sim): Sim {
       if let Some(answer) = internet.challenged(s.rooms[f.to], f.data, f.data.len()) {
         later = later.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[f.to], data: answer });
       } else {
-        s = Sim { ...s, nodes: s.nodes.with(f.to, node.receive(s.nodes[f.to], f.data, f.data.len(), f.from, s.now)) };
+        s = received(s, f);
       }
     }
   }
@@ -179,29 +213,10 @@ function run(sc: Script, end: i64): Sim {
       s = Sim { ...s, flights: [] };
     }
     s = deliver(s);
-    let nodes = s.nodes;
-    let resumed = s.resumed;
     let users_confirm = sc.dark_from < 0i64 || s.now < sc.dark_from;
     for i in 0..2 {
-      let n = nodes[i];
-      if (users_confirm && shows_code(n)) {
-        n = node.confirm(n, s.now);
-      }
-      if (i == 0 && sc.press.contains(s.now)) {
-        n = node.press(n, s.now);
-      }
-      if (i == 0 && sc.release.contains(s.now)) {
-        n = node.release(n, s.now);
-      }
-      n = node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice);
-      if (node.reconnecting(n)) {
-        n = node.resume(n, 0i64, seed(i + 3), s.now);
-        n = node.in_room(n, s.rooms[i].lead, 15i64 + 4i64 * (i as i64), s.now);
-        resumed += 1;
-      }
-      nodes = nodes.with(i, n);
+      s = stepped(s, i, sc, users_confirm, voice);
     }
-    s = Sim { ...s, nodes: nodes, resumed: resumed };
     if (s.now == sc.move_at) {
       s = Sim { ...s, addrs: s.addrs.with(1, addr(7, 40000)) };
     }

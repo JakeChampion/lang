@@ -1,0 +1,295 @@
+import "std/audio/caf";
+import "std/audio/caf/chunks";
+import "std/audio/caf/file";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "alac_smoke_vectors";
+import "caf_smoke_vectors";
+import "caf_check";
+import "caf_file_check";
+import "flac_file_check" as io;
+
+function fixture(): Result[u8[], string] {
+  return ref.unpack(caf_smoke_vectors.vector().encoded);
+}
+
+function copy(input: [u8]): u8[] {
+  let bytes: u8[] = [];
+  for byte in input {
+    bytes = bytes.append(byte);
+  }
+  return bytes;
+}
+
+function field(input: [u8], at: i32, count: i32, value: u64): u8[] {
+  let bytes = copy(input);
+  for i in 0..count {
+    bytes = bytes.with(at + i, (value >> ((count - i - 1) * 8) as u64) as u8);
+  }
+  return bytes;
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  for end in 0..bytes.len() {
+    if let Err(_) = caf_file_check.index(io.mock(copy(bytes[:end])), file.default_limits()) {} else {
+      return test.fail("incomplete source prefix");
+    }
+  }
+  return test.pass();
+}
+
+function metadata(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(chunks) = chunks.inspect(bytes, 16) else {
+    return test.fail("chunks");
+  };
+  let Some(table) = chunks.packets else {
+    return test.fail("packet table");
+  };
+  let Some(cookie) = chunks.cookie else {
+    return test.fail("cookie");
+  };
+  for changed in [
+    field(bytes, 0, 4, 0u64), field(bytes, 4, 2, 2u64), field(bytes, 6, 2, 1u64),
+    field(bytes, 12, 8, 18446744073709551615u64), field(bytes, 12, 8, 9223372036854775807u64),
+    field(bytes, chunks.data.start - 4, 4, 1u64), bytes.append(0u8),
+    field(bytes, chunks.description.start, 8, 9221120237041090560u64),
+    field(bytes, chunks.description.start + 24, 4, 2u64), field(bytes, cookie.start + 4, 1, 1u64),
+    field(bytes, table.start, 8, 0u64), field(bytes, table.start, 8, 2u64),
+    field(bytes, table.start, 8, 1048577u64), field(bytes, table.start + 8, 8, 18446744073709551615u64),
+    field(bytes, table.start + 8, 8, 33u64), field(bytes, table.start + 16, 4, 2147483648u64),
+    field(bytes, table.start + 20, 4, 2147483648u64), field(bytes, table.start + 24, 1, 0u64),
+    field(bytes, table.start + 24, 1, 128u64),
+  ] {
+    if let Err(_) = caf_file_check.index(io.mock(changed), file.default_limits()) {} else {
+      return test.fail("invalid source metadata");
+    }
+  }
+  let duplicate = copy(bytes[:chunks.description.end]);
+  for byte in bytes[chunks.description.start - 12:chunks.description.end] {
+    duplicate = duplicate.append(byte);
+  }
+  for byte in bytes[chunks.description.end:] {
+    duplicate = duplicate.append(byte);
+  }
+  if let Err(_) = caf_file_check.index(io.mock(duplicate), file.default_limits()) {} else {
+    return test.fail("duplicate singleton");
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let limits = file.default_limits();
+  for bound in [
+    file.Limits { ...limits, max_file_bytes: bytes.len() as i64 - 1i64 },
+    file.Limits { ...limits, container: caf.Limits { ...limits.container, max_packets: 0 } },
+    file.Limits { ...limits, container: caf.Limits { ...limits.container, max_chunks: 3 } },
+    file.Limits { ...limits, input: source.Limits { ...limits.input, max_buffer_bytes: 71 } },
+    file.Limits { ...limits, input: source.Limits { ...limits.input, chunk_size: 0 } },
+    file.Limits { ...limits, container: caf.Limits { ...limits.container, audio: pcm.Limits { ...limits.container.audio, max_input_bytes: 1 } } },
+    file.Limits { ...limits, container: caf.Limits { ...limits.container, audio: pcm.Limits { ...limits.container.audio, max_samples: 31 } } },
+  ] {
+    if let Err(_) = caf_file_check.index(io.mock(bytes), bound) {} else {
+      return test.fail("source budget");
+    }
+  }
+  return test.pass();
+}
+
+function callback_error(kind: i32): Result[source.ReadError, string] {
+  let state = match (file.create(4096i64, file.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let seek = (at: i64): Result[i64, IoError] => {
+    if (kind == 0) {
+      return Err(IoError.Interrupted);
+    }
+    return Ok(if (kind == 1) { at + 1i64 } else { at });
+  };
+  let read = (count: i32): Result[u8[], IoError] => {
+    if (kind == 2) {
+      return Err(IoError.Interrupted);
+    }
+    if (kind == 3) {
+      return Ok([]);
+    }
+    let bytes: u8[] = [];
+    for _ in 0..count + 1 {
+      bytes = bytes.append(0u8);
+    }
+    return Ok(bytes);
+  };
+  for _ in 0..8 {
+    match (state.step_with(seek, read)) {
+      Err(e) => {
+        return Ok(e);
+      },
+      Ok((next, _)) => {
+        state = next;
+      }
+    }
+  }
+  return Err("missing callback error");
+}
+
+function io_failures(): test.TestOutcome {
+  for kind in [0, 2] {
+    let Ok(source.ReadIo(IoError.Interrupted)) = callback_error(kind) else {
+      return test.fail("distinct I/O error");
+    };
+  }
+  for kind in [1, 4] {
+    let Ok(source.ReadSize) = callback_error(kind) else {
+      return test.fail("invalid seek or oversized read");
+    };
+  }
+  let Ok(source.ReadAudio(pcm.Truncated)) = callback_error(3) else {
+    return test.fail("early EOF");
+  };
+  return test.pass();
+}
+
+function seek_and_output(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let src = io.mock(bytes);
+  let Ok(index) = caf_file_check.index(src, file.default_limits()) else {
+    return test.fail("index");
+  };
+  for position in [-1i64, index.information().frames + 1i64] {
+    let Ok(cursor) = file.cursor(index) else {
+      return test.fail("cursor");
+    };
+    if let Err(source.ReadAudio(pcm.Header)) = cursor.seek(position) {} else {
+      return test.fail("invalid sample position");
+    }
+  }
+  let Ok(cursor) = file.cursor(index) else {
+    return test.fail("cursor");
+  };
+  for _ in 0..1000 {
+    match (cursor.step_into_with([], io.seek_source(src), io.read_source(src))) {
+      Err(source.ReadAudio(pcm.Buffer)) => {
+        return test.pass();
+      },
+      Err(e) => {
+        return test.fail(e.message());
+      },
+      Ok((next, _)) => {
+        cursor = next;
+      }
+    }
+  }
+  return test.fail("small output buffer");
+}
+
+struct Sparse { prefix: u8[], suffix: u8[], base: i64, bytes: i64, position: Cell[i64], operations: Cell[i32] }
+
+function sparse(bytes: [u8]): Result[Sparse, string] {
+  let file = match (chunks.inspect(bytes, 16)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let prefix = copy(bytes[:file.description.end]);
+  for byte in [102u8, 114u8, 101u8, 101u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8] {
+    prefix = prefix.append(byte);
+  }
+  let suffix = copy(bytes[file.description.end:]);
+  let base = prefix.len() as i64 + 4294967296i64;
+  return Ok(Sparse { prefix: prefix, suffix: suffix, base: base, bytes: base + suffix.len() as i64, position: cell_new(0i64), operations: cell_new(0) });
+}
+
+function sparse_seek(src: Sparse): (i64) => Result[i64, IoError] {
+  return (at: i64): Result[i64, IoError] => {
+    src.operations.set(src.operations.get() + 1);
+    if (at < 0i64 || at > src.bytes) {
+      return Err(IoError.Interrupted);
+    }
+    src.position.set(at);
+    return Ok(at);
+  };
+}
+
+function sparse_read(src: Sparse): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    src.operations.set(src.operations.get() + 1);
+    let at = src.position.get();
+    let input = if (at < src.prefix.len() as i64) { src.prefix[:] } else { src.suffix[:] };
+    let local = if (at < src.prefix.len() as i64) { at } else { at - src.base };
+    if (local < 0i64 || local > input.len() as i64) {
+      return Err(IoError.Interrupted);
+    }
+    let count = if (requested > 17) { 17 } else { requested };
+    count = if (count > input.len() - local as i32) { input.len() - local as i32 } else { count };
+    let result = copy(input[local as i32:local as i32 + count]);
+    src.position.set(at + count as i64);
+    return Ok(result);
+  };
+}
+
+function beyond_32_bits(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(src) = sparse(bytes) else {
+    return test.fail("sparse source");
+  };
+  let Ok(index) = caf_file_check.build(src.bytes, file.default_limits(), sparse_seek(src), sparse_read(src), src.operations) else {
+    return test.fail("64-bit source index");
+  };
+  let Ok(cursor) = file.cursor(index) else {
+    return test.fail("cursor");
+  };
+  let source = alac_smoke_vectors.vector();
+  let vector = caf_smoke_vectors.vector();
+  let Ok(expected) = ref.unpack(source.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let reference = caf_check.Reference { rate: source.rate, channels: source.channels, depth: source.depth, trim: vector.trim, frames: vector.frames, mask: vector.mask, order: vector.order };
+  let storage = pcm.zeros(index.max_packet_frames() * source.channels);
+  for _ in 0..1000 {
+    let before = src.operations.get();
+    let Ok((next, event)) = cursor.step_into_with(storage, sparse_seek(src), sparse_read(src)) else {
+      return test.fail("64-bit source playback");
+    };
+    cursor = next;
+    if (src.operations.get() - before > 1) {
+      return test.fail("sparse cooperative work bound");
+    }
+    match (event) {
+      caf.BufferPending(value) => {
+        storage = value;
+      },
+      caf.BufferSamples(value) => {
+        if (value.frames != vector.frames || value.position != 0i64 || src.position.get() <= 4294967296i64) {
+          return test.fail("64-bit packet offset or range");
+        }
+        if let Err(e) = caf_check.samples(value.samples, value.start, value.frames, value.position, expected, source.channels, reference) {
+          return test.fail(e);
+        }
+        return test.pass();
+      },
+      caf.BufferFinished(_) => {
+        return test.fail("missing sparse PCM");
+      }
+    }
+  }
+  return test.fail("sparse progress");
+}
+
+function main(): i32 {
+  let runner = test.new("CAF ALAC source bounds and I/O");
+  runner = runner.it("every incomplete prefix", prefixes);
+  runner = runner.it("malformed chunks, configuration, and packet tables", metadata);
+  runner = runner.it("file, window, packet, and sample budgets", budgets);
+  runner = runner.it("distinct I/O, EOF, seek, and callback-size errors", io_failures);
+  runner = runner.it("invalid seeks and undersized output", seek_and_output);
+  runner = runner.it("exact PCM beyond 4 GiB without unknown-payload reads", beyond_32_bits);
+  return runner.finish();
+}

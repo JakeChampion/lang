@@ -941,6 +941,12 @@ The caller retains the returned array.
 
 `pack_f32x4` converts two double vectors to one float vector, with the low vector first.
 
+The unsafe intrinsic `__f64x2_load_f32_ptr(address)` reads exactly eight bytes from a pointer.
+It converts two adjacent IEEE floats to a double vector, with the first sample in the low lane.
+The load permits an unaligned pointer with eight readable bytes.
+Conversion preserves finite values, infinities, and signed zero.
+NaN conversion follows the scalar float-to-double conversion.
+
 ```fern
 <<packed float memory>>=
 pub function load_f32x4_le(bytes: u8[], offset: i32): f32x4 {

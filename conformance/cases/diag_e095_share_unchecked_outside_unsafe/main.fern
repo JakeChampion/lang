@@ -1,0 +1,17 @@
+// `share_unchecked` gives an own parameter a value that shares the handles of
+// a borrowed one. The caller must make sure that no copy of a handle is used
+// after the callee closes it, so the call is only accepted in an unsafe block.
+
+struct H { w: Writer, n: i32 }
+
+function finish(own h: H): i32 {
+  return h.n;
+}
+
+function shared(h: H): i32 {
+  return finish(share_unchecked(h));
+}
+
+function main(): i32 {
+  return 0;
+}

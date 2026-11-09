@@ -1,5 +1,9 @@
-# 2026-11-09: PR #14919, perf-x86_64 job 129331284242 measured the byte-count kernel after main changed.
-# Pin its 1321 emitted lines and 41173368 instructions. Retain all tolerances.
+# 2026-11-09: PR #14906, perf-x86_64 job 129318795686 on b8cebe345e.
+# The string-count kernel adds 50 text lines and uses 39.5% fewer instructions.
+# Pin both measured values after the merge of main 97af82fcbe.
+# 2026-11-09: PR #14906, perf-aarch64 job 129295354221 on 9f5ed23c4b.
+# array_with.text and record_update.text fall 22.1%. deflate_decode.ir falls 1.72%.
+# Pin these improvements at their measured values.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI jobs 129298782292 and 129298782302
 # measure eight changed rows after the merge of main d04e79179f. Bank each value.
 # The string count kernel grows in size and uses fewer instructions. Keep all tolerances.
@@ -624,3 +628,7 @@ x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6027
 aarch64/video_qtrle.ir 1662057925
+# 2026-11-09: PR #14917, CI job 129321185181. The merged byte-count kernel
+# from #14910 changes the string-count rows. Parent 97af82fc and IVF head
+# cbed65e0 produce identical assembly, binaries, and Callgrind counts.
+# Pin both measured rows. Keep the 1% tolerance.

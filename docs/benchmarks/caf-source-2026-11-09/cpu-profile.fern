@@ -1,0 +1,151 @@
+import "std/audio/caf";
+import "std/audio/caf/file";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/i32";
+import "std/string";
+import "std/result";
+
+function rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.replace("\t", " ").split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function report(started: i64, allocations: i64, fresh: i64, info: caf.Info, packets: i32): void {
+  let elapsed = monotonic_ns() - started;
+  let count = __heap_alloc_count() - allocations;
+  let bytes = __heap_bump_bytes() - fresh;
+  let peak = rss();
+  print("index_ns=" + elapsed.to_string());
+  print("allocations=" + count.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("peak_rss_kib=" + peak.to_string());
+  print("frames=" + info.frames.to_string());
+  print("packets=" + packets.to_string());
+}
+
+function hash(audio: caf.Audio): u32 {
+  let value = 2166136261u32;
+  let channels = audio.format.channels;
+  for sample in audio.samples[audio.start * channels:(audio.start + audio.frames) * channels] {
+    for byte in 0..4 {
+      value = (value ^ sample as u32 >> byte * 8 & 255u32) * 16777619u32;
+    }
+  }
+  return value;
+}
+
+function view(path: string, started: i64, allocations: i64, fresh: i64): Result[u32, string] {
+  let input = match (read_file_bytes(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let index = match (caf.inspect(input, caf.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  report(started, allocations, fresh, index.information(), index.packet_count());
+  let cursor = match (caf.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let (_, event) = match (cursor.step_into(input, pcm.zeros(index.max_packet_frames() * index.information().format.channels))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let caf.BufferSamples(audio) = event {
+    return Ok(hash(audio));
+  }
+  return Err("missing byte-view PCM");
+}
+
+function source_step(own builder: file.Builder, reader: Reader, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], reuse: boolean): Result[(file.Builder, file.BuildEvent), source.ReadError] {
+  if (reuse) {
+    return builder.step_with(seek, read);
+  }
+  return builder.step(reader);
+}
+
+function source_index(reader: Reader, bytes: i64, reuse_callbacks: boolean): Result[file.Index, string] {
+  let builder = match (file.create(bytes, file.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let seek = (at: i64): Result[i64, IoError] => reader.seek(at, 0);
+  let read = (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count);
+  while (true) {
+    let (next, event) = match (source_step(builder, reader, seek, read, reuse_callbacks)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    builder = next;
+    match (event) {
+      file.BuildReady(index) => {
+        return Ok(index);
+      },
+      file.BuildFinished => {
+        return Err("missing source index");
+      },
+      file.BuildPending => {}
+    }
+  }
+}
+
+function source_read(reader: Reader, started: i64, allocations: i64, fresh: i64, reuse_callbacks: boolean): Result[u32, string] {
+  let bytes = match (reader.seek(0i64, 2)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let index = source_index(reader, bytes, reuse_callbacks)?;
+  report(started, allocations, fresh, index.information(), index.packet_count());
+  let cursor = match (file.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let output = pcm.zeros(index.max_packet_frames() * index.information().format.channels);
+  while (true) {
+    let (next, event) = match (cursor.step_into(output, reader)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    match (event) {
+      caf.BufferPending(value) => {
+        output = value;
+      },
+      caf.BufferSamples(audio) => {
+        return Ok(hash(audio));
+      },
+      caf.BufferFinished(_) => {
+        return Err("missing source PCM");
+      }
+    }
+  }
+}
+
+function source(path: string, started: i64, allocations: i64, fresh: i64, reuse_callbacks: boolean): Result[u32, string] {
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = source_read(reader, started, allocations, fresh, reuse_callbacks);
+  let closed = reader.close();
+  let value = result?;
+  if let Err(e) = closed {
+    return Err(e.message());
+  }
+  return Ok(value);
+}
+
+function benchmark_once(): i32 {
+  let argv = args();
+  if (argv.len() != 3 || argv[1] != "view" && argv[1] != "source" && argv[1] != "source-with") {
+    return 1;
+  }
+  let allocations = __heap_alloc_count();
+  let fresh = __heap_bump_bytes();
+  let started = monotonic_ns();
+  let result = if (argv[1] == "view") { view(argv[2], started, allocations, fresh) } else { source(argv[2], started, allocations, fresh, argv[1] == "source-with") };
+  match (result) {
+    Ok(value) => {
+      print("checksum=" + value.to_string());
+      return 0;
+    },
+    Err(message) => {
+      eprint(message);
+      return 2;
+    }
+  }
+}
+
+function main(): i32 {
+  for _ in 0..100 {
+    let code = benchmark_once();
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

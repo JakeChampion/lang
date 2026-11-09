@@ -1,0 +1,9 @@
+diff --git a/internal/stdlib/std/audio/source.fern.md b/internal/stdlib/std/audio/source.fern.md
+index 17d0b6ba85..ede64f5ddc 100644
+--- a/internal/stdlib/std/audio/source.fern.md
++++ b/internal/stdlib/std/audio/source.fern.md
+@@ -81,0 +82,4 @@ function extend(own buffer: Buffer, own chunk: u8[]): Buffer {
++  if (buffer.available() == 0) {
++    let eof = chunk.len() == 0;
++    return Buffer { bytes: chunk, position: 0, eof: eof, limits: buffer.limits };
++  }
