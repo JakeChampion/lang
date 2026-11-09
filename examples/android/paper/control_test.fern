@@ -4,6 +4,7 @@
 // the screens of the system it starts to a log file.
 import "std/android";
 import "std/android/draw";
+import "std/android/testkit";
 import "std/test";
 import "std/worker";
 import "./control";
@@ -39,17 +40,10 @@ function keys(): string[] {
   return out;
 }
 
-function read_text(path: string): string {
-  if let Ok(b) = read_file_bytes(path) {
-    return unsafe { string_from_bytes_unchecked(b) };
-  }
-  return "";
-}
-
 // The value of the property `name` in the file `props` of the test, which
 // holds a line "name=value" for each property.
 function prop(dir: string, name: string): string {
-  for line in read_text(dir + "/props").split("\n") {
+  for line in testkit.read_text(dir + "/props").split("\n") {
     if (line.starts_with(name + "=")) {
       return line.drop(name.len() + 1).to_owned();
     }
@@ -59,11 +53,11 @@ function prop(dir: string, name: string): string {
 
 // The GPU calls of the app go to a log of their own.
 function gpu_line(dir: string, line: string): void {
-  let ok = write_file(dir + "/gpu", read_text(dir + "/gpu") + line + "\n");
+  let ok = write_file(dir + "/gpu", testkit.read_text(dir + "/gpu") + line + "\n");
 }
 
 function log_line(dir: string, line: string): void {
-  let ok = write_file(dir + "/log", read_text(dir + "/log") + line + "\n");
+  let ok = write_file(dir + "/log", testkit.read_text(dir + "/log") + line + "\n");
 }
 
 // A frame that the fake device presents, as a line of its frame log: the
@@ -92,7 +86,7 @@ function fake(dir: string, now: i64): control.Device {
     utc_offset_ms: (unix_ms: i64): i32 => 0,
     is_24h: (): boolean => false,
     country: (): string => "US",
-    read: (path: string): string => read_text(path),
+    read: (path: string): string => testkit.read_text(path),
     write: (path: string, text: string): void => { let ok = write_file(path, text); },
     size: (window: usize): (i32, i32) => (W, H),
     wallpaper: (w: i32): draw.Image => ui_test.wallpaper(w),
@@ -123,7 +117,7 @@ function fake(dir: string, now: i64): control.Device {
       return p;
     },
     present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
-      let ok = write_file(dir + "/frames", read_text(dir + "/frames") + frame_line(passes) + "\n");
+      let ok = write_file(dir + "/frames", testkit.read_text(dir + "/frames") + frame_line(passes) + "\n");
       return p;
     },
     detach_gpu: (p: gpu.Painter): gpu.Painter => {
@@ -143,8 +137,7 @@ struct Run { s: control.App, dir: string, now: i64 }
 // after it, as the display gives it.
 function at(own r: Run, dt: i64, e: android.Event): Run {
   let now = r.now + dt;
-  let s = control.step(control.App { ...r.s, dev: fake(r.dir, now) }, e);
-  s = control.step(s, android.Vsync(now * 1000000i64));
+  let s = testkit.step_at(control.App { ...r.s, dev: fake(r.dir, now) }, control.step, e, now);
   return Run { s: s, dir: r.dir, now: now };
 }
 
@@ -216,7 +209,7 @@ function type_text(own r: Run, text: string): Run {
 }
 
 function logged(r: Run): string {
-  return read_text(r.dir + "/log").trim();
+  return testkit.read_text(r.dir + "/log").trim();
 }
 
 const PAPER_KEY: string = "dev.fern.paper/dev.fern.paper.Home";
@@ -291,7 +284,7 @@ function test_rename(): test.TestOutcome {
   }
   r = type_text(r, "Web browser");
   r = at(r, 20, android.Key(66, 0));
-  let saved = paper.parse_settings(read_text(r.dir + "/settings"));
+  let saved = paper.parse_settings(testkit.read_text(r.dir + "/settings"));
   let name = paper.name_of(saved, "com.android.chrome/Main");
   r = swipe(r, 2000, 900);
   r = control_off_auto(r);
@@ -336,19 +329,6 @@ function test_back_and_home_key(): test.TestOutcome {
   return test.assert_eq(opened.to_string() + after_back.to_string() + r.s.layer.to_string(), "100");
 }
 
-// The log with each run of the same line as one line.
-function runs(text: string): string {
-  let out = "";
-  let last = "";
-  for line in text.split("\n") {
-    if (line != last) {
-      out = out + line + " ";
-      last = line.to_owned();
-    }
-  }
-  return out.trim();
-}
-
 // The app list slides over home as a second pass, which shows from none of
 // it to all of it as the list opens, moves down less as it shows, and goes
 // the other way as the list closes.
@@ -357,7 +337,7 @@ function test_slide_passes(): test.TestOutcome {
   r = at(r, 20, android.Key(4, 1));
   r = at(r, 100, android.Tick);
   r = at(r, 200, android.Tick);
-  return test.assert_eq(runs(read_text(r.dir + "/frames").trim()), "1 2 none 2 mid 1 2 full 2 mid 1");
+  return test.assert_eq(testkit.runs(testkit.read_text(r.dir + "/frames").trim()), "1 2 none 2 mid 1 2 full 2 mid 1");
 }
 
 // The painter leaves the window when the window goes, with its images
@@ -368,7 +348,7 @@ function test_gpu_kept_without_window(): test.TestOutcome {
   r = at(r, 500, android.WindowCreated(android.Window { ptr: 2 as usize }));
   let dir = r.dir;
   control.close(r.s);
-  return test.assert_eq(runs(read_text(dir + "/gpu").trim()), "attach detach attach close");
+  return test.assert_eq(testkit.runs(testkit.read_text(dir + "/gpu").trim()), "attach detach attach close");
 }
 
 // With the property debug.fern.frames at 1, the frames of the slide record
@@ -383,7 +363,7 @@ function test_frame_overlay(): test.TestOutcome {
       sixty += 1;
     }
   }
-  let last = read_text(r.dir + "/frames").trim().split("\n");
+  let last = testkit.read_text(r.dir + "/frames").trim().split("\n");
   let got = r.s.overlay.to_string() + " " + (sixty >= 8).to_string() + " " + last[last.len() - 1] + " " + plain.s.overlay.to_string() + " " + plain.s.frames.times.len().to_string();
   return test.assert_eq(got, "true true 2 full false 0");
 }

@@ -1,0 +1,73 @@
+// Tests of std/android/testkit.
+import "std/android";
+import "std/android/draw";
+import "std/android/testkit";
+import "std/test";
+
+struct Counter { events: i32, vsyncs: i32, last_ns: i64 }
+
+function count_step(own s: Counter, e: android.Event): Counter {
+  match (e) {
+    android.Vsync(ns) => {
+      return Counter { events: s.events, vsyncs: s.vsyncs + 1, last_ns: ns };
+    },
+    _ => {
+      return Counter { events: s.events + 1, vsyncs: s.vsyncs, last_ns: s.last_ns };
+    }
+  }
+}
+
+function test_step_at(): test.TestOutcome {
+  let s = testkit.step_at(Counter { events: 0, vsyncs: 0, last_ns: 0i64 }, count_step, android.Tick, 16i64);
+  s = testkit.step_at(s, count_step, android.Tick, 32i64);
+  return test.assert_eq(s.events.to_string() + " " + s.vsyncs.to_string() + " " + s.last_ns.to_string(), "2 2 32000000");
+}
+
+function test_differ(): test.TestOutcome {
+  let a = draw.offscreen(4, 2);
+  let b = draw.offscreen(4, 2);
+  a.store(0, 0, 4, 2, draw.rgb(100, 100, 100));
+  b.store(0, 0, 4, 2, draw.rgb(102, 100, 98));
+  b.store(3, 1, 1, 1, draw.rgb(110, 100, 100));
+  let wide = draw.offscreen(5, 2);
+  wide.store(0, 0, 5, 2, draw.rgb(100, 100, 100));
+  let got = testkit.differ(a, b, 2).to_string() + " " + testkit.differ(a, b, 10).to_string() + " " + testkit.differ(a, wide, 0).to_string();
+  draw.release(a);
+  draw.release(b);
+  draw.release(wide);
+  return test.assert_eq(got, "1 0 2");
+}
+
+function test_save_png(): test.TestOutcome {
+  let f = draw.offscreen(2, 1);
+  f.store(0, 0, 2, 1, 0);
+  f.store(0, 0, 1, 1, draw.rgb(10, 20, 30));
+  // Half of white over nothing is the premultiplied 128, 128, 128, 128.
+  f.store(1, 0, 1, 1, draw.rgba(128, 128, 128, 128));
+  let px = testkit.rgba(f);
+  let path = "/tmp/fern-testkit-" + now_unix_ms().to_string() + ".png";
+  let ok = testkit.save_png(f, path);
+  draw.release(f);
+  let signature = false;
+  if let Ok(bytes) = read_file_bytes(path) {
+    signature = bytes.len() > 8 && bytes[1] == 80u8 && bytes[2] == 78u8 && bytes[3] == 71u8;
+  }
+  let got = px[0].to_string() + " " + px[3].to_string() + " " + px[4].to_string() + " " + px[7].to_string() + " " + ok.to_string() + " " + signature.to_string();
+  return test.assert_eq(got, "10 255 255 128 true true");
+}
+
+function test_logs(): test.TestOutcome {
+  let path = "/tmp/fern-testkit-log-" + now_unix_ms().to_string();
+  let missing = testkit.read_text(path + ".none");
+  let wrote = write_file(path, "attach\ndetach\ndetach\nattach\n");
+  return test.assert_eq("[" + missing + "] " + testkit.runs(testkit.read_text(path)), "[] attach detach attach");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/testkit");
+  r = r.it("step_at gives the event and the vsync after it", test_step_at);
+  r = r.it("differ counts the pixels past the tolerance", test_differ);
+  r = r.it("save_png writes straight alpha", test_save_png);
+  r = r.it("read_text and runs read a fake device's log", test_logs);
+  return r.finish();
+}

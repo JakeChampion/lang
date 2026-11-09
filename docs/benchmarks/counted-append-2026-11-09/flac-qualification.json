@@ -1,0 +1,134 @@
+[
+  {
+    "suite": "flac_lpc",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 35416,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_lpc",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_lpc",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  },
+  {
+    "suite": "flac_lpc_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 819,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_lpc_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_lpc_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  },
+  {
+    "suite": "flac_encoder",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 68872,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_encoder",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_encoder",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  },
+  {
+    "suite": "flac_encoder_cost",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 2305,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_encoder_cost",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_encoder_cost",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  },
+  {
+    "suite": "flac_encoder_boundary",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 816,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_encoder_boundary",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_encoder_boundary",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  },
+  {
+    "suite": "flac_encoder_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 1186,
+    "live_bytes": 0
+  },
+  {
+    "suite": "flac_encoder_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "flac_encoder_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-flac-partitions",
+    "build": "pass"
+  }
+]

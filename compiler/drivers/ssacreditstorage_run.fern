@@ -7,6 +7,7 @@ import "../ssa_lift";
 import "../ssacreditreuse" as reuse;
 import "../ssacredithelper" as helper;
 import "../util";
+import "./ssacreditboxed" as boxed;
 import "./ssacreditsparse" as sparse;
 import "./ssacreditbranch" as branch;
 
@@ -198,7 +199,7 @@ function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
 }
 
 function target_checks(target: string): void {
-  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
+  let sub = semlower.driven(boxed.parsed(source(), ["parent", "replace", "handoff"]), target).sub;
   branch.run(source_with_assertion("function require(ok: boolean, code: i32): void { return; }\n"), target);
   let f = body(sub, "replace");
   let assertion = body(sub, "require");

@@ -11,22 +11,6 @@ function took(cs: lexer.Comment[], cursor: i32, decl_line: i32): string {
 }
 
 function self_checks(): i32 {
-  if (ferndoc.trim_space("  hi  ") != "hi") {
-    return 1;
-  }
-  if (ferndoc.trim_space("\t\nhi\r\n") != "hi") {
-    return 2;
-  }
-  if (ferndoc.trim_space("   ") != "") {
-    return 3;
-  }
-  if (ferndoc.trim_space("") != "") {
-    return 4;
-  }
-  if (ferndoc.trim_space("  a  b  ") != "a  b") {
-    return 5;
-  }
-
   let one: lexer.Comment[] = [c(4, " doc")];
   if (took(one, 0, 5) != "doc") {
     return 10;

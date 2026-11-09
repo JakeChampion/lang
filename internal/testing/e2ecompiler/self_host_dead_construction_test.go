@@ -39,7 +39,7 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 		{"update-unread", `struct P { x: i32, y: i32 }
 @noinline function mk(i: i32): P { return P { x: i, y: 1 }; }
 @noinline function f(i: i32): i32 { let a: P = mk(i); let b: P = P { ...a, x: 2 }; return i * 2; }
-function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, ""},
+function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 0, ""},
 		{"update-read-base-overridden", `struct P { x: i32, y: i32 }
 @noinline function get(p: P): i32 { return p.x + p.y; }
 @noinline function via(read: (P)=>i32, p: P): i32 { return read(p); }
@@ -104,20 +104,22 @@ function main(): i32 { return f(1) + f(2); }`, 12, 6, "dropped\ndropped\ndropped
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-				stderr, code := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
-				if code != tc.want {
-					t.Fatalf("%s: exit %d, want %d\n%s", target, code, tc.want, stderr)
-				}
-				allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
-				if allocs != frees || live != 0 {
-					t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", target, allocs, frees, live)
-				}
-				if allocs != tc.allocs {
-					t.Errorf("%s: allocs=%d, want %d", target, allocs, tc.allocs)
-				}
-				if tc.stderr != "" && !strings.HasPrefix(stderr, tc.stderr) {
-					t.Errorf("%s: stderr %q, want it to start with %q", target, stderr, tc.stderr)
-				}
+				t.Run(target, func(t *testing.T) {
+					stderr, code := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
+					if code != tc.want {
+						t.Fatalf("%s: exit %d, want %d\n%s", target, code, tc.want, stderr)
+					}
+					allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+					if allocs != frees || live != 0 {
+						t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", target, allocs, frees, live)
+					}
+					if allocs != tc.allocs {
+						t.Errorf("%s: allocs=%d, want %d", target, allocs, tc.allocs)
+					}
+					if tc.stderr != "" && !strings.HasPrefix(stderr, tc.stderr) {
+						t.Errorf("%s: stderr %q, want it to start with %q", target, stderr, tc.stderr)
+					}
+				})
 			}
 		})
 	}

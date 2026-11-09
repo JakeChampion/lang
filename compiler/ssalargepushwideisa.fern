@@ -68,8 +68,8 @@ function extra(line: string): WideOp {
     return unknown();
   }
   let name = slice_unchecked(line, 0, at) + "";
-  let parts = util.trim(slice_unchecked(line, at + 1, line.len()) + "").split(",");
-  return if (parts.len() == 2) { operands(name, util.trim(parts[0]), util.trim(parts[1])) } else { unknown() };
+  let parts = (slice_unchecked(line, at + 1, line.len()) + "").trim().split(",");
+  return if (parts.len() == 2) { operands(name, parts[0].trim(), parts[1].trim()) } else { unknown() };
 }
 
 function label(line: string): string {
@@ -98,7 +98,7 @@ pub function large_program(output: string): WideProgram {
     }
     if (op.instruction.kind == 17 && op.instruction.target < 0) {
       let instruction = op.instruction;
-      let target = util.trim(slice_unchecked(line, instruction.condition.len(), line.len()) + "");
+      let target = (slice_unchecked(line, instruction.condition.len(), line.len()) + "").trim();
       if (target != ".Lrawfree_double" || instruction.condition != "je" && instruction.condition != "jz") {
         return error("wide large-push branch target outside selected body");
       }

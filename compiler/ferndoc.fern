@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./docsummary";
+import "std/string";
 
 pub struct DocDecl {
   kind: string,
@@ -15,24 +16,8 @@ pub struct DocDecl {
 
 pub struct TakeResult { doc: string, cursor: i32 }
 
-function is_space(b: i32): boolean {
-  return b == 32 || b >= 9 && b <= 13;
-}
-
 function own(v: string): string {
   return v;
-}
-
-pub function trim_space(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && is_space(s[a] as i32)) {
-    a += 1;
-  }
-  while (b > a && is_space(s[b - 1] as i32)) {
-    b -= 1;
-  }
-  return own(slice_unchecked(s, a, b));
 }
 
 function run_end(cs: lexer.Comment[], start: i32): i32 {
@@ -50,7 +35,7 @@ function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
     if (i > start) {
       out += "\n";
     }
-    out += trim_space(cs[i].text);
+    out += cs[i].text.trim();
     i += 1;
   }
   return out;
@@ -103,7 +88,7 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
     if (j > 0) {
       out += "\n";
     }
-    out += trim_space(cs[j].text);
+    out += cs[j].text.trim();
     j += 1;
   }
   return out;

@@ -30,6 +30,7 @@ import "./semcse";
 import "./semthread";
 import "./semunroll";
 import "./semfuse";
+import "./semreserve";
 import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
@@ -6924,7 +6925,7 @@ function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
     let eq = util.index_of_sub(entry, "=");
     if (eq < 0) {
       positional = positional.append(entry);
-    } else if (!pins_assoc(imp, util.trim(slice_unchecked(entry, 0, eq) + ""), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
+    } else if (!pins_assoc(imp, (slice_unchecked(entry, 0, eq) + "").trim(), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
       return false;
     }
   }
@@ -7893,6 +7894,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__load_ptr", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__store_u8", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__str_bytes", params: [typeinfo.t_string(), typeinfo.t_usize()], modes: [b, v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__bytes_data", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [b], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__store_i32", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__store_i64", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
@@ -9255,10 +9257,13 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
       modes = modes.append(all[at].modes);
       at += 1;
     }
-    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.rewritten) };
+    // Capacity reservations introduce no callbacks.
+    // Only pipeline fusion needs another closure-inline pass.
+    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.pipelines) };
   }
   if (report) {
     semarrayreport.write(sink, semarrayreport.render(out.sites));
+    semarrayreport.write(sink, semreserve.render(out.reserves));
   }
   let result: Produced[] = [];
   let i = 0;

@@ -4,9 +4,11 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
+import "./semreserve";
+import "./optbisect";
 import "std/string";
 
-pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
+pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], pipelines: boolean[], sites: semarrayreport.Site[], reserves: semarrayreport.Site[] }
 
 struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], aborts: boolean[], any: boolean }
 
@@ -20,7 +22,10 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
   let cx = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
+  let pipelines: boolean[] = [];
   let sites: semarrayreport.Site[] = [];
+  let reserves: semarrayreport.Site[] = [];
+  let switches = optbisect.switches();
   let i = 0;
   while (i < funcs.len()) {
     let f = funcs[i];
@@ -42,11 +47,18 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
         sites = util.append_all(sites, remaining_sites(f, cx, names[i], enabled));
       }
     }
+    pipelines = pipelines.append(changed);
+    if (usable[i] && semreserve.candidate(f)) {
+      let r = semreserve.reserve(f, cx.index, cx.bad, enabled && optbisect.allowed_by(switches, "fuse", names[i]), report, names[i]);
+      f = r.f;
+      changed = changed || r.changed;
+      reserves = util.append_all(reserves, r.sites);
+    }
     out = out.append(f);
     rewritten = rewritten.append(changed);
     i += 1;
   }
-  return Fused { funcs: out, rewritten: rewritten, sites: sites };
+  return Fused { funcs: out, rewritten: rewritten, pipelines: pipelines, sites: sites, reserves: reserves };
 }
 
 @noinline
@@ -55,9 +67,11 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
   let verbs: string[] = [];
   let report_verbs: string[] = [];
   let any = false;
+  let reserves = false;
   let i = 0;
   while (i < funcs.len()) {
     let v = fn_verb(usable[i], names[i], trusted, iter_trusted);
+    reserves = reserves || usable[i] && semreserve.candidate(funcs[i]);
     if (report) {
       report_verbs = report_verbs.append(v);
     }
@@ -68,10 +82,14 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     any = any || v != "" || report && report_verbs[i] != "";
     i += 1;
   }
-  if (!any) {
+  if (!any && !reserves) {
     return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], aborts: [], any: false };
   }
-  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: may_abort(funcs, usable, index), any: true };
+  let aborts: boolean[] = [];
+  if (any) {
+    aborts = may_abort(funcs, usable, index);
+  }
+  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: aborts, any: any };
 }
 
 function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_trusted: util.NameIndex): string {

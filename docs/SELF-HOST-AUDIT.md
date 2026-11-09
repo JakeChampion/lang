@@ -194,8 +194,9 @@ findings. Ranked by leverage.
   parsed to zero packages**: the loader saw an empty lock rather than an error.
   Native does not have this bug — `internal/pkg/mvs/lock.go:66` makes the identical
   comparison but trims with `strings.TrimSpace`, which strips `\r` — so this
-  was a self-host-only divergence from the reference it mirrors. One
-  CRLF-aware `util.trim` now serves `fern_toml` and `mvs`, pinned by
+  was a self-host-only divergence from the reference it mirrors. The compiler
+  now trims with `std/string`'s `.trim()`, which strips all ASCII whitespace
+  as `strings.TrimSpace` does. `fern_toml` and `mvs` are pinned by
   `toml_crlf_run.fern` + `TestSelfHostTomlCRLF`, which parses the same
   documents LF and CRLF and requires the halves to agree.
   Only the lock half ever misbehaved, which is why it went unseen: the manifest

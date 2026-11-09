@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/testing/corpus"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -40,7 +41,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	cases := selfHostStdTestCases(t, tls)
+	cases := selfHostStdTestShard(t, selfHostStdTestCases(t, tls))
 
 	t.Run("cases", func(t *testing.T) {
 		for _, tc := range cases {
@@ -146,7 +147,7 @@ func TestSelfHostStdTestInterp(t *testing.T) {
 			t.Errorf("interpSlowStdTests names %q, which is not a std/test case", name)
 		}
 	}
-	for _, tc := range selfHostStdTestCases(t, false) {
+	for _, tc := range selfHostStdTestShard(t, selfHostStdTestCases(t, false)) {
 		if interpSlowStdTests[tc.name] {
 			continue
 		}
@@ -195,7 +196,7 @@ func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	cases := selfHostStdTestCases(t, tls)
+	cases := selfHostStdTestShard(t, selfHostStdTestCases(t, tls))
 	t.Run("cases", func(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -256,6 +257,15 @@ type selfHostStdTestCase struct {
 	name        string
 	src         string
 	stripPrefix string
+}
+
+func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
+	t.Helper()
+	selected, err := corpus.Shard(cases, os.Getenv("FERN_STDTEST_SHARD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return selected
 }
 
 func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
@@ -478,6 +488,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"android_draw", langSrcAbs(t, "tests/stdlib/android_draw_test.fern"), ""},
 		{"android_motion", langSrcAbs(t, "tests/stdlib/android_motion_test.fern"), ""},
 		{"android_trace", langSrcAbs(t, "tests/stdlib/android_trace_test.fern"), ""},
+		{"android_testkit", langSrcAbs(t, "tests/stdlib/android_testkit_test.fern"), ""},
 		{"jpeg", langSrcAbs(t, "tests/stdlib/jpeg_test.fern"), ""},
 		{"truetype", langSrcAbs(t, "tests/stdlib/truetype_test.fern"), ""},
 		{"android_property", langSrcAbs(t, "tests/stdlib/android_property_test.fern"), ""},
@@ -587,6 +598,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"tz", langSrcAbs(t, "tests/stdlib/tz_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "tests/stdlib/string_replace_split_test.fern"), ""},
 		{"string_rsplit_once", langSrcAbs(t, "tests/stdlib/string_rsplit_once_test.fern"), ""},
+		{"string_trim", langSrcAbs(t, "tests/stdlib/string_trim_test.fern"), ""},
 		{"string_partition", langSrcAbs(t, "tests/stdlib/string_partition_test.fern"), ""},
 		{"string_parse_radix", langSrcAbs(t, "tests/stdlib/string_parse_radix_test.fern"), ""},
 		{"string_parse_bool", langSrcAbs(t, "tests/stdlib/string_parse_bool_test.fern"), ""},

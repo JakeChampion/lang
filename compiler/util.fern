@@ -1421,21 +1421,6 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
   return clean_path(module_path_join(entry_dir, rel));
 }
 
-pub function trim(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
-    b -= 1;
-  }
-  if (a == 0 && b == s.len()) {
-    return s;
-  }
-  return slice_unchecked(s, a, b) + "";
-}
-
 pub function levenshtein(a: string, b: string): i32 {
   if (a == b) {
     return 0;

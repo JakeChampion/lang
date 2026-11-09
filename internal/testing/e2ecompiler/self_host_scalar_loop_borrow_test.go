@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -43,10 +42,7 @@ function main(): i32 {
 			bin := buildSelfHostBinFor(t, dir, "drivers/checker_codes_run.fern", "scalar-loop-check", target)
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					command := exec.Command(bin)
-					if target == e2eharness.TargetWasm32Wasi {
-						command = exec.Command(e2eharness.Wasmtime(t), "run", bin)
-					}
+					command := runScaleTarget(t, target, bin)
 					command.Stdin = strings.NewReader(tc.source)
 					for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, tc.source), "self-host": driverDiags(runCheckerDriver(t, command, tc.name))} {
 						if tc.want == "" && len(ds) == 0 {

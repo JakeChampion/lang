@@ -16,56 +16,25 @@ fails on a crash in logcat. OUT_DIR gets the frames and logcat.
 
 import json
 from pathlib import Path
-import re
-import struct
 import subprocess
 import sys
 import time
 
-CRASH = re.compile(r"Fatal signal|SIGSYS|UnsatisfiedLinkError|fern: |Unable to load native library")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
+from emulator import adb, count, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
+
 GREY = (110, 110, 110)
 GREEN = (80, 200, 120)
 # The face of the stopwatch covers some thousands of pixels on any screen.
 MIN_FACE_PIXELS = 2000
 
-failures = []
-
-
-def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
-
-
-def fail(message):
-    failures.append(message)
-    print("FAIL " + message, flush=True)
-
-
-def logcat():
-    return adb("logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:*", "libc:*", "*:F")
-
-
-def wait_for(pattern, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        m = re.search(pattern, logcat())
-        if m:
-            return m
-        time.sleep(0.5)
-    return None
 
 
 def frame(out, name):
-    """The colour counts of one raw screen frame: RGBA_8888 after a header."""
-    raw = subprocess.run(["adb", "exec-out", "screencap"], check=True, capture_output=True).stdout
-    with open(f"{out}/{name}.raw", "wb") as f:
-        f.write(raw)
-    width, height, _ = struct.unpack_from("<III", raw)
-    head = len(raw) - width * height * 4
-    counts = {GREY: 0, GREEN: 0}
-    for at in range(head, len(raw), 16):
-        px = (raw[at], raw[at + 1], raw[at + 2])
-        if px in counts:
-            counts[px] += 1
+    """The counts of the grey and the green of the face, in one pixel of each
+    four of one screen frame."""
+    width, height, pixels = screen(out, name)
+    counts = {GREY: count(pixels, GREY, 4), GREEN: count(pixels, GREEN, 4)}
     print(f"{name}: {width}x{height}, grey {counts[GREY]}, green {counts[GREEN]} (one pixel in four)", flush=True)
     return width, height, counts
 
@@ -147,14 +116,12 @@ def main(apk, package, out, libs="mapped"):
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
-    for line in log.splitlines():
-        if CRASH.search(line):
-            fail("logcat: " + line)
+    for line in crashes(log):
+        fail("logcat: " + line)
 
     if failures:
         print(f"{len(failures)} failures", flush=True)
-        sys.exit(1)
-    print("ok", flush=True)
+    finish()
 
 
 if __name__ == "__main__":

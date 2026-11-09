@@ -65,11 +65,11 @@ pub function line_content(raw: string): string {
     if (raw[i] == b'"') {
       quoted = !quoted;
     } else if (raw[i] == b'#' && !quoted) {
-      return util.trim(slice_unchecked(raw, 0, i));
+      return slice_unchecked(raw, 0, i).trim();
     }
     i += 1;
   }
-  return util.trim(raw);
+  return raw.trim();
 }
 
 function is_integer_text(s: string): boolean {
@@ -107,7 +107,7 @@ pub function parse(src: string): Manifest {
       if (line[line.len() - 1] != b']') {
         return Manifest { ...m, err: "malformed section header " + docsummary.quote(line), err_line: li };
       }
-      section = util.trim(slice_unchecked(line, 1, line.len() - 1));
+      section = slice_unchecked(line, 1, line.len() - 1).trim();
       if (section == "package") {
         package_line = li;
       }
@@ -149,7 +149,7 @@ function entry_key(line: string): string {
   if (eq < 0) {
     return "";
   }
-  return util.trim(slice_unchecked(line, 0, eq));
+  return slice_unchecked(line, 0, eq).trim();
 }
 
 function failed(m: Manifest, err: string): Manifest {
@@ -161,8 +161,8 @@ function with_entry(m: Manifest, section: string, line: string, at: i32, seen: s
   if (eq < 0) {
     return failed(m, "expected `key = value`, got " + docsummary.quote(line));
   }
-  let key = util.trim(slice_unchecked(line, 0, eq));
-  let val = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let key = slice_unchecked(line, 0, eq).trim();
+  let val = slice_unchecked(line, eq + 1, line.len()).trim();
   if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
     return failed(m, "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
   }
@@ -357,7 +357,7 @@ function parse_str_array(val: string): Result[string[], string] {
   }
   let out: string[] = [];
   for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
-    let part = util.trim(raw);
+    let part = raw.trim();
     if (part.len() > 0) {
       match (parse_string(part)) {
         Ok(value) => {
@@ -464,8 +464,8 @@ function parse_dep(name: string, val: string): Result[Dep, string] {
   if (val[val.len() - 1] != b'}') {
     return Err("malformed inline table " + docsummary.quote(val));
   }
-  for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
-    let part = util.trim(raw);
+  for raw in inline_parts(slice_unchecked(val, 1, val.len() - 1).trim()) {
+    let part = raw.trim();
     if (part.len() > 0) {
       match (with_dep_field(d, part)) {
         Ok(dep) => {
@@ -485,8 +485,8 @@ function with_dep_field(d: Dep, part: string): Result[Dep, string] {
   if (eq < 0) {
     return Err("expected `key = value` in inline table, got " + docsummary.quote(part));
   }
-  let k = util.trim(slice_unchecked(part, 0, eq));
-  let v = util.trim(slice_unchecked(part, eq + 1, part.len()));
+  let k = slice_unchecked(part, 0, eq).trim();
+  let v = slice_unchecked(part, eq + 1, part.len()).trim();
   if (k == "workspace") {
     if (v != "true") {
       return Err("workspace must be `true` (the only supported value), got " + docsummary.quote(v));
@@ -762,8 +762,8 @@ pub function parse_lock(src: string): Result[Lock, string] {
     if (eq < 0) {
       return Err(lock_line(li, "expected `key = value`"));
     }
-    let key = util.trim(slice_unchecked(line, 0, eq));
-    let v: string = match (parse_quoted(util.trim(slice_unchecked(line, eq + 1, line.len())))) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
+    let key = slice_unchecked(line, 0, eq).trim();
+    let v: string = match (parse_quoted(slice_unchecked(line, eq + 1, line.len()).trim())) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
     let updated: LockEntry = match (with_lock_field(entry, key, v)) { Ok(e) => e, Err(message) => { return Err(lock_line(li, message)); } };
     cur = Some(updated);
   }
@@ -777,13 +777,13 @@ pub function parse_lock(src: string): Result[Lock, string] {
 // A line above the first entry: only `index_serial = N`.
 function lock_top_level(line: string, serial: string): Result[string, string] {
   let eq = index_of(line, b'=', 0);
-  if (eq < 0 || util.trim(slice_unchecked(line, 0, eq)) != "index_serial") {
+  if (eq < 0 || slice_unchecked(line, 0, eq).trim() != "index_serial") {
     return Err(docsummary.quote(line) + " outside a [[package]] entry");
   }
   if (serial.len() > 0) {
     return Err("index_serial given twice");
   }
-  let v = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let v = slice_unchecked(line, eq + 1, line.len()).trim();
   if let Err(message) = validate_serial(v) {
     return Err("index_serial " + message);
   }

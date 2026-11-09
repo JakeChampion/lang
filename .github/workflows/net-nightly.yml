@@ -163,6 +163,15 @@ jobs:
         with:
           path: ~/.cache/fern-h3-tools
           key: h3-tools-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/h3tools') }}
+      # The packages http.zig and zap pin, each named by its content hash,
+      # so a host that fails to serve an archive does not fail the run.
+      - name: Cache the Zig servers' packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            scripts/net-bench.d/httpzhello/zig-pkg
+            scripts/net-bench.d/zaphello/zig-pkg
+          key: zig-pkg-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/httpzhello/build.zig.zon', 'scripts/net-bench.d/zaphello/build.zig.zon') }}
 
       - name: Load the hello servers
         env:
@@ -346,7 +355,8 @@ jobs:
   quic-interop:
     name: net-quic-interop-x86_64
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Room for the HTTP/3 tools' first build, before the cache holds them.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -355,7 +365,16 @@ jobs:
         with:
           path: ~/.cache/fern-quic-interop
           key: quic-interop-${{ runner.os }}-${{ hashFiles('scripts/net-quic-interop.d/requirements.txt') }}
-      - name: Handshake with aioquic each way
+      # h2o with HTTP/3, the second peer, built by scripts/net-bench.d/h3tools
+      # with the same cache key as the bench job.
+      - name: Install the HTTP/3 tools' build dependencies
+        run: sudo apt-get install -y --no-install-recommends libev-dev libc-ares-dev zlib1g-dev cmake pkg-config
+      - name: Cache the HTTP/3 tools
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-h3-tools
+          key: h3-tools-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/h3tools') }}
+      - name: Handshake with aioquic and h2o
         run: scripts/net-quic-interop
 
   h2spec:

@@ -4,30 +4,15 @@
 // internal/testing/e2e loads it with Mesa's OpenGL ES 2 on the host.
 import "std/android/draw";
 import "std/android/gl";
+import "std/android/testkit";
 import "./face";
 import "./gpu";
 import "./ui";
 import "./ui_test";
 
-// The pixels of the two frames whose channels differ by more than 6. The
-// CPU truncates each blend and the GPU rounds it, so a pixel under several
-// translucent layers can differ by a few steps.
-function differ(a: draw.Frame, b: draw.Frame): i32 {
-  let n = 0;
-  for y in 0..a.height {
-    for x in 0..a.width {
-      let p = a.pixel(x, y);
-      let q = b.pixel(x, y);
-      for shift in [0, 8, 16] {
-        if (((p >> shift & 255) - (q >> shift & 255)).abs() > 6) {
-          n += 1;
-          break;
-        }
-      }
-    }
-  }
-  return n;
-}
+// The CPU truncates each blend and the GPU rounds it, so a pixel under
+// several translucent layers can differ by a few steps.
+const TOLERANCE: i32 = 6;
 
 // The screen of `nodes` on the CPU.
 function cpu(fs: face.Fonts, nodes: ui.Node[], m: ui.Metrics): draw.Frame {
@@ -70,7 +55,7 @@ pub function check(): i32 {
   let home = ui.nodes(fs, v);
   let (got, p1) = gpu_frame(p, [ui.Pass { nodes: home, dy: 0, alpha: 1.0 }]);
   let want = cpu(fs, home, m);
-  if (differ(got, want) == 0) {
+  if (testkit.differ(got, want, TOLERANCE) == 0) {
     n += 1;
   }
   draw.release(got);
@@ -78,7 +63,7 @@ pub function check(): i32 {
   let (slid, p2) = gpu_frame(p1, [ui.Pass { nodes: home, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list, dy: 96, alpha: 0.5 }]);
   let over = cpu(fs, list, m);
   want.blend_frame(over, 0, 96, 128);
-  if (differ(slid, want) == 0) {
+  if (testkit.differ(slid, want, TOLERANCE) == 0) {
     n += 10;
   }
   draw.release(slid);
@@ -87,7 +72,7 @@ pub function check(): i32 {
   let dialog = ui.nodes(fs, ui.View { ...v, layer: ui.DRAWER, sheet: Some(sheet()) });
   let (shown, p3) = gpu_frame(p2, [ui.Pass { nodes: dialog, dy: 0, alpha: 1.0 }]);
   let expect = cpu(fs, dialog, m);
-  if (differ(shown, expect) == 0) {
+  if (testkit.differ(shown, expect, TOLERANCE) == 0) {
     n += 100;
   }
   draw.release(shown);

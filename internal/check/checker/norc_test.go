@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -141,5 +142,24 @@ func TestNoRCRefusesNonScalarReads(t *testing.T) {
 				t.Fatalf("want one E102 ending %q, got %v", tc.want, errs)
 			}
 		})
+	}
+}
+
+func TestEarlyHookRules(t *testing.T) {
+	const main = "\nfunction main(): i32 { return 0; }\n"
+	ok := "@early\nfunction setup(): void {\n  unsafe { __sysreg_write(\"tpidr_el1\", 1i64); }\n}" + main
+	if errs := checkErrors(t, ok); len(errs) != 0 {
+		t.Fatalf("a well-formed @early hook refused: %v", errs)
+	}
+	for name, c := range map[string]struct{ src, want string }{
+		"a parameter":   {"@early\nfunction h(n: i32): void {}" + main, "must take no parameters and return void"},
+		"a result":      {"@early\nfunction h(): i32 { return 1; }" + main, "must take no parameters and return void"},
+		"two hooks":     {"@early\nfunction a(): void {}\n@early\nfunction b(): void {}" + main, "is a second hook"},
+		"implies @norc": {"@early\nfunction h(): void { let s = \"x\"; }" + main, "`@early` function \"h\""},
+	} {
+		errs := checkErrors(t, c.src)
+		if len(errs) == 0 || !strings.Contains(fmt.Sprint(errs), c.want) {
+			t.Errorf("%s: errors %v, want %q", name, errs, c.want)
+		}
 	}
 }

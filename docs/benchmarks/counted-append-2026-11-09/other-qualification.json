@@ -1,0 +1,134 @@
+[
+  {
+    "suite": "wavpack_predict",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 2938,
+    "live_bytes": 0
+  },
+  {
+    "suite": "wavpack_predict",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "wavpack_predict",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass"
+  },
+  {
+    "suite": "wavpack_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 1516,
+    "live_bytes": 0
+  },
+  {
+    "suite": "wavpack_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "wavpack_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass"
+  },
+  {
+    "suite": "wavpack_boundary",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 16197,
+    "live_bytes": 0
+  },
+  {
+    "suite": "wavpack_boundary",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "wavpack_boundary",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-wavpack-predict",
+    "build": "pass"
+  },
+  {
+    "suite": "mp3_input_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 976,
+    "live_bytes": 0
+  },
+  {
+    "suite": "mp3_input_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "mp3_input_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass"
+  },
+  {
+    "suite": "opus_input_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 7494,
+    "live_bytes": 0
+  },
+  {
+    "suite": "opus_input_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "opus_input_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass"
+  },
+  {
+    "suite": "opus_file_smoke",
+    "target": "x86-64-linux",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass",
+    "allocs": 3222,
+    "live_bytes": 0
+  },
+  {
+    "suite": "opus_file_smoke",
+    "target": "wasm32-wasi",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "suite": "opus_file_smoke",
+    "target": "arm64-android",
+    "source_root": "/workspace/fern-counted-append",
+    "build": "pass"
+  }
+]

@@ -9,6 +9,7 @@ import "../semrecords";
 import "../typeinfo";
 import "../ssacreditabi" as abi;
 import "../util";
+import "./ssacreditboxed" as boxed;
 
 function partial_sibling_controls(sub: ircore.Sub): void {
   partial_expect(sub, "partial_left", 1, false, "field differs from incoming", 198);
@@ -782,7 +783,7 @@ function partial_checks(target: string): void {
   let reasons = ["", "", "", "sibling type or user finalizer", "sibling is not a flat", "nominal type or user finalizer", "nominal type or user finalizer", "exactly two child fields"];
   let mode = 0;
   while (mode < 8) {
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(partial_source(mode))), target).sub;
+    let sub = semlower.driven(boxed.parsed(partial_source(mode), ["partial_left", "partial_right"]), target).sub;
     partial_expect(sub, "partial_left", 0, mode < 3, reasons[mode], 170 + mode);
     if (mode < 3) {
       partial_expect(sub, "partial_right", 1, true, "proved guarded", 180 + mode);
@@ -868,7 +869,7 @@ function assertion_checks(target: string): void {
 
 function caller_controls(target: string): void {
   let text = partial_source(0) + "\n@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\n";
-  let sub = semlower.driven(parser.parse_module(lexer.tokenize(text)), target).sub;
+  let sub = semlower.driven(boxed.parsed(text, ["partial_left", "partial_right"]), target).sub;
   for field in [0, 1] {
     let name = "partial_left";
     if (field == 1) {
@@ -957,7 +958,7 @@ function producer_checks(target: string): void {
   let reasons = ["", "", "", "unsupported producer result or finalizer", "unsupported producer child or finalizer", "producer child is not flat", "unsupported producer layout or ABI arity"];
   let mode = 0;
   for why in reasons {
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(producer_source(mode))), target).sub;
+    let sub = semlower.driven(boxed.parsed(producer_source(mode), ["leaf", "parent"]), target).sub;
     producer_expect(sub, "parent", if (mode < 3) { 3 } else { 0 }, why, 210 + mode);
     if (mode < 3) {
       producer_expect(sub, "leaf", 2, "", 218);
@@ -1032,7 +1033,7 @@ function origin_caller_checks(target: string): void {
       + "@noinline\nfunction select_parent(flag: boolean, a: " + child + ", b: " + child + "): Parent { let p = if (flag) { parent(a,b) } else { parent(b,a) }; return p; }\n"
       + "@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n; }\n"
       + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return boxed_result(p); }\n";
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+    let sub = semlower.driven(boxed.parsed(source, ["parent", "select_parent"]), target).sub;
     origin_caller_expect(sub, "select_parent", "");
     origin_schema_controls(sub);
     let reasons = ["missing or ambiguous origin caller ABI", "missing or ambiguous origin caller ABI", "origin caller requires scalar and two consuming parameters", "unsupported origin caller types or finalizers", "unsupported origin caller types or finalizers", "missing or ambiguous origin callee ABI", "missing or ambiguous origin callee ABI", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "missing origin caller schema", "unsupported origin caller layout", "origin caller result field differs from child", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: unproduced producer body", "missing or ambiguous origin callee ABI", "origin callee proof refused: unsupported allocation producer effect", ""];
