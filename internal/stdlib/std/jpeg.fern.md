@@ -56,6 +56,8 @@ The root chunk keeps the order of the declarations.
 ```fern
 <<module introduction>>=
 // This module decodes baseline and progressive JPEG images.
+import "core/cmp";
+import "core/error";
 import "std/f64";
 ```
 
@@ -85,6 +87,14 @@ pub function (e: DecodeError) message(): string {
     }
   }
 }
+
+pub function (e: DecodeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for DecodeError {}
+
+impl cmp.Display for DecodeError {}
 ```
 
 ### `Huffman tables and bits`

@@ -1,0 +1,22 @@
+// A break leaves the loop with the moved set it has. An own parameter that is
+// consumed before the break is moved after the loop, so a read there is a use
+// after move.
+
+struct State { bytes: u8[] }
+
+function (own state: State) size(): i32 {
+  return state.bytes.len();
+}
+
+function work(own state: State): i32 {
+  let n = 0;
+  while (true) {
+    n = state.size();
+    break;
+  }
+  return n + state.size();
+}
+
+function main(): i32 {
+  return work(State { bytes: [] });
+}

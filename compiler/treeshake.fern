@@ -216,8 +216,9 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 }
 
 // The roots of a call of the method `fa.field` with `arity` arguments. A
-// method of that name reaches only methods with that many parameters, and
-// An unknown receiver can also name a module with a free function.
+// method of that name reaches only methods with that many parameters. On a
+// receiver of unknown type, `ts_call_root` also reaches free functions of
+// that name.
 function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]): string[] {
   let tag = ts_recv_tag(fa.obj);
   let ft = util.base_type_name(tag);

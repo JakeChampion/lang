@@ -56,6 +56,15 @@ func (s *ownedBindingScope) hideMoves(moves map[string]ast.Position) map[string]
 	return hidden
 }
 
+// settle gives moves, a moved set taken inside the scope, the moves that it
+// has once the scope ends.
+func (s *ownedBindingScope) settle(moves map[string]ast.Position) {
+	s.hideMoves(moves)
+	for path, at := range s.wasMoved {
+		moves[path] = at
+	}
+}
+
 func (s *ownedBindingScope) restore() {
 	for name := range s.names {
 		delete(s.owned, name)

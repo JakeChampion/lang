@@ -292,6 +292,28 @@ function test_readers_stay_inside_the_value(): test.TestOutcome {
   return test.assert_eq(safe && invalid.reg(memory, 0).is_none(), true);
 }
 
+// A root with a chosen node, as a loader writes it for an initrd.
+function chosen(): Builder {
+  let b = begin(Builder { structs: [], strings: [] }, "");
+  b = begin(b, "chosen");
+  b = prop(b, "linux,initrd-start", cells([0x1, 0x48000000]));
+  b = prop(b, "linux,initrd-end", cells([0x48001000]));
+  b = prop(b, "bad", cells([1, 2, 3]));
+  b = end(b);
+  return end(b);
+}
+
+function test_property_cells(): test.TestOutcome {
+  let Ok(t) = fdt.parse(blob(chosen(), 17)) else {
+    return test.fail("parse refused the chosen tree");
+  };
+  let c = 1;
+  let two = t.property_cells(c, "linux,initrd-start").unwrap_or(0 as u64) == 0x148000000 as u64;
+  let one = t.property_cells(c, "linux,initrd-end").unwrap_or(0 as u64) == 0x48001000 as u64;
+  let refused = t.property_cells(c, "bad").is_none() && t.property_cells(c, "missing").is_none();
+  return test.assert_eq(two && one && refused, true);
+}
+
 function display[T: cmp.Display](value: T): string {
   return value.to_string();
 }
@@ -313,6 +335,7 @@ function main(): i32 {
   r = r.it("reg reads two-cell pairs", test_reg_two_cells);
   r = r.it("reg takes the cell counts from the parent", test_reg_one_cell_from_the_parent);
   r = r.it("property_string and property_u32 read a value or give None", test_strings_and_words);
+  r = r.it("property_cells reads one or two cells", test_property_cells);
   r = r.it("parse refuses a bad header", test_refuses_a_bad_header);
   r = r.it("parse refuses a bad structure", test_refuses_a_bad_structure);
   r = r.it("errors support Display and Error", test_error_traits);

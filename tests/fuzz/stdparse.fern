@@ -1,3 +1,7 @@
+import "std/brotli";
+import "std/deflate";
+import "std/hash/crc32";
+import "std/hex";
 import "std/http";
 import "std/http/h2";
 import "std/http/h2/frame";
@@ -6,13 +10,24 @@ import "std/http/qpack";
 import "std/json";
 import "std/quic/frames";
 import "std/quic/packet";
+import "std/result";
+import "std/time";
+import "std/tls/handshake";
+import "std/tls/message";
+import "std/tls/pem";
+import "std/tls/record";
+import "std/tls/verify";
+import "std/tls/x509";
 import "std/url";
+import "std/zstd";
 
 // Feeds a file to one network-facing parser of the standard library: the
 // HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
 // and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
-// reader, the JSON parser, or the URL and query parsers. Each refuses malformed bytes with
-// an error value, so the accepted outcome is exit 0 with a summary on stdout.
+// reader, the TLS record and handshake readers, the X.509 reader, the
+// DEFLATE, gzip, zlib, zstd and Brotli decoders, the JSON parser, or the URL
+// and query parsers. Each refuses malformed bytes with an
+// error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
 function text_of(b: u8[]): string {
@@ -200,6 +215,407 @@ function quic_frames_summary(raw: u8[]): string {
   }
 }
 
+// Runs the reader of one ClientHello or ServerHello extension, and gives true
+// when the reader accepts the data or when no reader takes the kind.
+function extension_ok(e: message.Extension): boolean {
+  let k = e.kind;
+  if (k == message.EXT_SERVER_NAME) {
+    return message.server_name(e.data).is_ok();
+  }
+  if (k == message.EXT_SUPPORTED_VERSIONS) {
+    return message.supported_versions(e.data).is_ok() || message.selected_version(e.data).is_ok();
+  }
+  if (k == message.EXT_SUPPORTED_GROUPS) {
+    return message.supported_groups(e.data).is_ok();
+  }
+  if (k == message.EXT_SIGNATURE_ALGORITHMS) {
+    return message.signature_algorithms(e.data).is_ok();
+  }
+  if (k == message.EXT_KEY_SHARE) {
+    return message.key_shares(e.data).is_ok() || message.key_share(e.data).is_ok() || message.retry_group(e.data).is_ok();
+  }
+  if (k == message.EXT_ALPN) {
+    return message.alpn(e.data).is_ok();
+  }
+  if (k == message.EXT_PRE_SHARED_KEY) {
+    return message.pre_shared_key(e.data).is_ok() || message.selected_psk(e.data).is_ok();
+  }
+  if (k == message.EXT_PSK_KEY_EXCHANGE_MODES) {
+    return message.psk_modes(e.data).is_ok();
+  }
+  return true;
+}
+
+function extensions_of(m: message.Message): message.Extension[] {
+  match (m) {
+    message.ClientHelloMsg(h) => {
+      return h.extensions;
+    },
+    message.ServerHelloMsg(h) => {
+      return h.extensions;
+    },
+    message.EncryptedExtensions(es) => {
+      return es;
+    },
+    _ => {
+      return [];
+    }
+  }
+}
+
+// Splits the bytes into handshake messages, decodes each one, and runs the
+// extension readers over each hello.
+function messages_summary(raw: [u8]): string {
+  match (message.split(raw)) {
+    Ok(sp) => {
+      let decoded = 0;
+      let extensions = 0;
+      let refused = 0;
+      for r in sp.messages {
+        match (message.decode(r)) {
+          Ok(m) => {
+            decoded += 1;
+            for e in extensions_of(m) {
+              extensions += 1;
+              if (!extension_ok(e)) {
+                refused += 1;
+              }
+            }
+          },
+          Err(_) => {}
+        }
+      }
+      return "messages " + sp.messages.len().to_string() + " decoded " + decoded.to_string() + " extensions " + extensions.to_string() + " refused " + refused.to_string() + " rest " + sp.rest.len().to_string();
+    },
+    Err(e) => {
+      return "messages refused " + e.message().len().to_string();
+    }
+  }
+}
+
+// Deframes the bytes as TLS records and reads the handshake records as
+// handshake messages. A record that does not deframe falls back to reading
+// the bytes as a handshake stream, as a QUIC CRYPTO frame carries them.
+function tls_summary(raw: u8[]): string {
+  match (record.deframe(raw)) {
+    Ok(d) => {
+      let hs: u8[] = [];
+      for r in d.records {
+        match (r.content_type) {
+          record.Handshake => {
+            hs = hs.concat(r.fragment);
+          },
+          _ => {}
+        }
+      }
+      return "tls records " + d.records.len().to_string() + " rest " + d.rest.len().to_string() + " " + messages_summary(hs);
+    },
+    Err(e) => {
+      return "tls deframe refused " + e.message().len().to_string() + " " + messages_summary(raw);
+    }
+  }
+}
+
+function filled(start: i32, n: i32): u8[] {
+  let out = __alloc_u8(n);
+  let i = 0;
+  while (i < n) {
+    out = out.with(i, (start + i * 7 & 255) as u8);
+    i += 1;
+  }
+  return out;
+}
+
+struct Tally { events: i32, output: i32, signs: i32, verifies: i32 }
+
+function tally(t: Tally, output: [u8], events: handshake.Event[]): Tally {
+  let signs = t.signs;
+  let verifies = t.verifies;
+  for e in events {
+    match (e) {
+      handshake.SignNeeded(_) => {
+        signs += 1;
+      },
+      handshake.VerifyServer(_) => {
+        verifies += 1;
+      },
+      handshake.VerifyClient(_) => {
+        verifies += 1;
+      },
+      _ => {}
+    }
+  }
+  return Tally { events: t.events + events.len(), output: t.output + output.len(), signs: signs, verifies: verifies };
+}
+
+function tally_text(t: Tally): string {
+  return " events " + t.events.to_string() + " output " + t.output.to_string() + " signs " + t.signs.to_string() + " verifies " + t.verifies.to_string();
+}
+
+// Starts a server and feeds it the bytes in pieces of eleven. A request for a
+// signature gets a signature of zeros, so a hostile ClientHello can reach the
+// next state.
+function tls_server_summary(raw: u8[]): string {
+  let config = handshake.server_config([filled(3, 32)], [0x0807]);
+  let s: handshake.Server = match (handshake.server_new(config, filled(2, handshake.server_entropy(config)))) {
+    Ok(v) => v,
+    Err(e) => {
+      return "tls-server config refused " + e.message();
+    },
+  };
+  let t = Tally { events: 0, output: 0, signs: 0, verifies: 0 };
+  let at = 0;
+  while (at < raw.len()) {
+    let end = at + 11;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    match (s.read_alerting(__bytes_range(raw, at, end))) {
+      Ok(step) => {
+        t = tally(t, step.output, step.events);
+        s = step.server;
+        if (t.signs == 1 && step.events.len() > 0) {
+          match (s.signature(__alloc_u8(64))) {
+            Ok(signed) => {
+              t = tally(t, signed.output, signed.events);
+              s = signed.server;
+            },
+            Err(e) => {
+              return "tls-server signature refused " + e.message().len().to_string() + tally_text(t);
+            }
+          }
+        }
+      },
+      Err(r) => {
+        return "tls-server refused " + r.error.message().len().to_string() + " alert " + r.alert.len().to_string() + tally_text(t);
+      }
+    }
+    at = end;
+  }
+  return "tls-server open" + tally_text(t);
+}
+
+function fuzz_client(): Result[handshake.ClientStep, handshake.HandshakeError] {
+  let config = handshake.client_config("example.com");
+  return handshake.client_start(config, filled(1, handshake.client_entropy(config)));
+}
+
+// Prints the ClientHello of the client that the tls-client reader starts, so
+// a test can ask another implementation's server for a reply to it.
+function tls_hello_summary(): string {
+  match (fuzz_client()) {
+    Ok(step) => {
+      return "tls-hello " + hex.encode(step.output);
+    },
+    Err(e) => {
+      return "tls-hello refused " + e.message();
+    }
+  }
+}
+
+// Starts a client and reads the bytes as the server's flight in pieces of
+// eleven. A chain to verify gets a verdict that accepts it, so a hostile
+// flight can reach the server's Finished message.
+function tls_client_summary(raw: u8[]): string {
+  let c: handshake.Client = match (fuzz_client()) {
+    Ok(v) => v.client,
+    Err(e) => {
+      return "tls-client config refused " + e.message();
+    },
+  };
+  let t = Tally { events: 0, output: 0, signs: 0, verifies: 0 };
+  let answered = false;
+  let at = 0;
+  while (at < raw.len()) {
+    let end = at + 11;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    match (c.read(__bytes_range(raw, at, end))) {
+      Ok(step) => {
+        t = tally(t, step.output, step.events);
+        c = step.client;
+      },
+      Err(e) => {
+        return "tls-client refused " + e.message().len().to_string() + tally_text(t);
+      }
+    }
+    if (t.verifies > 0 && !answered) {
+      answered = true;
+      match (c.verdict(true)) {
+        Ok(step) => {
+          t = tally(t, step.output, step.events);
+          c = step.client;
+        },
+        Err(e) => {
+          return "tls-client verdict refused " + e.message().len().to_string() + tally_text(t);
+        }
+      }
+    }
+    at = end;
+  }
+  if (c.connected()) {
+    return "tls-client connected" + tally_text(t);
+  }
+  return "tls-client open" + tally_text(t);
+}
+
+// Reads PEM text when the bytes start with a PEM line, and one DER
+// certificate otherwise. Each certificate is then verified as its own root
+// for example.com at a fixed time.
+function x509_summary(raw: u8[]): string {
+  let ders: u8[][] = [raw];
+  if (raw.len() >= 10 && text_of(raw.take(10)) == "-----BEGIN") {
+    match (pem.certificates(text_of(raw))) {
+      Ok(cs) => {
+        ders = cs;
+      },
+      Err(e) => {
+        return "x509 pem refused " + e.message().len().to_string();
+      }
+    }
+  }
+  let parsed = 0;
+  let verified = 0;
+  let names = 0;
+  for der in ders {
+    match (x509.parse(der)) {
+      Ok(c) => {
+        parsed += 1;
+        names += c.dns_names.len();
+        let now = time.timestamp_from_unix(1800000000i64);
+        if (verify.server([der], verify.roots([der]), "example.com", now).is_ok()) {
+          verified += 1;
+        }
+      },
+      Err(_) => {}
+    }
+  }
+  return "x509 certificates " + ders.len().to_string() + " parsed " + parsed.to_string() + " verified " + verified.to_string() + " names " + names.to_string();
+}
+
+// The output limit of each decoder, 1 MiB.
+const DECODE_LIMIT: i32 = 1048576;
+
+// The length and CRC-32 of decoded bytes, which a test compares with the
+// output of another decoder.
+function digest(out: [u8]): string {
+  return out.len().to_string() + " crc " + crc32.of(out).to_string();
+}
+
+function inflate_refusal(e: deflate.InflateError): string {
+  match (e) {
+    deflate.Truncated => {
+      return "truncated";
+    },
+    deflate.OutputLimit => {
+      return "limit";
+    },
+    deflate.BadChecksum => {
+      return "checksum";
+    },
+    deflate.BadHeader(_) => {
+      return "header";
+    },
+    deflate.Malformed(_) => {
+      return "malformed";
+    }
+  }
+}
+
+function inflate_summary(raw: u8[]): string {
+  match (deflate.inflate(raw, DECODE_LIMIT)) {
+    Ok(got) => {
+      return "inflate ok " + digest(got.out) + " consumed " + got.consumed.to_string();
+    },
+    Err(e) => {
+      return "inflate refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function gunzip_summary(raw: u8[]): string {
+  match (deflate.gunzip(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      return "gunzip ok " + digest(out);
+    },
+    Err(e) => {
+      return "gunzip refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function zlib_summary(raw: u8[]): string {
+  match (deflate.zlib_decode(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      return "zlib ok " + digest(out);
+    },
+    Err(e) => {
+      return "zlib refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+// Decodes the bytes as a zstd frame, then compresses the bytes and decodes
+// them back. A round trip that does not give the bytes back is a finding.
+function zstd_summary(raw: u8[]): string {
+  let decoded = "";
+  match (zstd.decompress(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      decoded = "ok " + digest(out);
+    },
+    Err(e) => {
+      decoded = "refused " + e.message().len().to_string();
+    }
+  }
+  let trip = "broken";
+  match (zstd.decompress(zstd.compress(raw), raw.len())) {
+    Ok(back) => {
+      if (same(back, raw)) {
+        trip = "ok";
+      }
+    },
+    Err(_) => {}
+  }
+  return "zstd " + decoded + " roundtrip " + trip;
+}
+
+function brotli_summary(raw: u8[]): string {
+  let decoded = "";
+  match (brotli.decompress(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      decoded = "ok " + digest(out);
+    },
+    Err(e) => {
+      decoded = "refused " + e.message().len().to_string();
+    }
+  }
+  let trip = "broken";
+  match (brotli.decompress(brotli.compress(raw), raw.len())) {
+    Ok(back) => {
+      if (same(back, raw)) {
+        trip = "ok";
+      }
+    },
+    Err(_) => {}
+  }
+  return "brotli " + decoded + " roundtrip " + trip;
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -226,7 +642,7 @@ function url_summary(src: string): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|json|url FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -261,6 +677,46 @@ function main(): i32 {
   }
   if (av[1] == "frames") {
     print(quic_frames_summary(raw));
+    return 0;
+  }
+  if (av[1] == "tls") {
+    print(tls_summary(raw));
+    return 0;
+  }
+  if (av[1] == "tls-server") {
+    print(tls_server_summary(raw));
+    return 0;
+  }
+  if (av[1] == "tls-hello") {
+    print(tls_hello_summary());
+    return 0;
+  }
+  if (av[1] == "tls-client") {
+    print(tls_client_summary(raw));
+    return 0;
+  }
+  if (av[1] == "x509") {
+    print(x509_summary(raw));
+    return 0;
+  }
+  if (av[1] == "inflate") {
+    print(inflate_summary(raw));
+    return 0;
+  }
+  if (av[1] == "gunzip") {
+    print(gunzip_summary(raw));
+    return 0;
+  }
+  if (av[1] == "zlib") {
+    print(zlib_summary(raw));
+    return 0;
+  }
+  if (av[1] == "zstd") {
+    print(zstd_summary(raw));
+    return 0;
+  }
+  if (av[1] == "brotli") {
+    print(brotli_summary(raw));
     return 0;
   }
   if (av[1] == "json") {

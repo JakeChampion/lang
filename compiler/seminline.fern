@@ -852,17 +852,24 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     out = next.out;
     round += 1;
   }
+  if (more) {
+    util.report_unsettled("seminline.splice", round, "");
+  }
   let tiny = none_of(out.funcs.len());
   let none = none_of(out.funcs.len());
-  for _ in 0..4 {
+  let tiny_rounds = 0;
+  let tiny_more = true;
+  while (tiny_more && tiny_rounds < 4) {
     tiny = grown_tiny(out, s, tiny);
     let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small);
     sizes = next.sizes;
     callees = next.callees;
     out = next.out;
-    if (!next.changed) {
-      break;
-    }
+    tiny_more = next.changed;
+    tiny_rounds += 1;
+  }
+  if (tiny_more) {
+    util.report_unsettled("seminline.tiny", tiny_rounds, "");
   }
   let merged = s.once;
   for j in 0..once.len() {
@@ -2306,6 +2313,9 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
     rewritten = rewritten || changed;
     round += 1;
   }
+  if (changed) {
+    util.report_unsettled("seminline.split_constructions", round, f.graph.name);
+  }
   if (rewritten) {
     f = ssasem.Func { ...f, graph: ssa.prune_trivial_phis(f.graph).f };
   }
@@ -2623,7 +2633,7 @@ function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[
 function swapped(swap: i32[], v: i32): i32 {
   let x = v;
   let steps = 0;
-  while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < 64) {
+  while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < swap.len()) {
     x = swap[x];
     steps += 1;
   }
