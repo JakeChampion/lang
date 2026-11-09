@@ -113,19 +113,19 @@ function in_range(v: i32, n: i32): boolean {
 }
 
 function droppable(k: i32): boolean {
-  return k == 8 || k == 7 || k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new()
+  return k == ssa.PHI || k == ssa.COPY || k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new()
     || k == ssasem.checked_present() || k == ssasem.checked_value();
 }
 
 function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != 7 && !pure_lane_call(ins)) {
+  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != ssa.COPY && !pure_lane_call(ins)) {
     return false;
   }
   if (ins.result < 0 || ins.result >= uses.len() || uses[ins.result] != 0) {
     return false;
   }
-  return k == 7 || k == ssasem.call() || !ssasem.has_finalizer(f, f.values[ins.result]);
+  return k == ssa.COPY || k == ssasem.call() || !ssasem.has_finalizer(f, f.values[ins.result]);
 }
 
 // A lane builtin that reads only its operands.

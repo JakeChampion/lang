@@ -1,4 +1,5 @@
 import "std/envflag";
+import "std/string";
 
 pub function arity_message(subject: string, want: i32, got: i32, unit: string): string {
   let units = unit;
@@ -515,35 +516,6 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
-pub function str_has_prefix(s: string, prefix: string): boolean {
-  if (s.len() < prefix.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < prefix.len()) {
-    if (s[i] != prefix[i]) {
-      return false;
-    }
-    i += 1;
-  }
-  return true;
-}
-
-pub function str_has_suffix(s: string, suffix: string): boolean {
-  let at = s.len() - suffix.len();
-  if (at < 0) {
-    return false;
-  }
-  let i = 0;
-  while (i < suffix.len()) {
-    if (s[at + i] != suffix[i]) {
-      return false;
-    }
-    i += 1;
-  }
-  return true;
-}
-
 pub function contains(haystack: string, needle: string): boolean {
   return index_of_sub(haystack, needle) >= 0;
 }
@@ -808,7 +780,7 @@ pub function f64_range_kind(text: string): string {
 }
 
 pub function is_f64_range_kind(kind: string): boolean {
-  return str_has_prefix(kind, f64_range_prefix());
+  return kind.starts_with(f64_range_prefix());
 }
 
 pub function f64_range_message(kind: string): string {
@@ -1188,7 +1160,7 @@ pub function is_ident(s: string): boolean {
 pub const ENTRY_SHADOW_PREFIX: string = "__entry__";
 
 pub function demangle(name: string): string {
-  if (str_has_prefix(name, ENTRY_SHADOW_PREFIX)) {
+  if (name.starts_with(ENTRY_SHADOW_PREFIX)) {
     return slice_unchecked(name, ENTRY_SHADOW_PREFIX.len(), name.len()) + "";
   }
   let cut = dunder_at(name);
@@ -1273,10 +1245,10 @@ pub function module_name(import_path: string): string {
 }
 
 pub function without_fern_ext(path: string): string {
-  if (str_has_suffix(path, ".fern.md")) {
+  if (path.ends_with(".fern.md")) {
     return slice_unchecked(path, 0, path.len() - 8) + "";
   }
-  if (str_has_suffix(path, ".fern")) {
+  if (path.ends_with(".fern")) {
     return slice_unchecked(path, 0, path.len() - 5) + "";
   }
   return path;
@@ -1311,7 +1283,7 @@ pub function import_qualifier(path: string): string {
     i += 1;
   }
   let end = path.len();
-  if (str_has_suffix(path, ".fern")) {
+  if (path.ends_with(".fern")) {
     end -= 5;
   }
   let out = "";
@@ -1424,7 +1396,7 @@ pub function should_load(import_path: string, root: string, deps: string[]): boo
 }
 
 pub function is_stdlib_path(import_path: string): boolean {
-  return str_has_prefix(import_path, "std/") || str_has_prefix(import_path, "core/");
+  return import_path.starts_with("std/") || import_path.starts_with("core/");
 }
 
 pub function is_dir(path: string): boolean {

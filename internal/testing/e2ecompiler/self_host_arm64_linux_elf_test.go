@@ -45,11 +45,14 @@ function main(): i32 {
     let pa2: Arm64Asm = p.asm;
     let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    write(unsafe { string_from_bytes_unchecked(elf_image_wx(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size)) });
+    unsafe {
+        write(string_from_bytes_unchecked(elf_image_wx(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size)));
+    }
     return 0;
 }
 `
 	edir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, edir, "arm64_native.fern")
 	if err := os.WriteFile(filepath.Join(edir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+driverMain), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}
@@ -63,13 +66,15 @@ function main(): i32 {
     let p: Arm64GasProg = arm64_gas_program(asm);
     if (p.unknown.len() > 0) { write("UNKNOWN:"); return 0; }
     let pa: Arm64Asm = p.asm;
-    let tv: i64 = (elf_text_vaddr_pie()) as i64;
-    let dv: i64 = (elf_data_vaddr_pie(pa.text.len())) as i64;
+    let tv: i64 = (elf_text_vaddr_pie(false)) as i64;
+    let dv: i64 = (elf_data_vaddr_pie(pa.text.len(), false)) as i64;
     p = arm64_gas_link(p, tv, dv);
     let pa2: Arm64Asm = p.asm;
     let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    write(unsafe { string_from_bytes_unchecked(elf_image_pie(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size, 0)) });
+    unsafe {
+        write(string_from_bytes_unchecked(elf_image_pie(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size, 0, false)));
+    }
     return 0;
 }
 `

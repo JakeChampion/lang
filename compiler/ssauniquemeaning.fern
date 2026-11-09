@@ -96,34 +96,34 @@ function block_positions(f: ssa.SFunc): Graph {
 }
 
 function targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];
 }
 
 function constant(op: ssa.SInst): boolean {
-  return op.args.len() == 0 && op.str == "" && (op.imm == 0 || op.imm == 1 || op.kind_tag == 1 && (op.imm == 7 || op.imm == 9));
+  return op.args.len() == 0 && op.str == "" && (op.imm == 0 || op.imm == 1 || op.kind_tag == ssa.CONST_INT && (op.imm == 7 || op.imm == 9));
 }
 
 function unary(op: ssa.SInst): boolean {
-  return op.args.len() == 1 && (op.kind_tag == 7 && op.str == "" || op.kind_tag == 10 && op.str == "!" || op.kind_tag == 11 && op.str == "__fern_rc_is_unique");
+  return op.args.len() == 1 && (op.kind_tag == ssa.COPY && op.str == "" || op.kind_tag == ssa.UNARY && op.str == "!" || op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique");
 }
 
 function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
-  if (op.kind_tag == 6) {
+  if (op.kind_tag == ssa.PARAM) {
     return b.id == entry && op.imm == 0 && op.str == "" && op.args.len() == 0;
   }
-  if (op.kind_tag == 1 || op.kind_tag == 2) {
+  if (op.kind_tag == ssa.CONST_INT || op.kind_tag == ssa.CONST_BOOL) {
     return constant(op);
   }
-  if (ssa.plain_imm(op) != 0 && !(op.imm == 4 && op.kind_tag == 11 && op.str == "__fern_rc_is_unique")) {
+  if (ssa.plain_imm(op) != 0 && !(op.imm == 4 && op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique")) {
     return false;
   }
-  if (op.kind_tag == 8) {
+  if (op.kind_tag == ssa.PHI) {
     return b.preds.len() > 0 && op.args.len() == b.preds.len() && op.str == "";
   }
   return unary(op);
@@ -162,10 +162,10 @@ function definitions(f: ssa.SFunc, b: ssa.SBlock, prior: Graph): Graph {
     if (op.result < 0 || op.result >= f.nvals || !operation(op, b, f.entry)) {
       return bad;
     }
-    if (op.kind_tag == 8 && body) {
+    if (op.kind_tag == ssa.PHI && body) {
       return bad;
     }
-    if (op.kind_tag != 8) {
+    if (op.kind_tag != ssa.PHI) {
       body = true;
     }
     values = values.append(op.result);
@@ -200,7 +200,7 @@ function declarations(f: ssa.SFunc): Graph {
       return bad;
     }
     for op in b.insts {
-      if (op.kind_tag == 6) {
+      if (op.kind_tag == ssa.PARAM) {
         params += 1;
       }
     }
@@ -260,7 +260,7 @@ function incoming_row(blocks: IdIndex, b: ssa.SBlock, rows: boolean[][], empty: 
 }
 
 function term_readable(t: ssa.STerm, row: boolean[], ids: IdIndex): boolean {
-  return !(t.kind_tag == 1 && !readable(row, ids, t.value) || t.kind_tag == 3 && !readable(row, ids, t.cond));
+  return !(t.kind_tag == ssa.TERM_RET && !readable(row, ids, t.value) || t.kind_tag == ssa.TERM_BRIF && !readable(row, ids, t.cond));
 }
 
 function available(f: ssa.SFunc, g: Graph): Graph {
@@ -282,7 +282,7 @@ function available(f: ssa.SFunc, g: Graph): Graph {
     for op in b.insts {
       let i = 0;
       for arg in op.args {
-        let source = if (op.kind_tag == 8) { rows[position(g.blocks, b.preds[i])] } else { row };
+        let source = if (op.kind_tag == ssa.PHI) { rows[position(g.blocks, b.preds[i])] } else { row };
         if (!readable(source, g.slots, arg)) {
           return Graph { ...g, ok: false };
         }
@@ -303,26 +303,26 @@ function constant_value(n: i32): i32 {
 }
 
 function unary_value(kind: i32, v: i32, unique: boolean): i32 {
-  if (kind == 7 || kind == 8) {
+  if (kind == ssa.COPY || kind == ssa.PHI) {
     return v;
   }
-  if (kind == 10 && (v == 3 || v == 4)) {
+  if (kind == ssa.UNARY && (v == 3 || v == 4)) {
     return if (v == 3) { 4 } else { 3 };
   }
-  if (kind == 11 && v == 1) {
+  if (kind == ssa.CALL && v == 1) {
     return if (unique) { 4 } else { 3 };
   }
   return 0;
 }
 
 function value(op: ssa.SInst, source: i32[], ids: IdIndex, phi_position: i32, unique: boolean): i32 {
-  if (op.kind_tag == 6) {
+  if (op.kind_tag == ssa.PARAM) {
     return 1;
   }
-  if (op.kind_tag == 1 || op.kind_tag == 2) {
+  if (op.kind_tag == ssa.CONST_INT || op.kind_tag == ssa.CONST_BOOL) {
     return constant_value(op.imm);
   }
-  let pos = if (op.kind_tag == 8) { phi_position } else { 0 };
+  let pos = if (op.kind_tag == ssa.PHI) { phi_position } else { 0 };
   if (pos < 0) {
     return 0;
   }
@@ -339,7 +339,7 @@ function path_marks(f: ssa.SFunc): boolean[] {
 }
 
 function successor(t: ssa.STerm, values: i32[], ids: IdIndex): i32 {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return t.target;
   }
   let v = values[position(ids, t.cond)];
@@ -367,7 +367,7 @@ function run(f: ssa.SFunc, g: Graph, unique: boolean): i32 {
     let incoming = values;
     let phi_position = position(g.preds[at], pred);
     for op in b.insts {
-      let v = value(op, if (op.kind_tag == 8) { incoming } else { values }, g.slots, phi_position, unique);
+      let v = value(op, if (op.kind_tag == ssa.PHI) { incoming } else { values }, g.slots, phi_position, unique);
       if (v == 0) {
         return 0;
       }

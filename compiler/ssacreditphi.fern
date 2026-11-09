@@ -86,7 +86,7 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
       return failed(arena, "invalid phi block definition");
     }
     definitions = definitions.append(op.result);
-    if (op.kind_tag == 8) {
+    if (op.kind_tag == ssa.PHI) {
       if (body || op.args.len() != block.preds.len()) {
         return failed(arena, "phi predecessor arity or position");
       }
@@ -96,7 +96,7 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
   }
   let bindings: Binding[] = [];
   for op in block.insts {
-    if (op.kind_tag == 8) {
+    if (op.kind_tag == ssa.PHI) {
       let identity = zero.id;
       let kind = 0;
       let scalar = zero.id;

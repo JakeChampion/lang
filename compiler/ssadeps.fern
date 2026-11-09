@@ -262,10 +262,10 @@ pub function check_graph(f: ssa.SFunc): Facts {
 }
 
 function term_value(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;

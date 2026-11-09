@@ -17,11 +17,8 @@ func TestSelfHostWatLex(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	lex, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	source := string(lex) + "\n" + watLexSelfTestMain
+	lex := assemblerSource(t, "watbin.fern")
+	source := lex + "\n" + watLexSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

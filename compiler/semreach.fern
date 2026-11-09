@@ -6,6 +6,7 @@ import "./sempair";
 import "./semthread";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[], ok: boolean }
 
@@ -180,7 +181,7 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
   let k = ins.kind_tag;
-  if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
+  if (k == ssasem.call() || k == ssasem.closure_new() || k == ssa.FUNCADDR) {
     return call_arrives(ins, ix, usable);
   }
   if (is_option_enum(result, u) && !moves_option(k)) {
@@ -189,7 +190,7 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
   if (k < 0) {
     return semantic_arrives(k, result, u);
   }
-  return !(k >= 1 && k <= 10 || k == 35 || k == 36);
+  return !(k >= ssa.CONST_INT && k <= ssa.UNARY || k == ssa.LINE || k == ssa.SELECT);
 }
 
 // An Option or a Result that a built-in makes, such as the Some of a map
@@ -199,7 +200,7 @@ function moves_option(k: i32): boolean {
 }
 
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
-  if (ssasem.is_dyn_call(ins.str) || util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
+  if (ssasem.is_dyn_call(ins.str) || ins.str.starts_with(sempair.word_as_prefix())) {
     return false;
   }
   let g = ix.find(ins.str);
@@ -697,10 +698,10 @@ function none_held(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst)
 
 function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Walk {
   let t = b.term;
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return entered(g, at, wk, b.id, t.target);
   }
-  if (t.kind_tag != 3) {
+  if (t.kind_tag != ssa.TERM_BRIF) {
     return wk;
   }
   let c = wk.vals[t.cond];
@@ -748,22 +749,22 @@ function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.S
 
 function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
   let k = ins.kind_tag;
-  if (k == 1 || k == 2) {
+  if (k == ssa.CONST_INT || k == ssa.CONST_BOOL) {
     return konst(ins.imm);
   }
-  if (k == 7) {
+  if (k == ssa.COPY) {
     return wk.vals[ins.args[0]];
   }
-  if (k == 8) {
+  if (k == ssa.PHI) {
     return phi_value(wk, pos, ins);
   }
-  if (k == 36) {
+  if (k == ssa.SELECT) {
     return select_value(wk, ins);
   }
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return binary(f, wk, ins);
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return unary(f, wk, ins);
   }
   return any();
@@ -1069,7 +1070,7 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
   }
   if (wk.exec[pos] && b.term.kind_tag == ssa.TERM_BRIF) {
     let t = decided(b.term, wk.vals[b.term.cond], dead);
-    if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
+    if (t.kind_tag != ssa.TERM_BRIF || t.t != b.term.t || t.f != b.term.f) {
       return (ssa.SBlock { ...b, term: t }, true);
     }
   }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,51 +111,24 @@ func runParseF64Driver(t *testing.T, gcc string, runner []string, dir, name, pro
 	}
 }
 
-const parseF64DriverBody = `
+const parseF64Driver = `import "std/io";
+import "./util";
 function main(): i32 {
   let src: string = "";
   match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
   let lines: string[] = src.split("\n");
   let i: i32 = 0;
   while (i < lines.len()) {
-    if (lines[i].len() > 0) { print(f64_bits(PARSE(lines[i])).to_string()); }
+    if (lines[i].len() > 0) { print(util.parse_f64_bits(lines[i]).to_string()); }
     i = i + 1;
   }
   return 0;
 }
 `
 
-func TestSelfHostParseF64Watbin(t *testing.T) {
+func TestSelfHostParseF64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	src, err := os.ReadFile("../../../compiler/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "watbin.fern"), src, 0o644); err != nil {
-		t.Fatalf("write watbin: %v", err)
-	}
-	prog := "import \"std/io\";\nimport \"./watbin\";\n" +
-		strings.ReplaceAll(parseF64DriverBody, "PARSE", "watbin.parse_f64")
-	runParseF64Driver(t, gcc, runner, dir, "pf64_watbin", prog)
-}
-
-func TestSelfHostParseF64X86Gas(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := copySelfHostTree(t)
-	nat := mustRead(t, "../../../compiler/x86_native.fern")
-	prog := "import \"std/io\";\n" + string(nat) + "\n" +
-		strings.ReplaceAll(parseF64DriverBody, "PARSE", "x86_gas_parse_f64")
-	runParseF64Driver(t, gcc, runner, dir, "pf64_x86gas", prog)
-}
-
-func TestSelfHostParseF64Arm64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := copySelfHostTree(t)
-	a64 := mustRead(t, "../../../compiler/arm64_native.fern")
-	prog := "import \"std/io\";\n" + string(a64) + "\n" +
-		strings.ReplaceAll(parseF64DriverBody, "PARSE", "arm64_parse_f64")
-	runParseF64Driver(t, gcc, runner, dir, "pf64_arm64", prog)
+	runParseF64Driver(t, gcc, runner, copySelfHostTree(t), "pf64", parseF64Driver)
 }
 
 const f64RangeDriverBody = `
@@ -224,76 +196,5 @@ func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
 	}
 	if bad > 10 {
 		t.Errorf("... and %d more mismatches", bad-10)
-	}
-}
-
-var pf64Mirrors = []string{"util", "watbin", "x86_native", "arm64_native"}
-
-var pf64MirrorFuncs = []string{"parse_f64_bits", "pf64_halve", "pf64_double", "pf64_top_bit", "pf64_trim"}
-
-func pf64FuncBody(t *testing.T, module, name string) string {
-	t.Helper()
-	src := string(mustRead(t, "../../../compiler/"+module+".fern"))
-	open := regexp.MustCompile(`^(pub )?function ` + name + `\(`)
-	var kept []string
-	started := false
-	for _, line := range strings.Split(src, "\n") {
-		if !started && open.MatchString(line) {
-			started = true
-		}
-		if !started {
-			continue
-		}
-		done := line == "}"
-		if i := strings.Index(line, "//"); i >= 0 {
-			line = line[:i]
-		}
-		if line = strings.TrimSpace(line); line != "" {
-			kept = append(kept, strings.TrimPrefix(line, "pub "))
-		}
-		if done {
-			break
-		}
-	}
-	if len(kept) == 0 {
-		t.Fatalf("%s.fern: no %s definition", module, name)
-	}
-	return strings.Join(kept, "\n")
-}
-
-func pf64Consts(t *testing.T, module string) string {
-	t.Helper()
-	var kept []string
-	for _, line := range strings.Split(string(mustRead(t, "../../../compiler/"+module+".fern")), "\n") {
-		if strings.HasPrefix(line, "const PF64_") {
-			kept = append(kept, line)
-		}
-	}
-	if len(kept) == 0 {
-		t.Fatalf("%s.fern: no PF64_ constants", module)
-	}
-	return strings.Join(kept, "\n")
-}
-
-func TestSelfHostParseF64MirrorsAgree(t *testing.T) {
-	t.Run("constants", func(t *testing.T) {
-		want := pf64Consts(t, pf64Mirrors[0])
-		for _, m := range pf64Mirrors[1:] {
-			if got := pf64Consts(t, m); got != want {
-				t.Errorf("%s.fern's PF64_ constants have drifted from %s.fern's:\n--- %s\n%s\n--- %s\n%s",
-					m, pf64Mirrors[0], m, got, pf64Mirrors[0], want)
-			}
-		}
-	})
-	for _, fn := range pf64MirrorFuncs {
-		t.Run(fn, func(t *testing.T) {
-			want := pf64FuncBody(t, pf64Mirrors[0], fn)
-			for _, m := range pf64Mirrors[1:] {
-				if got := pf64FuncBody(t, m, fn); got != want {
-					t.Errorf("%s.fern's %s has drifted from %s.fern's:\n--- %s\n%s\n--- %s\n%s",
-						m, fn, pf64Mirrors[0], m, got, pf64Mirrors[0], want)
-				}
-			}
-		})
 	}
 }

@@ -10,6 +10,7 @@ import "./sempair";
 import "./semdead";
 import "./ownership";
 import "./ssabytes";
+import "std/string";
 
 function max_leaf_insts(): i32 {
   return 40;
@@ -534,7 +535,7 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
     return true;
   }
   // Pair operations transfer their input dependency without a new memory read.
-  if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0 || util.str_has_prefix(ins.str, sempair.word_as_prefix()))) {
+  if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0 || ins.str.starts_with(sempair.word_as_prefix()))) {
     return false;
   }
   if (k == ssasem.call() && !util.has_str(f.shadows, ins.str) && copied_scalar_result(ins.str)) {
@@ -642,10 +643,10 @@ function loops(g: ssa.SFunc): boolean {
 }
 
 function term_successors(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];
@@ -709,7 +710,7 @@ function small_branch(f: ssasem.Func, calls: i32, cycle: i32): boolean {
 }
 
 function small_branch_body(f: ssasem.Func): boolean {
-  return scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
+  return ssasem.is_scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
 }
 
 // A body called once stays out of a small branch that it would grow past the
@@ -745,7 +746,7 @@ function scalar_record(f: ssasem.Func, t: typeinfo.Type): boolean {
     return false;
   }
   for field in f.records.list[at].fields {
-    if (!scalar(field.ty)) {
+    if (!ssasem.is_scalar(field.ty)) {
       return false;
     }
   }
@@ -771,7 +772,7 @@ struct Returned { ok: boolean, boxed: boolean }
 
 function returned(defs: Defs, v: i32, depth: i32): Returned {
   let d = def_inst(defs, ssa.copy_root(defs.insts, v));
-  if (d.kind_tag == 8 && depth < 8) {
+  if (d.kind_tag == ssa.PHI && depth < 8) {
     let boxed = false;
     for a in d.args {
       let r = returned(defs, a, depth + 1);
@@ -1291,14 +1292,10 @@ function unused_environment(f: ssasem.Func): i32 {
   return env;
 }
 
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
-}
-
 function scalar_tuple(t: typeinfo.Type): boolean {
   if let typeinfo.TypeTuple(tt) = t {
     for e in tt.elements {
-      if (!scalar(e)) {
+      if (!ssasem.is_scalar(e)) {
         return false;
       }
     }
@@ -1308,12 +1305,12 @@ function scalar_tuple(t: typeinfo.Type): boolean {
 }
 
 function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
-  if (scalar(t)) {
+  if (ssasem.is_scalar(t)) {
     return true;
   }
   if let typeinfo.TypeTuple(tt) = t {
     for e in tt.elements {
-      if (!scalar(e) && !(ssasem.reference(e) && !ssasem.holds_view(f, e))) {
+      if (!ssasem.is_scalar(e) && !(ssasem.reference(e) && !ssasem.holds_view(f, e))) {
         return false;
       }
     }
@@ -1394,7 +1391,7 @@ function leaf_call(f: ssasem.Func, ins: ssa.SInst): boolean {
 }
 
 function leaf_kind(k: i32): boolean {
-  return k >= 1 && k <= 10 && k != 5 || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
+  return k >= ssa.CONST_INT && k <= ssa.UNARY && k != ssa.CONST_STR || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new()
     || line_mark(k);
 }
@@ -1407,7 +1404,7 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
-    return !a.view && scalar(a.elem);
+    return !a.view && ssasem.is_scalar(a.elem);
   }
   return false;
 }
@@ -1415,7 +1412,7 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
 // A scalar element or word read, or a length, borrows its array or view and
 // carries no ownership units.
 function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.result < 0 || !scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
+  if (ins.result < 0 || !ssasem.is_scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
     return false;
   }
   if (ins.kind_tag == ssasem.array_get()) {
@@ -1473,7 +1470,7 @@ function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
 }
 
 function term_reads(t: ssa.STerm, v: i32): boolean {
-  return t.value == v && t.kind_tag == 1 || t.cond == v && t.kind_tag == 3;
+  return t.value == v && t.kind_tag == ssa.TERM_RET || t.cond == v && t.kind_tag == ssa.TERM_BRIF;
 }
 
 function raw_word_read(name: string): boolean {
@@ -1491,7 +1488,7 @@ function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   for arg in ins.args {
-    if (!scalar(f.values[arg])) {
+    if (!ssasem.is_scalar(f.values[arg])) {
       return false;
     }
   }
@@ -1501,11 +1498,11 @@ function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
 // A scalar call can remain in a record builder after the builder is spliced.
 // Its operands carry no ownership units and its result cannot be this builder.
 function leaf_record_call(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !scalar(f.values[ins.result])) {
+  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !ssasem.is_scalar(f.values[ins.result])) {
     return false;
   }
   for arg in ins.args {
-    if (!scalar(f.values[arg])) {
+    if (!ssasem.is_scalar(f.values[arg])) {
       return false;
     }
   }
@@ -1561,7 +1558,7 @@ function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (k == ssasem.param() || line_mark(k)) {
     return 0;
   }
-  if (literal_kind(k) || k == 7 || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
+  if (literal_kind(k) || k == ssa.COPY || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
     return 1;
   }
   if (k == ssasem.record_new() && record_param(f, ssasem.update_base(ins))) {
@@ -1638,7 +1635,7 @@ function constructor_body(f: ssasem.Func): boolean {
 }
 
 function constructor_kind(k: i32): boolean {
-  return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || built_kind(k);
+  return literal_kind(k) || k == ssasem.param() || k == ssa.COPY || line_mark(k) || k == ssasem.call() || built_kind(k);
 }
 
 function built_kind(k: i32): boolean {
@@ -1749,7 +1746,7 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
       if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !leaf_call(f, ins) && !lent_to_kernels(f, ins)) {
         return false;
       }
-      if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
+      if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !ssasem.is_scalar(f.values[ins.result])) {
         return false;
       }
       if (ins.kind_tag == ssasem.param()) {
@@ -1948,10 +1945,10 @@ function br(target: i32): ssa.STerm {
 }
 
 function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];
@@ -2000,15 +1997,15 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
       preds = [b.id];
     }
     let t = cb.term;
-    if (t.kind_tag == 1) {
+    if (t.kind_tag == ssa.TERM_RET) {
       rets = rets.append(first + j);
       if (t.value >= 0) {
         ret_vals = ret_vals.append(vmap[t.value]);
       }
       t = br(cont);
-    } else if (t.kind_tag == 2) {
+    } else if (t.kind_tag == ssa.TERM_BR) {
       t = br(first + position_of(pos, t.target));
-    } else if (t.kind_tag == 3) {
+    } else if (t.kind_tag == ssa.TERM_BRIF) {
       t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + position_of(pos, t.t), f: first + position_of(pos, t.f) };
     }
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
@@ -2039,7 +2036,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   for ob in g.blocks {
     if (ob.id == b.id) {
       blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: br(first + position_of(pos, entry_id)) });
-    } else if (index_of(targets, ob.id) >= 0) {
+    } else if (util.index_of_i32(targets, ob.id) >= 0) {
       let preds: i32[] = [];
       for q in ob.preds {
         if (q == b.id) {
@@ -2187,17 +2184,6 @@ function mapped(vmap: i32[], v: i32): i32 {
     return v;
   }
   return vmap[v];
-}
-
-function index_of(xs: i32[], x: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == x) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function block_positions(g: ssa.SFunc): i32[] {
@@ -2367,7 +2353,7 @@ function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
 }
 
 function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
-  return scalar(ty) && read.kind_tag != ssasem.variant_is() && read.kind_tag != ssasem.variant_get();
+  return ssasem.is_scalar(ty) && read.kind_tag != ssasem.variant_is() && read.kind_tag != ssasem.variant_get();
 }
 
 function kept_values(g: ssa.SFunc): boolean[] {
@@ -2458,8 +2444,8 @@ function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i3
   if (builds(d.kind_tag)) {
     return (part(d, read).ok, phis);
   }
-  if (d.kind_tag != 8 || index_of(phis, x) >= 0) {
-    return (d.kind_tag == 8 || d.kind_tag == ssasem.zero(), phis);
+  if (d.kind_tag != ssa.PHI || util.index_of_i32(phis, x) >= 0) {
+    return (d.kind_tag == ssa.PHI || d.kind_tag == ssasem.zero(), phis);
   }
   let seen = phis.append(x);
   for a in d.args {
@@ -2489,7 +2475,7 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
     }
     return part_value(w, p, ty);
   }
-  let seen = index_of(w.phis, x);
+  let seen = util.index_of_i32(w.phis, x);
   if (seen >= 0) {
     return Walk { ...w, value: w.parts[seen] };
   }
@@ -2921,10 +2907,10 @@ function donor_root(defs: Defs, gone: boolean[], v: i32, depth: i32): i32 {
     }
     return donor_root(defs, gone, b, depth + 1);
   }
-  if (d.kind_tag == 7 && d.args.len() == 1) {
+  if (d.kind_tag == ssa.COPY && d.args.len() == 1) {
     return donor_root(defs, gone, d.args[0], depth + 1);
   }
-  if (d.kind_tag != 8) {
+  if (d.kind_tag != ssa.PHI) {
     return -1;
   }
   let root: i32 = -1;

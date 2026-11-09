@@ -44,7 +44,7 @@ function main(): i32 {
     // -> 0x14000002 -> 02 00 00 14
     let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_b(a, "skip");
-    arm64_push_arr(a.code, arm64_movz([], arm64_x0(), 99, 0, false));
+    gas__push_arr(a.code, arm64_movz([], arm64_x0(), 99, 0, false));
     a = arm64_asm_label(a, "skip");
     a = arm64_asm_resolve(a);
     if (a.text[0] != 2 || a.text[1] != 0 || a.text[2] != 0 || a.text[3] != 20) { return 1; }
@@ -53,7 +53,7 @@ function main(): i32 {
     // 0x54000040 -> 40 00 00 54
     let b: Arm64Asm = arm64_asm_new();
     b = arm64_asm_bcond(b, arm64_eq(), "end");
-    arm64_push_arr(b.code, arm64_movz([], arm64_x0(), 7, 0, false));
+    gas__push_arr(b.code, arm64_movz([], arm64_x0(), 7, 0, false));
     b = arm64_asm_label(b, "end");
     b = arm64_asm_resolve(b);
     if (b.text[0] != 64 || b.text[1] != 0 || b.text[2] != 0 || b.text[3] != 84) { return 2; }
@@ -70,7 +70,7 @@ function main(): i32 {
     // off 0, rel -4 (known when queued) -> 0xB5FFFFE1 -> E1 FF FF B5
     let d: Arm64Asm = arm64_asm_new();
     d = arm64_asm_label(d, "top");
-    arm64_push_arr(d.code, arm64_movz([], arm64_x0(), 1, 0, false));
+    gas__push_arr(d.code, arm64_movz([], arm64_x0(), 1, 0, false));
     d = arm64_asm_cbnz(d, arm64_x1(), "top", false);
     d = arm64_asm_resolve(d);
     if (d.text[4] != 225 || d.text[5] != 255 || d.text[6] != 255 || d.text[7] != 181) { return 4; }
@@ -86,16 +86,16 @@ const arm64MachOCallDriverMain = `
 function main(): i32 {
     let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_bl(a, "compute");                    // call compute (forward)
-    arm64_push_arr(a.code, arm64_movz([], arm64_x16(), 1, 0, false));    // SYS_exit (Darwin)
-    arm64_push_arr(a.code, arm64_exception([], "svc", 128));                    // svc #0x80
+    gas__push_arr(a.code, arm64_movz([], arm64_x16(), 1, 0, false));    // SYS_exit (Darwin)
+    gas__push_arr(a.code, arm64_exception([], "svc", 128));                    // svc #0x80
     a = arm64_asm_label(a, "compute");
-    arm64_push_arr(a.code, arm64_movz([], arm64_x0(), 0, 0, false));     // acc = 0
-    arm64_push_arr(a.code, arm64_movz([], arm64_x1(), 7, 0, false));     // counter = 7
+    gas__push_arr(a.code, arm64_movz([], arm64_x0(), 0, 0, false));     // acc = 0
+    gas__push_arr(a.code, arm64_movz([], arm64_x1(), 7, 0, false));     // counter = 7
     a = arm64_asm_label(a, "loop");
-    arm64_push_arr(a.code, arm64_addimm([], arm64_x0(), arm64_x0(), 6, false)); // acc += 6
-    arm64_push_arr(a.code, arm64_subimm([], arm64_x1(), arm64_x1(), 1, false)); // counter -= 1
+    gas__push_arr(a.code, arm64_addimm([], arm64_x0(), arm64_x0(), 6, false)); // acc += 6
+    gas__push_arr(a.code, arm64_subimm([], arm64_x1(), arm64_x1(), 1, false)); // counter -= 1
     a = arm64_asm_cbnz(a, arm64_x1(), "loop", false);          // loop if != 0 (backward)
-    arm64_push_arr(a.code, arm64_ret([], arm64_lr()));             // return to caller
+    gas__push_arr(a.code, arm64_ret([], arm64_lr()));             // return to caller
     a = arm64_asm_resolve(a);
     let none: i32[] = [];
     let bin: i32[] = macho_executable(a.text, none, none, "fern", macho_entry_off(a), 0, none);
@@ -255,7 +255,7 @@ function main(): i32 {
     a = arm64_asm_label(a, "far");
     let i: i32 = 0;
     while (i < 8200) {
-        arm64_push_arr(a.code, arm64_movz([], arm64_x0(), 0, 0, false));
+        gas__push_arr(a.code, arm64_movz([], arm64_x0(), 0, 0, false));
         i = i + 1;
     }
     let before: i32 = buf_len(a.code);
@@ -273,7 +273,7 @@ function main(): i32 {
     if (arm64_fix_count(b) != 1) { return 22; }   // queued, range not yet knowable
     let j: i32 = 0;
     while (j < 8200) {
-        arm64_push_arr(b.code, arm64_movz([], arm64_x0(), 0, 0, false));
+        gas__push_arr(b.code, arm64_movz([], arm64_x0(), 0, 0, false));
         j = j + 1;
     }
     b = arm64_asm_label(b, "ahead");
@@ -286,7 +286,7 @@ function main(): i32 {
     c = arm64_asm_label(c, "near");
     let k: i32 = 0;
     while (k < 8) {
-        arm64_push_arr(c.code, arm64_movz([], arm64_x0(), 0, 0, false));
+        gas__push_arr(c.code, arm64_movz([], arm64_x0(), 0, 0, false));
         k = k + 1;
     }
     c = arm64_asm_tbz(c, arm64_x1(), 0, "near");

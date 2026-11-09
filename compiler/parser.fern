@@ -7573,11 +7573,11 @@ pub function pp_marker(rest: string): string {
 }
 
 pub function is_param_prelude_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;");
+  return type_name.starts_with("@pp;");
 }
 
 pub function strip_pp_marker(marker: string): string {
-  if (!util.str_has_prefix(marker, "@pp;")) {
+  if (!marker.starts_with("@pp;")) {
     return marker;
   }
   return slice_unchecked(marker, 4, marker.len()) + "";
@@ -7586,11 +7586,11 @@ pub function strip_pp_marker(marker: string): string {
 pub function destr_marker_split(marker0: string): DestrMarker {
   let at = "";
   let m = strip_pp_marker(marker0);
-  let struct_match = util.str_has_prefix(m, "@sm;");
+  let struct_match = m.starts_with("@sm;");
   if (struct_match) {
     m = slice_unchecked(m, 4, m.len()) + "";
   }
-  if (util.str_has_prefix(m, "@at:")) {
+  if (m.starts_with("@at:")) {
     let i = 4;
     while (i < m.len()) {
       if (m[i] == b';') {
@@ -7602,7 +7602,7 @@ pub function destr_marker_split(marker0: string): DestrMarker {
     }
   }
   let rest_written = false;
-  if (util.str_has_prefix(m, "@rest;")) {
+  if (m.starts_with("@rest;")) {
     rest_written = true;
     m = slice_unchecked(m, 6, m.len()) + "";
   }
@@ -7610,16 +7610,16 @@ pub function destr_marker_split(marker0: string): DestrMarker {
 }
 
 pub function is_struct_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(destr_marker_split(type_name).tag, "@sd:");
+  return destr_marker_split(type_name).tag.starts_with("@sd:");
 }
 
 pub function is_destr_marker(type_name: string): boolean {
   return type_name.len() > 0 && type_name[0] == b'@'
-    && (util.str_has_prefix(type_name, "@pp;")
-    || util.str_has_prefix(type_name, "@sm;")
-    || util.str_has_prefix(type_name, "@at:")
-    || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:"));
+    && (type_name.starts_with("@pp;")
+    || type_name.starts_with("@sm;")
+    || type_name.starts_with("@at:")
+    || type_name.starts_with("@rest;")
+    || type_name.starts_with("@sd:"));
 }
 
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
@@ -9508,7 +9508,7 @@ pub function parse_type_ref(sin: string): TypeRef {
 
 // canon_vec spells a `Vec[N, T]` of the portable tier as its lane type.
 pub function canon_vec(spelling: string): string {
-  if (!util.str_has_prefix(spelling, "Vec[")) {
+  if (!spelling.starts_with("Vec[")) {
     return spelling;
   }
   let ref = parse_type_ref(spelling);
@@ -9874,7 +9874,7 @@ function split_dunder(s: string): string[] {
 
 function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]): string[] {
   if (util.contains(s, ";")) {
-    return split_inst_key(s);
+    return util.split_char(s, b';');
   }
   let tokens = split_dunder(s);
   if (n <= 1 && tokens.len() == 1) {
@@ -10021,7 +10021,7 @@ pub function sanitize_key(s: string): string {
     return sanitize_plain_key(s);
   }
   let out = "";
-  for part in split_inst_key(s) {
+  for part in util.split_char(s, b';') {
     if (out.len() > 0) {
       out += "__";
     }
@@ -10156,7 +10156,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     let pbase = slice_unchecked(pattern, 0, pb);
     let mpfx = pbase + "__";
-    if (concrete.len() > mpfx.len() && util.str_has_prefix(concrete, mpfx)) {
+    if (concrete.len() > mpfx.len() && concrete.starts_with(mpfx)) {
       let pp = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       let ckey = slice_unchecked(concrete, mpfx.len(), concrete.len());
       let cp = split_key(ckey + "", pp.len(), funcs.structs, funcs.enums);
@@ -10268,7 +10268,7 @@ function key_parts(fd: FuncDecl, key: string): string[] {
   if (fd.type_params.len() == 1) {
     return [key];
   }
-  return split_inst_key(key);
+  return util.split_char(key, b';');
 }
 
 function binds_to_key(tparams: string[], binds: MEnv): string {
@@ -10297,23 +10297,6 @@ function infer_inst_ret(fd: FuncDecl, args: ast.Expr[], expected_ret: string, en
     binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds, funcs);
   }
   return binds_to_key(fd.type_params, binds);
-}
-
-function split_inst_key(s: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b';') {
-      out = out.append(slice_unchecked(s, start, i) + "");
-      i += 1;
-      start = i;
-      continue;
-    }
-    i += 1;
-  }
-  out = out.append(slice_unchecked(s, start, s.len()) + "");
-  return out;
 }
 
 function tv_word_char(c: i32): boolean {
@@ -10582,7 +10565,7 @@ function mono_keyed_args(c: ast.ExprCall, fd: FuncDecl, key: string, env: MEnv, 
   let pspell: string[] = [];
   if (call_args_want_expected(c, env, funcs)) {
     for p in fd.params {
-      pspell = pspell.append(subst_ty(param_spelling(p), fd.type_params, split_inst_key(key)));
+      pspell = pspell.append(subst_ty(param_spelling(p), fd.type_params, util.split_char(key, b';')));
     }
   }
   return mono_args_spelled(c, pspell, env, funcs, ins);
@@ -10747,7 +10730,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
       }
       let ed = funcs.enums[owner];
       let own = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
-      if (str_list_contains(vars, pattern)) {
+      if (util.has_str(vars, pattern)) {
         let whole = bound_spelling(ed.name, ed.type_params, own);
         if (whole.len() == 0) {
           return binds;
@@ -10955,7 +10938,7 @@ function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: ME
   }
   let cts: string[] = [key];
   if (fd.type_params.len() != 1) {
-    cts = split_inst_key(key);
+    cts = util.split_char(key, b';');
   }
   let rt = resolve_proj_in_type(subst_ty(fd.ret_type, fd.type_params, cts), funcs.impls);
   let rvars = type_str_vars(rt, []);
@@ -11496,7 +11479,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               }
               let skey = infer_inst(funcs.decls[sgi], sargs, env, funcs);
               if (skey.len() > 0) {
-                return subst_ty(funcs.decls[sgi].ret_type, funcs.decls[sgi].type_params, split_inst_key(skey));
+                return subst_ty(funcs.decls[sgi].ret_type, funcs.decls[sgi].type_params, util.split_char(skey, b';'));
               }
             }
           }
@@ -11853,7 +11836,7 @@ function literal_written(s: ast.ExprStructLit, env: MEnv, funcs: MFns): string {
     return s.written;
   }
   let args = "";
-  for a in split_inst_key(key) {
+  for a in util.split_char(key, b';') {
     if (args.len() > 0) {
       args += ", ";
     }
@@ -12000,7 +11983,7 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
   if (key.len() == 0) {
     return "";
   }
-  return subst_ty(funcs.decls[gi].ret_type, funcs.decls[gi].type_params, split_inst_key(key));
+  return subst_ty(funcs.decls[gi].ret_type, funcs.decls[gi].type_params, util.split_char(key, b';'));
 }
 
 function mono_ty_mentions_var(t: string): boolean {
@@ -12700,7 +12683,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[], reqs: TraitReq[]
   let tparams = fd.type_params;
   let cts: string[] = [key];
   if (tparams.len() != 1) {
-    cts = split_inst_key(key);
+    cts = util.split_char(key, b';');
   }
   let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
   let rewritten = FuncDecl { ...fd, body: bound_rewritten(fd, cts, reqs, funcs) };
@@ -12806,7 +12789,7 @@ function bound_field(fa: ast.ExprFieldAccess, ctx: BoundUse): string {
 function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolean {
   for entry in split_plus_bounds(bound) {
     for ri in trait_closure(reqs, derive_simple_name(util.base_type_name(entry)), "") {
-      if (str_list_contains(reqs[ri].methods, method) || str_list_contains(reqs[ri].provided, method)) {
+      if (util.has_str(reqs[ri].methods, method) || util.has_str(reqs[ri].provided, method)) {
         return true;
       }
     }
@@ -12911,14 +12894,14 @@ function bc_binary(b: ast.ExprBinary, ctx: BoundUse): ast.Expr {
   if (lt.len() == 0) {
     lt = mono_infer(b.right, ctx.env, ctx.funcs);
   }
-  if (util.has_str(["<", "<=", ">", ">="], b.op) && str_list_contains(ctx.ord, lt)) {
+  if (util.has_str(["<", "<=", ">", ">="], b.op) && util.has_str(ctx.ord, lt)) {
     let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: b.line, col: b.col };
     return ast.ExprBinary { ...b, left: dv_call1(left, bound_method(lt, "cmp", true, ctx), right), right: zero };
   }
-  if (b.op == "==" && str_list_contains(ctx.eq, lt)) {
+  if (b.op == "==" && util.has_str(ctx.eq, lt)) {
     return dv_call1(left, bound_method(lt, "eq", true, ctx), right);
   }
-  if (b.op == "!=" && str_list_contains(ctx.eq, lt)) {
+  if (b.op == "!=" && util.has_str(ctx.eq, lt)) {
     return ast.ExprUnary { op: "!", operand: dv_call1(left, bound_method(lt, "eq", true, ctx), right), line: b.line, col: b.col, ty: "" };
   }
   return ast.ExprBinary { ...b, left: left, right: right };
@@ -13029,7 +13012,7 @@ pub function concrete_array_method_name(receiver: string, method: string): strin
 
 function is_concrete_array_fold(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0
-    && (util.str_has_prefix(fd.name, "__carrm_") || util.str_has_prefix(fd.name, "__cviewm_"));
+    && (fd.name.starts_with("__carrm_") || fd.name.starts_with("__cviewm_"));
 }
 
 function concrete_array_method_at(funcs: MFns, receiver: string, method: string): i32 {
@@ -13892,7 +13875,7 @@ function folded_array_call(amn: string, key: string, c: ast.ExprCall, fac: ast.E
   let lkey = lane_map_key(amn, key, c, env, funcs);
   if (lkey.len() > 0) {
     let lr = mono_expr(fac.obj, env, funcs, ins);
-    let kernel = split_inst_key(lkey)[0];
+    let kernel = util.split_char(lkey, b';')[0];
     let lins = lr.rins.iadd("__lanes_map", lkey).iadd(kernel, lane_type_of(key)).iadd(kernel, key);
     return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: "__lanes_map__" + sanitize_key(lkey), line: fac.line, col: fac.col, ty: "", builtin: false }, args: [lr.rexpr], line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: lins };
   }
@@ -13981,11 +13964,11 @@ function lane_fusable(name: string, types: string[], funcs: MFns, seen: string[]
     if (r.len() == 0) {
       return false;
     }
-    if (util.str_has_prefix(r, "!")) {
+    if (r.starts_with("!")) {
       if (bg_find(funcs, slice_unchecked(r, 1, r.len()) + "") < 0) {
         return false;
       }
-    } else if (util.str_has_prefix(r, "@")) {
+    } else if (r.starts_with("@")) {
       if (!std_methods(slice_unchecked(r, 1, r.len()) + "", types, funcs)) {
         return false;
       }
@@ -14042,7 +14025,7 @@ function lane_map_decls(done: Insts): FuncDecl[] {
 }
 
 function lane_map_decl(key: string): FuncDecl {
-  let parts = split_inst_key(key);
+  let parts = util.split_char(key, b';');
   let kernel = parts[0];
   let elem = parts[1];
   let lanes = lane_type_of(elem);
@@ -14339,7 +14322,7 @@ function on_call_request(fa: ast.ExprFieldAccess, env: MEnv, gstructs: StructDec
   }
   let sfx = "." + fa.field;
   for name in funcs.on_call {
-    if (util.str_has_suffix(name, sfx)) {
+    if (name.ends_with(sfx)) {
       let base = slice_unchecked(name, 0, name.len() - sfx.len()) + "";
       let rt = mg_ty(mono_infer(fa.obj, env, funcs), gstructs, ins);
       if (is_clone_of(rt.ty, base)) {
@@ -14478,7 +14461,7 @@ function member_lit_dest(dest: string, name: string, funcs: MFns): string {
     let cts: string[] = [];
     if (first_bracket(dest) >= 0 && strip_struct_base(dest) == ed.name) {
       cts = type_args_of(dest);
-    } else if (util.str_has_prefix(dest, ed.name + "__")) {
+    } else if (dest.starts_with(ed.name + "__")) {
       cts = split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()) + "", ed.type_params.len(), funcs.structs, funcs.enums);
     }
     if (cts.len() != ed.type_params.len()) {
@@ -14582,7 +14565,7 @@ function lit_field_decl_type(structs: StructDecl[], name: string, field: string)
 
 function is_clone_of(mangled: string, base: string): boolean {
   let pfx = base + "__";
-  return mangled.len() > pfx.len() && util.str_has_prefix(mangled, pfx);
+  return mangled.len() > pfx.len() && mangled.starts_with(pfx);
 }
 
 function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
@@ -14797,7 +14780,7 @@ function retype_assoc_call(init: ast.Expr, base: string, dest: string, funcs: MF
     if let ast.ExprFieldAccess(fa) = c.callee {
       let concrete = assoc_ctor_concrete(base, fa.field, dest, funcs);
       if let ast.ExprIdent(oid) = fa.obj {
-        if (concrete.len() > base.len() + 2 && util.str_has_prefix(concrete, base + "__")) {
+        if (concrete.len() > base.len() + 2 && concrete.starts_with(base + "__")) {
           let obj: ast.Expr = ast.ExprIdent { ...oid, name: concrete, ty: "" };
           return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj } };
         }
@@ -15981,7 +15964,7 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
 function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[], env: MEnv, funcs: MFns): string {
   match (callee) {
     ast.ExprIdent(cid) => {
-      if (str_list_contains(env.mnames, cid.name)) {
+      if (util.has_str(env.mnames, cid.name)) {
         return "";
       }
       if (genum_owner_of_variant(enums, cid.name) >= 0 || cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") {
@@ -15993,7 +15976,7 @@ function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[], env: MEnv, funcs
     },
     ast.ExprFieldAccess(cfa) => {
       if let ast.ExprIdent(oid) = cfa.obj {
-        if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
+        if (!util.has_str(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
           return cfa.field;
         }
       }
@@ -16140,7 +16123,7 @@ function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDec
     return RExpr { rexpr: ast.ExprIdent { ...id, name: me_rewrite_ty(id.name, enums) }, rins: me_collect_anno(id.name, enums, ins) };
   }
   let owner = genum_owner_of_variant(enums, id.name);
-  if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
+  if (owner >= 0 && !util.has_str(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
     let key = genum_key_from_anno(expected, enums[owner].name, enums);
     if (key.len() > 0) {
       let nins = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
@@ -16198,7 +16181,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       let mexps: string[] = [];
       if (owner < 0) {
         if let ast.ExprIdent(cid) = c.callee {
-          if (!str_list_contains(env.mnames, cid.name)) {
+          if (!util.has_str(env.mnames, cid.name)) {
             mexps = me_call_arg_types(funcs, cid.name, c.args, env, expected, ins);
           }
         }
@@ -16294,7 +16277,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(oid) => {
-          if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
+          if (!util.has_str(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
             let owner = genum_owner_of_variant(enums, fa.field);
             if (owner >= 0) {
               let key = genum_key_from_anno(expected, enums[owner].name, enums);
@@ -16915,7 +16898,7 @@ function folds_method(name: string, verb: string): boolean {
     return true;
   }
   let sfx = "_" + verb;
-  return util.str_has_prefix(name, "__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
+  return name.starts_with("__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
 }
 
 struct BgStep { funcs: FuncDecl[], ins: Insts }
@@ -22263,7 +22246,7 @@ function desugar_fn_trait_params(fd: FuncDecl, traits: string[], spelled: boolea
   let all_type_params = fd.all_type_params;
   for p in fd.params {
     let tr = parse_type_ref(p.type_name);
-    if (tr.array_depth > 0 || tr.is_tuple || tr.is_fn || tr.is_view || !str_list_contains(traits, tr.base) || str_list_contains(all_type_params, tr.base)) {
+    if (tr.array_depth > 0 || tr.is_tuple || tr.is_fn || tr.is_view || !util.has_str(traits, tr.base) || util.has_str(all_type_params, tr.base)) {
       params = params.append(p);
       continue;
     }
@@ -22321,7 +22304,7 @@ pub function trait_decl_names(traits: TraitDecl[]): string[] {
 function fresh_trait_param(want: string, taken: string[], spelled: boolean): string {
   let name = want;
   let n = 1;
-  while (str_list_contains(taken, name) || str_list_contains(taken, "0_" + name)) {
+  while (util.has_str(taken, name) || util.has_str(taken, "0_" + name)) {
     name = want + util.i32_to_string(n);
     n += 1;
   }
@@ -22888,7 +22871,7 @@ pub function resolve_dyn_traits(mod: Module): Module {
         let req = mod.trait_reqs[ri];
         for m in req.provided {
           let at = answering_method(mod.funcs, ix, bn, m, req.trait_name);
-          if (at >= 0 && !str_list_contains(served[at], im.trait_name)) {
+          if (at >= 0 && !util.has_str(served[at], im.trait_name)) {
             served = served.with(at, served[at].append(im.trait_name));
           }
         }
@@ -22999,7 +22982,7 @@ function answers_traits(fd: FuncDecl, traits: string[], method: string): boolean
     return false;
   }
   for t in traits {
-    if (str_list_contains(fd.dyn_traits, derive_simple_name(util.base_type_name(t)))) {
+    if (util.has_str(fd.dyn_traits, derive_simple_name(util.base_type_name(t)))) {
       return true;
     }
   }
@@ -23057,7 +23040,7 @@ pub function is_inherited_default(impls: ImplInfo[], reqs: TraitReq[], fd: FuncD
   let name = derive_simple_name(fd.name);
   for im in impls {
     if (im.trait_name == fd.impl_trait && util.base_type_name(im.impl_type) == base) {
-      if (str_list_contains(im.method_names, name)) {
+      if (util.has_str(im.method_names, name)) {
         return false;
       }
       for tr in reqs {
@@ -23071,17 +23054,6 @@ pub function is_inherited_default(impls: ImplInfo[], reqs: TraitReq[], fd: FuncD
       }
       return false;
     }
-  }
-  return false;
-}
-
-function str_list_contains(xs: string[], want: string): boolean {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == want) {
-      return true;
-    }
-    i += 1;
   }
   return false;
 }
@@ -23294,7 +23266,7 @@ function fj_text_name(json_alias: string): string {
 }
 
 function fj_local_prefix(json_alias: string): string {
-  if (util.str_has_prefix(json_alias, "__fj_")) {
+  if (json_alias.starts_with("__fj_")) {
     return "__fja_";
   }
   return "__fj_";
@@ -24133,7 +24105,7 @@ function pub_errors(pub_at: Par, p: Par): ast.Stmt[] {
     }
     return [decl_sentinel(pub_at, "`pub(...)` only supports `pub(package)`")];
   }
-  if (unsafe_function_head(p) || str_list_contains(["function", "struct", "enum", "type", "trait", "const", "use"], p.peek_keyword()) || str_list_contains(["opaque", "fip", "fbip", "async"], p.peek_ident())) {
+  if (unsafe_function_head(p) || util.has_str(["function", "struct", "enum", "type", "trait", "const", "use"], p.peek_keyword()) || util.has_str(["opaque", "fip", "fbip", "async"], p.peek_ident())) {
     return [];
   }
   return [decl_sentinel(pub_at, "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`")];
@@ -25091,7 +25063,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         let method_body: ast.Stmt[] = [];
         for st in fr_func.body {
           if let ast.StmtUnknown(u) = st {
-            if (util.str_has_prefix(u.kind, "decl:")) {
+            if (u.kind.starts_with("decl:")) {
               trait_bad = trait_bad.append(st);
               continue;
             }
@@ -26214,7 +26186,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     while (ddi < trait_defaults.len()) {
       let td = trait_defaults[ddi];
       if (td.trait_name == info.trait_name) {
-        if (!str_list_contains(info.method_names, td.method.name)) {
+        if (!util.has_str(info.method_names, td.method.name)) {
           let td_cl = claim_method_name(inherit_default(td.method, td.trait_params, td.trait_consts, info), info.trait_name, mth_keys, mth_traits);
           mth_keys = td_cl.keys;
           mth_traits = td_cl.traits;

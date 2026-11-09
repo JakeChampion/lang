@@ -1188,6 +1188,12 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 			r.rewriteType(&fn.Params[i].Type)
 		}
 		r.rewriteType(&fn.ReturnType)
+		if w := fn.ImplWritten; w != nil {
+			for i := range w.Params {
+				r.rewriteType(&w.Params[i])
+			}
+			r.rewriteType(&w.Result)
+		}
 		r.rewriteFuncBody(fn)
 		restoreTypeParams()
 	}

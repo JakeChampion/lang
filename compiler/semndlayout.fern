@@ -2,6 +2,7 @@ import "./ssa";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
+import "std/string";
 
 pub struct Facts { values: i32[][], params: i32[][], returns: i32[] }
 
@@ -34,7 +35,7 @@ function meet(a: i32, b: i32): i32 {
 
 function handle(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
-    return util.str_has_prefix(s.name, "ndarray__NdArray__");
+    return s.name.starts_with("ndarray__NdArray__");
   }
   return false;
 }
@@ -53,14 +54,14 @@ function seed(types: typeinfo.Type[], open: boolean): i32[] {
 
 pub function operation(name: string): string {
   let prefix = "__smm_ndarray__NdArray_";
-  if (util.str_has_prefix(name, prefix)) {
+  if (name.starts_with(prefix)) {
     let end = prefix.len();
     while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
       end += 1;
     }
     return slice_unchecked(name, prefix.len(), end) + "";
   }
-  if (util.str_has_prefix(name, "ndarray__NdArray__")) {
+  if (name.starts_with("ndarray__NdArray__")) {
     let k = 0;
     while (k < name.len()) {
       if (name[k] == b'.') {
@@ -73,7 +74,7 @@ pub function operation(name: string): string {
 }
 
 function library_layout(ins: ssa.SInst, values: i32[]): i32 {
-  if (util.str_has_prefix(ins.str, "ndarray__from_flat__") || util.str_has_prefix(ins.str, "ndarray__from_flat$")) {
+  if (ins.str.starts_with("ndarray__from_flat__") || ins.str.starts_with("ndarray__from_flat$")) {
     return packed();
   }
   let v = operation(ins.str);

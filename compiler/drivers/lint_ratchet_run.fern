@@ -4,6 +4,7 @@ import "../lint";
 import "../modloader";
 import "../parser";
 import "../util";
+import "std/string";
 
 function fern_files(dir: string): string[] {
   let out: string[] = [];
@@ -14,8 +15,8 @@ function fern_files(dir: string): string[] {
         for f in fern_files(p) {
           out = out.append(f);
         }
-      } else if (util.str_has_suffix(n, ".fern") || util.str_has_suffix(n, ".fern.md")) {
-        if (util.str_has_suffix(n, ".fern.md") && util.has_str(names, slice_unchecked(n, 0, n.len() - 3) + "")) {
+      } else if (n.ends_with(".fern") || n.ends_with(".fern.md")) {
+        if (n.ends_with(".fern.md") && util.has_str(names, slice_unchecked(n, 0, n.len() - 3) + "")) {
           continue;
         }
         out = out.append(p);

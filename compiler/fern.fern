@@ -51,6 +51,7 @@ import "std/crypto/ed25519";
 import "std/io";
 import "core/error";
 import "std/rand";
+import "std/string";
 
 function blank_line_map(src: string): boolean[] {
   let out: boolean[] = [false];
@@ -84,7 +85,7 @@ function content_print(src: string): string {
   let m = parser.parse_module(lx.tokens);
   let out: string[] = [];
   for c in lx.comments {
-    out = out.append("//" + literate.trim(c.text) + "\n");
+    out = out.append("//" + util.trim(c.text) + "\n");
   }
   for im in m.imports {
     out = out.append("import " + im.path + " " + im.alias + "\n");
@@ -157,7 +158,7 @@ function unwrap_formatted(formatted: string): string {
       out = out.append("\n");
     }
     let ln = lines[i];
-    if (util.str_has_prefix(ln, "  ")) {
+    if (ln.starts_with("  ")) {
       ln = slice_unchecked(ln, 2, ln.len()) + "";
     }
     out = out.append(ln);
@@ -167,7 +168,7 @@ function unwrap_formatted(formatted: string): string {
 }
 
 function format_chunk_body(body: string): (boolean, string) {
-  if (literate.trim(body).len() == 0) {
+  if (util.trim(body).len() == 0) {
     return (false, "");
   }
   if (parses_as_decls(body)) {
@@ -1518,7 +1519,7 @@ function java_decl(class: string, decl: string): JavaDecl {
   let none: string[] = [];
   let bad = JavaDecl { ok: false, is_static: false, result: "", name: "", types: none };
   let d = decl.trim();
-  let is_static = util.str_has_prefix(d, "static ");
+  let is_static = d.starts_with("static ");
   if (is_static) {
     d = slice_unchecked(d, 7, d.len()).trim();
   }
@@ -1765,7 +1766,7 @@ function jni_java_class(class: string, library: string, methods: JniMethod[]): s
 // "fern" for "lib/arm64-v8a/libfern.so".
 function jni_library(out_path: string): string {
   let base = slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "";
-  if (util.str_has_prefix(base, "lib")) {
+  if (base.starts_with("lib")) {
     base = slice_unchecked(base, 3, base.len()) + "";
   }
   if (base.ends_with(".so")) {
@@ -1861,7 +1862,7 @@ function jni_width(t: string): boolean {
 // its arguments. The JVM passes a 32-bit jint in a 64-bit register with
 // undefined upper bits, so each type must have the width of its JNI type.
 function jni_export_refusal(f: parser.FuncDecl): string {
-  if (!util.str_has_prefix(f.name, "Java_")) {
+  if (!f.name.starts_with("Java_")) {
     return "";
   }
   if (f.params.len() < 2 || f.params[0].type_name != "usize" || f.params[1].type_name != "usize") {
@@ -1991,7 +1992,7 @@ function export_entry(f: parser.FuncDecl, name: string, harden: boolean, locked:
 
 function export_arg(src: string, t: string): string {
   if (t == "f32") {
-    if (util.str_has_prefix(src, "%xmm")) {
+    if (src.starts_with("%xmm")) {
       return "    cvtss2sd " + src + ", %xmm15\n    movq %xmm15, %rax\n";
     }
     return "    movl " + src + ", %eax\n    movd %eax, %xmm15\n    cvtss2sd %xmm15, %xmm15\n    movq %xmm15, %rax\n";
@@ -2056,7 +2057,7 @@ function text_when(on: boolean, text: string): string {
 }
 
 function export_arg_arm64(src: string, t: string): string {
-  if (util.str_has_prefix(src, "[")) {
+  if (src.starts_with("[")) {
     if (t == "f32") {
       return "    ldr s16, " + src + "\n    fcvt d16, s16\n    fmov x16, d16\n";
     }
@@ -2398,7 +2399,7 @@ function path_remaps(specs: string[]): (PathRemap[], boolean) {
       return (out, false);
     }
     let from = slice_unchecked(spec, 0, eq) + "";
-    while (from.len() > 1 && util.str_has_suffix(from, "/")) {
+    while (from.len() > 1 && from.ends_with("/")) {
       from = slice_unchecked(from, 0, from.len() - 1) + "";
     }
     out = out.append(PathRemap { from: from, to: slice_unchecked(spec, eq + 1, spec.len()) + "" });
@@ -2417,15 +2418,15 @@ function remap_path(remaps: PathRemap[], path: string): string {
       return to;
     }
     let dir = from;
-    if (!util.str_has_suffix(from, "/")) {
+    if (!from.ends_with("/")) {
       dir = from + "/";
     }
-    if (util.str_has_prefix(path, dir)) {
+    if (path.starts_with(dir)) {
       let rest = slice_unchecked(path, dir.len(), path.len()) + "";
       if (to.len() == 0) {
         return rest;
       }
-      if (util.str_has_suffix(to, "/")) {
+      if (to.ends_with("/")) {
         return to + rest;
       }
       return to + "/" + rest;
@@ -2780,7 +2781,7 @@ function find_flag(name: string): CliFlag {
 function read_flag(av: string[], i: i32): CliArg {
   let a = av[i];
   let body = slice_unchecked(a, 1, a.len()) + "";
-  if (util.str_has_prefix(body, "-")) {
+  if (body.starts_with("-")) {
     body = slice_unchecked(body, 1, body.len()) + "";
   }
   let eq = util.index_of_sub(body, "=");
@@ -2797,7 +2798,7 @@ function read_flag(av: string[], i: i32): CliArg {
   if (f.value.len() == 0) {
     return read_bool(arg, eq >= 0, given);
   }
-  let optional = util.str_has_prefix(f.value, "[");
+  let optional = f.value.starts_with("[");
   if (eq >= 0) {
     if (given.len() == 0 && !optional) {
       return CliArg { ...arg, err: f.name + "= has no value: write " + f.name + " " + f.value + " or " + f.name + "=" + f.value };
@@ -3537,7 +3538,7 @@ function dep_line(name: string, spec: string, grant: string, fetcher: Fetcher): 
     return "";
   }
   if (grant.len() == 0) {
-    if (util.str_has_prefix(spec, "version:")) {
+    if (spec.starts_with("version:")) {
       return name + " = " + mvs.quoted(slice_unchecked(spec, 8, spec.len()) + "");
     }
     return name + " = { " + fields + " }";
@@ -3552,23 +3553,23 @@ function dep_line(name: string, spec: string, grant: string, fetcher: Fetcher): 
 function dep_source(spec: string, fetcher: Fetcher): string {
   if (spec == "workspace") {
     return "workspace = true";
-  } else if (util.str_has_prefix(spec, "path:")) {
+  } else if (spec.starts_with("path:")) {
     let p = slice_unchecked(spec, 5, spec.len()) + "";
     if (p.len() == 0) {
       eprint("fern: -add: empty path in " + mvs.quoted(spec));
       return "";
     }
     return "path = " + mvs.quoted(p);
-  } else if (util.str_has_prefix(spec, "version:")) {
+  } else if (spec.starts_with("version:")) {
     let v = slice_unchecked(spec, 8, spec.len()) + "";
     if (!fern_toml.is_version(v)) {
       eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + mvs.quoted(v));
       return "";
     }
     return "version = " + mvs.quoted(v);
-  } else if (util.str_has_prefix(spec, "url:")) {
+  } else if (spec.starts_with("url:")) {
     let u = slice_unchecked(spec, 4, spec.len()) + "";
-    if (!util.str_has_prefix(u, "https://") && !util.str_has_prefix(u, "http://")) {
+    if (!u.starts_with("https://") && !u.starts_with("http://")) {
       eprint("fern: -add: url must be http(s), got " + mvs.quoted(u));
       return "";
     }
@@ -4062,7 +4063,7 @@ struct Bundle {
 struct Sources { paths: string[], srcs: string[], maps: util.LineMap[], open: modloader.Buffers }
 
 function is_literate(path: string): boolean {
-  return util.str_has_suffix(path, ".fern.md");
+  return path.ends_with(".fern.md");
 }
 
 function entry_sources(path: string, src: string): (Sources, string) {
@@ -4134,7 +4135,7 @@ function list_add(list: string, item: string): string {
 
 function add_generated(s: Sources, doc: string, f: literate.FileResult): Sources {
   let mpath = f.path;
-  if (!util.str_has_prefix(mpath, "/")) {
+  if (!mpath.starts_with("/")) {
     mpath = modloader.dirname(doc) + mpath;
   }
   return Sources {
@@ -4154,7 +4155,7 @@ function eprint_tangle_error(path: string, line: i32, col: i32, msg: string): vo
 }
 
 function display_path(mpath: string, root: string): string {
-  if (root.len() == 0 || !util.str_has_prefix(mpath, root)) {
+  if (root.len() == 0 || !mpath.starts_with(root)) {
     return mpath;
   }
   let at = root.len();
@@ -4560,7 +4561,7 @@ function repl_line(s: interp.Session, line: string): interp.Session {
     return s.declare(m);
   }
   let src = line;
-  if (!util.str_has_suffix(src, ";") && !util.str_has_suffix(src, "}")) {
+  if (!src.ends_with(";") && !src.ends_with("}")) {
     src += ";";
   }
   let m = parser.parse_module(lexer.tokenize("function __repl(): void { " + src + " }"));
@@ -4576,7 +4577,7 @@ function repl_line(s: interp.Session, line: string): interp.Session {
 
 function repl_declares(line: string): boolean {
   for kw in ["function ", "fn ", "pub ", "struct ", "enum ", "type "] {
-    if (util.str_has_prefix(line, kw)) {
+    if (line.starts_with(kw)) {
       return true;
     }
   }
@@ -4925,7 +4926,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
 }
 
 function is_doc_module(name: string): boolean {
-  if (!util.str_has_suffix(name, ".fern") && !is_literate(name)) {
+  if (!name.ends_with(".fern") && !is_literate(name)) {
     return false;
   }
   return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
@@ -5210,7 +5211,7 @@ function lsp_buffers(s: Server): modloader.Buffers {
 function lsp_checked_files(c: Checked, root: string): string[] {
   let out: string[] = [c.entry];
   for f in c.files {
-    if (root.len() > 0 && util.str_has_prefix(f, "stdlib://")) {
+    if (root.len() > 0 && f.starts_with("stdlib://")) {
       out = out.append(util.clean_path(root + "/" + slice_unchecked(f, 9, f.len())));
     } else {
       out = out.append(util.clean_path(f));
@@ -5384,7 +5385,7 @@ function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {
     return at;
   }
   let path = lsp_module_doc(s, q.d, m, q.path);
-  let stdlib = util.str_has_prefix(display_path(path, s.root), "stdlib://") || m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
+  let stdlib = display_path(path, s.root).starts_with("stdlib://") || m > 0 && m <= q.d.files.len() && q.d.files[m - 1].starts_with("stdlib://");
   if (path == q.path) {
     return RefDoc { m: m, uri: q.uri, text: q.text, stdlib: stdlib };
   }
@@ -5546,7 +5547,7 @@ function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {
   }
   let f = d.files[m - 1];
   let std = "stdlib://";
-  if (util.str_has_prefix(f, std)) {
+  if (f.starts_with(std)) {
     return util.clean_path(s.root + "/" + slice_unchecked(f, std.len(), f.len()));
   }
   return util.clean_path(f);
@@ -5842,7 +5843,7 @@ function explain_text(canonical: string, body: string): string {
   }
   let heading = "# " + canonical + " — ";
   let nl = util.index_of_sub(body, "\n");
-  if (nl <= heading.len() || !util.str_has_prefix(body, heading)) {
+  if (nl <= heading.len() || !body.starts_with(heading)) {
     return header + "\n\n" + body + "\n";
   }
   let at = nl;
@@ -6089,7 +6090,7 @@ function source_files(paths: string[]): (string[], boolean[], string) {
       }
       continue;
     }
-    if (p != "-" && !util.str_has_suffix(p, ".fern") && !is_literate(p)) {
+    if (p != "-" && !p.ends_with(".fern") && !is_literate(p)) {
       let no: string[] = [];
       let none: boolean[] = [];
       if let Err(e) = read_file(p) {
@@ -6121,7 +6122,7 @@ function dir_sources(dir: string): string[] {
         let child = d + "/" + n;
         if (util.is_dir(child)) {
           todo = todo.append(child);
-        } else if (util.str_has_suffix(n, ".fern") || is_literate(n)) {
+        } else if (n.ends_with(".fern") || is_literate(n)) {
           out = out.append(child);
         }
       }
@@ -6237,7 +6238,7 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   let line = "";
   if (f.line >= 1 && f.line <= lines.len()) {
     line = lines[f.line - 1];
-    if (util.str_has_suffix(line, "\r")) {
+    if (line.ends_with("\r")) {
       line = slice_unchecked(line, 0, line.len() - 1) + "";
     }
   }
@@ -6569,7 +6570,7 @@ function apk_build_args(av: string[]): (string[], string) {
       value_next = false;
     } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java", "-jni-dex"], name)) {
       return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
-    } else if (util.str_has_prefix(name, "-apk")) {
+    } else if (name.starts_with("-apk")) {
       value_next = !apk_switch(name) && !a.contains("=");
     } else {
       out = out.append(a);
@@ -6584,7 +6585,7 @@ function apk_flag_name(a: string): string {
     return "";
   }
   let body = slice_unchecked(a, 1, a.len()) + "";
-  if (util.str_has_prefix(body, "-")) {
+  if (body.starts_with("-")) {
     body = slice_unchecked(body, 1, body.len()) + "";
   }
   let eq = util.index_of_sub(body, "=");
