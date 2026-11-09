@@ -27,6 +27,14 @@ function through_method(box: Box[Handle]): i32 {
   return read_owned(box.borrowed());
 }
 
+function (box: Box[T]) borrow_value[U](value: U): U {
+  return value;
+}
+
+function through_generic_method(box: Box[Handle], value: Handle): i32 {
+  return read_owned(box.borrow_value(value));
+}
+
 function main(): i32 {
   return 0;
 }
