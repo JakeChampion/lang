@@ -30,6 +30,7 @@ import "./semcse";
 import "./semthread";
 import "./semunroll";
 import "./semfuse";
+import "./semreserve";
 import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
@@ -9317,6 +9318,7 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   }
   if (report) {
     semarrayreport.write(sink, semarrayreport.render(out.sites));
+    semarrayreport.write(sink, semreserve.render(out.reserves));
   }
   let result: Produced[] = [];
   let i = 0;
