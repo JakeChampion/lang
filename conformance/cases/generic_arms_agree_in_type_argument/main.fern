@@ -1,0 +1,13 @@
+// Arms of one generic type with the same type argument join, also when one
+// arm is a literal whose argument the other arm gives.
+
+struct Box[T] { v: T }
+
+function main(): i32 {
+  let a: Box[i32] = Box { v: 1 };
+  let b: Box[i32] = Box { v: 2 };
+  let c = if (a.v > 5) { a } else { b };
+  let d = match (a.v > 5) { true => a, false => Box { v: 3 } };
+  print((c.v + d.v).to_string());
+  return 0;
+}
