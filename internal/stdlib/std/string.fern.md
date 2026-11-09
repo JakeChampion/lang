@@ -1476,9 +1476,6 @@ pub function (s: string) trim(): string {
     }
     high -= 1;
   }
-  if (low == 0 && high == n) {
-    return s;
-  }
   return slice_unchecked(s, low, high) + "";
 }
 ```
@@ -1492,9 +1489,6 @@ pub function (s: string) trim_start(): string {
   while (i < n && __is_ascii_ws(s[i] as i32)) {
     i += 1;
   }
-  if (i == 0) {
-    return s;
-  }
   return slice_unchecked(s, i, n) + "";
 }
 
@@ -1503,9 +1497,6 @@ pub function (s: string) trim_end(): string {
   let end = n;
   while (end > 0 && __is_ascii_ws(s[end - 1] as i32)) {
     end -= 1;
-  }
-  if (end == n) {
-    return s;
   }
   return slice_unchecked(s, 0, end) + "";
 }
