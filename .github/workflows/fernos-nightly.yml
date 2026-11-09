@@ -60,6 +60,9 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelSelfCompilesOnQemu$' -test.v -test.timeout 70m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # Failures land on one long-lived issue, so a week of the same break is a
   # thread and not seven issues.
