@@ -534,7 +534,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		case *ast.FieldAccess:
 			q, ok := it.Target.(*ast.Ident)
 			if ok && !lambdaCaptured[q.Name] && !deferBare[q.Name] && !deferField[[2]string{q.Name, it.Field}] && fieldOwner(q.Name) &&
-				!loopRepeats(body, v, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, it.Field) {
+				!loopRepeats(body, v, declNode[q.Name]) && fieldPathDead(info, bf, v, q, it.Field, order, fieldOf, updates) {
 				iterOwned[v.Name] = true
 			}
 		default:
@@ -572,7 +572,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, t.Field}] || !fieldOwner(q.Name) {
 				return
 			}
-			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, t.Field) {
+			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathDead(info, bf, holder, q, t.Field, order, fieldOf, updates) {
 				moves[e] = true
 			}
 		}
@@ -884,7 +884,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, bf, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -1046,44 +1046,41 @@ func withinLiteralOf(body ast.Node, c *ast.Call, name string) bool {
 	return found
 }
 
-// fieldPathIsLast reports whether every later occurrence of q reads a field
-// other than field: the read `q.field` at q is then the last use of that
-// path. A later update `S { ...q, field: v }` replaces the path, so it does
-// not read it.
-func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool, q *ast.Ident, field string) bool {
-	at := order.Idx[q]
-	for id, idx := range order.Idx {
-		if idx <= at || id.Name != q.Name {
-			continue
-		}
-		f, isField := fieldOf[id]
-		if isField && f != field || !isField && updates[id][field] {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// fieldBaseDead reports that no path after the statement that holds c reads
-// q, and that the statement reads only other fields of q after q.field. A
-// later mention in a branch that the call does not reach is not a read.
-func fieldBaseDead(info *Info, bf *bodyFrames, c *ast.Call, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string) bool {
-	frames := bf.of(c)
+// fieldPathDead reports that no path after holder reads q.field. A mention
+// of q reads the path unless it reads another field, or is the base of an
+// update literal that replaces field. A later mention in a branch that
+// holder does not reach is not a read.
+func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool) bool {
+	frames := bf.of(holder)
 	if len(frames) == 0 {
 		return false
+	}
+	readsPath := func(id *ast.Ident) bool {
+		if id.Name != q.Name {
+			return false
+		}
+		f, isField := fieldOf[id]
+		return !(isField && f != field || !isField && updates[id][field])
+	}
+	reads := func(n ast.Node) bool {
+		found := false
+		ast.Walk(n, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && readsPath(id) {
+				found = true
+			}
+			return !found
+		})
+		return found
 	}
 	inner := frames[len(frames)-1]
 	later := false
 	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
-		if id, ok := m.(*ast.Ident); ok && id.Name == q.Name && order.Idx[id] > order.Idx[q] {
-			if f, isField := fieldOf[id]; !isField || f == field {
-				later = true
-			}
+		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && readsPath(id) {
+			later = true
 		}
 		return !later
 	})
-	return !later && !liveFrom(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name))
+	return !later && !liveFromReads(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name), reads)
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the
@@ -2360,6 +2357,16 @@ type settleReach struct {
 	frames []liveFrame
 	level  int
 	scope  int
+	// reads, when set, reports a node that can read the taken value. A nil
+	// reads counts each mention of the name.
+	reads func(ast.Node) bool
+}
+
+func (r settleReach) refs(n ast.Node, name string) bool {
+	if r.reads != nil {
+		return r.reads(n)
+	}
+	return StmtReferencesName(n, name)
 }
 
 // stmtsSettle walks a statement list that follows a take of name. live
@@ -2374,12 +2381,12 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string, reach settleReach) (
 		}
 		switch x := st.(type) {
 		case *ast.Match:
-			if StmtReferencesName(x.Tag, name) {
+			if reach.refs(x.Tag, name) {
 				return true, false
 			}
 			allSettled := true
 			for _, arm := range x.Arms {
-				if arm.Guard != nil && StmtReferencesName(arm.Guard, name) {
+				if arm.Guard != nil && reach.refs(arm.Guard, name) {
 					return true, false
 				}
 				if arm.Body == nil {
@@ -2405,7 +2412,7 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string, reach settleReach) (
 			}
 			continue
 		case *ast.If:
-			if StmtReferencesName(x.Cond, name) {
+			if reach.refs(x.Cond, name) {
 				return true, false
 			}
 			branches := [][]ast.Stmt{blockStmts(x.Then)}
@@ -2427,10 +2434,10 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string, reach settleReach) (
 			}
 			continue
 		}
-		if StmtReferencesName(st, name) {
+		if reach.refs(st, name) {
 			return true, false
 		}
-		if jumpsLive(info, reach.frames, reach.level, jumpsOf(info, st), name, reach.scope) {
+		if jumpsLive(info, reach.frames, reach.level, jumpsOf(info, st), name, reach.scope, reach.reads) {
 			return true, false
 		}
 		if divergesStmt(info, st) || neverReturns(info, st) {
@@ -2448,8 +2455,13 @@ func blockStmts(st ast.Stmt) []ast.Stmt {
 }
 
 func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int) bool {
+	return liveFromReads(info, frames, level, name, scope, nil)
+}
+
+// liveFromReads is liveFrom with a read test, as settleReach.reads.
+func liveFromReads(info *Info, frames []liveFrame, level int, name string, scope int, reads func(ast.Node) bool) bool {
 	f := frames[level]
-	reach := settleReach{frames: frames, level: level, scope: scope}
+	reach := settleReach{frames: frames, level: level, scope: scope, reads: reads}
 	// An initializer reads the outer binding before its declaration hides it.
 	// Later reads in this block name the new binding. Jumps and scope exits
 	// can still reach the outer value, so keep those paths.
@@ -2457,7 +2469,7 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 	for j := f.idx + 1; j < len(f.stmts); j++ {
 		if shadowed {
 			st := f.stmts[j]
-			if jumpsLive(info, frames, level, jumpsOf(info, st), name, scope) {
+			if jumpsLive(info, frames, level, jumpsOf(info, st), name, scope, reads) {
 				return true
 			}
 			if divergesStmt(info, st) || neverReturns(info, st) {
@@ -2486,19 +2498,19 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 	if level == 0 {
 		return false
 	}
-	return liveFrom(info, frames, level-1, name, scope)
+	return liveFromReads(info, frames, level-1, name, scope, reads)
 }
 
 // jumpsLive reports a continue or a break of a statement at level that
 // reaches a read of name. A jump to a loop at or inside the block of the
 // binding leaves the binding.
-func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name string, scope int) bool {
+func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name string, scope int, reads func(ast.Node) bool) bool {
 	for _, label := range jumps.continues {
 		l := loopFrameLevel(frames, level, label)
 		if l >= 0 && l <= scope {
 			continue
 		}
-		if l < 0 || scope >= 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
+		if l < 0 || scope >= 0 || loopHeadLive(frames, l, name) || liveFromReads(info, frames, l-1, name, scope, reads) {
 			return true
 		}
 	}
@@ -2507,7 +2519,7 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 		if l >= 0 && l <= scope {
 			continue
 		}
-		if l < 0 || liveFrom(info, frames, l-1, name, scope) {
+		if l < 0 || liveFromReads(info, frames, l-1, name, scope, reads) {
 			return true
 		}
 	}

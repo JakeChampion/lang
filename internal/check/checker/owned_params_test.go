@@ -3388,10 +3388,56 @@ func TestOwnGuardRejectsAConsumeHiddenInAScalarArgument(t *testing.T) {
 	wantE051(t, "consume-through-earlier-tuple", scalarCallConsumeSrc)
 }
 
-// A field move inside the else block comes before the reads after the
-// let-else, so it is not the last use of the base.
-func TestOwnGuardRejectsSupersededFieldMoveInLetElseBlock(t *testing.T) {
-	wantE051(t, "field-move-in-let-else-block", fieldMovePrelude+`
+// The else block of a let-else leaves, so its field move reaches no read
+// after the let-else.
+const branchMovePrelude = `struct P { n: i32 }
+struct S { p: P, k: i32, flag: boolean }
+function take(own p: P): P { return p; }
+`
+
+// A field move in a branch that returns reaches no read after the branch.
+// The update literal in the branch replaces the moved field (#14996).
+func TestOwnGuardAllowsFieldMoveInAReturningBranch(t *testing.T) {
+	wantOK(t, "returning-branch", branchMovePrelude+`
+function step(own s: S): S {
+  if (s.flag) {
+    let a = take(s.p);
+    return S { ...s, p: a };
+  }
+  return s;
+}
+function main(): i32 { return 0; }`)
+	wantOK(t, "other-field-read-after", branchMovePrelude+`
+function step(own s: S): i32 {
+  if (s.flag) {
+    let a = take(s.p);
+  }
+  return s.k;
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsAFieldReadAfterABranchMove(t *testing.T) {
+	wantE051(t, "whole-read-after", branchMovePrelude+`
+function step(own s: S): S {
+  if (s.flag) {
+    let a = take(s.p);
+  }
+  return s;
+}
+function main(): i32 { return 0; }`)
+	wantE051(t, "base-kept-after", branchMovePrelude+`
+function step(own s: S): S {
+  if (s.flag) {
+    let a = take(s.p);
+  }
+  return S { ...s, k: 1 };
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardAllowsFieldMoveInLetElseBlock(t *testing.T) {
+	wantOK(t, "field-move-in-let-else-block", fieldMovePrelude+`
 struct Holder { cfi: Cfi, room: Option[i32] }
 function step(own h: Holder): Holder {
     let Some(v) = h.room else {

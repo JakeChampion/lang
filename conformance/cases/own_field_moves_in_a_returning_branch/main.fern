@@ -1,0 +1,24 @@
+// A field of an own parameter moves in a branch that returns. No path from
+// the move reaches the read of the parameter after the branch, and the update
+// literal in the branch replaces the moved field.
+
+struct P { n: i32 }
+struct S { p: P, k: i32, flag: boolean }
+
+function take(own p: P): P {
+  return P { n: p.n + 10 };
+}
+
+function step(own s: S): S {
+  if (s.flag) {
+    let a = take(s.p);
+    return S { ...s, p: a };
+  }
+  return s;
+}
+
+function main(): i32 {
+  print(step(S { p: P { n: 1 }, k: 0, flag: true }).p.n);
+  print(step(S { p: P { n: 2 }, k: 0, flag: false }).p.n);
+  return 0;
+}

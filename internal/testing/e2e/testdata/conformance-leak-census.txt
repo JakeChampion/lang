@@ -1,3 +1,4 @@
+# 2026-11-09: own_field_moves_in_a_returning_branch is clean under RC trace.
 # 2026-11-09: own_field_moves_beside_an_if_value is clean under RC trace.
 # 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
 # 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
@@ -703,6 +704,7 @@ own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_field_move_in_one_branch                         0
 own_field_moves_beside_an_if_value                   0
+own_field_moves_in_a_returning_branch                0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
