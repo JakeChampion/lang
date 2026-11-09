@@ -2,7 +2,7 @@
 // With PAPER_UI_PNG set to a directory, it writes each screen there as a
 // PNG file.
 import "std/android/draw";
-import "std/png";
+import "std/android/testkit";
 import "std/test";
 import "./face";
 import "./paper";
@@ -83,22 +83,9 @@ function draw_view(v: ui.View, name: string): draw.Frame {
   let c = ui.render(f, fs, face.new_cache(), ns, wall, v.m.d);
   draw.release(wall);
   if let Some(out) = env("PAPER_UI_PNG") {
-    save(f, out + "/" + name + ".png");
+    let saved = testkit.save_png(f, out + "/" + name + ".png");
   }
   return f;
-}
-
-function save(f: draw.Frame, path: string): void {
-  let rgb: u8[] = [];
-  for y in 0..f.height {
-    for x in 0..f.width {
-      let p = f.pixel(x, y);
-      rgb = rgb.append((p & 255) as u8).append((p >> 8 & 255) as u8).append((p >> 16 & 255) as u8);
-    }
-  }
-  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
-    let ok = write_file_bytes(path, bytes);
-  }
 }
 
 // The node with action `act`, or one far off the screen.
