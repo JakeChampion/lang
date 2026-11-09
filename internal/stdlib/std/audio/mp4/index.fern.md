@@ -10,6 +10,7 @@ Box, track, description, packet, edit, and encoded-input budgets bound parsing.
 
 ```fern
 <<*>>=
+// Index ISO audio tracks with bounded packet tables and edit lists.
 import "std/audio/mp4/boxes";
 import "std/audio/mp4/entries";
 import "std/audio/mp4/tables";

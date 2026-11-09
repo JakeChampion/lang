@@ -6,6 +6,7 @@ The source PCM remains interleaved and retains its exact integer depth.
 
 ```fern
 <<*>>=
+// Read Core Audio channel layouts and retain exact ALAC sample values.
 import "std/audio/alac/config";
 import "std/audio/pcm";
 import "std/audio/wire";

@@ -6,6 +6,7 @@ Codec modules supply the sample rate, channel count, and physical decoded extent
 
 ```fern
 <<*>>=
+// Map ISO audio packet clocks and edit lists to PCM spans.
 import "std/audio/mp4/tables";
 import "std/audio/mp4/time";
 import "std/audio/pcm";

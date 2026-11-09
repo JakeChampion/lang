@@ -13,6 +13,7 @@ A retained index applies to the same immutable input bytes used during inspectio
 
 ```fern
 <<*>>=
+// Decode ALAC tracks from bounded ISO media byte views.
 import "std/audio/alac" as codec;
 import "std/audio/alac/config";
 import "std/audio/alac/layout";

@@ -6,6 +6,7 @@ Codec modules validate the decoder-specific child boxes.
 
 ```fern
 <<*>>=
+// Validate common ISO audio sample entries and data references.
 import "std/audio/mp4/boxes";
 import "std/audio/pcm";
 import "std/audio/wire";
