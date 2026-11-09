@@ -477,6 +477,54 @@ function deferred_plan_tests(): void {
   }
 }
 
+function packed_output_tests(): void {
+  for n in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768] {
+    let input = __alloc_u8(4 * n + 8);
+    let output = __alloc_u8(4 * n + 8);
+    let re = __alloc_u8(2 * n + 8);
+    let im = __alloc_u8(2 * n + 8);
+    for buffer in [output, re, im] {
+      unsafe {
+        for i in 0..4 {
+          __store_u8(buffer as usize + 8 as usize + i as usize, 165);
+          __store_u8(buffer as usize + 8 as usize + (buffer.len() - 1 - i) as usize, 165);
+        }
+      }
+    }
+    let precise = transform.zeros(n);
+    for i in 0..n {
+      let value = ((i as f64 * 0.19).sin() * 0.01 + (i as f64 * 0.071).cos() * 0.003) as f32;
+      precise = precise.with(i, value as f64);
+      unsafe {
+        __store_i32(input as usize + 12 as usize + (4 * i) as usize, f32_bits(value));
+      }
+    }
+    let expected = transform.dct4(precise);
+    unsafe {
+      packed_transform.dct4_packed(input as usize + 12 as usize, output as usize + 12 as usize, re as usize + 12 as usize, im as usize + 12 as usize, packed_transform.plan(n));
+    }
+    let peak = 1.0;
+    let error = 0.0;
+    for i in 0..n {
+      if (expected[i].abs() > peak) {
+        peak = expected[i].abs();
+      }
+      unsafe {
+        let value = f32_from_bits(__load_i32(output as usize + 12 as usize + (4 * i) as usize)) as f64;
+        if ((expected[i] - value).abs() > error) {
+          error = (expected[i] - value).abs();
+        }
+      }
+    }
+    require(error < peak * 0.000003, "packed output order matches the double FFT at every size");
+    for buffer in [output, re, im] {
+      for i in 0..4 {
+        require(buffer[i] == 165u8 && buffer[buffer.len() - 1 - i] == 165u8, "unaligned FFT spans preserve their boundary bytes");
+      }
+    }
+  }
+}
+
 function packed_tests(): void {
   for n in [32, 256, 2048, 32768] {
     let input = transform.zeros(n);
@@ -904,6 +952,7 @@ pub function run_tests(): i32 {
   transform_tests();
   print("ok - transform definition and lapping");
   packed_tests();
+  packed_output_tests();
   coefficient_parser_tests();
   parser_properties();
   packed_file_tests();
