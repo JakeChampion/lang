@@ -151,12 +151,16 @@ func TestSelfHostStdTestInterp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			wantOut, wantExit := e2eharness.InterpVerdict(t, interpBin, tc.src)
-			cmd := exec.Command(cli, "-interp", tc.src, stdlibRoot)
-			gotOut, _ := stdTestOutput(cmd)
+			cmd := exec.Command(cli, "-stdlib", stdlibRoot, "-interp", tc.src)
+			gotOut, runErr := stdTestOutput(cmd)
 			if cmd.ProcessState == nil {
 				t.Fatalf("the self-host interpreter did not start")
 			}
 			if gotExit := cmd.ProcessState.ExitCode(); gotExit != wantExit {
+				var exitErr *exec.ExitError
+				if errors.As(runErr, &exitErr) {
+					t.Logf("self-host interpreter stderr:\n%s", exitErr.Stderr)
+				}
 				t.Errorf("exit code: self-host interp %d, oracle interp %d\n%s", gotExit, wantExit, gotOut)
 			}
 			gotStr, wantStr := string(gotOut), string(wantOut)
