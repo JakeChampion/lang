@@ -232,3 +232,10 @@ bin/fern -target arm64-linux -o PROBE PROBE.fern internal/stdlib && qemu-aarch64
 ```
 
 Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, Go go1.27.3, QEMU 8.2.2, wasmtime 46.0.1.
+
+## Empty option results
+
+The empty `None` constructor holds no handle and is a fresh value.
+A value match can move an owned source into its result when each arm yields an owned or fresh value.
+That result can form a field of a literal passed to an own parameter.
+A borrowed source, a source with a later read, or a local that shadows `None` does not gain ownership from this rule.

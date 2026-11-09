@@ -1,0 +1,27 @@
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+struct App { a: Option[Handle], b: Option[Handle] }
+
+function poll(own h: Handle): Option[Handle] {
+  return Some(h);
+}
+
+function eat(own s: App): i32 {
+  let App { a, b } = s;
+  let x = match (a) { Some(h) => h.close(), None => 0 };
+  let y = match (b) { Some(h) => h.close(), None => 0 };
+  return x + y;
+}
+
+function step(s: App): i32 {
+  let next_a = match (s.a) { Some(h) => Some(h), None => None };
+  return eat(App { a: next_a, b: None });
+}
+
+function main(): i32 {
+  return 0;
+}

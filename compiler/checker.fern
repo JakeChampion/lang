@@ -19461,7 +19461,7 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     return true;
   }
   if let ast.ExprIdent(id) = e {
-    if (fx.ofuncs.ctors.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
+    if ((id.name == "None" || fx.ofuncs.ctors.has(id.name)) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
       return true;
     }
   }

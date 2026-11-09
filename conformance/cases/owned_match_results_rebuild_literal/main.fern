@@ -1,0 +1,48 @@
+// spec: RH-40
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+struct App { a: Option[Handle], b: Option[Handle] }
+
+function poll(own h: Handle): Option[Handle] {
+  return Some(h);
+}
+
+function eat(own s: App): i32 {
+  let App { a, b } = s;
+  let x = match (a) { Some(h) => h.close(), None => 0 };
+  let y = match (b) { Some(h) => h.close(), None => 0 };
+  return x + y;
+}
+
+function step(own s: App, tag: i32): i32 {
+  match (tag) {
+    0 => {
+      let App { a, b } = s;
+      let next_a = match (a) { Some(h) => poll(h), None => None };
+      let next_b = match (b) { Some(h) => poll(h), None => None };
+      return eat(App { a: next_a, b: next_b });
+    },
+    _ => {
+      return eat(s);
+    }
+  }
+}
+
+function empty(): i32 {
+  let none: Option[Handle] = None;
+  return eat(App { a: none, b: None });
+}
+
+function main(): i32 {
+  print(step(App { a: Some(Handle { fd: 3 }), b: Some(Handle { fd: 4 }) }, 0));
+  print(step(App { a: None, b: Some(Handle { fd: 4 }) }, 0));
+  print(step(App { a: Some(Handle { fd: 3 }), b: None }, 0));
+  print(step(App { a: None, b: None }, 0));
+  print(step(App { a: Some(Handle { fd: 3 }), b: Some(Handle { fd: 4 }) }, 1));
+  print(empty());
+  return 0;
+}
