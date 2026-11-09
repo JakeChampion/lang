@@ -845,7 +845,28 @@ and three `mmap` reservations at start.
    requests. The x86-64 image also reads the same archive as its initrd.
    Then both images write the last sector, and the Go test reads it in the
    disk file. The ELF loader is the other half of the milestone.
-18. Beside those: the panic scope is decided (#14257, see the north-star
+18. **User mode runs on arm64** (#14263, the first slice of milestone 4).
+   `__user_run(frame)` enters EL0 with the state of a trap frame, much as a
+   VMM runs a guest. Each exception from EL0 goes through a lower-EL slot of
+   the vector table. The slot saves the user state back into the frame, and
+   `__user_run` returns with the kind of the trap. Thus the syscall
+   dispatch, demand paging and preemption are ordinary Fern code in a loop
+   around `__user_run`, and a timer IRQ during EL0 returns to that loop. The
+   kernel heap is never preempted:
+   - The frame holds x0 to x30, `SP_EL0`, the PC, PSTATE, `TPIDR_EL0`, FPSR,
+     FPCR and q0 to q31, 816 bytes in all.
+   - `__user_run` keeps the callee-saved registers and the DAIF of the kernel.
+     It masks the exceptions before it writes `ELR_EL1` and `SPSR_EL1`, so
+     that no nested exception overwrites them.
+   - `std/pagetable` maps user pages with `map_user`. Each virtual page goes
+     to a physical page, at AP 01 or AP 11 and PXN. The kernel mapping stays
+     kernel-only, so a load of a kernel address from EL0 faults.
+
+   `TestSelfHostKernelUserModeOnQemu` runs EL0 code that makes two `svc`
+   calls. The kernel answers them through the frame. Then the code loads a
+   kernel address and takes a data abort. x86-64 refuses `__user_run` until
+   its slice, which uses `syscall` and `iretq`.
+19. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

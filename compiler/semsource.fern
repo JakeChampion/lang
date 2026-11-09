@@ -7909,6 +7909,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__irq_mask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_unmask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_wait", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__user_run", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__irq_pending", params: [], modes: [], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__hvc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__smc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },

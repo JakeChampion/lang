@@ -3575,6 +3575,8 @@ TestSelfHostUrlQueryIR 10
 TestSelfHostUrlX86_64 9
 TestSelfHostUseSyntaxDiagnosticsX86_64 2
 TestSelfHostUserFnShadowsBuiltinIR 4
+TestSelfHostUserRunRefusals 3
+TestSelfHostUserRunVectors 5
 TestSelfHostUsizeArrayFieldRefused 3
 TestSelfHostUsizeEqOrdHashRuns 5
 TestSelfHostUtf8ValidityProperty 19

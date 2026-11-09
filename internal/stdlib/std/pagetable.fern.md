@@ -6,7 +6,13 @@ This module builds the page tables of a kernel, with frames from `std/frames`, a
 
 Both ISAs walk four levels of 512 entries, 4096 bytes each, and index them with the same bits of the address. The formats differ in the descriptor. On arm64, a table entry is the table address with the low bits 3. A block at level 2 carries the attributes alone, and a page at level 3 adds bit 1. Attribute index 1 of `MAIR_EL1` is the Normal memory of the reset entry, and index 0 is Device-nGnRnE. A device descriptor is execute-never.
 
-On x86-64, a table entry is present and writable. A 2 MiB page at level 2 adds the page-size bit, and a device page sets the cache-disable and write-through bits.
+On x86-64, a table entry is present, writable and user-accessible. The leaf decides the access: a 2 MiB page at level 2 adds the page-size bit, and a device page sets the cache-disable and write-through bits.
+
+## User mappings
+
+`map_user` maps a range of a process. Each virtual page translates to a page of physical frames, and user code at EL0 or ring 3 can reach it. The kernel's own mapping stays kernel-only. Thus a process that loads a kernel address takes a fault.
+
+On arm64 a user page has AP 01 (read and write at both levels) or AP 11 (read-only at both levels), and it is PXN, so the kernel never runs user code. A user page that is not executable is also UXN. On x86-64 a user page sets the U/S bit, and the R/W bit when it is writable.
 
 ## Module assembly
 
@@ -73,9 +79,34 @@ function device_attr(): i64 {
   return 0x1bi64;
 }
 
-// A table entry, a block at level 2, and a page at level 3.
+// A table entry, a block at level 2, and a page at level 3. On x86-64 a table
+// entry lets a user page below it be reached: the leaf decides the access.
 function table_entry(table: usize): i64 {
-  return table as i64 | 3i64;
+  if (target_arch() == "arm64") {
+    return table as i64 | 3i64;
+  }
+  return table as i64 | 7i64;
+}
+
+// The descriptor of a user page of normal memory.
+function user_attr(write: boolean, exec: boolean): i64 {
+  if (target_arch() == "arm64") {
+    // AF, inner shareable, Normal (index 1), PXN; AP 01 or AP 11; UXN unless exec.
+    let attr = 0x20000000000705i64;
+    if (write) {
+      attr |= 0x40i64;
+    } else {
+      attr |= 0xc0i64;
+    }
+    if (!exec) {
+      attr |= 0x40000000000000i64;
+    }
+    return attr;
+  }
+  if (write) {
+    return 7i64;
+  }
+  return 5i64;
 }
 
 function block_entry(address: usize, attr: i64): i64 {
@@ -118,6 +149,24 @@ pub function (m: Tables) map_normal(start: usize, len: usize): boolean {
 // Maps [start, start + len) as device memory.
 pub function (m: Tables) map_device(start: usize, len: usize): boolean {
   return m.map_range(start, len, device_attr());
+}
+
+// Maps the user pages [va, va + len) to the physical pages from pa, for code
+// at EL0 or ring 3. False when a bound is not page aligned or when the frames
+// ran out.
+pub function (m: Tables) map_user(va: usize, pa: usize, len: usize, write: boolean, exec: boolean): boolean {
+  if (va % PAGE_BYTES != ZERO || pa % PAGE_BYTES != ZERO || len % PAGE_BYTES != ZERO) {
+    return false;
+  }
+  let attr = user_attr(write, exec);
+  let at = ZERO;
+  while (at < len) {
+    if (!m.map_page(va + at, pa + at, attr)) {
+      return false;
+    }
+    at += PAGE_BYTES;
+  }
+  return true;
 }
 
 function clear(table: usize): void {
@@ -163,6 +212,26 @@ function (m: Tables) next_table(table: usize, address: usize, level: i32): usize
     __store_i64(at, table_entry(fresh));
     return fresh;
   }
+}
+
+// Maps the one page at va to pa.
+function (m: Tables) map_page(va: usize, pa: usize, attr: i64): boolean {
+  let l1 = m.next_table(m.root, va, 0);
+  if (l1 == ZERO) {
+    return false;
+  }
+  let l2 = m.next_table(l1, va, 1);
+  if (l2 == ZERO) {
+    return false;
+  }
+  let l3 = m.next_table(l2, va, 2);
+  if (l3 == ZERO) {
+    return false;
+  }
+  unsafe {
+    __store_i64(l3 + index(va, 3) * ENTRY_BYTES, page_entry(pa, attr));
+  }
+  return true;
 }
 
 function (m: Tables) map_range(start: usize, len: usize, attr: i64): boolean {
