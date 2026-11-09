@@ -317,6 +317,10 @@ pub function array_reserve(): i32 {
   return -53;
 }
 
+pub function array_zero(): i32 {
+  return -59;
+}
+
 pub function tuple_new(): i32 {
   return -2;
 }
@@ -1240,16 +1244,16 @@ function bytes_construction_error(ins: ssa.SInst, result: typeinfo.Type): string
   return "constant byte array type";
 }
 
-function array_reserve_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+function scalar_allocation_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1 || !is_i32(f.values[ins.args[0]])) {
-    return "array reserve capacity type";
+    return "scalar array allocation count type";
   }
   if let typeinfo.TypeArray(a) = result {
     if (!a.view && (is_integer(a.elem) || is_float(a.elem) || is_bool(a.elem) || is_char(a.elem))) {
       return "";
     }
   }
-  return "array reserve requires owned scalar elements";
+  return "scalar array allocation requires owned scalar elements";
 }
 
 function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -2960,7 +2964,7 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 }
 
 function is_aggregate_op(kind: i32): boolean {
-  return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
+  return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == array_zero() || kind == tuple_new() || kind == array_get()
     || kind == tuple_get() || kind == record_new() || kind == record_get();
 }
 
@@ -2969,8 +2973,8 @@ function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   if (kind == bytes_new()) {
     return bytes_construction_error(ins, result);
   }
-  if (kind == array_reserve()) {
-    return array_reserve_error(ins, f, result);
+  if (kind == array_reserve() || kind == array_zero()) {
+    return scalar_allocation_error(ins, f, result);
   }
   if (kind == array_new()) {
     return array_construction_error(ins, f, result);

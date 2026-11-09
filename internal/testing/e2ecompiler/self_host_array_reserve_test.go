@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,9 +15,13 @@ import "./typeinfo";
 function main(): i32 {
   let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
   let row: i32 = 0;
-  while (row < 7) {
+  while (row < 11) {
     let elem = word;
     if (row == 1) { elem = typeinfo.TypeFloat { width: 64, polymorphic: false }; }
+    if (row == 7) { elem = typeinfo.TypeFloat { width: 32, polymorphic: false }; }
+    if (row == 8) { elem = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }; }
+    if (row == 9) { elem = typeinfo.TypeBool { tag: 0 }; }
+    if (row == 10) { elem = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false }; }
     if (row == 5) { elem = typeinfo.TypeString { tag: 0 }; }
     let result: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: row == 4 };
     if (row == 6) { result = word; }
@@ -34,19 +39,24 @@ function main(): i32 {
       records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [],
       shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
     let checked = ssasem.analyze(f);
-    if (checked.ok != (row < 2)) { print(checked.why); return row + 1; }
+    if (checked.ok != (row < 2 || row >= 7)) { print(checked.why); return row + 1; }
     row = row + 1;
   }
   return 0;
 }`
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ssasem.fern")
-	if err := os.WriteFile(filepath.Join(dir, "reserve-admission.fern"), []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := buildSelfHostBin(t, gcc, dir, "reserve-admission.fern", "reserve-admission")
-	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
-		t.Fatalf("reserve admission: %v\n%s", err, out)
+	for _, operation := range []string{"array_reserve", "array_zero"} {
+		t.Run(operation, func(t *testing.T) {
+			gcc, runner := x86_64Tooling(t)
+			dir := t.TempDir()
+			copySelfHostDriver(t, dir, "ssasem.fern")
+			program := strings.ReplaceAll(src, "ssasem.array_reserve()", "ssasem."+operation+"()")
+			if err := os.WriteFile(filepath.Join(dir, "reserve-admission.fern"), []byte(program), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := buildSelfHostBin(t, gcc, dir, "reserve-admission.fern", "reserve-admission")
+			if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
+				t.Fatalf("scalar allocation admission: %v\n%s", err, out)
+			}
+		})
 	}
 }

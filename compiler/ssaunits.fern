@@ -624,7 +624,7 @@ function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string 
 }
 
 function construction(kind: i32): boolean {
-  return kind == ssasem.array_new() || kind == ssasem.bytes_new() || kind == ssasem.array_reserve() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
+  return kind == ssasem.array_new() || kind == ssasem.bytes_new() || kind == ssasem.array_reserve() || kind == ssasem.array_zero() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
     || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
     || kind == ssasem.map_cleared();
 }
@@ -3533,7 +3533,7 @@ function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolea
   if (ins.kind_tag == ssasem.call()) {
     return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_f64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ins.str == "__alloc_u8_uninit" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
   }
-  return ins.kind_tag == ssasem.array_reserve();
+  return ins.kind_tag == ssasem.array_reserve() || ins.kind_tag == ssasem.array_zero();
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
