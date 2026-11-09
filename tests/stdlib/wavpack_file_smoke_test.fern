@@ -1,0 +1,13 @@
+import "std/test";
+import "wavpack_smoke_vectors";
+import "wavpack_file_check";
+
+function main(): i32 {
+  let runner = test.new("WavPack indexed source exact seek");
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == "seek-24-2-35") {
+      runner = runner.it(vector.name, (): test.TestOutcome => match (wavpack_file_check.run(vector, [17i64, 35i64])) { Ok(_) => test.pass(), Err(message) => test.fail(message) });
+    }
+  }
+  return runner.finish();
+}

@@ -1,0 +1,140 @@
+import "std/audio/wavpack/file";
+import "std/audio/source";
+import "std/audio/pcm";
+import "std/test";
+import "wavpack_smoke_vectors";
+import "wavpack_file_check";
+import "wavpack_input_check";
+import "aac_kernel_check" as ref;
+
+function fixture(): Result[u8[], string] {
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == "seek-24-2-35") {
+      return ref.unpack(vector.encoded);
+    }
+  }
+  return Err("missing fixture");
+}
+
+function every_seek(): test.TestOutcome {
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == "seek-24-2-35") {
+      let positions: i64[] = [];
+      for position in 0..36 {
+        positions = positions.append(position as i64);
+      }
+      return match (wavpack_file_check.run(vector, positions)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+    }
+  }
+  return test.fail("missing fixture");
+}
+
+function entry_budget(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let value = wavpack_file_check.limits();
+  if let Ok(_) = wavpack_file_check.inspect(bytes, file.Limits { ...value, max_entries: 2 }) {
+    return test.fail("accepted extra entry");
+  }
+  if let Ok(_) = file.create(file.Limits { ...value, max_entries: 0 }) {
+    return test.fail("accepted zero entries");
+  }
+  return test.pass();
+}
+
+function index_ranges(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack_file_check.inspect(bytes, wavpack_file_check.limits()) else {
+    return test.fail("inspect");
+  };
+  let entries = index.entries();
+  if (entries.len() != 3) {
+    return test.fail("entry count");
+  }
+  let offset = 0i64;
+  let position = 0i64;
+  let frames = [16, 9, 10];
+  for i in 0..3 {
+    if (entries[i].offset != offset || entries[i].position != position || entries[i].frames != frames[i]) {
+      return test.fail("recorded range");
+    }
+    offset += entries[i].bytes as i64;
+    position += entries[i].frames as i64;
+  }
+  return test.assert_true(offset == bytes.len() as i64 && position == 35i64);
+}
+
+function read_error(index: file.Index, bytes: u8[]): Result[void, source.ReadError] {
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = wavpack_input_check.bytes_reader(bytes, position, calls, true);
+  let seek = wavpack_file_check.seeker(position, calls, bytes.len());
+  let cursor = file.reader(index);
+  let output: i32[] = [];
+  while (true) {
+    let file.Progress { state, event, samples } = cursor.step_into_with(seek, read, output)?;
+    if let file.Output(_) = event {
+      return Ok(());
+    }
+    if let file.Finished = event {
+      return Ok(());
+    }
+    cursor = state;
+    output = samples;
+  }
+}
+
+function corrupt_group(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack_file_check.inspect(bytes, wavpack_file_check.limits()) else {
+    return test.fail("inspect");
+  };
+  let at = index.entries()[0].bytes - 1;
+  return match (read_error(index, bytes.with(at, bytes[at] ^ 1u8))) { Err(source.ReadAudio(pcm.Checksum)) => test.pass(), _ => test.fail("corrupt group produced PCM") };
+}
+
+function truncated_group(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack_file_check.inspect(bytes, wavpack_file_check.limits()) else {
+    return test.fail("inspect");
+  };
+  let short: u8[] = [];
+  for byte in bytes[:index.entries()[0].bytes - 1] {
+    short = short.append(byte);
+  }
+  return match (read_error(index, short)) { Err(source.ReadAudio(pcm.Truncated)) => test.pass(), _ => test.fail("short group produced PCM") };
+}
+
+function bad_seek(): test.TestOutcome {
+  let Ok(bytes) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack_file_check.inspect(bytes, wavpack_file_check.limits()) else {
+    return test.fail("inspect");
+  };
+  let never_read = (_: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  let wrong = (_: i64): Result[i64, IoError] => Ok(1i64);
+  if let Err(source.ReadSize) = file.reader(index).step_into_with(wrong, never_read, []) {} else {
+    return test.fail("wrong seek position");
+  }
+  let failed = (_: i64): Result[i64, IoError] => Err(IoError.Interrupted);
+  return match (file.reader(index).step_into_with(failed, never_read, [])) { Err(source.ReadIo(IoError.Interrupted)) => test.pass(), _ => test.fail("seek I/O error category") };
+}
+
+function main(): i32 {
+  let runner = test.new("WavPack indexed source boundaries");
+  runner = runner.it("every sample and EOF seek", every_seek);
+  runner = runner.it("bounded index entries", entry_budget);
+  runner = runner.it("exact source ranges and short group lengths", index_ranges);
+  runner = runner.it("checksum before PCM", corrupt_group);
+  runner = runner.it("truncated group before PCM", truncated_group);
+  runner = runner.it("seek position and I/O failures", bad_seek);
+  return runner.finish();
+}
