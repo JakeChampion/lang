@@ -292,6 +292,12 @@ pub function (e: EarlySecret) binder_key(): u8[] {
   return derive_secret(e.hash, e.secret, "res binder", e.hash.digest(none));
 }
 
+// client_early_traffic is the secret that protects a client's early data,
+// over the hash of the ClientHello that offered it.
+pub function (e: EarlySecret) client_early_traffic(client_hello_hash: [u8]): u8[] {
+  return derive_secret(e.hash, e.secret, "c e traffic", client_hello_hash);
+}
+
 pub function resumption_psk(h: Hash, resumption_master_secret: [u8], ticket_nonce: [u8]): u8[] {
   return hkdf_expand_label(h, resumption_master_secret, "resumption", ticket_nonce, h.size());
 }

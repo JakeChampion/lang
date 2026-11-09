@@ -86,8 +86,14 @@ pub function server(q: conn.Conn, c: h3.Config): Conn {
   return Conn { quic: q, session: h3.server(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [], date: "", date_line: [] };
 }
 
+// client starts at once when the connection sends 0-RTT, so the control
+// streams go in the first flight.
 pub function client(q: conn.Conn, c: h3.Config): Conn {
-  return Conn { quic: q, session: h3.client(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [], date: "", date_line: [] };
+  let h = Conn { quic: q, session: h3.client(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, parked: [], events: [], date: "", date_line: [] };
+  if (q.sending_early()) {
+    return h.__started();
+  }
+  return h;
 }
 
 pub function (c: Conn) with_max_body(n: i64): Conn {
@@ -120,6 +126,22 @@ pub function (c: Conn) done(): boolean {
 
 pub function (c: Conn) ready(): boolean {
   return c.started && c.quic.connected() && c.session.goaway_received() < 0;
+}
+
+// early says a client can send a request in 0-RTT before the handshake
+// ends. Only a request that is safe to replay may go early (RFC 8470
+// section 2.1).
+pub function (c: Conn) early(): boolean {
+  return c.started && !c.quic.connected() && c.quic.sending_early() && c.session.goaway_received() < 0;
+}
+
+// tickets are the session tickets the connection received.
+pub function (c: Conn) tickets(): conn.Ticket[] {
+  return c.quic.tickets();
+}
+
+pub function (c: Conn) tickets_taken(): Conn {
+  return Conn { ...c, quic: c.quic.tickets_taken() };
 }
 
 pub function (c: Conn) events_taken(): Conn {
@@ -204,6 +226,9 @@ function (c: Conn) __stepped(now: Instant): Conn {
 function (c: Conn) __quic_event(e: conn.Event): Conn {
   match (e) {
     conn.Connected => {
+      if (c.started) {
+        return c;
+      }
       return c.__started();
     },
     conn.Closed(why) => {
@@ -402,7 +427,7 @@ function (c: Conn) __whole(id: i64, e: h3.Event): Conn {
   match (e) {
     h3.HeadersReceived(_, fields) => {
       if (c.session.is_server()) {
-        return Conn { ...c, partials: rest, next: next, events: c.events.append(Requested(id, __request(fields, [], none))) };
+        return Conn { ...c, partials: rest, next: next }.__requested(id, __request(fields, [], none));
       }
       return Conn { ...c, partials: rest, next: next, events: c.events.append(Responded(id, __response(fields, [], none))) };
     },
@@ -453,9 +478,24 @@ function (c: Conn) __ended(id: i64): Conn {
   let p = c.partials[i];
   let rest = __without(c.partials, id);
   if (c.session.is_server()) {
-    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p.fields, p.body, p.trailers))) };
+    return Conn { ...c, partials: rest }.__requested(id, __request(p.fields, p.body, p.trailers));
   }
   return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p.fields, p.body, p.trailers))) };
+}
+
+// __requested hands on a whole request. A request that came in 0-RTT can
+// be a replay. One with a method that is not safe gets 425 Too Early
+// (RFC 8470 section 5.2), and the client sends it again after the
+// handshake. A safe one goes on with the field Early-Data: 1, so the
+// handler knows (RFC 8470 section 5.1).
+function (c: Conn) __requested(id: i64, req: HttpRequest): Conn {
+  if (!c.quic.early_stream(id)) {
+    return Conn { ...c, events: c.events.append(Requested(id, req)) };
+  }
+  if (!http.method_safe(req.method)) {
+    return c.respond(id, http.text(425, "Too Early"));
+  }
+  return Conn { ...c, events: c.events.append(Requested(id, HttpRequest { ...req, headers: req.headers.append("early-data", "1") })) };
 }
 
 function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpRequest {
@@ -614,7 +654,7 @@ pub function (c: Conn) abort(id: i64, code: i64): Conn {
 }
 
 pub function (c: Conn) request(out: http.Outgoing): Result[(Conn, i64), string] {
-  if (!c.ready()) {
+  if (!c.ready() && !c.early()) {
     return Err("h3: the connection takes no requests");
   }
   let (q, id) = c.quic.open_stream(false)?;
