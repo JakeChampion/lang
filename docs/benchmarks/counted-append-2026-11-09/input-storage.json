@@ -1,0 +1,22 @@
+{
+  "candidate_commit": "c63b8da8e803cc437ebd470154c48dda23ad9fd6",
+  "candidate_core_sha256": "e45db7860ca628d5b0b36a6102c7685028cdc3d9b44776322640c5572d4c8b71",
+  "baseline_core_sha256": "b888ea5fe864d17c077e02bc10efe2c3c76dde47d88814c2951b936098a99e3e",
+  "codec_commit": "503bebe1526a9952d8f0c48acedcc30a074afe4b",
+  "probe_sha256": "a19047c0f56e21357b84dbc6924195748ca7cf3a9bcf3c73f70a4ef4ad024c02",
+  "input_sha256": "7f157002553cfa969aa835f31bb598d49801a8e733c1a76674f9d1a4887a1f31",
+  "modes": {
+    "baseline": {
+      "elements": 96000,
+      "construction_allocs": 16,
+      "construction_fresh_bytes": 2621040,
+      "encoded_bytes": 60458
+    },
+    "candidate": {
+      "elements": 96000,
+      "construction_allocs": 1,
+      "construction_fresh_bytes": 786432,
+      "encoded_bytes": 60458
+    }
+  }
+}

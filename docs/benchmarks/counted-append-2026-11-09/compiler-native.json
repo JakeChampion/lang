@@ -1,0 +1,541 @@
+{
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "fixed_source_root": "/workspace/fern-counted-append",
+  "compiler_sha256": {
+    "baseline": "b888ea5fe864d17c077e02bc10efe2c3c76dde47d88814c2951b936098a99e3e",
+    "candidate": "e45db7860ca628d5b0b36a6102c7685028cdc3d9b44776322640c5572d4c8b71"
+  },
+  "x25519": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 0.206435647996841
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 0.20410845300648361
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 0.20530804399459157
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 0.20317436999175698
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 0.20417523400101345
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 0.204450427001575
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 0.2041250280017266
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 0.205116197001189
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 0.2046523200115189
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 0.2136181440000655
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 0.20336345401301514
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 0.20818147899990436
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 0.20317676400009077
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 0.20365712499187794
+      },
+      {
+        "pair": 7,
+        "compiler": "candidate",
+        "seconds": 0.20585621800273657
+      },
+      {
+        "pair": 7,
+        "compiler": "baseline",
+        "seconds": 0.2054762609914178
+      },
+      {
+        "pair": 8,
+        "compiler": "baseline",
+        "seconds": 0.20496773000922985
+      },
+      {
+        "pair": 8,
+        "compiler": "candidate",
+        "seconds": 0.20896331999392714
+      },
+      {
+        "pair": 9,
+        "compiler": "candidate",
+        "seconds": 0.20371465799689759
+      },
+      {
+        "pair": 9,
+        "compiler": "baseline",
+        "seconds": 0.2056877510040067
+      },
+      {
+        "pair": 10,
+        "compiler": "baseline",
+        "seconds": 0.20271615899400786
+      },
+      {
+        "pair": 10,
+        "compiler": "candidate",
+        "seconds": 0.20449103499413468
+      },
+      {
+        "pair": 11,
+        "compiler": "candidate",
+        "seconds": 0.20365470800607
+      },
+      {
+        "pair": 11,
+        "compiler": "baseline",
+        "seconds": 0.20618022099370137
+      },
+      {
+        "pair": 12,
+        "compiler": "baseline",
+        "seconds": 0.20678215401130728
+      },
+      {
+        "pair": 12,
+        "compiler": "candidate",
+        "seconds": 0.2037092909886269
+      },
+      {
+        "pair": 13,
+        "compiler": "candidate",
+        "seconds": 0.20550836199254263
+      },
+      {
+        "pair": 13,
+        "compiler": "baseline",
+        "seconds": 0.20275974299875088
+      },
+      {
+        "pair": 14,
+        "compiler": "baseline",
+        "seconds": 0.20383946399670094
+      },
+      {
+        "pair": 14,
+        "compiler": "candidate",
+        "seconds": 0.20374634501058608
+      }
+    ],
+    "paired_ratios": [
+      0.9887267775069886,
+      1.0105016887854563,
+      1.0013478275262326,
+      0.9951677682506144,
+      1.0438100285794072,
+      0.976856610828039,
+      1.0023642516118967,
+      1.0018491528388023,
+      1.0194937514530573,
+      0.990407338319963,
+      1.008755473707349,
+      0.987750944414263,
+      0.9851396120841629,
+      1.0135560390496683,
+      0.9995431748872908
+    ],
+    "median_paired_ratio": 1.0013478275262326,
+    "stdout": "995072\n"
+  },
+  "calendar": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 0.19062487600604072
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 0.18896771701110993
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 0.19028977300331462
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 0.18967335700290278
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 0.1963745320099406
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 0.19205531499756034
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 0.18879510900296737
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 0.18892650501220487
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 0.19492328799969982
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 0.19450966999283992
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 0.19043280799814966
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 0.19292359899554867
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 0.19264568100334145
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 0.19195308099733666
+      },
+      {
+        "pair": 7,
+        "compiler": "candidate",
+        "seconds": 0.19200947000354063
+      },
+      {
+        "pair": 7,
+        "compiler": "baseline",
+        "seconds": 0.1904074180056341
+      },
+      {
+        "pair": 8,
+        "compiler": "baseline",
+        "seconds": 0.19291481300024316
+      },
+      {
+        "pair": 8,
+        "compiler": "candidate",
+        "seconds": 0.1914081300055841
+      },
+      {
+        "pair": 9,
+        "compiler": "candidate",
+        "seconds": 0.19181499099067878
+      },
+      {
+        "pair": 9,
+        "compiler": "baseline",
+        "seconds": 0.19200953299878165
+      },
+      {
+        "pair": 10,
+        "compiler": "baseline",
+        "seconds": 0.18968188800499775
+      },
+      {
+        "pair": 10,
+        "compiler": "candidate",
+        "seconds": 0.1912615249893861
+      },
+      {
+        "pair": 11,
+        "compiler": "candidate",
+        "seconds": 0.19099348699091934
+      },
+      {
+        "pair": 11,
+        "compiler": "baseline",
+        "seconds": 0.19127005299378652
+      },
+      {
+        "pair": 12,
+        "compiler": "baseline",
+        "seconds": 0.20410712801094633
+      },
+      {
+        "pair": 12,
+        "compiler": "candidate",
+        "seconds": 0.22084978700149804
+      },
+      {
+        "pair": 13,
+        "compiler": "candidate",
+        "seconds": 0.1936418789991876
+      },
+      {
+        "pair": 13,
+        "compiler": "baseline",
+        "seconds": 0.1905027210013941
+      },
+      {
+        "pair": 14,
+        "compiler": "baseline",
+        "seconds": 0.191276191995712
+      },
+      {
+        "pair": 14,
+        "compiler": "candidate",
+        "seconds": 0.192946294991998
+      }
+    ],
+    "paired_ratios": [
+      0.9913067012571943,
+      1.003249881850314,
+      0.9780052078639118,
+      0.9993045125710179,
+      0.99787804725077,
+      0.9870892363071846,
+      0.9964047986832739,
+      1.0084138108414407,
+      0.9921899051129,
+      0.9989868106803629,
+      1.008327821918067,
+      0.9985540548635903,
+      1.082028781423321,
+      1.0164782843063462,
+      1.0087313689114192
+    ],
+    "median_paired_ratio": 0.9989868106803629,
+    "stdout": "1298399926202526\n"
+  },
+  "compiler_cold": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 9.321830521002994
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 9.208985136006959
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 9.12201807400561
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 9.329721485992195
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 9.54894977400545
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 9.182446484002867
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 9.299122239011922
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 9.097332072007703
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 9.234925882992684
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 9.243751615998917
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 9.151790702992002
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 9.122042811010033
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 9.257580021992908
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 9.116439845995046
+      }
+    ],
+    "paired_ratios": [
+      0.9878945036876842,
+      0.9777374477578527,
+      0.9616184712793973,
+      1.022181246700351,
+      1.000955690724328,
+      1.003261099799495,
+      0.9847540960312998
+    ],
+    "median_paired_ratio": 0.9878945036876842,
+    "stdout": "",
+    "proof_cache": "disabled",
+    "certification": "enabled"
+  },
+  "compiler": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 7.23441897900193
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 7.187788098002784
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 7.390871779003646
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 7.407185596995987
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 7.356464982003672
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 7.25088931900973
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 7.197038220008835
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 7.145721670996863
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 7.1700257410120685
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 7.2199755030014785
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 7.411507006996544
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 7.465284962992882
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 7.321104420989286
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 7.265546820999589
+      }
+    ],
+    "paired_ratios": [
+      0.993554301854165,
+      0.9977975686205356,
+      0.9856485875685924,
+      1.0071814368617598,
+      1.006966468990997,
+      0.9927962621302565,
+      0.9924113088961802
+    ],
+    "median_paired_ratio": 0.993554301854165,
+    "stdout": "",
+    "proof_cache": "isolated-warm",
+    "certification": "enabled"
+  },
+  "fixed_source_commit": "c63b8da8e803cc437ebd470154c48dda23ad9fd6",
+  "fixed_source_sha256": {
+    "compiler/checker.fern": "4bbaac055bd30cb794c1e93658d9f383e4d87b1d7376b94268612b05990fbf44",
+    "compiler/typeinfo.fern": "e684efda24923a0e5f416bbb2b0b79cff77459a1728c48fe7da4238ebc6cad16",
+    "scripts/native-pair-bench": "8de736bc7cf586bbed5cc9766fbbf4badab8a7d52da49af61fede4245683fabe",
+    "bench/crypto/x25519.fern": "f2d0144b79681bee302d3741b439591348125a0140e604c9f7cee8074d623afd",
+    "bench/division/calendar.fern": "b7c5048614bdaf161a0f628d6e65e9f725be17ff3089f5059cb98c4f1ca4966f"
+  },
+  "affinity": [
+    0
+  ],
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor"
+}

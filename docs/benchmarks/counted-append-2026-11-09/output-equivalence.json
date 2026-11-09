@@ -1,0 +1,73 @@
+{
+  "codec_commit": "503bebe1526a9952d8f0c48acedcc30a074afe4b",
+  "compiler_core_sha256": {
+    "initial": "1b84c81ebc8c3a7404b98d2a1978a842cb2a40c625e877d97968a46c26992fe3",
+    "final": "e45db7860ca628d5b0b36a6102c7685028cdc3d9b44776322640c5572d4c8b71"
+  },
+  "outputs": {
+    "flac_encode": {
+      "initial": {
+        "sha256": "f02c807065b384be8436fdcc0481f28bb4fa5388206bbe443efad71661e317fc",
+        "bytes": 86192,
+        "command": [
+          "/workspace/scratch/counted-append-v1/fern",
+          "-stdlib",
+          "/workspace/fern-flac-partitions/internal/stdlib",
+          "-target",
+          "x86-64-linux",
+          "-O",
+          "-o",
+          "/workspace/scratch/counted-append-equivalence-flac_encode-initial",
+          "/workspace/fern-flac-partitions/bench/audio/flac_encode.fern"
+        ]
+      },
+      "final": {
+        "sha256": "f02c807065b384be8436fdcc0481f28bb4fa5388206bbe443efad71661e317fc",
+        "bytes": 86192,
+        "command": [
+          "/workspace/fern-counted-append/bin/fern",
+          "-stdlib",
+          "/workspace/fern-flac-partitions/internal/stdlib",
+          "-target",
+          "x86-64-linux",
+          "-O",
+          "-o",
+          "/workspace/scratch/counted-append-equivalence-flac_encode-final",
+          "/workspace/fern-flac-partitions/bench/audio/flac_encode.fern"
+        ]
+      }
+    },
+    "flac_lpc_encode": {
+      "initial": {
+        "sha256": "9bc8bb3863d6131f8c0282c0f7376c3ab86dfe1ba7d0fcdad16e6781f4befcf6",
+        "bytes": 93456,
+        "command": [
+          "/workspace/scratch/counted-append-v1/fern",
+          "-stdlib",
+          "/workspace/fern-flac-partitions/internal/stdlib",
+          "-target",
+          "x86-64-linux",
+          "-O",
+          "-o",
+          "/workspace/scratch/counted-append-equivalence-flac_lpc_encode-initial",
+          "/workspace/fern-flac-partitions/bench/audio/flac_lpc_encode.fern"
+        ]
+      },
+      "final": {
+        "sha256": "9bc8bb3863d6131f8c0282c0f7376c3ab86dfe1ba7d0fcdad16e6781f4befcf6",
+        "bytes": 93456,
+        "command": [
+          "/workspace/fern-counted-append/bin/fern",
+          "-stdlib",
+          "/workspace/fern-flac-partitions/internal/stdlib",
+          "-target",
+          "x86-64-linux",
+          "-O",
+          "-o",
+          "/workspace/scratch/counted-append-equivalence-flac_lpc_encode-final",
+          "/workspace/fern-flac-partitions/bench/audio/flac_lpc_encode.fern"
+        ]
+      }
+    }
+  }
+}

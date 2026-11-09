@@ -1,0 +1,12 @@
+import "../lexer";
+import "../parser";
+
+// These proofs require boxed boundaries. Exports preserve that ABI.
+pub function parsed(source: string, names: string[]): parser.Module {
+  let mod = parser.parse_module(lexer.tokenize(source));
+  let exports = mod.exports;
+  for name in names {
+    exports = exports.append(parser.ExportBinding { func_name: name, iface: "", wit: "", c_abi: true, method: false, jni: false });
+  }
+  return parser.Module { ...mod, exports: exports };
+}
