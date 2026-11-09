@@ -324,6 +324,11 @@ pub function check_only(): i32 {
   return 2;
 }
 
+// A complete 16-byte span has a separate proof from a single array element.
+pub function lane_span_proven(): i32 {
+  return 3;
+}
+
 pub function tuple_get(): i32 {
   return -4;
 }

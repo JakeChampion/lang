@@ -2947,12 +2947,14 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   let b = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
   if (ins.str.ends_with(":bytes")) {
-    s = s.need("heap");
-    s = ssa_ldst0(s, true, "x6", a);
-    s = ssa_cmp_rr(s, b, "x6");
-    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
-    s = s.write("    sub x16, x6, " + b + "\n    cmp x16, #16\n");
-    s = ssa_trap_guard(s, CC_HS, "__fern_oob_abort");
+    if (!ins.str.ends_with(":unchecked:bytes")) {
+      s = s.need("heap");
+      s = ssa_ldst0(s, true, "x6", a);
+      s = ssa_cmp_rr(s, b, "x6");
+      s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+      s = s.write("    sub x16, x6, " + b + "\n    cmp x16, #16\n");
+      s = ssa_trap_guard(s, CC_HS, "__fern_oob_abort");
+    }
     s = s.write("    add x17, " + a + ", " + b + "\n");
     if (set) {
       s = ssa_fread(reg_of, ins.args[2], "d1", s);

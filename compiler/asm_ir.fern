@@ -7785,10 +7785,12 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
   if (ins.str.ends_with(":bytes")) {
-    s = s.need("heap");
-    s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
-    s = s.write("    movq (" + a + "), %rdx\n    subq " + b + ", %rdx\n    cmpq $16, %rdx\n");
-    s = ssa_trap_jump(s, "jb", "__fern_oob_abort");
+    if (!ins.str.ends_with(":unchecked:bytes")) {
+      s = s.need("heap");
+      s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
+      s = s.write("    movq (" + a + "), %rdx\n    subq " + b + ", %rdx\n    cmpq $16, %rdx\n");
+      s = ssa_trap_jump(s, "jb", "__fern_oob_abort");
+    }
     let address = "8(" + a + "," + b + ")";
     if (set) {
       s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);

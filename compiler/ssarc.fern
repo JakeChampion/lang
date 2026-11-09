@@ -3187,7 +3187,8 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
   }
   if (ins.kind_tag == ssasem.array_get()) {
     if (ins.str == "lane_bytes") {
-      return emit(r, ir.Op { ...arr_get_op(f.values[ins.result], false), unsigned: true });
+      let op = ir.Op { ...arr_get_op(f.values[ins.result], false), unsigned: true };
+      return emit(r, if (ins.imm == ssasem.lane_span_proven()) { ir.in_bounds(op) } else { op });
     }
     if (typeinfo.is_array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
       return emit(r, ssabytes.check(ins.args[0]));
