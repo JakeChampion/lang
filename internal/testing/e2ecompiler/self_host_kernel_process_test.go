@@ -434,6 +434,25 @@ function main(): i32 {
   ok("write over the initrd", write_file("/etc/motd", "no"));
   ok("rename the initrd", rename("/etc/motd", "/etc/gone"));
   ok("mkdir in a missing parent", create_dir_all("/etc/motd/x"));
+  ok("dir a", create_dir_all("/tmp/a"));
+  ok("dir b", create_dir_all("/tmp/b"));
+  ok("remove a", remove_dir("/tmp/a"));
+  ok("dir c", create_dir_all("/tmp/c"));
+  match (stat("/tmp/b")) {
+    Ok(b) => {
+      match (stat("/tmp/c")) {
+        Ok(c) => {
+          print("b and c have their own inodes " + (b.ino != c.ino).to_string());
+        },
+        Err(e) => {
+          print("stat c failed");
+        }
+      }
+    },
+    Err(e) => {
+      print("stat b failed");
+    }
+  }
   ok("out", create_dir_all("/out"));
   ok("output", write_file("/out/result.txt", "made on fernos"));
   return 0;
@@ -588,6 +607,8 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/writer fd 1: write over the initrd failed\n",
 		"/bin/writer fd 1: rename the initrd failed\n",
 		"/bin/writer fd 1: mkdir in a missing parent failed\n",
+		"/bin/writer fd 1: remove a ok\n",
+		"/bin/writer fd 1: b and c have their own inodes true\n",
 		"/bin/writer fd 1: out ok\n",
 		"/bin/writer fd 1: output ok\n",
 		"/bin/writer exit 0\n",

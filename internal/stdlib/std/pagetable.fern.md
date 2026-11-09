@@ -279,6 +279,8 @@ function (m: Tables) map_range(start: usize, len: usize, attr: i64): boolean {
 
 A level 2 entry is a table or a block. On arm64 a table has bit 1 set and a block has it clear. On x86-64 a block has the page-size bit, and a table does not. `split` fills a fresh table with the 512 pages of a block, with the attributes of the block. One page can then change on its own. A range that is already mapped can thus change its memory type page by page, which `std/dma` does.
 
+After a change to the active mapping, `flush` drops every translation that the core cached. A change that only adds translations needs less: an entry that was invalid is in no TLB, so `publish` is a barrier alone. A kernel that pages in the memory of a process on each fault uses `publish`.
+
 ```fern
 <<split>>=
 function is_table(entry: i64): boolean {
@@ -310,6 +312,15 @@ function split(table: usize, block: i64): void {
       __store_i64(table + i * ENTRY_BYTES, page_entry(base + i * PAGE_BYTES, attr));
       i += ONE;
     }
+  }
+}
+
+// Makes entries that a change only added visible to the walker. An entry that
+// was invalid is in no TLB, so the change needs a barrier and no
+// invalidation.
+pub function (m: Tables) publish(): void {
+  unsafe {
+    __fence();
   }
 }
 

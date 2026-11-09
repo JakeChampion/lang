@@ -1657,7 +1657,17 @@ pub function to_u8(b: i32[]): u8[] {
   return o;
 }
 
+// The cache directory as a clean path: a module id is a clean path, and the
+// loader compares the stdlib root with module ids.
 pub function cache_base(): string {
+  let base = cache_dir();
+  if (base.len() == 0) {
+    return "";
+  }
+  return clean_path(base);
+}
+
+function cache_dir(): string {
   if let Some(d) = envflag.value("FERN_CACHE_DIR") {
     return d;
   }
