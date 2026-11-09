@@ -59,11 +59,17 @@ cd site
 # astro.config.mjs defaults `site` to the GitHub Pages origin, which would put
 # another host's domain in this deploy's canonical + Open Graph URLs. Netlify
 # exposes the deploy's own origin, so hand it over through the config's
-# existing SITE_URL hook. DEPLOY_PRIME_URL is the branch/preview URL; URL is
-# the production one. Only set it when non-empty: the config falls back on a
-# nullish value, and an empty string is not nullish — it would fail the build.
+# existing SITE_URL hook. URL is the production origin. DEPLOY_PRIME_URL is
+# the branch or preview URL, and a production deploy sets it to the main--
+# branch URL, so it applies only outside CONTEXT=production. Only set it when
+# non-empty: the config falls back on a nullish value, and an empty string is
+# not nullish — it would fail the build.
 if [ -z "${SITE_URL:-}" ]; then
-  deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  if [ "${CONTEXT:-}" = production ]; then
+    deploy_url="${URL:-}"
+  else
+    deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  fi
   if [ -n "$deploy_url" ]; then
     export SITE_URL="$deploy_url"
     echo "==> SITE_URL=$SITE_URL"

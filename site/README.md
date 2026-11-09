@@ -11,6 +11,7 @@ site/
 ├── astro.config.mjs            Starlight + sidebar + meta config
 ├── package.json
 ├── scripts/
+│   ├── capture.mjs             Record compiler output for the home page
 │   ├── fetch-fonts.mjs         Refresh the self-hosted webfonts
 │   └── render-og.mjs           Render the social card to public/og.png
 ├── src/
@@ -109,6 +110,18 @@ configured `base`).
 ```bash
 npm run build    # → site/dist/
 ```
+
+`npm run build` runs `scripts/capture.mjs` first. The script runs the
+compiler (`$FERN_SELFHOST`, else `../bin/fern-selfhost`) and records its
+output in `src/generated/captures.json`, which is not in git. The home
+page shows that output: the assembly for `src/captures/area.fern`, the
+size of the executable, the `fern -help` usage text, and the
+capabilities of `fern -lsp`. The script stops the build when `main` no
+longer loads the folded constant that the home page names.
+
+`public/install.sh` is the install script that the home page and the
+install tutorial give. `test/install.test.mjs` runs it against a fake
+release.
 
 The GitHub Actions `Pages` workflow runs this on every push to
 main that touches the site, the playground, the compiler, anything

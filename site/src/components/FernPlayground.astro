@@ -98,19 +98,20 @@ const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
     </a>
   </header>
   <iframe
-    src={embedSrc}
+    data-src={embedSrc}
     title={title}
-    style={`height: ${resolvedHeight};`}
-    loading="lazy"></iframe>
+    style={`height: ${resolvedHeight};`}></iframe>
 </figure>
 
 <script is:inline>
-  // Sync the embedded playground's theme with Starlight's. We
-  // append `?theme=…` to the iframe src on first paint (so the
-  // playground boots with the right palette), then postMessage
-  // on every Starlight theme-pref change so the iframe re-themes
-  // live without a reload.
+  // Load each embed when it comes near the viewport, with the page's
+  // theme in its URL, so the playground boots once and with the right
+  // palette. A later Starlight theme change goes to the running embed
+  // as a message. Astro emits this script once for each embed, so the
+  // first copy does the work for all of them.
   (function () {
+    if (window.__fernEmbeds) return;
+    window.__fernEmbeds = true;
     function currentTheme() {
       // Starlight stores its setting on <html data-theme="…">. Fall
       // back to prefers-color-scheme when the attribute hasn't been
@@ -122,36 +123,40 @@ const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
         ? "dark"
         : "light";
     }
-    function applyToFrame(iframe, theme) {
-      // Patch the iframe src ONCE on first paint so reloads /
-      // fresh viewers boot with the right palette.
-      if (!iframe.dataset.themeApplied) {
-        const u = new URL(iframe.src, location.href);
-        u.searchParams.set("theme", theme);
-        iframe.src = u.toString();
-        iframe.dataset.themeApplied = "1";
+    function load(iframe) {
+      if (iframe.getAttribute("src")) return;
+      const u = new URL(iframe.dataset.src, location.href);
+      u.searchParams.set("theme", currentTheme());
+      iframe.src = u.toString();
+    }
+    function start() {
+      const frames = document.querySelectorAll("[data-fern-playground] iframe[data-src]");
+      if (!("IntersectionObserver" in window)) {
+        frames.forEach(load);
         return;
       }
-      // Subsequent flips don't need a reload — postMessage tells
-      // the running playground to re-theme.
-      try {
-        iframe.contentWindow.postMessage({ type: "fern:theme", theme }, "*");
-      } catch (e) { /* iframe not yet ready; next observer tick will catch it */ }
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          io.unobserve(e.target);
+          load(e.target);
+        }
+      }, { rootMargin: "200px 0px" });
+      frames.forEach((f) => io.observe(f));
     }
-    function syncAll() {
-      const theme = currentTheme();
-      document
-        .querySelectorAll("[data-fern-playground] iframe")
-        .forEach((f) => applyToFrame(f, theme));
-    }
-    // First paint.
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", syncAll);
+      document.addEventListener("DOMContentLoaded", start);
     } else {
-      syncAll();
+      start();
     }
-    // Watch Starlight's data-theme attribute for changes.
-    new MutationObserver(syncAll).observe(document.documentElement, {
+    new MutationObserver(() => {
+      const theme = currentTheme();
+      document.querySelectorAll("[data-fern-playground] iframe[src]").forEach((f) => {
+        try {
+          f.contentWindow.postMessage({ type: "fern:theme", theme }, "*");
+        } catch (e) { /* the embed has not loaded; it reads the theme from its URL */ }
+      });
+    }).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });

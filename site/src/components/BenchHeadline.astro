@@ -1,0 +1,47 @@
+---
+// BenchHeadline — the two headline ratios from the newest coreutils bench
+// log (docs/coreutils-log/), with how they were measured. The coreutils
+// page has every workload.
+
+import { loadBench } from "../lib/coreutils-bench.mjs";
+
+const bench = loadBench(
+  import.meta.glob<string>("../../../docs/coreutils-log/*-bench.md", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+);
+const s = bench.summary;
+const repo = "https://github.com/JakeChampion/lang/blob/main";
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const tiles = [
+  { ratio: s.medianGnu, against: `GNU coreutils ${bench.gnuVersion ?? ""}`.trim(), compared: s.comparedGnu },
+  ...(bench.hasUutils && s.medianUutils !== null
+    ? [{ ratio: s.medianUutils, against: `uutils ${bench.uutilsVersion ?? ""}`.trim(), compared: s.comparedUutils }]
+    : []),
+];
+---
+
+<div class="fern-bench-head not-content">
+  <div class="fern-bench-head__tiles">
+    {tiles.map((t) => (
+      <div class="fern-panel fern-bench-head__tile">
+        <span class="fern-bench-head__value">{t.ratio.toFixed(2)}<span>×</span></span>
+        <span class="fern-bench-head__what">median speed against {t.against}</span>
+        <span class="fern-label">over {t.compared} workloads</span>
+      </div>
+    ))}
+  </div>
+  <p class="fern-bench-head__method">
+    Fern's own coreutils, built with <code>-O</code>, against the same
+    workloads on a GitHub-hosted Linux x86-64 runner on {bench.date}. A
+    ratio is the other tool's mean time over Fern's, so above 1 Fern is
+    faster. Most means come from 20 or more runs, and the log names a
+    smaller count where one run took over 3 s. A ratio within about 10%
+    of 1 is not a measured difference.
+    <a href={`${base}/coreutils/`}>Every workload</a> ·
+    <a href={`${repo}/docs/coreutils-log/${bench.file}`}>the log</a> ·
+    <a href={`${repo}/.github/workflows/coreutils-bench.yml`}>the workflow that runs it</a>
+  </p>
+</div>
