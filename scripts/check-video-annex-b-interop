@@ -20,12 +20,12 @@ subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm),
                 "scripts/video-reference/annex-b.fern", "internal/stdlib"], check=True)
 
 
-def decode(path):
+def decode(path, pixel_format):
     return subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
-                                    "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+                                    "-pix_fmt", pixel_format, "-f", "rawvideo", "-"])
 
 
-def check(path, directory):
+def check(path, directory, pixel_format):
     data = path.read_bytes()
     markers = list(re.finditer(b"\x00{2,}\x01", data))
     assert markers and markers[0].start() == 0
@@ -47,9 +47,11 @@ def check(path, directory):
     assert lines[-1] == "B " + canonical.hex()
     restored = directory / ("fern-" + path.name)
     restored.write_bytes(canonical)
-    pixels = decode(path)
-    assert len(pixels) == 6 * 64 * 48 * 3 and decode(restored) == pixels
-    print(f"{path.name}: {len(units)} native/WASI ranges and lengths match; FFmpeg pixels match", flush=True)
+    pixels = decode(path, pixel_format)
+    sample_bytes = 2 if pixel_format == "yuv420p10le" else 1
+    assert len(pixels) == 6 * 64 * 48 * 3 // 2 * sample_bytes
+    assert decode(restored, pixel_format) == pixels
+    print(f"{path.name}: {len(units)} native/WASI ranges and lengths match; FFmpeg planes match", flush=True)
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -69,4 +71,4 @@ with tempfile.TemporaryDirectory() as temporary:
                         "-frames:v", "6", "-c:v", encoder, "-profile:v", profile, "-threads", "1",
                         "-g", "4", "-bf", "0" if profile == "baseline" else "2", "-pix_fmt", pixels,
                         *options, "-f", codec, str(path)], check=True)
-        check(path, directory)
+        check(path, directory, pixels)

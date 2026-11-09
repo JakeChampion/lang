@@ -315,6 +315,9 @@ The widths cross literal, repeat, and skip boundaries.
 Fern decodes each packet to the expected ARGB CRC.
 FFmpeg also decodes twenty-four Fern packets with exact equality to the original ARGB bytes.
 AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels in two additional streams.
+
+`scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
+Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
 `scripts/test-video` executes the native suite with the sanitizer and the WASI suite.
