@@ -8460,6 +8460,33 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
+// An atomic access of the word at %rcx. x86-64 orders a load as acquire and a
+// store as release, so both are plain moves. lock xadd and lock cmpxchg are
+// sequentially consistent. cmpxchg compares %rax, writes %rdx, and gives the
+// old word in %rax. The operands go through the stack, as for an MMIO store,
+// because %rax, %rcx and %rdx can hold one of them.
+function ssa_atomic(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "dev_atomic_load_acquire") {
+    s = ssa_load(reg_of, ins.args[0], "%rcx", s);
+    s = s.write("    movq (%rcx), %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+  }
+  for a in ins.args {
+    s = ssa_push_operand(reg_of, a, s);
+  }
+  if (ins.str == "dev_atomic_cas") {
+    s = ssa_pop_r(ssa_pop_r(ssa_pop_r(s, "%rdx"), "%rax"), "%rcx");
+    s = s.write("    lock cmpxchgq %rdx, (%rcx)\n");
+  } else if (ins.str == "dev_atomic_fetch_add") {
+    s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx");
+    s = s.write("    lock xaddq %rax, (%rcx)\n");
+  } else {
+    s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx");
+    s = s.write("    movq %rax, (%rcx)\n    xorl %eax, %eax\n");
+  }
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+}
+
 // A cache or TLB op. clflush writes back and invalidates the line, because the
 // x86-64 baseline has no clwb. A reload of %cr3 drops every translation that is
 // not global. Instruction fetch sees each store on x86-64, so cache_sync_code
@@ -8482,6 +8509,9 @@ function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str.starts_with("dev_sysreg_")) {
     return ssa_sysreg(ins, reg_of, s);
+  }
+  if (ins.str.starts_with("dev_atomic_")) {
+    return ssa_atomic(ins, reg_of, s);
   }
   if (ircore.maintenance_op(ins.str)) {
     return ssa_maintenance(ins, reg_of, s);

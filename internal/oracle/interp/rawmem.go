@@ -201,6 +201,24 @@ func rawStore(name string, width int64, encode func([]byte, int64)) func(*Interp
 	}
 }
 
+// rawUpdate reads the 64-bit word at the address, writes next of it and the
+// other arguments, and gives the old word.
+func rawUpdate(name string, operands int, next func(old int64, a []int64) int64) func(*Interp, []Value) (Value, error) {
+	return func(ip *Interp, args []Value) (Value, error) {
+		a, err := rawArgs(name, args, 1+operands)
+		if err != nil {
+			return nil, err
+		}
+		b, err := ip.raw.span(name, a[0], 8)
+		if err != nil {
+			return nil, err
+		}
+		old := int64(binary.LittleEndian.Uint64(b))
+		binary.LittleEndian.PutUint64(b, uint64(next(old, a[1:])))
+		return Number(old), nil
+	}
+}
+
 func registerRawMemory(i *Interp) {
 	le := binary.LittleEndian
 	ptrBytes := int64(hostPtrBits / 8)
@@ -241,6 +259,16 @@ func registerRawMemory(i *Interp) {
 	i.Builtins["__mem_store16"] = &Builtin{Fn: rawStore("__mem_store16", 2, func(b []byte, v int64) { le.PutUint16(b, uint16(v)) })}
 	i.Builtins["__mem_store32"] = &Builtin{Fn: rawStore("__mem_store32", 4, func(b []byte, v int64) { le.PutUint32(b, uint32(v)) })}
 	i.Builtins["__mem_store64"] = &Builtin{Fn: rawStore("__mem_store64", 8, func(b []byte, v int64) { le.PutUint64(b, uint64(v)) })}
+	// The interpreter runs one thread, so an atomic access is an ordinary one.
+	i.Builtins["__atomic_load_acquire"] = &Builtin{Fn: rawLoad("__atomic_load_acquire", 8, func(b []byte) int64 { return int64(le.Uint64(b)) })}
+	i.Builtins["__atomic_store_release"] = &Builtin{Fn: rawStore("__atomic_store_release", 8, func(b []byte, v int64) { le.PutUint64(b, uint64(v)) })}
+	i.Builtins["__atomic_fetch_add"] = &Builtin{Fn: rawUpdate("__atomic_fetch_add", 1, func(old int64, a []int64) int64 { return old + a[0] })}
+	i.Builtins["__atomic_cas"] = &Builtin{Fn: rawUpdate("__atomic_cas", 2, func(old int64, a []int64) int64 {
+		if old == a[0] {
+			return a[1]
+		}
+		return old
+	})}
 	i.Builtins["__fence"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if _, err := rawArgs("__fence", args, 0); err != nil {
 			return nil, err
