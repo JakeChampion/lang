@@ -655,17 +655,25 @@ function index_from(s: string, from: i32, c: u8): i32 {
   return -1;
 }
 
+// A browser drops leading control bytes and spaces, and every tab and line
+// break, before it reads the scheme.
 function safe_link_url(url: string): boolean {
+  let scheme = "";
   let i = 0;
   while (i < url.len()) {
     let c = url[i];
+    if (c == b'\t' || c == b'\n' || c == b'\r' || c <= b' ' && scheme.len() == 0) {
+      i += 1;
+      continue;
+    }
     if (c == b':') {
-      let scheme = (slice_unchecked(url, 0, i) + "").to_lower();
-      return scheme == "http" || scheme == "https" || scheme == "mailto";
+      let known = scheme.to_lower();
+      return known == "http" || known == "https" || known == "mailto";
     }
     if (!is_alphanumeric(c) && c != b'+' && c != b'-' && c != b'.') {
       return true;
     }
+    scheme = scheme + (slice_unchecked(url, i, i + 1) + "");
     i += 1;
   }
   return true;

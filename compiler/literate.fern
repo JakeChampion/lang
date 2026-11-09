@@ -605,6 +605,24 @@ function file_paths(fp: FilePiece[]): string[] {
   return paths;
 }
 
+function path_escapes(path: string): boolean {
+  if (path.len() == 0 || path[0] == b'/' || path[0] == b'\\') {
+    return true;
+  }
+  let start = 0;
+  let i = 0;
+  while (i <= path.len()) {
+    if (i == path.len() || path[i] == b'/' || path[i] == b'\\') {
+      if (i - start == 2 && path[start] == b'.' && path[start + 1] == b'.') {
+        return true;
+      }
+      start = i + 1;
+    }
+    i += 1;
+  }
+  return false;
+}
+
 pub function fence_line(src: string, path: string): i32 {
   for b in parse(src).blocks {
     if (b.kind == FILE && b.name == path) {
@@ -675,6 +693,9 @@ pub function tangle_files(src: string): FileTangleResult {
   let i = 0;
   while (i < paths.len()) {
     let p = paths[i];
+    if (path_escapes(p)) {
+      return FileTangleErr { msg: "literate: `file=" + p + "` must name a file below the output directory (no absolute path, no `..` segment)", line: fence_line(src, p), col: 1 };
+    }
     let r = expand_file(fp, chunks, p);
     match (r) {
       ExpandOk(o) => {
