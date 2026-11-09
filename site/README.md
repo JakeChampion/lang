@@ -141,6 +141,14 @@ build that names no file. The Docs build lane runs it. With
 internal link. `.github/workflows/site-links.yml` runs that against the
 site every 6 hours, and opens an issue when a link is broken.
 
+## Error codes
+
+`scripts/error-docs.mjs` turns each explanation in
+`internal/syntax/diag/explanations/`, the text that `fern -explain`
+prints, into a page under `/errors/`, with an index of the codes.
+`npm run build` runs it first, and the pages are not in git. Edit the
+explanation, not the page.
+
 ## Social cards and llms.txt
 
 Each docs page except the home page has a social card at

@@ -232,6 +232,7 @@ export default defineConfig({
           label: "Reference",
           items: [{ autogenerate: { directory: "reference" } }],
         },
+        { label: "Error codes", link: "/errors/" },
         {
           label: "Standard library",
           items: stdlibSidebar(),
