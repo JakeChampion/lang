@@ -7,6 +7,76 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Final decoder comparison
+
+Source `466f99efe3296308be61943985d395100ef25990` combines all three decoder changes below.
+The same binary serves every case in this final comparison.
+Both Fern binaries use compiler source `acbe1f2f38b76dddf0db952f11bba1e73876e04b`.
+The baseline source is `49056c6e392ba85b267e4abb6a44dd94872cc891`.
+
+The 24 cases cover four fixtures, three PCM depths, and two input durations.
+Ten-second inputs use block size 32768.
+Hundred-second inputs use block size 2048.
+
+Each case has thirty repetitions, with one worker on CPU 0 of the Xeon Platinum 8573C.
+Six execution orders give C, Fern, and the baseline each position equally.
+Timing includes process startup and file I/O.
+No other local builds or tests run during measurement.
+
+Fern has lower medians than the baseline in 21 of 24 cases, including all eighteen non-silent cases.
+The geometric-mean baseline/Fern ratio is 1.166×, or 1.247× without silence.
+The corresponding fixed-suite intervals are 1.141× to 1.189× and 1.221× to 1.268×.
+Three short silence cases have lower baseline medians.
+The raw report retains those regressions.
+
+Fern has lower medians than tuned native C in 18 of 24 cases.
+The geometric-mean C/Fern ratio is 1.566×, or 1.110× without silence.
+The corresponding fixed-suite intervals are 1.532× to 1.590× and 1.086× to 1.124×.
+The calculations use 2000 paired bootstrap repetitions and seed 417.
+These intervals cover repetition uncertainty in this fixed suite.
+They do not quantify other inputs, machines, or runs.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM8 | 1.083 | 1.526 |
+| 10 | 32768 | PCM16 | 1.154 | 1.454 |
+| 10 | 32768 | PCM24 | 1.081 | 1.250 |
+| 100 | 2048 | PCM8 | 1.257 | 2.004 |
+| 100 | 2048 | PCM16 | 1.319 | 1.855 |
+| 100 | 2048 | PCM24 | 1.124 | 1.428 |
+
+[The complete final report](x86-64-decoder-final.json) includes all repetitions, executable hashes, compiler hashes, and oracle errors.
+Every final WAV equals the original baseline byte for byte.
+All six configurations pass the independent float64 oracle checks.
+C remains faster in six cases, so this report does not establish a universal speed ranking.
+
+Build the pinned compiler, codec, and original baseline with the commands in the sections below.
+Run each output format at both durations:
+
+```sh
+python3 examples/ulc/bench/run.py \
+  --fern /tmp/ulc-pcm24-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-fft-before/examples/ulc/build/ulc \
+  --baseline-source-commit 49056c6e392ba85b267e4abb6a44dd94872cc891 \
+  --compiler /tmp/ulc-fft-compiler/bin/fern \
+  --source-commit 466f99efe3296308be61943985d395100ef25990 \
+  --oracle /tmp/ulc-pcm24-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM16 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-decoder-10-PCM16.json
+```
+
+Repeat for PCM8 and PCM24, then for 100 seconds at block size 2048.
+Use separate output paths for each configuration.
+Summarize the complete suite:
+
+```sh
+python3 examples/ulc/bench/summarize.py --output /tmp/ulc-decoder-c.json /tmp/ulc-decoder-[0-9]*-PCM*.json
+python3 examples/ulc/bench/summarize.py --comparison Baseline \
+  --output /tmp/ulc-decoder-baseline.json /tmp/ulc-decoder-[0-9]*-PCM*.json
+```
+
 ## PCM24 word stores
 
 Source `466f99efe3296308be61943985d395100ef25990` converts four PCM24 samples with double-precision SIMD and three word stores.
