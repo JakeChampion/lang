@@ -1,0 +1,86 @@
+[
+  {
+    "name": "consumed-match",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let State { n, data } = state; match (choose) { true => { let state = State { n: n + 1, data: data }; return consume(state); }, false => { return n + data.len(); } } }\n",
+    "want": "",
+    "value": 10
+  },
+  {
+    "name": "consumed-if",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let State { n, data } = state; if (choose) { let state = State { n: n + 1, data: data }; return consume(state); } return n + data.len(); }\n",
+    "want": "",
+    "value": 10
+  },
+  {
+    "name": "borrowed-fresh",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work( state: State, choose: boolean): i32 { if (choose) { let state = State { n: 7, data: [1, 2, 3] }; return consume(state); } return state.n; }\n",
+    "want": "",
+    "value": 10
+  },
+  {
+    "name": "owned-initializer",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { if (choose) { let state = take(state); return consume(state); } return consume(state); }\n",
+    "want": "",
+    "value": 9
+  },
+  {
+    "name": "outer-move-restored",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let State { n, data } = state; if (choose) { let state = State { n: 7, data: [1, 2, 3] }; let ignored = consume(state); } return consume(state); }\n",
+    "want": "E050",
+    "value": 10
+  },
+  {
+    "name": "initializer-move-restored",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { if (choose) { let state = take(state); let ignored = consume(state); } return consume(state); }\n",
+    "want": "E050",
+    "value": 10
+  },
+  {
+    "name": "outer-borrow-restored",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work( state: State, choose: boolean): i32 { if (choose) { let state = State { n: 7, data: [1, 2, 3] }; let ignored = consume(state); } return consume(state); }\n",
+    "want": "E051",
+    "value": 10
+  },
+  {
+    "name": "deferred-outer",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { defer consume(state); if (choose) { let state = State { n: 7, data: [1, 2, 3] }; return consume(state); } return 0; }\n",
+    "want": "",
+    "value": 10
+  },
+  {
+    "name": "deferred-outer-restored",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { defer consume(state); if (choose) { let state = State { n: 7, data: [1, 2, 3] }; let ignored = consume(state); } return consume(state); }\n",
+    "want": "E050",
+    "value": 10
+  },
+  {
+    "name": "field-move-shadow",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let size = drain(state.data); if (choose) { let state = State { n: 7, data: [1, 2, 3] }; return consume(state); } return state.n; }\n",
+    "want": "",
+    "value": 10
+  },
+  {
+    "name": "field-move-restored",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let size = drain(state.data); if (choose) { let state = State { n: 7, data: [1, 2, 3] }; let ignored = consume(state); } return consume(state); }\n",
+    "want": "E051",
+    "value": 10
+  },
+  {
+    "name": "fresh-loop",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { let State { n, data } = state; let total = 0; for i in 0..2 { let state = State { n: n + i, data: [1] }; total += consume(state); } return total; }\n",
+    "want": "",
+    "value": 15
+  },
+  {
+    "name": "loop-initializer-move",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean): i32 { for i in 0..2 { let state = take(state); let ignored = consume(state); } return 0; }\n",
+    "want": "E050",
+    "value": 10
+  },
+  {
+    "name": "other-move-preserved",
+    "source": "struct State { n: i32, data: i32[] }\nfunction consume(own value: State): i32 { return value.n + value.data.len(); }\nfunction take(own value: State): State { return value; }\nfunction drain(own value: i32[]): i32 { return value.len(); }\nfunction work(own state: State, choose: boolean, own other: State): i32 { if (choose) { let state = State { n: 7, data: [1, 2, 3] }; let a = consume(other); let b = consume(state); } return consume(other); }\n",
+    "want": "E050",
+    "value": 10
+  }
+]
