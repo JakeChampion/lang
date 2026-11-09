@@ -292,7 +292,6 @@ function dyn_set_end(spelling: string, i: i32): i32 {
     }
     i = j + 1;
   }
-  return i;
 }
 
 function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
@@ -6869,7 +6868,6 @@ function same_modulo_spaces(a: string, b: string): boolean {
     i += 1;
     j += 1;
   }
-  return false;
 }
 
 function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {

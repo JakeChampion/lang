@@ -605,7 +605,6 @@ function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
       return "";
     }
   }
-  return "";
 }
 
 function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32, f: Fmt): (string, Fmt) {
@@ -1683,7 +1682,6 @@ function range_pair(lo: ast.Expr, hi: ast.Expr, binder: string): string {
       return "";
     }
   }
-  return "";
 }
 
 function range_slot_for(cond: ast.Expr, binder: string): string {
@@ -2481,7 +2479,6 @@ function is_not_of_ident(e: ast.Expr, name: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {

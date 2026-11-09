@@ -1002,7 +1002,6 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
       return InlineCloRes { expr: e, funcs: funcs, counter: counter };
     }
   }
-  return InlineCloRes { expr: e, funcs: funcs, counter: counter };
 }
 
 function iife_arms_all_boxable(stmts: ast.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
@@ -1167,7 +1166,6 @@ function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFu
       return false;
     }
   }
-  return false;
 }
 
 function names_local_fn_value(id: ast.ExprIdent, mfuncs: MFuncs): boolean {
@@ -3911,7 +3909,6 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
       return fd;
     }
   }
-  return fd;
 }
 
 pub function lift_lambdas(raw_mod: parser.Module): parser.Module {

@@ -5123,7 +5123,6 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return zero_value_of(env.heap, z.type_name);
     }
   }
-  return v_err("unhandled Expr variant");
 }
 
 function eval_expr_call(c: ast.ExprCall, env: Env): Value {
@@ -8512,7 +8511,6 @@ function value_eq(a: Value, b: Value): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub struct StepResult { env: Env, ret: Value, sig: i32 }
@@ -8622,7 +8620,6 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
     }
     cur = trim_env(step.env, base);
   }
-  return step_none(cur);
 }
 
 @noinline

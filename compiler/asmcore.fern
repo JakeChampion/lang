@@ -2673,7 +2673,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function is_struct_decl_name(name: string, s: EmitState): boolean {
@@ -3472,7 +3471,6 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
       return ty_ord(a) == ty_ord(b);
     }
   }
-  return false;
 }
 
 pub function ty_from_ref(t: parser.TypeRef): Ty {
@@ -5386,7 +5384,6 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
       return [];
     }
   }
-  return [];
 }
 
 pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] {

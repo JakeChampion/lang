@@ -1122,7 +1122,6 @@ function call_site_of(e: ast.Expr, want: util.NameIndex, own acc: CallSite[]): C
       return acc;
     }
   }
-  return acc;
 }
 
 pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: CallSite[]): CallSite[] {
