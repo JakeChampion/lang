@@ -67,6 +67,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler', required=True, type=Path)
     parser.add_argument('--baseline-compiler', type=Path)
+    parser.add_argument('--baseline-stdlib', type=Path)
     parser.add_argument('--rounds', type=int, default=16)
     parser.add_argument('--trials', type=int, default=7)
     parser.add_argument('--headers', type=Path, default=ROOT / 'build/audio/flac-headers')
@@ -115,15 +116,17 @@ def main():
     decode = runpy.run_path(str(ROOT / 'scripts/audio-reference/flac-independent.py'))['decode']
     with tempfile.TemporaryDirectory() as directory:
         temp = Path(directory)
-        modes = {'fern': args.compiler.resolve()}
-        if args.baseline_compiler:
-            modes['baseline'] = args.baseline_compiler.resolve()
+        modes = {'fern': (args.compiler.resolve(), ROOT / 'internal/stdlib')}
+        if args.baseline_compiler or args.baseline_stdlib:
+            modes['baseline'] = ((args.baseline_compiler or args.compiler).resolve(),
+                                 args.baseline_stdlib.resolve() if args.baseline_stdlib else ROOT / 'internal/stdlib')
         binaries = {}
-        for mode, compiler in modes.items():
+        for mode, (compiler, stdlib) in modes.items():
             result['compiler_sha256'][mode] = sha(compiler)
+            result.setdefault('codec_sha256', {})[mode] = {str(p.relative_to(stdlib)): sha(p) for p in sorted((stdlib / 'std/audio/flac').glob('*.fern.md'))}
             result.setdefault('core_sha256', {})[mode] = sha(compiler.parent / 'fern-selfhost')
             binary = temp / mode
-            subprocess.run([str(compiler), '-stdlib', str(ROOT / 'internal/stdlib'), '-target', target, '-O',
+            subprocess.run([str(compiler), '-stdlib', str(stdlib), '-target', target, '-O',
                             '-o', str(binary), str(ROOT / 'bench/audio/flac_encode.fern')], cwd=ROOT, env=env, check=True)
             binaries[mode] = binary
         reference = temp / 'libflac'

@@ -80,7 +80,7 @@ The encoder performs no quantization. LPC analysis and matched performance quali
 No compression, speed, or memory lead is claimed.
 
 The frozen bank contains 81 bitstreams independently decoded by FFmpeg and libFLAC 1.5.0 with MD5 verification.
-A separate exhaustive oracle checks 48 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
+A separate exhaustive oracle checks 147 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
 Regenerate the banks with `scripts/gen-flac-encoder-vectors.py --encoder PATH` and `scripts/gen-flac-encoder-costs.py`.
 The encoder executable comes from `scripts/audio-reference/flac-encode.fern`.
 

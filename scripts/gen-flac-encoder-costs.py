@@ -2,6 +2,7 @@
 """Generate exhaustive independent FLAC subframe bit-cost expectations."""
 from pathlib import Path
 import random
+import itertools
 ROOT=Path(__file__).resolve().parent.parent
 rng=random.Random(14688)
 def cost(a,depth,maxorder,maxpart):
@@ -45,6 +46,34 @@ for i in range(48):
     if i==47: a=[0]*(n//2)+[rng.randint(-32768,32767) for _ in range(n//2)];depth=32
     order=i%5;parts=i%5
     rows.append('    Case { depth: %d, order: %d, partition: %d, bits: %di64, samples: [%s] },'%(depth,order,parts,cost(a,depth,order,parts),', '.join(map(str,a))))
+for power in range(31):
+    center = 1 << power
+    maximum = 2147483647
+    inputs = [
+        [center - 1, center, min(maximum, center + 1)] * 21 + [0],
+        [1] + [0] * 62 + [min(maximum, center * 64 - 1)],
+        [max(-maximum, min(maximum, ((-1) ** i) * center + i % 3)) for i in range(64)],
+    ]
+    for a in inputs:
+        rows.append('    Case { depth: 32, order: 0, partition: 0, bits: %di64, samples: [%s] },' % (cost(a, 32, 0, 0), ', '.join(map(str, a))))
+for a in [[0, 1] * 32, [0, 2147483647], [-2147483647, 0, 1, 2147483647]]:
+    rows.append('    Case { depth: 32, order: 0, partition: 0, bits: %di64, samples: [%s] },' % (cost(a, 32, 0, 0), ', '.join(map(str, a))))
+for a in [[-2147483648, 0, 2147483647], [-2147483648, 2147483647, 2147483647, -2147483648], [-2147483647, 2147483647, 0, -2147483647, 2147483647]]:
+    rows.append('    Case { depth: 32, order: 4, partition: 0, bits: %di64, samples: [%s] },' % (cost(a, 32, 4, 0), ', '.join(map(str, a))))
+assert len(rows) == 147
+
+
+def verify_mean_bound():
+    cases = itertools.chain.from_iterable(itertools.product(range(8), repeat=n) for n in range(1, 6))
+    adversarial = [[rng.randrange(1 << 32) for _ in range(rng.randrange(1, 65))] for _ in range(1000)]
+    for values in itertools.chain(cases, adversarial):
+        mean = sum(values) // len(values)
+        seed = min(30, max(0, mean.bit_length() - 1))
+        exact = lambda k: (len(values) * (k + 1) + sum(v >> k for v in values), k)
+        assert min(exact(k) for k in range(31)) == min(exact(k) for k in range(max(0, seed - 1), min(30, seed + 1) + 1)), values
+
+
+verify_mean_bound()
 source='''// Costs come from exhaustive Python enumeration of Rice parameters 0..30.
 import "std/audio/flac/plan";
 import "std/test";
@@ -71,7 +100,7 @@ function costs(): test.TestOutcome {
 
 function main(): i32 {
   let runner = test.new("FLAC exhaustive Rice cost oracle");
-  runner = runner.it("48 independent minima over predictors, partitions, Rice/Rice2, raw escapes, and wasted bits", costs);
+  runner = runner.it("147 independent minima over predictors, partitions, Rice/Rice2, raw escapes, and wasted bits", costs);
   return runner.finish();
 }
 '''
