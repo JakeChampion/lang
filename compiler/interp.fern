@@ -3091,17 +3091,17 @@ function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i3
 }
 
 // udp_sendmmsg_by_sendto answers udp_sendmmsg with one udp_sendto_bytes per
-// datagram, a message whose segment size is set as one datagram per segment.
-// The pinned stage0 compiler builds this interpreter, so it cannot call the
-// builtin itself until a stage0 that knows it is published.
+// datagram, a message whose segment size is set as one datagram per segment,
+// and no TOS byte. The pinned stage0 compiler builds this interpreter, so it
+// cannot call the builtin itself until a stage0 that knows it is published.
 function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): i32 {
-  let n = lens.len() / 2;
+  let n = lens.len() / 3;
   let off = 0;
   let sent = 0;
   let m = 0;
   while (m < n) {
-    let size = lens[2 * m];
-    let seg = lens[2 * m + 1];
+    let size = lens[3 * m];
+    let seg = lens[3 * m + 1];
     if (size < 0 || off + size > data.len()) {
       if (sent > 0) {
         return sent;

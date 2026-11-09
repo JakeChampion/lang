@@ -141,6 +141,7 @@ pub struct Config {
   server_name: string,
   roots: verify.Roots,
   identity: Option[identity.Identity],
+  ecn: boolean,
 }
 ```
 
@@ -150,7 +151,15 @@ pub struct Config {
 <<4 pub function config(alpn: string[]): Config>>=
 pub function config(alpn: string[]): Config {
   let p = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
-  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None };
+  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None, ecn: false };
+}
+
+// with_ecn says the transport carries ECN marks both ways: it sends each
+// flight with ecn_codepoint and passes each datagram's mark to receive_from.
+// The connection then marks its packets ECT(0) until the peer's ACKs fail
+// validation (RFC 9000 section 13.4).
+pub function (c: Config) with_ecn(): Config {
+  return Config { ...c, ecn: true };
 }
 
 pub function (c: Config) client_side(server_name: string, roots: verify.Roots): Config {
@@ -188,6 +197,10 @@ struct Space {
   crypto_lost: i64[],
   crypto_in: streams.Reassembly,
   discarded: boolean,
+  // ecn counts the marks of the packets received in the space, and
+  // peer_ecn holds the largest counts the peer's ACKs reported.
+  ecn: frames.Ecn,
+  peer_ecn: frames.Ecn,
 }
 
 enum Tls { TlsClient(handshake.Client), TlsServer(handshake.Server), TlsNone }
@@ -248,6 +261,11 @@ pub struct Conn {
   accepted: i64,
   path: u8[],
   probe: Option[Probe],
+  // ecn_in is the mark of the datagram being processed, and held_ecn the
+  // mark of each held packet. ecn_failed stops marking on this path.
+  ecn_in: i32,
+  held_ecn: i32[],
+  ecn_failed: boolean,
 }
 
 // Cid is one connection ID with its sequence number and the stateless reset
@@ -265,7 +283,11 @@ struct Probe { path: u8[], data: u8[], until: i64, received: i64, sent: i64, pre
 ```fern
 <<6 function __space(): Space>>=
 function __space(): Space {
-  return Space { send: None, recv: None, next_pn: 0 as i64, largest_recv: 0 - 1 as i64, largest_recv_at: 0 as i64, ranges: [], ack_wanted: false, crypto_out: [], crypto_sent: 0 as i64, crypto_lost: [], crypto_in: streams.reassembly(), discarded: false };
+  return Space { send: None, recv: None, next_pn: 0 as i64, largest_recv: 0 - 1 as i64, largest_recv_at: 0 as i64, ranges: [], ack_wanted: false, crypto_out: [], crypto_sent: 0 as i64, crypto_lost: [], crypto_in: streams.reassembly(), discarded: false, ecn: __no_marks(), peer_ecn: __no_marks() };
+}
+
+function __no_marks(): frames.Ecn {
+  return frames.Ecn { ect0: 0 as i64, ect1: 0 as i64, ce: 0 as i64 };
 }
 ```
 
@@ -303,7 +325,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None, ecn_in: 0, held_ecn: [], ecn_failed: false };
 }
 ```
 
@@ -924,26 +946,34 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 ```fern
 <<23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn>>=
 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
-  return c.__receive(datagram, time.instant_nanos(now));
+  if (c.ecn_in == 0) {
+    return c.__receive(datagram, time.instant_nanos(now));
+  }
+  return Conn { ...c, ecn_in: 0 }.__receive(datagram, time.instant_nanos(now));
 }
 
 // receive_from is receive with the address the datagram came from, in any
-// encoding the caller keeps to. A server moves to a client's new address
-// once a packet from it is authenticated, validating the path; a client
-// drops datagrams from an address that is not its server's (RFC 9000
-// section 9).
-pub function (c: Conn) receive_from(datagram: [u8], path: [u8], now: Instant): Conn {
+// encoding the caller keeps to, and the ECN codepoint of its IP header (the
+// low two bits of the TOS byte, 0 when the transport does not read it). A
+// server moves to a client's new address once a packet from it is
+// authenticated, validating the path; a client drops datagrams from an
+// address that is not its server's (RFC 9000 section 9).
+pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Conn {
   let ns = time.instant_nanos(now);
+  let marked = c;
+  if (c.ecn_in != (ecn & 3)) {
+    marked = Conn { ...c, ecn_in: ecn & 3 };
+  }
   if (c.path.len() == 0) {
-    return Conn { ...c, path: __bytes_range(path, 0, path.len()) }.__receive(datagram, ns);
+    return Conn { ...marked, path: __bytes_range(path, 0, path.len()) }.__receive(datagram, ns);
   }
   if (__same(path, c.path)) {
-    return c.__receive(datagram, ns);
+    return marked.__receive(datagram, ns);
   }
   if (!c.server || c.state != ESTABLISHED) {
     return c;
   }
-  let cur = c.__receive(datagram, ns);
+  let cur = marked.__receive(datagram, ns);
   if (cur.accepted == c.accepted || cur.state >= CLOSING) {
     return cur;
   }
@@ -1114,7 +1144,7 @@ function (c: Conn) __hold(bytes: [u8]): Conn {
   if (c.held.len() >= MAX_UNDECRYPTED) {
     return c;
   }
-  return Conn { ...c, held: c.held.append(__copy(bytes)) };
+  return Conn { ...c, held: c.held.append(__copy(bytes)), held_ecn: c.held_ecn.append(c.ecn_in) };
 }
 ```
 
@@ -1127,16 +1157,17 @@ function (c: Conn) __retry_held(now: i64): Conn {
     return c;
   }
   let held = c.held;
-  let cur = Conn { ...c, held: [] };
-  for p in held {
+  let marks = c.held_ecn;
+  let cur = Conn { ...c, held: [], held_ecn: [] };
+  for i in 0..held.len() {
     if (cur.state < CLOSING) {
-      cur = cur.__datagram(p, now);
+      cur = Conn { ...cur, ecn_in: marks[i] }.__datagram(held[i], now);
     }
   }
   if (cur.held.len() == held.len()) {
-    return Conn { ...cur, held: held };
+    return Conn { ...cur, held: held, held_ecn: marks, ecn_in: c.ecn_in };
   }
-  return cur;
+  return Conn { ...cur, ecn_in: c.ecn_in };
 }
 
 function (c: Conn) __maybe_reset(datagram: [u8], h: packet.Header, now: i64): Conn {
@@ -1208,7 +1239,26 @@ function __idle(c: Conn, now: i64): i64 {
 }
 
 function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
-  return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)), accepted: c.accepted + 1 };
+  let s = c.spaces[space].__received(pn, eliciting, now);
+  if (c.ecn_in != 0) {
+    s = Space { ...s, ecn: __counted(s.ecn, c.ecn_in) };
+  }
+  return Conn { ...c, spaces: c.spaces.with(space, s), accepted: c.accepted + 1 };
+}
+
+// __counted adds one packet's ECN codepoint to the counts: 2 is ECT(0), 1
+// is ECT(1) and 3 is ECN-CE.
+function __counted(e: frames.Ecn, mark: i32): frames.Ecn {
+  if (mark == 2) {
+    return frames.Ecn { ...e, ect0: e.ect0 + 1 };
+  }
+  if (mark == 1) {
+    return frames.Ecn { ...e, ect1: e.ect1 + 1 };
+  }
+  if (mark == 3) {
+    return frames.Ecn { ...e, ce: e.ce + 1 };
+  }
+  return e;
 }
 
 function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
@@ -1425,7 +1475,7 @@ function (c: Conn) __migrating(path: [u8], received: i64, now: i64): Conn {
   let to = __bytes_range(path, 0, path.len());
   let data = __derived(c, 112u8, now, 8);
   let pr = Probe { path: to, data: data, until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), received: received, sent: 0 as i64, previous: c.path };
-  return Conn { ...c, path: to, probe: Some(pr), pending: c.pending.append(frames.PathChallenge(data)) }.rotate_dcid();
+  return Conn { ...c, path: to, probe: Some(pr), pending: c.pending.append(frames.PathChallenge(data)), ecn_failed: false }.rotate_dcid();
 }
 
 function __cid_index(ids: Cid[], seq: i64): i32 {
@@ -1474,18 +1524,68 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
     exponent = p.ack_delay_exponent;
   }
   let delay = (a.delay << exponent) * 1000;
+  let before = c.recovery.largest_acked(space);
   let cur = Conn { ...c, recovery: c.recovery.on_ack(space, a, time.duration_nanos(delay), time.instant_from_nanos(now), c.spaces[space].next_pn - 1) };
   let refused = cur.recovery.refused;
   if (refused != 0) {
     return Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__fail(refused, frames.ACK, "an ACK of a packet never sent", now);
   }
   let acked = cur.recovery.acked;
+  if (a.ranges[0].high > before) {
+    cur = cur.__ecn_validated(space, a, acked);
+  }
   let lost = cur.recovery.lost;
   cur = Conn { ...cur, recovery: cur.recovery.outcome_taken() };
   if (!cur.server && space == recovery.HANDSHAKE) {
     cur = Conn { ...cur, recovery: cur.recovery.validated() };
   }
   return cur.__delivered(acked).__requeue(lost);
+}
+
+// __ecn_validated checks the peer's ECN counts on an ACK that raises the
+// largest acknowledged (RFC 9000 section 13.4.2.1). Marking stops when the
+// ACK acknowledges marked packets without counts, when a count falls, or
+// when the counts rose by less than the marked packets it acknowledges.
+function (c: Conn) __ecn_validated(space: i32, a: frames.Ack, acked: recovery.Sent[]): Conn {
+  let marked = 0 as i64;
+  for p in acked {
+    if (p.ect) {
+      marked += 1;
+    }
+  }
+  let s = c.spaces[space];
+  let Some(e) = a.ecn else {
+    if (marked > 0) {
+      return Conn { ...c, ecn_failed: true };
+    }
+    return c;
+  };
+  let was = s.peer_ecn;
+  let fell = e.ect0 < was.ect0 || e.ect1 < was.ect1 || e.ce < was.ce;
+  if (fell) {
+    return Conn { ...c, ecn_failed: true };
+  }
+  let failed = c.ecn_failed || e.ect0 - was.ect0 + e.ce - was.ce < marked;
+  return Conn { ...c, spaces: c.spaces.with(space, Space { ...s, peer_ecn: e }), ecn_failed: failed };
+}
+
+// __marking is whether the next packet leaves marked ECT(0).
+function (c: Conn) __marking(): boolean {
+  return c.config.ecn && !c.ecn_failed;
+}
+
+// ecn_counts is the marks counted on the packets received in the space.
+pub function (c: Conn) ecn_counts(space: i32): frames.Ecn {
+  return c.spaces[space].ecn;
+}
+
+// ecn_codepoint is the ECN codepoint for the datagrams transmit built: 2
+// for ECT(0), or 0 when the transport carries no marks or validation failed.
+pub function (c: Conn) ecn_codepoint(): i32 {
+  if (c.__marking()) {
+    return 2;
+  }
+  return 0;
 }
 
 function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
@@ -1988,15 +2088,22 @@ function (p: Plan) __put(f: frames.Frame, room: i32): Plan {
 }
 
 function (c: Conn) __ack_planned(space: i32, now: i64): Conn {
-  let delay = __ack_delay(c.spaces[space], space, now);
-  return Conn { ...c, plans: c.plans.with(space, c.plans[space].__ack_put(delay, c.spaces[space].ranges, c.config.max_datagram)) };
+  let s = c.spaces[space];
+  let delay = __ack_delay(s, space, now);
+  return Conn { ...c, plans: c.plans.with(space, c.plans[space].__ack_put(delay, s.ranges, s.ecn, c.config.max_datagram)) };
 }
 
-function (p: Plan) __ack_put(delay: i64, ranges: frames.AckRange[], room: i32): Plan {
+// __ack_put writes an ACK, with the ECN counts once any packet of the
+// space arrived marked.
+function (p: Plan) __ack_put(delay: i64, ranges: frames.AckRange[], marks: frames.Ecn, room: i32): Plan {
   let q = p.__started(room);
   let payload = q.payload;
   q = Plan { ...q, payload: [] };
-  payload = frames.put_ack(payload, delay, ranges);
+  if (marks.ect0 + marks.ect1 + marks.ce > 0) {
+    payload = frames.put_ack_ecn(payload, delay, ranges, marks);
+  } else {
+    payload = frames.put_ack(payload, delay, ranges);
+  }
   return Plan { ...q, payload: payload };
 }
 
@@ -2240,7 +2347,7 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
 
 function (c: Conn) __recorded(p: Plan, now: i64, size: i32, padded: boolean): Conn {
   let pn = c.spaces[p.space].next_pn;
-  let sent = recovery.Sent { pn: pn, at: time.instant_from_nanos(now), size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
+  let sent = recovery.Sent { pn: pn, at: time.instant_from_nanos(now), size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, ect: c.__marking(), resend: p.resend };
   let sent_count = c.key_sent;
   if (p.space == recovery.APPLICATION) {
     sent_count += 1;
