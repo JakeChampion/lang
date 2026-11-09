@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -98,6 +99,13 @@ function main(): i32 {
   raw.store_u64(frame + 248 as usize, (STACK_VA + pagetable.PAGE_BYTES) as u64);
   raw.store_u64(frame + 256 as usize, UVA as u64);
   raw.store_u64(frame + 264 as usize, 0 as u64);
+  // The process gets its own TPIDR_EL0, and FPCR with flush-to-zero.
+  raw.store_u64(frame + 272 as usize, 99 as u64);
+  raw.store_u64(frame + 288 as usize, 0x1000000 as u64);
+  unsafe {
+    __sysreg_write("tpidr_el0", 1234i64);
+    __sysreg_write("fpcr", 0i64);
+  }
   set_reg(frame, 2, text as i64);
   let traps = 0;
   while (traps < 4) {
@@ -115,6 +123,9 @@ function main(): i32 {
       set_reg(frame, 0, 40i64);
     } else {
       print("trap kind " + kind.to_string() + " ec " + ec.to_string() + " far is the kernel address " + (far == text as i64).to_string());
+      unsafe {
+        print("kernel tpidr " + __sysreg_read("tpidr_el0").to_string() + " fpcr " + __sysreg_read("fpcr").to_string() + ", user tpidr " + raw.load_u64(frame + 272 as usize).to_string() + " fpcr " + raw.load_u64(frame + 288 as usize).to_string());
+      }
       board.power_off(0);
       return 0;
     }
@@ -139,7 +150,7 @@ func TestSelfHostKernelUserModeOnQemu(t *testing.T) {
 	}
 	// x0 is 41 at the exit_group svc: the kernel answered the write with 40,
 	// and the user code added 1. The data abort from EL0 has the class 0x24.
-	for _, want := range []string{"svc 64 x0 7\n", "svc 93 x0 41\n", "trap kind 0 ec 36 far is the kernel address true\n"} {
+	for _, want := range []string{"svc 64 x0 7\n", "svc 93 x0 41\n", "trap kind 0 ec 36 far is the kernel address true\n", fmt.Sprintf("kernel tpidr 1234 fpcr 0, user tpidr 99 fpcr %d\n", 0x1000000)} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant %q", console, want)
 		}
@@ -165,12 +176,14 @@ func TestSelfHostUserRunVectors(t *testing.T) {
 	}
 	wantInOrder(t, "arm64-kernel", text, []string{
 		"__fern_vectors:\n",
-		"__fern_user_run:\n    sub sp, sp, #160\n",
+		"__fern_user_run:\n    sub sp, sp, #192\n",
+		"    mrs x10, tpidr_el0\n    mrs x11, fpcr\n    stp x10, x11, [sp, #160]\n",
 		"    msr daifset, #15\n",
 		"    ldp x0, x1, [x0, #0]\n    eret\n",
 		"__fern_user_trap_0:\n    stp x0, x1, [sp, #-16]!\n",
 		"__fern_user_trap_3:\n",
 		".Luser_return:\n",
+		"    ldp x10, x11, [sp, #160]\n    msr tpidr_el0, x10\n    msr fpcr, x11\n",
 		"    msr daif, x10\n    ret\n",
 	})
 	i := strings.Index(text, "__fern_vectors:\n")

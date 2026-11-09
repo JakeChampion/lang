@@ -863,6 +863,8 @@ and three `mmap` reservations at start.
    - The frame holds x0 to x30, `SP_EL0`, the PC, PSTATE, `TPIDR_EL0`, FPSR,
      FPCR and q0 to q31, 816 bytes in all.
    - `__user_run` keeps the callee-saved registers and the DAIF of the kernel.
+     It also keeps the `TPIDR_EL0`, FPCR and FPSR of the kernel, because the
+     frame gives the process its own values of them.
      It masks the exceptions before it writes `ELR_EL1` and `SPSR_EL1`, so
      that no nested exception overwrites them.
    - `std/pagetable` maps user pages with `map_user`. Each virtual page goes
