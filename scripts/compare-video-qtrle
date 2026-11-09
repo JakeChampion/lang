@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""Compare QTRLE public decode APIs on identical packets and frames with one owner.
+
+Linux, FFmpeg with QTRLE encode/decode, its development headers, pkg-config,
+and a C compiler are required. --wasi also requires wasmtime.
+Smoke mode validates the harness and does not produce performance ratios.
+"""
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import shlex
+import statistics
+import struct
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run(command, **kwargs):
+    try:
+        return subprocess.run(command, check=True, capture_output=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        if error.stderr:
+            sys.stderr.write(error.stderr if isinstance(error.stderr, str) else error.stderr.decode(errors="replace"))
+        raise
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def equal_files(first, second):
+    with first.open("rb") as a, second.open("rb") as b:
+        while True:
+            left, right = a.read(65536), b.read(65536)
+            if left != right:
+                raise AssertionError("decoded ARGB samples differ")
+            if not left:
+                return
+
+
+def source_frames(width, height, depth, kind):
+    base = bytearray(width * height * 4)
+    state = 42
+    for i in range(width * height):
+        x, y = i % width, i // width
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        if kind == "runs":
+            color = ((x // 127 + y // 4) % 4) * 47
+            pixel = (255, color, 255 - color, 71)
+        else:
+            pixel = (255 if depth == 24 else (i * 13) % 256,
+                     state >> 24, (state >> 16) & 255, (state >> 8) & 255)
+        base[i * 4:i * 4 + 4] = bytes(pixel)
+    second = bytearray(base)
+    fourth = bytearray(base)
+    if kind == "dense":
+        table = bytes((i ^ 63) if i != 255 else 255 for i in range(256))
+        second = base.translate(table)
+        fourth = second.translate(bytes((i ^ 127) if i != 255 else 255 for i in range(256)))
+    else:
+        middle = (height // 2 * width + width // 2) * 4
+        second[middle:middle + 4] = bytes((255 if depth == 24 else 19, 250, 1, 2))
+        fourth = bytearray(second)
+        fourth[:4] = bytes((255 if depth == 24 else 0, 20, 30, 40))
+    return [bytes(base), bytes(second), bytes(second), bytes(fourth)]
+
+
+def write_case(directory, name, width, height, depth, kind):
+    frames = source_frames(width, height, depth, kind)
+    expected = directory / (name + ".argb")
+    expected.write_bytes(b"".join(frames))
+    movie = directory / (name + ".mov")
+    run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "argb",
+         "-video_size", f"{width}x{height}", "-framerate", "25", "-i", str(expected),
+         "-c:v", "qtrle", "-threads", "1", "-pix_fmt", "rgb24" if depth == 24 else "argb",
+         "-g", "30", str(movie)])
+    metadata = json.loads(run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
+                               "-show_entries", "packet=pos,size", "-of", "json", str(movie)]).stdout)
+    assert len(metadata["packets"]) == 4
+    data = movie.read_bytes()
+    packets = [data[int(p["pos"]):int(p["pos"]) + int(p["size"])] for p in metadata["packets"]]
+    assert all(struct.unpack_from(">I", p)[0] == len(p) for p in packets)
+    corpus = directory / (name + ".fqbm")
+    with corpus.open("wb") as output:
+        output.write(struct.pack("<4sIIIII", b"FQBM", 1, width, height, depth, len(packets)))
+        for p in packets:
+            output.write(struct.pack("<I", len(p)) + p + bytes(64))
+    return {"name": name, "width": width, "height": height, "depth": depth, "pattern": kind,
+            "packet_bytes": [len(p) for p in packets], "corpus_sha256": sha(corpus),
+            "argb_sha256": sha(expected)}, corpus, expected, frames
+
+
+def build(wasi):
+    compiler = os.environ.get("FERN")
+    if compiler is None:
+        subprocess.run(["make", "bin/fern-selfhost"], cwd=ROOT, check=True)
+        compiler = str(ROOT / "bin/fern-selfhost")
+    compiler = str(Path(compiler).resolve())
+    target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux"}[platform.machine()]
+    output = ROOT / "build/video/compare"
+    output.mkdir(parents=True, exist_ok=True)
+    fern = output / "fern-qtrle"
+    sanitized = output / "fern-qtrle-sanitize"
+    counter = output / "fern-qtrle-count"
+    reference = output / "ffmpeg-qtrle"
+    sampler = output / "sample"
+    source = ROOT / "scripts/video-compare/qtrle.fern"
+    run([compiler, "-target", target, "-o", str(fern), str(source), str(ROOT / "internal/stdlib")])
+    counter_source = ROOT / "scripts/video-compare/qtrle-count.fern"
+    run([compiler, "-target", target, "-o", str(counter), str(counter_source), str(ROOT / "internal/stdlib")])
+    plain_asm = run([compiler, "-target", target, "-emit", "asm", str(source), str(ROOT / "internal/stdlib")]).stdout
+    count_asm = run([compiler, "-target", target, "-emit", "asm", str(counter_source), str(ROOT / "internal/stdlib")]).stdout
+    assert b"__fern_alloc_count" not in plain_asm, "timed executable enables allocation instrumentation"
+    assert b"__fern_alloc_count" in count_asm, "allocation probe has no counter"
+    run([compiler, "-target", target, "-sanitize", "-o", str(sanitized), str(source), str(ROOT / "internal/stdlib")])
+    cflags = shlex.split(os.environ["FFMPEG_CFLAGS"]) if "FFMPEG_CFLAGS" in os.environ else shlex.split(run(["pkg-config", "--cflags", "libavcodec", "libavutil"], text=True).stdout)
+    libs = shlex.split(os.environ["FFMPEG_LIBS"]) if "FFMPEG_LIBS" in os.environ else shlex.split(run(["pkg-config", "--libs", "libavcodec", "libavutil"], text=True).stdout)
+    cc = shlex.split(os.environ.get("CC", "cc"))
+    flags = ["-O3", "-DNDEBUG", "-std=c11", "-Wall", "-Wextra", "-Werror"]
+    run([*cc, *flags, *cflags, str(ROOT / "scripts/video-compare/ffmpeg-qtrle.c"), *libs, "-o", str(reference)])
+    run([*cc, *flags, str(ROOT / "scripts/video-compare/sample.c"), "-o", str(sampler)])
+    wasm = None
+    if wasi:
+        wasm = output / "fern-qtrle.wasm"
+        run([compiler, "-target", "wasm32-wasi", "-o", str(wasm), str(source), str(ROOT / "internal/stdlib")])
+    manifest = {"target": target, "fern_compiler_sha256": sha(Path(compiler)),
+                "fern_binary_sha256": sha(fern), "allocation_probe_binary_sha256": sha(counter),
+                "timing_allocation_instrumented": False, "reference_binary_sha256": sha(reference), "sampler_binary_sha256": sha(sampler),
+                "cc": run([*cc, "--version"], text=True).stdout.splitlines()[0],
+                "cflags": flags + cflags, "libs": libs,
+                "ffmpeg": run(["ffmpeg", "-version"], text=True).stdout.splitlines()[0],
+                "tracked_source_tree": run(["git", "rev-parse", "HEAD^{tree}"], text=True).stdout.strip(),
+                "sources": {str(p.relative_to(ROOT)): sha(p) for p in [source,
+                            ROOT / "scripts/video-compare/ffmpeg-qtrle.c", ROOT / "scripts/video-compare/sample.c", counter_source, ROOT / "scripts/video-compare/corpus.fern", Path(__file__).resolve(),
+                            ROOT / "internal/stdlib/std/video/qtrle.fern.md", ROOT / "internal/stdlib/std/video/frame.fern.md"]}}
+    return {"fern": fern, "ffmpeg": reference}, sampler, sanitized, counter, wasm, manifest
+
+
+def timed(sampler, binary, corpus, frames, directory):
+    resources = directory / "resources.json"
+    value = json.loads(run([str(sampler), str(resources), str(binary), "measure", str(corpus), str(frames)]).stdout)
+    assert value["frames"] == frames and value["elapsed_ns"] > 0
+    value.update(json.loads(resources.read_text()))
+    return value
+
+
+def check_sampler(sampler, directory):
+    # A Python fork would copy this RSS floor into every measured child.
+    retained = bytearray(64 * 1024 * 1024)
+    for at in range(0, len(retained), 4096):
+        retained[at] = 1
+    resources = directory / "sampler-check.json"
+    run([str(sampler), str(resources), "/bin/true"])
+    usage = json.loads(resources.read_text())
+    assert usage["peak_rss_bytes"] < 32 * 1024 * 1024, "parent RSS contaminated the child measurement"
+    assert len(retained) == 64 * 1024 * 1024
+    resources.unlink()
+
+
+def verify_loaders(binaries, valid, directory):
+    original = valid.read_bytes()
+    for data in (original[:23], b"bad!" + original[4:], original[:-1],
+                 original[:24] + struct.pack("<I", 0xffffffff) + original[28:]):
+        broken = directory / "broken.fqbm"
+        broken.write_bytes(data)
+        for binary in binaries.values():
+            result = subprocess.run([str(binary), "verify", str(broken)], capture_output=True, timeout=20)
+            assert result.returncode != 0, "malformed corpus accepted"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--wasi", action="store_true")
+    parser.add_argument("--pairs", type=int, default=7)
+    parser.add_argument("--pixels", type=int, default=500000000)
+    options = parser.parse_args()
+    if sys.platform != "linux":
+        parser.error("Linux is required for wait4 resource measurements")
+    if options.pairs < 1 or options.pixels < 1:
+        parser.error("pairs and pixels must be positive")
+    os.chdir(ROOT)
+    binaries, sampler, sanitized, counter, wasm, manifest = build(options.wasi)
+    report = {"schema": 1, "qualification": not options.smoke, "platform": platform.platform(),
+              "cpu": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines() if line.startswith("model name")), platform.machine()),
+              "cpu_affinity": sorted(os.sched_getaffinity(0)), "tools": manifest,
+              "timing": "CLOCK_MONOTONIC public decode calls and one sampled ARGB pixel per frame, after one complete corpus warmup; setup, verification, and stdout are excluded",
+              "settings": {"threads": 1, "warmup_cycles": 1, "caller_retention": "current frame only", "input": "identical immutable preloaded packets, with 64 zero padding bytes"},
+              "memory": "Linux native sampler wait4 peak process RSS; includes runtime, loaded libraries, packets, and frame storage; excludes separate verification processes",
+              "process_cpu": "wait4 user and system CPU time for the complete measurement process, including setup and warmup",
+              "allocation_counts": "Separate instrumented Fern executable; excluded from timing and RSS comparisons; FFmpeg allocations are not instrumented",
+              "cases": []}
+    cases = [("rgb24-runs", 512, 288, 24, "runs"), ("argb32-literals", 512, 288, 32, "sparse"),
+             ("argb32-hd-sparse", 1920, 1080, 32, "sparse"), ("rgb24-hd-dense", 1920, 1080, 24, "dense")]
+    with tempfile.TemporaryDirectory(prefix="fern-qtrle-") as temporary:
+        directory = Path(temporary)
+        check_sampler(sampler, directory)
+        for number, (name, width, height, depth, kind) in enumerate(cases):
+            if options.smoke:
+                width, height = (257, 3) if number < 2 else (32, 32)
+            item, corpus, expected, decoded = write_case(directory, name, width, height, depth, kind)
+            for label, binary in {**binaries, "fern_sanitize": sanitized, "fern_counter": counter}.items():
+                actual = directory / (label + ".argb")
+                with actual.open("wb") as output:
+                    subprocess.run([str(binary), "verify", str(corpus)], stdout=output, check=True, timeout=120)
+                equal_files(actual, expected)
+            if wasm:
+                actual = directory / "wasi.argb"
+                with actual.open("wb") as output:
+                    subprocess.run(["wasmtime", "run", "--dir", str(directory) + "::.", str(wasm), "verify", corpus.name], stdout=output, check=True, timeout=120)
+                equal_files(actual, expected)
+            verify_loaders(binaries, corpus, directory)
+            frames = 8 if options.smoke else min(1000000, max(8, math.ceil(options.pixels / (width * height * 4)) * 4))
+            expected_sum = sum(int.from_bytes(decoded[i % 4][(i % (width * height)) * 4:(i % (width * height)) * 4 + 4], "big") for i in range(frames))
+            trials = {label: [] for label in binaries}
+            order = []
+            for pair in range(1 if options.smoke else options.pairs):
+                labels = list(binaries) if pair % 2 == 0 else list(reversed(binaries))
+                order.append(labels)
+                for label in labels:
+                    value = timed(sampler, binaries[label], corpus, frames, directory)
+                    if label == "ffmpeg":
+                        assert value["avcodec_version"] >> 16 == value["avcodec_header_version"] >> 16
+                    assert value["checksum"] == expected_sum, (item["name"], label, value)
+                    trials[label].append(value)
+            probe = json.loads(run([str(counter), "count", str(corpus), str(frames)]).stdout)
+            assert probe["frames"] == frames and probe["checksum"] == expected_sum
+            item.update({"frames_per_trial": frames, "full_argb_comparison": True, "wasi_verified": bool(wasm), "sanitizer_verified": True, "trial_order": order})
+            if not options.smoke:
+                item["allocation_probe"] = probe
+                item["trials"] = trials
+                item["summary"] = {label: {"median_elapsed_ns": statistics.median(t["elapsed_ns"] for t in values),
+                                          "min_elapsed_ns": min(t["elapsed_ns"] for t in values),
+                                          "max_elapsed_ns": max(t["elapsed_ns"] for t in values),
+                                          "median_peak_rss_bytes": statistics.median(t["peak_rss_bytes"] for t in values)} for label, values in trials.items()}
+            if not options.smoke:
+                reference = item["summary"]["ffmpeg"]
+                native = item["summary"]["fern"]
+                item["fern_over_ffmpeg_elapsed"] = native["median_elapsed_ns"] / reference["median_elapsed_ns"]
+                item["fern_over_ffmpeg_peak_rss"] = native["median_peak_rss_bytes"] / reference["median_peak_rss_bytes"]
+            report["cases"].append(item)
+            print(name + ": complete ARGB samples and timed checksums match", flush=True)
+    options.output.parent.mkdir(parents=True, exist_ok=True)
+    options.output.write_text(json.dumps(report, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()
