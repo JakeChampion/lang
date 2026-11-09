@@ -203,7 +203,8 @@ function main(): i32 {
     if (b9[240] != b7[128] || b9[241] != b7[129] || b9[248] != b7[136] || b9[249] != b7[137] || b9[250] != b7[138] || b9[251] != b7[139]) { return 64; }
     let constant_addr = test_u32(b9, 136);
     let mapped = protected - (constant_addr + protected) % 4096;
-    if (test_u32(b9, 264) != mapped || test_u32(b9, 272) != mapped || b9[280] != 1) { return 65; }
+    // PT_GNU_RELRO protects the mapped range, and its file size is the 8 constant bytes in the file.
+    if (test_u32(b9, 264) != 8 || test_u32(b9, 272) != mapped || b9[280] != 1) { return 65; }
     if (gap != 65536 || b9.len() != 384 || b9[120] != 1 || b9[124] != 6 || test_u32(b9, 152) != 8 || test_u32(b9, 160) != mapped) { return 66; }
     if (b9[176] != 1 || b9[180] != 6 || test_u32(b9, 184) != test_u32(b9, 128) + 8 || test_u32(b9, 192) != constant_addr + protected) { return 67; }
     if (test_u32(b9, 208) != 8 || test_u32(b9, 216) != 8 || b9[368] != 7 || b9[375] != 7 || b9[376] != 7 || b9[383] != 7) { return 68; }
