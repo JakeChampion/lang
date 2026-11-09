@@ -7893,6 +7893,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__load_ptr", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__store_u8", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__str_bytes", params: [typeinfo.t_string(), typeinfo.t_usize()], modes: [b, v], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__bytes_data", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }], modes: [b], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__store_i32", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__store_i64", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },

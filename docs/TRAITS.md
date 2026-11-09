@@ -699,7 +699,7 @@ impls. The checker already walks field layouts; generation is mechanical.
 This is what makes traits *ergonomic* and is the lever that finally
 collapses the `assert_eq_*` family.
 
-Eight traits are derivable today (`deriveKind`, `synthesizeDerives`):
+Nine traits are derivable today (`deriveKind`, `synthesizeDerives`):
 
 | Trait     | Synthesised method      | Shape |
 |-----------|-------------------------|-------|
@@ -711,6 +711,7 @@ Eight traits are derivable today (`deriveKind`, `synthesizeDerives`):
 | `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
 | `FromJson` | `from_json_value(v: JsonValue): Result[Self, string]` | each field read by name and decoded through its type's `FromJson` (an `E[]` field through `json.from_json_array[E]`, an `Option[E]` through `json.from_json_option[E]`, `None` when missing or null); a shape error names the field. An enum reads back what `Json` writes: the variant's name as a string, or as an object's one key whose value is the payload (an array of several, an object for a record variant); a shape error names the variant. The companion `from_json(s: string)` parses the text first (`json.decode[Self](s)`). Needs `import "std/json"` |
 | `Default` | `default(): Self`       | zero value — scalars' zero literal, nominal fields delegate to *their* `default()`; an enum defaults to its first variant (payloads defaulted) |
+| `CLayout` | `c_size(): usize`, `c_load(p): Self`, `c_store(self, p)` | the C layout of a struct: each field at the next multiple of its size, the size rounded to the largest field. It also makes `c_offset_F`, `c_load_F` and `c_store_F` for each field F. A field is `u8`, `i32`, `u32`, `i64`, `u64`, `usize`, `f32` or `f64`. `std/ffi` declares the trait. Go: `derive_clayout.go`; self-host: `synth_struct_clayout` |
 
 Each composes through the same trait on every field/payload, so a type is
 `@derive`-able as soon as its fields are — and a generic type derives a

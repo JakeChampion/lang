@@ -744,7 +744,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && util.has_str(["__store_u8", "__arr_set_len", "__store_i32", "__store_i64", "__store_ptr"], name)) {
     return typeinfo.t_void();
   }
-  if (argc == 2 && name == "__str_bytes") {
+  if (argc == 2 && name == "__str_bytes" || argc == 1 && name == "__bytes_data") {
     return typeinfo.t_usize();
   }
   if (builtinsigs.device_intrinsic(name)) {
@@ -934,6 +934,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (name == "__str_bytes") {
     return ([typeinfo.t_string(), typeinfo.t_usize()], true);
+  }
+  if (name == "__bytes_data") {
+    return ([t_view(typeinfo.t_u8())], true);
   }
   if (name == "__arr_set_len") {
     return ([t_array(typeinfo.t_u8()), typeinfo.t_i32()], true);
@@ -10072,7 +10075,7 @@ pub function unsafe_intrinsics(): string[] {
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
     "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
-    "__memcpy", "__memset", "__str_bytes", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
+    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
     "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
@@ -18001,7 +18004,7 @@ function registered_intrinsics(): string[] {
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
-    "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
+    "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
     "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
     "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
@@ -26658,8 +26661,11 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     }
     return [dg_at("E021", "@derive(" + tr + "): unknown trait", ln, cl)];
   }
-  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default") {
-    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", ln, cl)];
+  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default" && kind != "CLayout") {
+    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, Default, and CLayout are derivable", ln, cl)];
+  }
+  if (kind == "CLayout") {
+    return e021_clayout_diags(tr, tname, labels, ftys, tps, ln, cl);
   }
   let ctys = ftys;
   if (kind == "FromJson") {
@@ -26687,6 +26693,22 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
       }
     }
     fi += 1;
+  }
+  return [];
+}
+
+// A struct with a C layout has no type parameters, and each field has a C
+// form.
+function e021_clayout_diags(tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
+  if (tps.len() > 0) {
+    return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": a struct with a C layout has no type parameters", ln, cl)];
+  }
+  let i = 0;
+  while (i < ftys.len()) {
+    if (parser.clayout_width(ftys[i]) == 0) {
+      return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[i] + " has type " + ftys[i] + ", which has no C form; a field of a C layout is u8, i32, u32, i64, u64, usize, f32 or f64", ln, cl)];
+    }
+    i += 1;
   }
   return [];
 }
@@ -26781,6 +26803,9 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
     }
     for ederive in ederives {
       let edd = e021_derive_one_diag(mod, ederive, ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
+      if (edd.len() == 0 && parser.derive_simple_name(ederive) == "CLayout") {
+        edd = [dg_at("E021", "cannot @derive(" + ederive + ") for " + ed.name + ": only a struct has a C layout", ed.line, ed.col)];
+      }
       if (edd.len() > 0) {
         let emn = derive_method_name(parser.derive_simple_name(ederive));
         if (emn.len() > 0) {

@@ -23843,6 +23843,157 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
   return FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: noparams, ret_type: derived_self_type(sd), body: body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [], streams: [], is_unsafe: false };
 }
 
+// The size in bytes of a field type in a C struct, which is also its
+// alignment, or 0 when the type has no C form.
+pub function clayout_width(t: string): i32 {
+  if (t == "u8") {
+    return 1;
+  }
+  if (t == "i32" || t == "u32" || t == "f32") {
+    return 4;
+  }
+  if (t == "i64" || t == "u64" || t == "usize" || t == "f64") {
+    return 8;
+  }
+  return 0;
+}
+
+function clayout_round(n: i32, align: i32): i32 {
+  return (n + align - 1) / align * align;
+}
+
+// The C offset of each field of `sd`, and then the size of the struct. The
+// size rounds up to the largest alignment of a field.
+pub function clayout_offsets(sd: StructDecl): i32[] {
+  let out: i32[] = [];
+  let off = 0;
+  let align = 1;
+  for f in sd.fields {
+    let w = clayout_width(f.type_name);
+    off = clayout_round(off, w);
+    out = out.append(off);
+    off += w;
+    align = align.max(w);
+  }
+  return out.append(clayout_round(off, align));
+}
+
+function struct_clayout_derivable(sd: StructDecl): boolean {
+  if (sd.type_params.len() > 0) {
+    return false;
+  }
+  for f in sd.fields {
+    if (clayout_width(f.type_name) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function cl_addr(off: i32): ast.Expr {
+  if (off == 0) {
+    return e_ident("p");
+  }
+  return e_binary("+", e_ident("p"), e_number(dl_itoa(off), "usize", false));
+}
+
+function cl_call(name: string, args: ast.Expr[]): ast.Expr {
+  return e_call(e_ident(name), args);
+}
+
+// The value of type `t` at the address `addr`.
+function cl_load(t: string, addr: ast.Expr): ast.Expr {
+  if (t == "u8") {
+    return e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0);
+  }
+  if (t == "i32") {
+    return cl_call("__load_i32", [addr]);
+  }
+  if (t == "u32") {
+    return e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0);
+  }
+  if (t == "f32") {
+    return cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]);
+  }
+  if (t == "i64") {
+    return cl_call("__load_i64", [addr]);
+  }
+  if (t == "u64") {
+    return e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0);
+  }
+  if (t == "f64") {
+    return cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]);
+  }
+  return cl_call("__load_ptr", [addr]);
+}
+
+// The statement that writes `v` of type `t` at the address `addr`.
+function cl_store(t: string, addr: ast.Expr, v: ast.Expr): ast.Stmt {
+  if (t == "u8" || t == "u32") {
+    let name = "__store_i32";
+    if (t == "u8") {
+      name = "__store_u8";
+    }
+    return s_expr(cl_call(name, [addr, e_unary_at("as_i32", v, 0, 0)]));
+  }
+  if (t == "i32") {
+    return s_expr(cl_call("__store_i32", [addr, v]));
+  }
+  if (t == "f32") {
+    return s_expr(cl_call("__store_i32", [addr, cl_call("f32_bits", [v])]));
+  }
+  if (t == "i64") {
+    return s_expr(cl_call("__store_i64", [addr, v]));
+  }
+  if (t == "u64") {
+    return s_expr(cl_call("__store_i64", [addr, e_unary_at("as_i64", v, 0, 0)]));
+  }
+  if (t == "f64") {
+    return s_expr(cl_call("__store_i64", [addr, cl_call("f64_bits", [v])]));
+  }
+  return s_expr(cl_call("__store_ptr", [addr, v]));
+}
+
+function cl_param(name: string, type_name: string): ast.ParamDecl {
+  return ast.ParamDecl { name: name, type_name: type_name, own: false, send: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
+}
+
+function cl_func(sd: StructDecl, name: string, receiver: string, params: ast.ParamDecl[], ret: string, body: ast.Stmt[], unsafe_body: boolean, impl_trait: string): FuncDecl {
+  let stmts = body;
+  if (unsafe_body) {
+    stmts = [s_if_tagged(body, "unsafe")];
+  }
+  let notp: string[] = [];
+  return FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: name, receiver_name: receiver, receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: ret, body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: impl_trait, dyn_traits: [], streams: [], is_unsafe: unsafe_body };
+}
+
+// The functions of @derive(CLayout): `c_size`, the unsafe `c_load` and
+// `c_store` of the whole struct, and for each field F its `c_offset_F` and an
+// unsafe `c_load_F` and `c_store_F`.
+function synth_struct_clayout(sd: StructDecl, funcs: FuncDecl[]): FuncDecl[] {
+  let offs = clayout_offsets(sd);
+  let noparams: ast.ParamDecl[] = [];
+  let size = e_number(dl_itoa(offs[sd.fields.len()]), "usize", false);
+  funcs = funcs.append(cl_func(sd, "c_size", "", noparams, "usize", [s_return(size)], false, "CLayout"));
+  let fnames: string[] = [];
+  let fvals: ast.Expr[] = [];
+  let stores: ast.Stmt[] = [];
+  let i = 0;
+  while (i < sd.fields.len()) {
+    let f = sd.fields[i];
+    fnames = fnames.append(f.name);
+    fvals = fvals.append(cl_load(f.type_name, cl_addr(offs[i])));
+    stores = stores.append(cl_store(f.type_name, cl_addr(offs[i]), dv_self_field(f.name)));
+    funcs = funcs.append(cl_func(sd, "c_offset_" + f.name, "", noparams, "usize", [s_return(e_number(dl_itoa(offs[i]), "usize", false))], false, ""));
+    funcs = funcs.append(cl_func(sd, "c_load_" + f.name, "", [cl_param("p", "usize")], f.type_name, [s_return(cl_load(f.type_name, cl_addr(offs[i])))], true, ""));
+    funcs = funcs.append(cl_func(sd, "c_store_" + f.name, "", [cl_param("p", "usize"), cl_param("v", f.type_name)], "void", [cl_store(f.type_name, cl_addr(offs[i]), e_ident("v"))], true, ""));
+    i += 1;
+  }
+  let lit = e_struct_lit(sd.name, fnames, [], [], fvals, 0, 0);
+  funcs = funcs.append(cl_func(sd, "c_load", "", [cl_param("p", "usize")], sd.name, [s_return(lit)], true, "CLayout"));
+  return funcs.append(cl_func(sd, "c_store", "self", [cl_param("p", "usize")], "void", stores, true, "CLayout"));
+}
+
 function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[], json_alias: string): FuncDecl[] {
   let sd = erase_view_struct(declared);
   let di = 0;
@@ -23874,6 +24025,9 @@ function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[
       if (struct_default_derivable(declared)) {
         funcs = funcs.append(synth_struct_default(sd));
       }
+    }
+    if (kind == "CLayout" && struct_clayout_derivable(declared)) {
+      funcs = synth_struct_clayout(declared, funcs);
     }
     di += 1;
   }

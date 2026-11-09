@@ -87,9 +87,7 @@ function open(bytes: [u8]): Option[Decoder] {
   }
   unsafe {
     let buf: usize = __alloc(n);
-    for i in 0..n {
-      __store_u8(buf + i as usize, bytes[i] as i32);
-    }
+    __memcpy(buf, __bytes_data(bytes), n);
     let out: usize = __alloc(8);
     __store_ptr(out, 0 as usize);
     let rc = c_create(buf, n as usize, out);

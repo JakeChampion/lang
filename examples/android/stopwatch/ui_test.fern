@@ -2,7 +2,7 @@
 // case checks the colours at points of the screen. With STOPWATCH_UI_PNG set
 // to a directory, the test also writes each screen there as a PNG file.
 import "std/android/draw";
-import "std/png";
+import "std/android/testkit";
 import "std/test";
 import "../look";
 import "./screen";
@@ -41,7 +41,7 @@ function colours_at(name: string, w: i32, h: i32, v: ui.View, points: i32[][]): 
   defer free_frame(f);
   ui.render(f, v);
   if let Some(dir) = env("STOPWATCH_UI_PNG") {
-    save(f, dir + "/" + name + ".png");
+    let saved = testkit.save_png(f, dir + "/" + name + ".png");
   }
   let out: i32[] = [];
   for p in points {
@@ -52,47 +52,6 @@ function colours_at(name: string, w: i32, h: i32, v: ui.View, points: i32[][]): 
 
 function colours(name: string, v: ui.View, points: i32[][]): i32[] {
   return colours_at(name, W, H, v, points);
-}
-
-function save(f: draw.Frame, path: string): void {
-  let rgb: u8[] = [];
-  for y in 0..f.height {
-    for x in 0..f.width {
-      let c = f.pixel(x, y);
-      rgb = rgb.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8);
-    }
-  }
-  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
-    let written = write_file_bytes(path, bytes);
-  }
-}
-
-// Writes the premultiplied pixels of `f` as a PNG file, whose pixels hold
-// each channel apart from the alpha.
-function save_rgba(f: draw.Frame, path: string): void {
-  let rgba: u8[] = [];
-  for y in 0..f.height {
-    for x in 0..f.width {
-      let c = f.pixel(x, y);
-      let a = c >> 24 & 255;
-      for shift in [0, 8, 16] {
-        rgba = rgba.append(straight(c >> shift & 255, a) as u8);
-      }
-      rgba = rgba.append(a as u8);
-    }
-  }
-  if let Ok(bytes) = png.encode_rgba8(f.width, f.height, rgba) {
-    let written = write_file_bytes(path, bytes);
-  }
-}
-
-// The channel `v` of a premultiplied pixel with the alpha `a`, apart from
-// the alpha.
-function straight(v: i32, a: i32): i32 {
-  if (a == 0) {
-    return 0;
-  }
-  return (v * 255 + a / 2) / a;
 }
 
 function same(a: i32, b: i32): string {
@@ -216,7 +175,7 @@ function test_icon(): test.TestOutcome {
   defer free_frame(f);
   ui.icon(f);
   if let Some(path) = env("STOPWATCH_ICON") {
-    save_rgba(f, path);
+    let saved = testkit.save_png(f, path);
   }
   // A corner, the black edge, the dark disc, and the red dot: dot 16 of 24.
   let a: f64 = 6.283185307179586 * 16.0 / 24.0;

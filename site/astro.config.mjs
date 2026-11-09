@@ -72,7 +72,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_gl", "android_image", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_trace", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "jni"]],
+  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_gl", "android_image", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_testkit", "android_trace", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "ffi", "jni"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table
