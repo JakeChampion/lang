@@ -51,7 +51,10 @@ def main(apk, out):
     if not wait_for(r"paper: apps \d+, Paper listed true"):
         fail("the apps did not load with Paper among them")
     width, height, part = paper_part(out, "home")
-    if part < 0.2 or part > 0.7:
+    # The wallpaper is 947 by 2048 at the width of the screen, so on a
+    # screen of 1 by 2 it covers the screen, and only its paper-coloured top
+    # shows the paper colour.
+    if part < 0.05 or part > 0.7:
         fail(f"the home screen has {part:.3f} of the paper colour, not paper above the wallpaper")
 
     adb("shell", "atrace", "--async_start", "-c", "-b", "4096", "-a", PACKAGE, check=False)
