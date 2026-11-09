@@ -21,8 +21,9 @@ The complete checker, module-loader, and source-lint packages pass.
 The modern-form ratchet passes without a ceiling change.
 The performance changes lower two x86-64 QTRLE limits and raise no limit.
 
-Fresh controls still identify stale compiler expectations, missing global constant source sites, and missing socket-option filter values.
-Issues #14790, #14791, and #14792 track those remaining main failures.
+Fresh controls identified stale compiler expectations, missing global constant source sites, and missing socket-option filter values.
+The follow-up repairs for #14790, #14791, and #14792 retain exact runtime and source-site controls.
+Their source note describes the changes and the checks.
 The branch must pass those controls and full CI before merge.
 No merge or complete CI success follows from the focused results.
 
