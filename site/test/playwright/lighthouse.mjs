@@ -6,7 +6,9 @@
 // The thresholds come from measured scores. Accessibility, best practices
 // and SEO were 100 on every page here, and performance was 95 on each, so
 // its threshold keeps 5 points for a slower runner. A layout shift above
-// 0.1 is outside the "good" range of Core Web Vitals.
+// 0.1 is outside the "good" range of Core Web Vitals. One run of the same
+// page can score some points lower than the next, so each page gets RUNS
+// runs, and the gate reads the median run by its performance score.
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -18,6 +20,7 @@ import { chromium } from "playwright";
 const PAGES = ["/", "/tutorial/types/", "/cookbook/", "/stdlib/json/", "/playground/"];
 const MIN = { performance: 90, accessibility: 100, "best-practices": 100, seo: 100 };
 const MAX_CLS = 0.1;
+const RUNS = 3;
 const port = Number(process.env.LIGHTHOUSE_PORT ?? 4351);
 const site = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -39,7 +42,13 @@ const chrome = await chromeLauncher.launch({
 let failed = 0;
 try {
   for (const page of PAGES) {
-    const { lhr } = await lighthouse(origin + page, { port: chrome.port, output: "json", logLevel: "error" });
+    const runs = [];
+    for (let i = 0; i < RUNS; i++) {
+      const { lhr } = await lighthouse(origin + page, { port: chrome.port, output: "json", logLevel: "error" });
+      runs.push(lhr);
+    }
+    runs.sort((a, b) => a.categories.performance.score - b.categories.performance.score);
+    const lhr = runs[Math.floor(RUNS / 2)];
     const scores = Object.fromEntries(Object.entries(lhr.categories).map(([k, v]) => [k, Math.round(v.score * 100)]));
     const cls = lhr.audits["cumulative-layout-shift"].numericValue;
     const low = Object.entries(MIN).filter(([k, min]) => scores[k] < min).map(([k, min]) => `${k} ${scores[k]} < ${min}`);
@@ -51,7 +60,8 @@ try {
         if (ref.weight > 0 && audit.score !== null && audit.score < 1) low.push(`  ${k}: ${audit.id}`);
       }
     }
-    console.log(`${page.padEnd(18)} ${Object.entries(scores).map(([k, v]) => `${k} ${v}`).join(", ")}, layout shift ${cls.toFixed(3)}`);
+    const perf = runs.map((r) => Math.round(r.categories.performance.score * 100)).join("/");
+    console.log(`${page.padEnd(18)} ${Object.entries(scores).map(([k, v]) => `${k} ${v}`).join(", ")}, layout shift ${cls.toFixed(3)} (performance runs ${perf})`);
     for (const line of low) console.log(`  FAIL ${line}`);
     if (low.length > 0) failed++;
   }
