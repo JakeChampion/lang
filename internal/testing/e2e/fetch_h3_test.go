@@ -167,7 +167,8 @@ function main(): i32 {
   let tr = fetch.sockets_with(pool);
   let base = "https://localhost:" + port;
   let p = policy(roots);
-  let bounds = fetch.Timeouts { ...fetch.timeouts(), total: time.duration_seconds(60 as i64) };
+  // The first connection waits while an interpreted server starts.
+  let bounds = fetch.Timeouts { ...fetch.timeouts(), connect: time.duration_seconds(60 as i64), total: time.duration_seconds(60 as i64) };
   print(shown("GET /hello", fetch.send_on(tr, fetch.get(base + "/hello").with_timeouts(bounds), p), true));
   print("offered h3 port " + pool.h3_offered("localhost", i32.parse_i32(port).unwrap_or(0), clock.instant()).to_string());
   print(shown("GET /hello", fetch.send_on(tr, fetch.get(base + "/hello").with_timeouts(bounds), p), false));
