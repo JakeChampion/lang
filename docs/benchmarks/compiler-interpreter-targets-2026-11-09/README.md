@@ -96,6 +96,36 @@ The test corpus, exclusions, and CI package budget stay unchanged.
 Exact-head CI must still validate the package budget with its other work.
 Later records must state each completed outcome explicitly.
 
+## Complete compilation controls
+
+The [compilation controls](compilation-controls/samples.json) compile the fixed baseline checker and its imports to a native executable.
+They use the same normal binaries, input, standard library, producer, and target as the interpreter comparison.
+Cold commands disable the proof memo.
+Warm commands use separate caches that each binary primes itself.
+Each reporting probe records 2,410 hits and zero misses.
+The measured commands use normal verifier defaults without the reporting flag.
+
+Three pairs alternate compiler order in each mode.
+All 16 commands, including prime and probe controls, exit zero and produce the same executable hash.
+The [summary](compilation-controls/summary.json) retains that hash and the resource measurements.
+Other interpreter workloads run concurrently.
+
+| Measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Cold median wall time | 19.976808707 s | 22.338687408 s |
+| Cold wall time range | 19.716516333–36.005140447 s | 21.385110076–37.518412736 s |
+| Cold median CPU time | 19.953062 s | 22.301943 s |
+| Cold median peak RSS | 585,412 KiB | 585,480 KiB |
+| Warm median wall time | 29.515208713 s | 19.267208210 s |
+| Warm wall time range | 19.021349127–33.884395873 s | 17.434774872–33.451700101 s |
+| Warm median CPU time | 29.514153 s | 19.249595 s |
+| Warm median peak RSS | 582,788 KiB | 582,664 KiB |
+
+The cold median increases and the warm median decreases.
+These variable samples do not establish a complete-compilation performance change.
+The archive retains every sample and all raw logs.
+The native output hash is `ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068`.
+
 ## Identities and reproduction
 
 The [identity record](identities.json), [candidate build](build.json), and [baseline builds](profile-builds.json) retain exact sources, hashes, and commands.
