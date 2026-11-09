@@ -1,0 +1,18 @@
+---
+// InstallCard — the one-line install, pointing at this deploy's own copy of
+// public/install.sh, so each host of the site shows its own URL.
+
+import CommandCard from "./CommandCard.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const script = new URL(`${base}/install.sh`, Astro.site).href;
+---
+
+<CommandCard label="Install" commands={[`curl -fsSL ${script} | sh`, "fern -version"]}>
+  <p>
+    Linux on arm64 and x86-64, macOS on Apple silicon. The script checks the
+    SHA-256 of the download, and its build provenance when <code>gh</code> is
+    logged in. <a href={script}>Read the script</a> ·
+    <a href={`${base}/tutorial/install/`}>other ways to install</a>
+  </p>
+</CommandCard>

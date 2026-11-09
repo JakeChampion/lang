@@ -5,4 +5,4 @@ export {history, defaultKeymap, historyKeymap, indentWithTab} from "@codemirror/
 export {bracketMatching, indentOnInput} from "@codemirror/language";
 export {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "@codemirror/autocomplete";
 export {linter, lintGutter, forceLinting} from "@codemirror/lint";
-export {oneDark} from "@codemirror/theme-one-dark";
+export {fernLanguage, fernHighlight} from "./fern-language.js";

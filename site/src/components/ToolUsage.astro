@@ -1,0 +1,15 @@
+---
+// ToolUsage — the usage text of `fern -help`, from the build-time capture
+// (scripts/capture.mjs), so the list of tools on the home page is the one
+// the compiler prints.
+
+import { Code } from "@astrojs/starlight/components";
+import { captures } from "../lib/captures.mjs";
+---
+
+{captures && (
+<div class="fern-captured not-content">
+  <Code code={captures.usage} lang="text" title="fern -help" />
+  <p class="fern-label">Captured at build · fern {captures.revision}</p>
+</div>
+)}
