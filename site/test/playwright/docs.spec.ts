@@ -382,3 +382,31 @@ test("llms.txt indexes the docs, and llms-full.txt has their text", async ({ pag
   expect(full).toContain("# Install");
   expect(full).not.toContain("<FernPlayground");
 });
+
+test("the comparison page has the same program in four languages", async ({ page }) => {
+  await page.goto("compare/");
+  for (const name of ["Fern", "Go", "Rust", "TypeScript"]) {
+    await expect(page.getByRole("tab", { name, exact: true }).first()).toBeVisible();
+  }
+  await expect(page.locator("table")).toContainText("Option[T]");
+});
+
+test("a cookbook recipe runs with its stdin", async ({ page }) => {
+  await page.goto("cookbook/");
+  const iframe = page.locator("figure.fern-playground iframe[data-src*='&stdin=']").first();
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&stdin=']").first();
+  await expect(frame.locator("#out")).toHaveText("fern\nfrond\nspore\n", { timeout: 60_000 });
+});
+
+test("the CLI tutorial grep runs with its arguments and stdin", async ({ page }) => {
+  await page.goto("tutorial/cli-tool/");
+  const sel = "figure.fern-playground iframe[data-src*='&args=']";
+  await page.locator(sel).first().scrollIntoViewIfNeeded();
+  await expect(page.frameLocator(sel).first().locator("#out")).toHaveText("2:two fern\n", { timeout: 60_000 });
+});
+
+test("an MDX page renders its Markdown tables", async ({ page }) => {
+  await page.goto("tutorial/cli-tool/");
+  await expect(page.locator(".sl-markdown-content table").first()).toContainText("args()");
+});
