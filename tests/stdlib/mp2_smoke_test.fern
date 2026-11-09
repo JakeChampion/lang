@@ -1,0 +1,41 @@
+import "std/test";
+import "std/audio/mp2";
+import "std/audio/pcm";
+import "aac_kernel_check" as ref;
+import "mp2_check";
+import "mp2_smoke_vectors";
+
+function independent(): test.TestOutcome {
+  let vector = mp2_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(vector.encoded) else {
+    return test.fail("encoded fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  if let Err(e) = mp2_check.run(encoded, expected, vector.rate, vector.channels, vector.frames) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(mp2_smoke_vectors.vector().encoded) else {
+    return test.fail("encoded fixture");
+  };
+  let changed = encoded.with(4, encoded[4] ^ 1u8);
+  if let Err(pcm.Checksum) = mp2.decode_raw(changed, pcm.default_limits()) {} else {
+    return test.fail("protected checksum");
+  }
+  if let Err(pcm.Limit) = mp2.decode_raw(encoded, pcm.Limits { max_input_bytes: encoded.len(), max_samples: 1151 }) {} else {
+    return test.fail("PCM budget");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Layer II independent interpreter smoke");
+  runner = runner.it("exact independent PCM and reusable output suffix", independent);
+  runner = runner.it("protected checksum and PCM budget", invalid);
+  return runner.finish();
+}

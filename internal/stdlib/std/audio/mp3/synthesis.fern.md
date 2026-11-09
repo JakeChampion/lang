@@ -259,9 +259,9 @@ function butterfly8x4(own t: f32[], at: i32): f32[] {
   return __f32x4_with(t, at + 28, (xt - x7) * __f32x4_splat(2.56291556f32));
 }
 
-function dct32x4(own samples: f32[], base: i32): f32[] {
+function dct32x4(own samples: f32[], base: i32, groups: i32): f32[] {
   let t = spectral.zeros(128);
-  for group in 0..4 {
+  for group in 0..groups {
     let k = group * 4;
     for i in 0..8 {
       let x0 = __f32x4_load(samples, base + k + i * 18);
@@ -377,14 +377,26 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
 }
 
 pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  return granule_columns(qmf, samples, channels, 18, output, out_at);
+}
+
+// Layer II supplies twelve columns with the same 18-column subband stride.
+pub function granule12(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  return granule_columns(qmf, samples, channels, 12, output, out_at);
+}
+
+function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, columns: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
   for ch in 0..channels {
-    samples = dct32_tail(dct32x4(samples, ch * 576), ch * 576);
+    samples = dct32x4(samples, ch * 576, columns / 4);
+    if (columns == 18) {
+      samples = dct32_tail(samples, ch * 576);
+    }
   }
-  let lines = spectral.zeros(33 * 64);
+  let lines = spectral.zeros((15 + columns) * 64);
   for i in 0..15 * 64 {
     lines = lines.with(i, qmf[i]);
   }
-  for block in 0..9 {
+  for block in 0..columns / 2 {
     let i = block * 2;
     let (next, pcm) = synth(samples, i, channels, lines, i * 64, output, out_at + 32 * channels * i);
     lines = next;
@@ -392,7 +404,7 @@ pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own outp
   }
   for i in 0..15 * 64 {
     if (channels == 2 || (i & 1) == 0) {
-      qmf = qmf.with(i, lines[18 * 64 + i]);
+      qmf = qmf.with(i, lines[columns * 64 + i]);
     }
   }
   return (qmf, output);

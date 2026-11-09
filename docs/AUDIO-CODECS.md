@@ -16,6 +16,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
@@ -400,6 +401,43 @@ They cover fast-start files, multiple audio tracks, a video track, compact sizes
 The reference generator uses the independently reported container duration to exclude final codec padding from FFmpeg output.
 Boundary tests cover incomplete prefixes, malformed tables, media ranges, budgets, track selection, and edit-clock rounding.
 They also check 64-bit packet ranges beyond eight GiB without allocating a large file.
+
+## MP2
+
+`std/audio/mp2` decodes MPEG-1 and MPEG-2 Layer II frames to interleaved float PCM.
+It supports all six sample rates and all four channel modes.
+Protected frames validate the MPEG CRC over the header, allocation fields, and scale-factor selection.
+`decode_frame_into` reuses caller-owned PCM storage and preserves the unused suffix on success.
+Each frame contains 1,152 PCM frames per channel.
+
+The decoder retains 960 float values for synthesis history and two format fields.
+Frame scratch does not remain in decoder state.
+Header, budget, and output-size errors preserve history.
+Payload and checksum errors reset history.
+A rate or channel-count change also resets history.
+
+`decode_raw` accepts consecutive frames with one sample rate and channel count.
+It applies a cumulative output budget.
+Frame APIs require a header at the supplied byte offset.
+Layer I, MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+
+The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
+It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.
+Fern output matches pinned scalar minimp3 bit for bit.
+The generator also compares every stream with the FFmpeg float decoder and enables CRC checks.
+The FFmpeg input uses a WAVE wrapper with unchanged MPEG payload bytes.
+This wrapper avoids raw-demux rejection of valid short streams with channel-mode changes.
+
+```sh
+python3 scripts/gen-mp2-tables.py --source /path/to/minimp3.h --check
+python3 scripts/gen-mp2-vectors.py --minimp3 /path/to/minimp3.h --check
+```
+
+Native Linux tests include strict IR checks, sanitizers, and balanced allocation counts.
+WASI executes the same corpus and boundary tests.
+Android ARM64 shared libraries compile successfully.
+Native ARM64 CI and device measurements remain necessary.
+These checks do not establish a speed or quality lead over other codecs.
 
 ## MP3
 

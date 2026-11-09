@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Compare native Layer II decode with pinned scalar and SIMD minimp3."""
+import argparse
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import platform
+import resource
+import statistics
+import struct
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+HEADERS = {
+    'minimp3.h': '57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad',
+    'minimp3_ex.h': '8437f3fc1d4d8ab2269a1624f5380a08df1967a048f8887789bae6e25db7db79',
+}
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def tree_hash(root):
+    value = hashlib.sha256()
+    for path in sorted(root.rglob('*')):
+        if path.is_file():
+            value.update(path.relative_to(root).as_posix().encode() + b'\0')
+            value.update(path.read_bytes())
+    return value.hexdigest()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--compiler', type=Path, required=True)
+    parser.add_argument('--reference-dir', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--rounds', type=int, default=50)
+    parser.add_argument('--trials', type=int, default=7)
+    args = parser.parse_args()
+    assert args.rounds > 0 and args.trials >= 3
+    assert platform.system() == 'Linux', 'RSS metrics use Linux /proc'
+    target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux'}[platform.machine()]
+    work = args.output.resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    for name, expected in HEADERS.items():
+        path = args.reference_dir / name
+        assert sha(path) == expected, name + ' hash differs'
+        (work / name).write_bytes(path.read_bytes())
+    spec = importlib.util.spec_from_file_location('vectors', ROOT / 'scripts/gen-mp2-vectors.py')
+    vectors = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vectors)
+    inputs = {}
+    for rate, channels, kbps in [(48000, 2, 192), (32000, 1, 96), (16000, 1, 32)]:
+        name = f'{rate}-{channels}-{kbps}'
+        # Repeat the deterministic signal to approximately one second.
+        signal = vectors.signal(rate, channels, True)
+        signal = (signal * (rate // 1499 + 1))[:rate * channels * 4]
+        raw = work / (name + '.f32')
+        raw.write_bytes(signal)
+        encoded = work / (name + '.mp2')
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(rate),
+                        '-ac', str(channels), '-i', str(raw), '-c:a', 'libtwolame',
+                        '-b:a', str(kbps * 1000), '-error_protection', '1',
+                        '-f', 'mp2', str(encoded)], check=True)
+        inputs[name] = encoded
+    source = ROOT / 'scripts/audio-reference/mp3_freeformat_bench.c'
+    driver = ROOT / 'bench/audio/mp2.fern'
+    binaries = {'fern': work / 'fern', 'scalar': work / 'scalar', 'simd': work / 'simd'}
+    commands = {'fern': [args.compiler.resolve(), '-stdlib', ROOT / 'internal/stdlib',
+                         '-target', target, '-o', binaries['fern'], driver]}
+    for name in ['scalar', 'simd']:
+        commands[name] = ['cc', '-O3', '-ffp-contract=off', '-DFERN_MPEG_LAYERS_12',
+                          *(['-DFERN_MP3_BENCH_SIMD'] if name == 'simd' else []),
+                          '-I', work, source, '-o', binaries[name]]
+    for name, command in commands.items():
+        with (work / (name + '-build.log')).open('w') as log:
+            subprocess.run([str(x) for x in command], stdout=log, stderr=subprocess.STDOUT,
+                           check=True, timeout=300)
+    rows, comparisons = [], []
+    for kind, encoded in inputs.items():
+        for mode in ['whole', 'frames']:
+            for trial in range(args.trials):
+                order = list(binaries) if trial % 2 == 0 else list(reversed(binaries))
+                for name in order:
+                    output = work / f'{name}-{kind}-{mode}.pcm'
+                    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+                    result = subprocess.run([str(binaries[name]), str(encoded), mode,
+                                             str(args.rounds), str(output)], capture_output=True,
+                                            text=True, check=True, timeout=300)
+                    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+                    row = {key: int(value) for key, value in
+                           (line.split('=', 1) for line in result.stdout.splitlines())}
+                    row.update(name=name, input=kind, mode=mode, trial=trial,
+                               process_cpu_seconds=after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime)
+                    rows.append(row)
+                    print(json.dumps(row), flush=True)
+            reference = (work / f'scalar-{kind}-{mode}.pcm').read_bytes()
+            for name in binaries:
+                output = work / f'{name}-{kind}-{mode}.pcm'
+                pcm = output.read_bytes()
+                assert len(pcm) == len(reference)
+                error = max(abs(a[0] - b[0]) for a, b in zip(
+                    struct.iter_unpack('<f', reference), struct.iter_unpack('<f', pcm)))
+                assert error < 0.00002, (name, kind, mode, error)
+                if name == 'fern':
+                    assert pcm == reference, (kind, mode)
+                group = [r for r in rows if (r['name'], r['input'], r['mode']) == (name, kind, mode)]
+                assert len({(r['samples'], r['checksum']) for r in group}) == 1
+                comparisons.append({'name': name, 'input': kind, 'mode': mode,
+                                    'pcm_sha256': sha(output), 'max_absolute_error': error,
+                                    'medians': {key: statistics.median(r[key] for r in group)
+                                                for key in group[0] if key not in ['name', 'input', 'mode', 'trial']}})
+    report = {'machine': platform.platform(), 'target': target,
+              'cpu': Path('/proc/cpuinfo').read_text().splitlines()[4],
+              'compiler_sha256': sha(args.compiler), 'stdlib_sha256': tree_hash(ROOT / 'internal/stdlib'),
+              'reference_revision': vectors.REVISION, 'headers': HEADERS,
+              'cc': subprocess.check_output(['cc', '--version'], text=True).splitlines()[0],
+              'ffmpeg': subprocess.check_output(['ffmpeg', '-version'], text=True).splitlines()[0],
+              'inputs': {name: sha(path) for name, path in inputs.items()},
+              'binaries': {name: sha(path) for name, path in binaries.items()},
+              'script_sha256': sha(Path(__file__)), 'driver_sha256': sha(driver),
+              'c_driver_sha256': sha(source), 'rounds': args.rounds, 'trials': args.trials,
+              'wall_scope': 'Decode plus a byte checksum of every float sample, after two warmups.',
+              'cpu_scope': 'Whole process, including warmups and final PCM export.',
+              'rss_scope': 'Process VmHWM after timed decode, before final PCM export.',
+              'rows': rows, 'comparisons': comparisons}
+    (work / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()
