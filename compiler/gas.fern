@@ -1,0 +1,745 @@
+// gas holds the parts of the GAS-text assemblers that do not depend on the
+// ISA: the DWARF call-frame encoder behind the .cfi_* directives, and the
+// helpers x86_native and arm64_native both use.
+
+pub function escape(line: string, i: i32): (i32, i32) {
+  let e = line[i + 1] as i32;
+  if (e == 110) {
+    return (10, 2);
+  }
+  if (e == 116) {
+    return (9, 2);
+  }
+  if (e == 114) {
+    return (13, 2);
+  }
+  if (e >= 48 && e <= 55) {
+    let v = e - 48;
+    let n = 2;
+    while (n < 4 && i + n < line.len()) {
+      let d = line[i + n] as i32;
+      if (d < 48 || d > 55) {
+        break;
+      }
+      v = v * 8 + (d - 48);
+      n += 1;
+    }
+    return (v & 255, n);
+  }
+  return (e, 2);
+}
+
+pub function words_i32(words: u8[], at: i32): i32 {
+  return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
+}
+
+pub function push_arr(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
+  }
+}
+
+pub function data_like(section: i32): boolean {
+  return section == 1 || section == 3 || section == 4;
+}
+
+pub function dw_fields(line: string): string[] {
+  let out: string[] = [];
+  let i = 0;
+  while (i < line.len()) {
+    while (i < line.len() && (line[i] == b' ' || line[i] == b'\t')) {
+      i += 1;
+    }
+    let start = i;
+    while (i < line.len() && line[i] != b' ' && line[i] != b'\t') {
+      i += 1;
+    }
+    if (i > start) {
+      out = out.append(slice_unchecked(line, start, i) + "");
+    }
+  }
+  return out;
+}
+
+pub function label_buckets(): i32 {
+  return 4093;
+}
+
+pub function empty_buckets(): i32[] {
+  let n = label_buckets();
+  let b = __alloc_i32(n);
+  let i = 0;
+  while (i < n) {
+    b = b.with(i, -1);
+    i += 1;
+  }
+  return b;
+}
+
+function cfi_op_nop(): i32 {
+  return 0;
+}
+
+function cfi_op_advance_loc1(): i32 {
+  return 2;
+}
+
+function cfi_op_advance_loc2(): i32 {
+  return 3;
+}
+
+function cfi_op_advance_loc4(): i32 {
+  return 4;
+}
+
+function cfi_op_offset_extended(): i32 {
+  return 5;
+}
+
+function cfi_op_restore_extended(): i32 {
+  return 6;
+}
+
+function cfi_op_undefined(): i32 {
+  return 7;
+}
+
+function cfi_op_same_value(): i32 {
+  return 8;
+}
+
+function cfi_op_register(): i32 {
+  return 9;
+}
+
+function cfi_op_remember_state(): i32 {
+  return 10;
+}
+
+function cfi_op_restore_state(): i32 {
+  return 11;
+}
+
+function cfi_op_def_cfa(): i32 {
+  return 12;
+}
+
+function cfi_op_negate_ra_state(): i32 {
+  return 45;
+}
+
+function cfi_op_def_cfa_register(): i32 {
+  return 13;
+}
+
+function cfi_op_def_cfa_offset(): i32 {
+  return 14;
+}
+
+function cfi_op_advance_loc(): i32 {
+  return 64;
+}
+
+function cfi_op_offset(): i32 {
+  return 128;
+}
+
+function cfi_op_restore(): i32 {
+  return 192;
+}
+
+pub struct CfiProfile {
+  code_align: i32,
+  data_align: i32,
+  ra_column: i32,
+  ptr_enc: i32,
+  ptr_size: i32,
+  fde_align: i32,
+  initial: i32[],
+  reg_names: string[],
+  reg_nums: i32[],
+}
+
+pub struct CfiState {
+  profile: CfiProfile,
+  open: boolean,
+  fde_start: i32[],
+  fde_end: i32[],
+  fde_rule_first: i32[],
+  rule_off: i32[],
+  rule_pos: i32[],
+  rule_len: i32[],
+  rule_bytes: i32[],
+  bad: string[],
+}
+
+pub function cfi_new(p: CfiProfile): CfiState {
+  return CfiState { profile: p, open: false, fde_start: [], fde_end: [], fde_rule_first: [], rule_off: [], rule_pos: [], rule_len: [], rule_bytes: [], bad: [] };
+}
+
+pub function cfi_empty(s: CfiState): boolean {
+  return s.fde_start.len() == 0;
+}
+
+function cfi_trim(s: string): string {
+  let i = 0;
+  let j = s.len();
+  while (i < j && (s[i] == b' ' || s[i] == b'\t')) {
+    i += 1;
+  }
+  while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
+    j -= 1;
+  }
+  return slice_unchecked(s, i, j) + "";
+}
+
+function cfi_split_ops(rest: string): string[] {
+  let out: string[] = [];
+  let tok = "";
+  let i = 0;
+  while (i < rest.len()) {
+    if (rest[i] == b',') {
+      out = out.append(cfi_trim(tok));
+      tok = "";
+    } else {
+      tok += slice_unchecked(rest, i, i + 1);
+    }
+    i += 1;
+  }
+  if (cfi_trim(tok).len() > 0 || out.len() > 0) {
+    out = out.append(cfi_trim(tok));
+  }
+  let k = 0;
+  while (k < out.len()) {
+    if (out[k].len() > 0 && out[k][0] == b'%') {
+      out = out.with(k, slice_unchecked(out[k], 1, out[k].len()) + "");
+    }
+    k += 1;
+  }
+  return out;
+}
+
+function cfi_is_int(s: string): boolean {
+  let i = 0;
+  if (s.len() > 0 && (s[0] == b'-' || s[0] == b'+')) {
+    i = 1;
+  }
+  if (i >= s.len()) {
+    return false;
+  }
+  while (i < s.len()) {
+    if (s[i] < b'0' || s[i] > b'9') {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function cfi_atoi(s: string): i32 {
+  let neg = false;
+  let i = 0;
+  if (s.len() > 0 && s[0] == b'-') {
+    neg = true;
+    i = 1;
+  } else if (s.len() > 0 && s[0] == b'+') {
+    i = 1;
+  }
+  let v = 0;
+  while (i < s.len()) {
+    v = v * 10 + (s[i] as i32 - 48);
+    i += 1;
+  }
+  if (neg) {
+    return -v;
+  }
+  return v;
+}
+
+function cfi_reg_num(p: CfiProfile, tok: string): i32 {
+  if (cfi_is_int(tok)) {
+    let n = cfi_atoi(tok);
+    if (n < 0) {
+      return -1;
+    }
+    return n;
+  }
+  let i = 0;
+  while (i < p.reg_names.len()) {
+    if (p.reg_names[i] == tok) {
+      return p.reg_nums[i];
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+pub function cfi_uleb(b: i32[], v: i32): i32[] {
+  let x = v;
+  while (true) {
+    let c = x & 127;
+    x = x >> 7;
+    if (x != 0) {
+      b = b.append(c | 128);
+    } else {
+      return b.append(c);
+    }
+  }
+  return b;
+}
+
+pub function cfi_sleb(b: i32[], v: i32): i32[] {
+  let x = v;
+  while (true) {
+    let c = x & 127;
+    x = x >> 7;
+    if (x == 0 && (c & 64) == 0 || x == -1 && (c & 64) != 0) {
+      return b.append(c);
+    }
+    b = b.append(c | 128);
+  }
+  return b;
+}
+
+function cfi_le32(own b: i32[], v: i32): i32[] {
+  b = b.append(v & 255);
+  b = b.append(v >> 8 & 255);
+  b = b.append(v >> 16 & 255);
+  return b.append(v >> 24 & 255);
+}
+
+function cfi_le32_i64(own b: i32[], v: i64): i32[] {
+  return cfi_le32(b, (v & 4294967295 as i64) as i32);
+}
+
+function cfi_le64_i64(own b: i32[], v: i64): i32[] {
+  b = cfi_le32_i64(b, v);
+  return cfi_le32_i64(b, v >> 32 as i64);
+}
+
+function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
+  let pos = s.rule_bytes.len();
+  let i = 0;
+  while (i < body.len()) {
+    s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) };
+    i += 1;
+  }
+  return CfiState {
+    ...s,
+    rule_off: s.rule_off.append(off),
+    rule_pos: s.rule_pos.append(pos),
+    rule_len: s.rule_len.append(body.len()),
+  };
+}
+
+function cfi_bad(own s: CfiState, what: string): CfiState {
+  return CfiState { ...s, bad: s.bad.append(what) };
+}
+
+pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
+  let t = cfi_trim(line);
+  let sp = 0;
+  while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') {
+    sp += 1;
+  }
+  let d = slice_unchecked(t, 0, sp) + "";
+  let rest = "";
+  if (sp < t.len()) {
+    rest = cfi_trim(slice_unchecked(t, sp, t.len()) + "");
+  }
+  let ops = cfi_split_ops(rest);
+
+  if (d == ".cfi_sections") {
+    return s;
+  }
+  if (d == ".cfi_startproc" || d == ".cfi_endproc") {
+    return cfi_proc_directive(s, d, ops, off);
+  }
+  if (!s.open) {
+    return cfi_bad(s, d + " outside .cfi_startproc/.cfi_endproc");
+  }
+  if (d == ".cfi_def_cfa" || d == ".cfi_def_cfa_register" || d == ".cfi_def_cfa_offset") {
+    return cfi_cfa_directive(s, d, ops, rest, off);
+  }
+  if (d == ".cfi_remember_state") {
+    return cfi_add_rule(s, off, [cfi_op_remember_state()]);
+  }
+  if (d == ".cfi_restore_state") {
+    return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  if (d == ".cfi_negate_ra_state") {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
+  }
+  return cfi_reg_directive(s, d, ops, rest, off);
+}
+
+pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): CfiState {
+  if (kind == 1) {
+    return cfi_proc_directive(s, ".cfi_startproc", [], off);
+  }
+  if (kind == 2) {
+    return cfi_proc_directive(s, ".cfi_endproc", [], off);
+  }
+  if (!s.open) {
+    return cfi_bad(s, "a cfi record outside .cfi_startproc/.cfi_endproc");
+  }
+  if (kind == 3) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], n));
+  }
+  if (kind == 4) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
+  }
+  if (kind == 5) {
+    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), n));
+  }
+  if (kind == 6) {
+    let reg = cfi_reg_label(s.profile, r);
+    return cfi_offset_rule(s, reg, r, n, off);
+  }
+  if (kind == 7) {
+    return cfi_add_rule(s, off, [cfi_op_remember_state()]);
+  }
+  if (kind == 8) {
+    return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  if (kind == 9) {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
+  }
+  return cfi_bad(s, "a cfi record of an unknown kind");
+}
+
+function cfi_reg_label(p: CfiProfile, r: i32): string {
+  let i = 0;
+  while (i < p.reg_nums.len()) {
+    if (p.reg_nums[i] == r) {
+      return p.reg_names[i];
+    }
+    i += 1;
+  }
+  return cfi_uleb_text(r);
+}
+
+function cfi_uleb_text(v: i32): string {
+  if (v >= 10) {
+    return cfi_uleb_text(v / 10) + cfi_uleb_text(v % 10);
+  }
+  return slice_unchecked("0123456789", v, v + 1) + "";
+}
+
+function cfi_offset_rule(own s: CfiState, reg: string, r: i32, n: i32, off: i32): CfiState {
+  if (n % s.profile.data_align != 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": offset not a multiple of the data alignment");
+  }
+  let f = n / s.profile.data_align;
+  if (f < 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": positive offset is not supported");
+  }
+  if (r < 64) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f));
+  }
+  return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
+}
+
+function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
+  if (d == ".cfi_startproc") {
+    if (s.open) {
+      return cfi_bad(s, ".cfi_startproc inside an open .cfi_startproc");
+    }
+    if (ops.len() > 0 && ops[0].len() > 0) {
+      return cfi_bad(s, ".cfi_startproc " + ops[0] + " is not supported");
+    }
+    return CfiState {
+      ...s,
+      fde_start: s.fde_start.append(off),
+      fde_end: s.fde_end.append(off),
+      fde_rule_first: s.fde_rule_first.append(s.rule_off.len()),
+      open: true,
+    };
+  }
+  if (!s.open) {
+    return cfi_bad(s, ".cfi_endproc without .cfi_startproc");
+  }
+  return CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off), open: false };
+}
+
+function cfi_cfa_directive(own s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
+  if (d == ".cfi_def_cfa_offset") {
+    if (ops.len() < 1 || !cfi_is_int(ops[0])) {
+      return cfi_bad(s, d + " " + rest);
+    }
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], cfi_atoi(ops[0])));
+  }
+  if (ops.len() < 1) {
+    return cfi_bad(s, d + ": missing register operand");
+  }
+  let r = cfi_reg_num(s.profile, ops[0]);
+  if (r < 0) {
+    return cfi_bad(s, d + " " + rest);
+  }
+  if (d == ".cfi_def_cfa_register") {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
+  }
+  if (ops.len() < 2 || !cfi_is_int(ops[1])) {
+    return cfi_bad(s, d + " " + rest);
+  }
+  return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), cfi_atoi(ops[1])));
+}
+
+function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
+  if (ops.len() < 1) {
+    return cfi_bad(s, d + ": missing register operand");
+  }
+  let r = cfi_reg_num(s.profile, ops[0]);
+  if (r < 0) {
+    return cfi_bad(s, d + " " + rest);
+  }
+  if (d == ".cfi_offset") {
+    if (ops.len() < 2 || !cfi_is_int(ops[1])) {
+      return cfi_bad(s, d + " " + rest);
+    }
+    return cfi_offset_rule(s, ops[0], r, cfi_atoi(ops[1]), off);
+  }
+  if (d == ".cfi_register") {
+    if (ops.len() < 2) {
+      return cfi_bad(s, d + ": missing operand");
+    }
+    let rb = cfi_reg_num(s.profile, ops[1]);
+    if (rb < 0) {
+      return cfi_bad(s, d + " " + rest);
+    }
+    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_register()], r), rb));
+  }
+  if (d == ".cfi_restore") {
+    if (r < 64) {
+      return cfi_add_rule(s, off, [cfi_op_restore() | r]);
+    }
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_restore_extended()], r));
+  }
+  if (d == ".cfi_undefined") {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_undefined()], r));
+  }
+  if (d == ".cfi_same_value") {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_same_value()], r));
+  }
+  return cfi_bad(s, "unsupported CFI directive " + d);
+}
+
+function cfi_advance(own b: i32[], p: CfiProfile, delta: i32): i32[] {
+  let d = delta / p.code_align;
+  if (d == 0) {
+    return b;
+  }
+  if (d < 64) {
+    return b.append(cfi_op_advance_loc() | d);
+  }
+  if (d < 256) {
+    b = b.append(cfi_op_advance_loc1());
+    return b.append(d);
+  }
+  if (d < 65536) {
+    b = b.append(cfi_op_advance_loc2());
+    b = b.append(d & 255);
+    return b.append(d >> 8 & 255);
+  }
+  b = b.append(cfi_op_advance_loc4());
+  return cfi_le32(b, d);
+}
+
+function cfi_pad4(own b: i32[]): i32[] {
+  while (b.len() % 4 != 0) {
+    b = b.append(cfi_op_nop());
+  }
+  return b;
+}
+
+function cfi_pad_entry(own b: i32[], at: i32, align: i32): i32[] {
+  while ((at + 4 + b.len()) % align != 0) {
+    b = b.append(cfi_op_nop());
+  }
+  return b;
+}
+
+function cfi_cie(p: CfiProfile): i32[] {
+  let b: i32[] = [];
+  b = cfi_le32(b, 0);
+  b = b.append(1);
+  b = b.append(122);
+  b = b.append(82);
+  b = b.append(0);
+  b = cfi_uleb(b, p.code_align);
+  b = cfi_sleb(b, p.data_align);
+  b = cfi_uleb(b, p.ra_column);
+  b = cfi_uleb(b, 1);
+  b = b.append(p.ptr_enc);
+  let i = 0;
+  while (i < p.initial.len()) {
+    b = b.append(p.initial[i]);
+    i += 1;
+  }
+  b = cfi_pad4(b);
+  return cfi_cat(cfi_le32([], b.len()), b);
+}
+
+function cfi_cat(own a: i32[], b: i32[]): i32[] {
+  let i = 0;
+  while (i < b.len()) {
+    a = a.append(b[i]);
+    i += 1;
+  }
+  return a;
+}
+
+function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
+  let b: i32[] = [];
+  b = cfi_le32(b, at + 4);
+  let field_va = eh_vaddr + (at + 8) as i64;
+  let loc = text_vaddr + s.fde_start[k] as i64 - field_va;
+  if (p.ptr_size == 8) {
+    b = cfi_le64_i64(b, loc);
+    b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
+  } else {
+    b = cfi_le32_i64(b, loc);
+    b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
+  }
+  b = cfi_uleb(b, 0);
+  b = cfi_fde_rules(b, s, p, k);
+  b = cfi_pad_entry(b, at, p.fde_align);
+  return b;
+}
+
+function cfi_fde_rules(own b: i32[], s: CfiState, p: CfiProfile, k: i32): i32[] {
+  let pc = s.fde_start[k];
+  let r = s.fde_rule_first[k];
+  let end = s.rule_off.len();
+  if (k + 1 < s.fde_rule_first.len()) {
+    end = s.fde_rule_first[k + 1];
+  }
+  while (r < end) {
+    b = cfi_advance(b, p, s.rule_off[r] - pc);
+    pc = s.rule_off[r];
+    let q = 0;
+    while (q < s.rule_len[r]) {
+      b = b.append(s.rule_bytes[s.rule_pos[r] + q]);
+      q += 1;
+    }
+    r += 1;
+  }
+  return b;
+}
+
+pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[] {
+  if (cfi_empty(s) || s.open) {
+    return [];
+  }
+  let cie: i32[] = [];
+  cie = cfi_le32(cie, -1);
+  cie = cie.append(1);
+  cie = cie.append(0);
+  cie = cfi_uleb(cie, p.code_align);
+  cie = cfi_sleb(cie, p.data_align);
+  cie = cfi_uleb(cie, p.ra_column);
+  cie = cfi_cat(cie, p.initial);
+  cie = cfi_pad_entry(cie, 0, 8);
+  let out = cfi_cat(cfi_le32([], cie.len()), cie);
+  let k = 0;
+  while (k < s.fde_start.len()) {
+    let b = cfi_le32([], 0);
+    b = cfi_le64_i64(b, text_vaddr + s.fde_start[k] as i64);
+    b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
+    b = cfi_fde_rules(b, s, p, k);
+    b = cfi_pad_entry(b, out.len(), 8);
+    out = cfi_cat(cfi_le32(out, b.len()), b);
+    k += 1;
+  }
+  return out;
+}
+
+pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64): i32[] {
+  if (cfi_empty(s) || s.open) {
+    return [];
+  }
+  let out = cfi_cie(p);
+  let at = out.len();
+  let n = s.fde_start.len();
+  let payloads: i32[] = [];
+  let lens: i32[] = [];
+  let k = 0;
+  while (k < n) {
+    let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
+      pl = cfi_cat(pl, [0, 0, 0, 0]);
+    }
+    payloads = cfi_cat(payloads, pl);
+    lens = lens.append(pl.len());
+    at = at + 4 + pl.len();
+    k += 1;
+  }
+  let pos = 0;
+  k = 0;
+  while (k < n) {
+    out = cfi_le32(out, lens[k]);
+    let q = 0;
+    while (q < lens[k]) {
+      out = out.append(payloads[pos + q]);
+      q += 1;
+    }
+    pos += lens[k];
+    k += 1;
+  }
+  out = cfi_cat(out, [0, 0, 0, 0]);
+  return out;
+}
+
+pub function cfi_eh_frame_hdr_len(s: CfiState): i32 {
+  if (cfi_empty(s)) {
+    return 0;
+  }
+  return 12 + 8 * s.fde_start.len();
+}
+
+pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
+  if (cfi_empty(s) || s.open) {
+    return [];
+  }
+  let cie_len = cfi_cie(p).len();
+  let at = cie_len;
+  let n = s.fde_start.len();
+  let fns: i64[] = [];
+  let fdes: i64[] = [];
+  let k = 0;
+  while (k < n) {
+    let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    let plen = pl.len();
+    if (k == n - 1 && (at + 4 + plen) % 8 != 0) {
+      plen += 4;
+    }
+    fns = fns.append(text_vaddr + s.fde_start[k] as i64);
+    fdes = fdes.append(eh_vaddr + at as i64);
+    at = at + 4 + plen;
+    k += 1;
+  }
+  let i = 1;
+  while (i < n) {
+    let j = i;
+    while (j > 0 && fns[j] < fns[j - 1]) {
+      let tf = fns[j];
+      fns = fns.with(j, fns[j - 1]);
+      fns = fns.with(j - 1, tf);
+      let td = fdes[j];
+      fdes = fdes.with(j, fdes[j - 1]);
+      fdes = fdes.with(j - 1, td);
+      j -= 1;
+    }
+    i += 1;
+  }
+  let b: i32[] = [1, 27, 3, 59];
+  b = cfi_le32_i64(b, eh_vaddr - (hdr_vaddr + 4 as i64));
+  b = cfi_le32(b, n);
+  k = 0;
+  while (k < n) {
+    b = cfi_le32_i64(b, fns[k] - hdr_vaddr);
+    b = cfi_le32_i64(b, fdes[k] - hdr_vaddr);
+    k += 1;
+  }
+  return b;
+}

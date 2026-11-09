@@ -52,6 +52,7 @@ function main(): i32 {
 }
 `
 	edir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, edir, "arm64_native.fern")
 	if err := os.WriteFile(filepath.Join(edir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+driverMain), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}

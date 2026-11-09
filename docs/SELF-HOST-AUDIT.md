@@ -15,10 +15,9 @@ concrete remediation. Check items off as they land.
 > it does **not** explain most of the duplication below — receiver methods,
 > struct-update spread, sibling imports, and generics (`astwalk.fern:19` takes
 > `[T]`) are all already used in this tree, so a shared sibling `util.fern` /
-> `modload.fern` is fully within the subset. A handful of modules
-> (`watbin`, `x86_native`, `arm64_native`, `elf`, `lexer`) import nothing **by
-> design**; their duplicate helpers are deliberate and are called out where they
-> appear.
+> `modload.fern` is fully within the subset. The modules that import nothing
+> are listed in `self_host_import_free_drift_test.go`, which also checks that
+> their copies of `util` functions stay equal.
 
 ---
 
@@ -56,7 +55,7 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
 
 | Area | Files | Grade | One-line take |
 |---|---|---|---|
-| Machine-code encoders / containers | `x86_native` (pt.1), `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. Import-free by design. |
+| Machine-code encoders / containers | `x86_native` (pt.1), `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. |
 | Optimiser / SSA | `ssa` | B− | Strong algorithms + comments; undermined by an overloaded `imm` field and 2 giant fns. |
 | Literate / printer / constfold | `literate`, `printer`, `constfold` | B | Clean and tested; only duplication + hand-rolled option types. |
 | Frontend | `lexer`, `parser` | B− | Capable; no AST visitor in the rewrite passes, positionless `StmtUnknown`, types-as-strings. |
@@ -172,8 +171,10 @@ findings. Ranked by leverage.
   - **Per-driver `main`** — one per `*_run.fern`. See SH-056.
   - **Assembler modules.** `watbin`, `x86_native` and `arm64_native` import
     `util`, and the tests load them through `modload`. Their copies of the
-    `parse_f64_bits` family and of `index_of_str` are deleted. `elf.fern` imports
-    nothing and shares no function with `util`.
+    `parse_f64_bits` family and of `index_of_str` are deleted. `x86_native` and
+    `arm64_native` also import `gas`, which holds the DWARF call-frame encoder
+    and the GAS-text helpers they had in two copies. `elf.fern` imports nothing
+    and shares no function with `util`.
 
   The last candidate was `split_commas` (`irlower`, `printer`).
   The 2026-10 tree no longer contains `irlower.fern`.
