@@ -105,14 +105,14 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
 
 function admitted(s: Server, h: packet.Header, path: u8[], from: net.SocketAddr): Result[conn.Conn, string] {
   if (h.token.len() == 0) {
-    return conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now());
+    return conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now(), clock.now());
   }
   let Some(odcid) = conn.validated(s.retry_key, h, path, clock.now()) else {
     let _ = net.send_to(s.sock, conn.invalid_token(h), from);
     return Err("token refused");
   };
   print("fern h3 server: token accepted");
-  return conn.accept_validated(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, odcid, now());
+  return conn.accept_validated(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, odcid, now(), clock.now());
 }
 
 function received(s: Server, d: u8[], from: net.SocketAddr): Server {

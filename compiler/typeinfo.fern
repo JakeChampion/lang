@@ -145,6 +145,44 @@ pub function t_void(): Type {
   return TypeVoid { tag: 0 };
 }
 
+// Whether p holds for a type directly inside t: the element of an array, an
+// element of a tuple, an argument of a struct or a union, the key or the value
+// of a map, or a parameter or the result of a function.
+pub function any_child(t: Type, p: (Type) => boolean): boolean {
+  match (t) {
+    TypeArray(a) => {
+      return p(a.elem);
+    },
+    TypeTuple(tt) => {
+      return any_of(tt.elements, p);
+    },
+    TypeStruct(st) => {
+      return any_of(st.args, p);
+    },
+    TypeUnion(u) => {
+      return any_of(u.args, p);
+    },
+    TypeMap(m) => {
+      return p(m.key) || p(m.value);
+    },
+    TypeFunc(f) => {
+      return p(f.ret_type) || any_of(f.param_types, p);
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function any_of(ts: Type[], p: (Type) => boolean): boolean {
+  for t in ts {
+    if (p(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
 }

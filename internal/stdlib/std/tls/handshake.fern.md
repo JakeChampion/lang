@@ -167,6 +167,7 @@ import "std/tls/message";
 import "std/tls/record";
 import "std/tls/tls12";
 import "std/utf8";
+import "std/option";
 import "core/error";
 import "core/cmp";
 ```
@@ -415,7 +416,23 @@ pub struct TrafficSecret { level: i32, write: boolean, secret: u8[] }
 
 pub struct Offer { identities: message.PskIdentity[], suite: keyschedule.CipherSuite, server_name: string }
 
-pub struct Resumed { index: i32, psk: u8[] }
+// early says the ticket allows early data, and alpn is the protocol of the
+// session it resumes.
+pub struct Resumed { index: i32, psk: u8[], early: boolean, alpn: string }
+
+// EARLY_LEVEL is the level of the secret that protects a client's early
+// data: a write secret for the client, a read secret for the server.
+pub const EARLY_LEVEL: i32 = 3;
+
+// The early data of a client: none offered, offered and not yet answered,
+// accepted, or rejected.
+pub const EARLY_NONE: i32 = 0;
+
+pub const EARLY_OFFERED: i32 = 1;
+
+pub const EARLY_ACCEPTED: i32 = 2;
+
+pub const EARLY_REJECTED: i32 = 3;
 
 pub struct Resumption { identity: u8[], psk: u8[], suite: keyschedule.CipherSuite, obfuscated_age: u32 }
 
@@ -972,7 +989,7 @@ function __has_string(v: string[], x: string): boolean {
 
 ```fern
 <<28 pub struct ClientConfig>>=
-pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], shares: i32, schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[], tls12: boolean }
+pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], shares: i32, schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[], tls12: boolean, early_data: boolean }
 ```
 
 ### `29 pub function client_config(server_name: string): ClientConfig`
@@ -980,7 +997,7 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 ```fern
 <<29 pub function client_config(server_name: string): ClientConfig>>=
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false, early_data: false };
 }
 ```
 
@@ -1051,6 +1068,7 @@ pub struct Client {
   server_random: u8[],
   key_exchange: tls12.KeyExchange,
   master12: u8[],
+  early: i32,
 }
 
 pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[] }
@@ -1197,7 +1215,7 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
     more = more.append(shares[i]);
     i += 1;
   }
-  let step = __client_from_hello(__offering(hello, config.resume)?, shares[0], spare, config)?;
+  let step = __client_from_hello(__offering(__early_offered(hello, config), config.resume)?, shares[0], spare, config)?;
   return Ok(ClientStep { ...step, client: Client { ...step.client, more_shares: more } });
 }
 
@@ -1223,6 +1241,16 @@ function __offering(hello: message.ClientHello, resume: Option[Resumption]): Res
     }
   }
   return Ok(hello);
+}
+
+// __early_offered adds early_data to a QUIC ClientHello that resumes a
+// session, when the config asks for it. Over TCP this handshake sends no
+// early data, since it does not write EndOfEarlyData.
+function __early_offered(hello: message.ClientHello, config: ClientConfig): message.ClientHello {
+  if (!config.early_data || !config.quic || config.resume.is_none()) {
+    return hello;
+  }
+  return message.ClientHello { ...hello, extensions: hello.extensions.append(message.ext_early_data()) };
 }
 
 function __bound(hello: message.ClientHello, r: Resumption, before: [u8]): message.ClientHello {
@@ -1255,7 +1283,18 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
   let bytes = message.encode(message.ClientHelloMsg(hello));
   let w = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
   let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [] };
+  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE };
+  match (config.resume) {
+    Some(r) => {
+      if (message.find(hello.extensions, message.EXT_EARLY_DATA).is_some()) {
+        let h = r.suite.hash();
+        let secret = keyschedule.early_secret(h, r.psk).client_early_traffic(h.digest(bytes));
+        let ev = Secret(TrafficSecret { level: EARLY_LEVEL, write: true, secret: secret });
+        return Ok(__client_step(Client { ...c, early: EARLY_OFFERED }, Out { ...__out(), output: w.bytes, events: [ev] }));
+      }
+    },
+    None => {}
+  }
   return Ok(__client_step(c, Out { ...__out(), output: w.bytes }));
 }
 ```
@@ -1363,7 +1402,7 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   }
   let suite = __check_server_hello(c, h)?;
   let share = __retry_share(c, h)?;
-  let hello = message.ClientHello { ...c.hello, extensions: __without(__retry_extensions(c.hello.extensions, h.extensions, share), message.EXT_PRE_SHARED_KEY) };
+  let hello = message.ClientHello { ...c.hello, extensions: __without(__without(__retry_extensions(c.hello.extensions, h.extensions, share), message.EXT_PRE_SHARED_KEY), message.EXT_EARLY_DATA) };
   let digest = suite.hash().digest(c.conn.transcript);
   let before = __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), raw.bytes);
   let resume: Option[Resumption] = None;
@@ -1380,7 +1419,7 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   let transcript = __cat(before, ch2);
   __at_key_change(c.conn)?;
   let w = __plain_out(Conn { ...c.conn, transcript: transcript }, 0x0303, ch2);
-  let next = Client { ...c, conn: w.conn, hello: hello, share: share, more_shares: [], spare: [], retry_suite: h.cipher_suite, resume: resume };
+  let next = Client { ...c, conn: w.conn, hello: hello, share: share, more_shares: [], spare: [], retry_suite: h.cipher_suite, resume: resume, early: __early_answered(c.early, false) };
   return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
@@ -1570,10 +1609,25 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   if (c.conn.quic) {
     __quic_terms(exts, alpn)?;
   }
-  if (c.resumed) {
-    return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_FINISHED });
+  let accepted = message.find(exts, message.EXT_EARLY_DATA).is_some();
+  if (accepted && (c.early != EARLY_OFFERED || !c.resumed)) {
+    return Err(Illegal("early_data"));
   }
-  return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST });
+  let early = __early_answered(c.early, accepted);
+  if (c.resumed) {
+    return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_FINISHED, early: early });
+  }
+  return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST, early: early });
+}
+
+function __early_answered(early: i32, accepted: boolean): i32 {
+  if (early != EARLY_OFFERED) {
+    return early;
+  }
+  if (accepted) {
+    return EARLY_ACCEPTED;
+  }
+  return EARLY_REJECTED;
 }
 
 function __quic_terms(exts: message.Extension[], alpn: string): Result[boolean, HandshakeError] {
@@ -2241,6 +2295,12 @@ pub function (c: Client) alpn(): string {
   return c.alpn;
 }
 
+// early_state is one of EARLY_NONE, EARLY_OFFERED, EARLY_ACCEPTED and
+// EARLY_REJECTED.
+pub function (c: Client) early_state(): i32 {
+  return c.early;
+}
+
 pub function (c: Client) resumed(): boolean {
   return c.resumed;
 }
@@ -2307,7 +2367,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [] });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE });
 }
 ```
 
@@ -2370,7 +2430,7 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
 
 ```fern
 <<46 pub struct ServerConfig>>=
-pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[] }
+pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[], early_data: boolean }
 ```
 
 ### `47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig`
@@ -2378,7 +2438,7 @@ pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.Cip
 ```fern
 <<47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig>>=
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [] };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [], early_data: false };
 }
 ```
 
@@ -2446,6 +2506,7 @@ pub struct Server {
   finished_hash: u8[],
   client_chain: u8[][],
   peer_extensions: message.Extension[],
+  early: boolean,
 }
 
 pub struct ServerStep { server: Server, output: u8[], data: u8[], events: Event[] }
@@ -2473,7 +2534,7 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
     return Err(Entropy(entropy.len(), server_entropy(config)));
   }
   let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  return Ok(Server { conn: __conn_for(config.quic), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [], peer_extensions: [] });
+  return Ok(Server { conn: __conn_for(config.quic), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [], peer_extensions: [], early: false });
 }
 ```
 
@@ -2688,6 +2749,9 @@ function __encrypted_extensions_msg(s: Server, alpn: string): u8[] {
   if (alpn.len() > 0) {
     ee = ee.append(message.ext_alpn([alpn]));
   }
+  if (s.early) {
+    ee = ee.append(message.ext_early_data());
+  }
   for extra in s.config.extensions {
     ee = ee.append(extra);
   }
@@ -2749,7 +2813,7 @@ function __client_hello(first: Server, raw: message.Raw, out: Out): Result[Serve
     },
     None => {}
   }
-  return __serve_hello(s, raw, h, n, [], 0, out);
+  return __serve_hello(s, raw, h, n, [], 0, false, out);
 }
 
 function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPsks], HandshakeError] {
@@ -2778,7 +2842,7 @@ function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPs
   return Ok(None);
 }
 
-function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, psk: [u8], index: i32, out: Out): Result[ServerRun, HandshakeError] {
+function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, psk: [u8], index: i32, early: boolean, out: Out): Result[ServerRun, HandshakeError] {
   let suite = n.suite;
   let share = __answer_share(s, n.choice)?;
   let exts = [message.ext_key_share(message.KeyShareEntry { group: n.choice.group.code(), key: share.public }), message.ext_selected_version(message.TLS13)];
@@ -2800,8 +2864,12 @@ function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: N
   let client_hs = hs.client_traffic(th);
   let server_hs = hs.server_traffic(th);
   conn = __with_write(__with_read(conn, client_hs, 1), server_hs, 1);
-  let next = Server { ...s, conn: conn, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, server_name: n.name, alpn: n.alpn, resumed: psk.len() > 0 };
+  let next = Server { ...s, conn: conn, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, server_name: n.name, alpn: n.alpn, resumed: psk.len() > 0, early: early };
   let sent = Out { ...out, output: output };
+  if (early) {
+    let secret = keyschedule.early_secret(suite.hash(), psk).client_early_traffic(suite.hash().digest(raw.bytes));
+    sent = Out { ...sent, events: sent.events.append(Secret(TrafficSecret { level: EARLY_LEVEL, write: false, secret: secret })) };
+  }
   if (psk.len() > 0) {
     return __send_finished(next, [], __encrypted_extensions_msg(next, n.alpn), sent);
   }
@@ -3095,11 +3163,12 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
   match (choice) {
     Some(c) => {
       __check_binder(s, raw, h, n.suite, c)?;
-      let r = __serve_hello(server, raw, h, n, c.psk, c.index, __out())?;
+      let early = s.config.early_data && s.conn.quic && s.retry_group == 0 && c.index == 0 && c.early && c.alpn == n.alpn && message.find(h.extensions, message.EXT_EARLY_DATA).is_some();
+      let r = __serve_hello(server, raw, h, n, c.psk, c.index, early, __out())?;
       return __server_run(r.server, [], r.out);
     },
     None => {
-      let r = __serve_hello(server, raw, h, n, [], 0, __out())?;
+      let r = __serve_hello(server, raw, h, n, [], 0, false, __out())?;
       return __server_run(r.server, [], r.out);
     }
   }
@@ -3126,6 +3195,11 @@ pub function (s: Server) ticket(t: message.NewSessionTicket): Result[ServerStep,
   }
   let w = __write(s.conn, record.Handshake, message.encode(message.NewSessionTicketMsg(t)))?;
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
+}
+
+// early_accepted says the server took the client's early data.
+pub function (s: Server) early_accepted(): boolean {
+  return s.early;
 }
 
 pub function (s: Server) resumed(): boolean {
