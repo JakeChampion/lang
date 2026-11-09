@@ -1,0 +1,35 @@
+// A continue before the own parameter has a new value takes it moved to the
+// next round, which consumes it again. The checker refuses the consume, also
+// when the end of the body gives it a new value.
+
+struct State { bytes: u8[] }
+
+enum Failure { Full }
+
+function (own state: State) step(): Result[State, Failure] {
+  return Ok(state);
+}
+
+function work(own state: State, n: i32): i32 {
+  let i = 0;
+  while (i < n) {
+    let r = state.step();
+    i += 1;
+    if (i == 2) {
+      continue;
+    }
+    match (r) {
+      Ok(next) => {
+        state = next;
+      },
+      Err(_) => {
+        return 0;
+      }
+    }
+  }
+  return state.bytes.len();
+}
+
+function main(): i32 {
+  return work(State { bytes: [] }, 3);
+}

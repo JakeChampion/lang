@@ -1,0 +1,1 @@
+is consumed inside a loop; a later iteration would use it after move

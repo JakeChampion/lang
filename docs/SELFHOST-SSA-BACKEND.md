@@ -278,7 +278,13 @@ have to build the box the callee no longer builds, and where the callee built
 it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
 that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
 995 allocations to 1.1 million, every write copying the arrays on its path,
-and five times the instructions.
+and five times the instructions. A callee that builds every value it returns
+is the exception (`sempair.always_built`). It takes no parameter of the
+result's type, and no value it returns is made of constants only. Its box is
+never free. A caller that keeps the value whole builds one box from the
+words, and the callee builds no box. The other callers get the words. One
+`Some(now.add(d))` in `std/fetch` kept `Duration.add` boxed for every caller,
+the reactor's wait among them.
 
 The same rule holds one level down. A function returns a payload in two words
 only while every caller takes the payload apart as well

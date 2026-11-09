@@ -6,7 +6,7 @@ This module reads a flattened device tree (FDT). Firmware, a boot loader or a VM
 
 `parse` reads the header and walks the structure block once. It gives a `Tree` with a flat list of nodes in the order of the blob, so the root is node 0. Each node has its name, the index of its parent and its properties. Each property gives the range of the blob that holds its value.
 
-A node finds its devices by `compatible` with `find_compatible`, or by name with `find_name`. A name matches with or without its unit address, so `memory` matches `memory@40000000`. `property_string`, `property_strings` and `property_u32` read a value. `reg` reads one address and size pair of a `reg` property, with the `#address-cells` and `#size-cells` of the parent.
+A node finds its devices by `compatible` with `find_compatible`, or by name with `find_name`. A name matches with or without its unit address, so `memory` matches `memory@40000000`. `property_string`, `property_strings`, `property_u32` and `property_cells` read a value. `property_cells` reads a value of one or two big-endian words. `reg` reads one address and size pair of a `reg` property, with the `#address-cells` and `#size-cells` of the parent.
 
 ## Contracts
 
@@ -417,6 +417,18 @@ pub function (t: Tree) property_u32(node: i32, name: string): Option[u32] {
     return None;
   };
   return Some(v);
+}
+
+// A value of one or two cells, such as `linux,initrd-start` in `/chosen`,
+// which a loader writes with the `#address-cells` of the root.
+pub function (t: Tree) property_cells(node: i32, name: string): Option[u64] {
+  let Some(p) = t.property(node, name) else {
+    return None;
+  };
+  if (p.len != 4 && p.len != 8) {
+    return None;
+  }
+  return t.cells(p.start, p.len / 4);
 }
 
 // The pair at `index` of the `reg` property of `node`.

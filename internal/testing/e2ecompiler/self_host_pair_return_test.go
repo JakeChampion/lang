@@ -242,7 +242,7 @@ struct Box2 { n: i32, s: string }
   return (s, n * 3);
 }
 
-// Kept whole by a caller, so it stays boxed.
+// Kept whole by a caller, which builds it again from the returned words.
 @noinline function kept_pair(n: i32, s: string): (i32, string) {
   return (n, s);
 }

@@ -1,0 +1,233 @@
+import "core/cmp";
+import "core/error";
+import "std/cpio";
+import "std/option";
+import "std/test";
+import "std/utf8";
+
+function hex8(v: i64): string {
+  let s = (v & 0xffffffff).to_string_radix(16);
+  while (s.len() < 8) {
+    s = "0" + s;
+  }
+  return s;
+}
+
+function bytes_of(s: string): u8[] {
+  let out: u8[] = [];
+  for b in s.as_bytes() {
+    out = out.append(b);
+  }
+  return out;
+}
+
+function pad4(own b: u8[]): u8[] {
+  while (b.len() % 4 != 0) {
+    b = b.append(0 as u8);
+  }
+  return b;
+}
+
+// One newc entry with the inode 7, the uid 1000, the gid 100, two links and
+// the mtime 0x5f5e100. `check` is the checksum field.
+function raw_entry(magic: string, name: string, mode: i64, data: u8[], check: i64): u8[] {
+  let header = magic + hex8(7) + hex8(mode) + hex8(1000) + hex8(100) + hex8(2) + hex8(0x5f5e100) + hex8(data.len() as i64);
+  header += hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(name.len() as i64 + 1) + hex8(check);
+  let out = bytes_of(header + name);
+  out = pad4(out.append(0 as u8));
+  for b in data {
+    out = out.append(b);
+  }
+  return pad4(out);
+}
+
+function entry(name: string, mode: i64, data: string): u8[] {
+  return raw_entry("070701", name, mode, bytes_of(data), 0);
+}
+
+function trailer(): u8[] {
+  return entry("TRAILER!!!", 0, "");
+}
+
+function join(parts: u8[][]): u8[] {
+  let out: u8[] = [];
+  for p in parts {
+    for b in p {
+      out = out.append(b);
+    }
+  }
+  return out;
+}
+
+// A directory, a file in it, a symbolic link to the file, and a file at the
+// root that a tool wrote with a leading "./".
+function sample(): u8[] {
+  return join([entry("etc", 0x41ed, ""), entry("etc/motd", 0x81a4, "hello from fern\n"), entry("motd", 0xa1ff, "etc/motd"), entry("./init", 0x81ed, "#!"), trailer()]);
+}
+
+function text(b: u8[]): string {
+  let Ok(s) = utf8.from_bytes(b) else {
+    return "<not UTF-8>";
+  };
+  return s;
+}
+
+function test_fields(): test.TestOutcome {
+  let Ok(a) = cpio.parse(sample()) else {
+    return test.fail("parse refused the sample archive");
+  };
+  if (a.entries.len() != 4) {
+    return test.fail("want 4 entries, got " + a.entries.len().to_string());
+  }
+  let e = a.entries[1];
+  let ok = e.name == "etc/motd" && e.inode == 7 as u32 && e.mode == 0x81a4 as u32 && e.uid == 1000 as u32
+    && e.gid == 100 as u32 && e.links == 2 as u32 && e.mtime == 0x5f5e100 as u32 && e.size == 16
+    && e.permissions() == 0x1a4 as u32;
+  return test.assert_eq(ok, true);
+}
+
+function test_kinds(): test.TestOutcome {
+  let Ok(a) = cpio.parse(sample()) else {
+    return test.fail("parse refused the sample archive");
+  };
+  let es = a.entries;
+  let kinds = es[0].is_dir() && !es[0].is_file() && es[1].is_file() && es[2].is_symlink() && !es[2].is_file();
+  return test.assert_eq(kinds, true);
+}
+
+function test_read(): test.TestOutcome {
+  let Ok(a) = cpio.parse(sample()) else {
+    return test.fail("parse refused the sample archive");
+  };
+  let Some(link) = a.find("motd") else {
+    return test.fail("no entry motd");
+  };
+  return test.assert_eq(text(a.read(a.entries[1])) + "|" + text(a.read(link)), "hello from fern\n|etc/motd");
+}
+
+function found(a: cpio.Archive, path: string): string {
+  match (a.file(path)) {
+    Some(b) => {
+      return text(b);
+    },
+    None => {
+      return "none";
+    }
+  }
+}
+
+function test_paths(): test.TestOutcome {
+  let Ok(a) = cpio.parse(sample()) else {
+    return test.fail("parse refused the sample archive");
+  };
+  let r = found(a, "/etc/motd") + "|" + found(a, "./etc/motd") + "|" + found(a, "init") + "|" + found(a, "/init");
+  r += "|" + found(a, "etc") + "|" + found(a, "motd") + "|" + found(a, "missing");
+  return test.assert_eq(r, "hello from fern\n|hello from fern\n|#!|#!|none|none|none");
+}
+
+function test_clean(): test.TestOutcome {
+  let r = cpio.clean("/./a/b") + "|" + cpio.clean(".//x") + "|" + cpio.clean(".") + "|" + cpio.clean("") + "|" + cpio.clean("..");
+  return test.assert_eq(r, "a/b|x|.||..");
+}
+
+function test_empty_file_at_the_end(): test.TestOutcome {
+  let Ok(a) = cpio.parse(join([entry("empty", 0x81a4, ""), trailer()])) else {
+    return test.fail("parse refused an empty file");
+  };
+  return test.assert_eq(a.entries.len() == 1 && a.read(a.entries[0]).len() == 0, true);
+}
+
+function test_stops_at_the_trailer(): test.TestOutcome {
+  let b = join([entry("a", 0x81a4, "x"), trailer(), bytes_of("not an entry")]);
+  let Ok(a) = cpio.parse(b) else {
+    return test.fail("parse read past the trailer");
+  };
+  return test.assert_eq(a.entries.len(), 1);
+}
+
+function test_checksum(): test.TestOutcome {
+  let data = bytes_of("fern");
+  let sum: i64 = 102 + 101 + 114 + 110;
+  let good = join([raw_entry("070702", "f", 0x81a4, data, sum), trailer()]);
+  let Ok(a) = cpio.parse(good) else {
+    return test.fail("parse refused a matching checksum");
+  };
+  return test.assert_eq(text(a.read(a.entries[0])) + "|" + refusal(join([raw_entry("070702", "f", 0x81a4, data, sum + 1), trailer()])), "fern|cpio: the checksum does not match the file at byte 102");
+}
+
+function test_checksum_is_for_regular_files_only(): test.TestOutcome {
+  let b = join([raw_entry("070702", "d", 0x41ed, [], 0), raw_entry("070702", "l", 0xa1ff, bytes_of("d"), 0), trailer()]);
+  return test.assert_eq(cpio.parse(b).is_ok(), true);
+}
+
+function test_newc_ignores_the_check_field(): test.TestOutcome {
+  return test.assert_eq(cpio.parse(join([raw_entry("070701", "f", 0x81a4, bytes_of("fern"), 99), trailer()])).is_ok(), true);
+}
+
+function refusal(b: u8[]): string {
+  match (cpio.parse(b)) {
+    Ok(_) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_refusals(): test.TestOutcome {
+  let good = entry("a", 0x81a4, "xyz");
+  let r = refusal(good.with(0, 49 as u8));
+  r += "; " + refusal(good.take(100));
+  r += "; " + refusal(good.with(20, 103 as u8));
+  r += "; " + refusal(good);
+  r += "; " + refusal([]);
+  return test.assert_eq(r, "cpio: the magic is not 070701 or 070702 at byte 0; cpio: the bytes end inside a header at byte 0; cpio: a header field is not hexadecimal at byte 20; cpio: the archive has no trailer at byte 116; cpio: the archive has no trailer at byte 0");
+}
+
+function test_name_refusals(): test.TestOutcome {
+  // The name "ab" with its size cut to 2, so its last byte is "b", not a NUL.
+  let no_nul = bytes_of("070701" + hex8(7) + hex8(0x81a4) + hex8(0) + hex8(0) + hex8(1) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(2) + hex8(0) + "ab");
+  let empty = raw_entry("070701", "", 0x81a4, [], 0);
+  let past = bytes_of("070701" + hex8(7) + hex8(0x81a4) + hex8(0) + hex8(0) + hex8(1) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(64) + hex8(0) + "a");
+  let bad_utf8 = raw_entry("070701", "a", 0x81a4, [], 0).with(110, 255 as u8);
+  let r = refusal(no_nul) + "; " + refusal(empty) + "; " + refusal(past) + "; " + refusal(bad_utf8);
+  return test.assert_eq(r, "cpio: the name does not end with a NUL at byte 111; cpio: the name is empty at byte 110; cpio: the name ends past the bytes at byte 94; cpio: the name is not UTF-8 at byte 110");
+}
+
+function test_file_past_the_bytes(): test.TestOutcome {
+  let b = entry("a", 0x81a4, "xyz");
+  return test.assert_eq(refusal(b.take(113)), "cpio: the file ends past the bytes at byte 54");
+}
+
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function error_message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function test_error_traits(): test.TestOutcome {
+  let problem = cpio.CpioError { offset: 4, reason: "bad" };
+  return test.assert_eq(display(problem) + "; " + error_message(problem), "cpio: bad at byte 4; cpio: bad at byte 4");
+}
+
+function main(): i32 {
+  let r = test.new("std/cpio");
+  r = r.it("parse reads each field of a header", test_fields);
+  r = r.it("the mode gives the kind of an entry", test_kinds);
+  r = r.it("read copies the bytes of an entry", test_read);
+  r = r.it("find and file ignore a leading / or ./", test_paths);
+  r = r.it("clean removes the leading prefixes only", test_clean);
+  r = r.it("an empty file takes no bytes", test_empty_file_at_the_end);
+  r = r.it("parse stops at the trailer", test_stops_at_the_trailer);
+  r = r.it("070702 checks the sum of the file bytes", test_checksum);
+  r = r.it("070702 checks no sum for a directory or a symbolic link", test_checksum_is_for_regular_files_only);
+  r = r.it("070701 ignores the check field", test_newc_ignores_the_check_field);
+  r = r.it("parse refuses a bad header and a missing trailer", test_refusals);
+  r = r.it("parse refuses a bad name", test_name_refusals);
+  r = r.it("parse refuses a file that ends past the bytes", test_file_past_the_bytes);
+  r = r.it("errors support Display and Error", test_error_traits);
+  return r.finish();
+}

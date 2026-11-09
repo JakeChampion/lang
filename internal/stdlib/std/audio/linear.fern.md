@@ -144,7 +144,7 @@ pub function (index: Index) read_float_into(input: [u8], start: i32, frames: i32
   let stride = format.storage_bits / 8;
   let scale = if (format.kind == Float) { 1f64 } else { (1i64 << (format.bits - 1) as i64) as f64 };
   for i in 0..count {
-    let value: f64 = 0f64;
+    let value = 0f64;
     if (format.kind == Float) {
       let raw = word(input, at + i * stride, format);
       value = if (format.bits == 32) { f32_from_bits(raw as i32) as f64 } else { f64_from_bits(raw as i64) };

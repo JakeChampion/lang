@@ -1,0 +1,36 @@
+// A labelled continue from a nested loop goes back to the head of the outer
+// loop. When the own parameter has no new value yet, the next round consumes
+// it again, and the checker refuses the consume.
+
+struct State { bytes: u8[] }
+
+enum Failure { Full }
+
+function (own state: State) step(): Result[State, Failure] {
+  return Ok(state);
+}
+
+function work(own state: State, n: i32): i32 {
+  outer: while (true) {
+    let r = state.step();
+    let j = 0;
+    while (j < n) {
+      j += 1;
+      if (j == 1) {
+        continue outer;
+      }
+    }
+    match (r) {
+      Ok(next) => {
+        state = next;
+      },
+      Err(_) => {
+        return 0;
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  return work(State { bytes: [] }, 3);
+}

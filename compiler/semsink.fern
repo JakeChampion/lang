@@ -511,7 +511,22 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (child_grown_in(rd, bi, v, 0) && child_spent_between(rd, bi, v, 0)) {
     return false;
   }
+  if (child_kept_across(rd, bi, v)) {
+    return false;
+  }
   return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
+}
+
+// child_kept_across says a read off the first read of v is live into bi and
+// is not read again there. A new read of v in bi is then a second read of
+// the slot that child came from, and the plan holds the child across it.
+function child_kept_across(rd: Reads, bi: i32, v: i32): boolean {
+  for c in rd.kids[rd.first[v]] {
+    if (rd.at[c] != bi && ssalive.live_in_has(rd.flow, bi, c) && !read_above(rd, bi, c)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // An element read off the first read in a dominator, spent there, and
@@ -628,7 +643,11 @@ function read_above_for(rd: Reads, spent: i32[][], bi: i32, v: i32, leaf: i32): 
   if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
     return false;
   }
-  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above_for(rd, spent, bi, p, leaf)) {
+  if (ssalive.live_out_has(rd.flow, rd.at[v], p)) {
+    if (ancestor_spent_past(rd, spent, p, leaf)) {
+      return false;
+    }
+  } else if (!read_above_for(rd, spent, bi, p, leaf)) {
     return false;
   }
   for s in spent[p] {
@@ -637,6 +656,23 @@ function read_above_for(rd: Reads, spent: i32[][], bi: i32, v: i32, leaf: i32): 
     }
   }
   return true;
+}
+
+// An ancestor of p is spent while leaf is live and p is not. A re-read of
+// leaf from p keeps p past that spend, and the plan must then hold p.
+function ancestor_spent_past(rd: Reads, spent: i32[][], p: i32, leaf: i32): boolean {
+  let a = p;
+  let depth = 0;
+  while (depth <= 8 && rd.at[a] >= 0) {
+    a = rd.par[a];
+    for s in spent[a] {
+      if (ssalive.live_out_has(rd.flow, s, leaf) && !ssalive.live_out_has(rd.flow, s, p)) {
+        return true;
+      }
+    }
+    depth += 1;
+  }
+  return false;
 }
 
 function reread(rd: Reads, g: ssa.SFunc, bi: i32, own r: Rereads, v: i32): Rereads {

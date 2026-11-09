@@ -5381,7 +5381,8 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
 }
 
 function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
-  let t_lift = monotonic_ns();
+  let timed = ircore.ssa_report_on();
+  let t_lift = ircore.report_clock(timed);
   let lifted: ssa_lift.Lifted = match (s.lift(pre, label_name, r)) { Ok(l) => l, Err(message) => { ircore.ssa_refuse(label_name, message); return s; } };
   let collision = ssa.repeated_block_id(lifted.func);
   if (collision >= 0) {
@@ -5391,16 +5392,16 @@ function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected,
   if (why != "") {
     ircore.ssa_refuse(label_name, why);
   }
-  let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
-  let t_emit = monotonic_ns();
+  let lift_ms: i64 = (ircore.report_clock(timed) - t_lift) / 1000000i64;
+  let t_emit = ircore.report_clock(timed);
   let certified = s.finish(pre, r, selected, lifted);
   irverifygate.certify_or_refuse(label_name, certified.formed.f, r.ops, vgate);
   let prepared = ssaprepare.with_selects(certified);
   let context = asmcore.preparation_context(s, "arm64");
   let entry = ircore.release_entry(r, "arm64", s.rc_free_debug, s.reg_entries);
   s = emit_ssa_function_arm64(prepared, label_name, entry, context, s);
-  let emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
-  if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
+  let emit_ms: i64 = (ircore.report_clock(timed) - t_emit) / 1000000i64;
+  if (timed && lift_ms + emit_ms > 200i64) {
     eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots");
   }
   return s;

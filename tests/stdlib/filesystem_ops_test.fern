@@ -263,6 +263,23 @@ function test_create_dir_all_on_existing_path_is_ok(): test.TestOutcome {
   return test.pass();
 }
 
+// The parent exists, so only the leaf is new.
+function test_create_dir_all_makes_a_leaf_under_an_existing_parent(): test.TestOutcome {
+  match (temp_dir("mkdirp-leaf")) {
+    Ok(dir) => {
+      let made = create_dir_all(dir + "/leaf").is_ok() && write_file(dir + "/leaf/f", "x").is_ok();
+      match (remove_dir_all(dir)) {
+        Ok(_) => {},
+        Err(_) => {}
+      }
+      return test.assert_eq(made, true);
+    },
+    Err(_) => {
+      return test.fail("temp_dir setup failed");
+    }
+  }
+}
+
 function test_create_dir_all_under_a_file_is_an_error(): test.TestOutcome {
   match (temp_dir("mkdirp-notdir")) {
     Ok(dir) => {
@@ -324,6 +341,7 @@ function main(): i32 {
   r = r.it("remove_dir_all on missing target is ok", test_remove_dir_all_silently_ok_on_missing_target);
   r = r.it("create_dir_all builds a missing chain", test_create_dir_all_builds_a_missing_chain);
   r = r.it("create_dir_all on an existing path is ok", test_create_dir_all_on_existing_path_is_ok);
+  r = r.it("create_dir_all makes a leaf under an existing parent", test_create_dir_all_makes_a_leaf_under_an_existing_parent);
   r = r.it("create_dir_all under a file errors", test_create_dir_all_under_a_file_is_an_error);
   return r.finish();
 }
