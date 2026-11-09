@@ -15,6 +15,11 @@
   command = "scripts/netlify-build"
   publish = "site/dist"
 
+# The playground's short links (site/netlify/share.mjs): /api/share stores a
+# snippet in Netlify Blobs, and /p/ID redirects to it.
+[functions]
+  directory = "site/netlify/functions"
+
 [build.environment]
   # Astro 6 requires Node >=22.12; the pin matches what docs-build.yml tests on.
   # Netlify provisions Go through gimme BEFORE the build command runs, so it

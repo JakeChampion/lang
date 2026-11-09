@@ -1,0 +1,1 @@
+{"args": ["go", "test", "-overlay=/tmp/lang-test-overlay.json", "-v", "./internal/testing/e2ecompiler", "-run", "^TestSelfHost(SSALifetime|RcCertifyCases)", "-count=1"], "exit_code": 0}

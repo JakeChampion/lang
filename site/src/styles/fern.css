@@ -953,6 +953,27 @@ site-search dialog h2 {
   overflow-wrap: anywhere;
 }
 
+/* --- "Open in playground" under a fern code block ---------------- */
+
+.fern-run-link {
+  display: block;
+  margin-top: 0.4rem;
+  text-align: end;
+  font-family: var(--fern-font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.fern-run-link a {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+}
+
+.fern-run-link a:hover {
+  text-decoration: underline;
+}
+
 /* --- Landing reveal --------------------------------------------- */
 
 .hero .stack,

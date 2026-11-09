@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -16,13 +17,18 @@ import (
 // std/user_process, each in its own page tables, and runs them at EL0.
 var processBoardSrc = strings.ReplaceAll(strings.Replace(dmaBoardSrc, "const DEVICE_TREE: usize = 0x40000000;\n", "", 1), "DEVICE_TREE + k", "__boot_info() + k")
 
-const processMainSrc = `import "./board";
+// processKernelSrc is the part of a kernel that starts processes: it moves
+// the heap onto frames, reads the initrd, makes the kernel mapping active,
+// and loads a program from the initrd into tables of its own.
+const processKernelSrc = `import "./board";
 import "std/cpio";
 import "std/fdt";
 import "std/frames";
 import "std/option";
 import "std/pagetable";
 import "std/user_process";
+
+struct Boot { f: frames.Frames, ram: fdt.Region, a: cpio.Archive, kernel: pagetable.Tables }
 
 function initrd(t: fdt.Tree): Option[u8[]] {
   let Some(c) = t.find_name("chosen") else {
@@ -45,34 +51,98 @@ function initrd(t: fdt.Tree): Option[u8[]] {
   return Some(image);
 }
 
-// Runs the program at path with its own tables, which hold the kernel
-// mapping, and prints each line that it writes. At the end the kernel makes
-// its own tables active again and gives back the frames of the process.
-function spawn(f: frames.Frames, kernel: pagetable.Tables, ram: fdt.Region, a: cpio.Archive, path: string, argv: string[]): void {
-  let free = f.free_count();
-  run(f, kernel, ram, a, path, argv);
-  print(path + " gave back its frames " + (f.free_count() == free).to_string());
-}
-
-function run(f: frames.Frames, kernel: pagetable.Tables, ram: fdt.Region, a: cpio.Archive, path: string, argv: string[]): void {
-  let Some(image) = a.file(path) else {
-    print(path + ": not in the initrd");
-    return;
-  };
+// Tables that hold the kernel mapping: the RAM and the device window.
+function kernel_tables(f: frames.Frames, ram: fdt.Region): Option[pagetable.Tables] {
   let Some(tables) = pagetable.new(f) else {
-    print("no frame for the tables");
-    return;
+    return None;
   };
   if (!tables.map_normal(ram.address as usize, ram.size as usize) || !tables.map_device(board.DEVICES, board.DEVICES_BYTES)) {
-    print("no kernel mapping");
-    return;
+    return None;
   }
-  let p = match (user_process.load(f, tables, image, argv, ["HOME=/"])) {
-    Ok(loaded) => loaded,
+  return Some(tables);
+}
+
+function boot(): Option[Boot] {
+  let top = board.RAM_BASE + board.RAM_SIZE - board.STACK_BYTES;
+  let cursor = 0 as usize;
+  unsafe {
+    cursor = (__heap_mark() as usize) + 65536 as usize;
+  }
+  let Some(f) = frames.new(cursor, top - cursor) else {
+    return None;
+  };
+  let heap_frames = 4096 as usize;
+  let Some(heap) = f.alloc_run(heap_frames) else {
+    return None;
+  };
+  unsafe {
+    __heap_adopt(heap as i64, (heap + heap_frames * frames.FRAME_BYTES) as i64);
+  }
+  let Ok(t) = fdt.parse(board.device_tree()) else {
+    return None;
+  };
+  let Some(mem) = t.find_name("memory") else {
+    return None;
+  };
+  let Some(ram) = t.reg(mem, 0) else {
+    return None;
+  };
+  let Some(bytes) = initrd(t) else {
+    return None;
+  };
+  let Ok(a) = cpio.parse(bytes) else {
+    return None;
+  };
+  let Some(kernel) = kernel_tables(f, ram) else {
+    return None;
+  };
+  kernel.activate();
+  return Some(Boot { f: f, ram: ram, a: a, kernel: kernel });
+}
+
+function load(b: Boot, path: string, argv: string[]): Option[user_process.Process] {
+  let Some(image) = b.a.file(path) else {
+    print(path + ": not in the initrd");
+    return None;
+  };
+  let Some(tables) = kernel_tables(b.f, b.ram) else {
+    print("no kernel mapping");
+    return None;
+  };
+  match (user_process.load(b.f, tables, image, argv, ["HOME=/"])) {
+    Ok(p) => {
+      return Some(p);
+    },
     Err(why) => {
       print(path + ": " + why);
-      return;
+      return None;
     }
+  }
+}
+
+// Prints each line that bytes ends, and gives the start of the next line.
+function print_lines(path: string, fd: i32, line: u8[], bytes: u8[]): u8[] {
+  for b in bytes {
+    if (b == 10 as u8) {
+      unsafe {
+        print(path + " fd " + fd.to_string() + ": " + string_from_bytes_unchecked(line));
+      }
+      line = [];
+    } else {
+      line = line.append(b);
+    }
+  }
+  return line;
+}
+`
+
+const processMainSrc = processKernelSrc + `
+// Runs the program at path to its end. Then the kernel makes its own tables
+// active again and gives back the frames of the process.
+function spawn(b: Boot, path: string, argv: string[]): void {
+  let free = b.f.free_count();
+  let Some(p) = load(b, path, argv) else {
+    return;
   };
   let line: u8[] = [];
   while (true) {
@@ -80,16 +150,7 @@ function run(f: frames.Frames, kernel: pagetable.Tables, ram: fdt.Region, a: cpi
     p = q;
     match (stop) {
       Output(fd, bytes) => {
-        for b in bytes {
-          if (b == 10 as u8) {
-            unsafe {
-              print(path + " fd " + fd.to_string() + ": " + string_from_bytes_unchecked(line));
-            }
-            line = [];
-          } else {
-            line = line.append(b);
-          }
-        }
+        line = print_lines(path, fd, line, bytes);
       },
       Exited(status) => {
         print(path + " exit " + status.to_string());
@@ -102,57 +163,19 @@ function run(f: frames.Frames, kernel: pagetable.Tables, ram: fdt.Region, a: cpi
       Interrupted => {}
     }
   }
-  kernel.activate();
+  b.kernel.activate();
   p.release();
+  print(path + " gave back its frames " + (b.f.free_count() == free).to_string());
 }
 
 function main(): i32 {
-  let top = board.RAM_BASE + board.RAM_SIZE - board.STACK_BYTES;
-  let cursor = 0 as usize;
-  unsafe {
-    cursor = (__heap_mark() as usize) + 65536 as usize;
-  }
-  let Some(f) = frames.new(cursor, top - cursor) else {
-    print("no frames");
+  let Some(b) = boot() else {
+    print("no boot");
     return 1;
   };
-  let heap_frames = 4096 as usize;
-  let Some(heap) = f.alloc_run(heap_frames) else {
-    print("no heap run");
-    return 1;
-  };
-  unsafe {
-    __heap_adopt(heap as i64, (heap + heap_frames * frames.FRAME_BYTES) as i64);
-  }
-  let Ok(t) = fdt.parse(board.device_tree()) else {
-    print("no device tree");
-    return 1;
-  };
-  let Some(mem) = t.find_name("memory") else {
-    return 1;
-  };
-  let Some(ram) = t.reg(mem, 0) else {
-    return 1;
-  };
-  let Some(bytes) = initrd(t) else {
-    print("no initrd");
-    return 1;
-  };
-  let Ok(a) = cpio.parse(bytes) else {
-    print("the initrd is not a cpio archive");
-    return 1;
-  };
-  let Some(kernel) = pagetable.new(f) else {
-    return 1;
-  };
-  if (!kernel.map_normal(ram.address as usize, ram.size as usize) || !kernel.map_device(board.DEVICES, board.DEVICES_BYTES)) {
-    print("no kernel mapping");
-    return 1;
-  }
-  kernel.activate();
-  spawn(f, kernel, ram, a, "/bin/hello", ["/bin/hello", "world"]);
-  spawn(f, kernel, ram, a, "/bin/efault", ["/bin/efault"]);
-  spawn(f, kernel, ram, a, "/bin/crash", ["/bin/crash"]);
+  spawn(b, "/bin/hello", ["/bin/hello", "world"]);
+  spawn(b, "/bin/efault", ["/bin/efault"]);
+  spawn(b, "/bin/crash", ["/bin/crash"]);
   board.power_off(0);
   return 0;
 }
@@ -190,7 +213,7 @@ const processCrashSrc = `function main(): i32 {
 // efaultImage is a static arm64 ELF of one segment: a write from a kernel
 // address, then exit_group with the negated result, so the status is EFAULT.
 func efaultImage() []byte {
-	code := []uint32{
+	return codeImage(0x400000, []uint32{
 		0xd2800020, // movz x0, #1
 		0xd2a80001, // movz x1, #0x4000, lsl #16
 		0xd28000a2, // movz x2, #5
@@ -199,8 +222,13 @@ func efaultImage() []byte {
 		0xcb0003e0, // neg x0, x0
 		0xd2800bc8, // movz x8, #94
 		0xd4000001, // svc #0
-	}
-	const base, headers = 0x400000, 64 + 56
+	})
+}
+
+// codeImage is a static arm64 ELF of one read and execute segment at base,
+// which holds the headers and then code, the entry.
+func codeImage(base uint64, code []uint32) []byte {
+	const headers = 64 + 56
 	le := binary.LittleEndian
 	b := make([]byte, headers+4*len(code))
 	copy(b, "\x7fELF\x02\x01\x01")
@@ -226,12 +254,15 @@ func efaultImage() []byte {
 	return b
 }
 
-func TestSelfHostKernelProcessOnQemu(t *testing.T) {
-	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
-	cli := buildSelfHostCLI(t)
-	dir := t.TempDir()
-	programs := map[string][]byte{"bin/efault": efaultImage()}
-	for name, src := range map[string]string{"hello": processHelloSrc, "crash": processCrashSrc} {
+// processInitrd builds each Fern program for arm64-linux, and writes a cpio
+// archive with it and each raw image as bin/NAME.
+func processInitrd(t *testing.T, cli *selfHostCLI, dir string, fern map[string]string, raw map[string][]byte) string {
+	t.Helper()
+	programs := map[string][]byte{}
+	for name, b := range raw {
+		programs[name] = b
+	}
+	for name, src := range fern {
 		path := filepath.Join(dir, name+".fern")
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
@@ -244,16 +275,29 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		programs["bin/"+name] = b
+		programs[name] = b
 	}
+	names := make([]string, 0, len(programs))
+	for name := range programs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	files := []cpioFile{{"bin", 0o40755, nil}}
-	for _, name := range []string{"bin/crash", "bin/efault", "bin/hello"} {
-		files = append(files, cpioFile{name, 0o100755, programs[name]})
+	for _, name := range names {
+		files = append(files, cpioFile{"bin/" + name, 0o100755, programs[name]})
 	}
 	archive := filepath.Join(dir, "initrd.cpio")
 	if err := os.WriteFile(archive, newcArchive(files), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return archive
+}
+
+func TestSelfHostKernelProcessOnQemu(t *testing.T) {
+	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc}, map[string][]byte{"efault": efaultImage()})
 	src := writeTickProgram(t, processBoardSrc, processMainSrc)
 	kernel := filepath.Join(dir, "kernel.img")
 	if msg, err := cli.compileCmd("arm64-kernel", kernel, src, "-ram", imageRAM, "-emit", "image").CombinedOutput(); err != nil {
