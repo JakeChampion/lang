@@ -235,8 +235,9 @@ pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 // protection. A socket is AF_UNIX, AF_INET or AF_INET6. A prctl is one of
 // PR_SET_PDEATHSIG, PR_SET_DUMPABLE, PR_GET_TAGGED_ADDR_CTRL and
 // PR_PAC_GET_ENABLED_KEYS. An ioctl is one of the eight terminal and
-// reflink requests. A setsockopt level is SOL_SOCKET, SOL_TCP, SOL_IPV6 or
-// SOL_TLS, and its option is one of the ten the runtime sets. A fcntl command is F_DUPFD, F_GETFL, F_SETFL, F_SETPIPE_SZ or
+// reflink requests. A setsockopt level is SOL_IP, SOL_SOCKET, SOL_TCP,
+// SOL_UDP, SOL_IPV6 or SOL_TLS. Its option is one the runtime sets.
+// A fcntl command is F_DUPFD, F_GETFL, F_SETFL, F_SETPIPE_SZ or
 // F_GETPIPE_SZ, so no lock, owner or signal command passes. The flags of an
 // openat carry only the bits the runtime and the open options set, so
 // O_ASYNC, O_PATH, O_TMPFILE and an undefined bit are killed. The runtime
@@ -244,7 +245,7 @@ pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 pub function arg_rules(target: string): ArgRule[] {
   let ioctls: i32[] = [21505, 21506, 21507, 21508, 21521, 21523, 21524, 1074041865];
   let fcntls: i32[] = [0, 3, 4, 1031, 1032];
-  let sockopts: i32[] = [1, 2, 6, 9, 15, 26, 31, 51];
+  let sockopts: i32[] = [1, 2, 6, 9, 13, 15, 26, 31, 51, 66, 104];
   if (target == "arm64-linux" || target == "arm64-android") {
     return [
       ArgRule { nr: 25, arg: 1, values: fcntls, mask: 0 },
@@ -252,7 +253,7 @@ pub function arg_rules(target: string): ArgRule[] {
       ArgRule { nr: 56, arg: 2, values: [], mask: 2145525822 },
       ArgRule { nr: 167, arg: 0, values: [1, 4, 56, 61], mask: 0 },
       ArgRule { nr: 198, arg: 0, values: [1, 2, 10], mask: 0 },
-      ArgRule { nr: 208, arg: 1, values: [1, 6, 41, 282], mask: 0 },
+      ArgRule { nr: 208, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
       ArgRule { nr: 208, arg: 2, values: sockopts, mask: 0 },
       ArgRule { nr: 220, arg: 0, values: [17], mask: 0 },
       ArgRule { nr: 222, arg: 2, values: [], mask: 4 },
@@ -265,7 +266,7 @@ pub function arg_rules(target: string): ArgRule[] {
     ArgRule { nr: 10, arg: 2, values: [], mask: 4 },
     ArgRule { nr: 16, arg: 1, values: ioctls, mask: 0 },
     ArgRule { nr: 41, arg: 0, values: [1, 2, 10], mask: 0 },
-    ArgRule { nr: 54, arg: 1, values: [1, 6, 41, 282], mask: 0 },
+    ArgRule { nr: 54, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
     ArgRule { nr: 54, arg: 2, values: sockopts, mask: 0 },
     ArgRule { nr: 56, arg: 0, values: [17], mask: 0 },
     ArgRule { nr: 72, arg: 1, values: fcntls, mask: 0 },

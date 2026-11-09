@@ -234,7 +234,7 @@ function ts_arity_root(name: string, arity: i32): string {
   return name + "/" + util.i32_to_string(arity);
 }
 
-// The root of a free function `name` that method syntax can call.
+// The root of a free function `name` on an unresolved module receiver.
 function ts_call_root(name: string): string {
   return "call " + name;
 }

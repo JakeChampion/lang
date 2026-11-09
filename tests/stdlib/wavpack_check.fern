@@ -1,0 +1,105 @@
+import "std/audio/wavpack";
+import "std/test";
+import "aac_kernel_check" as ref;
+
+pub struct Vector { name: string, encoded: string, pcm: string, depth: i32, channels: i32, rate: i32, frames: i32, floating: boolean, mask: u32 }
+
+function metadata(v: Vector, info: wavpack.Info): boolean {
+  return info.format.bits_per_sample == v.depth && info.format.channels == v.channels
+    && info.format.sample_rate == v.rate && info.total_frames == v.frames as i64
+    && info.channel_mask == v.mask && info.floating == v.floating;
+}
+
+function integer(v: Vector, input: [u8], expected: [u8]): test.TestOutcome {
+  let value = match (wavpack.decode(input, wavpack.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("integer decode: " + e.message()); } };
+  if (!metadata(v, value.info) || value.samples.len() * 4 != expected.len()) {
+    return test.fail("integer format or extent");
+  }
+  for i in 0..value.samples.len() {
+    if (value.samples[i] != ref.word(expected, i * 4)) {
+      return test.fail("integer sample " + i.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function float_value(actual: i32, expected: i32): boolean {
+  let bits = expected as u32;
+  if ((bits & 2139095040u32) == 2139095040u32 && (bits & 8388607u32) != 0u32) {
+    return (actual as u32 & 2139095040u32) == 2139095040u32 && (actual as u32 & 8388607u32) != 0u32;
+  }
+  return actual == expected;
+}
+
+function float_bits(v: Vector, input: [u8], expected: [u8]): test.TestOutcome {
+  let value = match (wavpack.decode_bits(input, wavpack.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("float bits decode: " + e.message()); } };
+  if (!metadata(v, value.info) || value.samples.len() * 4 != expected.len()) {
+    return test.fail("raw float format or extent");
+  }
+  for i in 0..value.samples.len() {
+    if (value.samples[i] != ref.word(expected, i * 4)) {
+      return test.fail("exact float bits " + i.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function floating(v: Vector, input: [u8], expected: [u8]): test.TestOutcome {
+  if let test.Fail(message) = float_bits(v, input, expected) {
+    return test.fail(message);
+  }
+  let value = match (wavpack.decode_float(input, wavpack.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("float decode: " + e.message()); } };
+  if (!metadata(v, value.info) || value.samples.len() * 4 != expected.len() || value.info.norm_exp != 127) {
+    return test.fail("float format or extent");
+  }
+  for i in 0..value.samples.len() {
+    if (!float_value(f32_bits(value.samples[i]), ref.word(expected, i * 4))) {
+      return test.fail("float bits " + i.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function streamed(input: [u8], expected: [u8], index: wavpack.Index): test.TestOutcome {
+  let reader = wavpack.reader(index);
+  let buffer: i32[] = [];
+  let at = 0;
+  let position = 0i64;
+  while (true) {
+    let (next, frame) = match (reader.read(input, buffer)) { Ok(value) => value, Err(e) => { return test.fail("stream read: " + e.message()); } };
+    reader = next;
+    if (frame.first_frame != position) {
+      return test.fail("stream position");
+    }
+    for i in 0..frame.frames * frame.info.format.channels {
+      if (at + 4 > expected.len() || frame.samples[i] != ref.word(expected, at)) {
+        return test.fail("streamed sample " + at.to_string());
+      }
+      at += 4;
+    }
+    position += frame.frames as i64;
+    buffer = frame.samples;
+    if (frame.frames == 0) {
+      break;
+    }
+  }
+  return test.assert_true(at == expected.len() && position == index.information().total_frames);
+}
+
+pub function reference(v: Vector): test.TestOutcome {
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("encoded reference");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("PCM reference");
+  };
+  let index = match (wavpack.inspect(input, wavpack.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("inspect: " + e.message()); } };
+  if (!metadata(v, index.information())) {
+    return test.fail("indexed format");
+  }
+  let outcome = if (v.floating) { floating(v, input, expected) } else { integer(v, input, expected) };
+  if let test.Fail(message) = outcome {
+    return test.fail(v.name + ": " + message);
+  }
+  return streamed(input, expected, index);
+}

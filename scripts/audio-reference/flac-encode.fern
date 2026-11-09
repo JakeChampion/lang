@@ -1,0 +1,37 @@
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/result";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 7) {
+    eprint("usage: flac-encode INPUT.s32le OUTPUT.flac BITS CHANNELS RATE BLOCK");
+    return 1;
+  }
+  let bits = i32.parse_i32_radix(argv[3], 10).unwrap_or(0);
+  let channels = i32.parse_i32_radix(argv[4], 10).unwrap_or(0);
+  let rate = i32.parse_i32_radix(argv[5], 10).unwrap_or(0);
+  let block = i32.parse_i32_radix(argv[6], 10).unwrap_or(0);
+  let Ok(raw) = io.read_input_bytes(argv[1]) else {
+    eprint("cannot read PCM input");
+    return 2;
+  };
+  if (raw.len() % 4 != 0) {
+    return 3;
+  }
+  let input: i32[] = [];
+  for at in 0..raw.len() / 4 {
+    input = input.append(wire.le(raw, at * 4, 4) as i32);
+  }
+  let format = pcm.Format { sample_rate: rate, channels: channels, bits_per_sample: bits };
+  let options = encoder.Options { ...encoder.default_options(), block_frames: block };
+  let limits = pcm.Limits { max_input_bytes: 16777216, max_samples: 1048576 };
+  let encoded = match (encoder.encode(input, format, options, limits)) { Ok(value) => value, Err(e) => { eprint(e.message()); return 4; } };
+  if let Err(_) = write_file_bytes(argv[2], encoded) {
+    return 5;
+  }
+  return 0;
+}

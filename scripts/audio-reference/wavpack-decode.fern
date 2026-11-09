@@ -1,0 +1,44 @@
+import "std/audio/wavpack";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    eprint("usage: wavpack-decode INPUT.wv OUTPUT.s32le");
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let limits = wavpack.default_limits();
+  let index = match (wavpack.inspect(input, limits)) { Ok(value) => value, Err(e) => { eprint(e.message()); return 3; } };
+  let info = index.information();
+  if (info.total_frames > limits.audio.max_samples as i64 / (info.format.channels as i64)) {
+    return 4;
+  }
+  let reader = wavpack.reader(index);
+  let buffer: i32[] = [];
+  let raw: u8[] = [];
+  while (true) {
+    let (next, frame) = match (reader.read(input, buffer)) { Ok(value) => value, Err(e) => { eprint(e.message()); return 5; } };
+    reader = next;
+    for i in 0..frame.frames * frame.info.format.channels {
+      raw = wire.put_le(raw, frame.samples[i] as u64, 4);
+    }
+    buffer = frame.samples;
+    if (frame.frames == 0) {
+      break;
+    }
+  }
+  if let Err(_) = write_file_bytes(argv[2], raw) {
+    return 6;
+  }
+  print("bits=" + info.format.bits_per_sample.to_string());
+  print("channels=" + info.format.channels.to_string());
+  print("rate=" + info.format.sample_rate.to_string());
+  print("frames=" + info.total_frames.to_string());
+  return 0;
+}

@@ -1,0 +1,45 @@
+import "std/audio/mp4/alac";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_alac_vectors";
+
+// Check every independent format field and PCM sample in one corpus pass.
+// fern-lint: allow cyclomatic-complexity
+function references(): test.TestOutcome {
+  let count = 0;
+  for vector in mp4_alac_vectors.all() {
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("encoded reference");
+    };
+    let Ok(expected) = ref.unpack(vector.pcm) else {
+      return test.fail("PCM reference");
+    };
+    let index = match (alac.inspect(encoded, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": inspect: " + e.message()); } };
+    let Ok(info) = index.information(0) else {
+      return test.fail("track information");
+    };
+    if (index.track_count() != 1 || info.packets != vector.packets || info.format.bits_per_sample != vector.depth || info.format.channels != vector.channels || info.format.sample_rate != vector.rate) {
+      return test.fail(vector.name + ": metadata");
+    }
+    let audio = match (alac.decode_track(encoded, index, 0, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": decode: " + e.message()); } };
+    if (audio.frames != vector.frames as i64 || audio.samples.len() * 4 != expected.len()) {
+      return test.fail(vector.name + ": extent");
+    }
+    for i in 0..audio.samples.len() {
+      if (audio.samples[i] != ref.word(expected, i * 4)) {
+        return test.fail(vector.name + ": sample " + i.to_string());
+      }
+    }
+    count += 1;
+  }
+  if (count != 44) {
+    return test.fail("incomplete M4A ALAC corpus");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Independent integer M4A ALAC playback");
+  runner = runner.it("44 independent container and packet references, depths, layouts, clocks, and final short packets", references);
+  return runner.finish();
+}

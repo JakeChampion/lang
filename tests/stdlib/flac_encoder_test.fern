@@ -1,0 +1,59 @@
+import "std/audio/flac";
+import "std/audio/flac/encoder";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "flac_encoder_vectors";
+
+// Verify each field in one bounded conformance campaign.
+// fern-lint: allow cyclomatic-complexity
+function references(): test.TestOutcome {
+  let count = 0;
+  for vector in flac_encoder_vectors.all() {
+    let Ok(raw) = ref.unpack(vector.pcm) else {
+      return test.fail("source reference");
+    };
+    let Ok(expected) = ref.unpack(vector.encoded) else {
+      return test.fail("encoded reference");
+    };
+    let input: i32[] = [];
+    for i in 0..raw.len() / 4 {
+      input = input.append(ref.word(raw, i * 4));
+    }
+    let format = pcm.Format { sample_rate: vector.rate, channels: vector.channels, bits_per_sample: vector.depth };
+    let options = encoder.Options { ...encoder.default_options(), block_frames: vector.block };
+    let Ok(encoded) = encoder.encode(input, format, options, pcm.default_limits()) else {
+      return test.fail(vector.name + ": encode");
+    };
+    if (encoded.len() != expected.len()) {
+      return test.fail(vector.name + ": encoded extent");
+    }
+    for i in 0..encoded.len() {
+      if (encoded[i] != expected[i]) {
+        return test.fail(vector.name + ": independent bitstream");
+      }
+    }
+    let Ok(decoded) = flac.decode(encoded, pcm.default_limits()) else {
+      return test.fail(vector.name + ": decode or MD5");
+    };
+    if (decoded.samples.len() != input.len() || decoded.format.sample_rate != vector.rate || decoded.format.channels != vector.channels || decoded.format.bits_per_sample != vector.depth) {
+      return test.fail(vector.name + ": format or extent");
+    }
+    for i in 0..input.len() {
+      if (decoded.samples[i] != input[i]) {
+        return test.fail(vector.name + ": exact PCM");
+      }
+    }
+    count += 1;
+  }
+  if (count != 81) {
+    return test.fail("incomplete encoder corpus");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("FLAC encoder independently qualified bitstreams");
+  runner = runner.it("81 exact bitstreams, every depth and channel count, block sizes, counters, and sample rates", references);
+  return runner.finish();
+}

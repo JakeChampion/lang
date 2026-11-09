@@ -2,6 +2,7 @@ import "./ssa";
 import "./ssasem";
 import "./sourcepos";
 import "./semrecords";
+import "./semtypes";
 import "./typeinfo";
 import "./util";
 
@@ -227,7 +228,8 @@ pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
 }
 
 pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boolean[] {
-  let pending = kept_fields(f.graph, whole0);
+  let kept = kept_fields(f, whole0);
+  let pending = kept.values;
   if (pending.len() == 0) {
     return whole0;
   }
@@ -242,7 +244,7 @@ pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boole
     }
     seen = seen.with(v, true);
     let ref = ssasem.reference(f.values[v]);
-    if (ref) {
+    if (ref && contains_type(kept.types, f.values[v])) {
       whole = whole.with(v, true);
     }
     let d = defs[v];
@@ -255,18 +257,34 @@ pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boole
   return whole;
 }
 
-function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
+struct Kept { values: i32[], types: typeinfo.Type[] }
+
+function contains_type(types: typeinfo.Type[], wanted: typeinfo.Type): boolean {
+  for ty in types {
+    if (semtypes.equal(ty, wanted)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function kept_fields(f: ssasem.Func, whole: boolean[]): Kept {
   let out: i32[] = [];
-  for b in g.blocks {
+  let types: typeinfo.Type[] = [];
+  for b in f.graph.blocks {
     for ins in b.insts {
       if ((ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.tuple_new()) && whole[ins.result]) {
+        let ty = f.values[ins.result];
+        if (!contains_type(types, ty)) {
+          types = types.append(ty);
+        }
         for a in ins.args {
           out = out.append(a);
         }
       }
     }
   }
-  return out;
+  return Kept { values: out, types: types };
 }
 
 function donation_edges(reference: boolean, kind: i32): boolean {
