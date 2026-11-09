@@ -13,6 +13,81 @@ function queued(): i32;
 @import("libmediandk.so", "mock_released")
 function released(): i32;
 
+@import("libmediandk.so", "mock_output_format")
+function output_format(width: i32, height: i32, right: i32, bottom: i32): void;
+
+struct FormatCase { width: i32, height: i32, right: i32, bottom: i32, error: frame.VideoError }
+
+function rejected_formats(d: video.Decoder): i32 {
+  let cases = [
+    FormatCase { width: 17, height: 8, right: -1, bottom: -1, error: frame.Limit },
+    FormatCase { width: 32, height: 8, right: 15, bottom: 7, error: frame.Limit },
+    FormatCase { width: 2147483647, height: 2, right: -1, bottom: -1, error: frame.Limit },
+    FormatCase { width: 2147483647, height: 2147483647, right: -1, bottom: -1, error: frame.Limit },
+    FormatCase { width: 0, height: 8, right: -1, bottom: -1, error: frame.Platform },
+    FormatCase { width: -2147483648, height: 8, right: -1, bottom: -1, error: frame.Platform },
+    FormatCase { width: 8, height: 0, right: -1, bottom: -1, error: frame.Platform },
+    FormatCase { width: 8, height: 16, right: 8, bottom: 15, error: frame.Platform },
+    FormatCase { width: 8, height: 16, right: 7, bottom: 16, error: frame.Platform },
+    FormatCase { width: 8, height: 16, right: -2, bottom: 15, error: frame.Platform },
+  ];
+  for item in cases {
+    let Ok(_) = d.flush() else {
+      return 104;
+    };
+    output_format(item.width, item.height, item.right, item.bottom);
+    match (d.output(0i64)) {
+      Err(error) => {
+        if (error != item.error) {
+          return 105;
+        }
+      },
+      _ => {
+        return 106;
+      }
+    }
+    if (live() != 1 || released() != 0) {
+      return 107;
+    }
+  }
+  return 0;
+}
+
+function exact_format(d: video.Decoder): i32 {
+  output_format(8, 16, -1, -1);
+  let Ok(video.FormatChanged(exact)) = d.output(0i64) else {
+    return 102;
+  };
+  if (exact.width != 8 || exact.height != 16 || exact.crop_right != 7 || exact.crop_bottom != 15) {
+    return 103;
+  }
+  return 0;
+}
+
+function output_limits(config: video.Config, limits: frame.Limits): i32 {
+  for window in [0 as usize, 123 as usize] {
+    mode(0);
+    let Ok(d) = video.open_named(config, window, "c2.android.avc.decoder", limits) else {
+      return 101;
+    };
+    let exact = exact_format(d);
+    if (exact != 0) {
+      return exact;
+    }
+    let result = rejected_formats(d);
+    if (result != 0) {
+      return result;
+    }
+    let Ok(_) = d.close() else {
+      return 108;
+    };
+    if (live() != 0) {
+      return 109;
+    }
+  }
+  return 0;
+}
+
 function main(): i32 {
   let config = video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [0, 0, 0, 1, 103], csd1: [0, 0, 0, 1, 103] };
   let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 64 };
@@ -147,5 +222,5 @@ function main(): i32 {
   if (live() != 0) {
     return 32;
   }
-  return 0;
+  return output_limits(config, limits);
 }

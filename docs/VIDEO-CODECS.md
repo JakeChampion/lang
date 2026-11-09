@@ -99,6 +99,11 @@ Decoded frames remain in the platform surface, without a Fern pixel copy.
 The API exposes input backpressure, output format changes, EOS, flush, and timed output release.
 Output format changes report dimensions, crop, and available color identifiers.
 
+Each format change must satisfy the pixel limit from decoder open.
+The limit applies to complete output dimensions, before crop.
+An oversized format returns `Limit`. The lower-level player enters its failed state before it schedules more output.
+This check does not bound memory that MediaCodec allocates before its format event.
+
 Absent color identifiers remain zero. The adapter does not invent a color profile.
 
 `std/video/nal` converts MP4 length prefixes to Annex B start codes.
