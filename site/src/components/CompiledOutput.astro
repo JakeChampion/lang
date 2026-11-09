@@ -1,0 +1,38 @@
+---
+// CompiledOutput — a source file beside the assembly the compiler emits
+// for it, one tab per target, from the build-time capture
+// (scripts/capture.mjs). The constant the compiler folds is marked.
+
+import { Code, TabItem, Tabs } from "@astrojs/starlight/components";
+import { captures } from "../lib/captures.mjs";
+
+const repo = "https://github.com/JakeChampion/lang/blob/main";
+const bytes = (n: number) => n.toLocaleString("en-US");
+// The line that loads the folded result, 75, into the return register.
+const folded = (asm: string) =>
+  asm.split("\n").filter((l) => /[#$]75\b/.test(l)).map((l) => l.trim());
+---
+
+{captures && (
+<div class="fern-compiled not-content">
+  <div class="fern-compiled__pane">
+    <Code code={captures.source.code} lang="fern" title={captures.source.path.split("/").pop()} />
+  </div>
+  <div class="fern-compiled__pane">
+    <Tabs syncKey="fern-target">
+      {captures.compiled.map((c) => (
+        <TabItem label={c.target}>
+          <Code code={c.asm} lang="asm" title={`main · fern -target ${c.target} -O`} mark={folded(c.asm)} />
+          <p class="fern-compiled__size">
+            The whole static executable: <strong>{bytes(c.bytes)} bytes</strong>.
+          </p>
+        </TabItem>
+      ))}
+    </Tabs>
+  </div>
+  <p class="fern-compiled__note fern-label">
+    Captured at build · fern {captures.revision} · CFI and literal-pool directives removed ·
+    <a href={`${repo}/site/scripts/capture.mjs`}>capture script</a>
+  </p>
+</div>
+)}

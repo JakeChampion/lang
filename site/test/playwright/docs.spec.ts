@@ -98,6 +98,36 @@ test("a fern code fence uses the shared token colours", async ({ page }) => {
   await expect(kw).toHaveCSS("color", "rgb(36, 96, 63)");
 });
 
+test("the home page install card points at this site's install script", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const card = page.locator(".fern-install");
+  await expect(card.locator(".fern-cmd__text").first()).toHaveText(/^curl -fsSL \S+\/lang\/install\.sh \| sh$/);
+  const res = await page.request.get("install.sh");
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toMatch(/^#!\/bin\/sh\n/);
+});
+
+test("the home page shows the captured assembly for both targets", async ({ page }) => {
+  await page.goto("./");
+  const compiled = page.locator(".fern-compiled");
+  await expect(compiled).toContainText("area.fern");
+  await expect(compiled.getByRole("tab", { name: "arm64-linux" })).toBeVisible();
+  await expect(compiled.getByRole("tab", { name: "x86-64-linux" })).toBeVisible();
+  // The folded constant is marked.
+  await expect(compiled.locator("mark").first()).toContainText("75");
+  await expect(compiled).toContainText(/static executable: [\d,]+ bytes/);
+});
+
+test("the home page shows the bench ratios, the usage text and the editor features", async ({ page }) => {
+  await page.goto("./");
+  await expect(page.locator(".fern-bench-head__value").first()).toHaveText(/^\d+\.\d\d×$/);
+  await expect(page.locator(".fern-captured")).toContainText("usage: fern");
+  await expect(page.locator(".fern-editor li")).not.toHaveCount(0);
+  await expect(page.locator(".fern-editor")).toContainText("Go to definition");
+});
+
 test("minimal playground embed is wired read-only + autorun on the home page", async ({
   page,
 }) => {

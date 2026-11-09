@@ -30,12 +30,16 @@ hero:
       variant: minimal
 ---
 
-import CommandCard from "../../components/CommandCard.astro";
+import BenchHeadline from "../../components/BenchHeadline.astro";
+import CompiledOutput from "../../components/CompiledOutput.astro";
+import EditorFeatures from "../../components/EditorFeatures.astro";
 import Facet from "../../components/Facet.astro";
 import FacetRail from "../../components/FacetRail.astro";
 import FernPlayground from "../../components/FernPlayground.astro";
+import InstallCard from "../../components/InstallCard.astro";
 import NextSteps from "../../components/NextSteps.astro";
 import SpecSheet from "../../components/SpecSheet.astro";
+import ToolUsage from "../../components/ToolUsage.astro";
 
 <div class="fern-lead">
 
@@ -47,14 +51,7 @@ programs work too: Fern's own compiler is written in Fern.
 
 </div>
 
-<CommandCard
-  label="Install"
-  commands={["curl -fsSL https://github.com/JakeChampion/lang/releases/download/nightly/fern-linux-x86_64.tar.gz | tar -xz", "./fern -interp hello.fern"]}>
-
-One self-contained binary. macOS, arm64 and building from source are in
-the [install guide](tutorial/install/).
-
-</CommandCard>
+<InstallCard />
 
 Every program is a `main` returning an exit code. This one is compiling
 and running in your browser, right here on the page:
@@ -109,6 +106,15 @@ coverage reports. All included, none to assemble.
 
   </Facet>
 </FacetRail>
+
+## What the compiler emits
+
+Below is a program and the `main` that the compiler writes for it, read
+from the build of this page. The compiler folds `area(Circle(5))` to
+`75`, so no match runs at all. The string from `to_string` is freed in
+line, at the point of its last use, with no collector to wait for.
+
+<CompiledOutput />
 
 ## A real program
 
@@ -203,6 +209,32 @@ function double(s: string): Option[i32] {
 The [Reference](reference/syntax/) has the full grammar, the type
 system, and the error-handling rules.
 
+## Measured speed
+
+Fern's standard library aims to be the fastest at everything it
+does, and the benchmarks are how that gets checked. One public test is a
+rewrite of the GNU coreutils in Fern, timed against GNU and against
+uutils on every utility:
+
+<BenchHeadline />
+
+## One binary, every tool
+
+The compiler, interpreter, REPL, formatter, linter, documentation
+generator, coverage report, package tool and language server are one
+executable. This is its usage text:
+
+<ToolUsage />
+
+## In your editor
+
+`fern -lsp` is a language server for any editor that speaks the Language
+Server Protocol, and the [VS Code extension](https://github.com/JakeChampion/lang/tree/main/editors/vscode)
+runs it for you. The playground on this site runs the same server, compiled
+to WebAssembly.
+
+<EditorFeatures />
+
 ## At a glance
 
 <SpecSheet
@@ -238,6 +270,9 @@ system, and the error-handling rules.
 
 ## Good to know
 
+- **Pre-1.0 and single-threaded.** The syntax still changes. Concurrency
+  is tasks on one event loop: there are no threads inside a process.
+- **No Windows.** Fern runs on Linux, Android and macOS, and on WebAssembly.
 - **macOS means Apple Silicon.** There is no Intel Mac build.
 - **WebAssembly covers less than native.** Spawning processes, terminals
   and raw syscalls are native-only, and you get a clear error at build
