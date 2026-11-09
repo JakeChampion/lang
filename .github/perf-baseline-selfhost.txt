@@ -1,4 +1,5 @@
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The nine emitted sizes that #14756 pinned high fall back on every target, by scripts/perf-bench-selfhost. Each is pinned at its measured value.
+# 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The emitted size of the nine benchmarks that #14756 raised falls back on every target with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The three rows moved with the drift of main since the last bank. Each is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The emitted size of nine benchmarks rises on every target, as the .text rows do. The growth is main's at 1c692d87: its compiler and this PR's emit the same code.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: http_hello.emit on wasm32-wasi grows 3.3% and is pinned at its measured value.
@@ -272,7 +273,7 @@ selfhost/wasm32-wasi/byte_copy_with.emit	586
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
 selfhost/wasm32-wasi/deflate_decode.emit	19938
-selfhost/wasm32-wasi/deflate_encode.emit	11578
+selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/wasm32-wasi/http_hello.emit	18484
@@ -307,7 +308,7 @@ selfhost/x86-64-linux/byte_copy_with.emit	1240
 selfhost/x86-64-linux/call_overhead.emit	347
 selfhost/x86-64-linux/closure_call.emit	955
 selfhost/x86-64-linux/deflate_decode.emit	12766
-selfhost/x86-64-linux/deflate_encode.emit	7125
+selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15234

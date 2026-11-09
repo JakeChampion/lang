@@ -1,4 +1,5 @@
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
+# 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The http_hello and map_string profile rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The five rows moved with the drift of main since the last bank. Each is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The http_hello and map_string profile rows rise with the .text rows, and deflate_decode.minimal.ir falls 2.9%. The changes are main's at 1c692d87.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: nine http_hello rows grow 1.0% to 2.3% and each is pinned at its measured value.
@@ -122,7 +123,7 @@ profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
 profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	127776
+profile/arm64-linux/http_hello.diagnostic.bytes	127816
 profile/arm64-linux/http_hello.diagnostic.emit	16197
 profile/arm64-linux/http_hello.hardened.bytes	79672
 profile/arm64-linux/http_hello.hardened.emit	17752
@@ -138,7 +139,7 @@ profile/arm64-linux/int_loop.minimal.bytes	1992
 profile/arm64-linux/int_loop.minimal.emit	320
 profile/arm64-linux/int_loop.safe.bytes	2248
 profile/arm64-linux/int_loop.safe.emit	381
-profile/arm64-linux/map_string.diagnostic.bytes	139984
+profile/arm64-linux/map_string.diagnostic.bytes	140024
 profile/arm64-linux/map_string.diagnostic.emit	10784
 profile/arm64-linux/map_string.hardened.bytes	50424
 profile/arm64-linux/map_string.hardened.emit	11476
@@ -215,7 +216,7 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4544
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	116904
+profile/x86-64-linux/http_hello.diagnostic.bytes	116944
 profile/x86-64-linux/http_hello.diagnostic.emit	14950
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	39724679
@@ -240,7 +241,7 @@ profile/x86-64-linux/int_loop.minimal.ir	12000077
 profile/x86-64-linux/int_loop.safe.bytes	2032
 profile/x86-64-linux/int_loop.safe.emit	292
 profile/x86-64-linux/int_loop.safe.ir	12000077
-profile/x86-64-linux/map_string.diagnostic.bytes	133752
+profile/x86-64-linux/map_string.diagnostic.bytes	133784
 profile/x86-64-linux/map_string.diagnostic.emit	10858
 profile/x86-64-linux/map_string.diagnostic.ir	59644087
 profile/x86-64-linux/map_string.hardened.bytes	42528
