@@ -141,6 +141,17 @@ build that names no file. The Docs build lane runs it. With
 internal link. `.github/workflows/site-links.yml` runs that against the
 site every 6 hours, and opens an issue when a link is broken.
 
+## Playground short links
+
+The playground's Share button asks `/api/share` for a short link, such
+as `/p/zjxLsMlmJF`. `netlify/functions/share.mjs` is that Netlify
+Function: it stores the playground hash in the `playground-shares`
+Netlify Blobs store, and `/p/ID` redirects to the playground with it.
+The id comes from a hash of the snippet. Where the function is not
+there, as on a local server of `web/`, Share copies the long link.
+`netlify functions:serve --functions site/netlify/functions` runs it
+locally.
+
 ## Social cards and llms.txt
 
 Each docs page except the home page has a social card at

@@ -1499,10 +1499,28 @@ exampleEl.addEventListener("change", () => {
   }
 });
 
+// A short link for a playground hash, from the site's /api/share
+// (site/netlify/share.mjs), or null where that function is not there, such
+// as a local server of web/.
+async function shortLink(hash) {
+  try {
+    const res = await fetch("/api/share", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hash }),
+    });
+    if (!res.ok) return null;
+    const { id } = await res.json();
+    return typeof id === "string" ? location.origin + "/p/" + id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 shareBtn.addEventListener("click", async () => {
-  const url = location.origin + location.pathname + location.search +
-    writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value, expect: exerciseGoal });
-  window.history.replaceState(null, "", url);
+  const hash = writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value, expect: exerciseGoal });
+  window.history.replaceState(null, "", location.pathname + location.search + hash);
+  const url = (await shortLink(hash)) ?? location.origin + location.pathname + location.search + hash;
   let copied = false;
   try {
     await navigator.clipboard.writeText(url);
