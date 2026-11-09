@@ -111,6 +111,10 @@ jobs:
 
       - name: Install site deps + build
         working-directory: site
+        env:
+          # fern-lang.netlify.app is the main site. Each page of this copy
+          # names its Netlify page as canonical.
+          CANONICAL_SITE: https://fern-lang.netlify.app
         run: |
           npm install
           npm run build

@@ -147,6 +147,30 @@ at the domain root: `scripts/netlify-build` sets `SITE_BASE=/`, and
 hero link or a sidebar link as a site path such as `/tutorial/install/`,
 and the build adds the base. Keep the two build recipes in step.
 
+fern-lang.netlify.app is the main site. The Pages build sets
+`CANONICAL_SITE`, so each Pages page names its Netlify page as
+canonical, and search engines list one copy.
+
+`scripts/check-links.mjs --dist dist --base /lang` finds each internal
+link in a build that names no file. The Docs build lane runs it. With
+`--site URL`, it reads the sitemap of a deployed site and requests each
+internal link. `.github/workflows/site-links.yml` runs that against both
+hosts every 6 hours, and opens an issue when a link is broken.
+
+## Social cards and llms.txt
+
+Each docs page except the home page has a social card at
+`/og/PAGE.png`, which `src/pages/og/[...slug].png.ts` renders during
+the build. `src/lib/og-card.mjs` draws the text as SVG paths from the
+static TTFs in `src/assets/fonts/card/`, so a card does not depend on
+the fonts of the build machine. The home page keeps `public/og.png`.
+
+`/llms.txt` is an index of the docs in the llmstxt.org format.
+`/llms-full.txt` holds the text of every guide and reference page, and
+`/llms-stdlib.txt` holds every standard-library module.
+`src/lib/llms.mjs` makes them from the Markdown sources, and changes
+MDX components to plain Markdown.
+
 ## Embed a live snippet
 
 ```mdx

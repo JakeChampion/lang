@@ -362,6 +362,27 @@ test("the favicon link resolves", async ({ page }) => {
   expect(await res.text()).toContain("<svg");
 });
 
+test("a docs page has its own social card", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  const image = await page.locator('meta[property="og:image"]').getAttribute("content");
+  expect(image).toMatch(/\/og\/tutorial\/install\.png$/);
+  // The card is served from this build, whatever host the meta tag names.
+  const res = await page.request.get(new URL(new URL(image!).pathname, page.url()).href);
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("image/png");
+});
+
+test("llms.txt indexes the docs, and llms-full.txt has their text", async ({ page }) => {
+  const index = await page.request.get("llms.txt");
+  expect(index.status()).toBe(200);
+  const text = await index.text();
+  expect(text).toMatch(/^# Fern\n\n> /);
+  expect(text).toContain("## Tutorial");
+  const full = await (await page.request.get("llms-full.txt")).text();
+  expect(full).toContain("# Install");
+  expect(full).not.toContain("<FernPlayground");
+});
+
 test("the home page shows captured diagnostics with the suggested fix", async ({ page }) => {
   await page.goto("./");
   const diag = page.locator(".fern-captured:has(starlight-tabs)").filter({ hasText: "missing-arm.fern" });
