@@ -307,17 +307,9 @@ function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportG
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches, reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: parser.import_paths(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches, reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs), reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
-}
-
-function import_path_list(mod: parser.Module): string[] {
-  let out: string[] = [];
-  for im in mod.imports {
-    out = out.append(im.path);
-  }
-  return out;
+  return out.append(parser.ModuleSight { module: "", imports: parser.import_paths(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs), reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
 }
 
 function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module {
@@ -326,28 +318,6 @@ function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module
     enums = enums.append(parser.EnumDecl { ...ed, visible_from: viewers });
   }
   return parser.Module { ...mod, enums: enums };
-}
-
-function first_dot(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'.') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function first_bracket(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'[') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function is_in(name: string, list: string[]): boolean {
@@ -864,13 +834,13 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return gout;
   }
-  let dot = first_dot(tn);
+  let dot = util.index_of_byte(tn, b'.', 0);
   if (dot >= 0) {
     let qual = slice_unchecked(tn, 0, dot);
     if (is_in(qual, ctx.modnames)) {
       let prefix = resolve_prefix(qual, ctx);
       let rest = slice_unchecked(tn, dot + 1, tn.len());
-      let member_dot = first_dot(rest);
+      let member_dot = util.index_of_byte(rest, b'.', 0);
       if (member_dot >= 0) {
         let en = lookup_reexport(prefix + "__" + slice_unchecked(rest, 0, member_dot), ctx);
         let owner = imported_enum_prefix(en, ctx);
@@ -878,7 +848,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
           return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()) + "");
         }
       }
-      let rb = first_bracket(rest);
+      let rb = parser.first_bracket(rest);
       if (rb < 0) {
         return lookup_reexport(prefix + "__" + rest, ctx);
       }
@@ -890,7 +860,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return tn;
   }
-  let br = first_bracket(tn);
+  let br = parser.first_bracket(tn);
   if (br < 0) {
     return bare_type(tn, ctx);
   }
@@ -911,7 +881,7 @@ function bare_type(tn: string, ctx: RewriteCtx): string {
 }
 
 function rewrite_variant_name(tn: string, ctx: RewriteCtx): string {
-  if (first_dot(tn) < 0 && first_bracket(tn) < 0) {
+  if (util.index_of_byte(tn, b'.', 0) < 0 && parser.first_bracket(tn) < 0) {
     return mangle_bare(tn, ctx);
   }
   return rewrite_type_name(tn, ctx);

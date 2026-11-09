@@ -45,17 +45,6 @@ function shape(f: ssa.SFunc): boolean {
   return util.index_of_i32(ids, f.entry) >= 0;
 }
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
-  let i = 0;
-  for b in f.blocks {
-    if (b.id == id) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function single_pred(b: ssa.SBlock, id: i32): boolean {
   return b.preds.len() == 1 && b.preds[0] == id;
 }
@@ -123,7 +112,7 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
   if (f.name == drop.name || !shape(f) || f.blocks.len() != 4 && f.blocks.len() != 3) {
     return refused(f, "unsupported release graph");
   }
-  let entry = f.blocks[block_index(f, f.entry)];
+  let entry = f.blocks[ssa.block_with_id(f, f.entry)];
   if (entry.preds.len() != 0 || entry.insts.len() != 2 || entry.term.kind_tag != ssa.TERM_BRIF) {
     return refused(f, "unsupported uniqueness guard");
   }
@@ -136,8 +125,8 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
 }
 
 function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.SInst): Proof {
-  let ti = block_index(f, entry.term.t);
-  let fi = block_index(f, entry.term.f);
+  let ti = ssa.block_with_id(f, entry.term.t);
+  let fi = ssa.block_with_id(f, entry.term.f);
   if (ti < 0 || fi < 0 || ti == fi) {
     return refused(f, "invalid uniqueness edges");
   }
@@ -159,7 +148,7 @@ function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.
   if (yes.term.kind_tag != ssa.TERM_BR || !direct && no.term.kind_tag != ssa.TERM_BR || yes.term.target != target) {
     return refused(f, "release join mismatch");
   }
-  let ji = block_index(f, yes.term.target);
+  let ji = ssa.block_with_id(f, yes.term.target);
   if (ji < 0 || ji == ti || !direct && ji == fi || f.blocks[ji].id == entry.id) {
     return refused(f, "invalid release join");
   }

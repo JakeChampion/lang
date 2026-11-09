@@ -139,12 +139,7 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat := assemblerSource(t, "x86_native.fern")
-	elf, err := os.ReadFile("../../../compiler/elf.fern")
-	if err != nil {
-		t.Fatalf("read elf.fern: %v", err)
-	}
-	source := nat + "\n" + string(elf) + toU8Src + driverMain
+	source := assemblerJoin(t, "x86_native.fern", "elf.fern") + toU8Src + driverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

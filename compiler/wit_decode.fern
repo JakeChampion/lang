@@ -1,3 +1,4 @@
+import "./util";
 import "./watbin";
 
 pub struct UlebRead { value: i32, next: i32 }
@@ -870,13 +871,13 @@ function wit_def_refs(tbody: i32[], q: i32): i32[] {
 
 function wit_func_vals(f: WitFunc): i32[] {
   if (f.named == 1) {
-    return wit_cat_vals(f.p_vals, f.r_vals);
+    return util.append_all(f.p_vals, f.r_vals);
   }
   return f.p_vals.append(f.result);
 }
 
 function wit_def_vals(d: WitDef): i32[] {
-  let vals = wit_cat_vals(wit_cat_vals(d.rec_vals, d.tup_elems), wit_variant_vals(d));
+  let vals = util.append_all(util.append_all(d.rec_vals, d.tup_elems), wit_variant_vals(d));
   if (d.tag == 112 || d.tag == 107) {
     vals = vals.append(d.elem);
   }
@@ -912,15 +913,6 @@ function wit_variant_vals(d: WitDef): i32[] {
     i += 1;
   }
   return out;
-}
-
-function wit_cat_vals(a: i32[], b: i32[]): i32[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
 }
 
 function wit_decl_refs(tbody: i32[], p: i32): i32[] {
@@ -1082,12 +1074,12 @@ pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
       } else {
         body = wit_def_mapped(tbody, p + 1, plan.type_map);
       }
-      out = wit_emit_section(out, 7, watbin.wcat([1], body));
+      out = wit_emit_section(out, 7, util.append_all([1], body));
     } else if (plan.decl_keep[i] && d.kind[i] == 2) {
-      out = wit_emit_section(out, 6, watbin.wcat([1], wit_world_alias_mapped(tbody, p + 1, plan.index)));
+      out = wit_emit_section(out, 6, util.append_all([1], wit_world_alias_mapped(tbody, p + 1, plan.index)));
     } else if (plan.decl_keep[i] && d.kind[i] == 3) {
       let nm = wit_tx_externname(tbody, p + 1, [1]);
-      out = wit_emit_section(out, 10, watbin.wcat(nm.out, wit_externdesc_mapped(tbody, nm.next, plan.type_map)));
+      out = wit_emit_section(out, 10, util.append_all(nm.out, wit_externdesc_mapped(tbody, nm.next, plan.type_map)));
     }
     i += 1;
   }
@@ -1104,7 +1096,7 @@ function wit_inst_emit(tbody: i32[], q: i32, pr: WitInstPrune, type_map: i32[]):
   while (i < ds.len()) {
     let defines = wit_decl_defines_type(tbody, ds[i]);
     if (pr.keep[i]) {
-      decls = watbin.wcat(decls, wit_decl_mapped(tbody, ds[i], local, pr.inline[i], type_map));
+      decls = util.append_all(decls, wit_decl_mapped(tbody, ds[i], local, pr.inline[i], type_map));
       count += 1;
       if (defines) {
         local = local.append(n_local);
@@ -1115,24 +1107,24 @@ function wit_inst_emit(tbody: i32[], q: i32, pr: WitInstPrune, type_map: i32[]):
     }
     i += 1;
   }
-  return watbin.wcat(watbin.leb_u32([66], count), decls);
+  return util.append_all(watbin.leb_u32([66], count), decls);
 }
 
 function wit_decl_mapped(tbody: i32[], p: i32, local: i32[], inline: i32, type_map: i32[]): i32[] {
   let none: i32[] = [];
   let kind = tbody[p];
   if (kind == 1) {
-    return watbin.wcat([1], wit_def_mapped(tbody, p + 1, local));
+    return util.append_all([1], wit_def_mapped(tbody, p + 1, local));
   }
   if (kind == 2 && inline >= 0) {
     return wit_tx_typedef(tbody, inline, [1]).out;
   }
   if (kind == 2) {
-    return watbin.wcat([2], wit_use_alias_mapped(tbody, p + 1, type_map));
+    return util.append_all([2], wit_use_alias_mapped(tbody, p + 1, type_map));
   }
   if (kind == 3 || kind == 4) {
     let nm = wit_tx_externname(tbody, p + 1, [kind]);
-    return watbin.wcat(nm.out, wit_externdesc_mapped(tbody, nm.next, local));
+    return util.append_all(nm.out, wit_externdesc_mapped(tbody, nm.next, local));
   }
   return wit_tx_decl(tbody, p, none).out;
 }

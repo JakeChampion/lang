@@ -516,6 +516,65 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
+pub function has_i32(xs: i32[], n: i32): boolean {
+  return index_of_i32(xs, n) >= 0;
+}
+
+pub function count_str(xs: string[], s: string): i32 {
+  let n = 0;
+  for x in xs {
+    if (x == s) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+pub function any_true(xs: boolean[]): boolean {
+  for x in xs {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function filled_i32(n: i32, v: i32): i32[] {
+  let out: i32[] = [];
+  while (out.len() < n) {
+    out = out.append(v);
+  }
+  return out;
+}
+
+pub function empty_i32_lists(n: i32): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < n) {
+    out = out.append([]);
+  }
+  return out;
+}
+
+// index_of_byte is the first index at or after from that holds c, or -1.
+pub function index_of_byte(s: string, c: u8, from: i32): i32 {
+  let i = from;
+  while (i < s.len()) {
+    if (s[i] == c) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+// hex_digit is the lower-case hex character for d in 0..16.
+pub function hex_digit(d: i32): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  return (87 + d) as u8;
+}
+
 // path_base is the part of path after its last slash.
 pub function path_base(path: string): string {
   let start = 0;
@@ -541,6 +600,17 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
     i += 1;
   }
   return true;
+}
+
+// drop_last_i32 is a without its last element.
+pub function drop_last_i32(a: i32[]): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  while (i < a.len() - 1) {
+    out = out.append(a[i]);
+    i += 1;
+  }
+  return out;
 }
 
 pub function contains(haystack: string, needle: string): boolean {
@@ -1523,6 +1593,25 @@ pub function append_all[T](into: T[], more: T[]): T[] {
     i += 1;
   }
   return into;
+}
+
+pub function le32(buf: i32[], v: i32): i32[] {
+  buf = buf.append(v & 255);
+  buf = buf.append(v >> 8 & 255);
+  buf = buf.append(v >> 16 & 255);
+  return buf.append(v >> 24 & 255);
+}
+
+// is_inner_label is true for an assembler label that stays out of the symbol table.
+pub function is_inner_label(s: string): boolean {
+  let i = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.' || s[i] == b'#') {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 pub function to_u8(b: i32[]): u8[] {

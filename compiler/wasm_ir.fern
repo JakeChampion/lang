@@ -4663,20 +4663,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_sleep_ms\n");
   } else if (o.kind_tag == ir.K_SLEEP_NS) {
     parts = parts.append("    call $__fern_sleep_ns\n");
-  } else if (o.kind_tag == ir.K_ISATTY) {
-    parts = emit_wasm_isatty(parts);
-  } else if (o.kind_tag == ir.K_SIGNAL_IGNORE || o.kind_tag == ir.K_SIGNAL_DEFAULT || o.kind_tag == ir.K_SIGNAL_CATCH || o.kind_tag == ir.K_SIGNAL_CATCH_INTERRUPTING) {
-    parts = emit_wasm_signal_disposition(parts);
-  } else if (o.kind_tag == ir.K_SIGNAL_TAKEN) {
-    parts = emit_wasm_signal_taken(parts);
+  } else if (drops_to_zero(o.kind_tag)) {
+    parts = parts.append("    drop\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_SIGNAL_RAISE) {
     parts = emit_wasm_signal_raise(parts);
-  } else if (o.kind_tag == ir.K_CT_MARK) {
-    parts = parts.append("    drop\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_SIGNAL_MASK) {
     parts = emit_wasm_signal_mask(parts);
-  } else if (o.kind_tag == ir.K_SIGNAL_DISPOSITION) {
-    parts = emit_wasm_signal_disposition_read(parts);
   } else if (o.kind_tag == ir.K_HOSTNAME) {
     parts = emit_wasm_hostname(bctmp, parts);
   } else if (o.kind_tag == ir.K_WASM_TIMER_POLLABLE) {
@@ -13274,22 +13266,10 @@ function emit_wasm_fround(f64tmp: i32, parts: string[]): string[] {
   return parts;
 }
 
-function emit_wasm_isatty(parts: string[]): string[] {
-  parts = parts.append("    drop\n    i32.const 0\n");
-
-  return parts;
-}
-
-function emit_wasm_signal_disposition(parts: string[]): string[] {
-  parts = parts.append("    drop\n    i32.const 0\n");
-
-  return parts;
-}
-
-function emit_wasm_signal_taken(parts: string[]): string[] {
-  parts = parts.append("    drop\n    i32.const 0\n");
-
-  return parts;
+// On WASI each of these ops drops its operand and gives 0.
+function drops_to_zero(k: i32): boolean {
+  return k == ir.K_ISATTY || k == ir.K_SIGNAL_IGNORE || k == ir.K_SIGNAL_DEFAULT || k == ir.K_SIGNAL_CATCH
+    || k == ir.K_SIGNAL_CATCH_INTERRUPTING || k == ir.K_SIGNAL_TAKEN || k == ir.K_CT_MARK || k == ir.K_SIGNAL_DISPOSITION;
 }
 
 function emit_wasm_signal_raise(parts: string[]): string[] {
@@ -13300,12 +13280,6 @@ function emit_wasm_signal_raise(parts: string[]): string[] {
 
 function emit_wasm_signal_mask(parts: string[]): string[] {
   parts = parts.append("    drop\n    drop\n    i64.const 0\n");
-
-  return parts;
-}
-
-function emit_wasm_signal_disposition_read(parts: string[]): string[] {
-  parts = parts.append("    drop\n    i32.const 0\n");
 
   return parts;
 }
