@@ -1,0 +1,196 @@
+import "std/test";
+import "std/audio/mp3";
+import "std/audio/mp3/spectral";
+import "std/audio/mp3/input";
+import "std/audio/mp3/seek";
+import "std/audio/mp3/file";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "mp3_freeformat_smoke_vectors" as ref;
+
+function encoded(): u8[] {
+  return match (hex.decode(ref.INPUT)) { Ok(value) => value, Err(_) => [] };
+}
+
+function same(samples: [f32], start: i32): boolean {
+  if (start < 0 || samples.len() - start != ref.SAMPLE_BITS.len()) {
+    return false;
+  }
+  for i in 0..ref.SAMPLE_BITS.len() {
+    if (f32_bits(samples[start + i]) as u32 != ref.SAMPLE_BITS[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function read(bytes: u8[], position: Cell[i64], calls: Cell[i32], width: i32): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    let count = if (requested < width) { requested } else { width };
+    let left = bytes.len() as i64 - position.get();
+    if (left < count as i64) {
+      count = left as i32;
+    }
+    let out: u8[] = [];
+    for i in 0..count {
+      out = out.append(bytes[position.get() as i32 + i]);
+    }
+    position.set(position.get() + count as i64);
+    return Ok(out);
+  };
+}
+
+function limits(): input.Limits {
+  return input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: 17, max_buffer_bytes: 2048 } };
+}
+
+function reference(): test.TestOutcome {
+  let buffer = spectral.zeros(577).with(576, 123.0f32);
+  let (codec, value) = mp3.decoder().decode_frame_into(encoded(), 0, buffer, pcm.default_limits());
+  let Ok(audio) = value else {
+    return test.fail("free-format frame");
+  };
+  if (audio.frames != 576 || audio.channels != 1 || audio.bytes_read != ref.FRAME_BYTES || codec.free_bytes != ref.FRAME_BYTES || audio.samples[576] != 123.0f32) {
+    return test.fail("frame extent or reusable output tail");
+  }
+  if (!same(audio.samples[:576], ref.POSITION as i32)) {
+    return test.fail("independent minimp3 PCM bits");
+  }
+  return test.pass();
+}
+
+function streaming(): test.TestOutcome {
+  let position = cell_new(0i64);
+  let calls = cell_new(0);
+  let reader = read(encoded(), position, calls, 1);
+  let Ok(state) = input.create(limits()) else {
+    return test.fail("input state");
+  };
+  let began = false;
+  for _ in 0..4000 {
+    let before = calls.get();
+    let Ok((next, event)) = state.step_with(reader) else {
+      return test.fail("short-read source");
+    };
+    state = next;
+    if (calls.get() - before > 1 || state.buffer.bytes.len() > 2048) {
+      return test.fail("source step budget");
+    }
+    match (event) {
+      input.Output(input.Begin(info)) => {
+        if (began || info.sample_rate != 8000 || info.channels != 1) {
+          return test.fail("source identification");
+        }
+        began = true;
+      },
+      input.Output(input.Samples(audio)) => {
+        if (!began || audio.position != 0i64 || audio.frames != 576 || !same(audio.samples, ref.POSITION as i32)) {
+          return test.fail("independent source PCM");
+        }
+        return test.pass();
+      },
+      input.Pending => {},
+      _ => {
+        return test.fail("source ended before its first frame");
+      }
+    }
+  }
+  return test.fail("source did not advance");
+}
+
+function seeking(): test.TestOutcome {
+  let bytes = encoded();
+  let Ok(index) = seek.inspect(bytes, seek.default_limits()) else {
+    return test.fail("memory index");
+  };
+  let Ok(cursor) = seek.reader(index).seek(bytes, ref.POSITION) else {
+    return test.fail("memory seek");
+  };
+  let Ok((_, Some(audio))) = cursor.next(bytes) else {
+    return test.fail("memory PCM");
+  };
+  if (audio.position != ref.POSITION || !same(audio.samples, 0)) {
+    return test.fail("independent memory seek bits");
+  }
+  let position = cell_new(0i64);
+  let calls = cell_new(0);
+  let reader = read(bytes, position, calls, 17);
+  let seeker = (offset: i64): Result[i64, IoError] => {
+    if (offset < 0i64 || offset > bytes.len() as i64) {
+      return Err(IoError.Interrupted);
+    }
+    position.set(offset);
+    return Ok(offset);
+  };
+  let Ok(file_index) = file.inspect_with(seeker, reader, bytes.len() as i64, file.Limits { ...file.default_limits(), input: limits() }) else {
+    return test.fail("source-backed index");
+  };
+  let Ok(file_cursor) = file.reader(file_index).seek(ref.POSITION) else {
+    return test.fail("source-backed seek");
+  };
+  let Ok((_, Some(file_audio))) = file_cursor.next_with(seeker, reader) else {
+    return test.fail("source-backed PCM");
+  };
+  if (file_audio.position != ref.POSITION || !same(file_audio.samples, 0)) {
+    return test.fail("independent source-backed seek bits");
+  }
+  return test.pass();
+}
+
+function eof_context(): test.TestOutcome {
+  let bytes: u8[] = [];
+  let all = encoded();
+  for i in 0..ref.FRAME_BYTES * 2 {
+    bytes = bytes.append(all[i]);
+  }
+  match (mp3.inspect(bytes[:ref.FRAME_BYTES], 0, pcm.default_limits())) {
+    Err(pcm.Truncated) => {},
+    _ => {
+      return test.fail("one frame lacks discovery context");
+    }
+  }
+  bytes = bytes.append(84u8).append(65u8).append(71u8);
+  for _ in 3..128 {
+    bytes = bytes.append(0u8);
+  }
+  let position = cell_new(0i64);
+  let calls = cell_new(0);
+  let reader = read(bytes, position, calls, 1);
+  let Ok(state) = input.create(limits()) else {
+    return test.fail("short stream state");
+  };
+  for _ in 0..4000 {
+    let before = calls.get();
+    let Ok((next, event)) = state.step_with(reader) else {
+      return test.fail("two-frame EOF with trailing metadata");
+    };
+    state = next;
+    if (calls.get() - before > 1) {
+      return test.fail("EOF step budget");
+    }
+    match (event) {
+      input.Output(input.Begin(info)) => {
+        if (info.sample_rate != 8000 || state.codec.free_bytes != ref.FRAME_BYTES || !state.buffer.eof) {
+          return test.fail("EOF discovery state");
+        }
+        return test.pass();
+      },
+      input.Pending => {},
+      _ => {
+        return test.fail("incorrect discovery event");
+      }
+    }
+  }
+  return test.fail("EOF discovery did not advance");
+}
+
+function main(): i32 {
+  let runner = test.new("Free-format MP3 interpreter smoke");
+  runner = runner.it("independent active PCM and isolated frame cache", reference);
+  runner = runner.it("one-byte source PCM and cooperative bounds", streaming);
+  runner = runner.it("sample-exact memory and source-backed seeks", seeking);
+  runner = runner.it("two-frame EOF, trailing metadata, and missing context", eof_context);
+  return runner.finish();
+}

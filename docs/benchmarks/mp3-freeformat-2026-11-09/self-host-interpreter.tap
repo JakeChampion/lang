@@ -1,0 +1,10 @@
+TAP version 13
+# Suite: Free-format MP3 interpreter smoke
+ok 1 - independent active PCM and isolated frame cache
+ok 2 - one-byte source PCM and cooperative bounds
+ok 3 - sample-exact memory and source-backed seeks
+ok 4 - two-frame EOF, trailing metadata, and missing context
+1..4
+# tests 4
+# pass 4
+# fail 0
