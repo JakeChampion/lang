@@ -1,0 +1,33 @@
+---
+// Diagnostics — programs with a mistake beside what `fern -check` says
+// about them, one tab each, from the build-time capture
+// (scripts/capture.mjs).
+
+import { Code, TabItem, Tabs } from "@astrojs/starlight/components";
+import { captures } from "../lib/captures.mjs";
+
+const label = (file: string) =>
+  ({ "missing-arm.fern": "A missing arm", "typo.fern": "A typo" })[file] ?? file;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+// The codes in a diagnostic, such as E030 in `error[E030]`.
+const codes = (output: string) => [...new Set([...output.matchAll(/\[([EPW]\d{3})\]/g)].map((m) => m[1]))];
+---
+
+{captures?.diagnostics && (
+<div class="fern-captured not-content">
+  <Tabs syncKey="fern-diagnostic">
+    {captures.diagnostics.map((d) => (
+      <TabItem label={label(d.file)}>
+        <Code code={d.code} lang="fern" title={d.file} />
+        <Code code={d.output} lang="text" title={`fern -check ${d.file}`} wrap />
+        <p class="fern-diag-codes">
+          {codes(d.output).map((c) => (
+            <a href={`${base}/errors/${c.toLowerCase()}/`}>What {c} means, and the fix</a>
+          ))}
+        </p>
+      </TabItem>
+    ))}
+  </Tabs>
+  <p class="fern-label">Captured at build · fern {captures.revision}</p>
+</div>
+)}

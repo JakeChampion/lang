@@ -293,6 +293,9 @@ function follows(s: Settings): boolean {
 }
 
 function descends_links(s: Settings, top: boolean): boolean {
+  if (!s.recursive) {
+    return false;
+  }
   if (s.traverse == trav_l()) {
     return true;
   }
@@ -354,12 +357,6 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
   let want_uid = t.spec.uid;
   let want_gid = t.spec.gid;
   let changed = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
-  if (want_uid < 0 as i64 && want_gid < 0 as i64) {
-    if (s.verbosity == v_all()) {
-      return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
-    }
-    return st;
-  }
   match (ent_chown(ent, want_uid as i32, want_gid as i32, follows(s))) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && changed) {
@@ -368,12 +365,31 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
       return st;
     },
     Err(e) => {
-      let noun = "changing ownership of ";
-      if (t.spec.uid < 0 as i64) {
-        noun = "changing group of ";
+      return change_failed(st, s, t, path, uid, gid, e);
+    }
+  }
+}
+
+function change_failed(st: St, s: Settings, t: Target, path: string, uid: i64, gid: i64, e: IoError): St {
+  let noun = "changing ownership of ";
+  if (t.spec.uid < 0 as i64) {
+    noun = "changing group of ";
+  }
+  let failed = fail_quiet(st, s, noun + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+  return say(failed, s, describe(t, s, path, uid, gid, true, false, true));
+}
+
+function change_quiet(st: St, s: Settings, t: Target, ent: Ent): St {
+  match (ent_chown(ent, t.spec.uid as i32, t.spec.gid as i32, follows(s))) {
+    Ok(_) => {
+      return st;
+    },
+    Err(e) => {
+      let r = look(s, ent, true);
+      if (!r.0.ok) {
+        return unreachable(st, s, t, ent.path, r.1);
       }
-      st = fail_quiet(st, s, noun + gnu.quotea(path) + ": " + gnu.io_error_text(e));
-      return say(st, s, describe(t, s, path, uid, gid, true, false, true));
+      return change_failed(st, s, t, ent.path, r.0.uid, r.0.gid, e);
     }
   }
 }
@@ -467,6 +483,9 @@ function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
 }
 
 function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
+  if (!s.recursive && s.verbosity == v_quiet() && !t.has_from) {
+    return change_quiet(st0, s, t, ent);
+  }
   let st = st0;
   let path = ent.path;
   let r: (Seen, string) = look(s, ent, top);

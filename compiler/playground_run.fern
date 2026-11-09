@@ -19,7 +19,9 @@ import "./util";
 import "./wasm_ir";
 import "./watbin";
 import "./wit_compose";
+import "std/i32";
 import "std/io";
+import "std/utf8";
 
 function main(): i32 {
   return util.rc_underflow_guard("playground_run", run());
@@ -48,6 +50,12 @@ const INTERP_FLAG: string = "-interp";
 const TARGET_FLAG: string = "-target";
 
 const EMIT_FLAG: string = "-emit";
+
+// The program source is the first N bytes of stdin, and the rest of stdin is the program's own input.
+const SOURCE_BYTES_FLAG: string = "-source-bytes";
+
+// The interpreted program's argv[0]. The arguments after `--` follow it.
+const PROGRAM_NAME: string = "main";
 
 function report_diags(diags: util.Diag[], files: string[]): boolean {
   for d in util.sorted_by(diags, util.diag_after) {
@@ -78,8 +86,12 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
   return 0;
 }
 
-function interpret(merged: parser.Module): i32 {
-  let v = interp.eval_module(merged);
+function interpret(merged: parser.Module, prog_args: string[]): i32 {
+  let argv: string[] = [PROGRAM_NAME];
+  for a in prog_args {
+    argv = argv.append(a);
+  }
+  let v = interp.eval_module_argv(merged, argv);
   let (is_status, status) = interp.exit_status(v);
   if (is_status) {
     return status;
@@ -99,33 +111,135 @@ function interpret(merged: parser.Module): i32 {
   }
 }
 
-struct Argv { check: boolean, interp: boolean, lsp: boolean, target: string, target_given: boolean, form: string }
+// source_bytes is ALL_OF_STDIN, BAD_BYTE_COUNT, or the length of the source.
+struct Argv { check: boolean, interp: boolean, lsp: boolean, target: string, target_given: boolean, form: string, source_bytes: i32, prog_args: string[] }
+
+const ALL_OF_STDIN: i32 = -1;
+
+const BAD_BYTE_COUNT: i32 = -2;
 
 function parse_argv(av: string[]): Argv {
-  let o = Argv { check: false, interp: false, lsp: false, target: "wasm32-wasi", target_given: false, form: "" };
-  let ai = 0;
+  let o = Argv { check: false, interp: false, lsp: false, target: "wasm32-wasi", target_given: false, form: "", source_bytes: ALL_OF_STDIN, prog_args: [] };
+  let ai = 1;
   while (ai < av.len()) {
     let a = av[ai];
-    if (a == CHECK_FLAG) {
-      o = Argv { ...o, check: true };
+    if (a == "--") {
+      return Argv { ...o, prog_args: args_after(av, ai) };
     }
-    if (a == INTERP_FLAG) {
-      o = Argv { ...o, interp: true };
-    }
-    if (a == LSP_FLAG) {
-      o = Argv { ...o, lsp: true };
-    }
-    if ((a == TARGET_FLAG || a == EMIT_FLAG) && ai + 1 < av.len()) {
-      if (a == TARGET_FLAG) {
-        o = Argv { ...o, target: av[ai + 1], target_given: true };
-      } else {
-        o = Argv { ...o, form: av[ai + 1] };
-      }
+    if (takes_value(a) && ai + 1 < av.len()) {
+      o = with_value(o, a, av[ai + 1]);
       ai += 1;
+    } else {
+      o = with_switch(o, a);
     }
     ai += 1;
   }
   return o;
+}
+
+function args_after(av: string[], at: i32): string[] {
+  let rest: string[] = [];
+  let i = at + 1;
+  while (i < av.len()) {
+    rest = rest.append(av[i]);
+    i += 1;
+  }
+  return rest;
+}
+
+function takes_value(flag: string): boolean {
+  return flag == TARGET_FLAG || flag == EMIT_FLAG || flag == SOURCE_BYTES_FLAG;
+}
+
+function with_value(o: Argv, flag: string, v: string): Argv {
+  if (flag == TARGET_FLAG) {
+    return Argv { ...o, target: v, target_given: true };
+  }
+  if (flag == EMIT_FLAG) {
+    return Argv { ...o, form: v };
+  }
+  return Argv { ...o, source_bytes: byte_count(v) };
+}
+
+function with_switch(o: Argv, flag: string): Argv {
+  if (flag == CHECK_FLAG) {
+    return Argv { ...o, check: true };
+  }
+  if (flag == INTERP_FLAG) {
+    return Argv { ...o, interp: true };
+  }
+  if (flag == LSP_FLAG) {
+    return Argv { ...o, lsp: true };
+  }
+  return o;
+}
+
+function byte_count(v: string): i32 {
+  match (i32.parse_i32(v)) {
+    Ok(n) => {
+      return if (n >= 0) { n } else { BAD_BYTE_COUNT };
+    },
+    Err(_) => {
+      return BAD_BYTE_COUNT;
+    }
+  }
+}
+
+// The source text: all of stdin, or its first n bytes. The bytes after them stay on stdin for the
+// interpreted program.
+function read_source(n: i32): Result[string, string] {
+  if (n == BAD_BYTE_COUNT) {
+    return Err(SOURCE_BYTES_FLAG + " needs a byte count of zero or more");
+  }
+  let bytes = if (n == ALL_OF_STDIN) { read_all_stdin() } else { read_stdin_bytes(n) };
+  match (bytes) {
+    Ok(got) => {
+      match (utf8.from_bytes(got)) {
+        Ok(text) => {
+          return Ok(text);
+        },
+        Err(_) => {
+          return Err("the source on stdin is not UTF-8");
+        }
+      }
+    },
+    Err(why) => {
+      return Err(why);
+    }
+  }
+}
+
+function read_all_stdin(): Result[u8[], string] {
+  match (io.read_all_stdin_bytes()) {
+    Ok(all) => {
+      return Ok(all);
+    },
+    Err(_) => {
+      return Err("cannot read stdin");
+    }
+  }
+}
+
+// A chunk read never returns more bytes than it asks for.
+function read_stdin_bytes(n: i32): Result[u8[], string] {
+  let r = stdin();
+  let got: u8[] = [];
+  while (got.len() < n) {
+    match (r.read_chunk_bytes(n - got.len())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return Err("stdin ended before " + SOURCE_BYTES_FLAG + " " + n.to_string() + " bytes of source");
+        }
+        for b in chunk {
+          got = got.append(b);
+        }
+      },
+      Err(_) => {
+        return Err("cannot read stdin");
+      }
+    }
+  }
+  return Ok(got);
 }
 
 function run(): i32 {
@@ -149,12 +263,12 @@ function run(): i32 {
     form = "asm";
   }
   let src = "";
-  match (io.read_all_stdin()) {
+  match (read_source(o.source_bytes)) {
     Ok(text) => {
       src = text;
     },
-    Err(_) => {
-      eprint("fern: cannot read UTF-8 stdin");
+    Err(why) => {
+      eprint("fern: " + why);
       return 1;
     }
   }
@@ -194,7 +308,7 @@ function run(): i32 {
     if (checked != 0) {
       return checked;
     }
-    return interpret(merged);
+    return interpret(merged, o.prog_args);
   }
   return emit(merged, files, target, form);
 }

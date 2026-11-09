@@ -1,0 +1,191 @@
+import "./ssa";
+import "./ssasem";
+import "./semunroll";
+import "./typeinfo";
+import "./sourcepos";
+
+function definition(f: ssasem.Func, value: i32): Option[ssa.SInst] {
+  if (value < f.graph.nparams) {
+    return None;
+  }
+  for block in f.graph.blocks {
+    for ins in block.insts {
+      if (ins.result == value) {
+        return Some(ins);
+      }
+    }
+  }
+  return None;
+}
+
+function zero_value(f: ssasem.Func, value: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
+  }
+  let Some(ins) = definition(f, value) else {
+    return false;
+  };
+  if (ins.kind_tag == ssa.COPY || ins.kind_tag == ssasem.cast()) {
+    return ins.args.len() == 1 && zero_value(f, ins.args[0], depth + 1);
+  }
+  return literal_zero(ins);
+}
+
+function literal_zero(ins: ssa.SInst): boolean {
+  if (ins.kind_tag == ssasem.zero()) {
+    return true;
+  }
+  if (ins.kind_tag == ssa.CONST_FLOAT) {
+    // Floating constants contain their bit pattern, including the sign of zero.
+    return ins.str == "0";
+  }
+  return (ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64 || ins.kind_tag == ssa.CONST_BOOL) && ins.imm == 0 && (ins.str == "" || ins.str == "0" || ins.str == "0.0");
+}
+
+function scalar(t: typeinfo.Type): boolean {
+  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
+}
+
+function loop_role(value: i32, iv: i32, phi: i32, step: i32, appended: i32, condition: i32): boolean {
+  return value == phi || value == iv || value == step || value == appended || value == condition;
+}
+
+function constant_kind(kind: i32): boolean {
+  return kind == ssa.CONST_INT || kind == ssa.CONST_BOOL || kind == ssa.CONST_I64 || kind == ssa.CONST_FLOAT || kind == ssa.LINE;
+}
+
+function harmless(f: ssasem.Func, ins: ssa.SInst, iv: i32, phi: i32, step: i32, appended: i32, condition: i32): boolean {
+  if (loop_role(ins.result, iv, phi, step, appended, condition)) {
+    return true;
+  }
+  if (constant_kind(ins.kind_tag)) {
+    return true;
+  }
+  if (ins.kind_tag == ssa.COPY) {
+    return scalar(f.values[ins.result]);
+  }
+  return (ins.kind_tag == ssasem.cast() || ins.kind_tag == ssasem.zero()) && zero_value(f, ins.result, 0);
+}
+
+function marked(inner: boolean[], value: i32): boolean {
+  return value >= 0 && value < inner.len() && inner[value];
+}
+
+function reads_inner(block: ssa.SBlock, inner: boolean[]): boolean {
+  for ins in block.insts {
+    for arg in ins.args {
+      if (marked(inner, arg)) {
+        return true;
+      }
+    }
+  }
+  return block.term.kind_tag == ssa.TERM_RET && marked(inner, block.term.value) || block.term.kind_tag == ssa.TERM_BRIF && marked(inner, block.term.cond);
+}
+
+function loop_values(f: ssasem.Func, c: semunroll.Counted, phi: i32, step: i32, appended: i32): Option[boolean[]] {
+  let inner = __alloc_bool(f.graph.nvals);
+  let condition = f.graph.blocks[c.head].term.cond;
+  for bi in [c.head, c.bodies[0]] {
+    for ins in f.graph.blocks[bi].insts {
+      if (!harmless(f, ins, c.iv, phi, step, appended, condition)) {
+        return None;
+      }
+      if (ins.result >= 0 && ins.result != phi) {
+        inner = inner.with(ins.result, true);
+      }
+    }
+  }
+  return Some(inner);
+}
+
+function private_values(f: ssasem.Func, c: semunroll.Counted, phi: i32, step: i32, appended: i32): boolean {
+  let Some(inner) = loop_values(f, c, phi, step, appended) else {
+    return false;
+  };
+  for value in f.dbg_vals {
+    if (marked(inner, value)) {
+      return false;
+    }
+  }
+  for bi in 0..f.graph.blocks.len() {
+    if (bi != c.head && bi != c.bodies[0] && reads_inner(f.graph.blocks[bi], inner)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function exit_position(f: ssasem.Func, c: semunroll.Counted): i32 {
+  for i in 0..f.graph.blocks.len() {
+    let block = f.graph.blocks[i];
+    if (block.id == c.exit && block.preds.len() == 1 && block.preds[0] == f.graph.blocks[c.head].id) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The caller first proves the exact scalar append loop through semreserve.
+pub function fill(f: ssasem.Func, c: semunroll.Counted, phi: i32, bound: i32, before: i32, zero: i32): Option[ssasem.Func] {
+  if (c.heads.len() != 1 || c.bodies.len() != 1) {
+    return None;
+  }
+  let Some(array) = definition(f, phi) else {
+    return None;
+  };
+  let Some(induction) = definition(f, c.iv) else {
+    return None;
+  };
+  let Some(append) = definition(f, array.args[c.latch]) else {
+    return None;
+  };
+  if (!zero_value(f, append.args[1], 0)) {
+    return None;
+  }
+  let exit = exit_position(f, c);
+  if (exit < 0 || !private_values(f, c, phi, induction.args[c.latch], append.result)) {
+    return None;
+  }
+  return Some(replace(f, c, phi, array.args[c.entry], bound, before, zero, exit));
+}
+
+function jump(target: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
+}
+
+function replace(f: ssasem.Func, c: semunroll.Counted, phi: i32, original: i32, bound: i32, before: i32, zero: i32, exit: i32): ssasem.Func {
+  let next = 0;
+  for block in f.graph.blocks {
+    if (block.id >= next) {
+      next = block.id + 1;
+    }
+  }
+  let value = f.values.len();
+  let condition = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [bound, zero], imm: 0, str: ">" };
+  let allocation = ssa.SInst { kind_tag: ssasem.array_zero(), result: value + 1, args: [bound], imm: 0, str: "" };
+  let fresh = ssa.SBlock { id: next, insts: [allocation], term: jump(next + 1), preds: [f.graph.blocks[before].id] };
+  let joined = ssa.SInst { kind_tag: ssa.PHI, result: phi, args: [original, value + 1], imm: 0, str: "" };
+  let join = ssa.SBlock { id: next + 1, insts: [joined], term: jump(c.exit), preds: [f.graph.blocks[before].id, next] };
+  let blocks: ssa.SBlock[] = [];
+  for i in 0..f.graph.blocks.len() {
+    let block = f.graph.blocks[i];
+    if (i == c.head) {
+      blocks = blocks.append(fresh).append(join);
+    } else if (i != c.bodies[0]) {
+      if (i == before) {
+        block = ssa.SBlock { ...block, insts: block.insts.append(condition), term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: value, target: 0, t: next, f: next + 1, value: 0 } };
+      } else if (i == exit) {
+        block = ssa.SBlock { ...block, preds: [next + 1] };
+      }
+      blocks = blocks.append(block);
+    }
+  }
+  let values = f.values.append(typeinfo.TypeBool { tag: 0 }).append(f.values[phi]);
+  let source = f.source_positions;
+  if (source.entry.line != 0) {
+    while (source.values.len() < values.len()) {
+      source = sourcepos.SourceInfo { ...source, values: source.values.append(sourcepos.SourcePos { line: 0, col: "0" }) };
+    }
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() }, values: values, source_positions: source };
+}

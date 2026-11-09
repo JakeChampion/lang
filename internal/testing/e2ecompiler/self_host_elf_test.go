@@ -17,11 +17,7 @@ func TestSelfHostELF(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	elf, err := os.ReadFile("../../../compiler/elf.fern")
-	if err != nil {
-		t.Fatalf("read elf.fern: %v", err)
-	}
-	source := string(elf) + "\n" + elfSelfTestMain
+	source := assemblerSource(t, "elf.fern") + "\n" + elfSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -173,7 +169,7 @@ function main(): i32 {
     // = 16; filesz = 64+56+16 = 136; memsz = 136 + 0xA0000000 = 0xA0000088
     // (LE 0x88=136,0,0,0xA0,0,0,0,0).
     let body6: i32[] = elf_pad_to(elf_cat_u8([], t3), 8);
-    body6 = elf_cat(body6, d3);
+    body6 = util__append_all(body6, d3);
     let b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
     if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }
     if (b6[108] != 0 || b6[109] != 0 || b6[110] != 0 || b6[111] != 0) { return 45; }
@@ -198,12 +194,13 @@ function main(): i32 {
     // The compact image omits the virtual gap between constants and globals.
     let gap = elf_executable_relro_gap(d3.len(), elf_page_align());
     let protected = d3.len() + gap;
-    let d9 = elf_cat(elf_pad_to(d3, protected), d3);
+    let d9 = util__append_all(elf_pad_to(d3, protected), d3);
     let b9: u8[] = elf_image_pie(t3, d9, elf_em_aarch64(), 0, 0, protected, false);
     if (b9[240] != b7[128] || b9[241] != b7[129] || b9[248] != b7[136] || b9[249] != b7[137] || b9[250] != b7[138] || b9[251] != b7[139]) { return 64; }
     let constant_addr = test_u32(b9, 136);
     let mapped = protected - (constant_addr + protected) % 4096;
-    if (test_u32(b9, 264) != mapped || test_u32(b9, 272) != mapped || b9[280] != 1) { return 65; }
+    // PT_GNU_RELRO keeps its file size to the constants the file holds.
+    if (test_u32(b9, 264) != d3.len() || test_u32(b9, 272) != mapped || b9[280] != 1) { return 65; }
     if (gap != 65536 || b9.len() != 384 || b9[120] != 1 || b9[124] != 6 || test_u32(b9, 152) != 8 || test_u32(b9, 160) != mapped) { return 66; }
     if (b9[176] != 1 || b9[180] != 6 || test_u32(b9, 184) != test_u32(b9, 128) + 8 || test_u32(b9, 192) != constant_addr + protected) { return 67; }
     if (test_u32(b9, 208) != 8 || test_u32(b9, 216) != 8 || b9[368] != 7 || b9[375] != 7 || b9[376] != 7 || b9[383] != 7) { return 68; }

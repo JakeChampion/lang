@@ -1,5 +1,6 @@
 import "std/json";
 import "./util";
+import "std/string";
 
 pub struct Input { r: Reader, pending: string }
 
@@ -63,8 +64,8 @@ function content_length(headers: string): i32 {
     }
     let line = slice_unchecked(rest, 0, end) + "";
     let colon = util.index_of_sub(line, ":");
-    if (colon > 0 && lower_ascii(util.trim(slice_unchecked(line, 0, colon) + "")) == "content-length") {
-      let v = util.trim(slice_unchecked(line, colon + 1, line.len()) + "");
+    if (colon > 0 && lower_ascii((slice_unchecked(line, 0, colon) + "").trim()) == "content-length") {
+      let v = (slice_unchecked(line, colon + 1, line.len()) + "").trim();
       if (util.is_all_digits(v)) {
         n = util.digits_to_i32(v);
       }

@@ -173,8 +173,9 @@ findings. Ranked by leverage.
     `util`, and the tests load them through `modload`. Their copies of the
     `parse_f64_bits` family and of `index_of_str` are deleted. `x86_native` and
     `arm64_native` also import `gas`, which holds the DWARF call-frame encoder
-    and the GAS-text helpers they had in two copies. `elf.fern` imports nothing
-    and shares no function with `util`.
+    and the GAS-text helpers they had in two copies. `elf.fern` and `gas.fern`
+    import `util` for the byte writers that the object writers share, and the
+    tests load them through `modload` too.
 
   The last candidate was `split_commas` (`irlower`, `printer`).
   The 2026-10 tree no longer contains `irlower.fern`.
@@ -194,8 +195,9 @@ findings. Ranked by leverage.
   parsed to zero packages**: the loader saw an empty lock rather than an error.
   Native does not have this bug — `internal/pkg/mvs/lock.go:66` makes the identical
   comparison but trims with `strings.TrimSpace`, which strips `\r` — so this
-  was a self-host-only divergence from the reference it mirrors. One
-  CRLF-aware `util.trim` now serves `fern_toml` and `mvs`, pinned by
+  was a self-host-only divergence from the reference it mirrors. The compiler
+  now trims with `std/string`'s `.trim()`, which strips all ASCII whitespace
+  as `strings.TrimSpace` does. `fern_toml` and `mvs` are pinned by
   `toml_crlf_run.fern` + `TestSelfHostTomlCRLF`, which parses the same
   documents LF and CRLF and requires the halves to agree.
   Only the lock half ever misbehaved, which is why it went unseen: the manifest

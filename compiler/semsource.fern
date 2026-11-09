@@ -104,13 +104,6 @@ function is_bool(t: typeinfo.Type): boolean {
   return semtypes.equal(t, typeinfo.t_bool());
 }
 
-function is_void(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeVoid(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function fail(s: State, why: string): State {
   if (!s.ok) {
     return s;
@@ -150,24 +143,8 @@ function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.S
   return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: str };
 }
 
-function t_ret(value: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
-}
-
-function t_br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
-}
-
-function t_brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
-}
-
 function t_none(): ssa.STerm {
   return ssa.STerm { kind_tag: ssa.TERM_NONE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
-}
-
-function t_unreachable(): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }
 
 function emit(s: State, ins: ssa.SInst): State {
@@ -705,17 +682,13 @@ function decimal(text: string): boolean {
   return true;
 }
 
-function hex_digit(b: i32): boolean {
-  return b >= 48 && b <= 57 || b >= 97 && b <= 102 || b >= 65 && b <= 70;
-}
-
 function hex_digits(text: string, from: i32): boolean {
   if (from >= text.len()) {
     return false;
   }
   let i = from;
   while (i < text.len()) {
-    if (!hex_digit(text[i] as i32)) {
+    if (!lexer.is_hex_digit(text[i] as i32)) {
       return false;
     }
     i += 1;
@@ -804,13 +777,6 @@ function decimal_text(t: string): string {
   return slice_unchecked(t, i, t.len()) + "";
 }
 
-function boolean_value(b: boolean): i32 {
-  if (b) {
-    return 1;
-  }
-  return 0;
-}
-
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
   let value = lookup(s, id.name);
   if (value >= 0) {
@@ -833,13 +799,6 @@ function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type
     s = State { ...s, calls: s.calls.append(contract) };
   }
   return define(s, ssasem.call(), [], 0, id.name, contract.result);
-}
-
-function union_name(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
 }
 
 function union_variants(s: State, name: string): string[] {
@@ -897,7 +856,7 @@ function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
 }
 
 function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
-  if (is_void(ty)) {
+  if (typeinfo.is_void(ty)) {
     return semrecords.Variant { name: name, fields: [] };
   }
   return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
@@ -922,7 +881,7 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) else {
+  let Some(shape) = checker.variant_shape_sig(s.scope, name, typeinfo.union_name(whole)) else {
     return None;
   };
   let sig = checker.instantiated_variant(shape, s.scope, whole);
@@ -933,7 +892,7 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)) else {
+  let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), typeinfo.union_name(whole)) else {
     return None;
   };
   let sig = checker.instantiated_variant(shape, s.scope, whole);
@@ -941,12 +900,12 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
 }
 
 function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
-  let sig: checker.UnionSig = match (checker.union_sig(s.scope, union_name(whole))) { Some(u) => u, None => { return name; } };
+  let sig: checker.UnionSig = match (checker.union_sig(s.scope, typeinfo.union_name(whole))) { Some(u) => u, None => { return name; } };
   if (sig.instance == "" || util.index_of_str(sig.variants, name) >= 0) {
     return name;
   }
   // Enum instances preserve the declaration order of their variants.
-  let origin: checker.UnionSig = match (checker.union_sig(s.scope, union_name(enum_origin(whole, s)))) { Some(u) => u, None => { return name; } };
+  let origin: checker.UnionSig = match (checker.union_sig(s.scope, typeinfo.union_name(enum_origin(whole, s)))) { Some(u) => u, None => { return name; } };
   let at = util.index_of_str(origin.variants, name);
   if (at >= 0 && origin.variants.len() == sig.variants.len()) {
     return sig.variants[at];
@@ -956,13 +915,13 @@ function literal_variant_name(s: State, whole: typeinfo.Type, name: string): str
 
 function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
   let ty = checked(e, s);
-  if (union_name(expected) != union_name(ty)) {
+  if (typeinfo.union_name(expected) != typeinfo.union_name(ty)) {
     if (completes_enum(enum_origin(ty, s), enum_origin(expected, s))) {
       return expected;
     }
     return ty;
   }
-  if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
+  if (builtin_union_layout(typeinfo.union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
     return expected;
   }
   return ty;
@@ -983,7 +942,7 @@ function union_unsettled(t: typeinfo.Type): boolean {
 }
 
 function names_variant(s: State, whole: typeinfo.Type, name: string): boolean {
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   if (owner == "") {
     return false;
   }
@@ -997,13 +956,6 @@ function struct_name(t: typeinfo.Type): string {
     }
   }
   return "";
-}
-
-function element_type(t: typeinfo.Type): typeinfo.Type {
-  if let typeinfo.TypeArray(a) = t {
-    return a.elem;
-  }
-  return typeinfo.unchecked();
 }
 
 function tuple_element_type(t: typeinfo.Type, at: i32): typeinfo.Type {
@@ -1027,7 +979,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "unresolved array literal type");
   }
-  let elem = element_type(ty);
+  let elem = typeinfo.array_elem(ty);
   if (ssasem.is_u8(elem)) {
     let (bytes, constant) = constant_byte_elements(a.elements);
     if (constant) {
@@ -1084,14 +1036,14 @@ function constant_byte_elements(elements: ast.Expr[]): (u8[], boolean) {
 
 function packed_bytes(e: ast.Expr, bytes: u8[], s: State, expected: typeinfo.Type): Value {
   let ty = destination_type(e, s, expected);
-  if (!ssasem.is_u8(element_type(ty))) {
+  if (!ssasem.is_u8(typeinfo.array_elem(ty))) {
     return refused(s, "constant byte array destination type");
   }
   let words = byteconst.words(bytes);
   if (!byteconst.valid(words, bytes.len())) {
     return refused(s, "constant byte array payload size");
   }
-  let owned: typeinfo.Type = typeinfo.TypeArray { elem: element_type(ty), view: false };
+  let owned: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.array_elem(ty), view: false };
   return widen(define(s, ssasem.bytes_new(), [], bytes.len(), words, owned), ty);
 }
 
@@ -1157,7 +1109,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
   if (ssasem.is_text(s.values[container.id])) {
     return define(s, ssasem.str_index(), [container.id, at.id], unchecked, "", typeinfo.t_u8());
   }
-  let elem = element_type(s.values[container.id]);
+  let elem = typeinfo.array_elem(s.values[container.id]);
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "array projection contract");
   }
@@ -1185,10 +1137,10 @@ function index_operand(v: Value): Value {
   let miss = hit + 1;
   let join = hit + 2;
   s = State { ...s, next_block: join + 1 };
-  s = terminate(s, t_brif(fits.id, hit, miss));
-  s = terminate(open(s, hit, [pred]), t_br(join));
+  s = terminate(s, ssa.t_brif(fits.id, hit, miss));
+  s = terminate(open(s, hit, [pred]), ssa.t_br(join));
   let outside = define(open(s, miss, [pred]), 1, [], -1, "", typeinfo.t_i32());
-  s = terminate(outside.s, t_br(join));
+  s = terminate(outside.s, ssa.t_br(join));
   return define(open(s, join, [hit, miss]), 8, [narrowed.id, outside.id], 0, "", typeinfo.t_i32());
 }
 
@@ -1206,19 +1158,19 @@ function slice_probe(t: SliceTree, src: i32, at: i32, len: i32, sink: i32): Slic
 
   let zero = define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_i32());
   let after_start = define(zero.s, ssa.BINARY, [at, zero.id], 0, ">", typeinfo.t_bool());
-  s = terminate(after_start.s, t_brif(after_start.id, below, ok));
+  s = terminate(after_start.s, ssa.t_brif(after_start.id, below, ok));
 
   let inside = define(open(s, below, [interior]), 9, [at, len], 0, "<", typeinfo.t_bool());
-  s = terminate(inside.s, t_brif(inside.id, byte, ok));
+  s = terminate(inside.s, ssa.t_brif(inside.id, byte, ok));
 
   let b = define(open(s, byte, [below]), ssasem.str_index(), [src, at], 0, "", typeinfo.t_u8());
   let low = define(b.s, ssa.CONST_INT, [], 128, "", typeinfo.t_u8());
   let ascii = define(low.s, ssa.BINARY, [b.id, low.id], 0, "<", typeinfo.t_bool());
-  s = terminate(ascii.s, t_brif(ascii.id, ok, lead));
+  s = terminate(ascii.s, ssa.t_brif(ascii.id, ok, lead));
 
   let first = define(open(s, lead, [byte]), 1, [], 192, "", typeinfo.t_u8());
   let starts = define(first.s, ssa.BINARY, [b.id, first.id], 0, ">=", typeinfo.t_bool());
-  s = terminate(starts.s, t_brif(starts.id, ok, sink));
+  s = terminate(starts.s, ssa.t_brif(starts.id, ok, sink));
 
   return SliceTree { s: open(s, ok, [interior, below, byte, lead]), preds: preds.append(lead) };
 }
@@ -1230,7 +1182,7 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
   let next = s.next_block;
   s = State { ...s, next_block: next + 1 };
   let held = define(s, ssa.BINARY, [left, right], 0, op, typeinfo.t_bool());
-  s = terminate(held.s, t_brif(held.id, next, sink));
+  s = terminate(held.s, ssa.t_brif(held.id, next, sink));
   return SliceTree { s: open(s, next, [from]), preds: preds.append(from) };
 }
 
@@ -1267,7 +1219,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id]));
   }
   let whole = checked(e, s);
-  let layout = union_layout(s, union_name(whole));
+  let layout = union_layout(s, typeinfo.union_name(whole));
   if (layout != semrecords.layout_option()) {
     return refused(s, "unsupported slice result");
   }
@@ -1315,10 +1267,10 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   let view = define(s, ssasem.slice(), [src.id, lo.id, hi], 0, "", typeinfo.t_str());
   let some = define(view.s, ssasem.variant_new(), [view.id], 0, "Some", whole);
   let from_some = some.s.cur.id;
-  s = terminate(some.s, t_br(join));
+  s = terminate(some.s, ssa.t_br(join));
 
   let none = define(open(s, sink, sink_preds), ssasem.variant_new(), [], 0, "None", whole);
-  s = terminate(none.s, t_br(join));
+  s = terminate(none.s, ssa.t_br(join));
 
   return define(open(s, join, [from_some, sink]), 8, [some.id, none.id], 0, "", whole);
 }
@@ -1380,17 +1332,6 @@ function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
   return None;
 }
 
-function record_field_index(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let container = expr(fa.obj, s, typeinfo.unchecked());
   s = container.s;
@@ -1403,7 +1344,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let Some(sig) = record_sig(s.values[container.id], s) else {
     return refused(s, "unsupported projection");
   };
-  let at = record_field_index(sig, fa.field);
+  let at = util.index_of_str(sig.field_names, fa.field);
   if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
     return refused(s, "record projection contract");
   }
@@ -1417,7 +1358,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
   let at: i32[] = [];
   let i = 0;
   while (i < sl.field_values.len()) {
-    let slot = field_slot(sig, sl.field_names[i]);
+    let slot = util.index_of_str(sig.field_names, sl.field_names[i]);
     if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
       return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] };
     }
@@ -1487,17 +1428,6 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty, base.id + 1);
 }
 
-function field_slot(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sl.has_base) {
     return record_update(e, sl, s);
@@ -1523,7 +1453,7 @@ function record_type(name: string, s: State): Option[typeinfo.Type] {
 
 function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: State): Value {
   name = literal_variant_name(s, whole, name);
-  let layout = union_layout(s, union_name(whole));
+  let layout = union_layout(s, typeinfo.union_name(whole));
   if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) {
     return refused(s, "unsupported variant literal");
   }
@@ -1531,7 +1461,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
     return refused(s, "unsupported variant literal");
   };
   let args = written;
-  if (shape.unit && written.len() == 1 && is_void(checked(written[0], s))) {
+  if (shape.unit && written.len() == 1 && typeinfo.is_void(checked(written[0], s))) {
     let unit = expr(written[0], s, typeinfo.t_void());
     s = unit.s;
     if (!s.ok) {
@@ -1927,7 +1857,7 @@ function method_owner(t: typeinfo.Type): string {
   }
   let owner = struct_name(t);
   if (owner == "") {
-    return union_name(t);
+    return typeinfo.union_name(t);
   }
   return owner;
 }
@@ -2114,8 +2044,8 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
     return v;
   }
   let from = s.values[v.id];
-  let flayout = union_layout(s, union_name(from));
-  let rlayout = union_layout(s, union_name(s.result));
+  let flayout = union_layout(s, typeinfo.union_name(from));
+  let rlayout = union_layout(s, typeinfo.union_name(s.result));
   if (!try_layout(flayout)) {
     return refused(s, "try of a value that is not a union");
   }
@@ -2166,7 +2096,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   let leave = good + 1;
   s = State { ...s, next_block: leave + 1 };
   let test = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], typeinfo.t_bool());
-  s = terminate(test.s, t_brif(test.id, good, leave));
+  s = terminate(test.s, ssa.t_brif(test.id, good, leave));
 
   let entry = s;
   let gone = stmts(armed_cleanup(s), open(State { ...s, replaying: true }, leave, [pred]));
@@ -2192,7 +2122,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
     args = [carried.id];
   }
   let out = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
-  s = terminate(out.s, t_ret(out.id));
+  s = terminate(out.s, ssa.t_ret(out.id));
   s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope, replaying: entry.replaying };
 
   if (unit_good) {
@@ -2217,7 +2147,7 @@ function armed_cleanup(s: State): ast.Stmt[] {
 }
 
 function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): string {
-  if (ssasem.is_dyn(to)) {
+  if (typeinfo.is_dyn(to)) {
     return "dyn";
   }
   let key = nominal_method_key("from", to, s);
@@ -2240,15 +2170,15 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (ssasem.is_integer(s.values[v.id])) {
     return checked_int_cast(u, v, s);
   }
-  if (!ssasem.is_dyn(s.values[v.id])) {
+  if (!typeinfo.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
   let target = slice_unchecked(u.op, 4, u.op.len()) + "";
   let concrete = resolved(s.scope.resolve_type(target), s.template, s.binding, s.scope);
-  if (struct_name(concrete) != target && union_name(concrete) != target) {
+  if (struct_name(concrete) != target && typeinfo.union_name(concrete) != target) {
     return refused(s, "downcast target: " + target);
   }
-  if (union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
+  if (typeinfo.union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
     return refused(s, "downcast to an enum whose box carries no shape: " + target);
   }
   let whole = ssasem.option_of(concrete);
@@ -2264,16 +2194,16 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   let join = hit + 2;
   s = State { ...s, next_block: join + 1 };
   let test = define(s, ssasem.dyn_is(), [v.id], 0, target, typeinfo.t_bool());
-  s = terminate(test.s, t_brif(test.id, hit, miss));
+  s = terminate(test.s, ssa.t_brif(test.id, hit, miss));
 
   let narrowed = define(open(s, hit, [pred]), ssasem.dyn_as(), [v.id], 0, target, some.types[0]);
   let yes = define(narrowed.s, ssasem.variant_new(), [narrowed.id], 0, names[0], whole);
   let hit_end = yes.s.cur.id;
-  s = terminate(yes.s, t_br(join));
+  s = terminate(yes.s, ssa.t_br(join));
 
   let no = define(open(s, miss, [pred]), ssasem.variant_new(), [], 0, names[1], whole);
   let miss_end = no.s.cur.id;
-  s = terminate(no.s, t_br(join));
+  s = terminate(no.s, ssa.t_br(join));
   return define(open(s, join, [hit_end, miss_end]), 8, [yes.id, no.id], 0, "", whole);
 }
 
@@ -2308,9 +2238,9 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
   let hit_pred = pred;
   let miss_preds: i32[] = [pred];
   if (signed < 0) {
-    s = terminate(s, t_brif(fits.id, hit, miss));
+    s = terminate(s, ssa.t_brif(fits.id, hit, miss));
   } else {
-    s = terminate(s, t_brif(fits.id, sign, miss));
+    s = terminate(s, ssa.t_brif(fits.id, sign, miss));
     let st = s.values[signed];
     let text = "";
     if (ssasem.text_constant(st)) {
@@ -2320,14 +2250,14 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
     let nonneg = define(zero.s, ssa.BINARY, [signed, zero.id], 0, ">=", typeinfo.t_bool());
     hit_pred = nonneg.s.cur.id;
     miss_preds = miss_preds.append(hit_pred);
-    s = terminate(nonneg.s, t_brif(nonneg.id, hit, miss));
+    s = terminate(nonneg.s, ssa.t_brif(nonneg.id, hit, miss));
   }
   let yes = define(open(s, hit, [hit_pred]), ssasem.variant_new(), [t.id], 0, names[0], whole);
   let hit_end = yes.s.cur.id;
-  s = terminate(yes.s, t_br(join));
+  s = terminate(yes.s, ssa.t_br(join));
   let no = define(open(s, miss, miss_preds), ssasem.variant_new(), [], 0, names[1], whole);
   let miss_end = no.s.cur.id;
-  s = terminate(no.s, t_br(join));
+  s = terminate(no.s, ssa.t_br(join));
   return define(open(s, join, [hit_end, miss_end]), 8, [yes.id, no.id], 0, "", whole);
 }
 
@@ -2414,7 +2344,7 @@ function cond(e: ast.Expr, s: State, yes: i32, no: i32): Cond {
     return Cond { s: fail(s, "condition type"), yes: [], no: [] };
   }
   let at = s.cur.id;
-  return Cond { s: terminate(s, t_brif(v.id, yes, no)), yes: [at], no: [at] };
+  return Cond { s: terminate(s, ssa.t_brif(v.id, yes, no)), yes: [at], no: [at] };
 }
 
 function concat_ids(a: i32[], b: i32[]): i32[] {
@@ -2440,9 +2370,9 @@ function logical(b: ast.ExprBinary, s: State): Value {
   let join = rhs + 2;
   s = State { ...s, next_block: join + 1 };
   if (b.op == "&&") {
-    s = terminate(s, t_brif(left.id, rhs, skip));
+    s = terminate(s, ssa.t_brif(left.id, rhs, skip));
   } else {
-    s = terminate(s, t_brif(left.id, skip, rhs));
+    s = terminate(s, ssa.t_brif(left.id, skip, rhs));
   }
   let right = expr(b.right, open(s, rhs, [pred]), typeinfo.t_bool());
   s = right.s;
@@ -2453,9 +2383,9 @@ function logical(b: ast.ExprBinary, s: State): Value {
     return refused(s, "operator contract");
   }
   let rhs_end = s.cur.id;
-  s = terminate(s, t_br(join));
-  let short = define(open(s, skip, [pred]), 2, [], boolean_value(b.op == "||"), "", typeinfo.t_bool());
-  s = terminate(short.s, t_br(join));
+  s = terminate(s, ssa.t_br(join));
+  let short = define(open(s, skip, [pred]), 2, [], util.bool_i32(b.op == "||"), "", typeinfo.t_bool());
+  s = terminate(short.s, ssa.t_br(join));
   return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", typeinfo.t_bool());
 }
 
@@ -2473,7 +2403,7 @@ function builtin_length(recv: i32, s: State): Value {
 
 function builtin_append(c: ast.ExprCall, recv: i32, s: State): Value {
   let t = s.values[recv];
-  let elem = element_type(t);
+  let elem = typeinfo.array_elem(t);
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "unsupported call target");
   }
@@ -2491,7 +2421,7 @@ function builtin_append(c: ast.ExprCall, recv: i32, s: State): Value {
 
 function builtin_with(c: ast.ExprCall, recv: i32, s: State): Value {
   let t = s.values[recv];
-  let elem = element_type(t);
+  let elem = typeinfo.array_elem(t);
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "unsupported call target");
   }
@@ -2517,7 +2447,7 @@ function builtin_with(c: ast.ExprCall, recv: i32, s: State): Value {
 
 function builtin_truncate(c: ast.ExprCall, recv: i32, s: State): Value {
   let t = s.values[recv];
-  if (!semtypes.concrete(element_type(t), false)) {
+  if (!semtypes.concrete(typeinfo.array_elem(t), false)) {
     return refused(s, "unsupported call target");
   }
   let n = expr(c.args[0], s, typeinfo.t_i32());
@@ -2779,7 +2709,7 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: S
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
@@ -2828,7 +2758,7 @@ function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
@@ -2840,11 +2770,11 @@ function boolean_text(recv: i32, s: State): Value {
   let no = yes + 1;
   let join = yes + 2;
   s = State { ...s, next_block: join + 1 };
-  s = terminate(s, t_brif(recv, yes, no));
+  s = terminate(s, ssa.t_brif(recv, yes, no));
   let t = define(open(s, yes, [pred]), 5, [], 0, "true", typeinfo.t_string());
-  s = terminate(t.s, t_br(join));
+  s = terminate(t.s, ssa.t_br(join));
   let f = define(open(s, no, [pred]), 5, [], 0, "false", typeinfo.t_string());
-  s = terminate(f.s, t_br(join));
+  s = terminate(f.s, ssa.t_br(join));
   return define(open(s, join, [yes, no]), 8, [t.id, f.id], 0, "", typeinfo.t_string());
 }
 
@@ -2852,7 +2782,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: St
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
-  if (semtypes.is_cell(s.values[recv])) {
+  if (typeinfo.is_cell(s.values[recv])) {
     return cell_method(c, fa, recv, s, statement);
   }
   if (ssasem.is_map(s.values[recv])) {
@@ -2917,12 +2847,12 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     return produced;
   }
   let recv = produced.id;
-  if (ssasem.is_dyn(s.values[recv])) {
+  if (typeinfo.is_dyn(s.values[recv])) {
     return dyn_method(c, fa, recv, s, statement);
   }
   let owner = method_owner(s.values[recv]);
   if let Some(fsig) = record_sig(s.values[recv], s) {
-    let fat = record_field_index(fsig, fa.field);
+    let fat = util.index_of_str(fsig.field_names, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
       let fv = field_read(s, recv, fat, fa.field, fsig.field_types[fat]);
       if (!fv.s.ok) {
@@ -2969,7 +2899,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (c.args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   if (ssasem.contract_variables(contract).len() > 0) {
@@ -3011,7 +2941,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
     if (statement) {
       ty = typeinfo.t_void();
     }
-    return unreachable_value(terminate(s, t_unreachable()), ty);
+    return unreachable_value(terminate(s, ssa.t_unreachable()), ty);
   }
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
@@ -3033,7 +2963,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if (c.args.len() + 1 != shape.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(shape.result) && !statement) {
+  if (typeinfo.is_void(shape.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   let params: typeinfo.Type[] = [receiver];
@@ -3221,7 +3151,7 @@ function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolea
   if (c.args.len() != params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(result) && !statement) {
+  if (typeinfo.is_void(result) && !statement) {
     return refused(s, "unsupported void call");
   }
   let ids: i32[] = [callee];
@@ -3410,7 +3340,7 @@ function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, preds: i32
   }
   let end = s.cur.id;
   let env = prefix(s.vals, count);
-  s = terminate(s, t_br(join));
+  s = terminate(s, ssa.t_br(join));
   return VArm { s: leave(s, count, scope), live: true, end: end, env: env, value: v.id };
 }
 
@@ -3525,7 +3455,7 @@ function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expe
 }
 
 function names_member(s: State, whole: typeinfo.Type, name: string): boolean {
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) {
     return false;
   }
@@ -3576,7 +3506,7 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
   if (c.args.len() != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke(c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
@@ -3686,7 +3616,7 @@ function declared_type_head(name: string, s: State): string {
 }
 
 function literal_owner(s: State, whole: typeinfo.Type, head: string): boolean {
-  return union_name(whole) == head || union_name(enum_origin(whole, s)) == head;
+  return typeinfo.union_name(whole) == head || typeinfo.union_name(enum_origin(whole, s)) == head;
 }
 
 function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
@@ -3711,7 +3641,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
   if (c.args.len() != contract.params.len()) {
     return refused(s, "call arity");
   }
-  if (is_void(contract.result) && !statement) {
+  if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
   return invoke(c.args, contract, s, binding, destination_binding(contract, expected));
@@ -3766,6 +3696,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   }
   if (name == "__socket_from_fd") {
     return socket_from_fd(c, s);
+  }
+  if (name == "share_unchecked" && c.args.len() == 1) {
+    return expr(c.args[0], s, expected);
   }
   if (parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin(name, c, s, expected);
@@ -3889,7 +3822,7 @@ function exiting(name: string, v: Value): Value {
   if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
     return v;
   }
-  return Value { s: terminate(v.s, t_unreachable()), id: v.id };
+  return Value { s: terminate(v.s, ssa.t_unreachable()), id: v.id };
 }
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
@@ -4022,7 +3955,7 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
 }
 
 function enum_origin(t: typeinfo.Type, s: State): typeinfo.Type {
-  if let Some(sig) = checker.union_sig(s.scope, union_name(t)) {
+  if let Some(sig) = checker.union_sig(s.scope, typeinfo.union_name(t)) {
     if (sig.instance != "") {
       return settled(resolved(checker.spelled_type(s.scope, sig.instance), s.template, s.binding, s.scope));
     }
@@ -4129,16 +4062,16 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (ssasem.lends_handle(s.values[v.id], expected)) {
     return define(s, ssasem.cast(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) {
+  if (ssasem.is_view(typeinfo.array_elem(expected)) && ssasem.is_string_array(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
+  if (typeinfo.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || typeinfo.union_name(s.values[v.id]) != "")) {
     return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
+  if (typeinfo.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
     return define(s, ssasem.dyn_box(), [v.id], 0, typeinfo.spelling(s.values[v.id]), expected);
   }
-  let owner = union_name(expected);
+  let owner = typeinfo.union_name(expected);
   let member = struct_name(s.values[v.id]);
   if (owner == "" || member == "") {
     return v;
@@ -4212,7 +4145,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return number(n, s, expected);
     },
     ast.ExprBool(b) => {
-      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", typeinfo.t_bool());
+      return define(s, ssa.CONST_BOOL, [], util.bool_i32(b.value), "", typeinfo.t_bool());
     },
     ast.ExprString(st) => {
       return string_literal(st, s, expected);
@@ -4350,7 +4283,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   }
   let i = 0;
   while (i < names.len()) {
-    let at = record_field_index(sig, fields[i]);
+    let at = util.index_of_str(sig.field_names, fields[i]);
     if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
       return fail(s, "record projection contract");
     }
@@ -4408,7 +4341,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
       ty = cty;
     }
   }
-  if (!semtypes.concrete(ty, false) && is_call(v.init)) {
+  if (!semtypes.concrete(ty, false) && ast.is_call(v.init)) {
     return declare_from_call(v, s, after);
   }
   if (!semtypes.concrete(ty, true)) {
@@ -4528,13 +4461,6 @@ function value_local_placeholder(v: ast.StmtVar): boolean {
   return false;
 }
 
-function is_call(e: ast.Expr): boolean {
-  if let ast.ExprCall(_) = e {
-    return true;
-  }
-  return false;
-}
-
 function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): State {
   let init = expr(v.init, s, typeinfo.unchecked());
   s = init.s;
@@ -4573,17 +4499,17 @@ function assign(a: ast.StmtAssign, s: State): State {
 
 function ret(r: ast.StmtReturn, s: State): State {
   if (parser.bare_return(r.value)) {
-    if (!is_void(s.result)) {
+    if (!typeinfo.is_void(s.result)) {
       return fail(s, "missing return value");
     }
-    return terminate(s, t_ret(-1));
+    return terminate(s, ssa.t_ret(-1));
   }
-  if (is_void(s.result)) {
+  if (typeinfo.is_void(s.result)) {
     s = discard(r.value, s);
     if (!s.ok) {
       return s;
     }
-    return terminate(s, t_ret(-1));
+    return terminate(s, ssa.t_ret(-1));
   }
   let value = expr(r.value, s, s.result);
   s = value.s;
@@ -4594,7 +4520,7 @@ function ret(r: ast.StmtReturn, s: State): State {
     return fail(s, "return type: declared " + typeinfo.spelling(s.result) + ", returns " + typeinfo.spelling(s.values[value.id]));
   }
   value = kept_view(unaliased_view(value));
-  return terminate(value.s, t_ret(value.id));
+  return terminate(value.s, ssa.t_ret(value.id));
 }
 
 struct Arm { s: State, live: boolean, end: i32, env: i32[], value: i32 }
@@ -4608,7 +4534,7 @@ function finish_arm(body: ast.Stmt[], s: State, join: i32, count: i32, scope: ch
   let live = s.live && s.ok;
   let end = s.cur.id;
   let env = prefix(s.vals, count);
-  s = terminate(s, t_br(join));
+  s = terminate(s, ssa.t_br(join));
   return Arm { s: leave(s, count, scope), live: live, end: end, env: env, value: -1 };
 }
 
@@ -4638,7 +4564,7 @@ function arm_body(body: ast.Stmt[], s: State, join: i32, count: i32, scope: chec
   }
   let end = s.cur.id;
   let env = prefix(s.vals, count);
-  s = terminate(s, t_br(join));
+  s = terminate(s, ssa.t_br(join));
   return Arm { s: leave(s, count, scope), live: true, end: end, env: env, value: v.id };
 }
 
@@ -4826,7 +4752,7 @@ function guard_gate(a: ast.MatchArm, s: State, next: i32): Gate {
   }
   let pred = s.cur.id;
   let body = s.next_block;
-  s = terminate(State { ...s, next_block: body + 1 }, t_brif(g.id, body, next));
+  s = terminate(State { ...s, next_block: body + 1 }, ssa.t_brif(g.id, body, next));
   return Gate { s: open(s, body, [pred]), from: pred };
 }
 
@@ -4867,7 +4793,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let next = id + 1;
   s = State { ...s, next_block: next + 1 };
   let test = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, typeinfo.t_bool());
-  s = terminate(test.s, t_brif(test.id, id, next));
+  s = terminate(test.s, ssa.t_brif(test.id, id, next));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
   opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
   let gate = guard_gate(a, opened, next);
@@ -4883,7 +4809,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
 function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, s: State, g: Gathered, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32, ty: typeinfo.Type): Arms {
   let pred = s.cur.id;
   let id = s.next_block;
-  s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+  s = terminate(State { ...s, next_block: id + 1 }, ssa.t_br(id));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
   opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
   return collect(g, arm_body(a.body, opened, join, count, scope, ty));
@@ -4895,11 +4821,11 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
   let pred = s.cur.id;
   let id = s.next_block;
   if (!a.has_guard) {
-    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    s = terminate(State { ...s, next_block: id + 1 }, ssa.t_br(id));
     return collect(g, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
   }
   let next = id + 1;
-  s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
+  s = terminate(State { ...s, next_block: next + 1 }, ssa.t_br(id));
   let gate = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
   if (!gate.s.ok) {
     return gathered(gate.s, g);
@@ -4938,10 +4864,10 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
   let test = define(low.s, ssa.BINARY, [scrut, low.id], 0, op, typeinfo.t_bool());
   let pred = test.s.cur.id;
   if (!literal.has_range) {
-    return ScalarGate { s: terminate(test.s, t_brif(test.id, hit, miss)), hit: [pred], miss: [pred] };
+    return ScalarGate { s: terminate(test.s, ssa.t_brif(test.id, hit, miss)), hit: [pred], miss: [pred] };
   }
   let upper = test.s.next_block;
-  s = terminate(State { ...test.s, next_block: upper + 1 }, t_brif(test.id, upper, miss));
+  s = terminate(State { ...test.s, next_block: upper + 1 }, ssa.t_brif(test.id, upper, miss));
   let high = expr(literal.range_hi, open(s, upper, [pred]), s.values[scrut]);
   if (!high.s.ok) {
     return ScalarGate { s: high.s, hit: [], miss: [] };
@@ -4949,7 +4875,7 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
   let upper_op: string = if (literal.range_inclusive) { "<=" } else { "<" };
   let test_high = define(high.s, ssa.BINARY, [scrut, high.id], 0, upper_op, typeinfo.t_bool());
   let upper_pred = test_high.s.cur.id;
-  return ScalarGate { s: terminate(test_high.s, t_brif(test_high.id, hit, miss)), hit: [upper_pred], miss: [pred, upper_pred] };
+  return ScalarGate { s: terminate(test_high.s, ssa.t_brif(test_high.id, hit, miss)), hit: [upper_pred], miss: [pred, upper_pred] };
 }
 
 function bind_scalar_pattern(a: ast.MatchArm, scrut: i32, s: State): State {
@@ -4986,7 +4912,7 @@ function scalar_arm(a: ast.MatchArm, scrut: i32, arms: Arms, entry: i32[], join:
   let id = s.next_block;
   let next = id + 1;
   s = State { ...s, next_block: next + 1 };
-  let branch = ScalarGate { s: terminate(s, t_br(id)), hit: [pred], miss: [] };
+  let branch = ScalarGate { s: terminate(s, ssa.t_br(id)), hit: [pred], miss: [] };
   if (!closing) {
     if let ast.PatLiteral(literal) = a.pattern {
       branch = scalar_literal_gate(literal, scrut, s, id, next);
@@ -5051,7 +4977,7 @@ function total_match(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrecord
     if (a.has_guard) {
       continue;
     }
-    let name = arm_variant_name(a, union_name(whole));
+    let name = arm_variant_name(a, typeinfo.union_name(whole));
     if (util.index_of_str(declared, name) < 0) {
       return false;
     }
@@ -5072,7 +4998,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
   }
   if (s.live) {
     arms = Arms { ...arms, preds: arms.preds.append(s.cur.id), envs: arms.envs.append(prefix(s.vals, c.count)) };
-    s = terminate(s, t_br(c.join));
+    s = terminate(s, ssa.t_br(c.join));
   }
   if (arms.preds.len() == 0) {
     return s;
@@ -5135,7 +5061,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     return no_chain(s);
   }
   let whole = s.values[scrut];
-  let owner = union_name(whole);
+  let owner = typeinfo.union_name(whole);
   let layout = union_layout(s, owner);
   let variants = laid_variants(s, whole, layout);
   m = inhabited_arms(m, whole, variants);
@@ -5196,7 +5122,7 @@ function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrec
   for a in m.arms {
     let name = "";
     if let ast.PatVariant(pv) = a.pattern {
-      name = unqualified(pv, union_name(whole)).type_name;
+      name = unqualified(pv, typeinfo.union_name(whole)).type_name;
     }
     if (util.index_of_str(absent, name) < 0) {
       arms = arms.append(a);
@@ -5247,10 +5173,10 @@ function leave_loop(s: State, label: string, is_break: boolean): State {
   let e = Exit { block: s.cur.id, env: prefix(s.vals, l.entry_count) };
   if (is_break) {
     s = with_loop_at(s, at, Loop { ...l, breaks: l.breaks.append(e) });
-    return terminate(s, t_br(l.exit));
+    return terminate(s, ssa.t_br(l.exit));
   }
   s = with_loop_at(s, at, Loop { ...l, continues: l.continues.append(e) });
-  return terminate(s, t_br(l.next));
+  return terminate(s, ssa.t_br(l.next));
 }
 
 function with_loop_at(s: State, at: i32, l: Loop): State {
@@ -5300,7 +5226,7 @@ function iterate(w: ast.StmtWhile, s: State): State {
   s = State { ...s, next_block: exit_id + 1 };
   let count = s.names.len();
   let scope = s.scope;
-  s = terminate(s, t_br(header));
+  s = terminate(s, ssa.t_br(header));
   s = header_phis(open(s, header, [pred]), count);
   let entry_env = s.vals;
   s = State { ...s, loops: s.loops.append(Loop { label: w.label, header: header, next: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
@@ -5348,7 +5274,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let it = produced.id;
   let text = ssasem.is_text(s.values[it]);
-  let elem = element_type(s.values[it]);
+  let elem = typeinfo.array_elem(s.values[it]);
   if (text) {
     elem = typeinfo.t_u8();
   }
@@ -5389,7 +5315,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   s = State { ...s, next_block: exit_id + 1 };
   let count = s.names.len();
   let scope = s.scope;
-  s = terminate(s, t_br(header));
+  s = terminate(s, ssa.t_br(header));
   s = header_phis(open(s, header, [pred]), count);
   s = State { ...s, loops: s.loops.append(Loop { label: fo.label, header: header, next: step_id, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
 
@@ -5402,7 +5328,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let cond_end = s.cur.id;
   let held = s.vals;
-  s = terminate(s, t_brif(test.id, body_id, exit_id));
+  s = terminate(s, ssa.t_brif(test.id, body_id, exit_id));
 
   let opened = open(State { ...s, vals: held }, body_id, [cond_end]);
   let read = ssasem.array_get();
@@ -5455,7 +5381,7 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
     if (s.live) {
       preds = preds.append(s.cur.id);
       envs = envs.append(prefix(s.vals, count));
-      s = terminate(s, t_br(step_id));
+      s = terminate(s, ssa.t_br(step_id));
     }
     s = merge_env(open(s, step_id, preds), envs, count);
   }
@@ -5466,7 +5392,7 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
   let step = define(one.s, ssa.BINARY, [lookup(one.s, index_name()), one.id], 0, "+", typeinfo.t_i32());
   s = replace(step.s, index_name(), step.id);
   let back = Exit { block: s.cur.id, env: prefix(s.vals, count) };
-  s = terminate(s, t_br(header));
+  s = terminate(s, ssa.t_br(header));
   return complete_header(s, header, [back]);
 }
 
@@ -5489,7 +5415,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
-    if (parser.is_value_block(c) && is_void(block_type(e, c, s, typeinfo.t_void()))) {
+    if (parser.is_value_block(c) && typeinfo.is_void(block_type(e, c, s, typeinfo.t_void()))) {
       return stmts(parser.vb_body(c), s);
     }
     return call(e, c, s, true, typeinfo.t_void()).s;
@@ -5718,7 +5644,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
+  let f = ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5849,31 +5775,24 @@ function slot_init(body: ast.Stmt[], name: string): ast.Expr {
     }
     if let ast.StmtIf(f) = st {
       let then_init = slot_init(f.then_body, name);
-      if (!is_unknown_expr(then_init)) {
+      if (!ast.is_unknown(then_init)) {
         return then_init;
       }
       let else_init = slot_init(f.else_body, name);
-      if (!is_unknown_expr(else_init)) {
+      if (!ast.is_unknown(else_init)) {
         return else_init;
       }
     }
     if let ast.StmtMatch(m) = st {
       for arm in m.arms {
         let arm_init = slot_init(arm.body, name);
-        if (!is_unknown_expr(arm_init)) {
+        if (!ast.is_unknown(arm_init)) {
           return arm_init;
         }
       }
     }
   }
   return parser.e_unknown("no such slot");
-}
-
-function is_unknown_expr(e: ast.Expr): boolean {
-  if let ast.ExprUnknown(_) = e {
-    return true;
-  }
-  return false;
 }
 
 function calls_synthesised(e: ast.Expr): boolean {
@@ -5922,7 +5841,7 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
     if (!literal_adapts(returned, declared)) {
       let body = inferred_result(fd, scope, b, contracts);
       // `Ok(x)` infers `never` for the error, which the declaration completes.
-      if (semtypes.concrete(body, true) && !is_void(body) && !completes_enum(body, declared)) {
+      if (semtypes.concrete(body, true) && !typeinfo.is_void(body) && !completes_enum(body, declared)) {
         return body;
       }
       if (calls_synthesised(returned)) {
@@ -6005,7 +5924,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6019,13 +5938,6 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
   };
 }
 
-function name_uses(st: ast.Stmt, own acc: string[]): string[] {
-  if let ast.StmtAssign(a) = st {
-    return acc.append(a.target);
-  }
-  return acc;
-}
-
 function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = e {
     return acc.append(id.name);
@@ -6033,13 +5945,9 @@ function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function descend_all(e: ast.Expr): boolean {
-  return true;
-}
-
 function uses_in(stmts: ast.Stmt[], own acc: string[]): string[] {
   for st in stmts {
-    acc = astwalk.fold_stmt_nodes(st, acc, name_uses, ident_uses, descend_all);
+    acc = astwalk.fold_stmt_nodes(st, acc, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
   }
   return acc;
 }
@@ -6050,7 +5958,7 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
       if let ast.PatVariant(pv) = a.pattern {
         let local = uses_in(a.body, []);
         if (a.has_guard) {
-          local = astwalk.fold_expr_nodes(a.guard, local, name_uses, ident_uses, descend_all);
+          local = astwalk.fold_expr_nodes(a.guard, local, astwalk.assign_target_of, ident_uses, astwalk.descend_all);
         }
         let names: string[] = [pv.binding];
         for n in pv.extra_bindings {
@@ -6155,19 +6063,15 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
   return acc;
 }
 
-function keep_names(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
 function escaping_bindings(body: ast.Stmt[]): string[] {
   if (!defer_lowered(body)) {
     return [];
   }
   let local = list_var_uses(body, []);
   for st in body {
-    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, keep_names, descend_all);
-    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, for_local_uses, astwalk.keep_names, astwalk.descend_all);
+    local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, astwalk.descend_all);
   }
   if (local.len() == 0) {
     return [];
@@ -6179,7 +6083,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
       continue;
     }
     let n = slice_unchecked(d, 1, d.len()) + "";
-    if (util.index_of_str(out, n) < 0 && count_of(all, n) > count_of(local, n)) {
+    if (util.index_of_str(out, n) < 0 && util.count_str(all, n) > util.count_str(local, n)) {
       out = out.append(n);
     }
   }
@@ -6189,7 +6093,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
 function defer_lowered(body: ast.Stmt[]): boolean {
   let found = false;
   for st in body {
-    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, keep_found, descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, astwalk.keep_flag, astwalk.descend_all);
   }
   return found;
 }
@@ -6199,20 +6103,6 @@ function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
     return acc || v.name == parser.DFA_TRYALL;
   }
   return acc;
-}
-
-function keep_found(e: ast.Expr, own acc: boolean): boolean {
-  return acc;
-}
-
-function count_of(xs: string[], name: string): i32 {
-  let n = 0;
-  for x in xs {
-    if (x == name) {
-      n += 1;
-    }
-  }
-  return n;
 }
 
 function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
@@ -6333,7 +6223,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if let typeinfo.TypeTuple(tup) = t {
     return types_hold_view(tup.elements, views, impls);
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return type_holds_view(semtypes.cell_elem(t), views, impls);
   }
   if let typeinfo.TypeMap(m) = t {
@@ -6348,7 +6238,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (ssasem.is_func(t)) {
     return util.index_of_str(views, func_view_key(t)) >= 0;
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
         if (v == n || v.starts_with(n + "__")) {
@@ -6413,7 +6303,7 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
 struct Roots { types: typeinfo.Type[], at: i32[], ix: util.NameIndex }
 
 function with_distinct_root(r: Roots, t: typeinfo.Type): Roots {
-  if (!names_schema(t) && !ssasem.is_dyn(t)) {
+  if (!names_schema(t) && !typeinfo.is_dyn(t)) {
     return r;
   }
   let sp = typeinfo.spelling(t);
@@ -6462,7 +6352,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     }
     return out;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return schema_of(semtypes.cell_elem(t), s, out);
   }
 
@@ -6525,7 +6415,7 @@ function with_known_enum(out: Schemas, at: i32): Schemas {
 }
 
 function with_new_enum(out: Schemas, e: semrecords.Enum): Schemas {
-  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e), enum_names: out.memo.enum_names.added(semrecords.union_name_of(e.ty)) } };
+  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e), enum_names: out.memo.enum_names.added(typeinfo.union_name(e.ty)) } };
 }
 
 function enum_members(e: semrecords.Enum, s: State, out: Schemas): Schemas {
@@ -6603,7 +6493,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
 }
 
 function typed_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
-  return laid_variants(s, whole, union_layout(s, union_name(whole)));
+  return laid_variants(s, whole, union_layout(s, typeinfo.union_name(whole)));
 }
 
 function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.Variant[] {
@@ -6611,9 +6501,9 @@ function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.
     return builtin_variants(whole);
   }
   let variants: semrecords.Variant[] = [];
-  for name in union_variants(s, union_name(whole)) {
+  for name in union_variants(s, typeinfo.union_name(whole)) {
     let fields: semrecords.Field[] = [];
-    if let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) {
+    if let Some(shape) = checker.variant_shape_sig(s.scope, name, typeinfo.union_name(whole)) {
       fields = fields_of(checker.instantiated_variant(shape, s.scope, whole), s.scope);
     }
     variants = variants.append(semrecords.Variant { name: name, fields: fields });
@@ -6650,7 +6540,7 @@ function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRo
     }
     for c in envs {
       let env = env_serving(c, t);
-      if (semtypes.is_env(env) && !has_env_row(out, t, env)) {
+      if (semtypes.is_env(env) && !ssasem.has_env_row(out, t, env)) {
         out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: env });
       }
     }
@@ -6689,7 +6579,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     let dreach = r.dyns;
     let grown = false;
     for row in env_rows(reach, s.contracts.envs) {
-      if (has_env_row(rows, row.fn_ty, row.env_ty)) {
+      if (ssasem.has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
       rows = rows.append(row);
@@ -6698,7 +6588,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     }
     for t in dreach {
       for c in dyn_concretes(t, s) {
-        if (has_env_row(drows, t, c)) {
+        if (ssasem.has_env_row(drows, t, c)) {
           continue;
         }
         drows = drows.append(ssasem.EnvRow { fn_ty: t, env_ty: c });
@@ -6744,7 +6634,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
   if (fns && ssasem.is_func(t)) {
     return Reach { ...r, fns: r.fns.append(t) };
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return Reach { ...r, dyns: r.dyns.append(t) };
   }
   if let typeinfo.TypeArray(a) = t {
@@ -6756,7 +6646,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
     }
     return r;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return reach_in(semtypes.cell_elem(t), r, fns);
   }
   if let typeinfo.TypeMap(m) = t {
@@ -6925,7 +6815,7 @@ function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
     let eq = util.index_of_sub(entry, "=");
     if (eq < 0) {
       positional = positional.append(entry);
-    } else if (!pins_assoc(imp, util.trim(slice_unchecked(entry, 0, eq) + ""), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
+    } else if (!pins_assoc(imp, (slice_unchecked(entry, 0, eq) + "").trim(), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
       return false;
     }
   }
@@ -6991,15 +6881,6 @@ function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
   return false;
 }
 
-function has_env_row(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
-  for row in rows {
-    if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for c in calls {
@@ -7017,10 +6898,10 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   if (!s.ok) {
     return Made { p: refuse(s.why), memo: memo };
   }
-  if (s.live && !is_void(s.result)) {
-    s = terminate(s, t_unreachable());
+  if (s.live && !typeinfo.is_void(s.result)) {
+    s = terminate(s, ssa.t_unreachable());
   }
-  s = terminate(s, t_ret(-1));
+  s = terminate(s, ssa.t_ret(-1));
   let blocks = reachable(s.blocks);
   let map = trivial_phis(blocks, s.values.len());
   let f = renumber(blocks, map, s.values, s.dbg_vals, s.dbg_names);
@@ -7710,7 +7591,7 @@ function lane_contracts(): ssasem.Contract[] {
   let names: string[] = [
     "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
-    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
@@ -7921,6 +7802,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__sysreg_read", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__sysreg_write", params: [typeinfo.t_string(), typeinfo.t_i64()], modes: [b, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_clean", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__cache_sync_code", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__cache_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: typeinfo.t_void() },
@@ -7928,6 +7810,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__irq_mask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_unmask", params: [], modes: [], result: typeinfo.t_void() },
     ssasem.Contract { name: "__irq_wait", params: [], modes: [], result: typeinfo.t_void() },
+    ssasem.Contract { name: "__user_run", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__irq_pending", params: [], modes: [], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__hvc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__smc", params: [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v, v], result: typeinfo.t_i64() },
@@ -8258,7 +8141,7 @@ function copy_returned_views(f: ssasem.Func): ssasem.Func {
       for ci in ssasem.view_copy(first, v) {
         insts = insts.append(ci);
       }
-      b = ssa.SBlock { ...b, insts: insts, term: t_ret(first + 2) };
+      b = ssa.SBlock { ...b, insts: insts, term: ssa.t_ret(first + 2) };
     }
     blocks = blocks.append(b);
   }
@@ -8448,7 +8331,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
     if (at >= 0) {
       let qs = quiet_slots(all[i].func);
       slots = slots.with(at, qs);
-      quiet = quiet.with(at, !reference(all[i].func.result) || any_true(qs));
+      quiet = quiet.with(at, !reference(all[i].func.result) || util.any_true(qs));
     }
     i += 1;
   }
@@ -8488,15 +8371,6 @@ function quiet_slots(f: ssasem.Func): boolean[] {
     out = out.append(reference(t) && (!holds || !ssasem.can_hold(f, f.result, t)));
   }
   return out;
-}
-
-function any_true(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function inferred_modes_change(p: Produced): boolean {
@@ -9576,7 +9450,7 @@ pub function any_row_changed(changed: boolean[]): boolean {
 }
 
 function produced_moved(a: Produced, b: Produced): boolean {
-  if (!same_bits_i32(a.modes, b.modes)) {
+  if (!util.same_i32s(a.modes, b.modes)) {
     return true;
   }
   return !same_call_modes(a.func.calls, b.func.calls);
@@ -9591,21 +9465,7 @@ function same_call_modes(a: ssasem.Contract[], b: ssasem.Contract[]): boolean {
     if (a[i].name != b[i].name) {
       return false;
     }
-    if (!same_bits_i32(a[i].modes, b[i].modes)) {
-      return false;
-    }
-    i += 1;
-  }
-  return true;
-}
-
-function same_bits_i32(a: i32[], b: i32[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < a.len()) {
-    if (a[i] != b[i]) {
+    if (!util.same_i32s(a[i].modes, b[i].modes)) {
       return false;
     }
     i += 1;

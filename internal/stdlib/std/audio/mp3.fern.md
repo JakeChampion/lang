@@ -1,8 +1,14 @@
 # MPEG Layer III audio
 
-This module decodes indexed-bitrate MPEG-1, MPEG-2, and MPEG-2.5 Layer III audio.
+This module decodes indexed-bitrate and free-format MPEG-1, MPEG-2, and MPEG-2.5 Layer III audio.
 It supports mono, stereo, joint stereo, short blocks, mixed blocks, and the bit reservoir.
-It verifies a supplied frame CRC. It does not support Layer I, Layer II, or free-format bitrate headers.
+It verifies a supplied frame CRC. It does not support Layer I or Layer II.
+
+Free-format discovery needs repeated compatible headers or two complete frames at physical EOF.
+The decoder retains the unpadded frame extent after discovery.
+A retained extent permits isolated-frame decode and the final frame of a stream.
+Protected LAME Info frames can place their tag two bytes before the normal side-info end.
+The decoder verifies their CRC over the original bytes and requires a silent side-info prefix.
 
 Output samples are interleaved, normalized `f32` values. Peaks can exceed -1 or 1.
 Use `pcm.quantize` for integer PCM conversion at a device or file boundary.
@@ -45,6 +51,7 @@ The module executes Fern code and needs no external codec library.
 import "std/audio/pcm";
 import "std/audio/wire";
 import "std/audio/mp3/header";
+import "std/audio/mp3/framing";
 import "std/audio/mp3/metadata";
 import "std/audio/mp3/bits";
 import "std/audio/mp3/spectral";
@@ -54,14 +61,14 @@ import "std/f64";
 
 pub const DECODER_DELAY: i32 = 529;
 
-pub struct Decoder { reservoir: u8[], overlap: f32[], qmf: f32[], sample_rate: i32, channels: i32, version: i32 }
+pub struct Decoder { reservoir: u8[], overlap: f32[], qmf: f32[], sample_rate: i32, channels: i32, version: i32, free_bytes: i32 }
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, needs_history: boolean, samples: f32[] }
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), sample_rate: 0, channels: 0, version: 0 };
+  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
 }
 
 pub function (own d: Decoder) reset(): Decoder {
@@ -69,8 +76,20 @@ pub function (own d: Decoder) reset(): Decoder {
 }
 
 pub function inspect(input: [u8], at: i32, limits: pcm.Limits): Result[header.Header, pcm.AudioError] {
+  return inspect_cached(input, at, 0, limits);
+}
+
+pub function inspect_cached(input: [u8], at: i32, free_bytes: i32, limits: pcm.Limits): Result[header.Header, pcm.AudioError] {
   pcm.check_input(input, limits)?;
-  return header.parse(input, at);
+  let h = header.parse(input, at)?;
+  return framing.resolve(input, at, h, free_bytes, limits.max_input_bytes);
+}
+
+function current_header(d: Decoder, input: [u8], at: i32, limits: pcm.Limits): Result[header.Header, pcm.AudioError] {
+  pcm.check_input(input, limits)?;
+  let h = header.parse(input, at)?;
+  let base = if (d.sample_rate == 0 || d.sample_rate == h.sample_rate && d.version == h.version) { d.free_bytes } else { 0 };
+  return framing.resolve(input, at, h, base, limits.max_input_bytes);
 }
 
 function crc16(input: [u8], own crc: i32): i32 {
@@ -95,10 +114,40 @@ function keep_reservoir(data: [u8], pos: i32): u8[] {
   return output;
 }
 
+function xing_position(input: [u8], at: i32, h: header.Header): i32 {
+  let end = at + 4 + (if (h.crc) { 2 } else { 0 }) + header.side_bytes(h);
+  let tag = end - 2;
+  if (h.crc && at + h.bytes - tag >= 8 && (wire.tag(input, tag, "Xing") || wire.tag(input, tag, "Info"))) {
+    return tag;
+  }
+  return end;
+}
+
+// Protected LAME metadata can overlap the final two side-info bytes.
+// The caller verifies the CRC over the original complete side-info region.
+function frame_side(input: [u8], at: i32, h: header.Header, start: i32, end: i32): Result[spectral.Side, pcm.AudioError] {
+  let tag = xing_position(input, at, h);
+  if (tag != end) {
+    for byte in input[start:tag] {
+      if (byte != 0) {
+        return Err(pcm.Header);
+      }
+    }
+    let (cursor, _) = xing_fields(input, tag + 8, at + h.bytes, wire.be(input, tag + 4, 4) as u32)?;
+    gapless_fields(input, cursor, at + h.bytes)?;
+    let zeros: u8[] = [];
+    for _ in 0..header.side_bytes(h) {
+      zeros = zeros.append(0u8);
+    }
+    return spectral.side_info(zeros, h);
+  }
+  return spectral.side_info(input[start:end], h);
+}
+
 // Frame decode keeps reservoir, granule, and synthesis state in stream order.
 // fern-lint: allow cyclomatic-complexity
 function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], limits: pcm.Limits): Result[(Decoder, Frame), pcm.AudioError] {
-  let h = inspect(input, at, limits)?;
+  let h = current_header(d, input, at, limits)?;
   let count = pcm.sample_count(h.frames, h.channels, limits)?;
   if (input.len() - at < h.bytes) {
     return Err(pcm.Truncated);
@@ -106,7 +155,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   if (output.len() < count) {
     return Err(pcm.Buffer);
   }
-  if (d.overlap.len() != 576 || d.qmf.len() != 960 || d.reservoir.len() > 511) {
+  if (d.overlap.len() != 576 || d.qmf.len() != 960 || d.reservoir.len() > 511 || d.free_bytes < 0) {
     return Err(pcm.Header);
   }
   if (d.sample_rate != 0 && (d.sample_rate != h.sample_rate || d.version != h.version)) {
@@ -123,8 +172,9 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       return Err(pcm.Checksum);
     }
   }
-  let side = spectral.side_info(input[side_start:main_start], h)?;
-  let Decoder { reservoir, overlap, qmf, sample_rate: _, channels: _, version: _ } = d;
+  let side = frame_side(input, at, h, side_start, main_start)?;
+  let free_bytes = framing.extent(h, d.free_bytes);
+  let Decoder { reservoir, overlap, qmf, sample_rate: _, channels: _, version: _, free_bytes: _ } = d;
   let main: u8[] = [];
   let start = if (reservoir.len() > side.begin) { reservoir.len() - side.begin } else { 0 };
   for i in start..reservoir.len() {
@@ -134,7 +184,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
     main = main.append(input[i]);
   }
   if (reservoir.len() < side.begin) {
-    let state = Decoder { reservoir: keep_reservoir(main, 0), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version };
+    let state = Decoder { reservoir: keep_reservoir(main, 0), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
     return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 0, bytes_read: h.bytes, needs_history: true, samples: output }));
   }
   let part_sum = 0;
@@ -191,7 +241,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       return Err(pcm.Sample);
     }
   }
-  let state = Decoder { reservoir: keep_reservoir(main, b.pos), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version };
+  let state = Decoder { reservoir: keep_reservoir(main, b.pos), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
   return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: h.frames, bytes_read: h.bytes, needs_history: false, samples: output }));
 }
 
@@ -203,7 +253,7 @@ pub function (own d: Decoder) decode_frame_into(input: [u8], at: i32, own output
 }
 
 pub function (own d: Decoder) decode_frame(input: [u8], at: i32, limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
-  let h = match (inspect(input, at, limits)) { Ok(v) => v, Err(e) => { return (decoder(), Err(e)); } };
+  let h = match (current_header(d, input, at, limits)) { Ok(v) => v, Err(e) => { return (decoder(), Err(e)); } };
   let count = match (pcm.sample_count(h.frames, h.channels, limits)) { Ok(v) => v, Err(e) => { return (decoder(), Err(e)); } };
   return d.decode_frame_into(input, at, spectral.zeros(count), limits);
 }
@@ -220,12 +270,13 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
   if (at > end) {
     return Err(pcm.Header);
   }
+  let coded = input[:end];
   let d = decoder();
   let samples: f32[] = [];
   let rate = 0;
   let cc = 0;
   while (at < end) {
-    let h = inspect(input, at, limits)?;
+    let h = current_header(d, coded, at, limits)?;
     if (h.bytes > end - at) {
       return Err(pcm.Truncated);
     }
@@ -236,7 +287,10 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
     if (samples.len() > limits.max_samples - count) {
       return Err(pcm.Limit);
     }
-    let (next, value) = d.decode_frame(input, at, limits);
+    if (h.bitrate == 0 && d.free_bytes == 0) {
+      d = Decoder { ...d, free_bytes: framing.extent(h, 0) };
+    }
+    let (next, value) = d.decode_frame(coded, at, limits);
     d = next;
     let frame = value?;
     if (frame.needs_history) {
@@ -255,7 +309,7 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
   return Ok(Decoded { sample_rate: rate, channels: cc, samples: samples });
 }
 
-pub struct Track { sample_rate: i32, channels: i32, data_offset: i32, data_end: i32, declared_frames: u32, skip_frames: i32, padding_frames: i32 }
+pub struct Track { sample_rate: i32, channels: i32, data_offset: i32, data_end: i32, declared_frames: u32, skip_frames: i32, padding_frames: i32, free_bytes: i32 }
 
 function audio_end(input: [u8]): Result[i32, pcm.AudioError] {
   let end = input.len();
@@ -322,12 +376,13 @@ function gapless_fields(input: [u8], cursor: i32, end: i32): Result[(i32, i32), 
   return Ok((0, 0));
 }
 
-function xing_side(input: [u8], at: i32, h: header.Header, tag: i32): Result[void, pcm.AudioError] {
+function xing_side(input: [u8], at: i32, h: header.Header): Result[void, pcm.AudioError] {
   let side_start = at + 4 + (if (h.crc) { 2 } else { 0 });
-  if (h.crc && crc16(input[side_start:tag], crc16(input[at + 2:at + 4], 65535)) != wire.be(input, at + 4, 2) as i32) {
+  let end = side_start + header.side_bytes(h);
+  if (h.crc && crc16(input[side_start:end], crc16(input[at + 2:at + 4], 65535)) != wire.be(input, at + 4, 2) as i32) {
     return Err(pcm.Checksum);
   }
-  let side = spectral.side_info(input[side_start:tag], h)?;
+  let side = frame_side(input, at, h, side_start, end)?;
   if (side.begin != 0) {
     return Err(pcm.Header);
   }
@@ -339,44 +394,48 @@ function xing_side(input: [u8], at: i32, h: header.Header, tag: i32): Result[voi
   return Ok(());
 }
 
-function track_header(input: [u8], at: i32, end: i32, limits: pcm.Limits): Result[(header.Header, i32), pcm.AudioError] {
+function track_header(input: [u8], at: i32, end: i32, free_bytes: i32, limits: pcm.Limits): Result[(header.Header, i32), pcm.AudioError] {
   if (at > end) {
     return Err(pcm.Header);
   }
-  let h = inspect(input, at, limits)?;
+  let h = inspect_cached(input[:end], at, free_bytes, limits)?;
   if (h.bytes > end - at) {
     return Err(pcm.Truncated);
   }
   let side_start = at + 4 + (if (h.crc) { 2 } else { 0 });
-  let tag = side_start + header.side_bytes(h);
-  if (tag > at + h.bytes) {
+  let end = side_start + header.side_bytes(h);
+  if (end > at + h.bytes) {
     return Err(pcm.Header);
   }
-  return Ok((h, tag));
+  return Ok((h, xing_position(input, at, h)));
 }
 
 pub function inspect_track(input: [u8], limits: pcm.Limits): Result[Track, pcm.AudioError] {
   let at = audio_start(input, limits)?;
   let end = audio_end(input)?;
-  return track_at(input, at, end, limits);
+  return track_at(input, at, end, 0, limits);
 }
 
 pub function inspect_first_frame(input: [u8], at: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
-  let h = inspect(input, at, limits)?;
+  return inspect_first_frame_cached(input, at, 0, limits);
+}
+
+pub function inspect_first_frame_cached(input: [u8], at: i32, free_bytes: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
+  let h = inspect_cached(input, at, free_bytes, limits)?;
   if (h.bytes > input.len() - at) {
     return Err(pcm.Truncated);
   }
-  return track_at(input, at, at + h.bytes, limits);
+  return track_at(input, at, at + h.bytes, framing.extent(h, free_bytes), limits);
 }
 
-function track_at(input: [u8], at: i32, end: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
-  let (h, tag) = track_header(input, at, end, limits)?;
+function track_at(input: [u8], at: i32, end: i32, free_bytes: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
+  let (h, tag) = track_header(input, at, end, free_bytes, limits)?;
   let declared = 0u32;
   let skip = 0;
   let padding = 0;
   let data_at = at;
   if (at + h.bytes - tag >= 8 && (wire.tag(input, tag, "Xing") || wire.tag(input, tag, "Info"))) {
-    xing_side(input, at, h, tag)?;
+    xing_side(input, at, h)?;
     let (cursor, count) = xing_fields(input, tag + 8, at + h.bytes, wire.be(input, tag + 4, 4) as u32)?;
     declared = count;
     let (encoder_skip, encoder_padding) = gapless_fields(input, cursor, at + h.bytes)?;
@@ -384,7 +443,7 @@ function track_at(input: [u8], at: i32, end: i32, limits: pcm.Limits): Result[Tr
     padding = encoder_padding;
     data_at += h.bytes;
   }
-  return Ok(Track { sample_rate: h.sample_rate, channels: h.channels, data_offset: data_at, data_end: end, declared_frames: declared, skip_frames: skip, padding_frames: padding });
+  return Ok(Track { sample_rate: h.sample_rate, channels: h.channels, data_offset: data_at, data_end: end, declared_frames: declared, skip_frames: skip, padding_frames: padding, free_bytes: framing.extent(h, free_bytes) });
 }
 
 // Gapless decode checks frame totals before copying the trimmed sample interval.
@@ -394,8 +453,9 @@ pub function decode(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioE
   let at = track.data_offset;
   let frames = 0u64;
   let samples = 0i64;
+  let free_bytes = track.free_bytes;
   while (at < track.data_end) {
-    let h = inspect(input, at, limits)?;
+    let h = inspect_cached(input, at, free_bytes, limits)?;
     if (h.sample_rate != track.sample_rate || h.channels != track.channels) {
       return Err(pcm.Unsupported);
     }
@@ -407,6 +467,7 @@ pub function decode(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioE
       return Err(pcm.Limit);
     }
     frames += 1u64;
+    free_bytes = framing.extent(h, free_bytes);
     at += h.bytes;
   }
   if (frames == 0u64) {
@@ -423,6 +484,9 @@ pub function decode(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioE
   let end = samples as i32 - padding;
   let output = spectral.zeros(end - skip);
   let d = decoder();
+  if (free_bytes > 0) {
+    d = Decoder { ...d, free_bytes: free_bytes };
+  }
   let scratch = spectral.zeros(2304);
   let absolute = 0;
   let written = 0;

@@ -1,0 +1,2 @@
+timeout_seconds=120
+b'TAP version 13\n# Suite: MPEG Layer II boundaries and state\nok 1 - frame prefixes and invalid offsets\nok 2 - reserved and unsupported header fields\nok 3 - input and cumulative PCM budgets\nok 4 - protected fields and history reset after CRC errors\nok 5 - output-size retry and explicit reset preserve exact history\nok 6 - rate and channel changes reset the synthesis filter\n'

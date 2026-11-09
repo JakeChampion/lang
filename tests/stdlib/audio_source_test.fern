@@ -92,11 +92,34 @@ function errors(): test.TestOutcome {
   return test.pass();
 }
 
+function shared_chunks(): test.TestOutcome {
+  let original = [1u8, 2u8, 3u8];
+  let Ok(buffer) = source.create(source.Limits { chunk_size: 3, max_buffer_bytes: 4 }) else {
+    return test.fail("create");
+  };
+  let Ok((first, ready)) = buffer.ensure(3, (_: i32): Result[u8[], IoError] => Ok(original)) else {
+    return test.fail("shared source chunk");
+  };
+  original = original.with(0, 9u8);
+  let changed = source.Buffer { bytes: first.bytes.with(1, 7u8), position: first.position, eof: first.eof, limits: first.limits };
+  if (!ready || original != [9u8, 2u8, 3u8] || first.bytes != [1u8, 2u8, 3u8] || changed.bytes != [1u8, 7u8, 3u8]) {
+    return test.fail("source and buffer aliases must preserve their original bytes");
+  }
+  let Ok(empty) = changed.advance(3) else {
+    return test.fail("consume shared chunk");
+  };
+  let Ok((next, ready)) = empty.ensure(2, (_: i32): Result[u8[], IoError] => Ok([4u8, 5u8])) else {
+    return test.fail("replacement chunk");
+  };
+  return test.assert_true(ready && next.bytes == [4u8, 5u8] && next.position == 0 && !next.eof && first.bytes == [1u8, 2u8, 3u8]);
+}
+
 function main(): i32 {
   let runner = test.new("Bounded audio sources");
   runner = runner.it("limits are checked before source reads", limits);
   runner = runner.it("short reads compact and preserve the unread prefix", windows);
   runner = runner.it("EOF is permanent and never reads the source again", eof);
   runner = runner.it("I/O, callback, and advance errors remain distinct", errors);
+  runner = runner.it("source chunks and buffer aliases retain independent values", shared_chunks);
   return runner.finish();
 }

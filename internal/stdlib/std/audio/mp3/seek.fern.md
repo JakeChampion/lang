@@ -1,6 +1,6 @@
 # MP3 seek indexes and bounded output
 
-This module builds a frame index for indexed-bitrate Layer III tracks.
+This module builds a frame index for indexed-bitrate and free-format Layer III tracks.
 The index stores byte offsets. It does not retain encoded bytes or decoded samples.
 The caller supplies the same immutable encoded input to each reader call.
 Input and index limits apply before the corresponding allocation.
@@ -18,10 +18,11 @@ These calls borrow a complete input view. They do not read a file or scan damage
 
 ```fern
 <<*>>=
-// Seek indexed-bitrate MP3 with reservoir and synthesis warmup.
+// Seek MP3 with reservoir and synthesis warmup.
 
 import "std/audio/mp3";
 import "std/audio/mp3/header";
+import "std/audio/mp3/framing";
 import "std/audio/pcm";
 
 pub struct Limits { audio: pcm.Limits, max_entries: i32 }
@@ -57,11 +58,12 @@ pub function inspect(input: [u8], limits: Limits): Result[Index, pcm.AudioError]
     return Err(pcm.Limit);
   }
   let track = mp3.inspect_track(input, limits.audio)?;
-  let first = mp3.inspect(input, track.data_offset, limits.audio)?;
+  let first = mp3.inspect_cached(input, track.data_offset, track.free_bytes, limits.audio)?;
   let offsets: i32[] = [];
   let at = track.data_offset;
+  let free_bytes = track.free_bytes;
   while (at < track.data_end) {
-    let h = mp3.inspect(input, at, limits.audio)?;
+    let h = mp3.inspect_cached(input, at, free_bytes, limits.audio)?;
     if (!frame_matches(h, track, first.frames)) {
       return Err(pcm.Unsupported);
     }
@@ -72,15 +74,20 @@ pub function inspect(input: [u8], limits: Limits): Result[Index, pcm.AudioError]
       return Err(pcm.Limit);
     }
     offsets = offsets.append(at);
+    free_bytes = framing.extent(h, free_bytes);
     at += h.bytes;
   }
   let frames = total(track, offsets.len(), first.frames)?;
-  return Ok(Index { track: track, offsets: offsets, frame_size: first.frames, frames: frames, input_bytes: input.len(), limits: limits });
+  return Ok(Index { track: mp3.Track { ...track, free_bytes: free_bytes }, offsets: offsets, frame_size: first.frames, frames: frames, input_bytes: input.len(), limits: limits });
 }
 
 pub function reader(own index: Index): Cursor {
   let target = index.track.skip_frames as i64;
-  return Cursor { index: index, codec: mp3.decoder(), entry: 0, target: target };
+  let codec = mp3.decoder();
+  if (index.track.free_bytes > 0) {
+    codec = mp3.Decoder { ...codec, free_bytes: index.track.free_bytes };
+  }
+  return Cursor { index: index, codec: codec, entry: 0, target: target };
 }
 
 function warmup(input: [u8], index: Index, entry: i32): Result[i32, pcm.AudioError] {
@@ -90,7 +97,7 @@ function warmup(input: [u8], index: Index, entry: i32): Result[i32, pcm.AudioErr
   let bytes = 0;
   while (start > 0 && bytes < 511) {
     start -= 1;
-    let h = mp3.inspect(input, index.offsets[start], index.limits.audio)?;
+    let h = mp3.inspect_cached(input, index.offsets[start], index.track.free_bytes, index.limits.audio)?;
     let payload = h.bytes - 4 - (if (h.crc) { 2 } else { 0 }) - header.side_bytes(h);
     if (payload < 0) {
       return Err(pcm.Header);
@@ -106,7 +113,11 @@ pub function (own r: Cursor) seek(input: [u8], position: i64): Result[Cursor, pc
   }
   let target = position + r.index.track.skip_frames as i64;
   let entry = if (position == r.index.frames) { r.index.offsets.len() } else { warmup(input, r.index, (target / (r.index.frame_size as i64)) as i32)? };
-  return Ok(Cursor { index: r.index, codec: r.codec.reset(), entry: entry, target: target });
+  let codec = r.codec.reset();
+  if (r.index.track.free_bytes > 0) {
+    codec = mp3.Decoder { ...codec, free_bytes: r.index.track.free_bytes };
+  }
+  return Ok(Cursor { index: r.index, codec: codec, entry: entry, target: target });
 }
 
 function crop(samples: [f32], start: i32, end: i32): f32[] {

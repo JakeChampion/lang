@@ -6,6 +6,7 @@ import "./parser";
 import "./util";
 import "./astwalk";
 import "./typeinfo";
+import "./capturebox";
 
 pub struct SigReg {
   rows: string[],
@@ -322,10 +323,6 @@ pub function decl_at_field_type(structs: StructTab, decl_index: i32, index: i32)
 
 pub function decl_field_type_at(structs: StructTab, struct_name: string, index: i32): string {
   return decl_at_field_type(structs, decl_index_of(structs, struct_name), index);
-}
-
-pub function elem_ty_is_f64slot(t: string): boolean {
-  return t == "f64" || t == "f32";
 }
 
 pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32): ir.Op[] {
@@ -1041,14 +1038,6 @@ pub function lane_operator(kind: i32, op: string): string {
   return "vdiv";
 }
 
-pub function is_f64_scalar_type_name(t: string): boolean {
-  return t == "f64" || t == "f32";
-}
-
-pub function reclaim_site_key_of(name: string, line: i32, col: i32): string {
-  return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
-}
-
 pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
   let bound = astwalk.collect_bound_stmts(stmts, []);
   let n = 0;
@@ -1298,7 +1287,7 @@ pub function body_assign_targets(stmts: ast.Stmt[]): string[] {
 
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
   for stmt in stmts {
-    out = astwalk.fold_stmt_spine(stmt, out, assign_target_into);
+    out = astwalk.fold_stmt_spine(stmt, out, astwalk.assign_target_of);
   }
   return out;
 }
@@ -1306,7 +1295,7 @@ function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
 pub function lambda_write_targets(stmts: ast.Stmt[]): string[] {
   let out: string[] = [];
   for stmt in stmts {
-    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, astwalk.descend_all);
+    out = astwalk.fold_stmt_nodes(stmt, out, astwalk.assign_target_of, astwalk.keep_names, astwalk.descend_all);
   }
   return out;
 }
@@ -1321,24 +1310,9 @@ pub function capture_frame_descend(e: ast.Expr): boolean {
 pub function capture_assign_targets(stmts: ast.Stmt[]): string[] {
   let out: string[] = [];
   for stmt in stmts {
-    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, capture_frame_descend);
+    out = astwalk.fold_stmt_nodes(stmt, out, astwalk.assign_target_of, astwalk.keep_names, capture_frame_descend);
   }
   return out;
-}
-
-function keep_targets(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
-}
-
-function assign_target_into(st: ast.Stmt, own acc: string[]): string[] {
-  match (st) {
-    ast.StmtAssign(a) => {
-      return acc.append(a.target);
-    },
-    _ => {
-      return acc;
-    }
-  }
 }
 
 pub function is_iife_callee(c: ast.ExprCall): boolean {
@@ -1353,10 +1327,6 @@ pub function is_iife_callee(c: ast.ExprCall): boolean {
       return false;
     }
   }
-}
-
-pub function no_source(): sourcepos.SourceInfo {
-  return sourcepos.no_source();
 }
 
 pub function body_payload(r: LowerResult): Option[Lowered] {

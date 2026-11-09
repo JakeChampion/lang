@@ -12,16 +12,12 @@ function failure(message: string): Body {
   return Body { lines: [], register_entry: -1, unguarded_entry: -1, error: message };
 }
 
-function symbol_byte(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function symbol(s: string): boolean {
   if (s.len() == 0 || s[0] >= b'0' && s[0] <= b'9') {
     return false;
   }
   for c in s {
-    if (!symbol_byte(c)) {
+    if (!util.is_symbol_byte(c)) {
       return false;
     }
   }
@@ -30,7 +26,7 @@ function symbol(s: string): boolean {
 
 function definition(line: string): string {
   let at = 0;
-  while (at < line.len() && symbol_byte(line[at])) {
+  while (at < line.len() && util.is_symbol_byte(line[at])) {
     at += 1;
   }
   let name = slice_unchecked(line, 0, at) + "";
@@ -68,7 +64,7 @@ function one_of(s: string, choices: string[]): boolean {
 
 function data_values(arg: string): boolean {
   for value in arg.split(",") {
-    if (!decimal(util.trim(value))) {
+    if (!decimal(value.trim())) {
       return false;
     }
   }
@@ -117,7 +113,7 @@ function literal_data(line: string, section: i32): boolean {
   if (section < 2 || !one_of(op, [".ascii", ".asciz"])) {
     return false;
   }
-  return quoted_data(util.trim(slice_unchecked(line, op.len(), line.len()) + ""));
+  return quoted_data((slice_unchecked(line, op.len(), line.len()) + "").trim());
 }
 
 function directive(line: string, section: i32): i32 {
@@ -134,7 +130,7 @@ function directive(line: string, section: i32): i32 {
     return 4;
   }
   let op = word(line);
-  let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
+  let arg = (slice_unchecked(line, op.len(), line.len()) + "").trim();
   if (metadata(line, op, arg, section)) {
     return section;
   }
@@ -177,7 +173,7 @@ function native_data(line: string, section: i32): boolean {
   if (section < 2 || word(line) != ".quad") {
     return false;
   }
-  let arg = util.trim(slice_unchecked(line, 5, line.len()) + "");
+  let arg = (slice_unchecked(line, 5, line.len()) + "").trim();
   if (symbol(arg)) {
     return true;
   }
@@ -203,10 +199,10 @@ function scan_mode(text: string, native: boolean): Scan {
     if (!raw_line(raw)) {
       return Scan { lines: [], sections: [], error: "unsupported decrement control byte" };
     }
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "" && !line.starts_with("#")) {
       let name = definition(line);
-      let tail = if (name == "") { line } else { util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "") };
+      let tail = if (name == "") { line } else { (slice_unchecked(line, name.len() + 1, line.len()) + "").trim() };
       if (!literal_data(tail, section) && ambiguous_syntax(tail)) {
         return Scan { lines: [], sections: [], error: "unsupported decrement assembly syntax" };
       }
@@ -285,7 +281,7 @@ function definition_index(lines: string[]): names.Names {
 }
 
 function positive_space(arg: string): boolean {
-  let count = util.trim(arg.split(",")[0]);
+  let count = arg.split(",")[0].trim();
   if (!decimal(count) || count.len() > 9) {
     return false;
   }
@@ -299,7 +295,7 @@ function positive_space(arg: string): boolean {
 
 function allocation(tail: string): boolean {
   let op = word(tail);
-  let arg = util.trim(slice_unchecked(tail, op.len(), tail.len()) + "");
+  let arg = (slice_unchecked(tail, op.len(), tail.len()) + "").trim();
   if (!data_values(arg)) {
     return false;
   }
@@ -312,7 +308,7 @@ function writable_declarations(s: Scan): boolean {
     if (s.sections[at] == 2 || s.sections[at] == 3) {
       let name = definition(line);
       if (name != "") {
-        let tail = util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "");
+        let tail = (slice_unchecked(line, name.len() + 1, line.len()) + "").trim();
         if (!allocation(tail)) {
           return false;
         }
@@ -350,7 +346,7 @@ function storage_alignment(s: Scan, at: i32, name: string): boolean {
   if (word(line) != ".align") {
     return false;
   }
-  let arg = util.trim(slice_unchecked(line, 6, line.len()) + "");
+  let arg = (slice_unchecked(line, 6, line.len()) + "").trim();
   if (!decimal(arg) || arg.len() > 9) {
     return false;
   }
@@ -360,10 +356,10 @@ function storage_alignment(s: Scan, at: i32, name: string): boolean {
 
 function space_extent(arg: string, minimum: i32): boolean {
   let parts = arg.split(",");
-  if (parts.len() > 2 || parts.len() == 2 && util.trim(parts[1]) != "0") {
+  if (parts.len() > 2 || parts.len() == 2 && parts[1].trim() != "0") {
     return false;
   }
-  let count = util.trim(parts[0]);
+  let count = parts[0].trim();
   if (!decimal(count) || count.len() > 9) {
     return false;
   }
@@ -378,7 +374,7 @@ function storage_extent(tail: string, minimum: i32): boolean {
   if (op != ".skip" && op != ".zero") {
     return false;
   }
-  return space_extent(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""), minimum);
+  return space_extent((slice_unchecked(tail, op.len(), tail.len()) + "").trim(), minimum);
 }
 
 function storage_at(s: Scan, ix: names.Names, name: string, minimum: i32): boolean {
@@ -386,7 +382,7 @@ function storage_at(s: Scan, ix: names.Names, name: string, minimum: i32): boole
   if (at < 1 || s.sections[at] != 2 && s.sections[at] != 3 || !storage_alignment(s, at, name)) {
     return false;
   }
-  let tail = util.trim(slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "");
+  let tail = (slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "").trim();
   return storage_extent(tail, minimum);
 }
 
@@ -417,11 +413,11 @@ function native_allocation(line: string): boolean {
   if (line == ".quad -1") {
     return true;
   }
-  return allocation(line) || word(line) == ".quad" && symbol(util.trim(slice_unchecked(line, 5, line.len()) + ""));
+  return allocation(line) || word(line) == ".quad" && symbol((slice_unchecked(line, 5, line.len()) + "").trim());
 }
 
 function native_writable_label(s: Scan, at: i32, name: string): boolean {
-  let tail = util.trim(slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "");
+  let tail = (slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "").trim();
   if (tail != "") {
     return native_allocation(tail);
   }
@@ -544,7 +540,7 @@ function retained_line_error(line: string, name: string, section: i32, position:
 
 function retained_directive_error(line: string, position: i32): string {
   let op = word(line);
-  let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
+  let arg = (slice_unchecked(line, op.len(), line.len()) + "").trim();
   if (!metadata(line, op, arg, 1) || !line.starts_with(".cfi_")) {
     return "unsupported retained function directive";
   }
@@ -664,7 +660,7 @@ function ascii_bytes(arg: string): Literal {
 }
 
 function literal_at(s: Scan, start: i32, entry: string): Literal {
-  let tail = util.trim(slice_unchecked(s.lines[start], entry.len() + 1, s.lines[start].len()) + "");
+  let tail = (slice_unchecked(s.lines[start], entry.len() + 1, s.lines[start].len()) + "").trim();
   if (tail == "") {
     let next = start + 1;
     if (next >= s.lines.len() || s.sections[next] != 4) {
@@ -676,7 +672,7 @@ function literal_at(s: Scan, start: i32, entry: string): Literal {
   if (op != ".ascii") {
     return no_literal("unsupported read-only literal declaration");
   }
-  return ascii_bytes(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""));
+  return ascii_bytes((slice_unchecked(tail, op.len(), tail.len()) + "").trim());
 }
 
 pub function readonly_ascii(text: string, entry: string): Literal {

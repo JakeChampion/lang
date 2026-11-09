@@ -8,10 +8,6 @@ function verdict(ok: boolean, message: string): helper.Proof {
   return helper.Proof { ok: ok, function_name: "__fn___fern_rc_is_unique", message: message };
 }
 
-function symbol_byte(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function definition(line: string): string {
   let i = 0;
   while (i < line.len()) {
@@ -19,7 +15,7 @@ function definition(line: string): string {
     if (c == b':') {
       return slice_unchecked(line, 0, i) + "";
     }
-    if (!symbol_byte(c)) {
+    if (!util.is_symbol_byte(c)) {
       return "";
     }
     i += 1;
@@ -37,17 +33,17 @@ function index(lines: string[]): names.Names {
 
 function assignment(line: string): boolean {
   let i = 0;
-  while (i < line.len() && symbol_byte(line[i])) {
+  while (i < line.len() && util.is_symbol_byte(line[i])) {
     i += 1;
   }
-  let rest = util.trim(slice_unchecked(line, i, line.len()) + "");
+  let rest = (slice_unchecked(line, i, line.len()) + "").trim();
   return i > 0 && rest.starts_with("=");
 }
 
 function lines(text: string): string[] {
   let out: string[] = [];
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (assignment(line)) {
       return [];
     }

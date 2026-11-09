@@ -42,10 +42,10 @@ func literateSeeds(t testing.TB) [][]byte {
 // FuzzSelfHostTangle feeds hostile documents to the chunk grammar, the
 // tangle of the root chunk and of the file roots, and the unused-chunk lint.
 func FuzzSelfHostTangle(f *testing.F) {
-	fuzzReader(f, "literate_fuzz_run", "tangle", literateSeeds(f))
+	fuzzReaderTarget(f)
 }
 
 // FuzzSelfHostWeave feeds hostile documents to the weave, to text and to HTML.
 func FuzzSelfHostWeave(f *testing.F) {
-	fuzzReader(f, "literate_fuzz_run", "weave", literateSeeds(f))
+	fuzzReaderTarget(f)
 }

@@ -1,0 +1,46 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/jakechampion/lang/internal/syntax/lexer"
+)
+
+func main() {
+	root := "/workspace/lang-semantic-base-20261109"
+	files, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	drivers, err := filepath.Glob(filepath.Join(root, "compiler", "drivers", "*.fern"))
+	if err != nil {
+		panic(err)
+	}
+	files = append(files, drivers...)
+	rows := []map[string]any{}
+	var bytes int64
+	accepted := 0
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+		_, _, lexErr := lexer.Tokenize(string(data))
+		row := map[string]any{"path": path, "bytes": len(data), "sha256": fmt.Sprintf("%x", sha256.Sum256(data)), "tokenizable": lexErr == nil}
+		if lexErr == nil {
+			bytes += int64(len(data))
+			accepted++
+		} else {
+			row["error"] = lexErr.Error()
+		}
+		rows = append(rows, row)
+	}
+	output := map[string]any{"fixed_input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef", "benchmark": "BenchmarkTokenizeSelfHostCorpus", "files": rows, "accepted_files": accepted, "accepted_bytes": bytes, "excluded_files": len(rows) - accepted}
+	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
+		panic(err)
+	}
+}

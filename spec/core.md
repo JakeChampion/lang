@@ -543,6 +543,9 @@ is the number of slots it leaves.
 | `alloc_uninit` | 515 | 1 | 1 |
 | `udp_sendmmsg` | 516 | 4 | 1 |
 | `udp_recvmmsg` | 517 | 4 | 1 |
+| `user_run` | 518 | 1 | 1 |
+| `cache_sync_code` | 519 | 1 | 1 |
+| `vload_f32` | 520 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

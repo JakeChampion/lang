@@ -1,0 +1,16 @@
+[
+  {
+    "target": "x86-64-linux",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "target": "wasm32-wasi",
+    "build": "pass",
+    "run": "pass"
+  },
+  {
+    "target": "arm64-android",
+    "build": "pass"
+  }
+]

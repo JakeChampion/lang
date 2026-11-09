@@ -72,6 +72,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides TLS 1.3 server sessions and connections.
+// A closed connection rejects read, write, offload, and update_keys with NetFailed(ConnectionAborted).
+// Copies share the closed flag. Repeated close calls return Ok.
 ```
 
 ### `dependencies 2`
@@ -576,19 +578,7 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
   if (body.len() != name_at + 2 + name_len + size) {
     return None;
   }
-  match (keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32)) {
-    Some(suite) => {
-      if (suite.hash().size() != size) {
-        return None;
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  let issued = __i64_at(body, 3);
-  let lifetime = __i64_at(body, 11);
-  if (now < issued || now >= issued + lifetime * (1000 as i64)) {
+  if (!__ticket_live(body, size, now)) {
     return None;
   }
   if (!__same(body[name_at + 2:name_at + 2 + name_len], offer.server_name.bytes())) {
@@ -598,6 +588,20 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
     return None;
   };
   return Some(handshake.Resumed { index: 0, psk: __copy(body[name_at + 2 + name_len:body.len()]), early: (body[19] as i32 & 1) == 1, alpn: alpn });
+}
+
+// __ticket_live says the ticket's suite hashes to `size` bytes, as the
+// offer's does, and that `now` is inside the ticket's lifetime.
+function __ticket_live(body: [u8], size: i32, now: i64): boolean {
+  let Some(suite) = keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32) else {
+    return false;
+  };
+  if (suite.hash().size() != size) {
+    return false;
+  }
+  let issued = __i64_at(body, 3);
+  let lifetime = __i64_at(body, 11);
+  return now >= issued && now < issued + lifetime * (1000 as i64);
 }
 
 function __u16(own out: u8[], v: i32): u8[] {
@@ -735,6 +739,9 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
 ```fern
 <<19 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]>>=
 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   if (c.session.offloaded()) {
     __send_fd(c.sock, data)?;
     return Ok(c);
@@ -745,6 +752,9 @@ pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]
 }
 
 pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   if let Some(o) = c.session.offload() {
     match (ktls.attach(c.sock, o.keys)) {
       ktls.Kernel => {
@@ -766,6 +776,9 @@ pub function (c: Connection) offloaded(): boolean {
 }
 
 pub function (c: Connection) update_keys(request: boolean): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   let step: Step = c.session.update_keys(request)?;
   __send_out(c.sock, c.session, step.output)?;
   let r: i32 = ktls.install(c.sock, step.rekeyed);
@@ -778,6 +791,9 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
 }
 
 pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   if (c.pending.len() > 0 || c.ended) {
     return Ok(Received { conn: Connection { ...c, pending: [] }, data: c.pending, ended: c.ended });
   }

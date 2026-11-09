@@ -256,12 +256,12 @@ function body_run(f: ssasem.Func, d: ssa.DefSites, test_id: i32, head_id: i32, i
   return run;
 }
 
-// The header phi that the loop test compares, directly or plus a constant,
+// The header phi that the loop test ssasem.comparison, directly or plus a constant,
 // when it starts at a constant and the loop steps it by a constant.
 function induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted): Counted {
   let g = f.graph;
   if let Some(c) = def_inst(g, d, test_block(g, shape).term.cond) {
-    if (c.kind_tag == ssa.BINARY && c.args.len() == 2 && util.index_of_i32(shape.heads, d.block[c.result]) >= 0 && compares(c.str)) {
+    if (c.kind_tag == ssa.BINARY && c.args.len() == 2 && util.index_of_i32(shape.heads, d.block[c.result]) >= 0 && ssasem.comparison(c.str)) {
       let first = phi_induction(f, d, shape, c.args[0]);
       if (first.iv >= 0) {
         return first;
@@ -326,10 +326,6 @@ function signed_step(op: string, k: i32): Option[i32] {
     return Some(-k);
   }
   return None;
-}
-
-function compares(op: string): boolean {
-  return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
 function compared(op: string, a: i64, b: i64): boolean {
@@ -657,7 +653,7 @@ function folded_pair(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i3
 function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
   let a = konst[ins.args[0]] as i64;
   let b = konst[ins.args[1]] as i64;
-  if (compares(ins.str) && ssasem.is_bool(f.values[ins.result])) {
+  if (ssasem.comparison(ins.str) && ssasem.is_bool(f.values[ins.result])) {
     let yes = 0;
     if (compared(ins.str, a, b)) {
       yes = 1;
@@ -672,9 +668,18 @@ function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
   return unfolded(ins);
 }
 
-// The i32 sum, difference or product of two constants, when it does not
-// overflow. A negation is the difference from 0.
+// Constant i32 arithmetic that does not overflow, and bitwise operations.
+// A negation is the difference from 0.
 pub function folded_i32(op: string, a: i32, b: i32): Option[i32] {
+  if (op == "&") {
+    return Some(a & b);
+  }
+  if (op == "|") {
+    return Some(a | b);
+  }
+  if (op == "^") {
+    return Some(a ^ b);
+  }
   if let Some(v) = arithmetic(op, a as i64, b as i64) {
     if (fits_i32(v)) {
       return Some(v as i32);

@@ -22,6 +22,7 @@ The caller supplies the same immutable source, preserves its position during pen
 import "std/audio/file";
 import "std/audio/mp3";
 import "std/audio/mp3/header";
+import "std/audio/mp3/framing";
 import "std/audio/mp3/input";
 import "std/audio/mp3/metadata";
 import "std/audio/mp3/seek";
@@ -32,7 +33,7 @@ pub struct Limits { input: input.Limits, max_entries: i32 }
 
 pub struct Entry { offset: i64, bytes: i32, payload: i32 }
 
-pub struct Index { info: input.Info, entries: Entry[], frame_size: i32, frames: i64, input_bytes: i64, limits: Limits }
+pub struct Index { info: input.Info, entries: Entry[], frame_size: i32, frames: i64, input_bytes: i64, limits: Limits, free_bytes: i32 }
 
 enum Stage { Tail, ApeHeader, Start, Decode, Complete }
 
@@ -115,7 +116,7 @@ function read_tail(own builder: Builder, seek: (i64) => Result[i64, IoError], re
   if let Tail = stage {
     return inspect_tail(remainder, current);
   }
-  let next_trailer = metadata.Trailer { ...remainder.trailer, first: bytes(current.view()) };
+  let next_trailer = metadata.Trailer { ...trailer, first: bytes(current.view()) };
   return finish_tail(Builder { ...remainder, trailer: next_trailer });
 }
 
@@ -138,7 +139,8 @@ function record(own builder: Builder, offset: i64, encoded: i64, h: Option[heade
 }
 
 function peek(decoder: input.Input): Option[header.Header] {
-  return match (header.parse(decoder.buffer.view(), 0)) { Ok(value) => Some(value), Err(_) => None };
+  let h = match (header.parse(decoder.buffer.view(), 0)) { Ok(value) => value, Err(_) => { return None; } };
+  return match (framing.sized(h, decoder.codec.free_bytes, decoder.limits.audio.max_input_bytes)) { Ok(value) => Some(value), Err(_) => None };
 }
 
 function build_event(own builder: Builder, own value: input.ReadEvent): Result[(Builder, BuildEvent), source.ReadError] {
@@ -147,7 +149,7 @@ function build_event(own builder: Builder, own value: input.ReadEvent): Result[(
       if (summary.bytes_read != builder.audio_end) {
         return Err(audio_error(pcm.Header));
       }
-      let index = Index { info: summary.info, entries: builder.entries, frame_size: builder.frame_size, frames: summary.frames, input_bytes: builder.input_bytes, limits: builder.limits };
+      let index = Index { info: summary.info, entries: builder.entries, frame_size: builder.frame_size, frames: summary.frames, input_bytes: builder.input_bytes, limits: builder.limits, free_bytes: builder.decoder.codec.free_bytes };
       return Ok((Builder { ...builder, entries: [], stage: Complete }, BuildReady(index)));
     },
     input.Finished => {
@@ -233,7 +235,11 @@ pub function inspect(reader: Reader, limits: Limits): Result[Index, source.ReadE
 
 pub function reader(own index: Index): Cursor {
   let target = index.info.skip_frames as i64;
-  return Cursor { index: index, codec: mp3.decoder(), entry: 0, target: target, window: None };
+  let codec = mp3.decoder();
+  if (index.free_bytes > 0) {
+    codec = mp3.Decoder { ...codec, free_bytes: index.free_bytes };
+  }
+  return Cursor { index: index, codec: codec, entry: 0, target: target, window: None };
 }
 
 function warmup(index: Index, entry: i32): i32 {
@@ -254,7 +260,11 @@ pub function (own cursor: Cursor) seek(position: i64): Result[Cursor, source.Rea
     return Err(audio_error(pcm.Limit));
   };
   let entry = if (position == cursor.index.frames) { cursor.index.entries.len() } else { warmup(cursor.index, (target / (cursor.index.frame_size as i64)) as i32) };
-  return Ok(Cursor { ...cursor, codec: cursor.codec.reset(), entry: entry, target: target, window: None });
+  let codec = cursor.codec.reset();
+  if (cursor.index.free_bytes > 0) {
+    codec = mp3.Decoder { ...codec, free_bytes: cursor.index.free_bytes };
+  }
+  return Ok(Cursor { ...cursor, codec: codec, entry: entry, target: target, window: None });
 }
 
 function crop(samples: [f32], start: i32, end: i32): f32[] {

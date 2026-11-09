@@ -8,10 +8,6 @@ import "std/string";
 
 struct Program { ops: isa.Op[], targets: i32[], ok: boolean }
 
-function label_char(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function label(line: string): boolean {
   if (!line.starts_with(".L") || !line.ends_with(":")) {
     return false;
@@ -19,7 +15,7 @@ function label(line: string): boolean {
   let i = 2;
   while (i < line.len() - 1) {
     let c = line[i];
-    if (!label_char(c)) {
+    if (!util.is_symbol_byte(c)) {
       return false;
     }
     i += 1;
@@ -40,7 +36,7 @@ function program(text: string, arm: boolean): Program {
   let ops: isa.Op[] = [];
   let labels: string[] = [];
   for raw in text.split("\n") {
-    let line = util.trim(raw);
+    let line = raw.trim();
     if (line != "") {
       let name = "";
       let decoded = isa.Op { kind: 30, a: "", b: "", target: "" };

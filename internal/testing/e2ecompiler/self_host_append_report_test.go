@@ -23,6 +23,21 @@ function sole(n: i32): i32[] {
   return xs;
 }
 
+// spare appends under an if, so the counted-append reserve pass does not size
+// it and the array keeps the spare capacity a shared push needs.
+@noinline
+function spare(n: i32): i32[] {
+  let xs: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    if (i >= 0) {
+      xs = xs.append(i);
+    }
+    i = i + 1;
+  }
+  return xs;
+}
+
 @noinline
 function preserved(xs: i32[], n: i32): boolean {
   return xs.len() == n && (n == 0 || xs[n - 1] == n - 1);
@@ -70,7 +85,7 @@ function main(): i32 {
   let c1: i32 = __arr_push_shared_count();
   let l: i32 = live(100);
   let c2: i32 = __arr_push_shared_count();
-  let m: i32[][] = [sole(10), [2]];
+  let m: i32[][] = [spare(10), [2]];
   let k: i32 = nested(m).len();
   let c3: i32 = __arr_push_shared_count();
   if (c1 != c0 || c2 - c1 < 50 || c3 - c2 != 1) {

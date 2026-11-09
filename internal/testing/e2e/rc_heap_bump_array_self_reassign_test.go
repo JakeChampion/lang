@@ -4,12 +4,14 @@ import (
 	"testing"
 )
 
+// build appends on even i only, so the counted-append reserve pass does not
+// size the array up front and the loop still grows it one push at a time.
 func arrSelfReassignSrc(iters string) string {
 	return `
 function build(k: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;
-    while (i < k) { a = a.append(i); i = i + 1; }
+    while (i < k) { if (i % 2 == 0) { a = a.append(i); } i = i + 1; }
     return a;
 }
 function main(): i32 {

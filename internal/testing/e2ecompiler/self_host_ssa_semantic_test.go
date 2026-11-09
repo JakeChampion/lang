@@ -156,6 +156,18 @@ graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+const semanticProjectedViewPhi = `
+let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+let stored: typeinfo.Type = typeinfo.TypeTuple { elements: [ia, ia] };
+params = [stored, bt]; types = [stored, bt, i32t, ia, i32t, av, ia, i32t, av, av, i32t]; result = i32t;
+graph = ssa.SFunc { name: "projected_view_phi", nparams: 2, nvals: 11, entry: 7, takes_env: false, blocks: [
+  ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssa.CONST_INT, 2, [], 0)], term: branch_on(1) },
+  ssa.SBlock { id: 17, preds: [7], insts: [inst(ssasem.tuple_get(), 3, [0], 0), inst(ssasem.length(), 4, [3], 0), inst(ssasem.arr_slice(), 5, [3, 2, 4], 0)], term: br(37) },
+  ssa.SBlock { id: 27, preds: [7], insts: [inst(ssasem.tuple_get(), 6, [0], 1), inst(ssasem.length(), 7, [6], 0), inst(ssasem.arr_slice(), 8, [6, 2, 7], 0)], term: br(37) },
+  ssa.SBlock { id: 37, preds: [17, 27], insts: [inst(ssa.PHI, 9, [5, 8], 0), inst(ssasem.length(), 10, [9], 0)], term: ret(10) }
+] };
+`
+
 const semanticAppendRange = `
 params = [st, view, i32t, i32t]; types = [st, view, i32t, i32t, st]; result = st;
 graph = ssa.SFunc { name: "append_range", nparams: 4, nvals: 5, entry: 7, takes_env: false, blocks: [
@@ -177,6 +189,18 @@ func semanticCases() []struct{ name, change, want string } {
 	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
 		{"array-lend", semanticArrayLend, ""},
+		{"projected-view-phi", semanticProjectedViewPhi, ""},
+		{"branch-local-view-phi", semanticProjectedViewPhi + `
+let blocks: ssa.SBlock[] = [];
+for block in graph.blocks {
+  let code: ssa.SInst[] = [];
+  for op in block.insts {
+    code = code.append(if (op.result == 3 || op.result == 6) { inst(ssasem.array_new(), op.result, [], 0) } else { op });
+  }
+  blocks = blocks.append(ssa.SBlock { ...block, insts: code });
+}
+graph = ssa.SFunc { ...graph, blocks: blocks };
+`, "dependency unavailable at use"},
 		{"array-view-cannot-append", semanticViewMutation, "append receiver must own storage"},
 		{"array-view-cannot-update", semanticViewMutation + "graph = change(graph, 3, inst(ssasem.with(), 3, [0, 1, 2], 0));", "with receiver must own storage"},
 		{"array-view-needs-owned-construction", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_new(), 1, [], 0));", "array construction must own storage"},
@@ -244,7 +268,7 @@ func semanticCases() []struct{ name, change, want string } {
 
 func semanticSource(indices []int) (string, string) {
 	var source, main, want strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./semtypes\";\nimport \"./semrecords\";\nimport \"./typeinfo\";\n")
+	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./sourcepos\";\nimport \"./semtypes\";\nimport \"./semrecords\";\nimport \"./typeinfo\";\n")
 	source.WriteString(semanticHelpers)
 	main.WriteString("function main(): i32 { if (type_checks() != 0) { return 90; }\n")
 	for _, i := range indices {
@@ -252,7 +276,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 let before = ssa.print_func(graph);
-let checked = ssasem.analyze(ssasem.Func { schema_checked: false, source_positions: ssasem.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
+let checked = ssasem.analyze(ssasem.Func { schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }
@@ -273,6 +297,12 @@ while (at < expected.len()) {
 }
 `)
 		}
+		if tc.name == "projected-view-phi" {
+			source.WriteString(`
+if (!checked.ok || checked.parents[9].len() != 1 || checked.parents[9][0] != 0) { return 18; }
+if (checked.dependencies[9].len() != 1 || checked.dependencies[9][0] != 0) { return 19; }
+`)
+		}
 		if tc.name == "record-replacement" {
 			source.WriteString(`
 if (!checked.ok) { print(checked.why); return 8; }
@@ -285,7 +315,7 @@ if (checked.dependencies[6].len() != 0) { return 11; }
 			source.WriteString(`
 if (!checked.ok) { print(checked.why); return 12; }
 if (checked.dependencies[1].len() != 1 || checked.dependencies[1][0] != 0) { return 13; }
-let f = ssasem.Func { schema_checked: false, source_positions: ssasem.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let f = ssasem.Func { schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
 let anchor = ssasem.result_anchor(f, anchors, []);
 if (!ssasem.holds_view(f, result) || anchor.pending) { return 14; }
 `)

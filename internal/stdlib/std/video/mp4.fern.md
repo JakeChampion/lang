@@ -47,13 +47,13 @@ pub struct Track { id: u32, enabled: boolean, clock: time.Clock, descriptions: D
 
 pub struct Index { movie: time.Clock, tracks: Track[], bytes: i64 }
 
-struct Scan { budget: boxes.Budget, media: tables.Media[], limits: Limits, packets: i32 }
+struct Scan { budget: boxes.Budget, media: tables.Media[], limits: Limits, packets: i32, file_bytes: i64 }
 
 pub function default_limits(): Limits {
   return Limits { video: frame.default_limits(), max_input_bytes: 268435456, max_boxes: 65536, max_tracks: 32, max_packets: 1048576, max_descriptions: 64, max_edits: 64 };
 }
 
-function video_error(error: pcm.AudioError): frame.VideoError {
+pub(package) function video_error(error: pcm.AudioError): frame.VideoError {
   return match (error) { pcm.Truncated => frame.Truncated, pcm.Unsupported => frame.Unsupported, pcm.Limit => frame.Limit, _ => frame.Header };
 }
 
@@ -149,7 +149,7 @@ function reject_encryption(children: [boxes.Box]): Result[void, pcm.AudioError] 
 function raw_packets(input: [u8], children: [boxes.Box], scan: Scan, descriptions: i32): Result[tables.Packet[], pcm.AudioError] {
   reject_encryption(children)?;
   let sizes = packet_sizes(input, children, scan)?;
-  let offsets = tables.offsets(input, exclusive(children, "stco", "co64")?, scan.limits.max_packets, input.len() as i64)?;
+  let offsets = tables.offsets(input, exclusive(children, "stco", "co64")?, scan.limits.max_packets, scan.file_bytes)?;
   let chunks = tables.chunks(input, boxes.required(children, "stsc")?, scan.limits.max_packets)?;
   let times = tables.times(input, boxes.required(children, "stts")?, scan.limits.max_packets)?;
   return tables.packets(sizes, offsets, chunks, times, scan.media, descriptions);
@@ -222,7 +222,7 @@ function media_boxes(top: [boxes.Box]): Result[tables.Media[], pcm.AudioError] {
   return Ok(media);
 }
 
-function limits(input: [u8], limits: Limits): Result[void, pcm.AudioError] {
+pub(package) function validate_limits(input: [u8], limits: Limits): Result[void, pcm.AudioError] {
   if (input.len() > limits.max_input_bytes || limits.max_input_bytes < 0) {
     return Err(pcm.Limit);
   }
@@ -252,7 +252,7 @@ function add_track(input: [u8], box: boxes.Box, scan: Scan, own previous: Track[
 }
 
 function headers(input: [u8], configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
-  limits(input, configured)?;
+  validate_limits(input, configured)?;
   let (budget, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: configured.max_boxes })?;
   file_type(input, top)?;
   let moov = boxes.required(top, "moov")?;
@@ -273,17 +273,21 @@ function file_type(input: [u8], top: [boxes.Box]): Result[void, pcm.AudioError] 
 
 function movie_header(input: [u8], top: [boxes.Box], children: boxes.Box[], budget: boxes.Budget, configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
   let movie = time.clock(input, boxes.required(children, "mvhd")?)?;
-  return Ok((Scan { budget: budget, media: media_boxes(top)?, limits: configured, packets: 0 }, movie, children));
+  return Ok((Scan { budget: budget, media: media_boxes(top)?, limits: configured, packets: 0, file_bytes: input.len() as i64 }, movie, children));
 }
 
 function index(input: [u8], configured: Limits): Result[Index, pcm.AudioError] {
   let (scan, movie, children) = headers(input, configured)?;
+  return collect_tracks(input, scan, movie, children);
+}
+
+function collect_tracks(input: [u8], scan: Scan, movie: time.Clock, children: [boxes.Box]): Result[Index, pcm.AudioError] {
   let tracks: Track[] = [];
   let count = 0;
   for box in children {
     if (box.kind == boxes.tag("trak")) {
       count += 1;
-      if (count > configured.max_tracks) {
+      if (count > scan.limits.max_tracks) {
         return Err(pcm.Limit);
       }
       let (after, output) = add_track(input, box, scan, tracks)?;
@@ -294,7 +298,51 @@ function index(input: [u8], configured: Limits): Result[Index, pcm.AudioError] {
   if (tracks.len() == 0) {
     return Err(pcm.Unsupported);
   }
-  return Ok(Index { movie: movie, tracks: tracks, bytes: input.len() as i64 });
+  return Ok(Index { movie: movie, tracks: tracks, bytes: scan.file_bytes });
+}
+
+// The file scanner supplies one complete moov box and absolute mdat ranges.
+// The nested box and packet readers remain the same as in the byte-view API.
+pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, configured: Limits): Result[Index, frame.VideoError] {
+  return match (movie_index(input, media, file_bytes, top_boxes, configured)) { Ok(value) => Ok(value), Err(error) => Err(video_error(error)) };
+}
+
+function source_extent(input: [u8], media: [tables.Media], file_bytes: i64, top_boxes: i32, maximum: i32): Result[void, pcm.AudioError] {
+  if (file_bytes < input.len() as i64 || media.len() == 0 || top_boxes < 1 || top_boxes > maximum || media.len() > top_boxes) {
+    return Err(pcm.Header);
+  }
+  return media_extents(media, file_bytes);
+}
+
+function media_extents(media: [tables.Media], file_bytes: i64): Result[void, pcm.AudioError] {
+  let end = 0i64;
+  for range in media {
+    if (range.start < end || range.end < range.start || range.end > file_bytes) {
+      return Err(pcm.Header);
+    }
+    end = range.end;
+  }
+  return Ok(());
+}
+
+function metadata_children(input: [u8], budget: boxes.Budget): Result[(boxes.Budget, boxes.Box[]), pcm.AudioError] {
+  let moov = boxes.read(input, 0, input.len())?;
+  if (moov.kind != boxes.tag("moov") || moov.end != input.len()) {
+    return Err(pcm.Header);
+  }
+  let (next, children) = boxes.children(input, moov.data, moov.end, budget)?;
+  if let Some(_) = boxes.one(children, "mvex")? {
+    return Err(pcm.Unsupported);
+  }
+  return Ok((next, children));
+}
+
+function movie_index(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, configured: Limits): Result[Index, pcm.AudioError] {
+  validate_limits(input, configured)?;
+  source_extent(input, media, file_bytes, top_boxes, configured.max_boxes)?;
+  let (budget, children) = metadata_children(input, boxes.Budget { boxes: top_boxes, maximum: configured.max_boxes })?;
+  let movie = time.clock(input, boxes.required(children, "mvhd")?)?;
+  return collect_tracks(input, Scan { budget: budget, media: media, limits: configured, packets: 0, file_bytes: file_bytes }, movie, children);
 }
 
 pub function inspect(input: [u8], limits: Limits): Result[Index, frame.VideoError] {

@@ -128,13 +128,6 @@ function t_lanes(width: i32): typeinfo.Type {
   return typeinfo.TypeLanes { width: width };
 }
 
-function is_lanes(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeLanes(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function is_float(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(f) = t {
     return true;
@@ -281,7 +274,7 @@ function t_array(elem: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeArray { elem: elem, view: false };
 }
 
-function is_sha_hw_builtin(name: string): boolean {
+pub function is_sha_hw_builtin(name: string): boolean {
   return name == "__sha256_hw" || name == "__sha1_hw";
 }
 
@@ -311,20 +304,6 @@ function as_view(t: typeinfo.Type): typeinfo.Type {
     return t_view(a.elem);
   }
   return t;
-}
-
-function is_arr_view(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return a.view;
-  }
-  return false;
-}
-
-function is_owned_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
 }
 
 function one_arg_intrinsic_result(name: string): typeinfo.Type {
@@ -466,13 +445,6 @@ function t_unknown(reason: string): typeinfo.Type {
   return typeinfo.TypeUnknown { reason: reason };
 }
 
-function is_cell_type(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(s) = t {
-    return s.name == "Cell";
-  }
-  return false;
-}
-
 function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeStruct(s) = t {
     if (s.args.len() == 1) {
@@ -495,7 +467,7 @@ function is_wide_map_ref(r: parser.TypeRef): boolean {
 }
 
 function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinfo.Type {
-  if (!is_cell_type(recv)) {
+  if (!typeinfo.is_cell(recv)) {
     return t_unknown("not a cell method call");
   }
   if (name == "get" && argc == 0) {
@@ -524,7 +496,7 @@ function is_lane_builtin(name: string): boolean {
   let names: string[] = [
     "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
-    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
@@ -1063,6 +1035,9 @@ function privileged_sig(name: string): DeviceSig {
   if (name == "__boot_info" || name == "__irq_pending") {
     return DeviceSig { params: [], result: typeinfo.t_usize() };
   }
+  if (name == "__user_run") {
+    return DeviceSig { params: [typeinfo.t_usize()], result: w };
+  }
   if (name == "__sysreg_read") {
     return DeviceSig { params: [typeinfo.t_string()], result: w };
   }
@@ -1432,7 +1407,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeStruct(an) => {
       match (b) {
         typeinfo.TypeStruct(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1495,7 +1470,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeUnion(an) => {
       match (b) {
         typeinfo.TypeUnion(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1553,6 +1528,30 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return false;
 }
 
+// The type arguments of two uses of one generic name agree unless both are
+// written and some pair that is known on both sides differs. A bare name and
+// an argument that holds an unknown, an unbound one included, stay open.
+function type_args_agree(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() == 0 || b.len() == 0) {
+    return true;
+  }
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (!holds_any_unknown(a[i]) && !holds_any_unknown(b[i]) && !type_eq(a[i], b[i])) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function holds_any_unknown(t: typeinfo.Type): boolean {
+  return is_unknown(t) || typeinfo.any_child(t, holds_any_unknown);
+}
+
 function is_unknown(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
@@ -1584,13 +1583,6 @@ function is_func_type(t: typeinfo.Type): boolean {
       return false;
     }
   }
-}
-
-function is_tuple_type(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeTuple(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function type_contains_unknown(t: typeinfo.Type): boolean {
@@ -1910,10 +1902,6 @@ function sig_buckets(): i32 {
   return 4093;
 }
 
-function sig_name_bucket(name: string): i32 {
-  return (__str_hash(name, 0) & 1073741823) % 4093;
-}
-
 function sig_table(sigs: FuncSig[]): SigTable {
   let names: string[] = [];
   for sig in sigs {
@@ -2072,14 +2060,14 @@ function union_table(unions: UnionSig[]): UnionTable {
   let bnext = next;
   let k = vnames.len() - 1;
   while (k >= 0) {
-    let bk = sig_name_bucket(vnames[k]);
+    let bk = util.hash_bucket(vnames[k], 4093);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     if (!declared_by_entry(unions[vowner[k]])) {
       lib_next = lib_next.with(k, lib_head[bk]);
       lib_head = lib_head.with(bk, k);
     }
-    let bb = sig_name_bucket(bnames[k]);
+    let bb = util.hash_bucket(bnames[k], 4093);
     bnext = bnext.with(k, bhead[bb]);
     bhead = bhead.with(bb, k);
     k -= 1;
@@ -2124,9 +2112,9 @@ function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {
 
 function (ut: UnionTable) variant_chain_head(name: string): i32 {
   if (ut.from_import) {
-    return ut.lib_head[sig_name_bucket(name)];
+    return ut.lib_head[util.hash_bucket(name, 4093)];
   }
-  return ut.head[sig_name_bucket(name)];
+  return ut.head[util.hash_bucket(name, 4093)];
 }
 
 function (ut: UnionTable) variant_chain_next(e: i32): i32 {
@@ -2343,17 +2331,8 @@ function (s: Scope) defines(name: string): boolean {
   return false;
 }
 
-function name_has_comma(name: string): boolean {
-  for ch in name {
-    if (ch == b',') {
-      return true;
-    }
-  }
-  return false;
-}
-
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
-  if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+  if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
     return s;
   }
   let at = parser.destr_marker_split(v.type_name).at;
@@ -3285,7 +3264,7 @@ function bound_import_unloaded(base: string, imports: string[], reqs: parser.Tra
 
 function bound_decl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  let imports = import_paths_of(mod);
+  let imports = parser.import_paths(mod);
   for fd in mod.funcs {
     let i = 0;
     while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
@@ -3418,7 +3397,7 @@ function (s: Scope) variant_hidden(v: StructSig): boolean {
   if (!s.unions.from_import) {
     return false;
   }
-  let e = s.unions.head[sig_name_bucket(v.name)];
+  let e = s.unions.head[util.hash_bucket(v.name, 4093)];
   while (e >= 0) {
     let u = s.unions.unions[s.unions.vowner[e]];
     if (s.unions.vnames[e] == v.name && u.name == v.enum_owner) {
@@ -3436,7 +3415,7 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     n = 1;
   }
   let last: i32 = -1;
-  let e = s.unions.bhead[sig_name_bucket(bare)];
+  let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
     let o = s.unions.vowner[e];
     let u = s.unions.unions[o];
@@ -3461,21 +3440,10 @@ function (s: Scope) lookup_owned_struct(name: string, owner: string): Option[Str
 }
 
 function variant_payload_struct(s: Scope, type_name: string): Option[StructSig] {
-  if (dot_index(type_name) < 0) {
+  if (util.index_of_byte(type_name, b'.', 0) < 0) {
     return s.lookup_variant(type_name);
   }
   return s.lookup_owned_struct(variant_pattern_name(type_name), variant_pattern_owner(type_name));
-}
-
-function field_index(ssig: StructSig, name: string): i32 {
-  let i = 0;
-  while (i < ssig.field_names.len()) {
-    if (ssig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): typeinfo.Type {
@@ -4409,7 +4377,7 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   if let typeinfo.TypeErased(_) = from {
     return true;
   }
-  if (is_owned_array(from) || is_arr_view(from)) {
+  if (typeinfo.is_owned_array(from) || typeinfo.is_array_view(from)) {
     return false;
   }
   let tn = util.base_type_name(type_label(from));
@@ -4597,8 +4565,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (nominal_args_clash(from, to, unions)) {
     return false;
   }
-  // type_eq ignores nominal arguments, so an aggregate checks its components below.
-  if (type_eq(from, to) && !is_tuple_or_array(to)) {
+  // nominal_args_clash above checks the arguments of one generic name, and
+  // an aggregate checks its components below.
+  if ((same_nominal(from, to) || type_eq(from, to)) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -4664,7 +4633,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return false;
     },
     typeinfo.TypeDyn(_) => {
-      return !is_str_view(from) && !is_arr_view(from);
+      return !is_str_view(from) && !typeinfo.is_array_view(from);
     },
     _ => {
       return false;
@@ -5047,12 +5016,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             _ => {}
           }
           if (bts.len() > 0) {
-            let result = vb_arms_unified(bts, mx_body_result_exprs(lm.body));
+            let arms = mx_body_result_exprs(lm.body);
+            bts = mx_settle_struct_arms(bts, arms, t_unknown("no destination"), s);
+            let result = vb_arms_unified(bts, arms);
             if (!is_unknown(result)) {
               return result;
             }
             if (parser.is_value_block_origin(lm.origin)) {
-              let arms = mx_body_result_exprs(lm.body);
               let fold = vb_arms_fold(bts, arms, s);
               if (is_unknown(fold.acc.t)) {
                 return t_unknown("value block arms disagree");
@@ -5162,6 +5132,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   }
   if (!is_method && name == "cell_new") {
     return cell_new_type(c, s);
+  }
+  if (!is_method && name == "share_unchecked" && c.args.len() == 1) {
+    return check_expr(c.args[0], s);
   }
   if (!is_method && parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin_type(name, c, s);
@@ -5949,7 +5922,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
   while (pass < 2) {
     let i = 0;
     while (i < sl.field_names.len()) {
-      let fi = field_index(ssig, sl.field_names[i]);
+      let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
       let binds = fi >= 0 && fi < ssig.field_type_names.len() && typed_int_field(sl.field_values[i], s) == (pass == 0);
       if let ast.ExprArray(ea) = sl.field_values[i] {
         if (ea.elements.len() == 0) {
@@ -6145,7 +6118,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
       let tp = ssig.type_params[i];
       let spellings: string[] = [];
       for fname in sl.field_names {
-        let fi = field_index(ssig, fname);
+        let fi = util.index_of_str(ssig.field_names, fname);
         if (fi >= 0 && fi < ssig.field_type_names.len()) {
           spellings = spellings.append(ssig.field_type_names[fi]);
         } else {
@@ -6168,7 +6141,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
 function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): i32 {
   let i = 0;
   while (i < sl.field_names.len()) {
-    let fi = field_index(ssig, sl.field_names[i]);
+    let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
     if (fi >= 0) {
       let ft = lit_field_type(ssig, fi, args, s);
       let vt = check_expr(sl.field_values[i], s);
@@ -6357,7 +6330,7 @@ function lanes_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Ty
 }
 
 function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (is_lanes(lt) || is_lanes(rt)) {
+  if (typeinfo.is_lanes(lt) || typeinfo.is_lanes(rt)) {
     return lanes_result_type(b, lt, rt);
   }
   if (b.op == "+") {
@@ -6468,7 +6441,7 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
     if (is_integer(ot)) {
       return ot;
     }
-    if (is_float(ot) || is_lanes(ot)) {
+    if (is_float(ot) || typeinfo.is_lanes(ot)) {
       return ot;
     }
     let novt = s.unop_overload_ret(u.op, ot);
@@ -6538,7 +6511,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = a.elements[i];
       continue;
     }
-    if (is_tuple_type(first) && is_tuple_type(et) && (type_contains_unknown(first) || type_contains_unknown(et))) {
+    if (typeinfo.is_tuple(first) && typeinfo.is_tuple(et) && (type_contains_unknown(first) || type_contains_unknown(et))) {
       let joined = vb_join(VbStore { t: first, e: first_expr }, VbStore { t: et, e: a.elements[i] });
       if (is_unknown(joined.t) || !array_mix_settles(first_expr, first, joined.t, s) || !array_mix_settles(a.elements[i], et, joined.t, s)) {
         return t_unknown(ARRAY_TUPLE_UNRESOLVED);
@@ -6698,7 +6671,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
   let swritten = __alloc_bool(ssig.field_names.len());
   let sli = 0;
   while (sli < sl.field_names.len()) {
-    let sfi = field_index(ssig, sl.field_names[sli]);
+    let sfi = util.index_of_str(ssig.field_names, sl.field_names[sli]);
     if (sfi < 0) {
       return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
     }
@@ -6760,7 +6733,7 @@ function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): ty
   let Some(fsig) = s.lookup_struct(sn.name) else {
     return t_unknown("undefined struct: " + sn.name);
   };
-  let fai = field_index(fsig, field);
+  let fai = util.index_of_str(fsig.field_names, field);
   if (fai < 0) {
     return t_unknown("struct " + sn.name + " has no field `" + field + "`");
   }
@@ -6806,7 +6779,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     ast.StmtVar(v) => {
       let init_scope = rec_local_scope(v, s);
       let t = check_expr(v.init, init_scope);
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return CheckResult { scope: bind_destructure_names(s, v), ty: t };
       }
       if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
@@ -6989,7 +6962,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       return bind_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return bind_destructure_names(s, v);
       }
       return bind_var(v, s, var_bind_type(v, s));
@@ -7332,13 +7305,6 @@ function nominal_args(t: typeinfo.Type): typeinfo.Type[] {
     return [m.key, m.value];
   }
   return [];
-}
-
-function is_dyn_slot(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeDyn(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function fills_unsettled_argument(from: typeinfo.Type, to: typeinfo.Type): boolean {
@@ -8171,25 +8137,6 @@ function func_scope_tparams(fd: parser.FuncDecl): string[] {
   return parser.type_str_vars(fd.receiver_type, fd.type_params);
 }
 
-function split_fn_param_spellings(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
-      start = i + 1;
-    } else if (csv[i] == b'(' || csv[i] == b'[') {
-      depth += 1;
-    } else if (csv[i] == b')' || csv[i] == b']') {
-      depth -= 1;
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function param_decl_type(p: ast.ParamDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   let t = fn_param_decl_type(p, tparams, subst, tn);
   if (is_unknown(t)) {
@@ -8217,7 +8164,7 @@ function declared_callable_type(name: string, ret: string, params: string, tpara
   let pts: typeinfo.Type[] = [];
   let powns: boolean[] = [];
   if (params.len() > 0) {
-    for seg in split_fn_param_spellings(params) {
+    for seg in parser.split_type_list(params) {
       powns = powns.append(parser.spelling_is_own(seg));
       pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
     }
@@ -8638,7 +8585,7 @@ function view_index(sums: ViewSum[]): ViewIndex {
   let next = util.minus_ones(sums.len());
   let k = sums.len() - 1;
   while (k >= 0) {
-    let bk = sig_name_bucket(sums[k].key);
+    let bk = util.hash_bucket(sums[k].key, 4093);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     k -= 1;
@@ -8647,7 +8594,7 @@ function view_index(sums: ViewSum[]): ViewIndex {
 }
 
 function view_sum_pos(sums: ViewSum[], vix: ViewIndex, key: string): i32 {
-  let i = vix.head[sig_name_bucket(key)];
+  let i = vix.head[util.hash_bucket(key, 4093)];
   while (i >= 0) {
     if (sums[i].key == key) {
       return i;
@@ -8660,10 +8607,6 @@ function view_sum_pos(sums: ViewSum[], vix: ViewIndex, key: string): i32 {
 pub struct ViewRoots { local: boolean, params: string[] }
 
 pub struct ViewCallee { key: string, args: ast.Expr[] }
-
-function view_sum_key(fn: parser.FuncDecl): string {
-  return parser.decl_key(fn);
-}
 
 function view_positions(fn: parser.FuncDecl): string[] {
   let out: string[] = [];
@@ -8900,7 +8843,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (is_arr_view(var_declared_type(v, cur)) && is_owned_array(check_expr(v.init, cur))) {
+        if (typeinfo.is_array_view(var_declared_type(v, cur)) && typeinfo.is_owned_array(check_expr(v.init, cur))) {
           if (slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
             tainted = tainted.append(v.name);
           }
@@ -9076,7 +9019,7 @@ pub struct ViewPart { value: ast.Expr, to: typeinfo.Type }
 
 // A type that is not itself a view but may carry one: a view inside it, or a type variable that a view can instantiate.
 function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
-  if (is_arr_view(t) || is_str_view(t)) {
+  if (typeinfo.is_array_view(t) || is_str_view(t)) {
     return false;
   }
   if (mentions_type_variable(t)) {
@@ -9148,7 +9091,7 @@ function struct_view_parts(sl: ast.ExprStructLit, to: typeinfo.Type, s: Scope): 
   if let Some(ssig) = s.lookup_struct(sl.type_name) {
     let args = nominal_args(to);
     for i in 0..sl.field_values.len() {
-      let fidx = field_index(ssig, sl.field_names[i]);
+      let fidx = util.index_of_str(ssig.field_names, sl.field_names[i]);
       if (fidx >= 0) {
         out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
       }
@@ -9219,7 +9162,7 @@ function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 
 // The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
 function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
-  if (is_arr_view(to)) {
+  if (typeinfo.is_array_view(to)) {
     return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
   }
   if (is_type_variable(to)) {
@@ -9282,7 +9225,7 @@ function fixed_string_locals(body: ast.Stmt[], s: Scope): string[] {
   }
   let assigned: string[] = [];
   for st in body {
-    assigned = astwalk.fold_stmt_spine(st, assigned, assigned_name);
+    assigned = astwalk.fold_stmt_spine(st, assigned, astwalk.assign_target_of);
   }
   let out: string[] = [];
   for name in declared {
@@ -9298,13 +9241,6 @@ function string_local_name(st: ast.Stmt, own acc: string[], s: Scope): string[] 
     if (v.type_name == "string" || v.type_name.len() == 0 && is_owned_string(check_expr(v.init, s))) {
       return acc.append(v.name);
     }
-  }
-  return acc;
-}
-
-function assigned_name(st: ast.Stmt, own acc: string[]): string[] {
-  if let ast.StmtAssign(a) = st {
-    return acc.append(a.target);
   }
   return acc;
 }
@@ -10069,13 +10005,13 @@ pub function unsafe_intrinsics(): string[] {
   return [
     "__alloc", "__alloc_reuse", "__alloc_u8_uninit", "__free",
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
-    "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr",
+    "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
     "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
-    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
+    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__user_run",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
-    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
+    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "share_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
     "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
@@ -10473,7 +10409,7 @@ function unsettled_arm_sum(a: i32, b: i32): i32 {
 function lit_locals_after(st: ast.Stmt, lits: string[]): string[] {
   if let ast.StmtVar(v) = st {
     let out = drop_lit_locals(lits, astwalk.binders_of(st, []));
-    if (v.type_name.len() == 0 && !name_has_comma(v.name) && unsettled_tree(v.init, lits)) {
+    if (v.type_name.len() == 0 && !util.contains(v.name, ",") && unsettled_tree(v.init, lits)) {
       return out.append(v.name);
     }
     return out;
@@ -10635,6 +10571,9 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeStruct(sa) => {
       match (b.t) {
         typeinfo.TypeStruct(sb) => {
+          if (sa.name == sb.name) {
+            return type_args_agree(sa.args, sb.args);
+          }
           return mx_same_enum_family(sa.name, sb.name, enums);
         },
         _ => {
@@ -10792,7 +10731,7 @@ function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSi
       j += 1;
       continue;
     }
-    if (!mx_arm_compatible(acc, arm, false, assigns, unions, enums) || if_form && is_dyn_slot(acc.t) != is_dyn_slot(arm.t)) {
+    if (!mx_arm_compatible(acc, arm, false, assigns, unions, enums) || if_form && typeinfo.is_dyn(acc.t) != typeinfo.is_dyn(arm.t)) {
       return MxFold { ok: false, acc: acc, bad: arm.t, bad_index: j };
     }
     acc = mx_arm_join(acc, arm);
@@ -10833,6 +10772,40 @@ function mx_widen_to(types: typeinfo.Type[], want: typeinfo.Type, s: Scope): typ
     return out;
   }
   return types;
+}
+
+// mx_arm_types gives each arm the type the destination or a sibling arm
+// settles it to, before the arms are compared.
+function mx_arm_types(types: typeinfo.Type[], exprs: ast.Expr[], want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  return mx_settle_struct_arms(mx_widen_to(types, want, s), exprs, want, s);
+}
+
+// A struct literal arm whose differing type arguments only unsuffixed literals
+// bind takes the type of the destination or of a sibling arm.
+function mx_settle_struct_arms(types: typeinfo.Type[], exprs: ast.Expr[], want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if (types.len() != exprs.len()) {
+    return types;
+  }
+  let targets: typeinfo.Type[] = [want];
+  for t in types {
+    targets = targets.append(t);
+  }
+  let out: typeinfo.Type[] = [];
+  let i = 0;
+  while (i < types.len()) {
+    out = out.append(mx_struct_arm_target(exprs[i], types[i], targets, s));
+    i += 1;
+  }
+  return out;
+}
+
+function mx_struct_arm_target(e: ast.Expr, t: typeinfo.Type, targets: typeinfo.Type[], s: Scope): typeinfo.Type {
+  for target in targets {
+    if (struct_lit_yields(e, t, target, s, false)) {
+      return target;
+    }
+  }
+  return t;
 }
 
 function mx_fold_diags(f: MxFold, line: i32, col: i32, if_form: boolean): util.Diag[] {
@@ -11116,12 +11089,12 @@ function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, 
         if let typeinfo.TypeUnion(_) = check_expr(m.scrutinee, s) {
           enum_match = true;
         }
-        out = util.append_diags(out, mx_e031(mx_widen_to(mts, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+        out = util.append_diags(out, mx_e031(mx_arm_types(mts, arms, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
         out = util.append_diags(out, vb_pinned_ranges(mts, arms));
       },
       ast.StmtIf(f) => {
         let fts = mx_if_branch_types(f, s);
-        out = util.append_diags(out, mx_if_diags(f, mx_widen_to(fts, want, s), arms, unions, enums, lm.origin, c.line, c.col));
+        out = util.append_diags(out, mx_if_diags(f, mx_arm_types(fts, arms, want, s), arms, unions, enums, lm.origin, c.line, c.col));
         out = util.append_diags(out, vb_pinned_ranges(fts, arms));
       },
       _ => {}
@@ -11138,7 +11111,7 @@ function mx_value_local_arms(body: ast.Stmt[], local: string, want: typeinfo.Typ
     types = types.append(store.t);
     exprs = exprs.append(store.e);
   }
-  let fold = mx_fold_arms(mx_widen_to(types, want, s), exprs, unions, enums, false, true);
+  let fold = mx_fold_arms(mx_arm_types(types, exprs, want, s), exprs, unions, enums, false, true);
   if (fold.ok) {
     return [];
   }
@@ -11362,7 +11335,7 @@ function slit_forges_handle(sl: ast.ExprStructLit, structs: StructTable): boolea
   if let Some(_) = find_struct_sig(structs, sl.type_name) {
     return false;
   }
-  return util.has_str(semtypes.fd_handle_names(), sl.type_name);
+  return semtypes.is_fd_handle_name(sl.type_name);
 }
 
 function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
@@ -11828,19 +11801,8 @@ function struct_decl_col(structs: parser.StructDecl[], name: string): i32 {
   return 0;
 }
 
-function dot_index(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'.') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function variant_pattern_name(name: string): string {
-  let d = dot_index(name);
+  let d = util.index_of_byte(name, b'.', 0);
   if (d < 0) {
     return name;
   }
@@ -11848,7 +11810,7 @@ function variant_pattern_name(name: string): string {
 }
 
 function variant_pattern_owner(name: string): string {
-  let d = dot_index(name);
+  let d = util.index_of_byte(name, b'.', 0);
   if (d < 0) {
     return "";
   }
@@ -12100,7 +12062,7 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructTable, unions: Unio
       }
     }
   }
-  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, ow_outside_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_lambda);
 }
 
 function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util.Diag[] {
@@ -12248,7 +12210,7 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
                 }
                 if (parser.is_record_pattern(pv)) {
                   out = util.append_diags(out, record_pattern_diags(pv, structs, m.arms[a].line, m.arms[a].col));
-                } else if (dot_index(pv.type_name) >= 0 || variant_owner_count(pv.type_name, structs) < 2) {
+                } else if (util.index_of_byte(pv.type_name, b'.', 0) >= 0 || variant_owner_count(pv.type_name, structs) < 2) {
                   out = util.append_diags(out, payload_arity_diags(pv, pv.type_name, structs, unions, m.arms[a].line, m.arms[a].col));
                 }
               }
@@ -12975,7 +12937,7 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
 // Inside a destination, a view slot takes only a value that is already a view:
 // a literal settles into a view only at the top of a destination.
 function view_free_settle(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
-  if (!is_arr_view(want)) {
+  if (!typeinfo.is_array_view(want)) {
     return true;
   }
   let t = check_expr(e, s);
@@ -13000,7 +12962,7 @@ function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     let boxed = false;
     let i = 0;
     while (i < ga.len()) {
-      if (is_dyn_slot(wa[i]) && !is_unknown(ga[i]) && !is_dyn_slot(ga[i])) {
+      if (typeinfo.is_dyn(wa[i]) && !is_unknown(ga[i]) && !typeinfo.is_dyn(ga[i])) {
         boxed = true;
       } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !nested_assignable(ga[i], wa[i], s.unions.unions)) {
         return false;
@@ -13176,7 +13138,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   let vname = variant_pattern_name(qname);
   let out: util.Diag[] = [];
   let owner = scope_variant_sig(vname, s);
-  if (dot_index(qname) >= 0) {
+  if (util.index_of_byte(qname, b'.', 0) >= 0) {
     owner = s.lookup_union(variant_pattern_owner(qname));
   }
   out = util.append_diags(out, enum_access_diags(owner, s, c.line, c.col));
@@ -13184,7 +13146,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   let declared_owner: string = match (find_variant_sig(s.structs, qname)) { Some(sig) => sig.enum_owner, None => "" };
   if (scope_variant_owner(vname, s).len() == 0 && declared_owner.len() == 0) {
     let builtin_owner: string = match (owner) { Some(u) => u.name, None => "" };
-    if (dot_index(qname) >= 0) {
+    if (util.index_of_byte(qname, b'.', 0) >= 0) {
       builtin_owner = variant_pattern_owner(qname);
     }
     let builtin_want = builtin_variant_payloads(s, builtin_owner, vname);
@@ -13193,11 +13155,11 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     }
     return out;
   }
-  if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
+  if (util.index_of_byte(qname, b'.', 0) < 0 && s.variant_ambiguous(vname)) {
     return out;
   }
   let want = variant_payload_count(qname, s.structs);
-  if (want < 0 && dot_index(qname) >= 0) {
+  if (want < 0 && util.index_of_byte(qname, b'.', 0) >= 0) {
     if let Some(u) = owner {
       if (u.is_enum && util.has_str(u.variants, vname)) {
         want = variant_value_payloads(s, u.name, vname);
@@ -13411,10 +13373,10 @@ function dyn_ret_at_spelling(ret: string, spelling: string, tparams: string[]): 
   let args: string[] = [];
   let out = ret;
   for raw in parser.split_top_commas(slice_unchecked(spelling, open + 1, spelling.len() - 1) + "") {
-    let entry = util.trim(raw);
+    let entry = raw.trim();
     let eq = pin_eq(entry);
     if (eq > 0) {
-      out = subst_self_proj(out, util.trim(slice_unchecked(entry, 0, eq) + ""), util.trim(slice_unchecked(entry, eq + 1, entry.len()) + ""));
+      out = subst_self_proj(out, (slice_unchecked(entry, 0, eq) + "").trim(), (slice_unchecked(entry, eq + 1, entry.len()) + "").trim());
     } else {
       args = args.append(entry);
     }
@@ -13748,7 +13710,7 @@ function lanes_inside(t: typeinfo.Type): boolean {
 }
 
 function holds_lanes(t: typeinfo.Type): boolean {
-  return is_lanes(t) || lanes_inside(t);
+  return typeinfo.is_lanes(t) || lanes_inside(t);
 }
 
 function any_holds_lanes(ts: typeinfo.Type[]): boolean {
@@ -14503,7 +14465,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
         },
         typeinfo.TypeStruct(sn) => {
-          if (is_cell_type(recv)) {
+          if (typeinfo.is_cell(recv)) {
             out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
           } else {
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
@@ -14523,7 +14485,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               if (!is_unknown(bms)) {
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
-                let fldi = field_index(fsig, mfa.field);
+                let fldi = util.index_of_str(fsig.field_names, mfa.field);
                 if (fldi < 0) {
                   out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
@@ -14699,7 +14661,7 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
 function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): util.Diag[] {
   if (util.has_str(["==", "!=", "<", ">", "<=", ">="], b.op)) {
     let lanes = type_label(lt);
-    if (!is_lanes(lt)) {
+    if (!typeinfo.is_lanes(lt)) {
       lanes = type_label(rt);
     }
     return [dg_at("E041", "cannot compare values of type " + lanes + " with \"" + b.op + "\": a lane value compares lane by lane, through __" + lanes + "_lt and __" + lanes + "_ne", b.line, b.col)];
@@ -14723,7 +14685,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   let out = util.append_diags(ldiags, rdiags);
   out = util.append_diags(out, binop_lit_range_diags(b, blt, brt));
   out = util.append_diags(out, tvar_operator_diags(b, blt, brt, s));
-  if (is_lanes(blt) || is_lanes(brt)) {
+  if (typeinfo.is_lanes(blt) || typeinfo.is_lanes(brt)) {
     return (util.append_diags(out, lanes_operator_diags(b, blt, brt)), binary_result_type(b, blt, brt, s));
   }
   if (b.op == "&&" || b.op == "||") {
@@ -14865,7 +14827,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   if (u.op == "-") {
     let nt = check_expr(u.operand, s);
     let nok = !is_unknown(s.unop_overload_ret(u.op, nt));
-    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !is_lanes(nt) && !nok) {
+    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !typeinfo.is_lanes(nt) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(nt), u.line, u.col));
     }
   }
@@ -15061,7 +15023,7 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
 
 function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {
   let set = parser.dyn_trait_set("dyn " + traits);
-  if (is_owned_array(src) || is_arr_view(src) || is_dyn_slot(src)) {
+  if (typeinfo.is_owned_array(src) || typeinfo.is_array_view(src) || typeinfo.is_dyn(src)) {
     return set[0];
   }
   let tn = util.base_type_name(type_label(src));
@@ -15134,11 +15096,11 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
       }
       return out;
     }
-    if (is_primitive_type(anchor) || is_func_type(anchor) || is_tuple_type(anchor)) {
+    if (is_primitive_type(anchor) || is_func_type(anchor) || typeinfo.is_tuple(anchor)) {
       out = scalar_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
-    } else if (is_owned_array(anchor) || is_arr_view(anchor) || struct_name_of(anchor).len() > 0) {
+    } else if (typeinfo.is_owned_array(anchor) || typeinfo.is_array_view(anchor) || struct_name_of(anchor).len() > 0) {
       out = element_mix(a, anchor, s, out);
     }
   }
@@ -15160,7 +15122,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
     }
     let lit = numeric_literal_kind(a.elements[k]);
     if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
-      if (same_element_type(etk, anchor) && (!is_tuple_type(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
+      if (same_element_type(etk, anchor) && (!typeinfo.is_tuple(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
         anchor = etk;
         anchor_lit = lit;
       } else {
@@ -15390,8 +15352,8 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   while (vi < sl.field_values.len()) {
     let fdest = t_unknown("no declared field");
     if let Some(fsig) = found {
-      if (vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
-        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
+      if (vi < sl.field_names.len() && util.index_of_str(fsig.field_names, sl.field_names[vi]) >= 0) {
+        fdest = lit_field_type(fsig, util.index_of_str(fsig.field_names, sl.field_names[vi]), args, s);
       }
     }
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
@@ -15415,7 +15377,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   if let Some(ssig) = found {
     let fi = 0;
     while (fi < sl.field_names.len()) {
-      let fidx = field_index(ssig, sl.field_names[fi]);
+      let fidx = util.index_of_str(ssig.field_names, sl.field_names[fi]);
       if (fidx >= 0) {
         let ft = lit_field_type(ssig, fidx, args, s);
         let vt = check_expr(sl.field_values[fi], s);
@@ -15459,7 +15421,7 @@ function lambda_lane_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
   }
   let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(lm, []) {
-    if (!util.has_str(seen, name) && s.is_bound(name) && is_lanes(s.lookup(name))) {
+    if (!util.has_str(seen, name) && s.is_bound(name) && typeinfo.is_lanes(s.lookup(name))) {
       out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + type_label(s.lookup(name)) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
     }
     seen = seen.append(name);
@@ -15487,7 +15449,7 @@ function capture_view_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
 }
 
 function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, string[]) {
-  if (is_str_view(t) || is_arr_view(t)) {
+  if (is_str_view(t) || typeinfo.is_array_view(t)) {
     return (true, seen);
   }
   if let typeinfo.TypeArray(a) = t {
@@ -15788,7 +15750,7 @@ function checks_array_element(ty: typeinfo.Type): boolean {
       return true;
     },
     _ => {
-      return is_dyn_slot(ty) || is_str_view(ty);
+      return typeinfo.is_dyn(ty) || is_str_view(ty);
     }
   }
 }
@@ -15826,7 +15788,7 @@ function cell_new_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
 // `cell_new(x)` settles to `Cell[W]` when x settles to W: the literal in
 // `let c: Cell[i64] = cell_new(2)` takes the width of the destination.
 function cell_new_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
-  if (!is_cell_type(want) || is_unknown(cell_elem_type(want))) {
+  if (!typeinfo.is_cell(want) || is_unknown(cell_elem_type(want))) {
     return false;
   }
   if let ast.ExprCall(c) = e {
@@ -15959,13 +15921,13 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return !util.has_str(preregistered_methods("Map"), field) && !s.has_visible_method(field, "Map");
     },
     typeinfo.TypeStruct(sn) => {
-      if (is_cell_type(recv) || s.has_visible_method(field, sn.name) || !is_unknown(builtin_method_sig(sn.name, field))) {
+      if (typeinfo.is_cell(recv) || s.has_visible_method(field, sn.name) || !is_unknown(builtin_method_sig(sn.name, field))) {
         return false;
       }
       let Some(fsig) = s.lookup_struct(sn.name) else {
         return false;
       };
-      let fi = field_index(fsig, field);
+      let fi = util.index_of_str(fsig.field_names, field);
       if (fi < 0) {
         return true;
       }
@@ -16097,7 +16059,7 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
 }
 
 function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
-  if (!name_has_comma(fr.var_name)) {
+  if (!util.contains(fr.var_name, ",")) {
     return [];
   }
   let n = split_pattern_names(fr.var_name).len();
@@ -17041,7 +17003,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                   ast.PatVariant(cpv) => {
                     if (cpv.type_name.len() > 0) {
                       out = util.append_diags(out, enum_access_diags(Some(usig), cur, elem.line, elem.col));
-                      let cdp = dot_index(cpv.type_name);
+                      let cdp = util.index_of_byte(cpv.type_name, b'.', 0);
                       if (cdp >= 0) {
                         let cqual = slice_unchecked(cpv.type_name, 0, cdp);
                         let cbare = slice_unchecked(cpv.type_name, cdp + 1, cpv.type_name.len());
@@ -17161,7 +17123,7 @@ function ambiguous_variants(ut: UnionTable): string[] {
 }
 
 function second_enum_declares(ut: UnionTable, e: i32): boolean {
-  let k = ut.bhead[sig_name_bucket(ut.bnames[e])];
+  let k = ut.bhead[util.hash_bucket(ut.bnames[e], 4093)];
   while (k >= 0) {
     if (ut.bnames[k] == ut.bnames[e] && ut.vowner[k] != ut.vowner[e] && ut.unions[ut.vowner[k]].is_enum) {
       return true;
@@ -17982,34 +17944,32 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 
 // Every intrinsic name starts with "__", so other names skip the list.
 function is_registered_intrinsic(name: string): boolean {
-  return name.starts_with("__") && util.has_str(registered_intrinsics(), name);
+  return name.starts_with("__") && util.has_str(REGISTERED_INTRINSICS, name);
 }
 
-function registered_intrinsics(): string[] {
-  return [
-    "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
-    "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
-    "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
-    "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
-    "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
-    "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
-    "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
-    "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
-    "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending",
-    "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
-    "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
-    "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
-    "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-    "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
-    "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
-    "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
-    "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
-    "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-  ];
-}
+const REGISTERED_INTRINSICS: string[] = [
+  "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
+  "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
+  "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
+  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+  "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
+  "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
+  "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
+  "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
+  "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
+  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
+  "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
+  "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code",
+  "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
+  "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
+  "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+  "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
+  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
+  "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
+  "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
+  "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
+  "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+];
 
 function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2 = funcs[di];
@@ -18430,7 +18390,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18692,7 +18652,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps() };
+  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
   return nested;
 }
 
@@ -18873,6 +18833,189 @@ function ow_is_fresh_literal(e: ast.Expr): boolean {
   }
 }
 
+// The value of `unsafe { e }`, a value block of one value in an unsafe block.
+function ow_unsafe_value(c: ast.ExprCall): Option[ast.Expr] {
+  let ast.ExprLambda(lm) = c.callee else {
+    return None;
+  };
+  if (lm.origin != parser.ORIGIN_BLOCK || c.args.len() != 0 || lm.body.len() != 1) {
+    return None;
+  }
+  let ast.StmtIf(block) = lm.body[0] else {
+    return None;
+  };
+  if (block.origin != "unsafe" || block.then_body.len() != 1) {
+    return None;
+  }
+  let ast.StmtReturn(r) = block.then_body[0] else {
+    return None;
+  };
+  return Some(r.value);
+}
+
+// `with`, `append` or `truncate` on an array owns its elements when they hold
+// no handle, or when the receiver and the new element are owned.
+function ow_array_update_owned(c: ast.ExprCall, mfa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
+  if (mfa.field != "with" && mfa.field != "append" && mfa.field != "truncate") {
+    return false;
+  }
+  let typeinfo.TypeArray(array) = check_expr(mfa.obj, ctx.scope) else {
+    return false;
+  };
+  if (array.view) {
+    return false;
+  }
+  if (ow_holds_no_handle(typeinfo.spelling(array.elem), ctx.decls)) {
+    return true;
+  }
+  if (!ow_is_owned_expr(mfa.obj, ctx)) {
+    return false;
+  }
+  if (mfa.field == "with") {
+    return c.args.len() > 1 && ow_is_owned_expr(c.args[1], ctx);
+  }
+  if (mfa.field == "append") {
+    return c.args.len() > 0 && ow_is_owned_expr(c.args[0], ctx);
+  }
+  return true;
+}
+
+// A read `b.f` in the value that a literal `S { ...b, f: v }` gives f, when v
+// names the root of b only in that read. The literal drops b.f, so the read
+// takes what b held there: it is owned when b is.
+struct OwnRead { line: i32, col: i32, field: string, base: ast.Expr }
+
+function ow_replaced_base(reads: OwnRead[], fa: ast.ExprFieldAccess): Option[ast.Expr] {
+  for r in reads {
+    if (r.line == fa.line && r.col == fa.col && r.field == fa.field) {
+      return Some(r.base);
+    }
+  }
+  return None;
+}
+
+function ow_based_lits(e: ast.Expr, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base) {
+      return acc.append(sl);
+    }
+  }
+  return acc;
+}
+
+function ow_lits_stmt(st: ast.Stmt, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+  return acc;
+}
+
+function ow_replaced_reads(body: ast.Stmt[]): OwnRead[] {
+  let lits: ast.ExprStructLit[] = [];
+  for st in body {
+    lits = astwalk.fold_stmt_nodes(st, lits, ow_lits_stmt, ow_based_lits, astwalk.descend_all);
+  }
+  let out: OwnRead[] = [];
+  let i = lits.len() - 1;
+  while (i >= 0) {
+    let sl = lits[i];
+    let root = ow_access_root(sl.base);
+    if (root.len() > 0) {
+      for j in 0..sl.field_names.len() {
+        let scan = ow_replaced_scan(sl.field_values[j], sl.base, sl.field_names[j], root, out);
+        if (scan.found && scan.mentions == 1) {
+          out = out.append(OwnRead { line: scan.line, col: scan.col, field: sl.field_names[j], base: sl.base });
+        }
+      }
+    }
+    i -= 1;
+  }
+  return out;
+}
+
+struct OwnScan { found: boolean, line: i32, col: i32, mentions: i32 }
+
+// The mentions of root in v, with the read of base.field that v makes. A
+// lambda can run later, so a mention in one never takes the field. A read
+// that an inner literal with base base.field replaces belongs to that literal.
+function ow_replaced_scan(v: ast.Expr, base: ast.Expr, field: string, root: string, inner: OwnRead[]): OwnScan {
+  function skip(n: ast.Expr): boolean {
+    match (n) {
+      ast.ExprLambda(lm) => {
+        return lm.origin.len() > 0 && lm.origin != ast.ORIGIN_NESTED_FN;
+      },
+      ast.ExprFieldAccess(fa) => {
+        if let Some(b) = ow_replaced_base(inner, fa) {
+          if (ow_same_access(fa.obj, b)) {
+            return false;
+          }
+        }
+        return fa.field != field || !ow_same_access(fa.obj, base);
+      },
+      _ => {
+        return true;
+      }
+    }
+  }
+  function visit(n: ast.Expr, own acc: OwnScan): OwnScan {
+    match (n) {
+      ast.ExprLambda(lm) => {
+        if (lm.origin.len() == 0 || lm.origin == ast.ORIGIN_NESTED_FN) {
+          return OwnScan { ...acc, mentions: acc.mentions + 2 * ow_count_ident(n, root) };
+        }
+      },
+      ast.ExprFieldAccess(fa) => {
+        if let Some(b) = ow_replaced_base(inner, fa) {
+          if (ow_same_access(fa.obj, b)) {
+            return acc;
+          }
+        }
+        if (fa.field == field && ow_same_access(fa.obj, base)) {
+          return OwnScan { found: true, line: fa.line, col: fa.col, mentions: acc.mentions + 1 };
+        }
+      },
+      ast.ExprIdent(id) => {
+        if (id.name == root) {
+          return OwnScan { ...acc, mentions: acc.mentions + 1 };
+        }
+      },
+      _ => {}
+    }
+    return acc;
+  }
+  return astwalk.fold_expr_pruned(v, OwnScan { found: false, line: 0, col: 0, mentions: 0 }, visit, skip);
+}
+
+// The local that a name or a field path of it starts from.
+function ow_access_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return ow_access_root(fa.obj);
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// a and b name the same local or the same field path of it.
+function ow_same_access(a: ast.Expr, b: ast.Expr): boolean {
+  match (a) {
+    ast.ExprIdent(x) => {
+      if let ast.ExprIdent(y) = b {
+        return x.name == y.name;
+      }
+    },
+    ast.ExprFieldAccess(x) => {
+      if let ast.ExprFieldAccess(y) = b {
+        return x.field == y.field && ow_same_access(x.obj, y.obj);
+      }
+    },
+    _ => {}
+  }
+  return false;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
@@ -18911,18 +19054,24 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return true;
         }
       }
+      if let Some(base) = ow_replaced_base(ctx.replaced, fa) {
+        if (ow_is_owned_expr(base, ctx)) {
+          return true;
+        }
+      }
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {
+      if let Some(tail) = ow_unsafe_value(c) {
+        return ow_is_owned_expr(tail, ctx);
+      }
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
+          return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
-          if let typeinfo.TypeArray(array) = check_expr(mfa.obj, ctx.scope) {
-            if (!array.view && (mfa.field == "with" || mfa.field == "append" || mfa.field == "truncate") && ow_holds_no_handle(typeinfo.spelling(array.elem), ctx.decls)) {
-              return true;
-            }
+          if (ow_array_update_owned(c, mfa, ctx)) {
+            return true;
           }
           if (ow_qualified_ctor(c.callee, ctx)) {
             return true;
@@ -19010,7 +19159,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }), assigns: f.assigns.append(LuVar { name: a.target, init: a.value }) };
     },
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
@@ -19272,6 +19421,11 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base) {
+      return lu_fresh_value(fx, sl.base);
+    }
+  }
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
     return lu_scoped_fresh(fx, empty, e);
@@ -19999,7 +20153,8 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
 }
 
 // An unpack reads the one field of a fresh local or an own parameter that
-// nothing else reads, from a holder that each mention selects a field of.
+// nothing else reads, from a holder that each mention selects a field of, or
+// is the base of a literal that replaces that field.
 function lu_unpack_expr(fx: LuFn, init: ast.Expr): boolean {
   return lu_unpack_expr_in(fx, init, []);
 }
@@ -20018,6 +20173,11 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
         if (sel.field == fa.field) {
           reads += 1;
         }
+      }
+    }
+    for up in fx.facts.updates {
+      if (up.obj == h && up.field == fa.field) {
+        selections += 1;
       }
     }
     return reads == 1 && selections == lu_occ_count(fx, h);
@@ -20441,7 +20601,7 @@ function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): bool
 // The names a let declares, as LuFacts.vars records them.
 function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
   if let ast.StmtVar(v) = st {
-    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
       for d in lu_destr_vars(v, []) {
         acc = acc.append(d.name);
       }
@@ -20453,10 +20613,10 @@ function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
 }
 
 function lu_declares(st: ast.Stmt, name: string): boolean {
-  if (util.has_str(astwalk.fold_stmt_nodes(st, [], lu_var_names, lu_no_binders, astwalk.not_lambda), name)) {
+  if (util.has_str(astwalk.fold_stmt_nodes(st, [], lu_var_names, astwalk.keep_names, astwalk.not_lambda), name)) {
     return true;
   }
-  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, astwalk.not_lambda), name);
+  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, astwalk.keep_names, astwalk.not_lambda), name);
 }
 
 function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
@@ -20465,10 +20625,6 @@ function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
       acc = astwalk.pattern_binders(arm.pattern, acc);
     }
   }
-  return acc;
-}
-
-function lu_no_binders(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
@@ -20804,7 +20960,7 @@ function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChai
 function lu_chain_after(st: ast.Stmt, chain: LuChain): LuChain {
   if let ast.StmtVar(v) = st {
     if let ast.ExprBool(b) = v.init {
-      if (!b.value && !name_has_comma(v.name)) {
+      if (!b.value && !util.contains(v.name, ",")) {
         return LuChain { flag: v.name, settles: true, result: LU_NOT_ARM };
       }
     }
@@ -21311,7 +21467,7 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
 
 function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
   if let ast.StmtVar(v) = st {
-    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
       return util.has_str(lu_var_names(st, []), name);
     }
     return v.name == name;
@@ -21831,7 +21987,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, lu_outside_lambda);
+    nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
@@ -21844,20 +22000,9 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   return out;
 }
 
-function lu_skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  return acc;
-}
-
 // A lambda is decided as a function of its own, so a name it declares can
 // move at its last use in the lambda's body.
-function lu_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  if let ast.ExprLambda(lm) = e {
-    return acc.append(lm);
-  }
-  return acc;
-}
-
-function lu_outside_lambda(e: ast.Expr): boolean {
+function not_lambda(e: ast.Expr): boolean {
   if let ast.ExprLambda(_) = e {
     return false;
   }
@@ -22121,7 +22266,7 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
 // above and holds nothing its parent did not refuse. A type parameter
 // crosses when its bound names `worker.Send`.
 function send_unsafe_reason(t: typeinfo.Type, s: Scope, seen: string[]): string {
-  if (is_str_view(t) || is_arr_view(t)) {
+  if (is_str_view(t) || typeinfo.is_array_view(t)) {
     return "a view borrows another value's storage";
   }
   return send_unsafe_nonview_reason(t, s, seen);
@@ -22611,7 +22756,7 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
     }
     return acc;
   }
-  let fields = astwalk.fold_expr_pruned(value, [], admit, ow_outside_lambda);
+  let fields = astwalk.fold_expr_pruned(value, [], admit, not_lambda);
   if (returned) {
     if let ast.ExprStructLit(sl) = value {
       let base = ow_ident_name(sl.base);
@@ -22623,13 +22768,6 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
     }
   }
   return OwnCtx { ...ctx, admit_fields: fields };
-}
-
-function ow_outside_lambda(e: ast.Expr): boolean {
-  if let ast.ExprLambda(_) = e {
-    return false;
-  }
-  return true;
 }
 
 function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -22683,13 +22821,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },
     ast.StmtFor(fr) => {
-      let takes = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
+      let takes = !util.contains(fr.var_name, ",") && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
       let ri = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
-      if (!takes && !name_has_comma(fr.var_name)) {
+      if (!takes && !util.contains(fr.var_name, ",")) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
       let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
@@ -23385,7 +23523,7 @@ function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
   while (true) {
     let next: string[] = [];
     for name in yes {
-      if (!dx.consuming.has(name) && !util.has_str(semtypes.fd_handle_names(), name) && ow_decl_holds_no_handle(name, dx, [name])) {
+      if (!dx.consuming.has(name) && !semtypes.is_fd_handle_name(name) && ow_decl_holds_no_handle(name, dx, [name])) {
         next = next.append(name);
       } else {
         no = no.append(name);
@@ -23444,7 +23582,7 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
   if (name == "Option" || name == "Result" || name == "Cell" || util.has_str(seen, name)) {
     return true;
   }
-  if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
+  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
     return false;
   }
   if (dx.no_handle.has(name)) {
@@ -23503,7 +23641,7 @@ function ow_alias_holds_no_handle(al: parser.TypeAlias, dx: OwnDecls, seen: stri
 
 function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
   for f in sd.fields {
-    if (!ow_no_handle_in(util.trim(f.type_name), dx, sd.type_params, seen)) {
+    if (!ow_no_handle_in(f.type_name.trim(), dx, sd.type_params, seen)) {
       return false;
     }
   }
@@ -23543,7 +23681,7 @@ function ow_local_last_use(id: ast.ExprIdent, ctx: OwnCtx): boolean {
 
 function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
   for t in ts {
-    if (!ow_no_handle_in(util.trim(t), dx, free, seen)) {
+    if (!ow_no_handle_in(t.trim(), dx, free, seen)) {
       return false;
     }
   }
@@ -23632,7 +23770,7 @@ function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: O
   let out: string[] = [];
   for p in fn.params {
     let elem = ow_elem_type_name(p.type_name);
-    if (util.has_str(borrowed, p.name) && elem.len() > 0 && !ow_type_is_pointer(elem, ofuncs)) {
+    if (util.has_str(borrowed, p.name) && elem.len() > 0 && !ow_decl_type_is_pointer(fn, elem, ofuncs)) {
       out = out.append(p.name);
     }
   }
@@ -23883,7 +24021,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     while (i < fn.params.len()) {
       if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
-        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(util.trim(fn.params[i].type_name), dx)) {
+        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(fn.params[i].type_name.trim(), dx)) {
           all_own = false;
         }
       }
@@ -24086,17 +24224,10 @@ function ow_result_has_methods(body: ast.Stmt[]): boolean {
   return false;
 }
 
-function ow_result_receiver_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
-}
-
 function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast.Expr {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
-      let tag = ow_result_receiver_tag(fa.obj);
+      let tag = ast.receiver_tag(fa.obj);
       let key = ow_receiver_ns(tag) + "." + fa.field;
       let cell_handle = tag == "Cell" && fa.field == "get" && !ow_holds_no_handle(c.ty, dx);
       if (tag.len() > 0 && !tag.starts_with("dyn ") && !methods.has(key) && !cell_handle) {
@@ -24143,7 +24274,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps() };
+    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
@@ -24438,7 +24569,7 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
   let out = e049_body_stores(fn, mod, env);
   let lams: ast.ExprLambda[] = [];
   for st in fn.body {
-    lams = astwalk.fold_stmt_nodes(st, lams, e049_no_stmt_lambdas, e049_lambda_at, e049_into_all);
+    lams = astwalk.fold_stmt_nodes(st, lams, astwalk.keep_lambdas, e049_lambda_at, e049_into_all);
   }
   for lm in lams {
     out = util.append_diags(out, e049_body_stores(parser.FuncDecl { ...fn, params: lm.params, ret_type: lm.ret_type, body: lm.body }, mod, env));
@@ -24468,10 +24599,6 @@ function e049_lambda_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[
       return acc.append(lm);
     }
   }
-  return acc;
-}
-
-function e049_no_stmt_lambdas(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   return acc;
 }
 
@@ -25432,7 +25559,7 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
           types = next_types;
         }
         out = util.append_diags(out, e044_expr(v.init, v.line, v.col, wk, names, types));
-        if (suspects.len() > 0 && (util.has_str(suspects, v.name) || name_has_comma(v.name))) {
+        if (suspects.len() > 0 && (util.has_str(suspects, v.name) || util.contains(v.name, ","))) {
           let (next_names, next_types) = e044_without(suspects, labels, astwalk.append_bound_name([], v.name));
           suspects = next_names;
           labels = next_types;
@@ -26933,7 +27060,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
         j += 1;
       }
       if (eq > 0) {
-        out = out.append(util.trim(slice_unchecked(seg, 0, eq) + ""));
+        out = out.append((slice_unchecked(seg, 0, eq) + "").trim());
       }
       start = i + 1;
     }
@@ -26964,7 +27091,7 @@ function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): ut
         continue;
       }
       for bound in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
-        let spelling = util.trim(bound);
+        let spelling = bound.trim();
         let target_trait = parser.parse_type_ref(spelling).base;
         let target = declared_bound_trait_req(mod, target_trait, fn.module);
         if (target < 0 || util.index_of_i32(seen, target) >= 0) {
@@ -26989,7 +27116,7 @@ function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): ut
 function e021_unknown_dyn_trait_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
   let seen: string[] = [];
-  let imports = import_paths_of(mod);
+  let imports = parser.import_paths(mod);
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
       continue;
@@ -27024,7 +27151,7 @@ function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
   for site in e021_dyn_sites(fn) {
     if (e021_dyn_target(site.spelling).len() > 0) {
       for entry in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
-        out = out.append(DynSite { spelling: parser.parse_type_ref(util.trim(entry)).base, line: site.line, col: site.col });
+        out = out.append(DynSite { spelling: parser.parse_type_ref(entry.trim()).base, line: site.line, col: site.col });
       }
     }
   }
@@ -27739,7 +27866,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     let cscope = build_func_scope(cfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
     let cparams = view_positions(cfn);
     slc_functions = slc_functions.append(SlcFunction { scope: cscope, params: cparams, fixed_strings: fixed_string_locals(cfn.body, cscope) });
-    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(cparams.len()), fresh: false });
+    slc_sums = slc_sums.append(ViewSum { key: parser.decl_key(cfn), flags: __alloc_bool(cparams.len()), fresh: false });
   }
   let slc_ix = view_index(slc_sums);
   let slc_calls: util.NameIndex[] = [];
@@ -27981,7 +28108,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (e065_summarised(sfn, slc_functions[sfi].scope)) {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(slc_functions[sfi].scope);
-      e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
+      e065_sums = e065_sums.append(ViewSum { key: parser.decl_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }
   let e065_ix = view_index(e065_sums);
@@ -29173,7 +29300,7 @@ function type_to_arrtag(t: typeinfo.Type): string {
 pub struct Imports { paths: string[], unloaded: string[], sights: parser.ModuleSight[] }
 
 function module_imports(mod: parser.Module): Imports {
-  return Imports { paths: import_paths_of(mod), unloaded: unloaded_qualifiers(mod), sights: mod.sights };
+  return Imports { paths: parser.import_paths(mod), unloaded: unloaded_qualifiers(mod), sights: mod.sights };
 }
 
 function unloaded_qualifiers(mod: parser.Module): string[] {
@@ -29212,14 +29339,6 @@ function (im: Imports) sees(from: string, decl: string): boolean {
   return true;
 }
 
-function import_paths_of(mod: parser.Module): string[] {
-  let out: string[] = [];
-  for im in mod.imports {
-    out = out.append(im.path);
-  }
-  return out;
-}
-
 function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s: Scope): ast.Expr[] {
   let Some(sig) = s.lookup_struct(sl.type_name) else {
     return fields;
@@ -29234,7 +29353,7 @@ function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s:
     let v = fields[i];
     let fi = -1;
     if (i < sl.field_names.len()) {
-      fi = field_index(sig, sl.field_names[i]);
+      fi = util.index_of_str(sig.field_names, sl.field_names[i]);
     }
     if (fi >= 0 && fi < sig.field_type_names.len()) {
       v = settle_wide_literals(v, type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, largs, s.type_names()));
@@ -29393,7 +29512,7 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
         let v = sl.field_values[i];
         let fi: i32 = -1;
         if (i < sl.field_names.len()) {
-          fi = field_index(sig, sl.field_names[i]);
+          fi = util.index_of_str(sig.field_names, sl.field_names[i]);
         }
         if (fi >= 0 && fi < sig.field_type_names.len()) {
           let ft = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
@@ -29796,7 +29915,7 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 // is annotated before the bind, so that the bind is the last use of s.
 function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
   if let ast.StmtVar(v) = stmt {
-    if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+    if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
       let t = var_bind_type(v, s);
       let annotated = annotate_var(v, s, t);
       return (annotated, bind_var(v, s, t));
@@ -29825,12 +29944,12 @@ function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   let body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !name_has_comma(fr.var_name) };
+    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !util.contains(fr.var_name, ",") };
   }
   let it = check_expr(fr.iter, s);
   match (it) {
     typeinfo.TypeString(_) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !name_has_comma(fr.var_name) };
+      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !util.contains(fr.var_name, ",") };
     },
     typeinfo.TypeArray(ta) => {
       return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
@@ -29847,7 +29966,7 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
 }
 
 function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
-  if (name_has_comma(name)) {
+  if (util.contains(name, ",")) {
     return bind_tuple_destr_names(s, split_pattern_names(name), ty);
   }
   if (name == "_") {
@@ -29864,7 +29983,7 @@ function annotate_variant_struct(name: string, s: Scope): string {
   if (s.has_struct(name)) {
     return name;
   }
-  let d = dot_index(name);
+  let d = util.index_of_byte(name, b'.', 0);
   if (d < 0) {
     return "";
   }
@@ -30151,7 +30270,7 @@ function vb_local_name(body: ast.Stmt[]): string {
   let name = "";
   match (body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || name_has_comma(v.name)) {
+      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || util.contains(v.name, ",")) {
         return "";
       }
       name = v.name;
@@ -30651,7 +30770,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 }
 
 function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
-  let (ne, ns, nh) = astwalk.map_expr_where(e, s, pretype_at_stmt, pretype_at_expr, astwalk.every_expr);
+  let (ne, ns, nh) = astwalk.map_expr_where(e, s, pretype_at_stmt, pretype_at_expr, astwalk.descend_all);
   return ne;
 }
 
@@ -31117,20 +31236,27 @@ function use_ret_typed(lm: ast.ExprLambda, cbt: typeinfo.Type): ast.ExprLambda {
   return lm;
 }
 
+// The bodies a rewrite pass changes: hits.funcs[k] for mod.funcs[k], and
+// hits.top for the top-level statements.
+struct BodyHits { funcs: boolean[], top: boolean, any: boolean }
+
 pub function pretype_module(mod: parser.Module): parser.Module {
-  let coll = colliding_variant_names(mod);
-  if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
-    return pretype_module_in(mod, module_env(mod), whole_focus(mod));
+  let hits = pretype_hits(mod, whole_focus(mod));
+  if (!hits.any) {
+    return mod;
   }
-  for fd in mod.funcs {
-    if (needs_pretype_or_rescope(fd.body, coll)) {
-      return pretype_module_in(mod, module_env(mod), whole_focus(mod));
-    }
-  }
-  return mod;
+  return pretyped(mod, module_env(mod), hits);
 }
 
 function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = pretype_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return pretyped(mod, env, hits);
+}
+
+function pretype_hits(mod: parser.Module, focus: Focus): BodyHits {
   let coll = colliding_variant_names(mod);
   let top_hit = focus.top && needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
@@ -31144,14 +31270,15 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
       any = true;
     }
   }
-  if (!any) {
-    return mod;
-  }
+  return BodyHits { funcs: hits, top: top_hit, any: any };
+}
+
+function pretyped(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
   let nfuncs: parser.FuncDecl[] = [];
   let i = 0;
   while (i < mod.funcs.len()) {
     let func = mod.funcs[i];
-    if (hits[i]) {
+    if (hits.funcs[i]) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: pretype_stmts(func.body, fs) });
     } else {
@@ -31160,7 +31287,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
     i += 1;
   }
   let ntop = mod.top_stmts;
-  if (top_hit) {
+  if (hits.top) {
     ntop = pretype_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
@@ -31303,7 +31430,7 @@ function qualify_expr(e: ast.Expr, want: typeinfo.Type, s: Scope, coll: util.Nam
   if (!expr_names_shared(e, coll)) {
     return e;
   }
-  let (out, _, _) = astwalk.map_expr_where(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at, astwalk.every_expr);
+  let (out, _, _) = astwalk.map_expr_where(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at, astwalk.descend_all);
   return out;
 }
 
@@ -31521,8 +31648,8 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
   for k in 0..sl.field_values.len() {
     let fdest = none;
     if let Some(fsig) = found {
-      if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
-        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[k]), args, s);
+      if (k < sl.field_names.len() && util.index_of_str(fsig.field_names, sl.field_names[k]) >= 0) {
+        fdest = lit_field_type(fsig, util.index_of_str(fsig.field_names, sl.field_names[k]), args, s);
       }
     }
     values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
@@ -31713,7 +31840,7 @@ function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
   match (t) {
     typeinfo.TypeUnion(u) => {
       if (bare_union(u)) {
-        return open_union_arity(s, u.name) > 0;
+        return union_arity(s, u.name) > 0;
       }
       return any_open_enum(u.args, s);
     },
@@ -31733,16 +31860,6 @@ function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
       return false;
     }
   }
-}
-
-function open_union_arity(s: Scope, name: string): i32 {
-  if (name == "Option") {
-    return 1;
-  }
-  if (name == "Result") {
-    return 2;
-  }
-  return union_type_params(s, name).len();
 }
 
 // bare_union is a union named without its arguments: none, or each one never.
@@ -31996,7 +32113,7 @@ function lit_struct_field_class(fa: ast.ExprFieldAccess, s: Scope): i32 {
     let Some(sig) = s.lookup_struct(name) else {
       return -1;
     };
-    let fi = field_index(sig, fa.field);
+    let fi = util.index_of_str(sig.field_names, fa.field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return -1;
     }
@@ -32499,7 +32616,7 @@ function field_want_lift(ot: typeinfo.Type, field: string, want: typeinfo.Type, 
     let Some(sig) = s.lookup_struct(sn.name) else {
       return (ot, false);
     };
-    let fi = field_index(sig, field);
+    let fi = util.index_of_str(sig.field_names, field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return (ot, false);
     }
@@ -33368,7 +33485,7 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       if (v.type_name.len() > 0) {
@@ -33798,7 +33915,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (at < 0) {
         return (st, rw, false);
       }
-      let (ie, ia, ih) = astwalk.map_expr_where(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+      let (ie, ia, ih) = astwalk.map_expr_where(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
       return (ast.StmtVar { ...v, type_name: rw.tags[at], init: ie }, rw, true);
     },
     ast.StmtFor(fr) => {
@@ -33823,7 +33940,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if let ast.ExprCall(c) = fr.iter {
         iter = ast.ExprCall { ...c, args: nb };
       }
-      let (body, ba) = astwalk.map_stmts_where(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+      let (body, ba) = astwalk.map_stmts_where(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
       return (ast.StmtFor { ...fr, iter: iter, body: body }, rw, true);
     },
     _ => {
@@ -33900,11 +34017,11 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     if (pt >= 0) {
       a = settle_wide_literals(a, rw.ptypes[pt]);
     }
-    let (ae, aa, ah) = astwalk.map_expr_where(a, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+    let (ae, aa, ah) = astwalk.map_expr_where(a, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
     args = args.append(ae);
     k += 1;
   }
-  let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+  let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
   return ast.ExprCall { ...c, callee: ce, args: args };
 }
 
@@ -33927,7 +34044,7 @@ function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
   let ast.ExprIdent(id) = c.callee else {
     return false;
   };
-  return v.type_name.len() == 0 && !name_has_comma(v.name) && c.type_args.len() == 0 && util.has_str(generics, id.name);
+  return v.type_name.len() == 0 && !util.contains(v.name, ",") && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
@@ -34014,7 +34131,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       return lit_holds_int_literal(m.scrutinee);
     },
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 || name_has_comma(v.name)) {
+      if (v.type_name.len() > 0 || util.contains(v.name, ",")) {
         return false;
       }
       return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
@@ -34108,30 +34225,48 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
   if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
-  let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
+  let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
   return out;
 }
 
 pub function settle_literal_locals(mod: parser.Module): parser.Module {
-  let generics = generic_fn_names(mod.funcs);
-  let any = needs_lit_settle(mod.top_stmts, generics);
-  for fd in mod.funcs {
-    if (!any && needs_lit_settle(fd.body, generics)) {
-      any = true;
-    }
-  }
-  if (!any) {
+  let hits = lit_settle_hits(mod, whole_focus(mod));
+  if (!hits.any) {
     return mod;
   }
-  return settle_literal_locals_in(mod, module_env(mod), whole_focus(mod));
+  return lit_settled(mod, module_env(mod), hits);
 }
 
 function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = lit_settle_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return lit_settled(mod, env, hits);
+}
+
+function lit_settle_hits(mod: parser.Module, focus: Focus): BodyHits {
   let generics = generic_fn_names(mod.funcs);
-  let nfuncs: parser.FuncDecl[] = [];
+  let top = focus.top && needs_lit_settle(mod.top_stmts, generics);
+  let funcs: boolean[] = [];
+  let any = top;
   let k = 0;
   for func in mod.funcs {
     let hit = focus.funcs[k] && needs_lit_settle(func.body, generics);
+    k += 1;
+    funcs = funcs.append(hit);
+    if (hit) {
+      any = true;
+    }
+  }
+  return BodyHits { funcs: funcs, top: top, any: any };
+}
+
+function lit_settled(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
+  let nfuncs: parser.FuncDecl[] = [];
+  let k = 0;
+  for func in mod.funcs {
+    let hit = hits.funcs[k];
     k += 1;
     if (hit) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -34141,7 +34276,7 @@ function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Foc
     }
   }
   let ntop = mod.top_stmts;
-  if (focus.top && needs_lit_settle(mod.top_stmts, generics)) {
+  if (hits.top) {
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
@@ -34157,13 +34292,6 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
   return typeinfo.mixed_integer_join(a, b);
 }
 
-function unknown_arm_expr(e: ast.Expr): boolean {
-  if let ast.ExprUnknown(_) = e {
-    return true;
-  }
-  return false;
-}
-
 function lit_kind_settled(e: ast.Expr): boolean {
   return numeric_literal_kind(e) == 0;
 }
@@ -34176,7 +34304,7 @@ function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_
 
 function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprArray(_) = e {
-    return vaguer_than(from, to) && array_mix_settles(e, from, to, s);
+    return (vaguer_than(from, to) || !type_eq(from, to)) && array_mix_settles(e, from, to, s);
   }
   return false;
 }
@@ -34196,7 +34324,7 @@ function widen_binary_operand(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Typ
 }
 
 function scalar_vb_joinable(a: VbStore, b: VbStore, scalar: typeinfo.Type): boolean {
-  return !is_unknown(scalar) && scalar_arms_settled(a, b) && (!unknown_arm_expr(a.e) || !unknown_arm_expr(b.e));
+  return !is_unknown(scalar) && scalar_arms_settled(a, b) && (!ast.is_unknown(a.e) || !ast.is_unknown(b.e));
 }
 
 function scalar_value_widens(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {

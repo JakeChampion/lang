@@ -36,23 +36,12 @@ pub struct Manifest {
   err_line: i32,
 }
 
-function index_of(s: string, c: u8, from: i32): i32 {
-  let i = from;
-  while (i < s.len()) {
-    if (s[i] == c) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 pub function parse_quoted(s: string): Result[string, string] {
   if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
     return Err("expected a quoted string, got " + docsummary.quote(s));
   }
   let inner = slice_unchecked(s, 1, s.len() - 1) + "";
-  if (index_of(inner, b'"', 0) >= 0 || index_of(inner, b'\\', 0) >= 0) {
+  if (util.index_of_byte(inner, b'"', 0) >= 0 || util.index_of_byte(inner, b'\\', 0) >= 0) {
     return Err("escapes unsupported in " + docsummary.quote(s));
   }
   return Ok(inner);
@@ -65,11 +54,11 @@ pub function line_content(raw: string): string {
     if (raw[i] == b'"') {
       quoted = !quoted;
     } else if (raw[i] == b'#' && !quoted) {
-      return util.trim(slice_unchecked(raw, 0, i));
+      return slice_unchecked(raw, 0, i).trim();
     }
     i += 1;
   }
-  return util.trim(raw);
+  return raw.trim();
 }
 
 function is_integer_text(s: string): boolean {
@@ -107,7 +96,7 @@ pub function parse(src: string): Manifest {
       if (line[line.len() - 1] != b']') {
         return Manifest { ...m, err: "malformed section header " + docsummary.quote(line), err_line: li };
       }
-      section = util.trim(slice_unchecked(line, 1, line.len() - 1));
+      section = slice_unchecked(line, 1, line.len() - 1).trim();
       if (section == "package") {
         package_line = li;
       }
@@ -145,11 +134,11 @@ function section_error(section: string, seen: string[]): string {
 }
 
 function entry_key(line: string): string {
-  let eq = index_of(line, b'=', 0);
+  let eq = util.index_of_byte(line, b'=', 0);
   if (eq < 0) {
     return "";
   }
-  return util.trim(slice_unchecked(line, 0, eq));
+  return slice_unchecked(line, 0, eq).trim();
 }
 
 function failed(m: Manifest, err: string): Manifest {
@@ -157,12 +146,12 @@ function failed(m: Manifest, err: string): Manifest {
 }
 
 function with_entry(m: Manifest, section: string, line: string, at: i32, seen: string[]): Manifest {
-  let eq = index_of(line, b'=', 0);
+  let eq = util.index_of_byte(line, b'=', 0);
   if (eq < 0) {
     return failed(m, "expected `key = value`, got " + docsummary.quote(line));
   }
-  let key = util.trim(slice_unchecked(line, 0, eq));
-  let val = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let key = slice_unchecked(line, 0, eq).trim();
+  let val = slice_unchecked(line, eq + 1, line.len()).trim();
   if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
     return failed(m, "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
   }
@@ -244,7 +233,7 @@ function with_members(m: Manifest, key: string, val: string): Manifest {
 function with_lint(m: Manifest, section: string, key: string, val: string): Manifest {
   match (parse_scalar(val)) {
     Ok(value) => {
-      if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
+      if (section == "lint.options" && util.index_of_byte(key, b'.', 0) < 0) {
         return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
       }
       return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(value) };
@@ -332,7 +321,7 @@ function parse_string(val: string): Result[string, string] {
     return Err("expected a double-quoted string, got " + docsummary.quote(val));
   }
   let s = slice_unchecked(val, 1, val.len() - 1) + "";
-  if (index_of(s, b'"', 0) >= 0 || index_of(s, b'\\', 0) >= 0) {
+  if (util.index_of_byte(s, b'"', 0) >= 0 || util.index_of_byte(s, b'\\', 0) >= 0) {
     return Err("escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)");
   }
   return Ok(s);
@@ -357,7 +346,7 @@ function parse_str_array(val: string): Result[string[], string] {
   }
   let out: string[] = [];
   for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
-    let part = util.trim(raw);
+    let part = raw.trim();
     if (part.len() > 0) {
       match (parse_string(part)) {
         Ok(value) => {
@@ -464,8 +453,8 @@ function parse_dep(name: string, val: string): Result[Dep, string] {
   if (val[val.len() - 1] != b'}') {
     return Err("malformed inline table " + docsummary.quote(val));
   }
-  for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
-    let part = util.trim(raw);
+  for raw in inline_parts(slice_unchecked(val, 1, val.len() - 1).trim()) {
+    let part = raw.trim();
     if (part.len() > 0) {
       match (with_dep_field(d, part)) {
         Ok(dep) => {
@@ -481,12 +470,12 @@ function parse_dep(name: string, val: string): Result[Dep, string] {
 }
 
 function with_dep_field(d: Dep, part: string): Result[Dep, string] {
-  let eq = index_of(part, b'=', 0);
+  let eq = util.index_of_byte(part, b'=', 0);
   if (eq < 0) {
     return Err("expected `key = value` in inline table, got " + docsummary.quote(part));
   }
-  let k = util.trim(slice_unchecked(part, 0, eq));
-  let v = util.trim(slice_unchecked(part, eq + 1, part.len()));
+  let k = slice_unchecked(part, 0, eq).trim();
+  let v = slice_unchecked(part, eq + 1, part.len()).trim();
   if (k == "workspace") {
     if (v != "true") {
       return Err("workspace must be `true` (the only supported value), got " + docsummary.quote(v));
@@ -758,12 +747,12 @@ pub function parse_lock(src: string): Result[Lock, string] {
       continue;
     }
     let entry: LockEntry = match (cur) { Some(e) => e, None => { serial = match (lock_top_level(line, serial)) { Ok(value) => value, Err(message) => { return Err(lock_line(li, message)); } }; continue; } };
-    let eq = index_of(line, b'=', 0);
+    let eq = util.index_of_byte(line, b'=', 0);
     if (eq < 0) {
       return Err(lock_line(li, "expected `key = value`"));
     }
-    let key = util.trim(slice_unchecked(line, 0, eq));
-    let v: string = match (parse_quoted(util.trim(slice_unchecked(line, eq + 1, line.len())))) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
+    let key = slice_unchecked(line, 0, eq).trim();
+    let v: string = match (parse_quoted(slice_unchecked(line, eq + 1, line.len()).trim())) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
     let updated: LockEntry = match (with_lock_field(entry, key, v)) { Ok(e) => e, Err(message) => { return Err(lock_line(li, message)); } };
     cur = Some(updated);
   }
@@ -776,14 +765,14 @@ pub function parse_lock(src: string): Result[Lock, string] {
 
 // A line above the first entry: only `index_serial = N`.
 function lock_top_level(line: string, serial: string): Result[string, string] {
-  let eq = index_of(line, b'=', 0);
-  if (eq < 0 || util.trim(slice_unchecked(line, 0, eq)) != "index_serial") {
+  let eq = util.index_of_byte(line, b'=', 0);
+  if (eq < 0 || slice_unchecked(line, 0, eq).trim() != "index_serial") {
     return Err(docsummary.quote(line) + " outside a [[package]] entry");
   }
   if (serial.len() > 0) {
     return Err("index_serial given twice");
   }
-  let v = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let v = slice_unchecked(line, eq + 1, line.len()).trim();
   if let Err(message) = validate_serial(v) {
     return Err("index_serial " + message);
   }

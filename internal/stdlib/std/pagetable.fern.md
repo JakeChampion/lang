@@ -6,7 +6,19 @@ This module builds the page tables of a kernel, with frames from `std/frames`, a
 
 Both ISAs walk four levels of 512 entries, 4096 bytes each, and index them with the same bits of the address. The formats differ in the descriptor. On arm64, a table entry is the table address with the low bits 3. A block at level 2 carries the attributes alone, and a page at level 3 adds bit 1. Attribute index 1 of `MAIR_EL1` is the Normal memory of the reset entry, and index 0 is Device-nGnRnE. A device descriptor is execute-never.
 
-On x86-64, a table entry is present and writable. A 2 MiB page at level 2 adds the page-size bit, and a device page sets the cache-disable and write-through bits.
+On x86-64, a table entry is present, writable and user-accessible. The leaf decides the access: a 2 MiB page at level 2 adds the page-size bit, and a device page sets the cache-disable and write-through bits.
+
+## User mappings
+
+`map_user` maps a range of a process. Each virtual page translates to a page of physical frames, and user code at EL0 or ring 3 can reach it. The kernel's own mapping stays kernel-only. Thus a process that loads a kernel address takes a fault.
+
+On arm64 a user page has AP 01 (read and write at both levels) or AP 11 (read-only at both levels), and it is PXN, so the kernel never runs user code. A user page that is not executable is also UXN. On x86-64 a user page sets the U/S bit, and the R/W bit when it is writable.
+
+`leaf` gives the translation of one address: the physical address and the access. A kernel uses it to check a pointer that a process gives it, and to read and write the process's memory through the identity mapping. `protect_user` changes the access of the user pages of a range. A page with no access keeps its frame in its entry with the valid bit clear. The walker then ignores the entry, and a later `protect_user` can give the access back.
+
+The two functions walk the tables and allocate no frame. A page that no entry maps is not changed, so a process can reserve a range and get its frames when it first touches them.
+
+`free_user` gives back the frames of a mapping: each table, and the frame of each user page. The frames of the kernel mapping stay in use. The mapping must not be the active translation when a kernel frees it.
 
 ## Module assembly
 
@@ -23,6 +35,8 @@ On x86-64, a table entry is present and writable. A 2 MiB page at level 2 adds t
 <<walk>>
 
 <<split>>
+
+<<lookup>>
 
 <<activate>>
 ```
@@ -73,9 +87,34 @@ function device_attr(): i64 {
   return 0x1bi64;
 }
 
-// A table entry, a block at level 2, and a page at level 3.
+// A table entry, a block at level 2, and a page at level 3. On x86-64 a table
+// entry lets a user page below it be reached: the leaf decides the access.
 function table_entry(table: usize): i64 {
-  return table as i64 | 3i64;
+  if (target_arch() == "arm64") {
+    return table as i64 | 3i64;
+  }
+  return table as i64 | 7i64;
+}
+
+// The descriptor of a user page of normal memory.
+function user_attr(write: boolean, exec: boolean): i64 {
+  if (target_arch() == "arm64") {
+    // AF, inner shareable, Normal (index 1), PXN; AP 01 or AP 11; UXN unless exec.
+    let attr = 0x20000000000705i64;
+    if (write) {
+      attr |= 0x40i64;
+    } else {
+      attr |= 0xc0i64;
+    }
+    if (!exec) {
+      attr |= 0x40000000000000i64;
+    }
+    return attr;
+  }
+  if (write) {
+    return 7i64;
+  }
+  return 5i64;
 }
 
 function block_entry(address: usize, attr: i64): i64 {
@@ -118,6 +157,24 @@ pub function (m: Tables) map_normal(start: usize, len: usize): boolean {
 // Maps [start, start + len) as device memory.
 pub function (m: Tables) map_device(start: usize, len: usize): boolean {
   return m.map_range(start, len, device_attr());
+}
+
+// Maps the user pages [va, va + len) to the physical pages from pa, for code
+// at EL0 or ring 3. False when a bound is not page aligned or when the frames
+// ran out.
+pub function (m: Tables) map_user(va: usize, pa: usize, len: usize, write: boolean, exec: boolean): boolean {
+  if (va % PAGE_BYTES != ZERO || pa % PAGE_BYTES != ZERO || len % PAGE_BYTES != ZERO) {
+    return false;
+  }
+  let attr = user_attr(write, exec);
+  let at = ZERO;
+  while (at < len) {
+    if (!m.map_page(va + at, pa + at, attr)) {
+      return false;
+    }
+    at += PAGE_BYTES;
+  }
+  return true;
 }
 
 function clear(table: usize): void {
@@ -163,6 +220,26 @@ function (m: Tables) next_table(table: usize, address: usize, level: i32): usize
     __store_i64(at, table_entry(fresh));
     return fresh;
   }
+}
+
+// Maps the one page at va to pa.
+function (m: Tables) map_page(va: usize, pa: usize, attr: i64): boolean {
+  let l1 = m.next_table(m.root, va, 0);
+  if (l1 == ZERO) {
+    return false;
+  }
+  let l2 = m.next_table(l1, va, 1);
+  if (l2 == ZERO) {
+    return false;
+  }
+  let l3 = m.next_table(l2, va, 2);
+  if (l3 == ZERO) {
+    return false;
+  }
+  unsafe {
+    __store_i64(l3 + index(va, 3) * ENTRY_BYTES, page_entry(pa, attr));
+  }
+  return true;
 }
 
 function (m: Tables) map_range(start: usize, len: usize, attr: i64): boolean {
@@ -243,6 +320,134 @@ pub function (m: Tables) flush(): void {
     __fence();
     __tlb_flush_all();
   }
+}
+```
+
+### `lookup`
+
+```fern
+<<lookup>>=
+// The translation of a page, and its access. valid is false for a page whose
+// entry keeps a frame with no access.
+pub struct Leaf { physical: usize, valid: boolean, user: boolean, write: boolean, exec: boolean }
+
+function is_block(entry: i64, level: i32): boolean {
+  return level > 0 && (entry & 1i64) != 0i64 && !is_table(entry);
+}
+
+function decode(entry: i64, va: usize, size: usize): Leaf {
+  let frame = entry as usize & 0xffffffffff000 as usize & ~(size - ONE);
+  let valid = (entry & 1i64) != 0i64;
+  if (target_arch() == "arm64") {
+    let user = (entry & 0x40i64) != 0i64;
+    let never = 0x20000000000000i64;
+    if (user) {
+      never = 0x40000000000000i64;
+    }
+    return Leaf { physical: frame + (va & size - ONE), valid: valid, user: user, write: (entry & 0x80i64) == 0i64, exec: (entry & never) == 0i64 };
+  }
+  return Leaf { physical: frame + (va & size - ONE), valid: valid, user: (entry & 4i64) != 0i64, write: (entry & 2i64) != 0i64, exec: entry >= 0i64 };
+}
+
+// The address of the level 3 entry of va, or 0 when a level above has no
+// table for it.
+function (m: Tables) slot(va: usize): usize {
+  let table = m.root;
+  let level = 0;
+  while (level < 3) {
+    unsafe {
+      let entry = __load_i64(table + index(va, level) * ENTRY_BYTES);
+      if (!is_table(entry)) {
+        return ZERO;
+      }
+      table = entry as usize & 0xfffffffff000 as usize;
+    }
+    level += 1;
+  }
+  return table + index(va, 3) * ENTRY_BYTES;
+}
+
+// The translation of va, or None when no entry maps it.
+pub function (m: Tables) leaf(va: usize): Option[Leaf] {
+  let table = m.root;
+  let level = 0;
+  let size = 0x8000000000 as usize;
+  while (level < 3) {
+    size >>= 9 as usize;
+    unsafe {
+      let entry = __load_i64(table + index(va, level) * ENTRY_BYTES);
+      if (is_block(entry, level)) {
+        return Some(decode(entry, va, size));
+      }
+      if (!is_table(entry)) {
+        return None;
+      }
+      table = entry as usize & 0xfffffffff000 as usize;
+    }
+    level += 1;
+  }
+  unsafe {
+    let entry = __load_i64(table + index(va, 3) * ENTRY_BYTES);
+    if (entry == 0i64) {
+      return None;
+    }
+    return Some(decode(entry, va, PAGE_BYTES));
+  }
+}
+
+// Returns each table frame, and the frame of each user page, to the frames.
+pub function (m: Tables) free_user(): void {
+  m.free_table(m.root, 0);
+}
+
+function (m: Tables) free_table(table: usize, level: i32): void {
+  let i = ZERO;
+  while (i < ENTRIES) {
+    unsafe {
+      let entry = __load_i64(table + i * ENTRY_BYTES);
+      if (level < 3 && is_table(entry)) {
+        m.free_table(entry as usize & 0xfffffffff000 as usize, level + 1);
+      } else if (level == 3 && entry != 0i64) {
+        let page = decode(entry, ZERO, PAGE_BYTES);
+        if (page.user) {
+          let freed = m.frames.free(page.physical);
+        }
+      }
+    }
+    i += ONE;
+  }
+  let freed = m.frames.free(table);
+}
+
+// Gives the user pages of [va, va + len) the access of read, write and exec.
+// A page that no entry maps does not change. False when a bound is not page
+// aligned or when the range holds a page that is not a user page. The caller
+// flushes the TLB.
+pub function (m: Tables) protect_user(va: usize, len: usize, read: boolean, write: boolean, exec: boolean): boolean {
+  if (va % PAGE_BYTES != ZERO || len % PAGE_BYTES != ZERO) {
+    return false;
+  }
+  let attr = user_attr(write, exec);
+  if (!read) {
+    attr &= ~1i64;
+  }
+  let at = va;
+  while (at < va + len) {
+    match (m.leaf(at)) {
+      Some(page) => {
+        let entry = m.slot(at);
+        if (!page.user || entry == ZERO) {
+          return false;
+        }
+        unsafe {
+          __store_i64(entry, page_entry(page.physical, attr));
+        }
+      },
+      None => {}
+    }
+    at += PAGE_BYTES;
+  }
+  return true;
 }
 ```
 

@@ -516,6 +516,136 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
+pub function has_i32(xs: i32[], n: i32): boolean {
+  return index_of_i32(xs, n) >= 0;
+}
+
+pub function count_str(xs: string[], s: string): i32 {
+  let n = 0;
+  for x in xs {
+    if (x == s) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+pub function any_true(xs: boolean[]): boolean {
+  for x in xs {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function filled_i32(n: i32, v: i32): i32[] {
+  let out: i32[] = [];
+  while (out.len() < n) {
+    out = out.append(v);
+  }
+  return out;
+}
+
+pub function empty_i32_lists(n: i32): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < n) {
+    out = out.append([]);
+  }
+  return out;
+}
+
+pub function bool_i32(b: boolean): i32 {
+  if (b) {
+    return 1;
+  }
+  return 0;
+}
+
+pub function quoted(s: string): string {
+  return "\"" + s + "\"";
+}
+
+// is_symbol_byte is true for a byte an assembler symbol name may hold.
+pub function is_symbol_byte(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+pub function push_bytes(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
+  }
+}
+
+pub function put_u8(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+pub function append_bytes(out: u8[], b: [u8]): u8[] {
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// index_of_byte is the first index at or after from that holds c, or -1.
+pub function index_of_byte(s: string, c: u8, from: i32): i32 {
+  let i = from;
+  while (i < s.len()) {
+    if (s[i] == c) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+// hex_digit is the lower-case hex character for d in 0..16.
+pub function hex_digit(d: i32): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  return (87 + d) as u8;
+}
+
+// path_base is the part of path after its last slash.
+pub function path_base(path: string): string {
+  let start = 0;
+  let i = 0;
+  while (i < path.len()) {
+    if (path[i] == b'/') {
+      start = i + 1;
+    }
+    i += 1;
+  }
+  return slice_unchecked(path, start, path.len()) + "";
+}
+
+pub function same_i32s(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+// drop_last_i32 is a without its last element.
+pub function drop_last_i32(a: i32[]): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  while (i < a.len() - 1) {
+    out = out.append(a[i]);
+    i += 1;
+  }
+  return out;
+}
+
 pub function contains(haystack: string, needle: string): boolean {
   return index_of_sub(haystack, needle) >= 0;
 }
@@ -1421,21 +1551,6 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
   return clean_path(module_path_join(entry_dir, rel));
 }
 
-pub function trim(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
-    b -= 1;
-  }
-  if (a == 0 && b == s.len()) {
-    return s;
-  }
-  return slice_unchecked(s, a, b) + "";
-}
-
 pub function levenshtein(a: string, b: string): i32 {
   if (a == b) {
     return 0;
@@ -1511,6 +1626,25 @@ pub function append_all[T](into: T[], more: T[]): T[] {
     i += 1;
   }
   return into;
+}
+
+pub function le32(buf: i32[], v: i32): i32[] {
+  buf = buf.append(v & 255);
+  buf = buf.append(v >> 8 & 255);
+  buf = buf.append(v >> 16 & 255);
+  return buf.append(v >> 24 & 255);
+}
+
+// is_inner_label is true for an assembler label that stays out of the symbol table.
+pub function is_inner_label(s: string): boolean {
+  let i = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.' || s[i] == b'#') {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 pub function to_u8(b: i32[]): u8[] {

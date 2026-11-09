@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./docsummary";
+import "std/string";
 
 pub struct DocDecl {
   kind: string,
@@ -15,24 +16,8 @@ pub struct DocDecl {
 
 pub struct TakeResult { doc: string, cursor: i32 }
 
-function is_space(b: i32): boolean {
-  return b == 32 || b >= 9 && b <= 13;
-}
-
 function own(v: string): string {
   return v;
-}
-
-pub function trim_space(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && is_space(s[a] as i32)) {
-    a += 1;
-  }
-  while (b > a && is_space(s[b - 1] as i32)) {
-    b -= 1;
-  }
-  return own(slice_unchecked(s, a, b));
 }
 
 function run_end(cs: lexer.Comment[], start: i32): i32 {
@@ -50,7 +35,7 @@ function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
     if (i > start) {
       out += "\n";
     }
-    out += trim_space(cs[i].text);
+    out += cs[i].text.trim();
     i += 1;
   }
   return out;
@@ -103,7 +88,7 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
     if (j > 0) {
       out += "\n";
     }
-    out += trim_space(cs[j].text);
+    out += cs[j].text.trim();
     j += 1;
   }
   return out;
@@ -117,8 +102,34 @@ function quote(s: string): string {
   return docsummary.quote(s);
 }
 
+// The structs and enums of a module that are not public. A function on
+// one of them, written or derived, is not part of the public API either.
+function private_types(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for sd in mod.structs {
+    if (!sd.is_pub && sd.enum_owner.len() == 0) {
+      out = out.append(sd.name);
+    }
+  }
+  for ed in mod.enums {
+    if (!ed.is_pub) {
+      out = out.append(ed.name);
+    }
+  }
+  return out;
+}
+
+function on_private_type(fd: parser.FuncDecl, private: string[]): boolean {
+  if (fd.receiver_type.len() == 0) {
+    return false;
+  }
+  let name = fd.receiver_type.split("[")[0];
+  return util.has_str(private, name);
+}
+
 pub function public_decls(mod: parser.Module): DocDecl[] {
   let out: DocDecl[] = [];
+  let private = private_types(mod);
   let i = 0;
   while (i < mod.funcs.len()) {
     let fd = mod.funcs[i];
@@ -126,7 +137,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
       if (fd.is_pub) {
         out = insert_sorted(out, DocDecl { kind: "const", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
       }
-    } else if (fd.is_pub && !starts_with_dunder(fd.name)) {
+    } else if (fd.is_pub && !starts_with_dunder(fd.name) && !on_private_type(fd, private)) {
       out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
     }
     i += 1;
@@ -230,12 +241,23 @@ function min_line(min: i32, line: i32): i32 {
   return min;
 }
 
-pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
+// The first line of a declaration, counting the attribute lines, such as
+// `@derive(...)`, directly above it. Its doc comment goes above them.
+function head_line(lines: string[], line: i32): i32 {
+  let h = line;
+  while (h > 1 && h - 2 < lines.len() && lines[h - 2].trim().starts_with("@")) {
+    h -= 1;
+  }
+  return h;
+}
+
+pub function associate(cs: lexer.Comment[], decls: DocDecl[], src: string): DocDecl[] {
+  let lines = src.split("\n");
   let out: DocDecl[] = [];
   let cursor = 0;
   let i = 0;
   while (i < decls.len()) {
-    let t = take_doc(cs, cursor, decls[i].line);
+    let t = take_doc(cs, cursor, head_line(lines, decls[i].line));
     cursor = t.cursor;
     out = out.append(DocDecl { ...decls[i], doc: t.doc });
     i += 1;
@@ -251,7 +273,7 @@ pub function docs_of(src: string): DocModule {
   let decls = public_decls(mod);
   return DocModule {
     intro: module_intro(lr.comments, first_decl_line(mod)),
-    decls: associate(lr.comments, decls),
+    decls: associate(lr.comments, decls, src),
   };
 }
 
@@ -309,7 +331,7 @@ function join_plus(names: string[]): string {
   return out;
 }
 
-function join_type_params(tps: string[]): string {
+pub function join_type_params(tps: string[]): string {
   if (tps.len() == 0) {
     return "";
   }
@@ -333,9 +355,15 @@ function doc_block(doc: string): string {
 }
 
 function render_func(fd: parser.FuncDecl, doc: string): string {
-  let out = "## `" + fd.name + "`\n\n```fern\npub function ";
+  // A function of a type with no receiver, such as one a derive makes, is
+  // called as `Type.name()`, so its heading names it that way.
+  let heading = fd.name;
+  if (fd.receiver_type.len() > 0 && fd.receiver_name.len() == 0) {
+    heading = fd.receiver_type + "." + fd.name;
+  }
+  let out = "## `" + heading + "`\n\n```fern\npub function ";
   let tps = fd.type_params;
-  if (fd.receiver_type.len() > 0) {
+  if (fd.receiver_type.len() > 0 && fd.receiver_name.len() > 0) {
     let rp = parser.receiver_with_bounds(fd);
     tps = rp.names;
     out = out + "(" + fd.receiver_name + ": " + rp.recv + ") ";
@@ -469,10 +497,32 @@ function render_impls(impls: parser.ImplInfo[]): string {
   return out + "\n";
 }
 
-pub function render_page(src: string, mod_path: string): string {
+// Where -doc-source links each declaration: the template, in which {path}
+// and {line} name the source file and the line, the file, and the map from
+// a tangled line to a line of that file.
+pub struct SourceLinks { template: string, path: string, map: util.LineMap }
+
+pub function no_source_links(): SourceLinks {
+  return SourceLinks { template: "", path: "", map: util.no_line_map() };
+}
+
+function source_link(links: SourceLinks, line: i32): string {
+  if (links.template.len() == 0) {
+    return "";
+  }
+  // A derived method has no line in the source.
+  let (doc_line, _) = util.doc_pos([links.map], line, 1);
+  if (doc_line <= 0) {
+    return "";
+  }
+  let url = links.template.replace("{path}", links.path).replace("{line}", doc_line.to_string());
+  return "[Source](" + url + ")\n\n";
+}
+
+pub function render_page(src: string, mod_path: string, links: SourceLinks): string {
   let lr = lexer.tokenize_full(src);
   let mod = parser.parse_module_verbatim(lr.tokens).pmod;
-  let decls = associate(lr.comments, public_decls(mod));
+  let decls = associate(lr.comments, public_decls(mod), src);
   if (decls.len() == 0 && mod.impls.len() == 0) {
     return "";
   }
@@ -502,6 +552,7 @@ pub function render_page(src: string, mod_path: string): string {
     } else if (d.kind == "trait") {
       out += render_trait(mod.trait_decls[d.index], d.doc);
     }
+    out += source_link(links, d.line);
     i += 1;
   }
   return out + render_impls(mod.impls);

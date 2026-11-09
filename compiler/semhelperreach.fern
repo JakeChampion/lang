@@ -14,7 +14,8 @@ function mark(own m: Marked, at: i32): Marked {
   return Marked { live: m.live.with(at, true), queue: m.queue.append(at) };
 }
 
-function references(body: irtables.LowerResult, names: util.NameIndex, labels: string[], own m: Marked): Marked {
+// Each label contains infix, so an op whose string lacks it names no label.
+function references(body: irtables.LowerResult, names: util.NameIndex, labels: string[], infix: string, own m: Marked): Marked {
   if (!body.ok || body.superseded) {
     return m;
   }
@@ -27,7 +28,7 @@ function references(body: irtables.LowerResult, names: util.NameIndex, labels: s
       m = mark(m, names.find(ir.const_struct_fn_body(op.str)));
     }
     // Constants can nest function values. Dynamic dispatch stores several names.
-    if (op.kind_tag == ir.K_CONST_STRUCT || op.kind_tag == ir.K_DYN_DISPATCH) {
+    if ((op.kind_tag == ir.K_CONST_STRUCT || op.kind_tag == ir.K_DYN_DISPATCH) && util.contains(op.str, infix)) {
       let i = 0;
       while (i < labels.len()) {
         if (!m.live[i] && labels[i] != "" && util.contains(op.str, labels[i])) {
@@ -49,6 +50,12 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     m = Marked { ...m, live: m.live.append(false) };
   }
   let names = util.name_index(labels);
+  let infix = "__";
+  for label in labels {
+    if (!util.contains(label, infix)) {
+      infix = "";
+    }
+  }
   let i = 0;
   while (i < extra.len()) {
     let typed = false;
@@ -61,12 +68,12 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     i += 1;
   }
   for body in declarations {
-    m = references(body, names, labels, m);
+    m = references(body, names, labels, infix, m);
   }
   let at = 0;
   while (at < m.queue.len()) {
     let body = extra[m.queue[at]];
-    m = references(body, names, labels, m);
+    m = references(body, names, labels, infix, m);
     at += 1;
   }
   let kept = Kept { bodies: [], indices: [] };

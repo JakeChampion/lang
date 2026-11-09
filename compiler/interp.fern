@@ -323,23 +323,6 @@ function is_vuint64(v: Value): boolean {
   }
 }
 
-function is_int_value(v: Value): boolean {
-  match (v) {
-    VInt(_) => {
-      return true;
-    },
-    VInt64(_) => {
-      return true;
-    },
-    VUint(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
 function index_in(v: Value, n: i32): i32 {
   let wide = vint_as_i64(v);
   if (wide < 0 || wide >= n as i64) {
@@ -388,17 +371,6 @@ function vint_bits(v: Value): i32 {
       return 0;
     }
   }
-}
-
-function is_destructure_name(name: string): boolean {
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b',') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
 }
 
 function split_binding_names(csv: string): string[] {
@@ -1159,7 +1131,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
   let a = acc;
   for st in stmts {
-    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all);
+    a = astwalk.fold_stmt_nodes(st, a, assign_target_of, astwalk.keep_names, astwalk.descend_all);
   }
   return a;
 }
@@ -1200,10 +1172,6 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-}
-
-function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
 }
 
 function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
@@ -1302,7 +1270,7 @@ function cell_for(heap: interpheap.Heap, v: Value): Value {
 }
 
 function cell_value(heap: interpheap.Heap, v: Value): Value {
-  let encoded = encoded_value(v);
+  let encoded = encoded_value(v, heap);
   if (encoded.ok) {
     let c = VCell { kind: cell_value_kind(v), root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
     return c;
@@ -1364,7 +1332,7 @@ function cell_as_declared(c: VCell, type_name: string): Value {
   if (!cell_kind_numeric(want) || !cell_kind_numeric(c.kind) || want == c.kind) {
     return VCell { ...c };
   }
-  let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want));
+  let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want), c.root.heap);
   if (encoded.ok) {
     interpheap.replace(c.root, encoded.text, [], encoded.edges);
     return VCell { ...c, kind: want };
@@ -1444,10 +1412,10 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
+function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
-    let (ok, next) = cell_any_text(h, v, edges, heap);
+    let (ok, next) = cell_any_text(h, v, edges, heap, captures);
     edges = next;
     if (!ok) {
       return (false, edges);
@@ -1456,8 +1424,14 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   return (true, edges);
 }
 
-function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
-  if let Some(owner) = heap {
+function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
+  if let VHandle(value) = v {
+    let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
+    let root = interpheap.allocate_handle(heap, handle);
+    cell_bits_text(h, 72, edges.len() as i64);
+    return (true, edges.append(root));
+  }
+  if (captures) {
     match (v) {
       VCellV(cv) => {
         cell_bits_text(h, 118, edges.len() as i64);
@@ -1468,19 +1442,13 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
         cell_name_text(h, c.kind);
         return (true, edges.append(c.root));
       },
-      VHandle(value) => {
-        let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
-        let root = interpheap.allocate_handle(owner, handle);
-        cell_bits_text(h, 72, edges.len() as i64);
-        return (true, edges.append(root));
-      },
       VFunc(f) => {
-        let captured = encoded_captures(f.captured_values, owner);
+        let captured = encoded_captures(f.captured_values, heap);
         if (!captured.ok) {
           return (false, edges);
         }
         let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name };
-        let root = interpheap.allocate_closure(owner, code, captured.text, captured.edges);
+        let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
       },
@@ -1500,19 +1468,19 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
       cell_name_text(h, a.elem);
       let store = a.store;
       edges = edges.append(store);
-      return cell_parts_text(h, a.items, edges, heap);
+      return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
-      return cell_parts_text(h, t.elements, edges, heap);
+      return cell_parts_text(h, t.elements, edges, heap, captures);
     },
     VMap(m) => {
       buf_push_byte(h, 109);
-      let (ok, next) = cell_parts_text(h, m.keys, edges, heap);
+      let (ok, next) = cell_parts_text(h, m.keys, edges, heap, captures);
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next, heap);
+      return cell_parts_text(h, m.values, next, heap, captures);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1526,7 +1494,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
       for name in st.field_names {
         cell_name_text(h, name);
       }
-      return cell_parts_text(h, st.field_values, edges, heap);
+      return cell_parts_text(h, st.field_values, edges, heap, captures);
     },
     _ => {
       return (cell_scalar_text(h, v), edges);
@@ -1537,24 +1505,24 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
 struct EncodedValue { ok: boolean, text: string, edges: interpheap.Root[] }
 
 // Public Cell values cannot contain functions or cells.
-function encoded_value(v: Value): EncodedValue {
-  return encoded_value_mode(v, None);
+function encoded_value(v: Value, heap: interpheap.Heap): EncodedValue {
+  return encoded_value_mode(v, heap, false);
 }
 
 // Internal slots store captures through managed edges, which the collector can trace.
 function encoded_binding(v: Value, heap: interpheap.Heap): EncodedValue {
-  return encoded_value_mode(v, Some(heap));
+  return encoded_value_mode(v, heap, true);
 }
 
 function encoded_captures(values: Value[], heap: interpheap.Heap): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_parts_text(h, values, [], Some(heap));
+  let (ok, edges) = cell_parts_text(h, values, [], heap, true);
   return encoded_buffer(h, ok, edges);
 }
 
-function encoded_value_mode(v: Value, heap: Option[interpheap.Heap]): EncodedValue {
+function encoded_value_mode(v: Value, heap: interpheap.Heap, captures: boolean): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_any_text(h, v, [], heap);
+  let (ok, edges) = cell_any_text(h, v, [], heap, captures);
   return encoded_buffer(h, ok, edges);
 }
 
@@ -1705,7 +1673,7 @@ function cell_set_value(c: VCell, v: Value): Value {
   if (c.kind != "value" && cell_value_kind(value) != c.kind) {
     return v_err("Cell.set: the value is not a " + c.kind);
   }
-  let encoded = encoded_value(value);
+  let encoded = encoded_value(value, c.root.heap);
   if (!encoded.ok) {
     return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
@@ -2553,6 +2521,12 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
     }
     return VLanes { width: width, bits: bits };
   }
+  if (verb == "load_f32_ptr") {
+    let address = vint_as_i64(args[0]) as usize;
+    unsafe {
+      return VLanes { width: 64, bits: [f64_bits(f32_from_bits(__load_i32(address)) as f64), f64_bits(f32_from_bits(__load_i32(address + 4 as usize)) as f64)] };
+    }
+  }
   if (verb == "load_ptr") {
     let address = vint_as_i64(args[0]) as usize;
     let bits: i64[] = [];
@@ -2676,7 +2650,7 @@ function worker_contract(heap: interpheap.Heap, name: string, args: Value[]): Va
     return send_copy_value(arg_at(args, 0));
   }
   if (name == "__send_root") {
-    let encoded = encoded_value(arg_at(args, 0));
+    let encoded = encoded_value(arg_at(args, 0), heap);
     if (!encoded.ok) {
       return v_err("__send_root: the interpreter cannot hand over a function value");
     }
@@ -3740,10 +3714,6 @@ function (own e: Env) update(name: string, v: Value): Env {
   return match (e.outer) { Some(parent) => Env { ...e, outer: Some(Env { ...parent }.update(name, v)) }, None => e };
 }
 
-function is_sat_op_name(op: string): boolean {
-  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
-}
-
 function sat_exact(op: string, a: i64, b: i64): i64 {
   if (op == "+|") {
     return a + b;
@@ -4104,7 +4074,7 @@ function checked_64(op: string, a: i64, b: i64, signed: boolean): Option[i64] {
 }
 
 function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value {
-  if (ty == "u8" && is_sat_op_name(op) && is_int_like(lv) && is_int_like(rv)) {
+  if (ty == "u8" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
     return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
   }
   let v = eval_binary(op, lv, rv);
@@ -4156,7 +4126,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       let ua = a as u64;
       let ub = b as u64;
       let uzero = 0 as u64;
-      if (is_sat_op_name(op)) {
+      if (lexer.is_saturating_op(op)) {
         return v_uint64(sat_u64(op, ua, ub));
       }
       if (op == "/") {
@@ -4190,7 +4160,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         return v_bool(ua >= ub);
       }
     }
-    if (is_sat_op_name(op)) {
+    if (lexer.is_saturating_op(op)) {
       return v_int64(sat_i64(op, a, b));
     }
     if (op == "/") {
@@ -4235,7 +4205,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     if (op == "*") {
       return v_uint(la * rb);
     }
-    if (is_sat_op_name(op)) {
+    if (lexer.is_saturating_op(op)) {
       return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
     }
     if (op == "&") {
@@ -4333,7 +4303,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       return v_bool(fa != fb);
     }
   }
-  if (is_sat_op_name(op)) {
+  if (lexer.is_saturating_op(op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -5458,7 +5428,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
   if (is_err(iv)) {
     return iv;
   }
-  if (!is_int_value(iv)) {
+  if (!is_int_like(iv)) {
     return v_err("index must be an integer");
   }
   match (av) {
@@ -5757,21 +5727,6 @@ function name_ends_with(nm: string, suffix: string): boolean {
     return false;
   }
   return slice_unchecked(nm, nm.len() - suffix.len(), nm.len()) == suffix;
-}
-
-function variant_simple_name(name: string): string {
-  let last_dot: i32 = -1;
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b'.') {
-      last_dot = i;
-    }
-    i += 1;
-  }
-  if (last_dot >= 0) {
-    return slice_unchecked(name, last_dot + 1, name.len()) + "";
-  }
-  return name;
 }
 
 function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
@@ -7721,10 +7676,6 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
   return w;
 }
 
-function is_sha_hw_name(name: string): boolean {
-  return name == "__sha256_hw" || name == "__sha1_hw";
-}
-
 function is_sha_blocks_name(name: string): boolean {
   return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
@@ -7848,6 +7799,12 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         return v_err("string_from_bytes_unchecked: arg must be an array");
       }
     }
+  }
+  if (name == "share_unchecked") {
+    if (args.len() != 1) {
+      return v_err("share_unchecked: expected 1 arg");
+    }
+    return args[0];
   }
   if (name == "string_from_bytes_range_unchecked") {
     if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
@@ -8000,7 +7957,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
     return call_aes_gcm_into(heap, name, args);
   }
-  if (args.len() == 0 && is_sha_hw_name(name)) {
+  if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);
   }
   if (args.len() == 2 && is_sha_blocks_name(name)) {
@@ -8680,7 +8637,7 @@ function eval_match_stmt(m: ast.StmtMatch, own env: Env): StepResult {
 function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scrutinee: ast.Expr): string {
   let r = parser.parse_type_ref(bound_type_spelling(env.static_type_of(scrutinee), env));
   let owner = r.base;
-  let simple = variant_simple_name(pattern);
+  let simple = parser.derive_simple_name(pattern);
   if (simple.len() < pattern.len()) {
     owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
   }
@@ -8775,7 +8732,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         }
         match (sv) {
           VStruct(vs) => {
-            if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
+            if (vs.type_name == pv.type_name || vs.type_name == parser.derive_simple_name(pv.type_name)) {
               matched = true;
               let is_payload = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
               if (pv.at_binding.len() > 0) {
@@ -8920,7 +8877,7 @@ function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       if (is_err(val)) {
         return step_stop(env, val);
       }
-      if (is_destructure_name(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return destructure_step(env, v, val);
       }
       let declared = v.type_name;
@@ -9131,7 +9088,7 @@ function for_elements(iv: Value): Option[Value[]] {
 }
 
 function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
-  if (is_destructure_name(header)) {
+  if (util.contains(header, ",")) {
     let (out, err) = bind_destructure(env, header, "", elem);
     if (!is_err(err)) {
       return out;

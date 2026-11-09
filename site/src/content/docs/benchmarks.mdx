@@ -1,0 +1,36 @@
+---
+title: Benchmarks
+description: Every run of the Fern benchmarks, with the machine that made it, and the trend from the weekly runs.
+---
+
+import BenchHistory from "../../components/BenchHistory.astro";
+
+Two benchmarks run each week on a GitHub-hosted Linux x86-64 runner, and
+each run adds a log to the repository. This page shows every run. A
+chart joins only the runs from that runner: a run on another computer
+is in the table, but it is not comparable, so it is not on the line.
+
+## Coreutils against GNU and uutils
+
+Fern's rewrite of the GNU coreutils, timed against GNU coreutils and
+uutils on the same workloads. A ratio is the other tool's mean time over
+Fern's, so above 1× Fern is faster. The [coreutils page](../coreutils/)
+has each workload of the newest run.
+
+<BenchHistory part="coreutils" />
+
+## Start to exit
+
+A program that prints one line and exits, built the usual release way
+for each language, timed from process start to exit with `hyperfine`.
+The size of each binary is in the log.
+
+<BenchHistory part="startup" />
+
+## How the runs are made
+
+`scripts/coreutils-bench` and `scripts/startup-bench` make the logs, and
+`.github/workflows/coreutils-bench.yml` and
+`.github/workflows/startup-bench.yml` run them each week. Each workflow
+opens a pull request with the new log, and the site shows it when the
+pull request merges.

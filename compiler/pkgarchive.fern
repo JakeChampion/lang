@@ -113,14 +113,14 @@ function write_entry(tmp: string, t: u8[], e: Entry): string {
     return "";
   }
   if (escapes(name)) {
-    return "archive entry " + quoted(e.name) + " escapes the package directory";
+    return "archive entry " + util.quoted(e.name) + " escapes the package directory";
   }
   let dst = tmp + "/" + name;
   if (e.kind == b'5') {
     return made(create_dir_all(dst), dst);
   }
   if (e.kind != b'0' && e.kind != 0) {
-    return "archive entry " + quoted(e.name) + " has unsupported type " + util.i32_to_string(e.kind as i32) + " (only files and directories)";
+    return "archive entry " + util.quoted(e.name) + " has unsupported type " + util.i32_to_string(e.kind as i32) + " (only files and directories)";
   }
   let err = made(create_dir_all(util.dir_of(dst)), util.dir_of(dst));
   if (err.len() > 0) {
@@ -287,8 +287,4 @@ function drop_last(xs: string[]): string[] {
     i += 1;
   }
   return out;
-}
-
-function quoted(s: string): string {
-  return "\"" + s + "\"";
 }

@@ -1,0 +1,96 @@
+import "std/audio/caf";
+import "std/audio/caf/file";
+import "std/audio/pcm";
+import "caf_check";
+import "flac_file_check" as io;
+
+pub function index(src: io.Source, limits: file.Limits): Result[file.Index, string] {
+  return build(src.bytes.len() as i64, limits, io.seek_source(src), io.read_source(src), src.operations);
+}
+
+pub function build(bytes: i64, limits: file.Limits, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], operations: Cell[i32]): Result[file.Index, string] {
+  let builder = match (file.create(bytes, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let steps = 0;
+  while (true) {
+    let before = operations.get();
+    let (next, event) = match (builder.step_with(seek, read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    builder = next;
+    steps += 1;
+    if (operations.get() - before > 1 || steps > 100000) {
+      return Err("index cooperative work bound");
+    }
+    match (event) {
+      file.BuildReady(value) => {
+        let (_, done) = match (builder.step_with(io.no_seek, io.no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let file.BuildFinished = done {
+          return Ok(value);
+        }
+        return Err("source access after index completion");
+      },
+      file.BuildFinished => {
+        return Err("missing index");
+      },
+      file.BuildPending => {}
+    }
+  }
+}
+
+function stream(index: file.Index, src: io.Source, expected: [u8], vector: caf_check.Reference, target: i64): Result[void, string] {
+  let cursor = match (file.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  cursor = match (cursor.seek(target)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let capacity = index.max_packet_frames() * vector.channels;
+  let storage = pcm.zeros(capacity + 1).with(capacity, 123456789);
+  let position = target;
+  let steps = 0;
+  while (true) {
+    let before = src.operations.get();
+    let (next, event) = match (cursor.step_into_with(storage, io.seek_source(src), io.read_source(src))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    steps += 1;
+    if (src.operations.get() - before > 1 || steps > 100000) {
+      return Err("playback cooperative work bound");
+    }
+    match (event) {
+      caf.BufferPending(value) => {
+        storage = value;
+      },
+      caf.BufferSamples(value) => {
+        if (value.position != position || value.frames < 1 || value.format.channels != vector.channels || value.channel_mask != vector.mask) {
+          return Err("source event range");
+        }
+        caf_check.samples(value.samples, value.start, value.frames, value.position, expected, vector.channels, vector)?;
+        position += value.frames as i64;
+        storage = value.samples;
+      },
+      caf.BufferFinished(value) => {
+        if (value.len() != capacity + 1 || value[capacity] != 123456789 || position != vector.frames as i64) {
+          return Err("source completion or suffix");
+        }
+        let (_, done) = match (cursor.step_into_with(value, io.no_seek, io.no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let caf.BufferFinished(_) = done {
+          return Ok(());
+        }
+        return Err("source access after playback completion");
+      }
+    }
+    if (storage.len() != capacity + 1 || storage[capacity] != 123456789) {
+      return Err("source buffer suffix");
+    }
+  }
+}
+
+pub function run(encoded: u8[], expected: [u8], vector: caf_check.Reference): Result[void, string] {
+  let src = io.mock(encoded);
+  let index = index(src, file.default_limits())?;
+  let info = index.information();
+  if (info.frames != vector.frames as i64 || info.priming != vector.trim as i64 || info.channel_mask != vector.mask || info.format.sample_rate != vector.rate || info.format.channels != vector.channels || info.format.bits_per_sample != vector.depth) {
+    return Err("source index information");
+  }
+  stream(index, src, expected, vector, 0i64)?;
+  for target in [info.frames, info.frames - 1i64, 1i64, 17i64, 4094i64, 4095i64, 4096i64, 4097i64, info.frames / 2i64, 0i64] {
+    if (target >= 0i64 && target <= info.frames) {
+      stream(index, src, expected, vector, target)?;
+    }
+  }
+  return Ok(());
+}

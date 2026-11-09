@@ -106,7 +106,15 @@ func TestTrustAndDistrust(t *testing.T) {
 	if strings.Count(src, "-----BEGIN CERTIFICATE-----") != st.taken {
 		t.Error("the PEM bundle does not hold one block per root taken")
 	}
-	if strings.Count(src, " as i64") != st.taken || strings.Count(src, "0 as i64") != st.taken-st.dated {
+	// Match each complete date. A nonzero timestamp can end in zero.
+	dates := regexp.MustCompile(`(?:\[|, )([0-9]+) as i64`).FindAllStringSubmatch(src, -1)
+	undated := 0
+	for _, date := range dates {
+		if date[1] == "0" {
+			undated++
+		}
+	}
+	if len(dates) != st.taken || undated != st.taken-st.dated {
 		t.Error("__distrust does not hold one date per root taken, zero for the undated")
 	}
 	var dated root

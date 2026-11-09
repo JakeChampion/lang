@@ -70,7 +70,26 @@ Fragmented media, encryption, and external data references return `Unsupported`.
 The input must be a complete byte view, within an explicit input limit.
 Separate budgets bound boxes, tracks, descriptions, edits, packets, dimensions, and each packet's size.
 The packet budget is cumulative across video tracks. The track budget includes audio and other non-video tracks.
-This API does not stream a large file or define an exact process-memory bound.
+The complete byte-view API does not stream a large file or define an exact process-memory bound.
+
+`std/video/mp4/file` indexes the same tracks from a borrowed seekable source.
+It reads top-level headers and one movie metadata box. It skips media payloads without a copy.
+It reuses the same nested box and sample-table readers.
+The source length and packet offsets use signed 64-bit counts.
+
+Its defaults permit files up to 64 GiB and movie metadata up to 16 MiB.
+Separate limits bound each input window and the number of seek and read operations.
+Short reads are permitted. Empty reads before a window completes report truncation.
+I/O errors retain their own category.
+
+The returned index retains metadata and packet ranges, without encoded payloads.
+These limits do not define an exact process-memory bound.
+
+The caller retains and closes the source after success or failure.
+The source must remain immutable through index and packet reads.
+Use `std/audio/file.Window` to read one indexed packet range through the same source.
+Skipped payloads still need truncation checks when the caller reads them.
+These synchronous calls must run outside a latency-sensitive Android loop callback.
 
 ## Android packet path
 
@@ -151,11 +170,13 @@ Container codec restrictions and sample order still apply.
 
 `std/android/video/extractor` reads platform-supported containers from an explicit file range.
 Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+
 `std/android/video/source` opens a granted content URI for this packet path.
 It duplicates the asset descriptor and preserves the provider's offset and length.
 An unknown length resolves from the seekable file's end. Non-seekable sources return `Unsupported`.
 A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
 The adapter does not buffer the complete source or retain Java global references.
+
 Close the extractor or player before source close. Each source has one owner.
 The app needs a URI read grant, without broad storage permission.
 
@@ -197,10 +218,26 @@ The header frame count is advisory. Each packet has its own timestamp.
 
 Timestamp conversion uses the declared rational timebase and checked arithmetic.
 
+`std/video/ivf/input` reads these packets from a borrowed sequential source.
+Each step performs at most one bounded read and emits at most one event.
+It accepts short reads and distinguishes I/O errors from malformed or truncated input.
+It validates the declared packet length before a payload read.
+Separate limits bound input-buffer bytes, packet bytes, packet count, and source-read operations.
+
+Packet events own their encoded bytes and preserve unsigned 64-bit timestamps without an order requirement.
+Payload offsets use signed 64-bit counts from the source start.
+EOF between packets returns `End`. EOF inside a header or payload returns `Truncated`.
+The header frame count remains advisory.
+The caller retains and closes the source after success or failure.
+
+The input-buffer limit excludes retained packet events and does not define an exact process-memory bound.
+Blocking source reads must run outside the Android loop callback.
+
 IVF support does not establish VP8, VP9, or AV1 software decode support.
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
-Native Fern demuxers for MP4, MOV, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
+The native MP4 indexer above supports self-contained AVC and HEVC tracks.
+Other MOV tracks, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
 
@@ -272,7 +309,7 @@ It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
 
-The compiler differential suite includes the native video, MP4 packet, codec-policy, and source-range tests.
+The compiler differential suite includes the native video, MP4 packet and file-input, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
 The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
@@ -282,15 +319,31 @@ The Android workflow builds `tests/android/video/app.fern` and runs it on the AP
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
+
 The workflow also copies the byte-buffer export into MediaStore and grants the video APK video read permission.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
 
 The APK build lane also runs `scripts/check-video-mp4-interop` on fresh FFmpeg fixtures.
 It compares native packet ranges, timestamps, durations, and sync flags with FFprobe.
-It extracts AVC and HEVC Annex B streams through Fern and compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+It compares complete-view and seekable-file packet indexes for all six generated fixtures.
+Native and WASI file readers must return the same packet bytes and metadata.
+It extracts AVC and HEVC Annex B streams through bounded file windows.
+It compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+
+An additional sparse AVC file places media beyond 8 GiB and checks packet offsets against FFprobe.
+The sparse file occupies less than 1 MiB of disk blocks and does not enter repository artifacts.
+
+Native and WASI file-input tests reject every media-payload read during index creation.
+They cover short reads, an 8 GiB sparse range, truncated boxes, resource limits, and I/O failures.
 Fixtures cover reordered frames, signed composition offsets, fast-start layout, interleaved AAC, multiple video tracks, compact sample sizes, and 64-bit offsets.
 Normal native and WASI tests use checked-in reference bytes and require no FFmpeg installation.
+
+The same build lane runs `scripts/check-video-ivf-interop` on fresh VP8, VP9, and AV1 files.
+Native and WASI readers must return identical packet bytes through three-byte source reads.
+FFprobe independently checks packet sizes, timestamps, and offsets.
+FFmpeg decodes the reconstructed IVF files and compares every RGB sample with the original decode.
+Native and WASI boundary tests cover partial input, invalid lengths, exact budgets, I/O failures, and source offsets beyond 4 GiB.
 
 Emulator results do not establish physical hardware throughput or battery consumption.
 
@@ -344,6 +397,55 @@ The decode loop allocated 200,000 objects, or two per call.
 These result allocations remain an optimization target.
 This small synthetic workload does not predict full-resolution device playback.
 It has no comparison with an established decoder and establishes no world-leading performance claim.
+
+## Matched QTRLE qualification
+
+`scripts/compare-video-qtrle` compares the public Fern and FFmpeg QTRLE decode APIs on identical packets.
+FFmpeg supplies a separate native reference executable for the qualification tool.
+The Fern decoder and the Android app do not acquire an FFmpeg dependency.
+
+The tool generates four-frame RGB24 and ARGB32 sequences with repeated runs, literal pixels, sparse changes, and dense changes.
+It includes one unchanged frame per sequence. Full workloads use 512 by 288 and 1920 by 1080 images.
+Both decoders must reproduce every canonical ARGB byte before timing starts.
+A separate native sanitizer build and optional WASI execution must reproduce those bytes too.
+
+Each process preloads its packets and retains only the current frame.
+FFmpeg uses one decoder thread. Each process completes one corpus cycle before the timed loop.
+The loop measures public decode calls and one sampled pixel per frame with `CLOCK_MONOTONIC`.
+Setup, frame verification, output writes, and process startup remain outside that interval.
+
+Pairs alternate their execution order. The report preserves every trial, checksums, compiler and binary hashes, tool versions, and corpus hashes.
+
+A small native sampler forks each measured process after its own exec.
+This excludes the Python parent's inherited RSS floor.
+The sampler records peak process RSS and complete-process user and system CPU time through Linux `wait4`.
+RSS includes runtime code, shared libraries, preloaded packets, and frame storage. It is not a decoder-only allocation budget.
+
+Fern pixel arrays use a different representation from FFmpeg's packed pixel buffers.
+A separate instrumented executable counts Fern allocations. Its time and RSS do not enter the comparison.
+Assembly checks require the timed executable to omit allocation instrumentation.
+FFmpeg allocation counts remain unmeasured.
+
+The tool requires Linux, a C compiler, FFmpeg, its development headers, and `pkg-config`.
+WASI verification also requires `wasmtime`.
+
+```sh
+scripts/compare-video-qtrle --wasi --output build/video/qtrle-comparison.json
+scripts/compare-video-qtrle --smoke --wasi --output build/video/qtrle-smoke.json
+```
+
+`--smoke` verifies the sampler, malformed-input rejection, complete frames, and timed checksums on small images.
+It records no performance ratios. The Android build lane runs this check with WASI verification and retains its report.
+
+The workloads repeat four packets on one host. They do not represent every animation, general video decode, or full application playback.
+Shared-host timings and process RSS require interpretation. They do not establish world-leading performance, physical-device power, or lip-sync accuracy.
+
+The [2026-11-08 x86-64 checkpoint](benchmarks/video-qtrle-2026-11-08/README.md) contains the first matched results.
+That compiler takes 2.2 to 7.7 times the FFmpeg loop time on those four workloads.
+
+The [2026-11-09 checkpoint](benchmarks/video-qtrle-2026-11-09/README.md) repeats the same packets with compiler source `15a62e417f`.
+Fern takes 2.3 to 7.4 times the FFmpeg loop time in that run.
+These results identify allocation and memory targets. They do not establish a general decoder ranking.
 
 ## Player work and qualification order
 

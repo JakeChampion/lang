@@ -1,0 +1,33 @@
+File: go-lexer.test
+Build ID: 20bcdb429b3906f0ff52466f655426bc4b631312
+Type: cpu
+Time: 2026-11-09 17:50:32 UTC
+Duration: 24.67s, Total samples = 26.47s (107.28%)
+Showing nodes accounting for 24.64s, 93.09% of 26.47s total
+Dropped 215 nodes (cum <= 0.13s)
+Showing top 24 nodes out of 55
+      flat  flat%   sum%        cum   cum%
+     6.63s 25.05% 25.05%     18.12s 68.45%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).next
+     5.52s 20.85% 45.90%      5.52s 20.85%  memeqbody
+     3.31s 12.50% 58.41%     24.24s 91.58%  github.com/jakechampion/lang/internal/syntax/lexer.Tokenize
+     2.37s  8.95% 67.36%      2.37s  8.95%  runtime.memclrNoHeapPointers
+     1.35s  5.10% 72.46%      7.94s 30.00%  internal/stringslite.HasPrefix (inline)
+     1.07s  4.04% 76.50%      1.07s  4.04%  runtime.memequal
+     0.81s  3.06% 79.56%      0.84s  3.17%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).advance (inline)
+     0.49s  1.85% 81.41%      0.85s  3.21%  runtime.scanObject
+     0.43s  1.62% 83.04%      0.46s  1.74%  github.com/jakechampion/lang/internal/syntax/lexer.asciiIdentStart (inline)
+     0.41s  1.55% 84.59%      0.41s  1.55%  internal/runtime/maps.memHashAES
+     0.32s  1.21% 85.80%      0.32s  1.21%  runtime.madvise
+     0.29s  1.10% 86.89%      0.71s  2.68%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).skipTrivia
+     0.26s  0.98% 87.87%      0.26s  0.98%  runtime.asyncPreempt
+     0.25s  0.94% 88.82%      1.03s  3.89%  runtime.mapaccess2_faststr
+     0.18s  0.68% 89.50%      0.18s  0.68%  github.com/jakechampion/lang/internal/syntax/lexer.asciiSpace (inline)
+     0.17s  0.64% 90.14%      0.19s  0.72%  runtime.typePointers.next
+     0.16s   0.6% 90.74%      0.16s   0.6%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     0.15s  0.57% 91.31%      0.15s  0.57%  runtime.memmove
+     0.14s  0.53% 91.84%      0.14s  0.53%  runtime.futex
+     0.09s  0.34% 92.18%      0.15s  0.57%  runtime.findObject
+     0.08s   0.3% 92.48%      0.15s  0.57%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).scanDigits
+     0.08s   0.3% 92.78%      1.11s  4.19%  runtime.mapaccess1_faststr
+     0.05s  0.19% 92.97%         8s 30.22%  strings.HasPrefix (inline)
+     0.03s  0.11% 93.09%      0.16s   0.6%  runtime.findRunnable

@@ -12,12 +12,12 @@ assembles, and links in-process, so building a program needs nothing on
 interprets, resolves packages, and reports what capabilities a package
 reaches.
 
-**Documentation:** <https://jakechampion.github.io/lang/>
-([tutorial](https://jakechampion.github.io/lang/tutorial/install/) ·
-[reference](https://jakechampion.github.io/lang/reference/syntax/) ·
-[standard library](https://jakechampion.github.io/lang/stdlib/) ·
-[playground](https://jakechampion.github.io/lang/playground/) ·
-[why Fern](https://jakechampion.github.io/lang/why/))
+**Documentation:** <https://fern-lang.netlify.app/>
+([tutorial](https://fern-lang.netlify.app/tutorial/install/) ·
+[reference](https://fern-lang.netlify.app/reference/syntax/) ·
+[standard library](https://fern-lang.netlify.app/stdlib/) ·
+[playground](https://fern-lang.netlify.app/playground/) ·
+[why Fern](https://fern-lang.netlify.app/why/))
 
 ## A taste
 
@@ -61,7 +61,7 @@ Sum types with exhaustive `match`, generics, traits with static dispatch,
 methods on any type including primitives, closures, `Option` / `Result`
 with `?`, `defer` / `errdefer`, saturating and checked integer operators,
 and a module system with `pub` visibility. There are no exceptions and no
-null. The [language reference](https://jakechampion.github.io/lang/reference/syntax/)
+null. The [language reference](https://fern-lang.netlify.app/reference/syntax/)
 has the full surface.
 
 ## Install

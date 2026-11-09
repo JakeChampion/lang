@@ -9,9 +9,11 @@ import (
 func TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	entry := "function main(): i32 {\n" +
+	entry := "function arch_of(f: () => string): string { return f(); }\n" +
+		"function main(): i32 {\n" +
 		"    print(target_os());\n" +
 		"    print(target_arch());\n" +
+		"    print(arch_of(() => target_arch()));\n" +
 		"    if (target_arch() == \"x86-64\") { return 0; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -30,7 +32,7 @@ func TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64(t *testing.T) {
 	}
 	out, _ := cmd.CombinedOutput()
 	got := strings.TrimRight(string(out), "\n")
-	if want := "linux\nx86-64"; got != want {
+	if want := "linux\nx86-64\nx86-64"; got != want {
 		t.Errorf("target name = %q, want %q\n"+
 			"arm64 for the ISA means the driver took the lowering's pointer-width default "+
 			"instead of folding its own -target", got, want)

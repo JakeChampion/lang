@@ -426,6 +426,8 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: irverify, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIRVerify,       wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-x86,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Assembler,   wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Assembler, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: image-x86, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Image,     wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: image-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Image, wasmtime: "false" }
           # The package layer's readers: a manifest, a lock, an index and an archive are inputs an attacker controls.
           - { runner: ubuntu-24.04,     host: x86_64,  slug: toml,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostToml,            wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: lock,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostLock,            wasmtime: "false" }
@@ -436,6 +438,7 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: std-http, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdHTTP,         wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: hpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdHPACK,        wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: json,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJSON,         wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: utf8,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdUTF8,         wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: url,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdURL,          wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: h2,      pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdH2,           wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: qpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQPACK,        wasmtime: "false" }
@@ -455,7 +458,10 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: jpeg,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJPEG,       wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 65
+    env:
+      # The targets of readerTargets in internal/testing/e2ecompiler.
+      READER_COVER: ${{ startsWith(matrix.target, 'FuzzSelfHostStd') || contains(fromJSON('["FuzzSelfHostManifest", "FuzzSelfHostToml", "FuzzSelfHostLock", "FuzzSelfHostIndex", "FuzzSelfHostArchive", "FuzzSelfHostTangle", "FuzzSelfHostWeave", "FuzzSelfHostIRVerify", "FuzzSelfHostX86Assembler", "FuzzSelfHostArm64Assembler", "FuzzSelfHostX86Image", "FuzzSelfHostArm64Image"]'), matrix.target) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -491,6 +497,29 @@ jobs:
         run: |
           gotestsum --format testname -- -timeout=40m \
             -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}
+
+      # A reader of stdparse.fern or of a driver also runs under the loop
+      # that steers by the coverage of the Fern process, which Go's fuzzer
+      # cannot see. Its corpus is its own, in the same night-to-night cache
+      # shape as Go's. A failing input goes into testdata/fuzz/<Target>/,
+      # which the upload below collects.
+      - name: Restore coverage-guided corpus
+        if: ${{ !cancelled() && env.READER_COVER == 'true' }}
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/reader-cover-corpus
+          key: readercover-${{ matrix.slug }}-${{ github.run_id }}
+          restore-keys: |
+            readercover-${{ matrix.slug }}-
+      - name: Coverage-guided ${{ matrix.target }}
+        if: ${{ !cancelled() && env.READER_COVER == 'true' }}
+        env:
+          FERN_READER_COVER_FUZZ: "1"
+          FERN_READER_COVER_FUZZ_TIME: "15m"
+          FERN_READER_COVER_FUZZ_CORPUS: ${{ runner.temp }}/reader-cover-corpus
+        run: |
+          gotestsum --format testname -- -timeout=25m \
+            -run '^TestSelfHostReaderCoverageGuidedFuzz$/^${{ matrix.target }}$' ${{ matrix.pkg }}
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

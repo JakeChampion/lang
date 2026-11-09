@@ -229,11 +229,11 @@ function part(b: [u8], at: i32, len: i32): u8[] {
   return out;
 }
 
-function log(n: Node, line: string): Node {
+function log(own n: Node, line: string): Node {
   return Node { ...n, logs: n.logs.append(line) };
 }
 
-function to_peer(n: Node, data: u8[][]): Node {
+function to_peer(own n: Node, data: u8[][]): Node {
   let out = n.out;
   for d in data {
     out = out.append(Datagram { broadcast: false, data: d });
@@ -243,7 +243,7 @@ function to_peer(n: Node, data: u8[][]): Node {
 
 // The datagram in the first `len` bytes of `data`, from `from`. After the
 // node finds its peer, it takes datagrams only from the peer's address.
-pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i64): Node {
+pub function receive(own n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i64): Node {
   if (!searching(n) && !from.eq(n.peer_addr)) {
     return n;
   }
@@ -263,7 +263,7 @@ function searching(n: Node): boolean {
   return false;
 }
 
-function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
+function packet(own n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
   let st = lan.heard(n.link, p, now);
   let t = to_peer(Node { ...n, link: st.link }, st.out);
   match (st.heard) {
@@ -279,7 +279,8 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
         me = 1;
         id = t.link.me;
       }
-      let u = act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
+      let up = session.TransportUp(lan.initiator(t.link), me, 3 - me, id);
+      let u = act(log(t, "keys are ready"), up, now);
       return announced(u, now);
     },
     lan.Failed => {
@@ -296,43 +297,43 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
   return t;
 }
 
-function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
+function frame(own n: Node, kind: i32, body: u8[], now: i64): Node {
   match (n.chan) {
     Some(c) => {
       if (kind == lan.CONTROL) {
         let (c1, plain) = secure.open_control(c, body);
-        let t = Node { ...n, chan: Some(c1) };
+        n = Node { ...n, chan: Some(c1) };
         match (plain) {
           Some(b) => {
             match (protocol.decode(b)) {
               Some(protocol.KeyOffer(epoch, public)) => {
-                return offered(t, epoch, public);
+                return offered(n, epoch, public);
               },
               Some(protocol.KeyAccept(epoch, public)) => {
-                return accepted(t, epoch, public);
+                return accepted(n, epoch, public);
               },
               Some(protocol.Identity(public, signature, flags)) => {
-                return pinned(t, public, signature, flags, now);
+                return pinned(n, public, signature, flags, now);
               },
               Some(m) => {
-                return act(t, session.Received(m), now);
+                return act(n, session.Received(m), now);
               },
               None => {}
             }
           },
           None => {}
         }
-        return t;
+        return n;
       }
       let (c2, voice) = secure.open_voice(c, body);
-      let t2 = Node { ...n, chan: Some(c2) };
+      n = Node { ...n, chan: Some(c2) };
       match (voice) {
         Some((seq, b)) => {
-          return played(t2, seq, b, now);
+          return played(n, seq, b, now);
         },
         None => {}
       }
-      return t2;
+      return n;
     },
     None => {}
   }
@@ -341,17 +342,16 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
 
 // The node with the frames of voice packet `b`, with sequence number `seq`,
 // in `heard`. The log says when the voice of the peer starts again.
-function played(n: Node, seq: i64, b: [u8], now: i64): Node {
-  let t = n;
+function played(own n: Node, seq: i64, b: [u8], now: i64): Node {
   if (now - n.heard_at > 1000i64) {
-    t = log(n, "hearing the peer");
+    n = log(n, "hearing the peer");
   }
-  let (rx, frames) = voice.receive(voice.Receiver { ...t.rx }, seq, b);
-  let heard = t.heard;
+  let (rx, frames) = voice.receive(n.rx, seq, b);
+  let heard = n.heard;
   for f in frames {
     heard = heard.append(f);
   }
-  return Node { ...t, rx: rx, heard: heard, heard_at: now };
+  return Node { ...n, rx: rx, heard: heard, heard_at: now };
 }
 
 // One session event and its actions. The log gets each change of state,
@@ -373,7 +373,7 @@ function act(n: Node, e: session.Event, now: i64): Node {
   return t;
 }
 
-function action(n: Node, a: session.Action): Node {
+function action(own n: Node, a: session.Action): Node {
   match (a) {
     session.Send(m) => {
       return send_frame(n, lan.CONTROL, protocol.encode(m));
@@ -389,7 +389,7 @@ function action(n: Node, a: session.Action): Node {
 }
 
 // A sealed control or voice frame to the peer.
-function send_frame(n: Node, kind: i32, plain: u8[]): Node {
+function send_frame(own n: Node, kind: i32, plain: u8[]): Node {
   match (n.chan) {
     Some(c) => {
       let (c1, sealed) = match (kind == lan.VOICE) {
@@ -405,7 +405,7 @@ function send_frame(n: Node, kind: i32, plain: u8[]): Node {
 
 // The tag of this side's identity, to the peer now and again at each
 // RESEND_MS until the peer confirms.
-function announced(n: Node, now: i64): Node {
+function announced(own n: Node, now: i64): Node {
   let Some(id) = n.identity else {
     return n;
   };
@@ -416,7 +416,7 @@ function announced(n: Node, now: i64): Node {
   return to_peer(Node { ...n, ident: [frame], ident_at: now + lan.RESEND_MS }, [frame]);
 }
 
-function proving(n: Node, now: i64): Node {
+function proving(own n: Node, now: i64): Node {
   let shows = false;
   match (n.link.phase) {
     lan.Verifying => {
@@ -437,7 +437,7 @@ function proving(n: Node, now: i64): Node {
 // proof. A proof of a known phone means that the peer knows this phone too,
 // because it sent the proof: the two met before and a user confirmed the
 // string then, so they need no new check.
-function identified(n: Node, body: u8[], now: i64): Node {
+function identified(own n: Node, body: u8[], now: i64): Node {
   let Some(k) = n.link.keys else {
     return n;
   };
@@ -462,7 +462,7 @@ function identified(n: Node, body: u8[], now: i64): Node {
 }
 
 // This side's identity on the channel, with its flags, to the peer.
-function send_pin(n: Node, now: i64): Node {
+function send_pin(own n: Node, now: i64): Node {
   let Some(id) = n.identity else {
     return n;
   };
@@ -485,7 +485,7 @@ function pins_done(n: Node): boolean {
 }
 
 // The identity again at each RESEND_MS, until each phone has the other's.
-function pinning(n: Node, now: i64): Node {
+function pinning(own n: Node, now: i64): Node {
   if (!n.pinning || pins_done(n) || now < n.pin_at || !session.connected(n.sess)) {
     return n;
   }
@@ -495,7 +495,7 @@ function pinning(n: Node, now: i64): Node {
 // The peer's identity on the channel. After a user confirmed the string of
 // this session, this phone keeps it. A peer that does not know yet that
 // this side has its identity gets an answer at once.
-function pinned(n: Node, public: u8[], signature: u8[], flags: i32, now: i64): Node {
+function pinned(own n: Node, public: u8[], signature: u8[], flags: i32, now: i64): Node {
   let Some(c) = n.chan else {
     return n;
   };
@@ -505,19 +505,20 @@ function pinned(n: Node, public: u8[], signature: u8[], flags: i32, now: i64): N
   if (n.peer_identity.len() > 0 && n.peer_identity != public) {
     return n;
   }
-  let t = Node { ...n, peer_identity: public, pinning: true, peer_has_mine: n.peer_has_mine || (flags & protocol.HAVE_PEER) != 0 };
-  if (t.confirmed && !knows(t, public)) {
-    t = log(Node { ...t, pins: t.pins.append(public) }, "this phone now knows the other phone as " + label(public));
+  let has_mine = n.peer_has_mine || (flags & protocol.HAVE_PEER) != 0;
+  n = Node { ...n, peer_identity: public, pinning: true, peer_has_mine: has_mine };
+  if (n.confirmed && !knows(n, public)) {
+    n = log(Node { ...n, pins: n.pins.append(public) }, "this phone now knows the other phone as " + label(public));
   }
   if ((flags & protocol.DONE) == 0) {
-    return send_pin(t, now);
+    return send_pin(n, now);
   }
-  return t;
+  return n;
 }
 
 // The beacons, the handshake resends, the session timers and the rekey at
 // `now`.
-pub function tick(n: Node, now: i64): Node {
+pub function tick(own n: Node, now: i64): Node {
   let (l1, beacons) = lan.beacon(n.link, now);
   let out = n.out;
   for b in beacons {
@@ -533,7 +534,7 @@ pub function tick(n: Node, now: i64): Node {
 
 // The node with `random`, fresh random bytes for the rekeys, in place of the
 // bytes it did not use. The app gives RANDOM_BYTES before each tick.
-pub function fresh(n: Node, own random: u8[]): Node {
+pub function fresh(own n: Node, own random: u8[]): Node {
   let old = n.random.get();
   n.random.set(random);
   crypto.erase(old);
@@ -554,7 +555,7 @@ function draw(n: Node): u8[] {
 
 // A transmission starts with an offer of a new key for this side's voice.
 // The offer goes again after each RESEND_MS until the peer accepts it.
-function rekeying(n: Node, now: i64): Node {
+function rekeying(own n: Node, now: i64): Node {
   let Some(c) = n.chan else {
     return n;
   };
@@ -577,12 +578,13 @@ function rekeying(n: Node, now: i64): Node {
 // The peer offers a new key for its voice. The first offer of the next epoch
 // gets an accept with a new key of this side. The same offer again gets the
 // same accept, because the first one can be lost.
-function offered(n: Node, epoch: i32, public: u8[]): Node {
+function offered(own n: Node, epoch: i32, public: u8[]): Node {
   let Some(c) = n.chan else {
     return n;
   };
   if (epoch == n.accepted && n.accepted_key.len() > 0) {
-    return send_frame(n, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, n.accepted_key)));
+    let frame = protocol.encode(protocol.KeyAccept(epoch, n.accepted_key));
+    return send_frame(n, lan.CONTROL, frame);
   }
   let (c1, mine) = secure.accept_offer(c, epoch, public, draw(n));
   if (mine.len() == 0) {
@@ -593,7 +595,7 @@ function offered(n: Node, epoch: i32, public: u8[]): Node {
 }
 
 // The peer accepts this side's offer: this side sends with the new key.
-function accepted(n: Node, epoch: i32, public: u8[]): Node {
+function accepted(own n: Node, epoch: i32, public: u8[]): Node {
   let Some(c) = n.chan else {
     return n;
   };
@@ -609,7 +611,7 @@ function accepted(n: Node, epoch: i32, public: u8[]): Node {
 
 // Microphone samples at `voice.RATE`. Each full frame goes to the peer as
 // one Opus packet.
-pub function voice(n: Node, samples: [i32]): Node {
+pub function voice(own n: Node, samples: [i32]): Node {
   if (!n.capture) {
     return n;
   }
@@ -638,21 +640,21 @@ pub function voice(n: Node, samples: [i32]): Node {
   return Node { ...t, pending: rest };
 }
 
-pub function press(n: Node, now: i64): Node {
+pub function press(own n: Node, now: i64): Node {
   return act(n, session.PttDown, now);
 }
 
-pub function release(n: Node, now: i64): Node {
+pub function release(own n: Node, now: i64): Node {
   return act(Node { ...n, talk_until: 0i64 }, session.PttUp, now);
 }
 
 // A press with no held button, such as from the notification: the node
 // releases the floor by itself after `ms` milliseconds.
-pub function press_for(n: Node, now: i64, ms: i64): Node {
+pub function press_for(own n: Node, now: i64, ms: i64): Node {
   return Node { ...press(n, now), talk_until: now + ms };
 }
 
-function limited(n: Node, now: i64): Node {
+function limited(own n: Node, now: i64): Node {
   if (n.talk_until == 0i64 || now < n.talk_until) {
     return n;
   }
@@ -661,7 +663,7 @@ function limited(n: Node, now: i64): Node {
 }
 
 // The user says that both phones show the same string.
-pub function confirm(n: Node, now: i64): Node {
+pub function confirm(own n: Node, now: i64): Node {
   match (n.link.phase) {
     lan.Verifying => {},
     _ => {

@@ -50,7 +50,7 @@ function operands(text: string): string[] {
       return [];
     }
     if (c == b',' && depth == 0) {
-      out = out.append(util.trim(slice_unchecked(text, start, i) + ""));
+      out = out.append((slice_unchecked(text, start, i) + "").trim());
       start = i + 1;
     }
     i += 1;
@@ -58,7 +58,7 @@ function operands(text: string): string[] {
   if (depth != 0) {
     return [];
   }
-  return out.append(util.trim(slice_unchecked(text, start, text.len()) + ""));
+  return out.append((slice_unchecked(text, start, text.len()) + "").trim());
 }
 
 function op(kind: i32, a: string, b: string): Op {

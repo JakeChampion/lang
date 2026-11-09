@@ -11,25 +11,6 @@ import "./capturebox";
 import "./captureflow";
 import "./irtables";
 
-function split_type_list(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
-      start = i + 1;
-    } else if (csv[i] == b'(' || csv[i] == b'[') {
-      depth += 1;
-    } else if (csv[i] == b')' || csv[i] == b']') {
-      depth -= 1;
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
   return decltypes.fn_param_decl(name, tys, ret);
 }
@@ -861,10 +842,6 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   return Some(clo);
 }
 
-function clo_owner_name(fd: parser.FuncDecl): string {
-  return parser.decl_key(fd);
-}
-
 struct InlineCloRes { expr: ast.Expr, funcs: parser.FuncDecl[], counter: i32 }
 
 struct InlineCloAcc { funcs: parser.FuncDecl[], counter: i32 }
@@ -874,7 +851,7 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
   if (caps.len() == 0) {
     return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter };
   }
-  let cloname = clo_owner_name(fd) + "$clo" + util.i32_to_string(counter);
+  let cloname = parser.decl_key(fd) + "$clo" + util.i32_to_string(counter);
   if let Some(clo) = make_clo_func(lam, cloname, fd, gfns, structs, mfuncs) {
     let capargs: ast.Expr[] = [];
     let ci = 0;
@@ -930,7 +907,7 @@ function named_wrap_name(fnname: string, fd: parser.FuncDecl, counter: i32, mfun
   if (irtables.sig_reg_has_exact(mfuncs.local, fnname)) {
     return fnname + "$wrap";
   }
-  return clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
+  return parser.decl_key(fd) + "$wrap" + util.i32_to_string(counter);
 }
 
 function with_hoisted(funcs: parser.FuncDecl[], f: parser.FuncDecl): parser.FuncDecl[] {
@@ -949,7 +926,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
       if (caps.len() > 0) {
         return try_inline_closure(lam, fd, funcs, counter, gfns, structs, mfuncs);
       }
-      let wn = clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
+      let wn = parser.decl_key(fd) + "$wrap" + util.i32_to_string(counter);
       let wf = make_wrap_lambda_func(lam, wn);
       let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "", builtin: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
       return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
@@ -1298,7 +1275,7 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
   let lifted = LiftAcc { funcs: funcs, counter: counter };
   let more = true;
   while (more) {
-    let cl = closure_lift_one(body, scope, clo_owner_name(scope) + "$direct", lifted, gfns, structs, mfuncs);
+    let cl = closure_lift_one(body, scope, parser.decl_key(scope) + "$direct", lifted, gfns, structs, mfuncs);
     body = cl.body;
     lifted = cl.acc;
     more = cl.changed;
@@ -1364,7 +1341,7 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_where(body, InlineCloAcc { funcs: lifted.funcs, counter: lifted.counter }, vs, ve, astwalk.every_expr);
+  return astwalk.map_stmts_where(body, InlineCloAcc { funcs: lifted.funcs, counter: lifted.counter }, vs, ve, astwalk.descend_all);
 }
 
 function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) {
@@ -1431,7 +1408,7 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarD
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.descend_all);
 }
 
 function box_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: irtables.StructTab): (ast.Stmt[], InlineCloAcc) {
@@ -1477,7 +1454,7 @@ function box_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDe
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.descend_all);
 }
 
 function passthrough_array_arg(c: ast.ExprCall, mfuncs: MFuncs): i32 {
@@ -1704,7 +1681,7 @@ function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, vars: VarDecls, id
 }
 
 function spelled_param_is_fn(csv: string, idx: i32): boolean {
-  let parts = split_type_list(csv);
+  let parts = parser.split_type_list(csv);
   return idx < parts.len() && fn_param_from_spelling("", parts[idx]).type_name == "fn";
 }
 
@@ -2267,7 +2244,7 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: 
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.descend_all);
 }
 
 function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: irtables.StructTab, mfuncs: MFuncs): InlineCloRes {
@@ -2284,7 +2261,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "", builtin: false });
     ci += 1;
   }
-  let nm = clo_owner_name(fd) + "$iife" + util.i32_to_string(counter);
+  let nm = parser.decl_key(fd) + "$iife" + util.i32_to_string(counter);
   let notp: string[] = [];
   let fnret = lam.ret_fn_ret;
   let fnptys = lam.ret_fn_param_types;
@@ -2576,7 +2553,7 @@ function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, vars: VarDe
   function vst(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     return ilc_stmt_at(s, a, fd, vars, gfns, structs, mfuncs);
   }
-  let (ne, na, nh) = astwalk.map_expr_where(e, InlineCloAcc { funcs: funcs, counter: counter }, vst, ve, astwalk.every_expr);
+  let (ne, na, nh) = astwalk.map_expr_where(e, InlineCloAcc { funcs: funcs, counter: counter }, vst, ve, astwalk.descend_all);
   return InlineCloRes { expr: ne, funcs: na.funcs, counter: na.counter };
 }
 
@@ -2940,7 +2917,7 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: irta
   function vst(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     return ilc_stmt_at(s, a, fd, vars, gfns, structs, mfuncs);
   }
-  let (ns, na) = astwalk.map_stmts_where(fd.body, InlineCloAcc { funcs: [], counter: 0 }, vst, ve, astwalk.every_expr);
+  let (ns, na) = astwalk.map_stmts_where(fd.body, InlineCloAcc { funcs: [], counter: 0 }, vst, ve, astwalk.descend_all);
   if (na.funcs.len() == 0) {
     return (fd.body, []);
   }
@@ -3667,7 +3644,7 @@ function declared(st: ast.Stmt, own site: CaptureSite): CaptureSite {
   }
   if let ast.StmtVar(v) = st {
     if (v.name == site.name) {
-      return CaptureSite { ...site, key: irtables.reclaim_site_key_of(v.name, v.line, v.col) };
+      return CaptureSite { ...site, key: capturebox.site_key(v.name, v.line, v.col) };
     }
   }
   return site;

@@ -247,8 +247,12 @@ func hsMessage(kind byte, body []byte) []byte {
 // FuzzSelfHostStdTLS feeds hostile bytes to the TLS record deframer, and the
 // handshake records to the message reader and the extension readers.
 func FuzzSelfHostStdTLS(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func tlsSeeds(f testing.TB) [][]byte {
 	hello, reply := goHandshake(f, goServerConfig(f), goClientConfig())
-	fuzzStdParser(f, "tls", [][]byte{
+	return [][]byte{
 		hello,
 		reply,
 		hello[5:],
@@ -263,18 +267,22 @@ func FuzzSelfHostStdTLS(f *testing.F) {
 		[]byte{22, 3, 3, 0xff, 0xff, 1},
 		[]byte{99, 3, 3, 0, 0},
 		{},
-	})
+	}
 }
 
 // FuzzSelfHostStdTLSServer feeds hostile bytes to a server handshake in pieces
 // of eleven, starting from a ClientHello that Go's client wrote.
 func FuzzSelfHostStdTLSServer(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func tlsServerSeeds(f testing.TB) [][]byte {
 	hello, _ := goHandshake(f, goServerConfig(f), goClientConfig())
 	tls12 := &tls.Config{ServerName: "example.com", InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12}
 	srv12 := goServerConfig(f)
 	srv12.MinVersion = tls.VersionTLS12
 	hello12, _ := goHandshake(f, srv12, tls12)
-	fuzzStdParser(f, "tls-server", [][]byte{
+	return [][]byte{
 		hello,
 		hello12,
 		append(tlsRecord(20, []byte{1}), hello...),
@@ -284,20 +292,24 @@ func FuzzSelfHostStdTLSServer(f *testing.F) {
 		tlsRecord(23, bytes.Repeat([]byte{0}, 40)),
 		tlsRecord(22, hsMessage(1, bytes.Repeat([]byte{0xff}, 60))),
 		{},
-	})
+	}
 }
 
 // FuzzSelfHostStdTLSClient feeds hostile bytes to a client handshake as the
 // server's flight, starting from the reply of Go's server to the client's own
 // ClientHello.
 func FuzzSelfHostStdTLSClient(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func tlsClientSeeds(f testing.TB) [][]byte {
 	hello := fernClientHello(f, fuzzStdParse(f))
 	reply := goReplyTo(f, goServerConfig(f), hello)
 	retry := goServerConfig(f)
 	retry.CurvePreferences = []tls.CurveID{tls.CurveP256}
 	retried := goReplyTo(f, retry, hello)
 	_, other := goHandshake(f, goServerConfig(f), goClientConfig())
-	fuzzStdParser(f, "tls-client", [][]byte{
+	return [][]byte{
 		reply,
 		retried,
 		other,
@@ -306,12 +318,16 @@ func FuzzSelfHostStdTLSClient(f *testing.F) {
 		tlsRecord(22, hsMessage(2, bytes.Repeat([]byte{0}, 38))),
 		tlsRecord(22, hsMessage(4, []byte{0, 0, 0, 1})),
 		{},
-	})
+	}
 }
 
 // FuzzSelfHostStdX509 feeds hostile bytes to the PEM reader, the X.509 reader
 // and the chain verifier.
 func FuzzSelfHostStdX509(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func x509Seeds(f testing.TB) [][]byte {
 	certs := goCertificates(f)
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -332,7 +348,7 @@ func FuzzSelfHostStdX509(f *testing.F) {
 		[]byte{0x30, 0x80, 0, 0},
 		[]byte{},
 	)
-	fuzzStdParser(f, "x509", seeds)
+	return seeds
 }
 
 // TestSelfHostStdTLSAgainstGo runs the readers on bytes that Go's crypto/tls

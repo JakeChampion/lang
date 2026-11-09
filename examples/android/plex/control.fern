@@ -1137,7 +1137,8 @@ function play_tick(own s: App, now: i64): App {
     t = App { ...t, play: Play { ...t.play, position: t.dev.position(), updated_at: now }, dirty: t.play.overlay };
   }
   if (now - t.play.reported_at >= REPORT_MS) {
-    t = timeline(App { ...t, play: Play { ...t.play, reported_at: now } }, "playing");
+    t = App { ...t, play: Play { ...t.play, reported_at: now } };
+    t = timeline(t, "playing");
   }
   return t;
 }
@@ -1258,20 +1259,20 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
         axis = 1;
       }
     }
-    let t = App { ...s, press: Press { ...p, x: x, y: y, axis: axis } };
+    s = App { ...s, press: Press { ...p, x: x, y: y, axis: axis } };
     if (axis == 1) {
       let i = row_index(p.group);
-      let max = ui.hub_row_width(m, row_items(t, i)) - m.w;
+      let max = ui.hub_row_width(m, row_items(s, i)) - m.w;
       if (max < 0) {
         max = 0;
       }
-      return App { ...t, rows: set_row(t.rows, i, clamp(p.row0 - dx as i32, 0, max)), dirty: true };
+      return App { ...s, rows: set_row(s.rows, i, clamp(p.row0 - dx as i32, 0, max)), dirty: true };
     }
     if (axis == 2) {
-      let next = clamp(p.scroll0 - dy as i32, 0, scroll_limit(t, m));
-      return more_items(App { ...t, scroll: next, dirty: true });
+      let next = clamp(p.scroll0 - dy as i32, 0, scroll_limit(s, m));
+      return more_items(App { ...s, scroll: next, dirty: true });
     }
-    return t;
+    return s;
   }
   let t = App { ...s, press: no_press() };
   if (action == 1 && p.axis == 0) {

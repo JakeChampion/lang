@@ -1,0 +1,54 @@
+import "std/audio/mp2";
+import "std/audio/mp2/header";
+import "std/audio/mp3/spectral";
+import "std/audio/pcm";
+import "aac_kernel_check" as ref;
+
+pub function samples(actual: [f32], count: i32, expected: [u8], at: i32): Result[void, string] {
+  if (count < 0 || count > actual.len() || at < 0 || count > expected.len() / 4 - at) {
+    return Err("PCM extent");
+  }
+  for i in 0..count {
+    if (f32_bits(actual[i]) != ref.word(expected, (at + i) * 4)) {
+      return Err("independent scalar PCM at " + (at + i).to_string());
+    }
+  }
+  return Ok(());
+}
+
+function buffered(encoded: [u8], expected: [u8], rate: i32, channels: i32): Result[void, string] {
+  let state = mp2.decoder();
+  let count = 1152 * channels;
+  let buffer = spectral.zeros(count + 3).with(count, 123.5f32).with(count + 1, -321.25f32).with(count + 2, 17.0f32);
+  let at = 0;
+  let position = 0;
+  while (at < encoded.len()) {
+    let h = match (header.parse(encoded, at)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let (next, result) = state.decode_frame_into(encoded, at, buffer, pcm.default_limits());
+    state = next;
+    let audio = match (result) { Ok(value) => value, Err(e) => { return Err("buffered frame: " + e.message()); } };
+    if (audio.sample_rate != rate || audio.channels != channels || audio.frames != 1152 || audio.bytes_read != h.bytes) {
+      return Err("frame format or extent");
+    }
+    if (audio.samples.len() != count + 3 || audio.samples[count] != 123.5f32 || audio.samples[count + 1] != -321.25f32 || audio.samples[count + 2] != 17.0f32) {
+      return Err("output suffix");
+    }
+    samples(audio.samples, count, expected, position)?;
+    position += count;
+    at += audio.bytes_read;
+    buffer = audio.samples;
+  }
+  if (position != expected.len() / 4) {
+    return Err("buffered PCM count");
+  }
+  return Ok(());
+}
+
+pub function run(encoded: [u8], expected: [u8], rate: i32, channels: i32, frames: i32): Result[void, string] {
+  let decoded = match (mp2.decode_raw(encoded, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err("whole decode: " + e.message()); } };
+  if (decoded.sample_rate != rate || decoded.channels != channels || decoded.samples.len() != frames * channels) {
+    return Err("whole format or sample count");
+  }
+  samples(decoded.samples, decoded.samples.len(), expected, 0)?;
+  return buffered(encoded, expected, rate, channels);
+}

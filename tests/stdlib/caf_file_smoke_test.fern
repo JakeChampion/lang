@@ -1,0 +1,28 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "alac_smoke_vectors";
+import "caf_smoke_vectors";
+import "caf_check";
+import "caf_file_check";
+
+function independent(): test.TestOutcome {
+  let vector = caf_smoke_vectors.vector();
+  let source = alac_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(vector.encoded) else {
+    return test.fail("CAF fixture");
+  };
+  let Ok(expected) = ref.unpack(source.pcm) else {
+    return test.fail("independent PCM fixture");
+  };
+  let reference = caf_check.Reference { rate: source.rate, channels: source.channels, depth: source.depth, trim: vector.trim, frames: vector.frames, mask: vector.mask, order: vector.order };
+  if let Err(e) = caf_file_check.run(encoded, expected, reference) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("CAF ALAC source interpreter smoke");
+  runner = runner.it("independent exact PCM, trim, short reads, and repeated source seeks", independent);
+  return runner.finish();
+}

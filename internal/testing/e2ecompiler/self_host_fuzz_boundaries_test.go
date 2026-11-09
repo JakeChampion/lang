@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,17 +65,24 @@ func runUnderBudget(cmd *exec.Cmd) fuzzRun {
 // the memory budget, whatever its exit status.
 func failOutsideBudget(t *testing.T, what string, r fuzzRun, input []byte) bool {
 	t.Helper()
+	fault := budgetFault(what, r, input)
+	if fault != "" {
+		t.Error(fault)
+	}
+	return fault != ""
+}
+
+// budgetFault returns the budget fault of one run, or "".
+func budgetFault(what string, r fuzzRun, input []byte) string {
 	switch {
 	case r.timedOut:
-		t.Errorf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
+		return fmt.Sprintf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
 	case !r.exited:
-		t.Errorf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
+		return fmt.Sprintf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
 	case r.maxRSS > fuzzMemoryBudget:
-		t.Errorf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
-	default:
-		return false
+		return fmt.Sprintf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
 	}
-	return true
+	return ""
 }
 
 // fuzzBuildCache gives the fuzz workers one disk cache for the driver
@@ -94,7 +102,7 @@ func fuzzBuildCache(f testing.TB) {
 	f.Setenv("FERN_SELFHOST_BUILD_CACHE", dir)
 }
 
-func fuzzCLI(f *testing.F) (bin, stdlib string) {
+func fuzzCLI(f testing.TB) (bin, stdlib string) {
 	fuzzBuildCache(f)
 	gcc, runner := e2eharness.X86_64Tooling(f)
 	if len(runner) != 0 {
@@ -110,7 +118,7 @@ func fuzzCLI(f *testing.F) (bin, stdlib string) {
 	return bin, stdlib
 }
 
-func fuzzDriver(f *testing.F, driver string) string {
+func fuzzDriver(f testing.TB, driver string) string {
 	fuzzBuildCache(f)
 	gcc, runner := e2eharness.X86_64Tooling(f)
 	if len(runner) != 0 {
@@ -121,7 +129,7 @@ func fuzzDriver(f *testing.F, driver string) string {
 	return e2eharness.BuildSelfHostBin(f, gcc, dir, "drivers/"+driver+".fern", driver)
 }
 
-func fuzzCompile(f *testing.F, bin, stdlib, src string, flags ...string) {
+func fuzzCompile(f testing.TB, bin, stdlib, src string, flags ...string) {
 	dir := f.TempDir()
 	main := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(main, []byte(src), 0o644); err != nil {
@@ -137,21 +145,23 @@ func fuzzCompile(f *testing.F, bin, stdlib, src string, flags ...string) {
 
 const fuzzManifestMagic = "FERNBUILD1 target="
 
-// FuzzSelfHostManifest feeds hostile bytes to `fern -manifest`. The reader
-// documents two outcomes: the fields on stdout with exit 0, or a refusal
-// naming the file with exit 1. The fields are printable ASCII, whatever the
+// FuzzSelfHostManifest feeds hostile bytes to the build manifest reader of
+// `fern -manifest`, through drivers/manifest_fuzz_run.fern. The reader finds
+// the fields or finds none, and the fields are printable ASCII, whatever the
 // file holds.
-func FuzzSelfHostManifest(f *testing.F) {
-	bin, stdlib := fuzzCLI(f)
-	image := filepath.Join(f.TempDir(), "image")
-	fuzzCompile(f, bin, stdlib, "function main(): i32 { return 0; }\n", "-target", "x86-64-linux", "-o", image)
+func FuzzSelfHostManifest(f *testing.F) { fuzzReaderTarget(f) }
+
+func manifestSeeds(tb testing.TB) [][]byte {
+	bin, stdlib := fuzzCLI(tb)
+	image := filepath.Join(tb.TempDir(), "image")
+	fuzzCompile(tb, bin, stdlib, "function main(): i32 { return 0; }\n", "-target", "x86-64-linux", "-o", image)
 	raw, err := os.ReadFile(image)
 	if err != nil {
-		f.Fatal(err)
+		tb.Fatal(err)
 	}
 	at := bytes.Index(raw, []byte(fuzzManifestMagic))
 	if at < 0 {
-		f.Fatalf("the compiled image carries no manifest")
+		tb.Fatalf("the compiled image carries no manifest")
 	}
 	lo, hi := at-64, at+320
 	if lo < 0 {
@@ -161,56 +171,56 @@ func FuzzSelfHostManifest(f *testing.F) {
 		hi = len(raw)
 	}
 	line := "FERNBUILD1 target=x86-64-linux profile=safe harden=0 pie=0 sanitize=0 backtrace=0 size=0 shared=0 heap_limit=0\n"
-	for _, seed := range [][]byte{
+	return [][]byte{
 		raw[lo:hi],
 		[]byte(line),
 		[]byte(strings.TrimSuffix(line, "\n")),
 		[]byte(strings.Repeat(fuzzManifestMagic, 100)),
 		[]byte(fuzzManifestMagic + strings.Repeat("x", 600) + "\n"),
 		[]byte(fuzzManifestMagic + " profile= heap_limit=\n"),
+		[]byte("FERNBUILD1 target=x86-64-linux  profile=safe heap_limit=0  \n"),
 		[]byte("FERNBUILD1 target=\x00 profile=safe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=\x1b]0;owned\x07 profile=safe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=x86-64-linux profile=\xff\xfe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=\x1b[2J profile=safe heap_limit=0\n" + line),
 		{},
 		{0x7f, 'E', 'L', 'F'},
-	} {
-		f.Add(seed)
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
+}
+
+// manifestCheck reads `manifest N` and the N fields after it. The first field
+// names the target, and no field holds a control byte.
+func manifestCheck(r readerRun) string {
+	lines := strings.Split(r.summary, "\n")
+	n, err := strconv.Atoi(strings.TrimPrefix(lines[0], "manifest "))
+	if err != nil || n != len(lines)-1 {
+		return fmt.Sprintf("the driver printed %q for %d bytes", r.summary, len(r.input))
+	}
+	if n > 0 && !strings.HasPrefix(lines[1], "target: ") {
+		return fmt.Sprintf("the first field is not the target on %d bytes\nfields: %q", len(r.input), r.summary)
+	}
+	for _, c := range []byte(r.summary) {
+		if (c < 0x20 || c > 0x7e) && c != '\n' {
+			return fmt.Sprintf("the fields carry byte %#x on %d bytes\nfields: %q", c, len(r.input), r.summary)
 		}
-		path := filepath.Join(work, "input")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command(bin, "-manifest", path)
-		cmd.Env = e2eharness.SelfHostChildEnv()
-		r := runUnderBudget(cmd)
-		if failOutsideBudget(t, "fern -manifest", r, input) {
-			return
-		}
-		switch r.code {
-		case 0:
-			if !strings.HasPrefix(r.stdout, "target: ") {
-				t.Errorf("exit 0 without the target field on %d bytes\nstdout: %q", len(input), r.stdout)
-			}
-			for _, c := range []byte(r.stdout) {
-				if (c < 0x20 || c > 0x7e) && c != '\n' {
-					t.Errorf("the fields carry byte %#x on %d bytes\nstdout: %q", c, len(input), r.stdout)
-					break
-				}
-			}
-		case 1:
-			if !strings.HasPrefix(r.stderr, "fern: no build manifest in ") {
-				t.Errorf("exit 1 without the documented refusal on %d bytes\nstderr: %q", len(input), r.stderr)
-			}
-		default:
-			t.Errorf("exit %d on %d bytes, want 0 or 1\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-		}
-	})
+	}
+	return ""
+}
+
+// TestSelfHostManifestRefusal pins the refusal of `fern -manifest` for a file
+// with no manifest: exit 1 and a message that names the file.
+func TestSelfHostManifestRefusal(t *testing.T) {
+	bin, _ := fuzzCLI(t)
+	path := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(path, []byte(fuzzManifestMagic+"x86-64-linux\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-manifest", path)
+	cmd.Env = e2eharness.SelfHostChildEnv()
+	r := runUnderBudget(cmd)
+	if r.code != 1 || !strings.HasPrefix(r.stderr, "fern: no build manifest in "+path+": ") || r.stdout != "" {
+		t.Fatalf("exit %d, want 1 with the refusal\nstdout: %q\nstderr: %q", r.code, r.stdout, r.stderr)
+	}
 }
 
 // FuzzSelfHostIRVerify decodes bytes into an op stream and runs the
@@ -218,8 +228,11 @@ func FuzzSelfHostManifest(f *testing.F) {
 // drivers/irverify_fuzz_run.fern. Every stream must come back as a problem
 // count: the verifiers refuse, they never trap.
 func FuzzSelfHostIRVerify(f *testing.F) {
-	driver := fuzzDriver(f, "irverify_fuzz_run")
-	for _, seed := range [][]byte{
+	fuzzReaderTarget(f)
+}
+
+func irSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		{},
 		{1, 3},
 		{1, 3, 0, 0, 0, 0},
@@ -227,55 +240,45 @@ func FuzzSelfHostIRVerify(f *testing.F) {
 		{0, 0, 255, 255, 255, 255},
 		{7, 15, 64, 128, 3, 7, 65, 130, 4, 11, 66, 132, 8, 15},
 		bytes.Repeat([]byte{3, 1, 9, 0}, 200),
-	} {
-		f.Add(seed)
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
-		}
-		path := filepath.Join(work, "ops")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		r := runUnderBudget(exec.Command(driver, path))
-		if failOutsideBudget(t, "irverify_fuzz_run", r, input) {
-			return
-		}
-		if r.code != 0 || !strings.HasPrefix(r.stdout, "ops ") {
-			t.Errorf("exit %d on %d bytes, want 0 with the counts\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-			return
-		}
-		want := 0
-		if len(input) >= 2 {
-			want = (len(input) - 2) / 4
-		}
-		fields := strings.Fields(r.stdout)
-		if n, err := strconv.Atoi(fields[1]); err != nil || n != want {
-			t.Errorf("the driver decoded %q ops from %d bytes, want %d", fields[1], len(input), want)
-		}
-	})
 }
 
-// fuzzAssembler shares the body of the two assembler targets: the text goes
-// to one in-process assembler through drivers/asm_fuzz_run.fern. The
-// assemblers consume the compiler's own output, so on foreign text an exit
-// 0 summary and an abort with a cause line are both documented outcomes; a
-// signal, a hang or a budget breach is not.
-func fuzzAssembler(f *testing.F, which, target string) {
-	bin, stdlib := fuzzCLI(f)
-	driver := fuzzDriver(f, "asm_fuzz_run")
-	emitted := filepath.Join(f.TempDir(), "out.s")
-	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", "-target", target, "-emit", "asm", "-o", emitted)
-	text, err := os.ReadFile(emitted)
-	if err != nil {
-		f.Fatal(err)
+// irOpCount checks that the driver decoded one op from each four bytes after
+// the two that choose the counts.
+func irOpCount(r readerRun) string {
+	want := 0
+	if len(r.input) >= 2 {
+		want = (len(r.input) - 2) / 4
 	}
+	fields := strings.Fields(r.summary)
+	if len(fields) < 3 || fields[2] != strconv.Itoa(want) {
+		return fmt.Sprintf("the driver gave %q for %d bytes, want %d ops", r.summary, len(r.input), want)
+	}
+	return ""
+}
+
+// FuzzSelfHostX86Assembler feeds hostile text to the x86-64 assembler through
+// drivers/asm_fuzz_run.fern.
+func FuzzSelfHostX86Assembler(f *testing.F) { fuzzReaderTarget(f) }
+
+// FuzzSelfHostArm64Assembler feeds hostile text to the arm64 assembler.
+func FuzzSelfHostArm64Assembler(f *testing.F) { fuzzReaderTarget(f) }
+
+// assemblerSeeds gives the seeds of an assembler for target: the assembly of
+// a compiled program and short texts that probe labels, sections and
+// alignment.
+func assemblerSeeds(target string) func(testing.TB) [][]byte {
+	return func(f testing.TB) [][]byte {
+		bin, stdlib := fuzzCLI(f)
+		return assemblerSeedsOf(compiledAssembly(f, bin, stdlib, target))
+	}
+}
+
+func assemblerSeedsOf(text []byte) [][]byte {
 	if len(text) > 16<<10 {
 		text = text[:16<<10]
 	}
-	for _, seed := range [][]byte{
+	return [][]byte{
 		text,
 		[]byte(".text\n_start:\n ret\n"),
 		[]byte(".text\n_start:\n b _start\n"),
@@ -286,30 +289,18 @@ func fuzzAssembler(f *testing.F, which, target string) {
 		[]byte(".text\nret\n.align 67108864\nret\n"),
 		[]byte("\x00\xff .text \n\n\n"),
 		{},
-	} {
-		f.Add(seed)
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
-		}
-		path := filepath.Join(work, "text.s")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		r := runUnderBudget(exec.Command(driver, which, path))
-		if failOutsideBudget(t, "asm_fuzz_run "+which, r, input) {
-			return
-		}
-		switch {
-		case r.code == 0 && strings.HasPrefix(r.stdout, which+" "):
-		case r.code == 134 && strings.HasPrefix(r.stderr, "fern: "):
-		default:
-			t.Errorf("exit %d on %d bytes, want 0 with a summary or 134 with a cause\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-		}
-	})
 }
 
-func FuzzSelfHostX86Assembler(f *testing.F)   { fuzzAssembler(f, "x86", "x86-64-linux") }
-func FuzzSelfHostArm64Assembler(f *testing.F) { fuzzAssembler(f, "arm64", "arm64-linux") }
+// compiledAssembly is the assembly that the compiler emits for a small program
+// with flags.
+func compiledAssembly(f testing.TB, bin, stdlib, target string, flags ...string) []byte {
+	emitted := filepath.Join(f.TempDir(), "out.s")
+	args := append([]string{"-target", target, "-emit", "asm", "-o", emitted}, flags...)
+	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", args...)
+	text, err := os.ReadFile(emitted)
+	if err != nil {
+		f.Fatal(err)
+	}
+	return text
+}

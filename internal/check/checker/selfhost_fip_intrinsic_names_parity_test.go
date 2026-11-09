@@ -22,6 +22,9 @@ func selfHostNameList(t *testing.T, fn string) []string {
 	src := string(b)
 	at := strings.Index(src, "function "+fn+"(")
 	if at < 0 {
+		at = strings.Index(src, "const "+fn+": ")
+	}
+	if at < 0 {
 		t.Fatalf("cannot find %s in compiler/checker.fern, so this test proves nothing", fn)
 	}
 	open := strings.Index(src[at:], "[\n")
@@ -66,7 +69,7 @@ func TestSelfHostRegisteredIntrinsicsMatch(t *testing.T) {
 			native = append(native, name)
 		}
 	}
-	sameNames(t, "registered intrinsics", native, selfHostNameList(t, "registered_intrinsics"))
+	sameNames(t, "registered intrinsics", native, selfHostNameList(t, "REGISTERED_INTRINSICS"))
 }
 
 func TestSelfHostFipBuiltinCalleesMatch(t *testing.T) {

@@ -2,6 +2,8 @@
 // ISA: the DWARF call-frame encoder behind the .cfi_* directives, and the
 // helpers x86_native and arm64_native both use.
 
+import "./util";
+
 pub function escape(line: string, i: i32): (i32, i32) {
   let e = line[i + 1] as i32;
   if (e == 110) {
@@ -31,12 +33,6 @@ pub function escape(line: string, i: i32): (i32, i32) {
 
 pub function words_i32(words: u8[], at: i32): i32 {
   return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
-}
-
-pub function push_arr(b: usize, xs: i32[]): void {
-  for x in xs {
-    buf_push_byte(b, x);
-  }
 }
 
 pub function data_like(section: i32): boolean {
@@ -301,15 +297,8 @@ pub function cfi_sleb(b: i32[], v: i32): i32[] {
   return b;
 }
 
-function cfi_le32(own b: i32[], v: i32): i32[] {
-  b = b.append(v & 255);
-  b = b.append(v >> 8 & 255);
-  b = b.append(v >> 16 & 255);
-  return b.append(v >> 24 & 255);
-}
-
 function cfi_le32_i64(own b: i32[], v: i64): i32[] {
-  return cfi_le32(b, (v & 4294967295 as i64) as i32);
+  return util.le32(b, (v & 4294967295 as i64) as i32);
 }
 
 function cfi_le64_i64(own b: i32[], v: i64): i32[] {
@@ -542,7 +531,7 @@ function cfi_advance(own b: i32[], p: CfiProfile, delta: i32): i32[] {
     return b.append(d >> 8 & 255);
   }
   b = b.append(cfi_op_advance_loc4());
-  return cfi_le32(b, d);
+  return util.le32(b, d);
 }
 
 function cfi_pad4(own b: i32[]): i32[] {
@@ -561,7 +550,7 @@ function cfi_pad_entry(own b: i32[], at: i32, align: i32): i32[] {
 
 function cfi_cie(p: CfiProfile): i32[] {
   let b: i32[] = [];
-  b = cfi_le32(b, 0);
+  b = util.le32(b, 0);
   b = b.append(1);
   b = b.append(122);
   b = b.append(82);
@@ -577,21 +566,12 @@ function cfi_cie(p: CfiProfile): i32[] {
     i += 1;
   }
   b = cfi_pad4(b);
-  return cfi_cat(cfi_le32([], b.len()), b);
-}
-
-function cfi_cat(own a: i32[], b: i32[]): i32[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
+  return util.append_all(util.le32([], b.len()), b);
 }
 
 function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
   let b: i32[] = [];
-  b = cfi_le32(b, at + 4);
+  b = util.le32(b, at + 4);
   let field_va = eh_vaddr + (at + 8) as i64;
   let loc = text_vaddr + s.fde_start[k] as i64 - field_va;
   if (p.ptr_size == 8) {
@@ -599,7 +579,7 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
   } else {
     b = cfi_le32_i64(b, loc);
-    b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
+    b = util.le32(b, s.fde_end[k] - s.fde_start[k]);
   }
   b = cfi_uleb(b, 0);
   b = cfi_fde_rules(b, s, p, k);
@@ -632,23 +612,23 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
     return [];
   }
   let cie: i32[] = [];
-  cie = cfi_le32(cie, -1);
+  cie = util.le32(cie, -1);
   cie = cie.append(1);
   cie = cie.append(0);
   cie = cfi_uleb(cie, p.code_align);
   cie = cfi_sleb(cie, p.data_align);
   cie = cfi_uleb(cie, p.ra_column);
-  cie = cfi_cat(cie, p.initial);
+  cie = util.append_all(cie, p.initial);
   cie = cfi_pad_entry(cie, 0, 8);
-  let out = cfi_cat(cfi_le32([], cie.len()), cie);
+  let out = util.append_all(util.le32([], cie.len()), cie);
   let k = 0;
   while (k < s.fde_start.len()) {
-    let b = cfi_le32([], 0);
+    let b = util.le32([], 0);
     b = cfi_le64_i64(b, text_vaddr + s.fde_start[k] as i64);
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
     b = cfi_fde_rules(b, s, p, k);
     b = cfi_pad_entry(b, out.len(), 8);
-    out = cfi_cat(cfi_le32(out, b.len()), b);
+    out = util.append_all(util.le32(out, b.len()), b);
     k += 1;
   }
   return out;
@@ -667,9 +647,9 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
   while (k < n) {
     let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
     if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
-      pl = cfi_cat(pl, [0, 0, 0, 0]);
+      pl = util.append_all(pl, [0, 0, 0, 0]);
     }
-    payloads = cfi_cat(payloads, pl);
+    payloads = util.append_all(payloads, pl);
     lens = lens.append(pl.len());
     at = at + 4 + pl.len();
     k += 1;
@@ -677,7 +657,7 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
   let pos = 0;
   k = 0;
   while (k < n) {
-    out = cfi_le32(out, lens[k]);
+    out = util.le32(out, lens[k]);
     let q = 0;
     while (q < lens[k]) {
       out = out.append(payloads[pos + q]);
@@ -686,7 +666,7 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
     pos += lens[k];
     k += 1;
   }
-  out = cfi_cat(out, [0, 0, 0, 0]);
+  out = util.append_all(out, [0, 0, 0, 0]);
   return out;
 }
 
@@ -734,7 +714,7 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
   }
   let b: i32[] = [1, 27, 3, 59];
   b = cfi_le32_i64(b, eh_vaddr - (hdr_vaddr + 4 as i64));
-  b = cfi_le32(b, n);
+  b = util.le32(b, n);
   k = 0;
   while (k < n) {
     b = cfi_le32_i64(b, fns[k] - hdr_vaddr);

@@ -11,22 +11,6 @@ function took(cs: lexer.Comment[], cursor: i32, decl_line: i32): string {
 }
 
 function self_checks(): i32 {
-  if (ferndoc.trim_space("  hi  ") != "hi") {
-    return 1;
-  }
-  if (ferndoc.trim_space("\t\nhi\r\n") != "hi") {
-    return 2;
-  }
-  if (ferndoc.trim_space("   ") != "") {
-    return 3;
-  }
-  if (ferndoc.trim_space("") != "") {
-    return 4;
-  }
-  if (ferndoc.trim_space("  a  b  ") != "a  b") {
-    return 5;
-  }
-
   let one: lexer.Comment[] = [c(4, " doc")];
   if (took(one, 0, 5) != "doc") {
     return 10;
@@ -226,7 +210,28 @@ function self_checks(): i32 {
     return 86;
   }
 
-  let page = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
+  // A doc comment above an attribute belongs to the declaration below it,
+  // and a function on a private type is not public.
+  let src6: string = "// A pair.\n"
+    + "@derive(cmp.Eq)\n"
+    + "pub struct Pair { a: i32 }\n"
+    + "struct Hidden { b: i32 }\n"
+    + "pub function (h: Hidden) get(): i32 { return h.b; }\n";
+  let dm6 = ferndoc.docs_of(src6);
+  let pair_doc = "";
+  for d in dm6.decls {
+    if (d.name == "get") {
+      return 90;
+    }
+    if (d.name == "Pair") {
+      pair_doc = d.doc;
+    }
+  }
+  if (pair_doc != "A pair.") {
+    return 91;
+  }
+
+  let page = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x", ferndoc.no_source_links());
   if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) {
     return 87;
   }

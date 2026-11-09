@@ -1,0 +1,58 @@
+import "std/net";
+import "std/tls";
+import "std/tls/client";
+import "std/tls/server";
+import "std/tls/identity";
+import "std/tls/verify";
+import "std/time";
+
+function zeros(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+function aborted[T](result: Result[T, tls.TlsError]): boolean {
+  return match (result) {
+    Err(tls.NetFailed(net.ConnectionAborted)) => true,
+    _ => false,
+  };
+}
+
+function main(): i32 {
+  let cc = client.config("example.test", verify.roots([]));
+  let Ok(cs) = client.start(cc, zeros(client.entropy(cc)), time.timestamp_from_unix_millis(0 as i64)) else {
+    return 1;
+  };
+  let cfg = server.config(identity.Identity { chain: [[0u8]], key: identity.Ed25519Seed(zeros(32)) }, []);
+  let Ok(ss) = server.start(cfg, zeros(server.entropy(cfg))) else {
+    return 2;
+  };
+  unsafe {
+    let client_open = cell_new(true);
+    let server_open = cell_new(true);
+    let c = client.Connection { sock: __socket_from_fd(-1), session: cs.session, tickets: [], open: client_open };
+    let s = server.Connection { sock: __socket_from_fd(-1), session: ss.session, pending: [1u8], ended: false, open: server_open };
+    let client_alias = c;
+    let server_alias = s;
+    print("client open " + match (c.offload()) { Ok(_) => true, _ => false }.to_string());
+    print("server open " + match (s.offload()) { Ok(_) => true, _ => false }.to_string());
+    client_open.set(false);
+    server_open.set(false);
+    print("client write " + aborted(c.write([])).to_string());
+    print("client read " + aborted(c.read(time.duration_nanos(0 as i64))).to_string());
+    print("client offload " + aborted(client_alias.offload()).to_string());
+    print("client keys " + aborted(client_alias.update_keys(false)).to_string());
+    print("server write " + aborted(s.write([])).to_string());
+    print("server read " + aborted(s.read(time.duration_nanos(0 as i64))).to_string());
+    print("server offload " + aborted(server_alias.offload()).to_string());
+    print("server keys " + aborted(server_alias.update_keys(false)).to_string());
+    print("client close " + match (c.close()) { Ok(_) => true, _ => false }.to_string());
+    print("client close again " + match (client_alias.close()) { Ok(_) => true, _ => false }.to_string());
+    print("server close " + match (s.close()) { Ok(_) => true, _ => false }.to_string());
+    print("server close again " + match (server_alias.close()) { Ok(_) => true, _ => false }.to_string());
+  }
+  return 0;
+}

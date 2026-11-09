@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -82,6 +83,10 @@ func dnsQuestion(name string, qtype uint16) []byte {
 // FuzzSelfHostStdDNS feeds hostile bytes to the DNS message reader, and
 // requires a message that it decodes to survive an encode and a second decode.
 func FuzzSelfHostStdDNS(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func dnsSeeds(testing.TB) [][]byte {
 	q := dnsQuestion("example.com", 1)
 	ptr := []byte{0xc0, 12}
 	seeds := [][]byte{
@@ -102,11 +107,14 @@ func FuzzSelfHostStdDNS(f *testing.F) {
 		[]byte{0x12, 0x34},
 		{},
 	}
-	fuzzStdOracle(f, "dns", seeds, func(t *testing.T, input []byte, summary string) {
-		if strings.Contains(summary, "roundtrip broken") {
-			t.Errorf("dns encodes a message it decoded into one that decodes differently: %q\ninput: %x", summary, input)
-		}
-	})
+	return seeds
+}
+
+func dnsRoundTrips(r readerRun) string {
+	if strings.Contains(r.summary, "roundtrip broken") {
+		return fmt.Sprintf("dns encodes a message it decoded into one that decodes differently: %q\ninput: %x", r.summary, r.input)
+	}
+	return ""
 }
 
 // pbVarint writes one protobuf varint.
@@ -125,8 +133,12 @@ func pbField(number, wire int, payload []byte) []byte {
 // FuzzSelfHostStdProtobuf feeds hostile bytes to the protobuf reader, and the
 // length-delimited fields it finds to the reader again.
 func FuzzSelfHostStdProtobuf(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func protobufSeeds(testing.TB) [][]byte {
 	inner := append(pbField(1, 0, pbVarint(150)), pbField(2, 2, []byte("hi"))...)
-	fuzzStdParser(f, "protobuf", [][]byte{
+	return [][]byte{
 		pbField(1, 0, pbVarint(150)),
 		append(append(pbField(1, 0, pbVarint(1<<63)), pbField(2, 2, inner)...), pbField(3, 1, make([]byte, 8))...),
 		pbField(4, 5, []byte{1, 2, 3, 4}),
@@ -140,7 +152,7 @@ func FuzzSelfHostStdProtobuf(f *testing.F) {
 		[]byte{0},
 		pbVarint(uint64(1) << 32 << 3),
 		{},
-	})
+	}
 }
 
 // imageVectorJPEGs reads the encoded JPEG files of tests/stdlib/image_vectors.fern,
@@ -219,6 +231,10 @@ func hugeJPEG(base []byte) []byte {
 // image/jpeg and the decoder both accept an input, they must agree on its
 // width and height.
 func FuzzSelfHostStdJPEG(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func jpegSeeds(f testing.TB) [][]byte {
 	seeds := append(goJPEGs(f), imageVectorJPEGs(f)...)
 	base := seeds[0]
 	seeds = append(seeds, damaged(base)...)
@@ -230,22 +246,26 @@ func FuzzSelfHostStdJPEG(f *testing.F) {
 		[]byte{0, 1},
 		[]byte{},
 	)
-	fuzzStdOracle(f, "jpeg", seeds, func(t *testing.T, input []byte, summary string) {
-		fields := strings.Fields(summary)
-		if len(fields) < 4 || fields[1] != "ok" {
-			return
-		}
-		cfg, err := jpeg.DecodeConfig(bytes.NewReader(input))
-		if err != nil {
-			return
-		}
-		if _, err := jpeg.Decode(bytes.NewReader(input)); err != nil {
-			return
-		}
-		if want := strconv.Itoa(cfg.Width) + " " + strconv.Itoa(cfg.Height); fields[2]+" "+fields[3] != want {
-			t.Errorf("jpeg decodes %d bytes as %s by %s, Go decodes them as %s\ninput: %x", len(input), fields[2], fields[3], want, input)
-		}
-	})
+	return seeds
+}
+
+func jpegAgreesWithGo(r readerRun) string {
+	reader, input := r.reader, r.input
+	fields := strings.Fields(r.summary)
+	if len(fields) < 4 || fields[1] != "ok" {
+		return ""
+	}
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(input))
+	if err != nil {
+		return ""
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(input)); err != nil {
+		return ""
+	}
+	if want := strconv.Itoa(cfg.Width) + " " + strconv.Itoa(cfg.Height); fields[2]+" "+fields[3] != want {
+		return fmt.Sprintf("%s decodes %d bytes as %s by %s, Go decodes them as %s\ninput: %x", reader, len(input), fields[2], fields[3], want, input)
+	}
+	return ""
 }
 
 // TestSelfHostStdJPEGAgainstGo decodes the files that Go's encoder wrote and

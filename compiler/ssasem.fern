@@ -8,6 +8,7 @@ import "./semrecords";
 import "./typeinfo";
 import "./byteconst";
 import "std/string";
+import "./lexer";
 
 // writes is false only for a finalizer that cannot write a cell
 // (mark_cell_writers).
@@ -245,7 +246,7 @@ function uses_of(f: Func): Uses {
         }
       }
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < n) {
       count = count.with(t + 1, count[t + 1] + 1);
     }
@@ -278,7 +279,7 @@ function uses_of(f: Func): Uses {
       }
       ii += 1;
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < n) {
       let k = next[t];
       kinds = kinds.with(k, term_use());
@@ -289,16 +290,6 @@ function uses_of(f: Func): Uses {
     bi += 1;
   }
   return Uses { start: count, kinds: kinds, block: block, at: at, slot: slot };
-}
-
-function term_operand(t: ssa.STerm): i32 {
-  if (t.kind_tag == ssa.TERM_RET) {
-    return t.value;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return t.cond;
-  }
-  return -1;
 }
 
 pub function param(): i32 {
@@ -315,6 +306,10 @@ pub function bytes_new(): i32 {
 
 pub function array_reserve(): i32 {
   return -53;
+}
+
+pub function array_zero(): i32 {
+  return -59;
 }
 
 pub function tuple_new(): i32 {
@@ -589,6 +584,36 @@ pub function is_i32(t: typeinfo.Type): boolean {
   return false;
 }
 
+// param_value is the value of parameter index in f, or -1.
+pub function param_value(f: Func, index: i32): i32 {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == param() && ins.imm == index) {
+        return ins.result;
+      }
+    }
+  }
+  return -1;
+}
+
+// callee_modes is the parameter modes of the call's target, or none.
+pub function callee_modes(f: Func, ins: ssa.SInst): i32[] {
+  let at = find_contract_in(f.calls, ins.str);
+  if (at < 0) {
+    return [];
+  }
+  return f.calls[at].modes;
+}
+
+pub function has_env_row(rows: EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
+  for row in rows {
+    if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function is_u8(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 8 && i.unsigned && !i.is_char;
@@ -650,13 +675,6 @@ pub function is_float(t: typeinfo.Type): boolean {
   return is_f64(t) || is_f32(t);
 }
 
-pub function is_lanes(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeLanes(_) = t {
-    return true;
-  }
-  return false;
-}
-
 pub function is_integer(t: typeinfo.Type): boolean {
   return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
@@ -703,13 +721,6 @@ pub function is_bool(t: typeinfo.Type): boolean {
   return false;
 }
 
-function is_void(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeVoid(_) = t {
-    return true;
-  }
-  return false;
-}
-
 pub function is_string(t: typeinfo.Type): boolean {
   if let typeinfo.TypeString(s) = t {
     return s.tag == 0;
@@ -749,7 +760,7 @@ pub function is_scalar(t: typeinfo.Type): boolean {
 // owned_shape says ownership inference can count a parameter of type t:
 // a record or a variant, which a callee that keeps one consumes.
 pub function owned_shape(t: typeinfo.Type): boolean {
-  if (semtypes.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
+  if (typeinfo.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
     return false;
   }
   if (is_map(t) || is_view(t)) {
@@ -781,7 +792,7 @@ pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): bool
       continue;
     }
     seen = seen.append(k);
-    if (semtypes.is_cell(t)) {
+    if (typeinfo.is_cell(t)) {
       work = work.append(semtypes.cell_elem(t));
       continue;
     }
@@ -868,13 +879,6 @@ function box_names(f: Func, t: typeinfo.Type): string[] {
     }
   }
   return out;
-}
-
-pub function is_dyn(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeDyn(_) = t {
-    return true;
-  }
-  return false;
 }
 
 pub function dyn_call_name(method: string, traits: string[], arms: string[]): string {
@@ -973,7 +977,7 @@ pub function float_map_value(v: typeinfo.Type): boolean {
 }
 
 pub function keyed_map_key(k: typeinfo.Type): boolean {
-  if (semtypes.is_handle(k) || semtypes.is_env(k) || semtypes.is_cell(k)) {
+  if (semtypes.is_handle(k) || semtypes.is_env(k) || typeinfo.is_cell(k)) {
     return false;
   }
   if let typeinfo.TypeStruct(r) = k {
@@ -1092,7 +1096,7 @@ pub function closure_env(c: Contract): boolean {
     return false;
   }
   if let typeinfo.TypeArray(a) = c.params[0] {
-    return semtypes.equal(a.elem, env_word());
+    return semtypes.equal(a.elem, typeinfo.t_i32());
   }
   return semtypes.is_env(c.params[0]);
 }
@@ -1106,10 +1110,6 @@ pub function closure_captures(c: Contract): typeinfo.Type[] {
     return [];
   }
   return semtypes.env_captures(c.params[0]);
-}
-
-function env_word(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 pub function closure_type(c: Contract): typeinfo.Type {
@@ -1163,7 +1163,7 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 }
 
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
-  if (is_void(result)) {
+  if (typeinfo.is_void(result)) {
     if (ins.imm != 0 || ins.str != "") {
       return "unit constant";
     }
@@ -1240,16 +1240,16 @@ function bytes_construction_error(ins: ssa.SInst, result: typeinfo.Type): string
   return "constant byte array type";
 }
 
-function array_reserve_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+function scalar_allocation_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1 || !is_i32(f.values[ins.args[0]])) {
-    return "array reserve capacity type";
+    return "scalar array allocation count type";
   }
   if let typeinfo.TypeArray(a) = result {
     if (!a.view && (is_integer(a.elem) || is_float(a.elem) || is_bool(a.elem) || is_char(a.elem))) {
       return "";
     }
   }
-  return "array reserve requires owned scalar elements";
+  return "scalar array allocation requires owned scalar elements";
 }
 
 function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -1532,7 +1532,7 @@ function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
   if (ins.args.len() != 1) {
     return "dyn widening arity";
   }
-  if (!is_dyn(result)) {
+  if (!typeinfo.is_dyn(result)) {
     return "dyn widening type";
   }
   let from = f.values[ins.args[0]];
@@ -1552,7 +1552,7 @@ function dyn_test_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   if (!is_bool(result)) {
     return "dyn test type";
   }
-  if (!is_dyn(f.values[ins.args[0]])) {
+  if (!typeinfo.is_dyn(f.values[ins.args[0]])) {
     return "dyn test operand";
   }
   return "";
@@ -1562,7 +1562,7 @@ function dyn_narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): st
   if (ins.args.len() != 1) {
     return "dyn narrowing arity";
   }
-  if (!is_dyn(f.values[ins.args[0]])) {
+  if (!typeinfo.is_dyn(f.values[ins.args[0]])) {
     return "dyn narrowing operand";
   }
   if (ins.str == "") {
@@ -1588,7 +1588,7 @@ function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "dyn box arity";
   }
-  if (!is_dyn(result)) {
+  if (!typeinfo.is_dyn(result)) {
     return "dyn box type";
   }
   let from = f.values[ins.args[0]];
@@ -1957,7 +1957,7 @@ function cell_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
   if (ins.args.len() != 1) {
     return "cell construction arity";
   }
-  if (!semtypes.is_cell(result)) {
+  if (!typeinfo.is_cell(result)) {
     return "cell construction type";
   }
   if (!semtypes.equal(semtypes.cell_elem(result), f.values[ins.args[0]])) {
@@ -1971,7 +1971,7 @@ function cell_read_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "cell read arity";
   }
   let cell = f.values[ins.args[0]];
-  if (!semtypes.is_cell(cell)) {
+  if (!typeinfo.is_cell(cell)) {
     return "cell read type";
   }
   if (!semtypes.equal(semtypes.cell_elem(cell), result)) {
@@ -1985,13 +1985,13 @@ function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
     return "cell write arity";
   }
   let cell = f.values[ins.args[0]];
-  if (!semtypes.is_cell(cell)) {
+  if (!typeinfo.is_cell(cell)) {
     return "cell write type";
   }
   if (!semtypes.equal(semtypes.cell_elem(cell), f.values[ins.args[1]])) {
     return "cell element type";
   }
-  if (!is_void(result)) {
+  if (!typeinfo.is_void(result)) {
     return "cell write result";
   }
   return "";
@@ -2573,7 +2573,7 @@ function leaf_key(t: typeinfo.Type): string {
   if let typeinfo.TypeLanes(l) = t {
     return typeinfo.lanes_spelling(l.width);
   }
-  if (is_void(t)) {
+  if (typeinfo.is_void(t)) {
     return "void";
   }
   if (is_view(t)) {
@@ -2621,7 +2621,7 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != c.params.len()) {
     return "call arity";
   }
-  if (is_dyn_call(ins.str) && (c.params.len() == 0 || !is_dyn(c.params[0]))) {
+  if (is_dyn_call(ins.str) && (c.params.len() == 0 || !typeinfo.is_dyn(c.params[0]))) {
     return "dyn call receiver type";
   }
   let i = 0;
@@ -2725,7 +2725,7 @@ function integer_op(op: string): boolean {
   return op == "<<" || op == ">>";
 }
 
-function comparison(op: string): boolean {
+pub function comparison(op: string): boolean {
   return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
@@ -2743,7 +2743,7 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
   if (is_float(left) && semtypes.equal(left, right)) {
     return float_result(op, left);
   }
-  if (is_lanes(left) && semtypes.equal(left, right)) {
+  if (typeinfo.is_lanes(left) && semtypes.equal(left, right)) {
     return lanes_result(op, left);
   }
   if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) {
@@ -2759,14 +2759,10 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
 }
 
 function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
-  if (saturating(op) || checked_arith(op)) {
+  if (lexer.is_saturating_op(op) || checked_arith(op)) {
     return typeinfo.unchecked();
   }
   return integer_result(op, t);
-}
-
-pub function saturating(op: string): boolean {
-  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
 }
 
 pub function checked_arith(op: string): boolean {
@@ -2804,7 +2800,7 @@ function checked_scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): s
 }
 
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
-  if (integer_op(op) || saturating(op)) {
+  if (integer_op(op) || lexer.is_saturating_op(op)) {
     return t;
   }
   if (checked_arith(op)) {
@@ -2844,7 +2840,7 @@ function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
 }
 
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || is_lanes(operand))) {
+  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || typeinfo.is_lanes(operand))) {
     return operand;
   }
   if (op == "!" && is_bool(operand)) {
@@ -2960,7 +2956,7 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 }
 
 function is_aggregate_op(kind: i32): boolean {
-  return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
+  return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == array_zero() || kind == tuple_new() || kind == array_get()
     || kind == tuple_get() || kind == record_new() || kind == record_get();
 }
 
@@ -2969,8 +2965,8 @@ function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   if (kind == bytes_new()) {
     return bytes_construction_error(ins, result);
   }
-  if (kind == array_reserve()) {
-    return array_reserve_error(ins, f, result);
+  if (kind == array_reserve() || kind == array_zero()) {
+    return scalar_allocation_error(ins, f, result);
   }
   if (kind == array_new()) {
     return array_construction_error(ins, f, result);
@@ -3100,7 +3096,7 @@ function line_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.args.len() != 0) {
     return "line mark arity";
   }
-  if (!is_void(result)) {
+  if (!typeinfo.is_void(result)) {
     return "line mark type";
   }
   return "";
@@ -3111,11 +3107,11 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
     return "function type without a signature";
   }
   for p in fn.param_types {
-    if (!is_void(p) && !signature_slot(p)) {
+    if (!typeinfo.is_void(p) && !signature_slot(p)) {
       return "function signature slot";
     }
   }
-  if (!is_void(fn.ret_type) && !signature_slot(fn.ret_type)) {
+  if (!typeinfo.is_void(fn.ret_type) && !signature_slot(fn.ret_type)) {
     return "function signature slot";
   }
   return "";
@@ -3276,7 +3272,7 @@ function contracts_error(calls: Contract[]): string {
 function terminator_error(b: ssa.SBlock, f: Func): string {
   if (b.term.kind_tag == ssa.TERM_RET) {
     if (b.term.value < 0) {
-      if (!is_void(f.result)) {
+      if (!typeinfo.is_void(f.result)) {
         return "missing return value";
       }
     } else if (!semtypes.equal(f.result, f.values[b.term.value])) {
@@ -3490,10 +3486,10 @@ function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, targe
     return known;
   }
   let name = g.defs[test].str;
-  if (target == term.t && !names_has(known.held, name)) {
+  if (target == term.t && !util.has_str(known.held, name)) {
     return Known { ...known, held: known.held.append(name) };
   }
-  if (target == term.f && !names_has(known.gone, name)) {
+  if (target == term.f && !util.has_str(known.gone, name)) {
     return Known { ...known, gone: known.gone.append(name) };
   }
   return known;
@@ -3516,7 +3512,7 @@ function value_test(g: Guards, term: ssa.STerm, value: i32): i32 {
 function common(a: string[], b: string[]): string[] {
   let out: string[] = [];
   for n in a {
-    if (names_has(b, n)) {
+    if (util.has_str(b, n)) {
       out = out.append(n);
     }
   }
@@ -3610,15 +3606,6 @@ function has_guarded_projection(f: Func): boolean {
   return false;
 }
 
-function names_has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
   if (guarded_by(f, ins, settled(f, ins.args[0], bi, g))) {
     return true;
@@ -3630,13 +3617,13 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
   let value = ins.args[0];
   if (settled_viewless(ins)) {
     for c in dyn_view_concretes(f, f.values[value]) {
-      if (!names_has(known.gone, shape_name(f, c))) {
+      if (!util.has_str(known.gone, shape_name(f, c))) {
         return false;
       }
     }
     return true;
   }
-  if (names_has(known.held, ins.str)) {
+  if (util.has_str(known.held, ins.str)) {
     return true;
   }
   let at = semrecords.find_enum(f.enums, f.values[value]);
@@ -3644,7 +3631,7 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
     return false;
   }
   for v in f.enums[at].variants {
-    if (semrecords.inhabited(v) && v.name != ins.str && !names_has(known.gone, v.name)) {
+    if (semrecords.inhabited(v) && v.name != ins.str && !util.has_str(known.gone, v.name)) {
       return false;
     }
   }
@@ -3684,6 +3671,13 @@ function borrows_storage(ins: ssa.SInst, f: Func): boolean {
   return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
 }
 
+// These projections borrow stored values from an immutable container.
+// Their source retains the projected storage across a control-flow join.
+function stored_projection(kind: i32): boolean {
+  return kind == ssa.COPY || kind == record_get() || kind == tuple_get() || kind == array_get()
+    || kind == variant_get() || kind == variant_up() || kind == variant_as();
+}
+
 function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[] {
   if (v < 0 || v >= defs.len() || seen[v]) {
     return [];
@@ -3691,6 +3685,9 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   let d = defs[v];
   let next = seen.with(v, true);
   if (d.kind_tag == str_as() && d.args.len() == 1) {
+    return bytes_roots(f, defs, d.args[0], next);
+  }
+  if (stored_projection(d.kind_tag) && d.args.len() > 0 && semtypes.needs_anchor(f.values[v])) {
     return bytes_roots(f, defs, d.args[0], next);
   }
   if (!holds_view(f, f.values[v])) {
@@ -4225,7 +4222,7 @@ function quiet_cell_read(g: ssa.SFunc, ri: i32, rpos: i32, v: i32): boolean {
         }
       }
     }
-    let t = term_operand(b.term);
+    let t = ssa.term_operand(b.term);
     if (t >= 0 && t < off.len() && off[t] && limit[xi] != b.insts.len()) {
       return false;
     }
@@ -4316,21 +4313,12 @@ pub function called_names(f: Func): string[] {
   let out: string[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == call() && ins.str != "" && !name_seen(out, ins.str)) {
+      if (ins.kind_tag == call() && ins.str != "" && !util.has_str(out, ins.str)) {
         out = out.append(ins.str);
       }
     }
   }
   return out;
-}
-
-function name_seen(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
-    }
-  }
-  return false;
 }
 
 pub function analyze(f: Func): Analysis {
@@ -4371,7 +4359,7 @@ pub function view_copy_types(): typeinfo.Type[] {
 pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: i32 }
 
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
-  let s = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph), unfold: false, helpers: [] };
+  let s = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: ssa.next_block_id(f.graph), unfold: false, helpers: [] };
   let made: i32[] = [];
   for _ in copies {
     made = made.append(-1);
@@ -4394,7 +4382,7 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     pi += 1;
   }
   let blocks: ssa.SBlock[] = [];
-  let first_new = next_block_id(f.graph);
+  let first_new = ssa.next_block_id(f.graph);
   for blk in s.done {
     let insts: ssa.SInst[] = [];
     for ins in blk.insts {
@@ -4427,16 +4415,6 @@ function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
     }
   }
   return out;
-}
-
-function next_block_id(g: ssa.SFunc): i32 {
-  let n = 0;
-  for b in g.blocks {
-    if (b.id >= n) {
-      n = b.id + 1;
-    }
-  }
-  return n;
 }
 
 struct Made { s: CopySplice, made: i32[] }
@@ -4490,14 +4468,6 @@ function sp_blocks(s: CopySplice, n: i32): CopySplice {
   return CopySplice { ...s, next_block: s.next_block + n };
 }
 
-function t_br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
-}
-
-function t_brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
-}
-
 function boolean_type(): typeinfo.Type {
   return typeinfo.TypeBool { tag: 0 };
 }
@@ -4521,7 +4491,7 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     }
     return false;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return holds_view(f, semtypes.cell_elem(t));
   }
   if let typeinfo.TypeMap(m) = t {
@@ -4542,7 +4512,7 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
       }
     }
   }
-  if (is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return dyn_view_concretes(f, t).len() > 0;
   }
   return false;
@@ -4558,7 +4528,7 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
   if let typeinfo.TypeTuple(tup) = t {
     return all_copyable(f, tup.elements, open);
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return "a cell " + typeinfo.spelling(t) + " is shared storage a copy would split";
   }
   if (is_map(t)) {
@@ -4568,7 +4538,7 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
     return "";
   }
   let inner = open.append(t);
-  if (is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return dyn_refusal(f, t, inner);
   }
   if let typeinfo.TypeUnion(_) = t {
@@ -4685,7 +4655,7 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
     return helper_call(s, v, t);
   }
   s = CopySplice { ...s, unfold: false };
-  if (is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return copy_dyn(f, s, v, t);
   }
   if (is_map(t)) {
@@ -4765,7 +4735,7 @@ function loop_enter(s: CopySplice, n: i32, acc0: i32, t: typeinfo.Type): CopyLoo
   let pre = s.id;
   let i = s.values.len();
   s = CopySplice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
-  s = sp_close(s, t_br(head));
+  s = sp_close(s, ssa.t_br(head));
   let head_at = s.done.len();
   s = sp_open(s, head + 1, [head]);
   return CopyLoop { s: s, pre: pre, head: head, exit: head + 2, head_at: head_at, i: i, acc: i + 1, cond: i + 2, zero: zero.value, one: one.value, n: n, acc0: acc0 };
@@ -4775,8 +4745,8 @@ function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
   let i1 = sp_emit(s, 9, i32_type(), [l.i, l.one], 0, "+");
   s = i1.s;
   let latch = s.id;
-  s = sp_close(s, t_br(l.head));
-  let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: t_brif(l.cond, l.head + 1, l.exit), insts: [
+  s = sp_close(s, ssa.t_br(l.head));
+  let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: ssa.t_brif(l.cond, l.head + 1, l.exit), insts: [
     ssa.SInst { kind_tag: ssa.PHI, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssa.PHI, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssa.BINARY, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
@@ -4816,16 +4786,16 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
       let arm = s.next_block;
       let next = arm + 1;
       let at = s.id;
-      s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, next));
+      s = sp_close(sp_blocks(s, 2), ssa.t_brif(test.value, arm, next));
       let r = rebuilt_variant(f, sp_open(s, arm, [at]), v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
-      s = sp_open(sp_close(r.s, t_br(join)), next, [at]);
+      s = sp_open(sp_close(r.s, ssa.t_br(join)), next, [at]);
     } else {
       let r = rebuilt_variant(f, s, v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
-      s = sp_close(r.s, t_br(join));
+      s = sp_close(r.s, ssa.t_br(join));
     }
     k += 1;
   }
@@ -4859,18 +4829,18 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
     s = test.s;
     let arm = s.next_block;
     let at = s.id;
-    s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, arm + 1));
+    s = sp_close(sp_blocks(s, 2), ssa.t_brif(test.value, arm, arm + 1));
     let n = sp_emit(sp_open(s, arm, [at]), dyn_as(), c, [v], 0, name);
     let cc = deep_copy(f, n.s, n.value);
     let up = sp_emit(cc.s, dyn_up(), t, [cc.value], 0, "");
     froms = froms.append(up.s.id);
     built = built.append(up.value);
-    s = sp_open(sp_close(up.s, t_br(join)), arm + 1, [at]);
+    s = sp_open(sp_close(up.s, ssa.t_br(join)), arm + 1, [at]);
   }
   let kept = sp_emit(s, dyn_as(), t, [v], 0, "");
   froms = froms.append(kept.s.id);
   built = built.append(kept.value);
-  s = sp_open(sp_close(kept.s, t_br(join)), join, froms);
+  s = sp_open(sp_close(kept.s, ssa.t_br(join)), join, froms);
   let out = s.values.len();
   let phi = ssa.SInst { kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
@@ -4961,7 +4931,7 @@ function copy_parts(f: Func, t: typeinfo.Type): typeinfo.Type[] {
   if (is_map(t)) {
     return [map_key(t), map_value(t)];
   }
-  if (is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return dyn_view_concretes(f, t);
   }
   if let typeinfo.TypeUnion(_) = t {
@@ -5261,7 +5231,7 @@ function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parent
   if (b.term.value == last.result) {
     return true;
   }
-  return b.term.value < 0 && is_void(f.result);
+  return b.term.value < 0 && typeinfo.is_void(f.result);
 }
 
 function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
@@ -5339,14 +5309,14 @@ function phi_map(f: Func, nparams: i32): i32[] {
   return map;
 }
 
-function mapped(map: i32[], v: i32): i32 {
+pub function mapped(map: i32[], v: i32): i32 {
   if (v < 0 || v >= map.len()) {
     return v;
   }
   return map[v];
 }
 
-function mapped_list(map: i32[], vs: i32[]): i32[] {
+pub function mapped_list(map: i32[], vs: i32[]): i32[] {
   let out: i32[] = [];
   for v in vs {
     out = out.append(mapped(map, v));
@@ -5360,6 +5330,24 @@ pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
     return ssa.SInst { ...ins, args: mapped_list(map, ins.args), imm: mapped(map, base) + 1 };
   }
   return ssa.SInst { ...ins, args: mapped_list(map, ins.args) };
+}
+
+pub function record_fields(t: typeinfo.Type, f: Func): semrecords.Field[] {
+  return f.records.list[semrecords.find(f.records, t)].fields;
+}
+
+pub function is_byte_view(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return a.view && is_u8(a.elem);
+  }
+  return false;
+}
+
+pub function with_contract(calls: Contract[], c: Contract): Contract[] {
+  if (find_contract_in(calls, c.name) >= 0) {
+    return calls;
+  }
+  return calls.append(c);
 }
 
 function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
@@ -5576,8 +5564,4 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
     ops = ops.append(row[at]);
   }
   return ssa.SInst { kind_tag: ssa.PHI, result: result, args: ops, imm: 0, str: "" };
-}
-
-pub function no_source(): sourcepos.SourceInfo {
-  return sourcepos.no_source();
 }

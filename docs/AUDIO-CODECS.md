@@ -16,6 +16,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
@@ -255,7 +256,8 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 ```
 
 Compressed stereo with 33 predictor bits remains unsupported.
-M4A playback and Reader integration remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+The byte-view M4A decoder uses `std/audio/mp4/alac`.
+Source-backed M4A playback remains open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 `std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
@@ -270,7 +272,23 @@ The complete-file convenience method checks a cumulative PCM budget.
 
 The index checks packet headers and extents. Reads validate the selected audio payloads.
 The playable end respects partial ALAC packets when a CAF packet table describes nominal full-packet capacity.
-CAF readers, other CAF codecs, and custom channel descriptions remain open.
+`std/audio/caf/file` supplies bounded ALAC playback over a borrowed seekable source.
+Its cooperative builder scans 64-bit chunk extents and skips unknown payloads without reads.
+It shares metadata, layout, packet-header, and presentation checks with the byte-view API.
+The builder retains scalar packet locations and sample positions, small metadata, and bounded byte windows.
+It retains no complete encoded file or PCM.
+
+The source index uses 20 logical bytes per packet and an eight-byte terminal position.
+Native scalar arrays use eight-byte slots, so their payload uses 24 bytes per packet before capacity and allocator overhead.
+Each cursor reuses ALAC scratch and caller-owned PCM storage.
+Audio events preserve the byte-view `start` and `frames` trim contract and output-buffer suffixes.
+Each step performs at most one seek, one bounded read, or one packet operation.
+The caller supplies the same immutable source and closes it after success or failure.
+
+The file budget covers the complete source. The audio input budget applies to one packet.
+The default source window holds at most 1 MiB, and the packet-table window normally holds 16 KiB.
+Both windows can coexist during index construction.
+Source-backed linear CAF playback and custom channel descriptions remain open.
 
 ## Vorbis
 
@@ -400,6 +418,47 @@ They cover fast-start files, multiple audio tracks, a video track, compact sizes
 The reference generator uses the independently reported container duration to exclude final codec padding from FFmpeg output.
 Boundary tests cover incomplete prefixes, malformed tables, media ranges, budgets, track selection, and edit-clock rounding.
 They also check 64-bit packet ranges beyond eight GiB without allocating a large file.
+
+## MP2
+
+`std/audio/mp2` decodes MPEG-1 and MPEG-2 Layer II frames to interleaved float PCM.
+It supports all six sample rates and all four channel modes.
+Protected frames validate the MPEG CRC over the header, allocation fields, and scale-factor selection.
+`decode_frame_into` reuses caller-owned PCM storage and preserves the unused suffix on success.
+Each frame contains 1,152 PCM frames per channel.
+
+The decoder retains 960 float values for synthesis history and two format fields.
+Frame scratch does not remain in decoder state.
+Header, budget, and output-size errors preserve history.
+Payload and checksum errors reset history.
+A rate or channel-count change also resets history.
+
+`decode_raw` accepts consecutive frames with one sample rate and channel count.
+It applies a cumulative output budget.
+Frame APIs require a header at the supplied byte offset.
+Layer I, MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+
+The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
+It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.
+Fern output matches pinned scalar minimp3 bit for bit.
+The generator also compares every stream with the FFmpeg float decoder and enables CRC checks.
+The FFmpeg input uses a WAVE wrapper with unchanged MPEG payload bytes.
+This wrapper avoids raw-demux rejection of valid short streams with channel-mode changes.
+
+```sh
+python3 scripts/gen-mp2-tables.py --source /path/to/minimp3.h --check
+python3 scripts/gen-mp2-vectors.py --minimp3 /path/to/minimp3.h --check
+```
+
+Native Linux tests include strict IR checks, sanitizers, and balanced allocation counts.
+WASI executes the same corpus and boundary tests.
+Android ARM64 shared libraries compile successfully.
+Native ARM64 CI and device measurements remain necessary.
+These checks do not establish a speed or quality lead over other codecs.
+The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
+Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation counts by 30 to 43 percent.
+The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.
+Fern now takes 3.08 to 3.52 times the decode time of SIMD minimp3 on the measured Linux host.
 
 ## MP3
 
