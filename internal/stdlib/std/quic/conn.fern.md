@@ -1813,7 +1813,7 @@ function (c: Conn) __ticket_issued(now: i64): Conn {
   }
   match (c.tls) {
     TlsServer(t) => {
-      return c.__server_step(t.ticket(tlsserver.issue_ticket(c.config.ticket_key, c.config.ticket_lifetime, t, c.ticket_entropy, c.__wall_ms(now))), now);
+      return c.__server_step(t.ticket(tlsserver.issue_ticket(c.config.ticket_key, c.config.ticket_lifetime, t, c.ticket_entropy, c.__wall_ms(now), false)), now);
     },
     _ => {
       return c;

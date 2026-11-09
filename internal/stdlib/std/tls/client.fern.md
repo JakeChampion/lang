@@ -93,6 +93,7 @@ import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
+import "std/result";
 ```
 
 ### `3 pub struct Config`
@@ -101,7 +102,8 @@ import "std/tls/x509";
 <<3 pub struct Config>>=
 pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity] }
 
-pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string }
+// max_early is the most early data the ticket allows, 0 when it allows none.
+pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32 }
 ```
 
 ### `4 pub function config(server_name: string, roots: verify.Roots): Config`
@@ -443,12 +445,24 @@ function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: messa
   return tickets;
 }
 
+function __max_early(t: message.NewSessionTicket): u32 {
+  match (message.find(t.extensions, message.EXT_EARLY_DATA)) {
+    Some(d) => {
+      return message.early_data_max(d).unwrap_or(0 as u32);
+    },
+    None => {
+      return 0 as u32;
+    }
+  }
+  return 0 as u32;
+}
+
 // ticket_from is the ticket a client for `server_name` keeps from the
 // NewSessionTicket `t` that the server sent on the connection `c`.
 pub function ticket_from(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp): Option[Ticket] {
   match (c.resumption_psk(t.nonce)) {
     Ok(psk) => {
-      return Some(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: server_name });
+      return Some(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: server_name, max_early: __max_early(t) });
     },
     Err(_) => {
       return None;
