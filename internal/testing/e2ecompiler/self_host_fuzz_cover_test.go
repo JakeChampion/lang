@@ -18,34 +18,41 @@ import (
 
 // Go's fuzzer steers by the coverage of the Go test binary, and it cannot see
 // into the Fern process that reads each input. The loop here steers by the
-// coverage of that process instead: `fern -cover` builds stdparse.fern, the
-// binary writes its counters at exit, and the loop keeps each input that
-// reached a counter that no earlier input reached. The counters cover the
-// standard library modules that stdparse imports. docs/COVERAGE.md has the
+// coverage of that process instead: `fern -cover` builds the program of a
+// reader, the binary writes its counters at exit, and the loop keeps each
+// input that reached a counter that no earlier input reached. The counters
+// cover the modules that the program imports: the stdlib for stdparse.fern,
+// and the compiler and the stdlib for a driver. docs/COVERAGE.md has the
 // report format.
 
 const (
-	stdCoverFuzzEnv       = "FERN_STD_COVER_FUZZ"
-	stdCoverFuzzTimeEnv   = "FERN_STD_COVER_FUZZ_TIME"
-	stdCoverFuzzCorpusEnv = "FERN_STD_COVER_FUZZ_CORPUS"
+	readerCoverFuzzEnv       = "FERN_READER_COVER_FUZZ"
+	readerCoverFuzzTimeEnv   = "FERN_READER_COVER_FUZZ_TIME"
+	readerCoverFuzzCorpusEnv = "FERN_READER_COVER_FUZZ_CORPUS"
 )
 
-func fuzzStdParseCover(tb testing.TB) string {
+// readerCoverProgram builds the program of r with -cover, with the shipped
+// CLI: stdparse.fern, or a driver of compiler/drivers.
+func readerCoverProgram(tb testing.TB, r readerTarget) string {
 	fuzzBuildCache(tb)
 	if _, runner := e2eharness.X86_64Tooling(tb); len(runner) != 0 {
 		tb.Skip("the fuzz programs run natively only")
 	}
-	return e2eharness.CachedCLIBuild(tb, e2eharness.CLIBuild{
+	b := e2eharness.CLIBuild{
 		Target: e2eharness.TargetX86_64Linux,
 		Dir:    e2eharness.RepoPath("tests", "fuzz"),
 		Entry:  "stdparse.fern",
 		Args:   []string{"-cover"},
-	})
+	}
+	if r.program != stdparse {
+		b.Dir, b.Entry = e2eharness.RepoPath("compiler"), "drivers/"+r.program+".fern"
+	}
+	return e2eharness.CachedCLIBuild(tb, b)
 }
 
-// runStdCover runs the -cover build of stdparse on one input. The run it
+// runCover runs the -cover build of stdparse on one input. The run it
 // returns has the program's own stderr, without the report.
-func runStdCover(tb testing.TB, bin, path string, r stdReader, input []byte) (*e2eharness.CoverBits, fuzzRun) {
+func runCover(tb testing.TB, bin, path string, r readerTarget, input []byte) (*e2eharness.CoverBits, fuzzRun) {
 	tb.Helper()
 	if err := os.WriteFile(path, input, 0o644); err != nil {
 		tb.Fatal(err)
@@ -118,19 +125,19 @@ func keepFailingInput(tb testing.TB, target string, input []byte) {
 	tb.Logf("the failing input is in %s: commit it with the fix", path)
 }
 
-// stdCampaign is the state of one coverage-guided loop over one reader.
-type stdCampaign struct {
+// coverCampaign is the state of one coverage-guided loop over one reader.
+type coverCampaign struct {
 	tb     testing.TB
 	bin    string
 	path   string
-	r      stdReader
+	r      readerTarget
 	total  e2eharness.CoverBits
 	corpus [][]byte
 	runs   int
 }
 
-func newStdCampaign(tb testing.TB, bin string, r stdReader, seeds [][]byte) *stdCampaign {
-	c := &stdCampaign{tb: tb, bin: bin, path: filepath.Join(tb.TempDir(), "input"), r: r}
+func newCoverCampaign(tb testing.TB, bin string, r readerTarget, seeds [][]byte) *coverCampaign {
+	c := &coverCampaign{tb: tb, bin: bin, path: filepath.Join(tb.TempDir(), "input"), r: r}
 	for _, seed := range seeds {
 		if len(seed) <= fuzzInputLimit {
 			c.try(seed, true)
@@ -142,15 +149,19 @@ func newStdCampaign(tb testing.TB, bin string, r stdReader, seeds [][]byte) *std
 // try runs one input and reports whether it reached a new counter. A fault
 // stops the test after the input is kept. With keep, an input that reached a
 // new counter joins the corpus.
-func (c *stdCampaign) try(input []byte, keep bool) bool {
+func (c *coverCampaign) try(input []byte, keep bool) bool {
 	c.tb.Helper()
-	bits, run := runStdCover(c.tb, c.bin, c.path, c.r, input)
+	bits, run := runCover(c.tb, c.bin, c.path, c.r, input)
 	c.runs++
-	if fault := stdFault(c.r, input, run); fault != "" {
+	if fault := readerFault(c.r, input, c.path, run); fault != "" {
 		keepFailingInput(c.tb, c.r.target, input)
 		c.tb.Fatalf("%s\ninput: %x", fault, input)
 	}
 	if bits.Rows == 0 {
+		// An abort ends the program before it writes the report.
+		if run.code != 0 {
+			return false
+		}
 		c.tb.Fatalf("%s gave no coverage rows, so the build is not instrumented", c.r.reader)
 	}
 	if c.total.Rows == 0 {
@@ -166,7 +177,7 @@ func (c *stdCampaign) try(input []byte, keep bool) bool {
 }
 
 // step mutates one corpus entry and runs it.
-func (c *stdCampaign) step(rng *rand.Rand, keep bool) bool {
+func (c *coverCampaign) step(rng *rand.Rand, keep bool) bool {
 	pool := c.corpus
 	if len(pool) == 0 {
 		pool = [][]byte{{}}
@@ -174,33 +185,33 @@ func (c *stdCampaign) step(rng *rand.Rand, keep bool) bool {
 	return c.try(mutateHostile(rng, pool[rng.Intn(len(pool))], pool), keep)
 }
 
-// TestSelfHostStdCoverageGuidedFuzz runs the coverage-guided loop on each
-// reader of stdReaders, with the seeds and the check of its Go fuzz target.
-// FERN_STD_COVER_FUZZ_TIME is the budget of each reader, and
-// FERN_STD_COVER_FUZZ_CORPUS is a directory that keeps the corpus of each
+// TestSelfHostReaderCoverageGuidedFuzz runs the coverage-guided loop on each
+// reader of readerTargets, with the seeds and the check of its Go fuzz target.
+// FERN_READER_COVER_FUZZ_TIME is the budget of each reader, and
+// FERN_READER_COVER_FUZZ_CORPUS is a directory that keeps the corpus of each
 // reader from one run to the next. Run one reader with
-// -run '^TestSelfHostStdCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$'.
-func TestSelfHostStdCoverageGuidedFuzz(t *testing.T) {
-	if !envflag.On(stdCoverFuzzEnv) {
-		t.Skip("set " + stdCoverFuzzEnv + "=1 to run the coverage-guided stdlib fuzzer")
+// -run '^TestSelfHostReaderCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$'.
+func TestSelfHostReaderCoverageGuidedFuzz(t *testing.T) {
+	if !envflag.On(readerCoverFuzzEnv) {
+		t.Skip("set " + readerCoverFuzzEnv + "=1 to run the coverage-guided reader fuzzer")
 	}
 	budget := 30 * time.Second
-	if v := os.Getenv(stdCoverFuzzTimeEnv); v != "" {
+	if v := os.Getenv(readerCoverFuzzTimeEnv); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			t.Fatalf("%s=%q: %v", stdCoverFuzzTimeEnv, v, err)
+			t.Fatalf("%s=%q: %v", readerCoverFuzzTimeEnv, v, err)
 		}
 		budget = d
 	}
-	bin := fuzzStdParseCover(t)
-	for _, r := range stdReaders {
+	for _, r := range readerTargets {
 		t.Run(r.target, func(t *testing.T) {
-			dir := os.Getenv(stdCoverFuzzCorpusEnv)
+			bin := readerCoverProgram(t, r)
+			dir := os.Getenv(readerCoverFuzzCorpusEnv)
 			if dir != "" {
 				dir = filepath.Join(dir, r.reader)
 			}
 			seeds := r.seeds(t)
-			c := newStdCampaign(t, bin, r, append(seeds, e2eharness.LoadCoverCorpus(dir)...))
+			c := newCoverCampaign(t, bin, r, append(seeds, e2eharness.LoadCoverCorpus(dir)...))
 			fromSeeds := c.total.Count()
 			seed := time.Now().UnixNano()
 			rng := rand.New(rand.NewSource(seed))
@@ -210,6 +221,9 @@ func TestSelfHostStdCoverageGuidedFuzz(t *testing.T) {
 					found++
 				}
 			}
+			if c.total.Rows == 0 {
+				t.Fatalf("no run of %s in %d wrote a coverage report", r.reader, c.runs)
+			}
 			t.Logf("%s: %d runs in %s (random seed %d), %d corpus entries (+%d found), %d of %d counters (the seeds and the saved corpus reached %d)",
 				r.reader, c.runs, budget, seed, len(c.corpus), found, c.total.Count(), c.total.Rows, fromSeeds)
 			e2eharness.SaveCoverCorpus(t, dir, c.corpus)
@@ -217,30 +231,33 @@ func TestSelfHostStdCoverageGuidedFuzz(t *testing.T) {
 	}
 }
 
-// TestSelfHostStdCoverageBeatsBlind runs the loop twice from the same seeds
+// TestSelfHostReaderCoverageBeatsBlind runs the loop twice from the same seeds
 // and the same random streams. One arm keeps each input that reached a new
 // counter, and the other keeps none. Summed over the readers and the streams,
 // the arm with feedback must reach more counters, or the loop is not steering
 // anything. The seeds are almost empty, because a reader's own seeds reach
 // most of what a few hundred blind mutations near them can reach.
-func TestSelfHostStdCoverageBeatsBlind(t *testing.T) {
-	if !envflag.On(stdCoverFuzzEnv) {
-		t.Skip("set " + stdCoverFuzzEnv + "=1 to run the coverage-guided stdlib fuzzer")
+func TestSelfHostReaderCoverageBeatsBlind(t *testing.T) {
+	if !envflag.On(readerCoverFuzzEnv) {
+		t.Skip("set " + readerCoverFuzzEnv + "=1 to run the coverage-guided reader fuzzer")
 	}
-	bin := fuzzStdParseCover(t)
 	const runs = 600
 	const streams = 2
-	readers := []string{"inflate", "url", "protobuf"}
+	readers := []string{"inflate", "url", "protobuf", "tangle", "index", "verify", "x86"}
 	seeds := [][]byte{{}, []byte("0")}
 	guided := make([]int, len(readers))
 	blind := make([]int, len(readers))
+	bins := make([]string, len(readers))
+	for i, name := range readers {
+		bins[i] = readerCoverProgram(t, readerTargetNamed(t, name))
+	}
 	t.Run("readers", func(t *testing.T) {
 		for i, name := range readers {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				r := stdReaderNamed(t, name)
+				r := readerTargetNamed(t, name)
 				arm := func(keep bool, stream int64) int {
-					c := newStdCampaign(t, bin, r, seeds)
+					c := newCoverCampaign(t, bins[i], r, seeds)
 					rng := rand.New(rand.NewSource(stream))
 					for range runs {
 						c.step(rng, keep)
@@ -269,12 +286,12 @@ func TestSelfHostStdCoverageBeatsBlind(t *testing.T) {
 	}
 }
 
-func stdReaderNamed(tb testing.TB, reader string) stdReader {
-	for _, r := range stdReaders {
+func readerTargetNamed(tb testing.TB, reader string) readerTarget {
+	for _, r := range readerTargets {
 		if r.reader == reader {
 			return r
 		}
 	}
-	tb.Fatalf("no reader %s in stdReaders", reader)
-	return stdReader{}
+	tb.Fatalf("no reader %s in readerTargets", reader)
+	return readerTarget{}
 }

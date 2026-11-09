@@ -1216,9 +1216,9 @@ Worth knowing so you do not assume coverage you do not have:
   suite's name about what it proves. It is also what the two
   coverage-guided loops steer by, because Go's instrumentation cannot see into
   a Fern binary. The nightly self-host fuzzer observes the paths that a
-  generated program reaches in the compiler. The stdlib reader loop observes
-  the paths that a hostile input reaches in the stdlib, in `fuzz-diff.yml` and
-  in the nightly reader rows. x86-64 Linux and arm64 Linux; `docs/COVERAGE.md`.
+  generated program reaches in the compiler. The reader loop observes the
+  paths that a hostile input reaches in the stdlib and in the compiler's
+  fuzz drivers. It runs in `fuzz-diff.yml` and in the nightly reader rows. x86-64 Linux and arm64 Linux; `docs/COVERAGE.md`.
 
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 512 self-host exit-byte

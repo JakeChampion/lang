@@ -10,12 +10,13 @@ import "../util";
 //
 // x86-image and arm64-image take the text on through the linker and the ELF
 // writer, as a native compile does. They write a static, a -pie and a -g image
-// to DIR, and print the size of each. Size 0 is a refusal with a cause line.
+// beside FILE, as FILE.static, FILE.pie and FILE.g, and print the size of
+// each. Size 0 is a refusal with a cause line.
 
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: asm_fuzz_run x86|arm64 FILE, or x86-image|arm64-image FILE DIR");
+    eprint("usage: asm_fuzz_run x86|arm64|x86-image|arm64-image FILE");
     return 2;
   }
   let src = "";
@@ -40,7 +41,7 @@ function main(): i32 {
     print("arm64 code_end " + util.i32_to_string(p.code_end) + " data " + util.i32_to_string(p.data.len()));
     return 0;
   }
-  if ((av[1] == "x86-image" || av[1] == "arm64-image") && av.len() > 3) {
+  if (av[1] == "x86-image" || av[1] == "arm64-image") {
     let x86 = av[1] == "x86-image";
     let words: u8[] = [];
     let line = av[1];
@@ -52,9 +53,9 @@ function main(): i32 {
         image = elfimage.arm64_elf_binary(src, words, kind == "g", "input.s", "/fuzz", false, kind == "pie");
       }
       if (image.len() > 0) {
-        match (write_file(av[3] + "/" + kind, image)) {
+        match (write_file(av[2] + "." + kind, image)) {
           Err(_) => {
-            eprint("asm_fuzz_run: cannot write " + av[3] + "/" + kind);
+            eprint("asm_fuzz_run: cannot write " + av[2] + "." + kind);
             return 2;
           },
           Ok(_) => {}
