@@ -199,12 +199,15 @@ function grown_unpackers(sofar: Inlined, sp: Spliceable, ctors: boolean[], own o
 // runs after the other splices, so that its copies do not use the caller
 // budget a larger body needs. A body joins once no callee of its own is still
 // to be spliced into it.
-function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolean[] {
+struct Tiny { tiny: boolean[], words: Words }
+
+function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[], own w: Words): Tiny {
   if (sp.size) {
-    return tiny;
+    return Tiny { tiny: tiny, words: w };
   }
   let no_ctors = none_of(tiny.len());
-  let words = returned_words(sofar.funcs, sp.ix, sp.owners);
+  let fresh = current_words(w, sofar.funcs, sp.ix, sp.owners);
+  let words = fresh.found;
   for i in 0..sofar.funcs.len() {
     let f = sofar.funcs[i];
     if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
@@ -212,7 +215,7 @@ function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolea
       tiny = tiny.with(i, true);
     }
   }
-  return tiny;
+  return Tiny { tiny: tiny, words: fresh };
 }
 
 struct ResourceOwners { names: util.NameIndex, types: util.NameIndex }
@@ -444,13 +447,34 @@ function can_hold_word(t: typeinfo.Type): boolean {
 // Follow return values through known callees before the splice rounds.
 // A function is examined again only when one of its callees starts to return a word.
 function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
+  return returned_words_since(funcs, ix, owners, none_of(funcs.len()), all_of(funcs.len()));
+}
+
+// The least fixpoint is unchanged for a function that reaches no stale one
+// through its callees, so only the stale functions and their callers are
+// found again.
+function returned_words_since(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners, prev: boolean[], stale: boolean[]): boolean[] {
   let callers = word_callers(funcs, ix);
-  let words = none_of(funcs.len());
-  let queued: boolean[] = [];
+  let words = prev;
+  let queued = none_of(funcs.len());
   let queue: i32[] = [];
   for i in 0..funcs.len() {
-    queued = queued.append(true);
-    queue = queue.append(i);
+    if (stale[i]) {
+      queued = queued.with(i, true);
+      queue = queue.append(i);
+    }
+  }
+  let reach = 0;
+  while (reach < queue.len()) {
+    let i = queue[reach];
+    reach += 1;
+    words = words.with(i, false);
+    for c in callers[i] {
+      if (!queued[c]) {
+        queued = queued.with(c, true);
+        queue = queue.append(c);
+      }
+    }
   }
   let head = 0;
   while (head < queue.len()) {
@@ -486,6 +510,25 @@ function returns_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, 
     }
   }
   return false;
+}
+
+// The returned words of each function, and the functions changed since they
+// were found.
+struct Words { found: boolean[], stale: boolean[], any_stale: boolean }
+
+function unknown_words(n: i32): Words {
+  return Words { found: none_of(n), stale: all_of(n), any_stale: n > 0 };
+}
+
+function current_words(w: Words, funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): Words {
+  if (!w.any_stale) {
+    return w;
+  }
+  return Words { found: returned_words_since(funcs, ix, owners, w.found, w.stale), stale: none_of(funcs.len()), any_stale: false };
+}
+
+function changed_words(w: Words, i: i32): Words {
+  return Words { found: w.found, stale: w.stale.with(i, true), any_stale: true };
 }
 
 // The callees whose result memory_read takes from words, inverted.
@@ -821,6 +864,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
   let once = alone;
   let sizes = sizes_of(funcs0);
   let callees = callees_of_all(funcs0, sp.ix);
+  let words = unknown_words(funcs0.len());
   let folded = false;
   let round = 0;
   let more = true;
@@ -840,10 +884,11 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
       j += 1;
     }
-    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
+    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small, words);
     more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
+    words = next.words;
     if (!more && !folded) {
       folded = true;
       once = s.once;
@@ -860,10 +905,12 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
   let tiny_rounds = 0;
   let tiny_more = true;
   while (tiny_more && tiny_rounds < 4) {
-    tiny = grown_tiny(out, s, tiny);
-    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small);
+    let grown = grown_tiny(out, s, tiny, words);
+    tiny = grown.tiny;
+    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small, grown.words);
     sizes = next.sizes;
     callees = next.callees;
+    words = next.words;
     out = next.out;
     tiny_more = next.changed;
     tiny_rounds += 1;
@@ -914,11 +961,12 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   return Spliceable { ...sp, shared: shared, once: once, small: small };
 }
 
-struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
+struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][], words: Words }
 
-function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], own w: Words): Round {
   let funcs = prev.funcs;
-  let words = returned_words(funcs, ix, owners);
+  let state = current_words(w, funcs, ix, owners);
+  let words = state.found;
   let rewritten = prev.rewritten;
   let changed = false;
   let i = 0;
@@ -933,12 +981,13 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
         callees = callees.with(i, callees_of(spliced.f, ix));
         funcs = funcs.with(i, spliced.f);
         rewritten = rewritten.with(i, true);
+        state = changed_words(state, i);
         changed = true;
       }
     }
     i += 1;
   }
-  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes, callees: callees };
+  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes, callees: callees, words: state };
 }
 
 struct Scalars { out: Inlined, modes: i32[][] }
@@ -1693,6 +1742,14 @@ function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
     j -= 1;
   }
   return false;
+}
+
+function all_of(n: i32): boolean[] {
+  let out = none_of(n);
+  for i in 0..n {
+    out = out.with(i, true);
+  }
+  return out;
 }
 
 function none_of(n: i32): boolean[] {
