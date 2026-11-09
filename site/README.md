@@ -87,11 +87,7 @@ npm install
 # build.sh needs bin/fern-selfhost and runs `make selfhost-cli` when it
 # is missing (or set FERN_SELFHOST to a compiler you already have).
 ( cd .. && ./web/build.sh )
-mkdir -p public/playground
-# Copy every .html/.js/.wasm, as pages.yml does: index.html statically
-# imports both wasi shims, so a missing one breaks the whole ES module
-# and the playground hangs on "loading runtime…".
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && web/stage.sh site/public/playground )
 
 # Generate the stdlib reference pages.
 ../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
@@ -147,7 +143,13 @@ import FernPlayground from "../../components/FernPlayground.astro";
 
 The component base64-URL-encodes the snippet into the iframe's
 hash — same codec the standalone playground's Share button uses,
-so URLs are interchangeable.
+so URLs are interchangeable. Give `args="…"` and `stdin={`…`}` to
+run the snippet with arguments and standard input. The embed then
+shows its program-input panel, so the reader can change both.
+
+Code fences and the playground editor take their token colours from
+`web/editor/fern-themes.json`, so a snippet and a fence colour the same
+token the same way.
 
 ## Add a new tutorial / reference page
 

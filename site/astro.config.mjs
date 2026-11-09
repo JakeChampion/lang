@@ -111,6 +111,15 @@ function stdlibSidebar() {
   return items;
 }
 
+// The token colours, shared with the playground editor so a snippet and a
+// code fence colour the same token the same way.
+const fernThemes = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../web/editor/fern-themes.json", import.meta.url)),
+    "utf8",
+  ),
+);
+
 const fernGrammar = JSON.parse(
   readFileSync(
     fileURLToPath(
@@ -186,6 +195,7 @@ export default defineConfig({
       // pipe operator all colour correctly instead of being approximated
       // by TypeScript's grammar.
       expressiveCode: {
+        themes: fernThemes,
         shiki: {
           langs: [fernGrammar],
         },

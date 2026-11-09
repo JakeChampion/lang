@@ -339,23 +339,22 @@ test("Build component reports compile errors instead of a download", async ({
   });
 });
 
-test("theme toggle flips body.dark and updates the glyph", async ({ page }) => {
+test("theme toggle flips body.dark and shows the other theme's icon", async ({ page }) => {
   await gotoReady(page);
   // Force light mode first so the toggle has a deterministic
   // before-state regardless of the CI runner's prefers-color-
   // scheme.
-  await page.evaluate(() => {
-    document.body.classList.remove("dark");
-    document.getElementById("themeGlyph")!.textContent = "🌙";
-  });
+  await page.evaluate(() => document.body.classList.remove("dark"));
   await expect(page.locator("body")).not.toHaveClass(/dark/);
+  await expect(page.locator("#themeToggle .icon-moon")).toBeVisible();
   await page.locator("#themeToggle").click();
   await expect(page.locator("body")).toHaveClass(/dark/);
-  await expect(page.locator("#themeGlyph")).toHaveText("☀");
+  await expect(page.locator("#themeToggle .icon-sun")).toBeVisible();
+  await expect(page.locator("#themeToggle .icon-moon")).not.toBeVisible();
   // Click back to light.
   await page.locator("#themeToggle").click();
   await expect(page.locator("body")).not.toHaveClass(/dark/);
-  await expect(page.locator("#themeGlyph")).toHaveText("🌙");
+  await expect(page.locator("#themeToggle .icon-moon")).toBeVisible();
 });
 
 test("?theme=dark URL param boots into dark mode", async ({ page }) => {
@@ -405,4 +404,75 @@ test("standalone mode does NOT show the embed tab strip", async ({ page }) => {
   await gotoReady(page);
   // Tab strip is gated on body.embed in CSS; standalone hides it.
   await expect(page.locator(".pane-tabs")).not.toBeVisible();
+});
+
+// The program input: argv after the program name, and stdin. Both run
+// paths take it, and a share link carries it in the hash.
+const grepSrc = `import "std/string";
+import "std/io";
+
+function main(): i32 {
+    let argv: string[] = args();
+    if (argv.len() < 2) {
+        eprint("usage: grep PATTERN");
+        return 2;
+    }
+    match (io.read_input("-")) {
+        Ok(text) => {
+            for line in text.lines() {
+                if (line.contains(argv[1])) { print(line); }
+            }
+            return 0;
+        },
+        Err(_) => { return 2; }
+    }
+}`;
+
+function b64url(s: string): string {
+  return Buffer.from(s, "utf8").toString("base64url");
+}
+
+const grepHash =
+  "#src=" + b64url(grepSrc) +
+  "&args=" + b64url("fern") +
+  "&stdin=" + b64url("fern frond\noak leaf\nfern spore\n");
+
+test("Run gives the program its arguments and stdin", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("#progInput")).toHaveAttribute("open", "");
+  await expect(page.locator("#progArgs")).toHaveValue("fern");
+  await page.locator("#run").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfern spore\n", { timeout: 10_000 });
+  await expect(page.locator("#meta .exit-ok")).toBeVisible();
+});
+
+test("Run (wasm) gives the program its arguments and stdin", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfern spore\n", { timeout: 30_000 });
+});
+
+test("Share keeps the program input in the hash", async ({ page }) => {
+  await page.goto("/index.html" + grepHash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.evaluate(() => {
+    (navigator as any).clipboard = { writeText: async () => {} };
+  });
+  await page.locator("#share").click();
+  await expect.poll(() => page.url()).toContain(grepHash);
+});
+
+test("the editor colours Fern keywords from the TextMate grammar", async ({ page }) => {
+  await gotoReady(page);
+  // `function` is keyword-class text in the grammar, so it gets its own
+  // highlight span with a colour that differs from plain text.
+  const kw = page.locator(".cm-content span", { hasText: /^function$/ }).first();
+  await expect(kw).toBeVisible();
+  const [kwColour, textColour] = await kw.evaluate((el) => [
+    getComputedStyle(el).color,
+    getComputedStyle(el.closest(".cm-line")!).color,
+  ]);
+  expect(kwColour).not.toBe(textColour);
 });

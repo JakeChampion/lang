@@ -75,6 +75,29 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
   );
 });
 
+test("the home page grep embed runs with its arguments and stdin", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const iframe = page.locator("figure.fern-playground iframe[src*='&args=']");
+  await expect(iframe).toHaveAttribute("src", /#src=[^&]+&args=[^&]+&stdin=/);
+  await iframe.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator("figure.fern-playground iframe[src*='&args=']");
+  await expect(frame.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", {
+    timeout: 60_000,
+  });
+});
+
+test("a fern code fence uses the shared token colours", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("./");
+  // web/editor/fern-themes.json gives keywords #24603f in the light theme.
+  const kw = page
+    .locator(".expressive-code span", { hasText: /^function$/ })
+    .first();
+  await expect(kw).toHaveCSS("color", "rgb(36, 96, 63)");
+});
+
 test("minimal playground embed is wired read-only + autorun on the home page", async ({
   page,
 }) => {

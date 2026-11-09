@@ -31,7 +31,11 @@ bundle `web/` already holds.
 - Typing a syntax error surfaces a diagnostic in the Problems
   panel.
 - A clean source clears the Problems panel.
-- Clicking Share updates the URL hash with the `#src=` payload.
+- Clicking Share updates the URL hash with the `#src=` payload, and
+  keeps the program's arguments and stdin in it.
+- Run and Run (wasm) give the program the arguments and stdin from
+  the program-input panel.
+- The editor colours Fern keywords from the TextMate grammar.
 
 Add more specs by dropping a `*.spec.ts` file in this directory.
 Each test should scope itself to one feature with one assertion —

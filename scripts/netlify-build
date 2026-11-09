@@ -47,11 +47,7 @@ bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
   -o "$stage/playground.wasm" "$PWD/compiler/playground_run.fern" "$PWD/internal/stdlib"
 
 echo "==> staging playground assets"
-# index.html statically imports ./wasi-shim.js and ./wasi-http-shim.js, so a
-# missing sibling breaks the whole ES module and the playground hangs on
-# "loading runtime…". Glob rather than list, so a newly-added local asset
-# stages without a change here.
-cp -L web/*.html web/*.js "$stage/"
+web/stage.sh "$stage"
 
 echo "==> generating stdlib reference"
 bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std

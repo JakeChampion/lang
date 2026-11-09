@@ -28,6 +28,9 @@
 //              content (the `height` prop becomes just the initial
 //              size before the first height report).
 //   title    — accessibility title for the iframe.
+//   args     — the program's arguments after its name, split on spaces.
+//   stdin    — the program's standard input.
+//              With either one the embed shows its program-input panel.
 
 interface Props {
   code: string;
@@ -35,6 +38,8 @@ interface Props {
   autoRun?: boolean;
   minimal?: boolean;
   title?: string;
+  args?: string;
+  stdin?: string;
 }
 
 const {
@@ -43,6 +48,8 @@ const {
   autoRun = true,
   minimal = false,
   title = "Fern playground",
+  args = "",
+  stdin = "",
 } = Astro.props;
 
 // Minimal embeds auto-grow, so they only need a small initial height
@@ -52,7 +59,8 @@ const resolvedHeight = height ?? (minimal ? "180px" : "420px");
 
 // URL-safe base64 (RFC 4648 §5), '=' padding stripped — matches
 // the encodeHash() helper in web/index.html so a copy-pasted hash
-// is interchangeable between embed and standalone playground.
+// is interchangeable between embed and standalone playground. The
+// hash fields are the ones writeHash() in web/index.html writes.
 function encodeHash(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
@@ -64,15 +72,19 @@ function encodeHash(s: string): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+let hash = `#src=${encodeHash(code)}`;
+if (args) hash += `&args=${encodeHash(args)}`;
+if (stdin) hash += `&stdin=${encodeHash(stdin)}`;
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fullSrc = `${base}/playground/#src=${encodeHash(code)}`;
+const fullSrc = `${base}/playground/${hash}`;
 const params = new URLSearchParams();
 params.set("embed", "1");
 if (minimal) params.set("minimal", "1");
 // Minimal snippets must autorun (there's no Run button), so force it
 // even if autoRun={false} was passed.
 if (autoRun || minimal) params.set("autorun", "1");
-const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code)}`;
+const embedSrc = `${base}/playground/?${params.toString()}${hash}`;
 ---
 
 <figure

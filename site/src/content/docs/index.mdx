@@ -114,7 +114,8 @@ coverage reports. All included, none to assemble.
 
 Fern reads arguments, streams stdin or files, and returns a `Result`
 from anything that can fail — so a Unix-style filter stays short. Here
-is the heart of a `grep`. Edit it and press Run.
+is the heart of a `grep`, with a pattern and some input already filled
+in. Change either one, or the program, and press Run.
 
 <FernPlayground
   code={`import "std/string";
@@ -148,7 +149,13 @@ function main(): i32 {
         }
     }
 }`}
-  autoRun={false}
+  args="fern"
+  stdin={`fern frond
+oak leaf
+fiddlehead fern
+moss
+`}
+  height="640px"
 />
 
 The [CLI tutorial](tutorial/cli-tool/) grows this into a real tool with
