@@ -23646,7 +23646,7 @@ function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: O
   let out: string[] = [];
   for p in fn.params {
     let elem = ow_elem_type_name(p.type_name);
-    if (util.has_str(borrowed, p.name) && elem.len() > 0 && !ow_type_is_pointer(elem, ofuncs)) {
+    if (util.has_str(borrowed, p.name) && elem.len() > 0 && !ow_decl_type_is_pointer(fn, elem, ofuncs)) {
       out = out.append(p.name);
     }
   }

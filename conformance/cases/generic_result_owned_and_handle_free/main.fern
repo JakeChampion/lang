@@ -1,0 +1,19 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+function transfer[T](own value: T): T { return value; }
+function identity[T](value: T): T { return value; }
+function first[T](values: T[]): T { return values[0]; }
+function take(own h: Handle): i32 { return h.close(); }
+function count(own values: i32[]): i32 { return values.len(); }
+function main(): i32 {
+    let source = [3, 4];
+    let copy = identity(source);
+    let n = count(copy);
+    let texts = ["ok"];
+    let text = first(texts);
+    let owned = transfer(Handle { fd: 7 });
+    let total = take(owned) + n + source[0] + text.len() + texts.len();
+    print(total.to_string());
+    return 0;
+}

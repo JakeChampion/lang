@@ -100,6 +100,13 @@ A `Socket` held as a `Socket` is refused the same way. A descriptor held as an `
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 A variant constructor carries its payload, so its result borrows what the payload borrows.
+
+A generic type parameter can hold a handle after substitution.
+An identity function retains that borrow in its result.
+An index or a for-each over a generic array also retains the element borrow.
+The probes `diag_e051_generic_result_identity`, `diag_e051_generic_result_index`, and `diag_e051_generic_result_for` pin these cases.
+The probe `generic_result_owned_and_handle_free` retains owned transfers and copies of data without handles.
+
 A local initialised from a plain call is fresh only when the call's result borrows nothing at that site.
 That rule applies only to a result that can hold a handle.
 A number, a string, or an array of them cannot hold one, so two names for such a value cannot close a handle twice.
