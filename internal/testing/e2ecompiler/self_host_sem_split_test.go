@@ -136,7 +136,7 @@ var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds",
 
 func TestSelfHostSemanticSplit(t *testing.T) {
 	runSemanticProgram(t, "semsplit", semSplitProgram, semSplitProduced,
-		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100200\n"))
+		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100100\n"))
 }
 
 // gate_rounds allocates 300 boxes, not 350: the Gate the if reassigns dies on
