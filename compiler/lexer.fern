@@ -22,6 +22,10 @@ pub struct TokFString { parts: FStringPart[], line: i32, col: i32 }
 
 pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString | TokError | TokFString;
 
+pub function is_saturating_op(op: string): boolean {
+  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+
 function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }

@@ -2154,7 +2154,7 @@ function armed_cleanup(s: State): ast.Stmt[] {
 }
 
 function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): string {
-  if (ssasem.is_dyn(to)) {
+  if (typeinfo.is_dyn(to)) {
     return "dyn";
   }
   let key = nominal_method_key("from", to, s);
@@ -2177,7 +2177,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (ssasem.is_integer(s.values[v.id])) {
     return checked_int_cast(u, v, s);
   }
-  if (!ssasem.is_dyn(s.values[v.id])) {
+  if (!typeinfo.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
   let target = slice_unchecked(u.op, 4, u.op.len()) + "";
@@ -2789,7 +2789,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: St
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
-  if (semtypes.is_cell(s.values[recv])) {
+  if (typeinfo.is_cell(s.values[recv])) {
     return cell_method(c, fa, recv, s, statement);
   }
   if (ssasem.is_map(s.values[recv])) {
@@ -2854,7 +2854,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     return produced;
   }
   let recv = produced.id;
-  if (ssasem.is_dyn(s.values[recv])) {
+  if (typeinfo.is_dyn(s.values[recv])) {
     return dyn_method(c, fa, recv, s, statement);
   }
   let owner = method_owner(s.values[recv]);
@@ -4069,10 +4069,10 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (ssasem.is_view(typeinfo.array_elem(expected)) && ssasem.is_string_array(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || typeinfo.union_name(s.values[v.id]) != "")) {
+  if (typeinfo.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || typeinfo.union_name(s.values[v.id]) != "")) {
     return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
   }
-  if (ssasem.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
+  if (typeinfo.is_dyn(expected) && ssasem.boxes_into_dyn(s.values[v.id])) {
     return define(s, ssasem.dyn_box(), [v.id], 0, typeinfo.spelling(s.values[v.id]), expected);
   }
   let owner = typeinfo.union_name(expected);
@@ -4345,7 +4345,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
       ty = cty;
     }
   }
-  if (!semtypes.concrete(ty, false) && is_call(v.init)) {
+  if (!semtypes.concrete(ty, false) && ast.is_call(v.init)) {
     return declare_from_call(v, s, after);
   }
   if (!semtypes.concrete(ty, true)) {
@@ -4461,13 +4461,6 @@ function value_local_placeholder(v: ast.StmtVar): boolean {
   }
   if let ast.ExprNumber(n) = v.init {
     return n.text == "0" && n.suffix.len() == 0 && !n.is_float;
-  }
-  return false;
-}
-
-function is_call(e: ast.Expr): boolean {
-  if let ast.ExprCall(_) = e {
-    return true;
   }
   return false;
 }
@@ -5786,31 +5779,24 @@ function slot_init(body: ast.Stmt[], name: string): ast.Expr {
     }
     if let ast.StmtIf(f) = st {
       let then_init = slot_init(f.then_body, name);
-      if (!is_unknown_expr(then_init)) {
+      if (!ast.is_unknown(then_init)) {
         return then_init;
       }
       let else_init = slot_init(f.else_body, name);
-      if (!is_unknown_expr(else_init)) {
+      if (!ast.is_unknown(else_init)) {
         return else_init;
       }
     }
     if let ast.StmtMatch(m) = st {
       for arm in m.arms {
         let arm_init = slot_init(arm.body, name);
-        if (!is_unknown_expr(arm_init)) {
+        if (!ast.is_unknown(arm_init)) {
           return arm_init;
         }
       }
     }
   }
   return parser.e_unknown("no such slot");
-}
-
-function is_unknown_expr(e: ast.Expr): boolean {
-  if let ast.ExprUnknown(_) = e {
-    return true;
-  }
-  return false;
 }
 
 function calls_synthesised(e: ast.Expr): boolean {
@@ -5956,13 +5942,6 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
   };
 }
 
-function name_uses(st: ast.Stmt, own acc: string[]): string[] {
-  if let ast.StmtAssign(a) = st {
-    return acc.append(a.target);
-  }
-  return acc;
-}
-
 function ident_uses(e: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = e {
     return acc.append(id.name);
@@ -5976,7 +5955,7 @@ function descend_all(e: ast.Expr): boolean {
 
 function uses_in(stmts: ast.Stmt[], own acc: string[]): string[] {
   for st in stmts {
-    acc = astwalk.fold_stmt_nodes(st, acc, name_uses, ident_uses, descend_all);
+    acc = astwalk.fold_stmt_nodes(st, acc, astwalk.assign_target_of, ident_uses, descend_all);
   }
   return acc;
 }
@@ -5987,7 +5966,7 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
       if let ast.PatVariant(pv) = a.pattern {
         let local = uses_in(a.body, []);
         if (a.has_guard) {
-          local = astwalk.fold_expr_nodes(a.guard, local, name_uses, ident_uses, descend_all);
+          local = astwalk.fold_expr_nodes(a.guard, local, astwalk.assign_target_of, ident_uses, descend_all);
         }
         let names: string[] = [pv.binding];
         for n in pv.extra_bindings {
@@ -6260,7 +6239,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if let typeinfo.TypeTuple(tup) = t {
     return types_hold_view(tup.elements, views, impls);
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return type_holds_view(semtypes.cell_elem(t), views, impls);
   }
   if let typeinfo.TypeMap(m) = t {
@@ -6275,7 +6254,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (ssasem.is_func(t)) {
     return util.index_of_str(views, func_view_key(t)) >= 0;
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
         if (v == n || v.starts_with(n + "__")) {
@@ -6340,7 +6319,7 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
 struct Roots { types: typeinfo.Type[], at: i32[], ix: util.NameIndex }
 
 function with_distinct_root(r: Roots, t: typeinfo.Type): Roots {
-  if (!names_schema(t) && !ssasem.is_dyn(t)) {
+  if (!names_schema(t) && !typeinfo.is_dyn(t)) {
     return r;
   }
   let sp = typeinfo.spelling(t);
@@ -6389,7 +6368,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     }
     return out;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return schema_of(semtypes.cell_elem(t), s, out);
   }
 
@@ -6671,7 +6650,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
   if (fns && ssasem.is_func(t)) {
     return Reach { ...r, fns: r.fns.append(t) };
   }
-  if (ssasem.is_dyn(t)) {
+  if (typeinfo.is_dyn(t)) {
     return Reach { ...r, dyns: r.dyns.append(t) };
   }
   if let typeinfo.TypeArray(a) = t {
@@ -6683,7 +6662,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
     }
     return r;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return reach_in(semtypes.cell_elem(t), r, fns);
   }
   if let typeinfo.TypeMap(m) = t {

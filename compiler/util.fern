@@ -539,6 +539,22 @@ pub function any_true(xs: boolean[]): boolean {
   return false;
 }
 
+pub function filled_i32(n: i32, v: i32): i32[] {
+  let out: i32[] = [];
+  while (out.len() < n) {
+    out = out.append(v);
+  }
+  return out;
+}
+
+pub function empty_i32_lists(n: i32): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < n) {
+    out = out.append([]);
+  }
+  return out;
+}
+
 // index_of_byte is the first index at or after from that holds c, or -1.
 pub function index_of_byte(s: string, c: u8, from: i32): i32 {
   let i = from;

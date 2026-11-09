@@ -401,7 +401,7 @@ function successor_count(b: ssa.SBlock): i32 {
 }
 
 function unit_free(t: typeinfo.Type): boolean {
-  if (semtypes.is_never(t) || ssasem.is_lanes(t)) {
+  if (semtypes.is_never(t) || typeinfo.is_lanes(t)) {
     return true;
   }
   if let typeinfo.TypeI32(_) = t {
@@ -459,7 +459,7 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
     }
     return true;
   }
-  if (semtypes.is_cell(t)) {
+  if (typeinfo.is_cell(t)) {
     return unit_shape(semtypes.cell_elem(t), f, lookup);
   }
   if (ssasem.is_map(t)) {
@@ -1900,13 +1900,13 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     i += 1;
   }
   let takes = tuple_takes(f, a, owned, defs);
-  let flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), retainable_reads(f, defs)), firm: [] };
+  let flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked_kept(f.graph, util.empty_i32_lists(f.graph.nvals), retainable_reads(f, defs)), firm: [] };
   let held = held_elements(f, a, owned, defs, sup, flows);
   let asked = twin_holds(f, a, defs, owned, held, flows.bare);
   let past = takes_past_holds(f, a, owned, asked, defs);
   let own_uses = flows.bare;
   if (count_true(past.taken) > 0) {
-    own_uses = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+    own_uses = ssalive.compute_checked(f.graph, util.empty_i32_lists(f.graph.nvals));
   }
   let added = false;
   let grew = true;
@@ -2041,7 +2041,7 @@ function holds_off(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bare: 
 }
 
 function field_reads(f: ssasem.Func, owned: boolean[]): i32[][] {
-  let out = empty_chains(f.graph.nvals);
+  let out = util.empty_i32_lists(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.result >= 0) {
@@ -2051,14 +2051,6 @@ function field_reads(f: ssasem.Func, owned: boolean[]): i32[][] {
         }
       }
     }
-  }
-  return out;
-}
-
-function empty_chains(n: i32): i32[][] {
-  let out: i32[][] = [];
-  while (out.len() < n) {
-    out = out.append([]);
   }
   return out;
 }
@@ -2444,7 +2436,7 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
   }
   if (element) {
-    return field_takeable(got) && is_tuple(box);
+    return field_takeable(got) && typeinfo.is_tuple(box);
   }
   if (slot) {
     return field_takeable(got) && typeinfo.is_owned_array(box);
@@ -2776,13 +2768,6 @@ pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   return root;
 }
 
-function is_tuple(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeTuple(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function is_union(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnion(_) = t {
     return true;
@@ -3026,7 +3011,7 @@ pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
   for v in at_value {
     asked = asked.with(v, true);
   }
-  let bare = ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), asked);
+  let bare = ssalive.compute_checked_kept(f.graph, util.empty_i32_lists(f.graph.nvals), asked);
   for k in 0..at_value.len() {
     let bi = at_block[k];
     let v = at_value[k];
@@ -4155,17 +4140,6 @@ function indexed_step(p: Plan, i: i32, point: i32): Step {
   return Step { block: -1, point: point, target: -1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
-function record_fields(t: typeinfo.Type, f: ssasem.Func): semrecords.Field[] {
-  return f.records.list[semrecords.find(f.records, t)].fields;
-}
-
-function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
-  if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements;
-  }
-  return [];
-}
-
 pub function payload_taken(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
   return ins.result < p.payloads.len() && p.payloads[ins.result] && shell_root(f, p, ins) < 0;
 }
@@ -4201,7 +4175,7 @@ pub function receiver_retained(step: Step): boolean {
 pub struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
-  if (semtypes.is_env(t) || semtypes.is_cell(t)) {
+  if (semtypes.is_env(t) || typeinfo.is_cell(t)) {
     return -1;
   }
   if (ssasem.has_finalizer(f, t)) {
@@ -4214,7 +4188,7 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     if (semrecords.find(f.records, t) < 0) {
       return -1;
     }
-    return record_fields(t, f).len() + 1;
+    return ssasem.record_fields(t, f).len() + 1;
   }
   if let typeinfo.TypeUnion(_) = t {
     return union_slots(t, f);
@@ -4319,7 +4293,7 @@ function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
     return -1;
   }
   if (ins.kind_tag == ssasem.tuple_new()) {
-    return tuple_elements(f.values[ins.result]).len();
+    return typeinfo.tuple_elements(f.values[ins.result]).len();
   }
   if (ins.kind_tag == ssasem.record_new()) {
     return reuse_slots(f.values[ins.result], f);
@@ -5174,7 +5148,7 @@ function classified_take(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32): boole
 
 function donor_fields(f: ssasem.Func, get: ssa.SInst, d: i32): i32 {
   if (get.kind_tag == ssasem.record_get()) {
-    return record_fields(f.values[d], f).len();
+    return ssasem.record_fields(f.values[d], f).len();
   }
   let e = semrecords.find_enum(f.enums, f.values[d]);
   if (e < 0) {

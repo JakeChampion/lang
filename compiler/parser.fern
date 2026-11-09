@@ -9277,6 +9277,14 @@ function type_ends_arr(s: string): boolean {
   return slice_unchecked(s, s.len() - 2, s.len()) == "[]";
 }
 
+pub function import_paths(mod: Module): string[] {
+  let out: string[] = [];
+  for im in mod.imports {
+    out = out.append(im.path);
+  }
+  return out;
+}
+
 pub function first_bracket(s: string): i32 {
   let i = 0;
   while (i < s.len()) {

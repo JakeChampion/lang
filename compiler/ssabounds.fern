@@ -1184,7 +1184,7 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
   let values = l.values;
   let v = values.len();
   let word = v;
-  if (is_byte_view(t)) {
+  if (ssasem.is_byte_view(t)) {
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[w.bytes / 8] });
   } else {
     let base = v;
@@ -1304,13 +1304,6 @@ function falses(n: i32): boolean[] {
     i += 1;
   }
   return out;
-}
-
-function is_byte_view(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return a.view && ssasem.is_u8(a.elem);
-  }
-  return false;
 }
 
 function has_contract(calls: ssasem.Contract[], name: string): boolean {

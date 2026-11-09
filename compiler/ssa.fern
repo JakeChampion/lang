@@ -5250,7 +5250,7 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
@@ -5398,7 +5398,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
   return m;
 }
 
-function no_inst(): SInst {
+pub function no_inst(): SInst {
   return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
@@ -5762,7 +5762,7 @@ function zero_extends_u32(ins: SInst): boolean {
 
 function def_of(defs: SInst[], v: i32): SInst {
   if (v < 0 || v >= defs.len()) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return defs[v];
 }

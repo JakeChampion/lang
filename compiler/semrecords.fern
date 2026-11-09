@@ -126,7 +126,7 @@ function resolved_all(types: typeinfo.Type[], records: Records, enums: Enum[]): 
 }
 
 function resolved(ty: typeinfo.Type, records: Records, enums: Enum[]): boolean {
-  if (semtypes.is_cell(ty)) {
+  if (typeinfo.is_cell(ty)) {
     return resolved(semtypes.cell_elem(ty), records, enums);
   }
   if (semtypes.is_handle(ty)) {

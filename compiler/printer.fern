@@ -1597,7 +1597,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
           if (pv_pattern_name(pv.nested[ni]).len() > 0) {
             np += print_pattern_ctx(pv.nested[ni], true);
           } else {
-            np += payload_slot(pv, nested_slot_binder(pv, ni));
+            np += payload_slot(pv, parser.payload_binder(pv, ni));
           }
           ni += 1;
         }
@@ -1635,16 +1635,6 @@ function pv_pattern_name(pat: ast.Pattern): string {
       return "";
     }
   }
-}
-
-function nested_slot_binder(pv: ast.PatVariant, i: i32): string {
-  if (i == 0) {
-    return pv.binding;
-  }
-  if (i - 1 < pv.extra_bindings.len()) {
-    return pv.extra_bindings[i - 1];
-  }
-  return "";
 }
 
 function range_pair(lo: ast.Expr, hi: ast.Expr, binder: string): string {
@@ -1811,7 +1801,7 @@ function print_record_fields(pv: ast.PatVariant): string {
       out += ", ";
     }
     let field = pv.field_names[i];
-    let slot = payload_slot(pv, nested_slot_binder(pv, i));
+    let slot = payload_slot(pv, parser.payload_binder(pv, i));
     if (i < pv.nested.len() && pv_pattern_name(pv.nested[i]).len() > 0) {
       slot = print_pattern_ctx(pv.nested[i], true);
     }
@@ -2349,7 +2339,7 @@ function print_stmt_inline(st: ast.Stmt, depth: i32): string {
 pub struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string }
 
 pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
-  if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) {
+  if (!ast.is_true_literal(ifs.cond) || ifs.else_body.len() != 0) {
     return None;
   }
   let outer = ifs.then_body;
@@ -2359,7 +2349,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   let flag = "";
   match (outer[outer.len() - 2]) {
     ast.StmtVar(v) => {
-      if (is_forc_name(v.name) && expr_is_true(v.init)) {
+      if (is_forc_name(v.name) && ast.is_true_literal(v.init)) {
         flag = v.name;
       }
     },
@@ -2373,7 +2363,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   let have_while = false;
   match (outer[outer.len() - 1]) {
     ast.StmtWhile(w) => {
-      if (expr_is_true(w.cond)) {
+      if (ast.is_true_literal(w.cond)) {
         wbody = w.body;
         label = w.label;
         have_while = true;
@@ -2459,17 +2449,6 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
 
 function is_forc_name(name: string): boolean {
   return name.len() > 7 && name.starts_with("__forc_");
-}
-
-function expr_is_true(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprBool(b) => {
-      return b.value;
-    },
-    _ => {
-      return false;
-    }
-  }
 }
 
 function expr_is_false(e: ast.Expr): boolean {

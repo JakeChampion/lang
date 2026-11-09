@@ -228,7 +228,7 @@ function owns_resource(t: typeinfo.Type, owners: ResourceOwners): boolean {
     return false;
   }
   if let typeinfo.TypeStruct(r) = t {
-    if (semtypes.is_cell(t)) {
+    if (typeinfo.is_cell(t)) {
       return owns_resource(semtypes.cell_elem(t), owners);
     }
     if (semtypes.is_env(t)) {
@@ -1517,7 +1517,7 @@ function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
 // A scalar call can remain in a record builder after the builder is spliced.
 // Its operands carry no ownership units and its result cannot be this builder.
 function leaf_record_call(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !ssasem.is_scalar(f.values[ins.result])) {
+  if (!typeinfo.is_record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !ssasem.is_scalar(f.values[ins.result])) {
     return false;
   }
   for arg in ins.args {
@@ -1526,13 +1526,6 @@ function leaf_record_call(f: ssasem.Func, ins: ssa.SInst): boolean {
     }
   }
   return true;
-}
-
-function record(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function leaf(f: ssasem.Func): boolean {
@@ -1562,7 +1555,7 @@ function updater(f: ssasem.Func): boolean {
 }
 
 function updater_shape(f: ssasem.Func): boolean {
-  return straight(f) && !f.graph.takes_env && !lends_view(f) && record(f.result);
+  return straight(f) && !f.graph.takes_env && !lends_view(f) && typeinfo.is_record(f.result);
 }
 
 function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
@@ -1580,7 +1573,7 @@ function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
 }
 
 function record_param(f: ssasem.Func, v: i32): boolean {
-  if (v < 0 || v >= f.values.len() || !record(f.values[v])) {
+  if (v < 0 || v >= f.values.len() || !typeinfo.is_record(f.values[v])) {
     return false;
   }
   for ins in f.graph.blocks[f.graph.entry].insts {
@@ -1725,7 +1718,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
     for ins in b.insts {
       if (ins.result >= 0 && ins.result != ignored) {
         let t = f.values[ins.result];
-        if (record(t)) {
+        if (typeinfo.is_record(t)) {
           records += 1;
         } else if (!leaf_word(f, t) && !typeinfo.is_void(t) && !read_view_param(f, ins) && !lent_to_kernels(f, ins)) {
           return -1;
@@ -1770,11 +1763,11 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
         return false;
       }
       if (ins.kind_tag == ssasem.param()) {
-        if (ins.result != ignored && record(f.values[ins.result])) {
+        if (ins.result != ignored && typeinfo.is_record(f.values[ins.result])) {
           record_sources += 1;
         }
       } else if (!line_mark(ins.kind_tag)) {
-        if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_new()) && record(f.values[ins.result])) {
+        if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_new()) && typeinfo.is_record(f.values[ins.result])) {
           record_sources += 1;
         }
         n += 1;
@@ -2204,16 +2197,12 @@ function position_of(at: i32[], id: i32): i32 {
 
 struct Defs { insts: ssa.SInst[], blocks: i32[] }
 
-function no_inst(): ssa.SInst {
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-}
-
 function defs_of(g: ssa.SFunc): Defs {
   let insts: ssa.SInst[] = [];
   let blocks: i32[] = [];
   let v = 0;
   while (v < g.nvals) {
-    insts = insts.append(no_inst());
+    insts = insts.append(ssa.no_inst());
     blocks = blocks.append(-1);
     v += 1;
   }
@@ -2232,7 +2221,7 @@ function defs_of(g: ssa.SFunc): Defs {
 
 function def_inst(defs: Defs, v: i32): ssa.SInst {
   if (v < 0 || v >= defs.insts.len()) {
-    return no_inst();
+    return ssa.no_inst();
   }
   return defs.insts[v];
 }
@@ -2484,7 +2473,7 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
   let nv = e0.base + e0.added.len();
   let pb = d0.blocks[x];
   let cur: Walk = Walk {
-    e: Edits { ...e0, defs: Defs { insts: d0.insts.append(no_inst()), blocks: d0.blocks.append(pb) }, added: e0.added.append(ty) },
+    e: Edits { ...e0, defs: Defs { insts: d0.insts.append(ssa.no_inst()), blocks: d0.blocks.append(pb) }, added: e0.added.append(ty) },
     value: -1, phis: w.phis.append(x), parts: w.parts.append(nv),
   };
   let args: i32[] = [];

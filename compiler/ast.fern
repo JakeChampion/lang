@@ -282,6 +282,27 @@ pub function receiver_tag(e: Expr): string {
   return expr_ty(e);
 }
 
+pub function is_call(e: Expr): boolean {
+  if let ExprCall(_) = e {
+    return true;
+  }
+  return false;
+}
+
+pub function is_unknown(e: Expr): boolean {
+  if let ExprUnknown(_) = e {
+    return true;
+  }
+  return false;
+}
+
+pub function is_true_literal(e: Expr): boolean {
+  if let ExprBool(b) = e {
+    return b.value;
+  }
+  return false;
+}
+
 pub function expr_col(e: Expr): i32 {
   match (e) {
     ExprNumber(n) => {

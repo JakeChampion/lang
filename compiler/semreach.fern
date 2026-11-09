@@ -209,16 +209,9 @@ function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): bo
 
 function semantic_arrives(k: i32, result: typeinfo.Type, u: Universe): boolean {
   if (k == ssasem.zero()) {
-    return !is_record(result) && !is_variant_enum(result, u);
+    return !typeinfo.is_record(result) && !is_variant_enum(result, u);
   }
   return k == ssasem.dyn_as() || k == ssasem.variant_up();
-}
-
-function is_record(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function is_option_enum(t: typeinfo.Type, u: Universe): boolean {
@@ -316,14 +309,6 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
 
 struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][] }
 
-function lists(n: i32): i32[][] {
-  let out: i32[][] = [];
-  while (out.len() < n) {
-    out = out.append([]);
-  }
-  return out;
-}
-
 function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
   let l = xs[at];
   if (l.len() > 0 && l[l.len() - 1] == i) {
@@ -333,7 +318,7 @@ function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
 }
 
 function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): i32[][] {
-  let out = lists(funcs.len());
+  let out = util.empty_i32_lists(funcs.len());
   let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
@@ -354,7 +339,7 @@ function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[])
 }
 
 function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out = lists(u.field_owner.len());
+  let out = util.empty_i32_lists(u.field_owner.len());
   let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
@@ -376,7 +361,7 @@ function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
 }
 
 function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out = lists(u.variant_owner.len());
+  let out = util.empty_i32_lists(u.variant_owner.len());
   let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
@@ -398,7 +383,7 @@ function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
 }
 
 function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out = lists(u.recs.len());
+  let out = util.empty_i32_lists(u.recs.len());
   let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
@@ -495,7 +480,7 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   while (rets.len() < ctx.funcs.len()) {
     rets = rets.append(none());
   }
-  let w = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let w = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: util.empty_i32_lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
   let i = 0;
   while (i < roots.len()) {
     if (roots[i]) {

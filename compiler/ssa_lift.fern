@@ -975,8 +975,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let sc_n = 0;
   let sc_outer_loop: i32 = -1;
 
-  let slot_mark = filled(nslots, -1);
-  let slot_pos = filled(nslots, -1);
+  let slot_mark = util.filled_i32(nslots, -1);
+  let slot_pos = util.filled_i32(nslots, -1);
   let matb: i32[] = [];
   let dl_slot: i32[] = [];
   let dl_old: i32[] = [];
@@ -1876,14 +1876,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   return Ok(Lifted { func: f, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values });
 }
 
-function filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  while (out.len() < n) {
-    out = out.append(v);
-  }
-  return out;
-}
-
 function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
   if (e + 1 < edge_from.len()) {
     return edge_from[e + 1];
@@ -1892,7 +1884,7 @@ function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
 }
 
 function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
-  let out = filled(nslots, -1);
+  let out = util.filled_i32(nslots, -1);
   let i = 0;
   while (i < ops.len()) {
     let o = ops[i];

@@ -979,15 +979,7 @@ function x86_asm_new(): X86Asm {
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
-}
-
-function x86_filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  while (out.len() < n) {
-    out = out.append(v);
-  }
-  return out;
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: util.filled_i32(n, -1), lab_offs: util.filled_i32(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 pub function x86_eh_frame(a: X86Asm, text_vaddr: i64, eh_vaddr: i64): i32[] {

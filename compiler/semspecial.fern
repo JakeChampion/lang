@@ -64,7 +64,7 @@ function calls_bound(r0: Round, at: i32): Round {
         let c = clone_for(r, ins.str, js, targets, calls);
         r = c.r;
         if (c.at >= 0) {
-          calls = with_contract(calls, c.contract);
+          calls = ssasem.with_contract(calls, c.contract);
           insts = insts.with(k, ssa.SInst { ...ins, str: c.contract.name, args: without(ins.args, js) });
           moved = true;
         }
@@ -157,7 +157,7 @@ function clone_for(r: Round, callee: string, js: i32[], targets: string[], known
   let made = ssasem.Func { ...g, graph: ssa.SFunc { ...g.graph, name: name } };
   let i = js.len() - 1;
   while (i >= 0) {
-    made = bound(ssasem.Func { ...made, calls: with_contract(made.calls, known[ssasem.find_contract_in(known, targets[i])]) }, js[i], targets[i]);
+    made = bound(ssasem.Func { ...made, calls: ssasem.with_contract(made.calls, known[ssasem.find_contract_in(known, targets[i])]) }, js[i], targets[i]);
     i -= 1;
   }
   let st: Specialized = Specialized {
@@ -193,7 +193,7 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
     let params: ssa.SInst[] = [];
     let rest: ssa.SInst[] = [];
     for ins in b.insts {
-      let moved = ssa.SInst { ...ins, result: mapped(map, ins.result), args: mapped_all(map, ins.args) };
+      let moved = ssa.SInst { ...ins, result: ssasem.mapped(map, ins.result), args: ssasem.mapped_list(map, ins.args) };
       if (ins.kind_tag == ssasem.param() && ins.imm == j) {
         rest = [ssa.SInst { kind_tag: ssasem.closure_new(), result: last, args: [], imm: 0, str: target }].concat(rest);
       } else if (ins.kind_tag == ssasem.param()) {
@@ -202,7 +202,7 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
         rest = rest.append(moved);
       }
     }
-    let t = ssa.STerm { ...b.term, cond: mapped(map, b.term.cond), value: mapped(map, b.term.value) };
+    let t = ssa.STerm { ...b.term, cond: ssasem.mapped(map, b.term.cond), value: ssasem.mapped(map, b.term.value) };
     blocks = blocks.append(ssa.SBlock { ...b, insts: params.concat(rest), term: t });
   }
   let values = g.values;
@@ -211,10 +211,10 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
       values = values.with(map[v], g.values[v]);
     }
   }
-  let dbg_vals = mapped_all(map, g.dbg_vals);
+  let dbg_vals = ssasem.mapped_list(map, g.dbg_vals);
   let pruned = ssa.prune_trivial_phis(ssa.SFunc { ...g.graph, blocks: blocks, nparams: last });
   if (pruned.repl.len() > 0) {
-    dbg_vals = mapped_all(pruned.repl, dbg_vals);
+    dbg_vals = ssasem.mapped_list(pruned.repl, dbg_vals);
   }
   return ssasem.Func {
     ...g,
@@ -224,28 +224,6 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
     dbg_vals: dbg_vals,
     source_positions: sourcepos.renamed(g.source_positions, map),
   };
-}
-
-function mapped(map: i32[], v: i32): i32 {
-  if (v < 0 || v >= map.len()) {
-    return v;
-  }
-  return map[v];
-}
-
-function mapped_all(map: i32[], vs: i32[]): i32[] {
-  let out: i32[] = [];
-  for v in vs {
-    out = out.append(mapped(map, v));
-  }
-  return out;
-}
-
-function with_contract(calls: ssasem.Contract[], c: ssasem.Contract): ssasem.Contract[] {
-  if (ssasem.find_contract_in(calls, c.name) >= 0) {
-    return calls;
-  }
-  return calls.append(c);
 }
 
 function without(xs: i32[], js: i32[]): i32[] {
