@@ -176,8 +176,9 @@ function print_lines(path: string, fd: i32, line: u8[], bytes: u8[]): u8[] {
 `
 
 const processMainSrc = processKernelSrc + `
-// Runs the program at path to its end. Then the kernel makes its own tables
-// active again and gives back the frames of the process.
+// Runs the program at path to its end. Then the kernel prints what the
+// program left in /out/result.txt, makes its own tables active again and gives
+// back the frames of the process.
 function spawn(b: Boot, path: string, argv: string[]): void {
   let free = b.f.free_count();
   let Some(p) = load(b, path, argv) else {
@@ -202,6 +203,11 @@ function spawn(b: Boot, path: string, argv: string[]): void {
       Interrupted => {}
     }
   }
+  if let Some(out) = p.written("/out/result.txt") {
+    unsafe {
+      print(path + " left /out/result.txt: " + string_from_bytes_unchecked(out));
+    }
+  }
   b.kernel.activate();
   p.release();
   print(path + " gave back its frames " + (b.f.free_count() == free).to_string());
@@ -217,6 +223,7 @@ function main(): i32 {
   spawn(b, "/bin/crash", ["/bin/crash"]);
   spawn(b, "/bin/files", ["/bin/files"]);
   spawn(b, "/bin/info", ["/bin/info"]);
+  spawn(b, "/bin/writer", ["/bin/writer"]);
   board.power_off(0);
   return 0;
 }
@@ -253,7 +260,7 @@ var etcFiles = []cpioFile{
 
 // files reads the root filesystem through the Linux calls: by an absolute
 // path, by a relative path with "..", through a symbolic link, and as a
-// directory listing. A missing file and a write both fail.
+// directory listing. A missing file and a write over the archive both fail.
 const processFilesSrc = `import "std/array";
 import "std/string";
 
@@ -281,7 +288,7 @@ function main(): i32 {
       print("etc failed");
     }
   }
-  match (write_file("/etc/new", "x")) {
+  match (write_file("/etc/hostname", "x")) {
     Ok(n) => {
       print("write succeeded");
     },
@@ -344,6 +351,63 @@ function main(): i32 {
     zero = zero && a[i] == 0 as u8;
   }
   print("random " + a.len().to_string() + " bytes, two reads differ " + (!same).to_string() + ", not zero " + (!zero).to_string());
+  return 0;
+}
+`
+
+// writer makes a directory tree in memory, writes a file in two parts,
+// renames it into place, and reads it back. It also writes over the middle of
+// a file, sets a mode, lists the new directory, and removes a file. Each change
+// of the archive fails with EROFS.
+const processWriterSrc = `import "std/array";
+
+function ok(label: string, r: Result[void, IoError]): void {
+  match (r) {
+    Ok(v) => {
+      print(label + " ok");
+    },
+    Err(e) => {
+      print(label + " failed");
+    }
+  }
+}
+
+function main(): i32 {
+  ok("mkdir", create_dir_all("/home/user/.cache/fern"));
+  ok("write", write_file("/home/user/.cache/fern/tmp-key", "key 1"));
+  ok("rename", rename("/home/user/.cache/fern/tmp-key", "/home/user/.cache/fern/key.txt"));
+  ok("chmod", chmod("/home/user/.cache/fern/key.txt", 384));
+  match (read_file("/home/user/.cache/fern/key.txt")) {
+    Ok(s) => {
+      print("read back " + s);
+    },
+    Err(e) => {
+      print("read back failed");
+    }
+  }
+  match (stat("/home/user/.cache/fern/key.txt")) {
+    Ok(st) => {
+      print("mode " + (st.mode & 4095 as u32).to_string() + ", size " + st.size.to_string());
+    },
+    Err(e) => {
+      print("stat failed");
+    }
+  }
+  ok("scratch", write_file("/home/user/scratch", "x"));
+  ok("remove", remove_file("/home/user/scratch"));
+  match (read_dir("/home/user/.cache/fern")) {
+    Ok(names) => {
+      print("cache: " + names.join(","));
+    },
+    Err(e) => {
+      print("cache listing failed");
+    }
+  }
+  ok("write over the initrd", write_file("/etc/motd", "no"));
+  ok("rename the initrd", rename("/etc/motd", "/etc/gone"));
+  ok("mkdir in a missing parent", create_dir_all("/etc/motd/x"));
+  ok("out", create_dir_all("/out"));
+  ok("output", write_file("/out/result.txt", "made on fernos"));
   return 0;
 }
 `
@@ -444,7 +508,7 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc, "files": processFilesSrc, "info": processInfoSrc}, map[string][]byte{"efault": efaultImage()})
+	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc, "files": processFilesSrc, "info": processInfoSrc, "writer": processWriterSrc}, map[string][]byte{"efault": efaultImage()})
 	src := writeTickProgram(t, processBoardSrc, processMainSrc)
 	kernel := filepath.Join(dir, "kernel.img")
 	if msg, err := cli.compileCmd("arm64-kernel", kernel, src, "-ram", imageRAM, "-emit", "image").CombinedOutput(); err != nil {
@@ -484,6 +548,22 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/info fd 1: monotonic advances true\n",
 		"/bin/info fd 1: random 32 bytes, two reads differ true, not zero true\n",
 		"/bin/info exit 0\n",
+		"/bin/writer fd 1: mkdir ok\n",
+		"/bin/writer fd 1: write ok\n",
+		"/bin/writer fd 1: rename ok\n",
+		"/bin/writer fd 1: chmod ok\n",
+		"/bin/writer fd 1: read back key 1\n",
+		"/bin/writer fd 1: mode 384, size 5\n",
+		"/bin/writer fd 1: scratch ok\n",
+		"/bin/writer fd 1: remove ok\n",
+		"/bin/writer fd 1: cache: key.txt\n",
+		"/bin/writer fd 1: write over the initrd failed\n",
+		"/bin/writer fd 1: rename the initrd failed\n",
+		"/bin/writer fd 1: mkdir in a missing parent failed\n",
+		"/bin/writer fd 1: out ok\n",
+		"/bin/writer fd 1: output ok\n",
+		"/bin/writer exit 0\n",
+		"/bin/writer left /out/result.txt: made on fernos\n",
 	} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant %q", console, want)

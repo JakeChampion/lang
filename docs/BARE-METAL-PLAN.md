@@ -932,7 +932,20 @@ and three `mmap` reservations at start.
    baseline has no `RNDR`, so `std/virtio_rng` reads random bytes from the
    host, and `with_random` makes it the source of `getrandom`. A process
    with no source gets `ENOSYS`, not bytes that are not random.
-22. Beside those: the panic scope is decided (#14257, see the north-star
+22. **A process writes files in memory** (#14265, the next slice of
+   milestone 6). The root of a process has a layer in memory above the
+   archive. The kernel answers `mkdirat`, `openat` with `O_CREAT`, `write`,
+   `renameat`, `unlinkat`, `fchmod` and `fsync` in that layer, and the
+   archive stays read-only. `written` gives the kernel a file of the layer,
+   such as the output of a compile. The compiler writes its cache of
+   certified functions in `$HOME/.cache/fern` and its output at `-o`, so it
+   needs only this layer.
+
+   `TestSelfHostKernelProcessOnQemu` runs a Fern program that makes a
+   directory tree, writes, renames, reads back, sets a mode, lists and
+   removes files there. A change of the archive fails, and the kernel reads
+   the output that the program leaves.
+23. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
