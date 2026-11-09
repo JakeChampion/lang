@@ -600,6 +600,23 @@ function test_client_round_trip(): test.TestOutcome {
   return test.assert_eq(got, "stream 1\nrequest 1 GET /hello?x=1 host=example.test body= trailer=-\nanswered 1 200 content-type=text/plain body=hi trailer=-\nopen 0 0");
 }
 
+function test_client_reads_a_body_past_one_window(): test.TestOutcome {
+  let p = paired();
+  let (sent, stream) = p.client.request(outgoing("GET", "/big", "", headers.new()));
+  p = exchanged(Pair { ...p, client: sent.conn, events: [] }, sent.output, []);
+  let body = "";
+  for i in 0..1500 {
+    body = body + "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789";
+  }
+  let answered = p.server.respond(stream, http.ok(body));
+  p = exchanged(Pair { ...p, server: answered.conn, events: [] }, [], answered.output);
+  let got = events_text(p.events);
+  if (!got.starts_with("answered 1 200 ") || got.len() < 150000) {
+    return test.fail("the client got " + got.len().to_string() + " bytes of events, open " + p.client.streams_open().to_string());
+  }
+  return test.assert_eq(p.client.streams_open() + p.server.streams_open(), 0);
+}
+
 function test_client_body_and_interim(): test.TestOutcome {
   let p = paired();
   let (sent, stream) = p.client.request(outgoing("POST", "/up", "abc", headers.new().append("Checksum", "9")));
@@ -722,6 +739,7 @@ function main(): i32 {
   r = r.it("responses without a body, and a produced body's end", test_headless_and_ended_bodies);
   r = r.it("a client's request and its answer", test_client_round_trip);
   r = r.it("a client's body, trailers and an interim response", test_client_body_and_interim);
+  r = r.it("a client reads a body larger than one window", test_client_reads_a_body_past_one_window);
   r = r.it("a client under GOAWAY, PUSH_PROMISE and RST_STREAM", test_client_goaway_and_push);
   return r.finish();
 }
