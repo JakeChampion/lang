@@ -223,7 +223,9 @@
 # perf-aarch64 lanes' measurements of the branch.
 
 x86_64/array_append.text	1187
-x86_64/array_append.ir	13371022
+# 2026-11-09: Counted append capacity (#14829) removes 10.2% of instructions.
+# CI run 42589964477 reports 12,005,460 instructions for this row.
+x86_64/array_append.ir	12005460
 x86_64/array_index.text	1188
 x86_64/array_index.ir	16315371
 x86_64/array_scale_f64.text	1313
