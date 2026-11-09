@@ -108,11 +108,36 @@ function test_runs(): test.TestOutcome {
   return test.assert_eq(f.free_count() as i64, 0i64);
 }
 
+// A reserved range keeps its frames, the frame of a partial page included,
+// from alloc. A second reserve and a range past the region mark nothing.
+function test_reserve(): test.TestOutcome {
+  let f = region();
+  let page = frames.FRAME_BYTES;
+  let marked = f.reserve(f.base + 10 as usize * page - 100 as usize, 3 as usize * page);
+  if (marked != 4 as usize || f.free_count() != 59 as usize) {
+    return test.fail("reserve marked " + (marked as i64).to_string() + ", want frames 9 to 12");
+  }
+  if (f.reserve(f.base + 9 as usize * page, page) != 0 as usize || f.reserve(f.end(), page) != 0 as usize) {
+    return test.fail("reserve marked a frame twice or past the region");
+  }
+  while (true) {
+    let Some(frame) = f.alloc() else {
+      break;
+    };
+    let index = (frame - f.base) / page;
+    if (index >= 9 as usize && index <= 12 as usize) {
+      return test.fail("alloc gave a reserved frame");
+    }
+  }
+  return test.assert_eq(f.free_count() as i64, 0i64);
+}
+
 function main(): i32 {
   let r = test.new("std/frames");
   r = r.it("counts the frames after the header", test_counts);
   r = r.it("hands out every free frame once", test_exhaust);
   r = r.it("reuses a freed frame and refuses a foreign one", test_free);
   r = r.it("allocates and returns runs", test_runs);
+  r = r.it("keeps a reserved range out of alloc", test_reserve);
   return r.finish();
 }

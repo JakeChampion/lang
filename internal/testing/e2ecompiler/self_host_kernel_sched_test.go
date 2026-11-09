@@ -39,7 +39,7 @@ function step(b: Boot, s: Slot): Slot {
 }
 
 function main(): i32 {
-  let Some(b) = boot() else {
+  let Some(b) = boot(4096 as usize) else {
     print("no boot");
     return 1;
   };
