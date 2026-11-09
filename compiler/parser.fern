@@ -25996,6 +25996,9 @@ function typed_literal_const(fd: FuncDecl): boolean {
     ast.ExprBool(_) => {
       return fd.ret_type == "boolean";
     },
+    ast.ExprString(_) => {
+      return fd.ret_type == "string";
+    },
     _ => {
       return false;
     }
