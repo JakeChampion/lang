@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--bootstrap', type=int, default=2000)
     parser.add_argument('--seed', type=int, default=417)
+    parser.add_argument('--comparison', choices=('C', 'Baseline'), default='C')
     args = parser.parse_args()
     if args.bootstrap < 100:
         parser.error('use at least 100 bootstrap repetitions')
@@ -23,7 +24,9 @@ def main():
     if len({r['source_commit'] for r in reports}) != 1:
         parser.error('use reports from one source commit')
     rows = [row for report in reports for row in report['results']]
-    observations = [(row['seconds']['C'], row['seconds']['Fern']) for row in rows]
+    if any(args.comparison not in row['seconds'] for row in rows):
+        parser.error('the selected comparison is missing from a report')
+    observations = [(row['seconds'][args.comparison], row['seconds']['Fern']) for row in rows]
     for c, fern in observations:
         if len(c) != len(fern) or len(c) < 3 or any(not math.isfinite(x) or x <= 0 for x in c + fern):
             parser.error('each case needs matching positive finite timing samples')
@@ -38,6 +41,7 @@ def main():
         estimates.append(statistics.geometric_mean(sampled))
     estimates.sort()
     summary = {
+        'comparison': args.comparison,
         'cases': len(rows),
         'fern_lower_medians': sum(ratio > 1 for ratio in ratios),
         'geometric_mean_ratio': statistics.geometric_mean(ratios),

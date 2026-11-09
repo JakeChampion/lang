@@ -7,6 +7,78 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Packed FFT output
+
+Source `aadbb7a969b682269117759f8cb46af11db5594f` writes the packed FFT output with contiguous SIMD stores.
+It reuses the existing FFT scratch spans for the final rotations and transposes four adjacent groups.
+The change adds no allocation and preserves all output bytes.
+This source precedes the separate narrow PCM conversion change.
+
+The comparison uses baseline source `49056c6e392ba85b267e4abb6a44dd94872cc891`.
+Both binaries use compiler source `acbe1f2f38b76dddf0db952f11bba1e73876e04b` and the same build flags.
+Each of the 24 cases has 30 repetitions on CPU 0, with one worker.
+Six execution orders give all three decoders each position equally.
+The inputs use stereo PCM16 at 44.1 kHz.
+No other local builds or tests run during measurement.
+
+Fern has lower medians than the baseline in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.051×, or 1.084× without silence.
+The fixed-suite bootstrap interval is 1.027× to 1.082×.
+The calculation uses 2000 repetitions and seed 417.
+The interval covers repetition uncertainty within these cases.
+It does not quantify other inputs, machines, or runs.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM16 | 1.006 | 1.313 |
+| 10 | 32768 | PCM24 | 1.017 | 1.192 |
+| 10 | 32768 | PCM8 | 1.000 | 1.321 |
+| 100 | 2048 | PCM16 | 1.082 | 1.546 |
+| 100 | 2048 | PCM24 | 1.121 | 1.340 |
+| 100 | 2048 | PCM8 | 1.090 | 1.733 |
+
+[The complete report](x86-64-post-stores.json) retains every timing, regression, executable hash, and oracle error.
+Every final WAV equals the baseline byte for byte.
+The float64 oracle checks frame counts and sample errors outside the timed commands.
+Fern has lower medians than C in 13 of 24 cases.
+The aggregate C/Fern ratio is 1.397×; the ratio without silence is 0.955×.
+C remains faster in eleven cases.
+
+Build the pinned compiler and both codec revisions:
+
+```sh
+git worktree add /tmp/ulc-fft-compiler acbe1f2f38b76dddf0db952f11bba1e73876e04b
+make -C /tmp/ulc-fft-compiler build
+git worktree add /tmp/ulc-fft-source aadbb7a969b682269117759f8cb46af11db5594f
+git worktree add /tmp/ulc-fft-before 49056c6e392ba85b267e4abb6a44dd94872cc891
+make -C /tmp/ulc-fft-source/examples/ulc FERN=/tmp/ulc-fft-compiler/bin/fern
+make -C /tmp/ulc-fft-source/examples/ulc build/reference64 FERN=/tmp/ulc-fft-compiler/bin/fern
+make -C /tmp/ulc-fft-before/examples/ulc FERN=/tmp/ulc-fft-compiler/bin/fern
+for output in PCM8 PCM16 PCM24; do
+  python3 examples/ulc/bench/run.py \
+    --fern /tmp/ulc-fft-source/examples/ulc/build/ulc \
+    --baseline-fern /tmp/ulc-fft-before/examples/ulc/build/ulc \
+    --baseline-source-commit 49056c6e392ba85b267e4abb6a44dd94872cc891 \
+    --compiler /tmp/ulc-fft-compiler/bin/fern \
+    --source-commit aadbb7a969b682269117759f8cb46af11db5594f \
+    --oracle /tmp/ulc-fft-source/examples/ulc/build/reference64 \
+    --reference /tmp/ulc-reference/release \
+    --direction decode --seconds 10 --block-size 32768 \
+    --output-format "$output" --repetitions 30 --cpu 0 \
+    --output "/tmp/ulc-fft-10-$output.json"
+done
+```
+
+Repeat with `--seconds 100 --block-size 2048` and separate output paths.
+Use the native C build flags in the reproduction section below.
+Summarize C or the baseline as the selected comparison:
+
+```sh
+python3 examples/ulc/bench/summarize.py --output /tmp/ulc-fft-c.json /tmp/ulc-fft-*.json
+python3 examples/ulc/bench/summarize.py --comparison Baseline \
+  --output /tmp/ulc-fft-baseline.json /tmp/ulc-fft-*.json
+```
+
 ## Integer PCM output
 
 Source `a0fee5aed7260df5f6878f146e5ced7644fa0549` adds direct paired PCM conversion.
