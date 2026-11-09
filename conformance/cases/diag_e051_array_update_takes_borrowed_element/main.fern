@@ -1,0 +1,17 @@
+// `append` on an owned array gives an owned array only when the new element
+// is owned too. Here the element is a borrowed parameter, so the result shares
+// its handle with the caller.
+
+struct Conn { w: Writer, n: i32 }
+
+function size(own all: Conn[]): i32 {
+  return all.len();
+}
+
+function updated(own all: Conn[], c: Conn): i32 {
+  return size(all.append(c));
+}
+
+function main(): i32 {
+  return 0;
+}
