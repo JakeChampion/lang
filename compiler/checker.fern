@@ -19006,7 +19006,7 @@ function ow_replaced_scan(v: ast.Expr, base: ast.Expr, field: string, root: stri
     match (n) {
       ast.ExprLambda(lm) => {
         if (lm.origin.len() == 0 || lm.origin == ast.ORIGIN_NESTED_FN) {
-          return OwnScan { ...acc, mentions: acc.mentions + 2 * ow_root_mentions(n, root) };
+          return OwnScan { ...acc, mentions: acc.mentions + 2 * ow_count_ident(n, root) };
         }
       },
       ast.ExprFieldAccess(fa) => {
@@ -19029,18 +19029,6 @@ function ow_replaced_scan(v: ast.Expr, base: ast.Expr, field: string, root: stri
     return acc;
   }
   return astwalk.fold_expr_pruned(v, OwnScan { found: false, line: 0, col: 0, mentions: 0 }, visit, skip);
-}
-
-function ow_root_mentions(e: ast.Expr, root: string): i32 {
-  function tally(n: ast.Expr, own acc: i32): i32 {
-    if let ast.ExprIdent(id) = n {
-      if (id.name == root) {
-        return acc + 1;
-      }
-    }
-    return acc;
-  }
-  return astwalk.fold_expr(e, 0, tally);
 }
 
 // The local that a name or a field path of it starts from.
