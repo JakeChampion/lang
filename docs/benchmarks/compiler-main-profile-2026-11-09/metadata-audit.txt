@@ -1,0 +1,11 @@
+Research only. No semantic or liveness source change.
+Compiler source: 6bca1d48f3eaa9e4a1d82f0af05cb076862fda16.
+Fixed input: d04e79179fda465d5897d25a00f9a2f34c4694ab.
+
+ssadeps.analyze_checked has three external call sites: ssasem.analyze_parents, ssaunits.takes_past_holds, and ssaunits.units_analysis. The last two alter dependency rows and ownership state, not the graph. They retain a.facts. ssasem.analyze creates checked Facts only when util.verify_on() is true. Verify-off callers carry unchecked Facts and require the existing metadata-construction fallback.
+
+Facts.at is the block-ID-to-storage-position map. Facts.defs and Facts.positions describe explicit instruction results, as do the maps in ssalive.compute_checked_kept. Parameter rules are checked by ssadeps.check_graph. Any proposed trusted entry must require maps for the same unchanged graph. Current analyze_checked already relies on that precondition for dominance and dependency availability. It must retain limits_error, dependencies_error, graph checks at Facts creation, dependency closure checks, and error ordering. Do not turn off verification or add checks blindly.
+
+The current certifier entry compute_kept_with_sites always checks dependency dimensions and graph shape. Reusing it from semantic analysis would add a graph scan after check_graph. A separate checked entry could share compute_prepared under the existing trusted-entry contract, but requires measured benefit and meaningful positive/negative controls. No such entry exists yet.
+
+Do not cache Facts across graph mutations. Do not change register_form caching from this investigation. A fresh production-mode CPU profile is in progress; older d9c1d44de8 costs do not describe this source.

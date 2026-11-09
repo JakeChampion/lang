@@ -494,3 +494,69 @@ test("an autorun embed at phone width does not shift its layout", async ({ brows
   expect(await page.evaluate(() => (window as any).__shift)).toBeLessThan(0.05);
   await ctx.close();
 });
+
+test("an exercise shows its goal and says when the output is the goal", async ({ page }) => {
+  const start = 'import "std/i32";\n\nfunction main(): i32 {\n    print("0");\n    return 0;\n}';
+  const hash = "#src=" + b64url(start) + "&expect=" + b64url("1\n2\n");
+  await page.goto("/index.html" + hash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("#exercise")).toBeVisible();
+  await expect(page.locator("#exerciseGoal")).toHaveText("1\n2\n");
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Not yet: the output is different from the goal.");
+  const solved = 'import "std/i32";\n\nfunction main(): i32 {\n    print("1");\n    print("2");\n    return 0;\n}';
+  await page.goto("/index.html#src=" + b64url(solved) + "&expect=" + b64url("1\n2\n"));
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Done: the output is the goal.");
+});
+
+test("a page with no exercise shows no goal", async ({ page }) => {
+  await gotoReady(page);
+  await expect(page.locator("#exercise")).toBeHidden();
+});
+
+test("the command-line template sets its arguments and stdin", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("cli");
+  await expect(page.locator("#progArgs")).toHaveValue("fern");
+  await expect(page.locator("#progInput")).toHaveAttribute("open", "");
+  await page.locator("#run").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", { timeout: 10_000 });
+});
+
+// Share asks /api/share for a short link, and copies the long one when no
+// such endpoint answers.
+async function shareAndCopy(page) {
+  await page.evaluate(() => {
+    (window as any).__copied = "";
+    // navigator.clipboard is a getter on the prototype, so a plain
+    // assignment does nothing.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => { (window as any).__copied = t; } },
+    });
+  });
+  await page.locator("#share").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).not.toBe("");
+  return page.evaluate(() => (window as any).__copied as string);
+}
+
+test("Share copies a short link when the site stores snippets", async ({ page }) => {
+  let body = "";
+  await page.route("**/api/share", async (route) => {
+    body = route.request().postData() ?? "";
+    await route.fulfill({ json: { id: "abc123" } });
+  });
+  await gotoReady(page);
+  const copied = await shareAndCopy(page);
+  expect(copied).toMatch(/\/p\/abc123$/);
+  expect(JSON.parse(body).hash).toMatch(/^#src=/);
+  await expect.poll(() => page.url()).toMatch(/#src=/);
+});
+
+test("Share copies the full link when no short-link endpoint answers", async ({ page }) => {
+  await page.route("**/api/share", (route) => route.fulfill({ status: 404, body: "" }));
+  await gotoReady(page);
+  expect(await shareAndCopy(page)).toMatch(/\/index\.html#src=/);
+});

@@ -1677,7 +1677,9 @@ function bump(own t: Tree): i32 {
 }`)
 	wantOK(t, "member-literal-returned-as-union", memberUnionPrelude+`
 function bump(own n: Node): Tree { return Node { ...n, xs: grow(n.xs) }; }`)
-	wantE051(t, "member-literal-stored-under-another-name", memberUnionPrelude+`
+	// The literal takes the owned n and drops n.xs. So grow takes the only
+	// reference to n.xs, under any name that holds the literal (#13929).
+	wantOK(t, "member-literal-stored-under-another-name", memberUnionPrelude+`
 function bump(own n: Node): Tree {
     let t: Tree = Leaf { v: 0 };
     t = Node { ...n, xs: grow(n.xs) };

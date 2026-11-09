@@ -1,0 +1,42 @@
+// A value can pass to an `own` parameter in three more shapes:
+// - a read of the field that a literal replaces in an owned base, at any depth
+//   of the replacing value;
+// - `with` or `append` on an owned array, with an owned element;
+// - a local unpacked from an own parameter's field, beside a literal that
+//   replaces that field.
+
+struct Conn { w: Writer, n: i32 }
+struct Conns { all: Conn[], count: i32 }
+
+function size(own all: Conn[]): i32 {
+  return all.len();
+}
+
+function grown(own all: Conn[], n: i32): Conn[] {
+  return all.append(Conn { w: stdout(), n: n });
+}
+
+function replaced(own cs: Conns): i32 {
+  let next = Conns { all: [], count: 0 };
+  next = Conns { ...cs, all: grown(cs.all, 1), count: 1 };
+  return next.all.len() * 10 + next.count;
+}
+
+function updated(own all: Conn[]): i32 {
+  let c = Conn { w: stdout(), n: 2 };
+  return size(all.append(c));
+}
+
+function unpacked(own cs: Conns): i32 {
+  let all = cs.all;
+  let empty: Conn[] = [];
+  let rest = Conns { ...cs, all: empty, count: 3 };
+  return size(all) * 10 + rest.count;
+}
+
+function main(): i32 {
+  print(replaced(Conns { all: [], count: 0 }));
+  print(updated([Conn { w: stdout(), n: 0 }]));
+  print(unpacked(Conns { all: [Conn { w: stdout(), n: 0 }], count: 0 }));
+  return 0;
+}
