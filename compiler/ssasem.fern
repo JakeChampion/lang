@@ -741,6 +741,10 @@ pub function is_char(t: typeinfo.Type): boolean {
   return false;
 }
 
+pub function is_scalar(t: typeinfo.Type): boolean {
+  return is_integer(t) || is_float(t) || is_bool(t) || is_char(t);
+}
+
 // owned_shape says ownership inference can count a parameter of type t:
 // a record or a variant, which a callee that keeps one consumes.
 pub function owned_shape(t: typeinfo.Type): boolean {

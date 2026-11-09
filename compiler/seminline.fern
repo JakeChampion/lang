@@ -709,7 +709,7 @@ function small_branch(f: ssasem.Func, calls: i32, cycle: i32): boolean {
 }
 
 function small_branch_body(f: ssasem.Func): boolean {
-  return scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
+  return ssasem.is_scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
 }
 
 // A body called once stays out of a small branch that it would grow past the
@@ -745,7 +745,7 @@ function scalar_record(f: ssasem.Func, t: typeinfo.Type): boolean {
     return false;
   }
   for field in f.records.list[at].fields {
-    if (!scalar(field.ty)) {
+    if (!ssasem.is_scalar(field.ty)) {
       return false;
     }
   }
@@ -1291,14 +1291,10 @@ function unused_environment(f: ssasem.Func): i32 {
   return env;
 }
 
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
-}
-
 function scalar_tuple(t: typeinfo.Type): boolean {
   if let typeinfo.TypeTuple(tt) = t {
     for e in tt.elements {
-      if (!scalar(e)) {
+      if (!ssasem.is_scalar(e)) {
         return false;
       }
     }
@@ -1308,12 +1304,12 @@ function scalar_tuple(t: typeinfo.Type): boolean {
 }
 
 function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
-  if (scalar(t)) {
+  if (ssasem.is_scalar(t)) {
     return true;
   }
   if let typeinfo.TypeTuple(tt) = t {
     for e in tt.elements {
-      if (!scalar(e) && !(ssasem.reference(e) && !ssasem.holds_view(f, e))) {
+      if (!ssasem.is_scalar(e) && !(ssasem.reference(e) && !ssasem.holds_view(f, e))) {
         return false;
       }
     }
@@ -1407,7 +1403,7 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
-    return !a.view && scalar(a.elem);
+    return !a.view && ssasem.is_scalar(a.elem);
   }
   return false;
 }
@@ -1415,7 +1411,7 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
 // A scalar element or word read, or a length, borrows its array or view and
 // carries no ownership units.
 function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.result < 0 || !scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
+  if (ins.result < 0 || !ssasem.is_scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
     return false;
   }
   if (ins.kind_tag == ssasem.array_get()) {
@@ -1491,7 +1487,7 @@ function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   for arg in ins.args {
-    if (!scalar(f.values[arg])) {
+    if (!ssasem.is_scalar(f.values[arg])) {
       return false;
     }
   }
@@ -1501,11 +1497,11 @@ function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
 // A scalar call can remain in a record builder after the builder is spliced.
 // Its operands carry no ownership units and its result cannot be this builder.
 function leaf_record_call(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !scalar(f.values[ins.result])) {
+  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !ssasem.is_scalar(f.values[ins.result])) {
     return false;
   }
   for arg in ins.args {
-    if (!scalar(f.values[arg])) {
+    if (!ssasem.is_scalar(f.values[arg])) {
       return false;
     }
   }
@@ -1749,7 +1745,7 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
       if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !leaf_call(f, ins) && !lent_to_kernels(f, ins)) {
         return false;
       }
-      if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
+      if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !ssasem.is_scalar(f.values[ins.result])) {
         return false;
       }
       if (ins.kind_tag == ssasem.param()) {
@@ -2039,7 +2035,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   for ob in g.blocks {
     if (ob.id == b.id) {
       blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: br(first + position_of(pos, entry_id)) });
-    } else if (index_of(targets, ob.id) >= 0) {
+    } else if (util.index_of_i32(targets, ob.id) >= 0) {
       let preds: i32[] = [];
       for q in ob.preds {
         if (q == b.id) {
@@ -2187,17 +2183,6 @@ function mapped(vmap: i32[], v: i32): i32 {
     return v;
   }
   return vmap[v];
-}
-
-function index_of(xs: i32[], x: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == x) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function block_positions(g: ssa.SFunc): i32[] {
@@ -2367,7 +2352,7 @@ function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
 }
 
 function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
-  return scalar(ty) && read.kind_tag != ssasem.variant_is() && read.kind_tag != ssasem.variant_get();
+  return ssasem.is_scalar(ty) && read.kind_tag != ssasem.variant_is() && read.kind_tag != ssasem.variant_get();
 }
 
 function kept_values(g: ssa.SFunc): boolean[] {
@@ -2458,7 +2443,7 @@ function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i3
   if (builds(d.kind_tag)) {
     return (part(d, read).ok, phis);
   }
-  if (d.kind_tag != ssa.PHI || index_of(phis, x) >= 0) {
+  if (d.kind_tag != ssa.PHI || util.index_of_i32(phis, x) >= 0) {
     return (d.kind_tag == ssa.PHI || d.kind_tag == ssasem.zero(), phis);
   }
   let seen = phis.append(x);
@@ -2489,7 +2474,7 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
     }
     return part_value(w, p, ty);
   }
-  let seen = index_of(w.phis, x);
+  let seen = util.index_of_i32(w.phis, x);
   if (seen >= 0) {
     return Walk { ...w, value: w.parts[seen] };
   }

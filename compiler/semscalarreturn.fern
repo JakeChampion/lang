@@ -13,7 +13,7 @@ pub function eligible(f: ssasem.Func, ty: typeinfo.Type): boolean {
   }
   for i in 0..parts.types.len() {
     let t = parts.types[i];
-    if (!scalar(t) && !(parts.tuple && i == 0 && primary_reference(f, t))) {
+    if (!ssasem.is_scalar(t) && !(parts.tuple && i == 0 && primary_reference(f, t))) {
       return false;
     }
   }
@@ -71,10 +71,6 @@ function built(parts: Parts): i32 {
     return ssasem.tuple_new();
   }
   return ssasem.record_new();
-}
-
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_char(t) || ssasem.is_float(t);
 }
 
 pub function bits_name(): string {
@@ -297,7 +293,7 @@ pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {
     return [];
   }
   for p in parts {
-    if (!scalar(p)) {
+    if (!ssasem.is_scalar(p)) {
       return [];
     }
   }
@@ -305,7 +301,7 @@ pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {
 }
 
 function payload_parts(t: typeinfo.Type): typeinfo.Type[] {
-  if (scalar(t)) {
+  if (ssasem.is_scalar(t)) {
     return [t];
   }
   if let typeinfo.TypeTuple(tup) = t {
@@ -339,7 +335,7 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
   let i = 0;
   while (i < parts.len()) {
     let part = payload;
-    if (parts.len() > 1 || !scalar(t)) {
+    if (parts.len() > 1 || !ssasem.is_scalar(t)) {
       part = out.f.values.len();
       out = Build { ...out, f: value(out.f, parts[i]), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.tuple_get(), result: part, args: [payload], imm: i, str: "" }) };
     }
@@ -372,7 +368,7 @@ pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typ
     args = args.append(out.result);
     i += 1;
   }
-  if (parts.len() == 1 && scalar(t)) {
+  if (parts.len() == 1 && ssasem.is_scalar(t)) {
     return Lanes { f: out.f, insts: out.insts, value: args[0] };
   }
   let v = out.f.values.len();
@@ -410,7 +406,7 @@ pub function param_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
   let payload = option_payload(f, ty);
   if (payload.len() == 1) {
     let parts = record_parts(f, payload[0]);
-    if (scalar(payload[0])) {
+    if (ssasem.is_scalar(payload[0])) {
       parts = payload;
     }
     if (parts.len() == 0 || parts.len() > 4) {
@@ -446,7 +442,7 @@ function record_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
     return [];
   }
   for t in parts.types {
-    if (!scalar(t)) {
+    if (!ssasem.is_scalar(t)) {
       return [];
     }
   }
@@ -522,7 +518,7 @@ pub function read_of_parts(ins: ssa.SInst, result: i32, parts: i32[], payload: t
   if (ins.kind_tag == ssasem.variant_is()) {
     return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [parts[0]], imm: 0, str: "" };
   }
-  if (ins.kind_tag == ssasem.variant_get() && payload.len() == 1 && scalar(payload[0])) {
+  if (ins.kind_tag == ssasem.variant_get() && payload.len() == 1 && ssasem.is_scalar(payload[0])) {
     return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [parts[1]], imm: 0, str: "" };
   }
   if (ins.kind_tag == ssasem.variant_get()) {
@@ -682,7 +678,7 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
   if (d.kind_tag == ssasem.variant_new() && d.str == "None") {
     w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 0, args: [], imm: 0, str: "" });
     let parts: typeinfo.Type[] = [payload];
-    if (!scalar(payload)) {
+    if (!ssasem.is_scalar(payload)) {
       parts = record_parts(w.b.f, payload);
     }
     for t in parts {
@@ -700,7 +696,7 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
     inner = read.b.result;
     w = Words { b: read.b, args: w.args };
   }
-  if (scalar(payload)) {
+  if (ssasem.is_scalar(payload)) {
     return Words { ...w, args: w.args.append(inner) };
   }
   return record_words(w, inner, payload, defs);
@@ -730,7 +726,7 @@ pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
   let head = w.b.insts;
   let read = emitted(Words { b: Build { f: w.b.f, insts: [], result: -1 }, args: [] }, payload, ssa.SInst { kind_tag: ssasem.variant_get(), result: 0, args: [a], imm: 0, str: "Some" });
   let some = Words { b: read.b, args: [read.b.result] };
-  if (!scalar(payload)) {
+  if (!ssasem.is_scalar(payload)) {
     some = record_words(Words { b: read.b, args: [] }, read.b.result, payload, []);
   }
   let none = Words { b: Build { f: some.b.f, insts: [], result: -1 }, args: [] };

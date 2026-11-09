@@ -1464,7 +1464,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
   let i = 0;
   while (i < sl.field_values.len()) {
     let slot = field_slot(sig, sl.field_names[i]);
-    if (slot < 0 || index_of_i32(at, slot) >= 0) {
+    if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
       return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] };
     }
     let v = expr(sl.field_values[i], s, sig.field_types[slot]);
@@ -1492,7 +1492,7 @@ function place_fields(w: Written, sig: checker.StructSig, base: i32): Written {
   let ids: i32[] = [];
   let d = 0;
   while (d < sig.field_names.len()) {
-    let found = index_of_i32(w.at, d);
+    let found = util.index_of_i32(w.at, d);
     if (found >= 0) {
       ids = ids.append(w.ids[found]);
     } else {
@@ -1537,17 +1537,6 @@ function field_slot(sig: checker.StructSig, name: string): i32 {
   let i = 0;
   while (i < sig.field_names.len()) {
     if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function index_of_i32(xs: i32[], v: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == v) {
       return i;
     }
     i += 1;

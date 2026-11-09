@@ -65,8 +65,8 @@ function replacement_layout_error(sub: ircore.Sub, c: ssasem.Contract, parent: s
     }
   }
   for field in child.fields {
-    if (!scalar(field.ty)) {
-      return "child is not a flat scalar record";
+    if (!semtypes.concrete_scalar(field.ty)) {
+      return "child is not a flat semtypes.concrete_scalar record";
     }
   }
   return "";
@@ -110,8 +110,8 @@ function sibling_error(sub: ircore.Sub, ty: typeinfo.Type): string {
     return "unsupported sibling effects";
   }
   for member in sibling.fields {
-    if (!scalar(member.ty)) {
-      return "sibling is not a flat scalar record";
+    if (!semtypes.concrete_scalar(member.ty)) {
+      return "sibling is not a flat semtypes.concrete_scalar record";
     }
   }
   return "";
@@ -134,7 +134,7 @@ function producer_metadata_child_error(metadata: physicalbody.Metadata, ty: type
     return "unsupported producer child effects";
   }
   for member in child.fields {
-    if (!scalar(member.ty)) {
+    if (!semtypes.concrete_scalar(member.ty)) {
       return "producer child is not flat";
     }
   }
@@ -151,7 +151,7 @@ function origin_layout_error(parent: semrecords.Record, child: semrecords.Record
     }
   }
   for field in child.fields {
-    if (!scalar(field.ty)) {
+    if (!semtypes.concrete_scalar(field.ty)) {
       return "origin caller child is not flat";
     }
   }
@@ -184,7 +184,7 @@ function origin_callee_signature(sub: ircore.Sub, name: string, c: ssasem.Contra
 
 function assertion_signature_error(c: ssasem.Contract): string {
   if (c.params.len() != 2 || c.modes.len() != 2 || c.modes[0] != 1 || c.modes[1] != 1) {
-    return "assertion requires two scalar parameters";
+    return "assertion requires two semtypes.concrete_scalar parameters";
   }
   let boolean_param = false;
   if let typeinfo.TypeBool(_) = c.params[0] {
@@ -213,7 +213,7 @@ function replacement_scalar_fields(sub: ircore.Sub, c: ssasem.Contract, parent: 
     let index = 0;
     for field in sub.physical_records.list[ri].fields {
       if (index > 268435454) {
-        return ScalarFields { fields: [], error: "unrepresentable scalar child field" };
+        return ScalarFields { fields: [], error: "unrepresentable semtypes.concrete_scalar child field" };
       }
       if let typeinfo.TypeI32(n) = field.ty {
         if (n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic) {
@@ -232,7 +232,7 @@ function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Rec
   let offsets: i32[] = [];
   let i = 0;
   for field in p.fields {
-    if (!scalar(field.ty)) {
+    if (!semtypes.concrete_scalar(field.ty)) {
       if (selected < 0 && (index >= 0 || !semtypes.equal(field.ty, c.result))) {
         return ExtractionSlots { offsets: [], index: -1, error: "parent must contain exactly the result child" };
       }
@@ -261,22 +261,6 @@ function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Rec
 
 function refused(name: string, why: string): helper.Proof {
   return helper.Proof { ok: false, function_name: name, message: why };
-}
-
-function scalar(t: typeinfo.Type): boolean {
-  if (!semtypes.concrete(t, false)) {
-    return false;
-  }
-  if let typeinfo.TypeI32(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeFloat(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeBool(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function ordinary(t: typeinfo.Type, finalized: ssasem.Finalizer[]): boolean {
@@ -328,7 +312,7 @@ function incoming_modes(c: ssasem.Contract): boolean {
 
 function incoming_signature_error(sub: ircore.Sub, c: ssasem.Contract): string {
   if (!incoming_modes(c)) {
-    return "incoming wrapper requires scalar and three consuming parameters";
+    return "incoming wrapper requires semtypes.concrete_scalar and three consuming parameters";
   }
   let boolean_param = false;
   if let typeinfo.TypeBool(_) = c.params[0] {
@@ -656,7 +640,7 @@ function producer_metadata_layout(metadata: physicalbody.Metadata, name: string)
     if (!semtypes.equal(field.ty, c.params[i])) {
       return no_producer_layout("producer parameter differs from field");
     }
-    let ref = !scalar(field.ty);
+    let ref = !semtypes.concrete_scalar(field.ty);
     if (c.modes[i] != (if (ref) { 3 } else { 1 })) {
       return no_producer_layout("incorrect producer parameter ownership mode");
     }
@@ -693,7 +677,7 @@ pub function check_origin_caller(sub: ircore.Sub, name: string): origin.Origin {
   }
   let c = contracts[0];
   if (c.params.len() != 3 || c.modes.len() != 3 || c.modes[0] != 1 || c.modes[1] != 3 || c.modes[2] != 3) {
-    return no_origin(name, "origin caller requires scalar and two consuming parameters");
+    return no_origin(name, "origin caller requires semtypes.concrete_scalar and two consuming parameters");
   }
   let boolean_param = false;
   if let typeinfo.TypeBool(_) = c.params[0] {
@@ -792,8 +776,8 @@ function extraction(sub: ircore.Sub, name: string, drop_name: string, release_na
     return refused(name, "unsupported record effects");
   }
   for field in child.fields {
-    if (!scalar(field.ty)) {
-      return refused(name, "child is not a flat scalar record");
+    if (!semtypes.concrete_scalar(field.ty)) {
+      return refused(name, "child is not a flat semtypes.concrete_scalar record");
     }
   }
   let slots = extraction_slots(sub, c, p, selected);

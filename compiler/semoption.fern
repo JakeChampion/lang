@@ -3,10 +3,6 @@ import "./ssasem";
 import "./semrecords";
 import "./typeinfo";
 
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
-}
-
 function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
   let at = semrecords.find_enum(f.enums, t);
   if (at < 0 || ssasem.has_finalizer(f, t)) {
@@ -21,7 +17,7 @@ function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
   if (some.name != "Some" || none.name != "None" || some.fields.len() != 1 || none.fields.len() != 0) {
     return -1;
   }
-  if (!scalar(some.fields[0].ty)) {
+  if (!ssasem.is_scalar(some.fields[0].ty)) {
     return -1;
   }
   return at;

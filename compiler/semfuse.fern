@@ -571,10 +571,6 @@ function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boo
   return out;
 }
 
-function scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
-}
-
 function is_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(_) = t {
     return true;
@@ -593,7 +589,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   let b = f.graph.blocks[c.block];
   let sink = b.insts[c.sink];
   let e = base_element(f, c);
-  if (!scalar(e)) {
+  if (!ssasem.is_scalar(e)) {
     return first_pos(c);
   }
   let j = 0;
@@ -604,7 +600,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
     if (c.verbs[j] == "flat_map") {
       e = element(ssasem.func_result(f.values[c.fns[j]]));
     }
-    if (!scalar(e)) {
+    if (!ssasem.is_scalar(e)) {
       return c.stages[j];
     }
     j += 1;
@@ -620,10 +616,10 @@ function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean
     return !ssasem.is_integer(f.values[sink.result]);
   }
   if (verb == "fold") {
-    return !scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
+    return !ssasem.is_scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
   }
   if (verb == "scan") {
-    return !scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result]));
+    return !ssasem.is_scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result]));
   }
   return false;
 }
@@ -643,7 +639,7 @@ function first_pos(c: Chain): i32 {
 }
 
 function removed(c: Chain, p: i32): boolean {
-  return index_of(c.stages, p) >= 0 || index_of(c.roots, p) >= 0;
+  return util.index_of_i32(c.stages, p) >= 0 || util.index_of_i32(c.roots, p) >= 0;
 }
 
 function defs_of(g: ssa.SFunc): Def[] {
@@ -666,17 +662,6 @@ function defs_of(g: ssa.SFunc): Def[] {
     bi += 1;
   }
   return out;
-}
-
-function index_of(xs: i32[], x: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == x) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function prepend(x: i32, xs: i32[]): i32[] {
@@ -1168,7 +1153,7 @@ function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
     if (i == at) {
       blk = built[0];
     }
-    if (index_of(targets, blk.id) >= 0) {
+    if (util.index_of_i32(targets, blk.id) >= 0) {
       blk = ssa.SBlock { ...blk, preds: renamed(blk.preds, old.id, last) };
     }
     out = out.append(blk);

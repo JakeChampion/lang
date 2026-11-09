@@ -208,6 +208,23 @@ pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
   return concrete_numeric(t) || concrete_leaf(t, allow_void) || concrete_container(t) || concrete_named(t);
 }
 
+// concrete_scalar is true for a concrete i32, float or bool type.
+pub function concrete_scalar(t: typeinfo.Type): boolean {
+  if (!concrete(t, false)) {
+    return false;
+  }
+  if let typeinfo.TypeI32(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeFloat(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeBool(_) = t {
+    return true;
+  }
+  return false;
+}
+
 function concrete_integer(i: typeinfo.TypeI32): boolean {
   if (i.polymorphic) {
     return false;

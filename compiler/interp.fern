@@ -1183,7 +1183,7 @@ function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
 }
 
 function lam_read_names(st: ast.Stmt): string[] {
-  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, not_lambda_expr);
+  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, astwalk.not_lambda);
 }
 
 function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -1226,7 +1226,7 @@ function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env
 }
 
 function stmt_lambda_writes(st: ast.Stmt): string[] {
-  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_target_of, not_lambda_expr);
+  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_target_of, astwalk.not_lambda);
 }
 
 function no_names(): string[] {
@@ -1251,17 +1251,6 @@ function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
     },
     _ => {
       return acc;
-    }
-  }
-}
-
-function not_lambda_expr(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprLambda(_) => {
-      return false;
-    },
-    _ => {
-      return true;
     }
   }
 }
