@@ -917,7 +917,7 @@ pub function view_escape_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean, array_report: i32): semsource.BuildOpts {
-  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report, stack_phi_joins: false };
+  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report, stack_phi_joins: false, passes: semsource.env_passes() };
 }
 
 pub function target_substitution(typed: parser.Module, target: string, opts: semsource.BuildOpts): ircore.Sub {
