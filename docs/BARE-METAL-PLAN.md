@@ -674,8 +674,8 @@ check time, in the same mechanism that enforces the OS boundary today.
   Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
   reads the header and the program headers of an ELF64 image, and
   `TestSelfHostElfReaderMatchesDebugElf` holds it to Go's `debug/elf` on the
-  images of every ELF target. The loader that maps the segments is milestone 5
-  (#14264).
+  images of every ELF target. `std/user_process` maps the segments of a static
+  executable into the tables of a process and runs it (sequencing, step 19).
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
   reads a device tree and `std/pvh` reads the PVH start info (#14260).
@@ -873,7 +873,29 @@ and three `mmap` reservations at start.
    calls. The kernel answers them through the frame. Then the code loads a
    kernel address and takes a data abort. x86-64 refuses `__user_run` until
    its slice, which uses `syscall` and `iretq`.
-19. Beside those: the panic scope is decided (#14257, see the north-star
+19. **Linux programs run as user processes on arm64** (#14263, the second
+   slice of milestone 4). `std/user_process` loads a static `arm64-linux`
+   executable into a fresh `std/pagetable` mapping, which holds the kernel
+   mapping, and runs it with `__user_run`:
+   - The pages that hold bytes of the file are copied at load, and
+     `__cache_sync_code` makes the code reach instruction fetch. The rest of
+     each segment, the start stack and each `mmap` reservation get a zeroed
+     frame when the program first touches them. Thus the 16 GiB heap and the
+     1 GiB stack of the Fern runtime cost only the pages that it uses.
+   - The kernel answers the start calls of the runtime (`mmap`, `mprotect`,
+     `sigaltstack`, `rt_sigaction`) and `ioctl`. `write`, `writev` and
+     `exit_group` return to the caller as events. It reads each pointer
+     argument through the tables of the process, so a bad pointer gives
+     `EFAULT`.
+   - A fault outside the regions of the process ends only that process, and
+     `release` gives back each frame that it used.
+   - `std/pagetable` gains `leaf`, `protect_user` and `free_user` for this.
+
+   `TestSelfHostKernelProcessOnQemu` runs three programs from the initrd: a
+   Fern program that prints its argument, uses its heap and its stack, and
+   exits with 3, a hand-made ELF that gets `EFAULT`, and a Fern program that
+   is killed for a load of a kernel address.
+20. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
