@@ -373,7 +373,7 @@ pub function (m: Tables) leaf(va: usize): Option[Leaf] {
   let level = 0;
   let size = 0x8000000000 as usize;
   while (level < 3) {
-    size = size >> 9 as usize;
+    size >>= 9 as usize;
     unsafe {
       let entry = __load_i64(table + index(va, level) * ENTRY_BYTES);
       if (is_block(entry, level)) {
