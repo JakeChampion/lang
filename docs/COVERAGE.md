@@ -181,8 +181,8 @@ The twenty `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
 `tests/fuzz/stdparse.fern`, and Go's fuzzer steers them blind for the same
 reason. `TestSelfHostStdCoverageGuidedFuzz` runs the same loop on a `-cover`
 build of that program. The rows cover the stdlib modules that the program
-imports, about 55,000 of them. One run costs about 60 ms, and the report
-is half of that.
+imports, 56,249 of them. One run costs about 45 ms, and most of that is the
+report.
 
 ```sh
 FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m \
