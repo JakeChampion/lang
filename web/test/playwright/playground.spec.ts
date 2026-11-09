@@ -494,3 +494,24 @@ test("an autorun embed at phone width does not shift its layout", async ({ brows
   expect(await page.evaluate(() => (window as any).__shift)).toBeLessThan(0.05);
   await ctx.close();
 });
+
+test("an exercise shows its goal and says when the output is the goal", async ({ page }) => {
+  const start = 'import "std/i32";\n\nfunction main(): i32 {\n    print("0");\n    return 0;\n}';
+  const hash = "#src=" + b64url(start) + "&expect=" + b64url("1\n2\n");
+  await page.goto("/index.html" + hash);
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("#exercise")).toBeVisible();
+  await expect(page.locator("#exerciseGoal")).toHaveText("1\n2\n");
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Not yet: the output is different from the goal.");
+  const solved = 'import "std/i32";\n\nfunction main(): i32 {\n    print("1");\n    print("2");\n    return 0;\n}';
+  await page.goto("/index.html#src=" + b64url(solved) + "&expect=" + b64url("1\n2\n"));
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await page.locator("#run").click();
+  await expect(page.locator("#exerciseResult")).toHaveText("Done: the output is the goal.");
+});
+
+test("a page with no exercise shows no goal", async ({ page }) => {
+  await gotoReady(page);
+  await expect(page.locator("#exercise")).toBeHidden();
+});

@@ -418,6 +418,36 @@
     .prog-input-fields { grid-template-columns: 1fr; }
   }
 
+  /* ---- Exercise: the goal output and the result of a run ---- */
+  .exercise {
+    max-width: 1400px;
+    margin: 0 0 1em;
+    padding: 0.6em 0.9em;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--focus);
+    border-radius: 4px;
+    background: var(--bg-card);
+  }
+  .exercise[hidden] { display: none; }
+  .exercise p { margin: 0; font-size: 0.9em; }
+  .exercise-label {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--focus);
+    margin-right: 0.4em;
+  }
+  .exercise pre {
+    height: auto;
+    margin: 0.4em 0;
+    padding: 0.4em 0.6em;
+    background: var(--bg-page);
+  }
+  .exercise-result { color: var(--fg-secondary); }
+  .exercise-result.done { color: var(--ok); font-weight: 600; }
+  body.embed .exercise pre { height: auto; }
+
   /* ---- HTTP request editor (wasi:http world) ---- */
   .http-req {
     max-width: 1400px;
@@ -771,6 +801,14 @@
     </label>
   </div>
 </details>
+
+<!-- An exercise: the output that the program must print. Hidden unless
+     the hash gives one. -->
+<div class="exercise" id="exercise" hidden>
+  <p><span class="exercise-label">goal</span> Change the program so that it prints:</p>
+  <pre id="exerciseGoal"></pre>
+  <p id="exerciseResult" class="exercise-result" aria-live="polite"></p>
+</div>
 
 <!-- Request editor for the wasi:http world. Hidden unless the world
      select is "wasm32-wasi-http"; "Run (wasm)" then sends this request
@@ -1165,6 +1203,9 @@ const themeBtn = document.getElementById("themeToggle");
 const progInputEl = document.getElementById("progInput");
 const progArgsEl = document.getElementById("progArgs");
 const progStdinEl = document.getElementById("progStdin");
+const exerciseEl = document.getElementById("exercise");
+const exerciseGoalEl = document.getElementById("exerciseGoal");
+const exerciseResultEl = document.getElementById("exerciseResult");
 const targetSelectEl = document.getElementById("targetSelect");
 const buildComponentBtn = document.getElementById("buildComponent");
 const worldSelectEl = document.getElementById("worldSelect");
@@ -1330,7 +1371,22 @@ function writeHash(src, input) {
   let h = "#src=" + encodeHash(src);
   if (input.args) h += "&args=" + encodeHash(input.args);
   if (input.stdin) h += "&stdin=" + encodeHash(input.stdin);
+  if (input.expect) h += "&expect=" + encodeHash(input.expect);
   return h;
+}
+
+// The output an exercise asks for, from the hash's `expect=` field, or "".
+let exerciseGoal = "";
+
+// After a run, says whether the output is the goal. White space at the
+// end does not count.
+function checkExercise(stdout) {
+  if (!exerciseGoal) return;
+  const done = stdout.trimEnd() === exerciseGoal.trimEnd();
+  exerciseResultEl.textContent = done
+    ? "Done: the output is the goal."
+    : "Not yet: the output is different from the goal.";
+  exerciseResultEl.classList.toggle("done", done);
 }
 
 // Returns the initial program for the editor, and fills the program
@@ -1343,6 +1399,10 @@ function initialSrcFromHash() {
   const given = Boolean(h.args || h.stdin);
   progInputEl.classList.toggle("given", given);
   if (given) progInputEl.open = true;
+  exerciseGoal = h.expect ?? "";
+  exerciseEl.hidden = !exerciseGoal;
+  exerciseGoalEl.textContent = exerciseGoal;
+  exerciseResultEl.textContent = "";
   return h.src ?? examples.hello;
 }
 
@@ -1385,7 +1445,7 @@ exampleEl.addEventListener("change", () => {
 
 shareBtn.addEventListener("click", async () => {
   const url = location.origin + location.pathname + location.search +
-    writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value });
+    writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value, expect: exerciseGoal });
   window.history.replaceState(null, "", url);
   let copied = false;
   try {
@@ -1461,6 +1521,7 @@ async function runOnce() {
     // anything that does pure computation). Make sure the user
     // sees `main()` returned 20 even when stdout is empty.
     outEl.textContent = body || "(program produced no output)";
+    checkExercise(result.stdout || "");
     const cls = result.exit === 0 ? "exit-ok" : "exit-err";
     metaEl.innerHTML =
       '<span class="exit-label">main() returned exit code </span>' +
@@ -1574,6 +1635,7 @@ function runWasmOnce() {
         body += (body ? "\n" : "") + "[stderr]\n" + run.stderr;
       }
       outEl.textContent = body || "(program produced no output)";
+      checkExercise(run.stdout || "");
       const cls = run.exit === 0 ? "exit-ok" : "exit-err";
       metaEl.innerHTML =
         '<span class="exit-label">compiled to wasm · ran in-browser · exit </span>' +

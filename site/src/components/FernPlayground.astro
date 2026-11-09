@@ -31,6 +31,8 @@
 //   args     — the program's arguments after its name, split on spaces.
 //   stdin    — the program's standard input.
 //              With either one the embed shows its program-input panel.
+//   expect   — the output of an exercise. The embed shows it as the goal,
+//              and after each run says whether the output is the goal.
 
 interface Props {
   code: string;
@@ -40,6 +42,7 @@ interface Props {
   title?: string;
   args?: string;
   stdin?: string;
+  expect?: string;
 }
 
 const {
@@ -50,6 +53,7 @@ const {
   title = "Fern playground",
   args = "",
   stdin = "",
+  expect = "",
 } = Astro.props;
 
 // Minimal embeds auto-grow, so they only need a small initial height
@@ -75,6 +79,7 @@ function encodeHash(s: string): string {
 let hash = `#src=${encodeHash(code)}`;
 if (args) hash += `&args=${encodeHash(args)}`;
 if (stdin) hash += `&stdin=${encodeHash(stdin)}`;
+if (expect) hash += `&expect=${encodeHash(expect)}`;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fullSrc = `${base}/playground/${hash}`;
