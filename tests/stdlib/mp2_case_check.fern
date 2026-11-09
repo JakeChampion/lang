@@ -1,0 +1,26 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp2_check";
+import "mp2_vectors";
+
+pub function run(shard: i32): test.TestOutcome {
+  let vectors = mp2_vectors.vectors();
+  let visited = 0;
+  for i in 0..vectors.len() {
+    if (i % 4 != shard) {
+      continue;
+    }
+    let vector = vectors[i];
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("encoded fixture");
+    };
+    let Ok(expected) = ref.unpack(vector.pcm) else {
+      return test.fail("PCM fixture");
+    };
+    if let Err(e) = mp2_check.run(encoded, expected, vector.rate, vector.channels, vector.frames) {
+      return test.fail(vector.name + ": " + e);
+    }
+    visited += 1;
+  }
+  return test.assert_true(visited > 0);
+}

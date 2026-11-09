@@ -1,0 +1,12 @@
+import "std/test";
+import "mp2_case_check";
+
+function independent(): test.TestOutcome {
+  return mp2_case_check.run(3);
+}
+
+function main(): i32 {
+  let runner = test.new("Layer II independent corpus shard 4 of 4");
+  runner = runner.it("encoder signals, all rates and modes, protected frames, and exact PCM", independent);
+  return runner.finish();
+}

@@ -1,0 +1,5 @@
+allocs=206
+fresh_bytes=826960
+native_peak_rss_kb=872
+decoders=100
+leakcheck: allocs=302 frees=302 live_bytes=0

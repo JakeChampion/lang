@@ -1,0 +1,211 @@
+import "std/audio/mp2";
+import "std/audio/mp2/header";
+import "std/audio/mp3/spectral";
+import "std/audio/pcm";
+import "std/f32";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp2_check";
+import "mp2_smoke_vectors";
+
+function changed(input: [u8], at: i32, value: u8): u8[] {
+  let output: u8[] = [];
+  for byte in input {
+    output = output.append(byte);
+  }
+  return output.with(at, value);
+}
+
+function prefixes(): test.TestOutcome {
+  let vector = mp2_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("fixture");
+  };
+  for end in 0..input.len() {
+    if let Err(pcm.Truncated) = mp2.inspect(input[:end], 0, pcm.default_limits()) {} else {
+      return test.fail("incomplete frame prefix");
+    }
+  }
+  for at in [-1, input.len() + 1, 2147483647] {
+    if let Err(pcm.Header) = mp2.inspect(input, at, pcm.default_limits()) {} else {
+      return test.fail("invalid frame offset");
+    }
+  }
+  return test.pass();
+}
+
+function headers(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp2_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  for bytes in [changed(input, 0, 0u8), changed(input, 1, 234u8), changed(input, 1, input[1] & 249u8), changed(input, 2, input[2] | 240u8), changed(input, 2, input[2] | 12u8)] {
+    if let Err(pcm.Header) = header.parse(bytes, 0) {} else {
+      return test.fail("reserved header field");
+    }
+  }
+  for bytes in [changed(input, 1, input[1] & 249u8 | 2u8), changed(input, 1, input[1] & 231u8), changed(input, 2, input[2] & 15u8)] {
+    if let Err(pcm.Unsupported) = header.parse(bytes, 0) {} else {
+      return test.fail("other layer, version, or free format");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp2_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  for bound in [pcm.Limits { max_input_bytes: input.len() - 1, max_samples: 1152 }, pcm.Limits { max_input_bytes: input.len(), max_samples: 1151 }, pcm.Limits { max_input_bytes: -1, max_samples: 1152 }] {
+    if let Err(pcm.Limit) = mp2.decode_raw(input, bound) {} else {
+      return test.fail("input or output budget");
+    }
+  }
+  let stream = mp2_smoke_vectors.stream();
+  let Ok(bytes) = ref.unpack(stream.encoded) else {
+    return test.fail("stream fixture");
+  };
+  if let Err(pcm.Limit) = mp2.decode_raw(bytes, pcm.Limits { max_input_bytes: bytes.len(), max_samples: stream.frames - 1 }) {} else {
+    return test.fail("cumulative PCM budget");
+  }
+  return test.pass();
+}
+
+function protected_frames(): test.TestOutcome {
+  let vector = mp2_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let state = mp2.decoder();
+  let (next, first) = state.decode_frame(input, 0, pcm.default_limits());
+  state = next;
+  if let Err(e) = first {
+    return test.fail(e.message());
+  }
+  for bit in 0..8 {
+    let bytes = changed(input, 4, input[4] ^ 1u8 << bit as u8);
+    let (next, result) = state.decode_frame(bytes, 0, pcm.default_limits());
+    state = next;
+    if let Err(pcm.Checksum) = result {} else {
+      return test.fail("protected-frame CRC");
+    }
+    let (restored, restored_result) = state.decode_frame(input, 0, pcm.default_limits());
+    state = restored;
+    let Ok(frame) = restored_result else {
+      return test.fail("decode after checksum error");
+    };
+    if let Err(e) = mp2_check.samples(frame.samples, 1152, expected, 0) {
+      return test.fail("history reset: " + e);
+    }
+  }
+  return test.pass();
+}
+
+function history_and_storage(): test.TestOutcome {
+  let vector = mp2_smoke_vectors.stream();
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("stream fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let Ok(h) = header.parse(input, 0) else {
+    return test.fail("header");
+  };
+  let state = mp2.decoder();
+  let (next, first) = state.decode_frame(input, 0, pcm.default_limits());
+  state = next;
+  let Ok(first) = first else {
+    return test.fail("first frame");
+  };
+  let (after_short, short) = state.decode_frame_into(input, h.bytes, [], pcm.default_limits());
+  state = after_short;
+  if let Err(pcm.Buffer) = short {} else {
+    return test.fail("undersized output");
+  }
+  let (after_second, second) = state.decode_frame_into(input, h.bytes, first.samples, pcm.default_limits());
+  state = after_second;
+  let Ok(second) = second else {
+    return test.fail("retry second frame");
+  };
+  if let Err(e) = mp2_check.samples(second.samples, 1152, expected, 1152) {
+    return test.fail("history after output error: " + e);
+  }
+  state = state.reset();
+  let (_, result) = state.decode_frame(input, 0, pcm.default_limits());
+  let Ok(frame) = result else {
+    return test.fail("reset frame");
+  };
+  if let Err(e) = mp2_check.samples(frame.samples, 1152, expected, 0) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function format_transition(): test.TestOutcome {
+  let old = mp2_smoke_vectors.vector();
+  let vector = mp2_smoke_vectors.transition();
+  let Ok(before) = ref.unpack(old.encoded) else {
+    return test.fail("old format fixture");
+  };
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("new format fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("new PCM fixture");
+  };
+  let state = mp2.decoder();
+  let (next, first) = state.decode_frame(before, 0, pcm.default_limits());
+  state = next;
+  if let Err(_) = first {
+    return test.fail("old format");
+  }
+  let (_, result) = state.decode_frame(input, 0, pcm.default_limits());
+  let Ok(frame) = result else {
+    return test.fail("new format");
+  };
+  if (frame.sample_rate != vector.rate || frame.channels != vector.channels) {
+    return test.fail("format metadata");
+  }
+  if let Err(e) = mp2_check.samples(frame.samples, 1152 * vector.channels, expected, 0) {
+    return test.fail("format history reset: " + e);
+  }
+  return test.pass();
+}
+
+function malformed_payloads(): test.TestOutcome {
+  let Ok(input) = ref.unpack(mp2_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let state = mp2.decoder();
+  for at in 4..input.len() {
+    let bytes = changed(input, at, input[at] ^ 255u8);
+    let (next, result) = state.decode_frame_into(bytes, 0, spectral.zeros(1153).with(1152, 321.5f32), pcm.default_limits());
+    state = next;
+    if let Ok(frame) = result {
+      if (frame.bytes_read != input.len() || frame.frames != 1152 || frame.channels != 1 || frame.samples[1152] != 321.5f32) {
+        return test.fail("malformed frame bounds");
+      }
+      for sample in frame.samples[:1152] {
+        if (!sample.is_finite()) {
+          return test.fail("nonfinite malformed output");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MPEG Layer II boundaries and state");
+  runner = runner.it("frame prefixes and invalid offsets", prefixes);
+  runner = runner.it("reserved and unsupported header fields", headers);
+  runner = runner.it("input and cumulative PCM budgets", budgets);
+  runner = runner.it("protected fields and history reset after CRC errors", protected_frames);
+  runner = runner.it("output-size retry and explicit reset preserve exact history", history_and_storage);
+  runner = runner.it("rate and channel changes reset the synthesis filter", format_transition);
+  runner = runner.it("payload mutations remain finite and bounded", malformed_payloads);
+  return runner.finish();
+}
