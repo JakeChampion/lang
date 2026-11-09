@@ -40,6 +40,12 @@ pub opaque struct Index { info: Info, blocks: block.Block[], groups: Group[], in
 
 pub opaque struct FileReader { index: Index, group: i32, skip: i32, scratch: i32[] }
 
+pub opaque struct GroupBuilder { state: Scan, profile: Option[Info], limits: Limits }
+
+pub opaque struct GroupIndex { index: Index }
+
+pub enum GroupEvent { GroupPending(GroupBuilder), GroupReady(GroupIndex) }
+
 pub struct Frame { info: Info, first_frame: i64, frames: i32, samples: i32[] }
 
 pub struct Decoded { info: Info, samples: i32[] }
@@ -218,6 +224,117 @@ pub function (value: Index) information(): Info {
 
 pub function (value: Index) group_count(): i32 {
   return value.groups.len();
+}
+
+function group_layout(previous: Option[Info]): config.Layout {
+  return match (previous) {
+    Some(info) => config.Layout { channels: info.format.channels, mask: info.channel_mask, identities: info.channel_identities, declared: true },
+    None => config.Layout { channels: 0, mask: 0u32, identities: [], declared: false },
+  };
+}
+
+pub function group_builder(previous: Option[Info], position: i64, limits: Limits): Result[GroupBuilder, pcm.AudioError] {
+  check_limits([], limits)?;
+  if (position < 0i64) {
+    return Err(pcm.Sample);
+  }
+  let layout = group_layout(previous);
+  let total = -1i64;
+  if let Some(info) = previous {
+    if (!pcm.valid(info.format) || info.total_frames < -1i64) {
+      return Err(pcm.Header);
+    }
+    if (info.total_frames >= 0i64 && position > info.total_frames) {
+      return Err(pcm.Sample);
+    }
+    total = info.total_frames;
+  }
+  let state = Scan { layout: layout, blocks: [], groups: [], group_first: -1, group_frames: 0, group_channels: 0, channels: layout.channels, frame: position, declared_total: total };
+  return Ok(GroupBuilder { state: state, profile: previous, limits: limits });
+}
+
+function group_profile(input: [u8], value: block.Block, previous: Option[Info]): Result[Option[Info], pcm.AudioError] {
+  if let Some(info) = previous {
+    return Ok(Some(info));
+  }
+  if (value.frames == 0) {
+    return Ok(None);
+  }
+  let (format, norm) = read_format(input, value)?;
+  return Ok(Some(Info { format: format, floating: (value.flags & 128u32) != 0u32, norm_exp: norm, channel_mask: 0u32, channel_identities: [], total_frames: value.total }));
+}
+
+function untyped_metadata(input: [u8], own state: Scan, value: block.Block): Result[Scan, pcm.AudioError] {
+  packet.validate_metadata(value)?;
+  let layout = config.layout(input, value, state.layout)?;
+  return Ok(Scan { ...state, layout: layout, blocks: state.blocks.append(value) });
+}
+
+function make_group_index(own state: Scan, profile: Info, bytes: i32, limits: Limits): Result[GroupIndex, pcm.AudioError] {
+  if (state.groups.len() != 1 || state.group_first >= 0) {
+    return Err(pcm.Header);
+  }
+  if (state.declared_total >= 0i64 && state.frame > state.declared_total) {
+    return Err(pcm.Header);
+  }
+  let info = Info { ...profile, format: pcm.Format { ...profile.format, channels: state.channels }, total_frames: state.declared_total, channel_mask: speaker_mask(state.layout, state.channels), channel_identities: state.layout.identities };
+  return Ok(GroupIndex { index: Index { info: info, blocks: state.blocks, groups: state.groups, input_bytes: bytes, limits: limits } });
+}
+
+function check_group_block(input: [u8], state: Scan, value: block.Block, limits: Limits): Result[void, pcm.AudioError] {
+  pcm.check_input(input, limits.audio)?;
+  if (state.blocks.len() >= limits.max_blocks) {
+    return Err(pcm.Limit);
+  }
+  let at = if (state.blocks.len() == 0) { 0 } else { state.blocks[state.blocks.len() - 1].end };
+  if (value.at != at || value.end > input.len()) {
+    return Err(pcm.Header);
+  }
+  return Ok(());
+}
+
+pub function (own builder: GroupBuilder) push(input: [u8], value: block.Block): Result[GroupEvent, pcm.AudioError] {
+  let GroupBuilder { state, profile: previous, limits } = builder;
+  check_group_block(input, state, value, limits)?;
+  let profile = group_profile(input, value, previous)?;
+  match (profile) {
+    None => {
+      let state = untyped_metadata(input, state, value)?;
+      return Ok(GroupPending(GroupBuilder { state: state, profile: profile, limits: limits }));
+    },
+    Some(info) => {
+      let state = push_block(input, state, value, info.format, info.floating, info.norm_exp, limits)?;
+      if (state.groups.len() == 0) {
+        return Ok(GroupPending(GroupBuilder { state: state, profile: profile, limits: limits }));
+      }
+      return Ok(GroupReady(make_group_index(state, info, value.end, limits)?));
+    }
+  }
+}
+
+pub function (own builder: GroupBuilder) discard_metadata(): Result[GroupBuilder, pcm.AudioError] {
+  if (builder.state.group_first >= 0 || builder.state.groups.len() != 0) {
+    return Err(pcm.Header);
+  }
+  return Ok(GroupBuilder { ...builder, state: Scan { ...builder.state, blocks: [] } });
+}
+
+pub function (value: GroupIndex) information(): Info {
+  return value.index.info;
+}
+
+pub function (value: GroupIndex) encoded_bytes(): i32 {
+  return value.index.input_bytes;
+}
+
+pub function (value: GroupIndex) frames(): i32 {
+  return value.index.groups[0].frames;
+}
+
+pub function (value: GroupIndex) decode_into(input: [u8], own scratch: i32[], own output: i32[]): Result[(i32[], Frame), pcm.AudioError] {
+  let group = value.index.groups[0];
+  let (reused, samples) = decode_group(input, value.index, group, 0, 0, scratch, output)?;
+  return Ok((reused, Frame { info: value.index.info, first_frame: group.frame, frames: group.frames, samples: samples }));
 }
 
 pub function reader(index: Index): FileReader {
