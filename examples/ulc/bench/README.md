@@ -7,6 +7,69 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## PCM24 word stores
+
+Source `466f99efe3296308be61943985d395100ef25990` converts four PCM24 samples with double-precision SIMD and three word stores.
+The arithmetic, clipping, and integer samples match the prior implementation.
+The scalar-oracle tests now cover 884736 random and boundary samples across all three PCM depths.
+
+The baseline source is `86e27cfe596f23167f57adfa74e158b93dd76363`.
+Both binaries use compiler source `acbe1f2f38b76dddf0db952f11bba1e73876e04b`.
+The eight stereo cases have thirty repetitions each on CPU 0, with one worker and six balanced execution orders.
+No other local builds or tests run during measurement.
+Every final WAV matches the baseline byte for byte, and all float64 oracle checks pass.
+
+The newer build has lower medians in all six non-silent cases.
+Its geometric-mean baseline/Fern ratio is 1.059× for those cases, with a fixed-suite interval of 1.023× to 1.100×.
+The aggregate across all eight cases is 1.024×, with an interval of 0.990× to 1.063×.
+The full aggregate does not establish a gain because its interval includes 1.0.
+Both intervals use 2000 paired bootstrap repetitions and seed 417.
+
+| Seconds | Input | Baseline/Fern | C/Fern |
+| ---: | --- | ---: | ---: |
+| 10 | silence | 0.957 | 3.586 |
+| 10 | tone | 1.147 | 0.943 |
+| 10 | noise | 1.013 | 0.804 |
+| 10 | transients | 1.009 | 0.918 |
+| 100 | silence | 0.898 | 2.907 |
+| 100 | tone | 1.103 | 1.159 |
+| 100 | noise | 1.061 | 0.973 |
+| 100 | transients | 1.028 | 1.063 |
+
+[The complete report](x86-64-pcm24-stores.json) retains every repetition, error, and hash.
+Fern has lower medians than C in four of the eight cases.
+The C/Fern aggregate is 1.311×, or 0.970× without silence.
+C remains faster on short non-silent inputs and the long noise input.
+
+Build the compiler and narrow-PCM baseline with the commands in the sections below.
+Build the newer codec with that same compiler:
+
+```sh
+git worktree add /tmp/ulc-pcm24-source 466f99efe3296308be61943985d395100ef25990
+make -C /tmp/ulc-pcm24-source/examples/ulc FERN=/tmp/ulc-fft-compiler/bin/fern
+make -C /tmp/ulc-pcm24-source/examples/ulc build/reference64 FERN=/tmp/ulc-fft-compiler/bin/fern
+python3 examples/ulc/bench/run.py \
+  --fern /tmp/ulc-pcm24-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-narrow-source/examples/ulc/build/ulc \
+  --baseline-source-commit 86e27cfe596f23167f57adfa74e158b93dd76363 \
+  --compiler /tmp/ulc-fft-compiler/bin/fern \
+  --source-commit 466f99efe3296308be61943985d395100ef25990 \
+  --oracle /tmp/ulc-pcm24-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM24 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-pcm24-10.json
+```
+
+Repeat with `--seconds 100 --block-size 2048 --output /tmp/ulc-pcm24-100.json`.
+Summarize both comparisons:
+
+```sh
+python3 examples/ulc/bench/summarize.py --output /tmp/ulc-pcm24-c.json /tmp/ulc-pcm24-[0-9]*.json
+python3 examples/ulc/bench/summarize.py --comparison Baseline \
+  --output /tmp/ulc-pcm24-baseline.json /tmp/ulc-pcm24-[0-9]*.json
+```
+
 ## Narrow PCM conversion
 
 Source `86e27cfe596f23167f57adfa74e158b93dd76363` combines contiguous FFT stores with four-lane PCM8 and PCM16 conversion.

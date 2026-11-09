@@ -33,13 +33,16 @@ def main():
     ratios = [statistics.median(c) / statistics.median(fern) for c, fern in observations]
     rng = random.Random(args.seed)
     estimates = []
+    non_silent_estimates = []
     for _ in range(args.bootstrap):
         sampled = []
         for c, fern in observations:
             indices = rng.choices(range(len(c)), k=len(c))
             sampled.append(statistics.median(c[i] for i in indices) / statistics.median(fern[i] for i in indices))
         estimates.append(statistics.geometric_mean(sampled))
+        non_silent_estimates.append(statistics.geometric_mean(ratio for row, ratio in zip(rows, sampled) if row['fixture'] != 'silence'))
     estimates.sort()
+    non_silent_estimates.sort()
     summary = {
         'comparison': args.comparison,
         'cases': len(rows),
@@ -49,6 +52,7 @@ def main():
         'bootstrap_repetitions': args.bootstrap,
         'bootstrap_seed': args.seed,
         'interval_scope': 'paired repetitions within each fixed case',
+        'geometric_mean_without_silence_95_percent_interval': [non_silent_estimates[int(p * (len(non_silent_estimates) - 1))] for p in (0.025, 0.975)],
         'geometric_mean_95_percent_interval': [estimates[int(p * (len(estimates) - 1))] for p in (0.025, 0.975)],
     }
     report = {'summarized_date_utc': datetime.now(timezone.utc).date().isoformat(), 'summary': summary, 'reports': reports}
