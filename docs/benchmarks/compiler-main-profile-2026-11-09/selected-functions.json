@@ -1,0 +1,52 @@
+[
+  {
+    "function": "__fn_semlower__substitution",
+    "inclusive": 511,
+    "exclusive": 0
+  },
+  {
+    "function": "__fn_irverifygate__certify_or_refuse",
+    "inclusive": 9,
+    "exclusive": 3
+  },
+  {
+    "function": "__fn_ssadeps__analyze_checked",
+    "inclusive": 14,
+    "exclusive": 0
+  },
+  {
+    "function": "__fn_ssadeps__dependencies_error",
+    "inclusive": 2,
+    "exclusive": 0
+  },
+  {
+    "function": "__fn_ssalive__compute_checked_kept",
+    "inclusive": 32,
+    "exclusive": 2
+  },
+  {
+    "function": "__fn_ssalive__compute_prepared",
+    "inclusive": 27,
+    "exclusive": 16
+  },
+  {
+    "function": "__fn_ssa__block_positions",
+    "inclusive": 5,
+    "exclusive": 5
+  },
+  {
+    "function": "__fn_ssa__inst_defs",
+    "inclusive": 14,
+    "exclusive": 11
+  },
+  {
+    "function": "__fn_semreach__walk",
+    "inclusive": 27,
+    "exclusive": 23
+  },
+  {
+    "function": "__fn_util__NameIndex__chain",
+    "inclusive": 32,
+    "exclusive": 32
+  }
+]
