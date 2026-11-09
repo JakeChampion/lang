@@ -515,3 +515,48 @@ test("a page with no exercise shows no goal", async ({ page }) => {
   await gotoReady(page);
   await expect(page.locator("#exercise")).toBeHidden();
 });
+
+test("the command-line template sets its arguments and stdin", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("cli");
+  await expect(page.locator("#progArgs")).toHaveValue("fern");
+  await expect(page.locator("#progInput")).toHaveAttribute("open", "");
+  await page.locator("#run").click();
+  await expect(page.locator("#out")).toHaveText("fern frond\nfiddlehead fern\n", { timeout: 10_000 });
+});
+
+// Share asks /api/share for a short link, and copies the long one when no
+// such endpoint answers.
+async function shareAndCopy(page) {
+  await page.evaluate(() => {
+    (window as any).__copied = "";
+    // navigator.clipboard is a getter on the prototype, so a plain
+    // assignment does nothing.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => { (window as any).__copied = t; } },
+    });
+  });
+  await page.locator("#share").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).not.toBe("");
+  return page.evaluate(() => (window as any).__copied as string);
+}
+
+test("Share copies a short link when the site stores snippets", async ({ page }) => {
+  let body = "";
+  await page.route("**/api/share", async (route) => {
+    body = route.request().postData() ?? "";
+    await route.fulfill({ json: { id: "abc123" } });
+  });
+  await gotoReady(page);
+  const copied = await shareAndCopy(page);
+  expect(copied).toMatch(/\/p\/abc123$/);
+  expect(JSON.parse(body).hash).toMatch(/^#src=/);
+  await expect.poll(() => page.url()).toMatch(/#src=/);
+});
+
+test("Share copies the full link when no short-link endpoint answers", async ({ page }) => {
+  await page.route("**/api/share", (route) => route.fulfill({ status: 404, body: "" }));
+  await gotoReady(page);
+  expect(await shareAndCopy(page)).toMatch(/\/index\.html#src=/);
+});

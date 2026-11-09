@@ -774,17 +774,19 @@
     <option value="wasm32-wasi">wasi:cli/run</option>
     <option value="wasm32-wasi-http">wasi:http/incoming-handler</option>
   </select>
-  <select id="example" title="Load an example program" aria-label="Load an example program">
-    <option value="">— pick an example —</option>
-    <option value="hello">hello, world</option>
-    <option value="fact">factorial</option>
-    <option value="strings">string methods</option>
-    <option value="sort">sort</option>
-    <option value="union">union types + match</option>
-    <option value="result">Result error handling</option>
-    <option value="interp">lex+parse arithmetic</option>
-    <option value="format">format(fmt, args)</option>
-    <option value="http">http handler</option>
+  <select id="example" title="Start from a template" aria-label="Start from a template">
+    <option value="">— start from a template —</option>
+    <option value="hello">01 · hello, world</option>
+    <option value="cli">02 · a command-line filter (arguments and stdin)</option>
+    <option value="test">03 · tests with std/test</option>
+    <option value="http">04 · an HTTP handler</option>
+    <option value="union">05 · enums and match</option>
+    <option value="result">06 · errors with Result</option>
+    <option value="fact">07 · factorial</option>
+    <option value="strings">08 · string methods</option>
+    <option value="sort">09 · sort</option>
+    <option value="format">10 · format(fmt, args)</option>
+    <option value="interp">11 · a lexer, parser and interpreter</option>
   </select>
   <span class="status" id="status">loading runtime…</span>
 </div>
@@ -900,6 +902,53 @@
 </script>
 <script type="module">
 const examples = {
+  cli: `import "std/string";
+import "std/io";
+
+function main(): i32 {
+    let argv: string[] = args();
+    if (argv.len() < 2) {
+        eprint("usage: grep PATTERN");
+        return 2;
+    }
+    let pattern: string = argv[1];
+
+    match (io.read_input("-")) {       // "-" means stdin
+        Ok(text) => {
+            let found: boolean = false;
+            let lines: string[] = text.lines();
+            let i: i32 = 0;
+            while (i < lines.len()) {
+                if (lines[i].contains(pattern)) {
+                    print(lines[i]);
+                    found = true;
+                }
+                i = i + 1;
+            }
+            return if (found) { 0 } else { 1 };  // grep's exit convention
+        },
+        Err(_) => {
+            eprint("grep: read error");
+            return 2;
+        }
+    }
+}`,
+  test: `import "std/test";
+import "std/string";
+
+function slugify(s: string): string {
+    return s.trim().to_lower().replace(" ", "-");
+}
+
+function test_slugify(): test.TestOutcome {
+    return test.assert_eq(slugify("  Hello World "), "hello-world");
+}
+
+function main(): i32 {
+    let r: test.TestRunner = test.new("slug");
+    r = r.it("lowercases and hyphenates", test_slugify);
+    return r.finish();
+}`,
   hello: `function main(): i32 {
     print("hello, world");
     return 0;
@@ -1189,6 +1238,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }`,
 };
 
+// The program input that a template starts with.
+const templateInput = {
+  cli: { args: "fern", stdin: "fern frond\noak leaf\nfiddlehead fern\nmoss\n" },
+};
+
 const outEl = document.getElementById("out");
 const metaEl = document.getElementById("meta");
 const runBtn = document.getElementById("run");
@@ -1424,8 +1478,10 @@ exampleEl.addEventListener("change", () => {
   const v = exampleEl.value;
   if (v && examples[v]) {
     setSrc(examples[v]);
-    progArgsEl.value = "";
-    progStdinEl.value = "";
+    const input = templateInput[v] ?? { args: "", stdin: "" };
+    progArgsEl.value = input.args;
+    progStdinEl.value = input.stdin;
+    if (input.args || input.stdin) progInputEl.open = true;
     // The http example only makes sense in the wasi-http world;
     // every other example is a cli/run program. Flip the world
     // select (+ request editor) to match so "Run (wasm)" does the
@@ -1443,10 +1499,28 @@ exampleEl.addEventListener("change", () => {
   }
 });
 
+// A short link for a playground hash, from the site's /api/share
+// (site/netlify/share.mjs), or null where that function is not there, such
+// as a local server of web/.
+async function shortLink(hash) {
+  try {
+    const res = await fetch("/api/share", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hash }),
+    });
+    if (!res.ok) return null;
+    const { id } = await res.json();
+    return typeof id === "string" ? location.origin + "/p/" + id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 shareBtn.addEventListener("click", async () => {
-  const url = location.origin + location.pathname + location.search +
-    writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value, expect: exerciseGoal });
-  window.history.replaceState(null, "", url);
+  const hash = writeHash(getSrc(), { args: progArgsEl.value, stdin: progStdinEl.value, expect: exerciseGoal });
+  window.history.replaceState(null, "", location.pathname + location.search + hash);
+  const url = (await shortLink(hash)) ?? location.origin + location.pathname + location.search + hash;
   let copied = false;
   try {
     await navigator.clipboard.writeText(url);
