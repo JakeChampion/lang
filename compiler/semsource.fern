@@ -13,6 +13,7 @@ import "./ssabounds";
 import "./ssaquotient";
 import "./ssabytes";
 import "./ssasem";
+import "./ssadeps";
 import "./ssaunits";
 import "./ownership";
 import "./util";
@@ -9422,7 +9423,14 @@ function lent_rereads(p: Produced): semsink.Sunk {
   if (!p.ok || p.template || p.bodyless) {
     return semsink.Sunk { f: p.func, reread: 0 };
   }
-  return semsink.sink_past_lent(p.func);
+  match (p.analysis) {
+    Some(a) => {
+      return semsink.sink_past_lent(p.func, a.facts);
+    },
+    None => {
+      return semsink.sink_past_lent(p.func, ssadeps.unchecked());
+    }
+  }
 }
 
 pub function changed_rows(a: Built, b: Built): boolean[] {
