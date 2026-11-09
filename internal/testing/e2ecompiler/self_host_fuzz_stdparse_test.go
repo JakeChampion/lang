@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
@@ -22,7 +24,7 @@ import (
 // standard library through tests/fuzz/stdparse.fern: the HTTP/1 request
 // framer and its chunked-body decoder, the HTTP/2 frame reader and server
 // connection, the HPACK and QPACK decoders, the QUIC packet and frame readers,
-// the JSON parser, and the URL and query parsers. A server reads these bytes from its peers.
+// the JSON parser, the URL and query parsers, and the UTF-8 validator. A server reads these bytes from its peers.
 // The shipped CLI builds the program, so the targets fuzz the standard
 // library as this tree compiles it. Each parser refuses malformed bytes with
 // an error value, so the one accepted outcome is exit 0 with a summary.
@@ -82,6 +84,7 @@ var readerTargets = []readerTarget{
 	{"FuzzSelfHostStdQUICFrames", stdparse, "frames", quicFrameSeeds, nil, false},
 	{"FuzzSelfHostStdJSON", stdparse, "json", jsonSeeds, nil, false},
 	{"FuzzSelfHostStdURL", stdparse, "url", urlSeeds, nil, false},
+	{"FuzzSelfHostStdUTF8", stdparse, "utf8", utf8Seeds, utf8AgreesWithGo, false},
 	{"FuzzSelfHostStdTLS", stdparse, "tls", tlsSeeds, nil, false},
 	{"FuzzSelfHostStdTLSServer", stdparse, "tls-server", tlsServerSeeds, nil, false},
 	{"FuzzSelfHostStdTLSClient", stdparse, "tls-client", tlsClientSeeds, nil, false},
@@ -416,6 +419,55 @@ func jsonSeeds(testing.TB) [][]byte {
 		[]byte("\xff"),
 		[]byte(""),
 	}
+}
+
+// FuzzSelfHostStdUTF8 feeds hostile bytes to the validator and the lossy
+// decoder of std/utf8, and compares the verdict with Go's unicode/utf8.
+func FuzzSelfHostStdUTF8(f *testing.F) {
+	fuzzReaderTarget(f)
+}
+
+func utf8Seeds(testing.TB) [][]byte {
+	return [][]byte{
+		[]byte("plain ascii"),
+		[]byte("x\u00e9\u20ac\U0001F600"),
+		{0xc0, 0x80},
+		{0xe0, 0x80, 0x80},
+		{0xf0, 0x80, 0x80, 0x80},
+		{0xed, 0xa0, 0x80},
+		{0xed, 0xbf, 0xbf},
+		{0xf4, 0x90, 0x80, 0x80},
+		{0xf8, 0x88, 0x80, 0x80, 0x80},
+		{0xe2, 0x82},
+		{'a', 0x80, 'b'},
+		{0xff, 0xfe},
+		[]byte(strings.Repeat("a", 300) + "\xe2\x82"),
+		[]byte(strings.Repeat("\u00e9", 100) + "\xc3"),
+		{},
+	}
+}
+
+// utf8AgreesWithGo checks the summary of the utf8 reader against Go: the
+// verdict, the offset of the first invalid sequence, the byte and rune counts
+// of a valid input, and a lossy decode that is valid.
+func utf8AgreesWithGo(r readerRun) string {
+	in := r.input
+	want := "utf8 ok " + strconv.Itoa(len(in)) + " " + strconv.Itoa(utf8.RuneCount(in)) + " lossy same valid true"
+	if !utf8.Valid(in) {
+		at := 0
+		for at < len(in) {
+			c, size := utf8.DecodeRune(in[at:])
+			if c == utf8.RuneError && size <= 1 {
+				break
+			}
+			at += size
+		}
+		want = "utf8 refused " + strconv.Itoa(at) + " lossy true valid false"
+	}
+	if r.summary != want {
+		return fmt.Sprintf("std/utf8 gave %q, Go gives %q\ninput: %q", r.summary, want, in)
+	}
+	return ""
 }
 
 // FuzzSelfHostStdURL feeds hostile strings to the URL parser and the query parser.

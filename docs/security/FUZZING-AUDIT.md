@@ -31,6 +31,7 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdHPACK` | the HPACK decoder of `std/http/hpack`, two blocks on one decoder | `tests/fuzz/stdparse.fern hpack` | the same |
 | `FuzzSelfHostStdJSON` | the JSON parser of `std/json` | `tests/fuzz/stdparse.fern json` | the same |
 | `FuzzSelfHostStdURL` | the URL parser and the query parser of `std/url` | `tests/fuzz/stdparse.fern url` | the same |
+| `FuzzSelfHostStdUTF8` | the validator and the lossy decoder of `std/utf8` | `tests/fuzz/stdparse.fern utf8` | a summary with exit 0 that agrees with Go's `unicode/utf8`: the verdict, the offset of the first invalid sequence, and the byte and rune counts |
 | `FuzzSelfHostStdH2` | the HTTP/2 frame reader of `std/http/h2/frame`, and a server connection of `std/http/h2` fed the client preface and the input in pieces of nine bytes | `tests/fuzz/stdparse.fern h2` | the same |
 | `FuzzSelfHostStdQPACK` | the QPACK decoder of `std/http/qpack`: encoder-stream bytes, then one header section | `tests/fuzz/stdparse.fern qpack` | the same |
 | `FuzzSelfHostStdQUIC` | the QUIC packet reader of `std/quic/packet`: the coalesced packets of a datagram, and the opening of each Initial packet with the client Initial keys | `tests/fuzz/stdparse.fern quic` | the same |
@@ -186,6 +187,7 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdHPACK` | 48783 | 2 | none |
 | `FuzzSelfHostStdJSON` | 50608 | 1 | none |
 | `FuzzSelfHostStdURL` | 53437 | 1 | none |
+| `FuzzSelfHostStdUTF8` | 66151 | 43 | none |
 | `FuzzSelfHostStdH2` | 47447 | 1 | none |
 | `FuzzSelfHostStdQPACK` | 46110 | 1 | none |
 | `FuzzSelfHostStdQUIC` | 65431 | 4 | none |
@@ -232,14 +234,14 @@ It cannot see into the Fern process that reads each input, so it mutates the rea
 It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-The loop takes thirty-two readers: the twenty of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
+The loop takes thirty-three readers: the twenty-one of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
 The drivers read build manifests, packages, literate documents, op streams and assembly text.
 The image modes of `asm_fuzz_run.fern` write their images beside the input, so the check can read them.
 The counters of a program cover the modules that it imports.
 
 | Program | Readers | Counters |
 |---|---|---|
-| `tests/fuzz/stdparse.fern` | 20 | 56,347 |
+| `tests/fuzz/stdparse.fern` | 21 | 56,362 |
 | `compiler/drivers/manifest_fuzz_run.fern` | 1 | 10,080 |
 | `compiler/drivers/pkg_fuzz_run.fern` | 4 | 16,969 |
 | `compiler/drivers/literate_fuzz_run.fern` | 2 | 13,581 |
@@ -273,7 +275,9 @@ From the readers' own seeds, 300 runs of each arm reached the same counters to w
 A run of `stdparse.fern` costs about 45 ms, and most of that time is the report.
 A run of a driver costs about 15 ms.
 An abort ends a program before it writes its report, so an aborted run of an assembler adds no counters.
-Each of the thirty-one readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
+In the CI run of 2026-11-09, each of the other thirty-two readers kept new inputs in 5 seconds from its seeds.
+No run found a fault.
+The `utf8` reader kept 12 new inputs in 20 seconds on the host.
 
 ## Crash triage
 
@@ -284,11 +288,11 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the thirty-two targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the thirty-three targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-two targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-three targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-two readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-three readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
 Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits

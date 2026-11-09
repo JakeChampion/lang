@@ -247,7 +247,7 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Thirty-two targets feed hostile bytes to the boundaries after the front end,
+Thirty-three targets feed hostile bytes to the boundaries after the front end,
 through five drivers and one program the shipped CLI builds. They
 are the build manifest reader, the IR verifiers, both in-process assemblers
 and, through them, the linker and the ELF writer, whose images Go's
@@ -258,7 +258,7 @@ stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
 and server connection, HPACK and QPACK decoders, QUIC packet and frame
 readers, TLS record, handshake message, server and client handshake, PEM,
 X.509 and chain verifier readers, DEFLATE, gzip, zlib, zstd and Brotli
-decoders, DNS message, protobuf and JPEG readers, JSON parser and URL parser. The DEFLATE, gzip and zlib targets
+decoders, DNS message, protobuf and JPEG readers, JSON parser, URL parser and UTF-8 validator. The DEFLATE, gzip and zlib targets
 must agree with Go's decoders on every input. Each input runs in a child process under a time and
 a memory budget. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
