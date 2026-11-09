@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The three rows moved with the drift of main since the last bank. Each is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The emitted size of nine benchmarks rises on every target, as the .text rows do. The growth is main's at 1c692d87: its compiler and this PR's emit the same code.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: http_hello.emit on wasm32-wasi grows 3.3% and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. The three video_qtrle rows rise with the split codec of this change. The other rows are the drift of main since the last bank. Every row is pinned at its measured value.
@@ -349,6 +350,6 @@ selfhost/arm64-linux/perceus_rbtree_ck.emit	3218
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
-selfhost/x86-64-linux/video_qtrle.emit 9405
-selfhost/arm64-linux/video_qtrle.emit 9780
-selfhost/wasm32-wasi/video_qtrle.emit 10438
+selfhost/x86-64-linux/video_qtrle.emit 5680
+selfhost/arm64-linux/video_qtrle.emit 6080
+selfhost/wasm32-wasi/video_qtrle.emit 6837
