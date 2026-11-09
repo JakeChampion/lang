@@ -53,6 +53,20 @@ The [summary](first-summary.json) retains the exact values.
 These results establish an additional benefit on this subset only.
 They do not establish full-corpus completion, a complete-compilation gain, or an external rank.
 
+The [larger comparison](paired-controls/summary.json) uses the second group, with 32 records and 127,126 decoded bytes.
+Three pairs alternate compiler order, and all six commands exit zero with identical TAP output.
+The CPU reductions are 61.76%, 61.93%, and 60.72%.
+Median wall time decreases from 80.264019253 seconds to 31.044851410 seconds.
+The shortcut range is 77.844565593–81.066830437 seconds, and the index range is 29.624515362–31.558555311 seconds.
+Median peak RSS increases from 150,856 KiB to 150,984 KiB.
+
+Separate counter builds remove 92,717 allocation events on the first group and 5,937,677 events on the second group.
+The reductions are 0.3233% and 8.2267%, respectively, relative to the shortcut version.
+Each run frees every allocation and reports zero live bytes.
+The [allocation comparison](allocation-controls/allocation-summary.json) retains exact totals and the complete records for both binaries.
+The fresh shortcut control reproduces its earlier first-group total of 28,676,955 events.
+The counter executables are separate from the normal timing executables.
+
 ## Correctness controls
 
 All eight targeted Go suites pass with exit zero in 270.880 seconds.
@@ -63,15 +77,25 @@ It verifies the new function-value binding and the earlier session snapshot on a
 
 The other suites cover callable values, both native driver suites, generic calls, associated constants, dynamic providers, and map key equality.
 The five positive CLI controls also pass.
+Five negative CLI controls produce identical failures and diagnostics through both normal binaries.
 Source check, Fern format, Go format, and diff checks pass.
+Go vet and the CI self-tests also pass on the index source.
+
 The qualified full rebuild produces the same executable as the initial prototype after a whitespace-only correction.
 The [agreement record](qualified-binary-agreement.json) retains both source identities and the executable hash.
 The archive also retains the first source-check failure and formatter diff.
 
-The full 1,896-record control, larger repeated comparison, and allocation controls remain active at this archive revision.
-Their later records must state each completed outcome explicitly.
+The indexed normal interpreter completes the unchanged full 1,896-record corpus with exit zero in 527.216713180 seconds.
+It reports 525.259982 seconds of user CPU time, 0.382929 seconds of system CPU time, and 222,664 KiB peak RSS.
+The [full control](full-corpus-control/full.json) retains the original source hash, command, output hashes, and child resource measurements.
+The TAP output reports one passing reference test and zero failures.
+The original and shortcut controls both reached their diagnostic deadlines without completion.
+Different concurrent workloads prevent a paired full-corpus timing claim.
+
 The test corpus and CI package budget stay unchanged.
 The direct full-corpus control retains its 1,980-second diagnostic limit.
+The exact Go oracle/native subtest control and exact-head CI remain incomplete at this archive revision.
+The direct result does not replace either check.
 
 ## Reproduction
 

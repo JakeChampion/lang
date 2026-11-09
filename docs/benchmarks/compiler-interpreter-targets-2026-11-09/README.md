@@ -58,6 +58,16 @@ The [concurrency note](concurrency-note.json) describes these overlaps.
 These results establish a benefit for this diagnostic subset only.
 They do not establish full-corpus completion, a complete-compilation gain, or an external rank.
 
+The [instruction control](instruction-controls/summary.json) records 26,463,602,512 guest instructions before the shortcut and 23,717,071,286 after it.
+This removes 2,746,531,226 instructions, or 10.38%, on the first diagnostic group.
+Each normal binary has one sample under Valgrind 3.24.0, with child tracing, cache simulation, and branch simulation disabled.
+Both commands exit zero with identical TAP output.
+This comparison does not measure the later function-name index.
+
+The archive retains raw Callgrind data, tool identities, and download records.
+The tool outputs use lossless gzip storage, with original byte counts and hashes in [the raw-data identities](instruction-controls/raw-data-identities.json).
+Decompression preserves the original whitespace.
+
 The [larger profile](larger-profile/second-group-breakdown.json) uses the second reference group, with 32 records and 127,126 decoded bytes.
 It exits normally with the expected TAP result.
 The reservoir retains 8,192 samples and omits 5,257 samples, including replacements.

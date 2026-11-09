@@ -1,0 +1,66 @@
+{
+  "source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "note": "Separate allocation-counter build, not a production timing executable. Waits for the targeted Go test process to finish before the build.",
+  "runs": [
+    {
+      "group": "first",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-count-20261109/fern-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "started": "2026-11-09T22:54:41.508154+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T22:54:47.015157+00:00",
+      "allocs": 28584238,
+      "frees": 28584238,
+      "live_bytes": 0,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    },
+    {
+      "group": "second",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-count-20261109/fern-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "started": "2026-11-09T22:54:47.017776+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T22:55:01.682444+00:00",
+      "allocs": 66237759,
+      "frees": 66237759,
+      "live_bytes": 0,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440"
+    }
+  ],
+  "build": {
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-count-20261109/fern-count",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-interpreter-index-20261109",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "1",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:53:29.032656+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-09T22:54:41.479632+00:00"
+  },
+  "binary_sha256": "2105a9dbcd875c614bf6f528defca15a61d04758e676d7696be2c5e609e01cb8",
+  "finished": "2026-11-09T22:55:01.686221+00:00"
+}

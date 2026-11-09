@@ -20,7 +20,9 @@ The candidate diagnostic profile still attributes 49.43% of exclusive samples to
 The [function-name index experiment](benchmarks/compiler-interpreter-index-2026-11-09/README.md) shares an immutable declaration index across interpreter calls.
 Five pairs reduce CPU time by 16.83% to 25.60% on the first 32-record diagnostic subset, relative to the shortcut version.
 All eight targeted suites pass, including a same-count REPL replacement on three targets.
-The full-corpus and larger repeated controls remain active at this record revision.
+Three further pairs reduce CPU time by 60.72% to 61.93% on the larger 32-record group.
+The indexed normal interpreter completes all 1,896 reference records in 527.217 seconds with exit zero.
+The direct control does not replace the Go oracle comparison or exact-head CI.
 
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |

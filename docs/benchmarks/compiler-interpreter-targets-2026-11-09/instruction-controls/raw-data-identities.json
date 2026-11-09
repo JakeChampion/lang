@@ -1,0 +1,44 @@
+{
+  "candidate.callgrind": {
+    "gzip_file": "candidate.callgrind.gz",
+    "uncompressed_sha256": "454cb0f481c3851e54da7abc6133fa8286835b15bbd810e1baa46b45224d4929",
+    "uncompressed_bytes": 1552877,
+    "gzip_sha256": "94236218cf097760f17a99b548ee6c11c016c6d1748249dcbad38b0357d4d304"
+  },
+  "tool-package.txt": {
+    "gzip_file": "tool-package.txt.gz",
+    "uncompressed_sha256": "26db01a04c1e921ddd4a27581de7a2dc17e2fa930a20cf80856863f118eeb70f",
+    "uncompressed_bytes": 867,
+    "gzip_sha256": "177d04553666c4c4755dca6408e1e254fdd81f6858688c88df8fd1b266d6be91"
+  },
+  "base.callgrind": {
+    "gzip_file": "base.callgrind.gz",
+    "uncompressed_sha256": "7ee5322241c0ac5989113ec2fd3cefce17aa4b9da5e4af4f8c2f7e8736c806c0",
+    "uncompressed_bytes": 1553058,
+    "gzip_sha256": "fc6bd01ddda467418e5f458e69c8efecb1b5024f02c616e476ddd4d45b5008fc"
+  },
+  "base.valgrind.log": {
+    "gzip_file": "base.valgrind.log.gz",
+    "uncompressed_sha256": "3870adce8aca408448dc4cd83f47c3ec4b560b492523f2f745d677ae84383568",
+    "uncompressed_bytes": 724,
+    "gzip_sha256": "25c079a08b6feaddf8b1f8db7d61ca0221726063186dfcb1235c7b097e7ac8ca"
+  },
+  "tool-download.log": {
+    "gzip_file": "tool-download.log.gz",
+    "uncompressed_sha256": "d17bcd72fa573e469f885a84bd7a9c1e16222e01260713838b2cf38d61396188",
+    "uncompressed_bytes": 793,
+    "gzip_sha256": "5968abd1aa9ce1c5ed108dd7f79b5fd3e0fb410d308d05444dfc8cda4b50055d"
+  },
+  "tool-mirror-download.log": {
+    "gzip_file": "tool-mirror-download.log.gz",
+    "uncompressed_sha256": "f1c826352f1c76de7c0d650592353926ae29a8c34f7261f8d4c55a839806e425",
+    "uncompressed_bytes": 396,
+    "gzip_sha256": "eb0ea3ac8473bc97db5efbe5679c9dae38bdeba5ab93969387f585756db1f106"
+  },
+  "candidate.valgrind.log": {
+    "gzip_file": "candidate.valgrind.log.gz",
+    "uncompressed_sha256": "e7a91763e3c3f9f2d4e70d4a8f27dea660fdc163d36084ca94d45cccbd483a57",
+    "uncompressed_bytes": 729,
+    "gzip_sha256": "f71445ac0b4e1e0ab7804d7d7b01fa3f6f2afb141b47677edd9d0bd35b0a900b"
+  }
+}
