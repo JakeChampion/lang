@@ -15,6 +15,7 @@ Track timestamps use microseconds and must follow the container's ordering rules
 <<*>>=
 // This module muxes codec output buffers into Android MP4 or WebM files.
 import "std/android/video";
+import "std/ffi";
 import "std/video/frame";
 import "core/cmp";
 
@@ -25,6 +26,11 @@ pub enum Container { MP4, WebM }
 pub enum State { Configuring, Started, Stopped }
 
 pub struct Muxer { handle: usize, state: usize, scratch: usize, max_packet_bytes: i32 }
+
+// The block of a muxer that its methods change: its State, and the number
+// of its tracks.
+@derive(ffi.CLayout)
+struct MuxerState { state: i32, tracks: i32 }
 
 @import("libmediandk.so", "AMediaMuxer_new")
 function c_new(fd: i32, format: i32): usize;
@@ -60,16 +66,15 @@ pub function create(fd: i32, container: Container, maximum: i32): Result[Muxer, 
     return Err(frame.Platform);
   }
   unsafe {
-    let state = __alloc(8);
-    __store_i32(state, 0);
-    __store_i32(state + 4 as usize, 0);
-    return Ok(Muxer { handle: handle, state: state, scratch: __alloc(24), max_packet_bytes: maximum });
+    let state = __alloc(MuxerState.c_size() as i32);
+    MuxerState { state: 0, tracks: 0 }.c_store(state);
+    return Ok(Muxer { handle: handle, state: state, scratch: __alloc(video.BufferInfo.c_size() as i32), max_packet_bytes: maximum });
   }
 }
 
 pub function (muxer: Muxer) state(): State {
   unsafe {
-    return match (__load_i32(muxer.state)) { 0 => Configuring, 1 => Started, _ => Stopped };
+    return match (MuxerState.c_load_state(muxer.state)) { 0 => Configuring, 1 => Started, _ => Stopped };
   }
 }
 
@@ -82,9 +87,9 @@ pub function (muxer: Muxer) add_track(format: video.CodecFormat): Result[i32, fr
     return Err(frame.Platform);
   }
   unsafe {
-    let count = __load_i32(muxer.state + 4 as usize);
+    let count = MuxerState.c_load_tracks(muxer.state);
     if (track as i32 + 1 > count) {
-      __store_i32(muxer.state + 4 as usize, track as i32 + 1);
+      MuxerState.c_store_tracks(muxer.state, track as i32 + 1);
     }
   }
   return Ok(track as i32);
@@ -105,13 +110,13 @@ pub function (muxer: Muxer) orientation(degrees: i32): Result[void, frame.VideoE
 
 pub function (muxer: Muxer) start(): Result[void, frame.VideoError] {
   unsafe {
-    if (muxer.state() != Configuring || __load_i32(muxer.state + 4 as usize) == 0) {
+    if (muxer.state() != Configuring || MuxerState.c_load_tracks(muxer.state) == 0) {
       return Err(frame.State);
     }
     if (c_start(muxer.handle) != 0) {
       return Err(frame.Platform);
     }
-    __store_i32(muxer.state, 1);
+    MuxerState.c_store_state(muxer.state, 1);
   }
   return Ok(());
 }
@@ -134,16 +139,13 @@ pub function (muxer: Muxer) write_view(track: i32, view: video.BufferView, prese
     return Err(frame.Limit);
   }
   unsafe {
-    if (track >= __load_i32(muxer.state + 4 as usize)) {
+    if (track >= MuxerState.c_load_tracks(muxer.state)) {
       return Err(frame.Header);
     }
     if (view.size == 0) {
       return Ok(());
     }
-    __store_i32(muxer.scratch, 0);
-    __store_i32(muxer.scratch + 4 as usize, view.size);
-    __store_i64(muxer.scratch + 8 as usize, presentation_time_us);
-    __store_i32(muxer.scratch + 16 as usize, (flags & video.FLAG_KEY_FRAME) as i32);
+    video.BufferInfo { offset: 0, size: view.size, presentation_time_us: presentation_time_us, flags: flags & video.FLAG_KEY_FRAME }.c_store(muxer.scratch);
     if (c_write(muxer.handle, track as usize, view.data, muxer.scratch) != 0) {
       return Err(frame.Platform);
     }
@@ -157,7 +159,7 @@ pub function (muxer: Muxer) stop(): Result[void, frame.VideoError] {
   }
   let status = c_stop(muxer.handle);
   unsafe {
-    __store_i32(muxer.state, 2);
+    MuxerState.c_store_state(muxer.state, 2);
   }
   if (status != 0) {
     return Err(frame.Platform);
@@ -169,8 +171,8 @@ pub function (muxer: Muxer) close(): Result[void, frame.VideoError] {
   let stopped = if (muxer.state() == Started) { c_stop(muxer.handle) } else { 0 };
   let deleted = c_delete(muxer.handle);
   unsafe {
-    __free(muxer.scratch, 24);
-    __free(muxer.state, 8);
+    __free(muxer.scratch, video.BufferInfo.c_size() as i32);
+    __free(muxer.state, MuxerState.c_size() as i32);
   }
   if (stopped != 0 || deleted != 0) {
     return Err(frame.Platform);

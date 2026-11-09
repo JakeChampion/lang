@@ -40,6 +40,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 // This module runs an Android app with no Java code, through NativeActivity.
 import "std/android/draw";
 import "std/android/trace";
+import "std/ffi";
 import "std/jni";
 import "std/utf8";
 ```
@@ -276,7 +277,8 @@ function message_event(kind: i32, arg: usize): Event {
   }
   if (kind == CONTENT_RECT) {
     unsafe {
-      return ContentRect(__load_i32(arg), __load_i32(arg + 4 as usize), __load_i32(arg + 8 as usize), __load_i32(arg + 12 as usize));
+      let r = Rect.c_load(arg);
+      return ContentRect(r.left, r.top, r.right, r.bottom);
     }
   }
   if (kind >= WINDOW_CREATED && kind <= WINDOW_DESTROYED) {
@@ -291,15 +293,33 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags and the frame state: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, the flags at 40, the time of the last vsync at 48, the frame flags at 56, and the Choreographer of the loop thread at 64.
+The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, and the Choreographer of the loop thread. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread at 16 of the activity. The window gets the focus after it shows, and again each time the user returns to it.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread, which the activity holds. The window gets the focus after it shows, and again each time the user returns to it.
 
-The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48, the instance at 56 and the asset manager at 64. The callbacks follow the order of `ANativeActivityCallbacks`.
+`NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
 ```fern
 <<the UI thread>>=
-const CTX_SIZE: i32 = 72;
+// The context block of an activity, which both threads share.
+@derive(ffi.CLayout)
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize }
+
+// ANativeActivity.
+@derive(ffi.CLayout)
+struct NativeActivity { callbacks: usize, vm: usize, env: usize, clazz: usize, internal_data_path: usize, external_data_path: usize, sdk_version: i32, instance: usize, asset_manager: usize, obb_path: usize }
+
+// ANativeActivityCallbacks.
+@derive(ffi.CLayout)
+struct Callbacks { on_start: usize, on_resume: usize, on_save_instance_state: usize, on_pause: usize, on_stop: usize, on_destroy: usize, on_window_focus_changed: usize, on_native_window_created: usize, on_native_window_resized: usize, on_native_window_redraw_needed: usize, on_native_window_destroyed: usize, on_input_queue_created: usize, on_input_queue_destroyed: usize, on_content_rect_changed: usize, on_configuration_changed: usize, on_low_memory: usize }
+
+// ARect of android/rect.h.
+@derive(ffi.CLayout)
+struct Rect { left: i32, top: i32, right: i32, bottom: i32 }
+
+// A message from the UI thread to the loop thread.
+@derive(ffi.CLayout)
+struct Message { kind: i32, arg: usize }
 
 // The frame flags: a frame is requested, and a vsync came.
 const FRAME_REQUESTED: i32 = 1;
@@ -383,7 +403,7 @@ pub function live_activity(e: usize): usize {
   let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
   jni.free_buffer(args);
   let text: string = jni.string_of(e, got);
-  let v: usize = 0 as usize;
+  let v = 0 as usize;
   for c in text.as_bytes() {
     if (c < 48u8 || c > 57u8) {
       return 0 as usize;
@@ -396,7 +416,7 @@ pub function live_activity(e: usize): usize {
 // The JNIEnv of the UI thread, which ANativeActivity holds.
 function ui_env(activity: usize): usize {
   unsafe {
-    return __load_ptr(activity + 16 as usize);
+    return NativeActivity.c_load_env(activity);
   }
 }
 
@@ -406,35 +426,18 @@ function ui_env(activity: usize): usize {
 // from ANativeActivity_onCreate.
 pub function start(activity: usize, thread_main: usize): void {
   unsafe {
-    let ctx: usize = __alloc(CTX_SIZE);
-    __store_ptr(ctx + 32 as usize, 0 as usize);
-    __store_i32(ctx + 40 as usize, 0);
-    __store_i64(ctx + 48 as usize, 0i64);
-    __store_i32(ctx + 56 as usize, 0);
-    __store_ptr(ctx + 64 as usize, 0 as usize);
-    let ok: i32 = c_pipe2(ctx, 524288) | c_pipe2(ctx + 8 as usize, 524288);
+    let ctx: usize = __alloc(Context.c_size() as i32);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize }.c_store(ctx);
+    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288);
     if (ok != 0) {
       c_activity_finish(activity);
       return;
     }
-    __store_ptr(ctx + 16 as usize, activity);
-    __store_ptr(activity + 56 as usize, ctx);
-    let cb: usize = __load_ptr(activity);
-    __store_ptr(cb, on_start_entry());
-    __store_ptr(cb + 8 as usize, on_resume_entry());
-    __store_ptr(cb + 24 as usize, on_pause_entry());
-    __store_ptr(cb + 32 as usize, on_stop_entry());
-    __store_ptr(cb + 40 as usize, on_destroy_entry());
-    __store_ptr(cb + 48 as usize, on_focus_entry());
-    __store_ptr(cb + 56 as usize, on_window_created_entry());
-    __store_ptr(cb + 64 as usize, on_window_resized_entry());
-    __store_ptr(cb + 72 as usize, on_window_redraw_entry());
-    __store_ptr(cb + 80 as usize, on_window_destroyed_entry());
-    __store_ptr(cb + 88 as usize, on_input_created_entry());
-    __store_ptr(cb + 96 as usize, on_input_destroyed_entry());
-    __store_ptr(cb + 104 as usize, on_content_rect_entry());
-    if (c_pthread_create(ctx + 24 as usize, 0 as usize, thread_main, ctx) == 0) {
-      let ignored: i32 = c_pthread_detach(__load_ptr(ctx + 24 as usize));
+    NativeActivity.c_store_instance(activity, ctx);
+    let cb: usize = NativeActivity.c_load_callbacks(activity);
+    Callbacks { ...Callbacks.c_load(cb), on_start: on_start_entry(), on_resume: on_resume_entry(), on_pause: on_pause_entry(), on_stop: on_stop_entry(), on_destroy: on_destroy_entry(), on_window_focus_changed: on_focus_entry(), on_native_window_created: on_window_created_entry(), on_native_window_resized: on_window_resized_entry(), on_native_window_redraw_needed: on_window_redraw_entry(), on_native_window_destroyed: on_window_destroyed_entry(), on_input_queue_created: on_input_created_entry(), on_input_queue_destroyed: on_input_destroyed_entry(), on_content_rect_changed: on_content_rect_entry() }.c_store(cb);
+    if (c_pthread_create(ctx + Context.c_offset_thread(), 0 as usize, thread_main, ctx) == 0) {
+      let ignored: i32 = c_pthread_detach(Context.c_load_thread(ctx));
     }
   }
   set_live(ui_env(activity), (activity as u64).to_string());
@@ -445,20 +448,20 @@ pub function start(activity: usize, thread_main: usize): void {
 // other than the loop thread.
 pub function send(activity: usize, kind: i32, arg: usize): void {
   unsafe {
-    let ctx: usize = __load_ptr(activity + 56 as usize);
-    let msg: usize = __alloc(16);
-    __store_i32(msg, kind);
-    __store_ptr(msg + 8 as usize, arg);
-    let sent: i64 = c_write(__load_i32(ctx + 4 as usize), msg, 16 as usize);
-    if (sent == 16i64) {
-      let got: i64 = c_read(__load_i32(ctx + 8 as usize), msg, 1 as usize);
+    let ctx: usize = NativeActivity.c_load_instance(activity);
+    let size = Message.c_size();
+    let msg: usize = __alloc(size as i32);
+    Message { kind: kind, arg: arg }.c_store(msg);
+    let sent: i64 = c_write(Context.c_load_message_write(ctx), msg, size);
+    if (sent == size as i64) {
+      let got: i64 = c_read(Context.c_load_reply_read(ctx), msg, 1 as usize);
     }
-    __free(msg, 16);
+    __free(msg, size as i32);
     if (kind == DESTROY) {
-      let a: i32 = c_close(__load_i32(ctx + 4 as usize));
-      let b: i32 = c_close(__load_i32(ctx + 8 as usize));
-      __store_ptr(activity + 56 as usize, 0 as usize);
-      __free(ctx, CTX_SIZE);
+      let a: i32 = c_close(Context.c_load_message_write(ctx));
+      let b: i32 = c_close(Context.c_load_reply_read(ctx));
+      NativeActivity.c_store_instance(activity, 0 as usize);
+      __free(ctx, Context.c_size() as i32);
     }
   }
 }
@@ -496,18 +499,18 @@ function on_focus(activity: usize, focused: i32): void {
 // Applies the requested bar visibility on the UI thread.
 function apply_system_bars(activity: usize): void {
   unsafe {
-    let ctx: usize = __load_ptr(activity + 56 as usize);
-    if (ctx == 0 as usize || (__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE_SET) == 0) {
+    let ctx: usize = NativeActivity.c_load_instance(activity);
+    if (ctx == 0 as usize || (Context.c_load_flags(ctx) & FLAG_IMMERSIVE_SET) == 0) {
       return;
     }
-    let ui: i32 = 0;
-    let fullscreen: i32 = 0;
-    if ((__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE) != 0) {
+    let ui = 0;
+    let fullscreen = 0;
+    if ((Context.c_load_flags(ctx) & FLAG_IMMERSIVE) != 0) {
       ui = IMMERSIVE_UI;
       fullscreen = 1024;
     }
-    let e: usize = __load_ptr(activity + 16 as usize);
-    let obj: usize = __load_ptr(activity + 24 as usize);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
     let activity_class: usize = jni.get_object_class(e, obj);
     let none: usize = jni.jvalue_alloc(0);
     let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, activity_class, "getWindow", "()Landroid/view/Window;"), none);
@@ -580,8 +583,8 @@ function on_vsync_entry(): usize;
 // ALooper_pollOnce. `data` is the context.
 function on_vsync(nanos: i64, data: usize): void {
   unsafe {
-    __store_i64(data + 48 as usize, nanos);
-    __store_i32(data + 56 as usize, FRAME_ARRIVED);
+    Context.c_store_vsync_ns(data, nanos);
+    Context.c_store_frame(data, FRAME_ARRIVED);
   }
 }
 
@@ -589,18 +592,18 @@ function on_vsync(nanos: i64, data: usize): void {
 // frame asks for no other. Call it on the loop thread.
 pub function request_frame(ctx: usize): void {
   unsafe {
-    if ((__load_i32(ctx + 56 as usize) & FRAME_REQUESTED) != 0) {
+    if ((Context.c_load_frame(ctx) & FRAME_REQUESTED) != 0) {
       return;
     }
-    let choreographer: usize = __load_ptr(ctx + 64 as usize);
+    let choreographer: usize = Context.c_load_choreographer(ctx);
     if (choreographer == 0 as usize) {
       choreographer = c_choreographer();
-      __store_ptr(ctx + 64 as usize, choreographer);
+      Context.c_store_choreographer(ctx, choreographer);
     }
     if (choreographer == 0 as usize) {
       return;
     }
-    __store_i32(ctx + 56 as usize, FRAME_REQUESTED);
+    Context.c_store_frame(ctx, FRAME_REQUESTED);
     c_post_frame(choreographer, on_vsync_entry(), ctx);
   }
 }
@@ -608,11 +611,11 @@ pub function request_frame(ctx: usize): void {
 // The Vsync event of a vsync that came, which clears it.
 function frame_event(ctx: usize): Option[Event] {
   unsafe {
-    if ((__load_i32(ctx + 56 as usize) & FRAME_ARRIVED) == 0) {
+    if ((Context.c_load_frame(ctx) & FRAME_ARRIVED) == 0) {
       return None;
     }
-    __store_i32(ctx + 56 as usize, 0);
-    return Some(Vsync(__load_i64(ctx + 48 as usize)));
+    Context.c_store_frame(ctx, 0);
+    return Some(Vsync(Context.c_load_vsync_ns(ctx)));
   }
 }
 
@@ -624,10 +627,10 @@ struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
 // gives the milliseconds to wait for the next event before a Tick. It
 // returns the last state after the Destroy event.
 pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout: (S) => i32): S {
-  let lp: Loop = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false };
+  let lp = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false };
   let vm: usize = attach(ctx);
   unsafe {
-    let added: i32 = c_looper_add_fd(lp.looper, __load_i32(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
+    let added: i32 = c_looper_add_fd(lp.looper, Context.c_load_message_read(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
   }
   while (!lp.done) {
     let ident: i32 = c_looper_poll_once(timeout(state), 0 as usize, 0 as usize, 0 as usize);
@@ -654,11 +657,13 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
 // Reads one message from the UI thread, handles it, and replies.
 function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S) {
   unsafe {
-    let msg: usize = __alloc(16);
-    let got: i64 = c_read(__load_i32(lp.ctx), msg, 16 as usize);
-    let kind: i32 = __load_i32(msg);
-    let arg: usize = __load_ptr(msg + 8 as usize);
-    if (got != 16i64) {
+    let size = Message.c_size();
+    let msg: usize = __alloc(size as i32);
+    let got: i64 = c_read(Context.c_load_message_read(lp.ctx), msg, size);
+    let m = Message.c_load(msg);
+    let kind: i32 = m.kind;
+    let arg: usize = m.arg;
+    if (got != size as i64) {
       kind = 0;
     }
     if (kind == INPUT_CREATED) {
@@ -672,17 +677,17 @@ function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S
     }
     if (kind == DESTROY) {
       lp = Loop { ...lp, done: true };
-      let closed: i32 = c_close(__load_i32(lp.ctx));
+      let closed: i32 = c_close(Context.c_load_message_read(lp.ctx));
     }
-    let reply_fd: i32 = __load_i32(lp.ctx + 12 as usize);
+    let reply_fd: i32 = Context.c_load_reply_write(lp.ctx);
     if (kind == DESTROY) {
-      __store_i32(lp.ctx + 12 as usize, 0 - 1);
+      Context.c_store_reply_write(lp.ctx, 0 - 1);
     }
     let sent: i64 = c_write(reply_fd, msg, 1 as usize);
     if (kind == DESTROY) {
       let closed_reply: i32 = c_close(reply_fd);
     }
-    __free(msg, 16);
+    __free(msg, size as i32);
     return (lp, state);
   }
 }
@@ -698,7 +703,7 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
       let ev: usize = __load_ptr(slot);
       if (c_queue_pre_dispatch(lp.queue, ev) == 0) {
         let kind: i32 = c_event_type(ev);
-        let handled: i32 = 0;
+        let handled = 0;
         if (kind == 2) {
           state = step(state, Touch(c_motion_action(ev) & 255, c_motion_x(ev, 0 as usize), c_motion_y(ev, 0 as usize)));
           handled = 1;
@@ -755,21 +760,24 @@ function system_key(code: i32): boolean {
   return code == 24 || code == 25 || code == 164;
 }
 
+// JNIInvokeInterface of jni.h, the functions of a JavaVM.
+@derive(ffi.CLayout)
+struct InvokeInterface { reserved0: usize, reserved1: usize, reserved2: usize, destroy_java_vm: usize, attach_current_thread: usize, detach_current_thread: usize, get_env: usize, attach_current_thread_as_daemon: usize }
+
 // Attaches the loop thread to the JVM of the activity, and keeps its
-// JNIEnv in the context at 32. The JavaVM interface has
-// AttachCurrentThread at 4 and DetachCurrentThread at 5.
+// JNIEnv in the context.
 function attach(ctx: usize): usize {
   unsafe {
-    let vm: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 8 as usize);
-    let attach_fn: usize = __load_ptr(__load_ptr(vm) + 32 as usize);
-    let ignored: usize = __c_call3(attach_fn, vm, ctx + 32 as usize, 0 as usize);
+    let vm: usize = NativeActivity.c_load_vm(Context.c_load_activity(ctx));
+    let attach_fn: usize = InvokeInterface.c_load_attach_current_thread(__load_ptr(vm));
+    let ignored: usize = __c_call3(attach_fn, vm, ctx + Context.c_offset_env(), 0 as usize);
     return vm;
   }
 }
 
 function detach(vm: usize): void {
   unsafe {
-    let detach_fn: usize = __load_ptr(__load_ptr(vm) + 40 as usize);
+    let detach_fn: usize = InvokeInterface.c_load_detach_current_thread(__load_ptr(vm));
     let ignored: usize = __c_call1(detach_fn, vm);
   }
 }
@@ -778,17 +786,17 @@ function detach(vm: usize): void {
 // thread to the JVM, so JNI calls work on the loop thread at any time.
 pub function env(ctx: usize): usize {
   unsafe {
-    if (__load_ptr(ctx + 32 as usize) == 0 as usize) {
+    if (Context.c_load_env(ctx) == 0 as usize) {
       let vm: usize = attach(ctx);
     }
-    return __load_ptr(ctx + 32 as usize);
+    return Context.c_load_env(ctx);
   }
 }
 
 // The global reference of the NativeActivity object.
 pub function activity_object(ctx: usize): usize {
   unsafe {
-    return __load_ptr(__load_ptr(ctx + 16 as usize) + 24 as usize);
+    return NativeActivity.c_load_clazz(Context.c_load_activity(ctx));
   }
 }
 
@@ -823,7 +831,7 @@ pub function intent_extra(ctx: usize, name: string): string {
 // The API level of the device.
 pub function sdk_version(ctx: usize): i32 {
   unsafe {
-    return __load_i32(__load_ptr(ctx + 16 as usize) + 48 as usize);
+    return NativeActivity.c_load_sdk_version(Context.c_load_activity(ctx));
   }
 }
 
@@ -834,7 +842,7 @@ pub function sdk_version(ctx: usize): i32 {
 pub function data_dir(ctx: usize): string {
   let bytes: u8[] = [];
   unsafe {
-    let path: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 32 as usize);
+    let path: usize = NativeActivity.c_load_internal_data_path(Context.c_load_activity(ctx));
     if (path == 0 as usize) {
       return "";
     }
@@ -895,14 +903,14 @@ pub function request_permissions(ctx: usize, names: string[]): void {
 // Asks the activity to finish. The Destroy event follows.
 pub function finish(ctx: usize): void {
   unsafe {
-    c_activity_finish(__load_ptr(ctx + 16 as usize));
+    c_activity_finish(Context.c_load_activity(ctx));
   }
 }
 
 // Keeps the screen on while the window shows, or stops that.
 pub function keep_screen_on(ctx: usize, on: boolean): void {
   unsafe {
-    let activity: usize = __load_ptr(ctx + 16 as usize);
+    let activity: usize = Context.c_load_activity(ctx);
     if (on) {
       c_activity_window_flags(activity, 128, 0);
     } else {
@@ -916,11 +924,11 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
 // swipe from the edge shows the bars for a short time.
 pub function immersive(ctx: usize, on: boolean): void {
   unsafe {
-    let flags: i32 = __load_i32(ctx + 40 as usize) | FLAG_IMMERSIVE_SET;
+    let flags: i32 = Context.c_load_flags(ctx) | FLAG_IMMERSIVE_SET;
     if (on) {
-      __store_i32(ctx + 40 as usize, flags | FLAG_IMMERSIVE);
+      Context.c_store_flags(ctx, flags | FLAG_IMMERSIVE);
     } else {
-      __store_i32(ctx + 40 as usize, flags & ~FLAG_IMMERSIVE);
+      Context.c_store_flags(ctx, flags & ~FLAG_IMMERSIVE);
     }
   }
 }
@@ -962,7 +970,7 @@ pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
 // such file.
 pub function asset(ctx: usize, name: string): Option[u8[]] {
   unsafe {
-    let manager: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 64 as usize);
+    let manager: usize = NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx));
     let path: usize = jni.cstr(name);
     // AASSET_MODE_BUFFER
     let a: usize = c_asset_open(manager, path, 3);
@@ -1003,7 +1011,7 @@ pub function asset(ctx: usize, name: string): Option[u8[]] {
 pub function density(ctx: usize): i32 {
   unsafe {
     let config: usize = c_config_new();
-    c_config_from_assets(config, __load_ptr(__load_ptr(ctx + 16 as usize) + 64 as usize));
+    c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
     let dpi: i32 = c_config_density(config);
     c_config_delete(config);
     if (dpi <= 0 || dpi == 65534 || dpi == 65535) {
@@ -1028,7 +1036,7 @@ pub function to_background(ctx: usize): void {
 // sends only text, not keys, types nothing.
 pub function show_keyboard(ctx: usize, show: boolean): void {
   unsafe {
-    let activity: usize = __load_ptr(ctx + 16 as usize);
+    let activity: usize = Context.c_load_activity(ctx);
     if (show) {
       // ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED
       c_activity_show_input(activity, 2);
@@ -1064,14 +1072,24 @@ pub function (w: Window) height(): i32 {
 pub function (w: Window) lock(): draw.Frame {
   unsafe {
     let set: i32 = c_window_set_geometry(w.ptr, 0, 0, 1);
-    let buffer: usize = __alloc(48);
+    let buffer: usize = __alloc(WindowBuffer.c_size() as i32);
     if (c_window_lock(w.ptr, buffer, 0 as usize) != 0) {
-      __free(buffer, 48);
+      __free(buffer, WindowBuffer.c_size() as i32);
       return draw.Frame { window: w.ptr, buffer: 0 as usize, bits: 0 as usize, width: 0, height: 0, stride: 0 };
     }
-    return draw.Frame { window: w.ptr, buffer: buffer, bits: __load_ptr(buffer + 16 as usize), width: __load_i32(buffer), height: __load_i32(buffer + 4 as usize), stride: __load_i32(buffer + 8 as usize) };
+    let b = WindowBuffer.c_load(buffer);
+    return draw.Frame { window: w.ptr, buffer: buffer, bits: b.bits, width: b.width, height: b.height, stride: b.stride };
   }
 }
+
+// ANativeWindow_Buffer of android/native_window.h.
+@derive(ffi.CLayout)
+struct WindowBuffer { width: i32, height: i32, stride: i32, format: i32, bits: usize, reserved0: u32, reserved1: u32, reserved2: u32, reserved3: u32, reserved4: u32, reserved5: u32 }
+
+// The start of struct ANativeWindow of the platform's system/window.h, to its
+// perform function.
+@derive(ffi.CLayout)
+struct NativeWindow { magic: i32, version: i32, reserved0: usize, reserved1: usize, reserved2: usize, reserved3: usize, inc_ref: usize, dec_ref: usize, flags: u32, min_swap_interval: i32, max_swap_interval: i32, xdpi: f32, ydpi: f32, oem0: usize, oem1: usize, oem2: usize, oem3: usize, set_swap_interval: usize, dequeue_buffer: usize, lock_buffer: usize, queue_buffer: usize, query: usize, perform: usize }
 
 // The magic number of struct ANativeWindow: '_wnd'.
 const WINDOW_MAGIC: i32 = 1601662564;
@@ -1085,10 +1103,10 @@ const API_CPU: i32 = 2;
 // window refuses, for example when no lock connected it.
 pub function (w: Window) release_cpu(): boolean {
   unsafe {
-    if (__load_i32(w.ptr) != WINDOW_MAGIC) {
+    if (NativeWindow.c_load_magic(w.ptr) != WINDOW_MAGIC) {
       return false;
     }
-    let perform: usize = __load_ptr(w.ptr + 152 as usize);
+    let perform: usize = NativeWindow.c_load_perform(w.ptr);
     return __c_call3(perform, w.ptr, API_DISCONNECT as usize, API_CPU as usize) as i32 == 0;
   }
 }
@@ -1106,7 +1124,7 @@ pub function post(f: draw.Frame): void {
   }
   let posted: i32 = c_window_post(f.window);
   unsafe {
-    __free(f.buffer, 48);
+    __free(f.buffer, WindowBuffer.c_size() as i32);
   }
 }
 ```

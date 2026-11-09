@@ -55,6 +55,7 @@ Resource limits bound Fern buffers, not internal codec memory or process RSS.
 ```fern
 <<*>>=
 // This module decodes and encodes video through Android MediaCodec.
+import "std/ffi";
 import "std/video/frame";
 import "std/android/video/capabilities";
 import "std/utf8";
@@ -98,6 +99,19 @@ pub struct SelectedEncoder { encoder: Encoder, info: capabilities.CodecInfo, att
 pub struct InputBuffer { index: i32, data: usize, capacity: i32 }
 
 pub struct OutputBuffer { index: i32, offset: i32, size: i32, presentation_time_us: i64, flags: u32 }
+
+// AMediaCodecBufferInfo of media/NdkMediaCodec.h.
+@derive(ffi.CLayout)
+pub(package) struct BufferInfo { offset: i32, size: i32, presentation_time_us: i64, flags: u32 }
+
+// The two results of AMediaFormat_getBuffer.
+@derive(ffi.CLayout)
+struct Bytes { data: usize, size: usize }
+
+// The block of an encoder that its methods change: the time of the last
+// sample, and 1 after the end of the stream.
+@derive(ffi.CLayout)
+struct EncoderState { last_time_us: i64, ended: i64 }
 
 pub struct OutputFormat { width: i32, height: i32, crop_left: i32, crop_top: i32, crop_right: i32, crop_bottom: i32, color_standard: i32, color_range: i32, color_transfer: i32, stride: i32, slice_height: i32, color_format: i32 }
 
@@ -345,6 +359,12 @@ pub function open_format_named(format: CodecFormat, window: usize, name: string,
   }
 }
 
+// The output buffer `index`, from the AMediaCodecBufferInfo at `scratch`.
+function output_buffer(index: i32, scratch: usize): OutputBuffer {
+  let info = unsafe { BufferInfo.c_load(scratch) };
+  return OutputBuffer { index: index, offset: info.offset, size: info.size, presentation_time_us: info.presentation_time_us, flags: info.flags };
+}
+
 function close_handle(handle: usize, scratch: usize): Result[void, frame.VideoError] {
   let stopped = c_stop(handle);
   let deleted = c_delete(handle);
@@ -493,10 +513,7 @@ pub function (decoder: Decoder) output(timeout_us: i64): Result[Output, frame.Vi
     return Err(frame.Platform);
   }
   unsafe {
-    return Ok(Buffer(OutputBuffer {
-      index: index as i32, offset: __load_i32(decoder.scratch), size: __load_i32(decoder.scratch + 4 as usize),
-      presentation_time_us: __load_i64(decoder.scratch + 8 as usize), flags: __load_i32(decoder.scratch + 16 as usize) as u32,
-    }));
+    return Ok(Buffer(output_buffer(index as i32, decoder.scratch)));
   }
 }
 
@@ -703,14 +720,13 @@ pub function (format: CodecFormat) buffer(name: string, maximum: i32): Result[u8
   }
   let key = c_string(name);
   unsafe {
-    let scratch = __alloc(16);
-    __store_ptr(scratch, 0 as usize);
-    __store_ptr(scratch + 8 as usize, 0 as usize);
-    let found = c_get_buffer(format.handle, key, scratch, scratch + 8 as usize);
+    let scratch = __alloc(Bytes.c_size() as i32);
+    Bytes { data: 0 as usize, size: 0 as usize }.c_store(scratch);
+    let found = c_get_buffer(format.handle, key, scratch + Bytes.c_offset_data(), scratch + Bytes.c_offset_size());
     free_string(key, name);
-    let data = __load_ptr(scratch);
-    let size = __load_ptr(scratch + 8 as usize);
-    __free(scratch, 16);
+    let data = Bytes.c_load_data(scratch);
+    let size = Bytes.c_load_size(scratch);
+    __free(scratch, Bytes.c_size() as i32);
     if (found == 0u8) {
       return Ok([]);
     }
@@ -837,9 +853,8 @@ function started_encoder(config: EncoderConfig, handle: usize, surface: usize, l
     return Err(frame.Platform);
   }
   unsafe {
-    let state = __alloc(16);
-    __store_i64(state, -1i64);
-    __store_i64(state + 8 as usize, 0i64);
+    let state = __alloc(EncoderState.c_size() as i32);
+    EncoderState { last_time_us: -1i64, ended: 0i64 }.c_store(state);
     let input_bytes = if (surface == 0 as usize) { config.format.width * config.format.height * 3 / 2 } else { 0 };
     return Ok(Encoder { handle: handle, scratch: __alloc(32), max_packet_bytes: limits.max_packet_bytes, input_surface: surface, input_bytes: input_bytes, state: state });
   }
@@ -882,14 +897,14 @@ pub function (encoder: Encoder) close(): Result[void, frame.VideoError] {
     c_window_release(encoder.input_surface);
   }
   unsafe {
-    __free(encoder.state, 16);
+    __free(encoder.state, EncoderState.c_size() as i32);
   }
   return result;
 }
 
 pub function (encoder: Encoder) input(timeout_us: i64): Result[Option[InputBuffer], frame.VideoError] {
   unsafe {
-    if (encoder.input_surface != 0 as usize || __load_i64(encoder.state + 8 as usize) != 0i64) {
+    if (encoder.input_surface != 0 as usize || EncoderState.c_load_ended(encoder.state) != 0i64) {
       return Err(frame.State);
     }
   }
@@ -909,20 +924,20 @@ function encoder_timestamp_valid(last: i64, next: i64, eos: boolean): boolean {
 
 pub function (encoder: Encoder) submit(slot: InputBuffer, bytes: [u8], presentation_time_us: i64, flags: u32): Result[void, frame.VideoError] {
   unsafe {
-    if (encoder.input_surface != 0 as usize || __load_i64(encoder.state + 8 as usize) != 0i64) {
+    if (encoder.input_surface != 0 as usize || EncoderState.c_load_ended(encoder.state) != 0i64) {
       return Err(frame.State);
     }
     let eos = (flags & FLAG_END_OF_STREAM) != 0u32;
     if (!encoder_sample_valid(encoder, bytes.len(), flags)) {
       return Err(frame.Header);
     }
-    if (!encoder_timestamp_valid(__load_i64(encoder.state), presentation_time_us, eos)) {
+    if (!encoder_timestamp_valid(EncoderState.c_load_last_time_us(encoder.state), presentation_time_us, eos)) {
       return Err(frame.Header);
     }
     submit_handle(encoder.handle, encoder.max_packet_bytes, slot, bytes, presentation_time_us, flags)?;
-    __store_i64(encoder.state, presentation_time_us);
+    EncoderState.c_store_last_time_us(encoder.state, presentation_time_us);
     if (eos) {
-      __store_i64(encoder.state + 8 as usize, 1i64);
+      EncoderState.c_store_ended(encoder.state, 1i64);
     }
   }
   return Ok(());
@@ -931,13 +946,13 @@ pub function (encoder: Encoder) submit(slot: InputBuffer, bytes: [u8], presentat
 // Surface producers supply presentation timestamps through EGL or the camera.
 pub function (encoder: Encoder) signal_end_of_input(): Result[void, frame.VideoError] {
   unsafe {
-    if (encoder.input_surface == 0 as usize || __load_i64(encoder.state + 8 as usize) != 0i64) {
+    if (encoder.input_surface == 0 as usize || EncoderState.c_load_ended(encoder.state) != 0i64) {
       return Err(frame.State);
     }
     if (c_surface_eos(encoder.handle) != 0) {
       return Err(frame.Platform);
     }
-    __store_i64(encoder.state + 8 as usize, 1i64);
+    EncoderState.c_store_ended(encoder.state, 1i64);
   }
   return Ok(());
 }
@@ -964,7 +979,7 @@ pub function (encoder: Encoder) output(timeout_us: i64): Result[EncoderOutput, f
     return Err(frame.Platform);
   }
   unsafe {
-    return Ok(EncodedBuffer(OutputBuffer { index: index as i32, offset: __load_i32(encoder.scratch), size: __load_i32(encoder.scratch + 4 as usize), presentation_time_us: __load_i64(encoder.scratch + 8 as usize), flags: __load_i32(encoder.scratch + 16 as usize) as u32 }));
+    return Ok(EncodedBuffer(output_buffer(index as i32, encoder.scratch)));
   }
 }
 
@@ -1006,7 +1021,7 @@ pub function (encoder: Encoder) set_bitrate(bitrate: i32): Result[void, frame.Vi
     return Err(frame.Header);
   }
   unsafe {
-    if (__load_i64(encoder.state + 8 as usize) != 0i64) {
+    if (EncoderState.c_load_ended(encoder.state) != 0i64) {
       return Err(frame.State);
     }
   }
@@ -1015,7 +1030,7 @@ pub function (encoder: Encoder) set_bitrate(bitrate: i32): Result[void, frame.Vi
 
 pub function (encoder: Encoder) request_keyframe(): Result[void, frame.VideoError] {
   unsafe {
-    if (__load_i64(encoder.state + 8 as usize) != 0i64) {
+    if (EncoderState.c_load_ended(encoder.state) != 0i64) {
       return Err(frame.State);
     }
   }
