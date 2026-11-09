@@ -287,6 +287,7 @@ func assemblerSeedsOf(text []byte) [][]byte {
 		[]byte(strings.Repeat(".section .rodata\n", 50)),
 		[]byte(".text\nret\n.p2align 26\nret\n"),
 		[]byte(".text\nret\n.align 67108864\nret\n"),
+		[]byte(".data\nx:\n.zero 2000000000\n"),
 		[]byte("\x00\xff .text \n\n\n"),
 		{},
 	}
