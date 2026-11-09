@@ -1,0 +1,33 @@
+// spec: SH-01
+struct Bundle { output: Writer, ns: i32[] }
+
+function grown(own value: Bundle): i32 {
+  return value.ns.append(4).len();
+}
+
+function local(value: Bundle): i32 {
+  let first = unsafe { share_unchecked(value) };
+  let second = first;
+  return grown(second);
+}
+
+function shared(value: Bundle): Bundle {
+  return unsafe { share_unchecked(value) };
+}
+
+function generic[T](value: T): T {
+  return unsafe { share_unchecked(value) };
+}
+
+function main(): i32 {
+  let value = Bundle { output: stdout(), ns: [1, 2, 3] };
+  print(local(value));
+  print(value.ns.len());
+  print(grown(shared(value)));
+  print(value.ns.len());
+  let alias = generic(value);
+  print(grown(alias));
+  print(grown(generic(value)));
+  print(value.ns.len());
+  return 0;
+}

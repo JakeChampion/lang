@@ -1,0 +1,19 @@
+// spec: SH-01
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function read_owned(own h: Handle): i32 {
+  return h.fd;
+}
+
+function f(h: Handle): i32 {
+  let value = unsafe { h };
+  return read_owned(value);
+}
+
+function main(): i32 {
+  return 0;
+}

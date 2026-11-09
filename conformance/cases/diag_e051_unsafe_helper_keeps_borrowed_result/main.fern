@@ -1,0 +1,22 @@
+// spec: SH-01
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function read_owned(own h: Handle): i32 {
+  return h.fd;
+}
+
+function borrowed(h: Handle): Handle {
+  return unsafe { h };
+}
+
+function f(h: Handle): i32 {
+  return read_owned(borrowed(h));
+}
+
+function main(): i32 {
+  return 0;
+}

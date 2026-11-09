@@ -10728,7 +10728,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id.Name == "share_unchecked" {
 					return true
 				}
-				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
+				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
 					if !c.calleeResultBorrows(x) {
 						return true
 					}

@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**136 of 139** claims are pinned by a conformance case. The remaining
+**137 of 140** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -173,6 +173,7 @@ of them.
 | `AL-04` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that only READS a container — a map lookup, hit or miss — reclaims what the read allocated | `alloc_flat_map_get` |
 | `AL-05` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that recycles a block still calls the allocator every round: the allocation COUNT scales with the round count where the fresh-byte mark stays flat | `alloc_count_sees_recycling` |
 | `AL-06` | `docs/ALLOCATION-OBSERVABLE.md` | An aggregate literal buys its box after evaluating its operands, so an operand that reads the allocation count does not see the literal's own box | `eval_order_aggregate_literal` |
+| `SH-01` | `docs/security/UNSAFE-INVENTORY.md` | The owned result of share_unchecked survives local aliases and helper returns. An unsafe block alone grants no ownership | `share_owner_result_survives_aliases` |
 | `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |

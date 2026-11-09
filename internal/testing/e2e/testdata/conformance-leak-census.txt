@@ -1143,6 +1143,7 @@ shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
 shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             0
+share_owner_result_survives_aliases                  0
 share_unchecked_gives_own_a_shared_value             0
 shared_quotient_runtime                              0
 shared_variant_name                                  0
