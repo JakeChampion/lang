@@ -1,0 +1,24 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function keep(own h: Handle): i32 {
+  return h.close();
+}
+
+function call[T](f: () => T): T {
+  return f();
+}
+
+function g(h: Handle): i32 {
+  let f = () => h;
+  let value = call(f);
+  return keep(value);
+}
+
+function main(): i32 {
+  return 0;
+}

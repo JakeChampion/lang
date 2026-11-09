@@ -116,6 +116,7 @@ A declared struct or enum whose fields cannot hold a handle cannot hold one eith
 At its last use, a fresh local passes to an `own` parameter.
 An unpack or an alias of a fresh local passes too.
 A local read out of a borrowed structure is none of these.
+
 A fresh local stays fresh only while each assignment to it stores an owned value.
 An owned value is a fresh value, an unpack, another fresh local, a payload a match took, or a self-update of the local.
 A call whose result borrows from no argument but the local itself also stores an owned value, as in `o = settle(o)`.
@@ -212,6 +213,19 @@ Both checkers report the same code at the same position for each row.
 
 A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
 A directory or a file opened under another directory (`Dir.open_dir`, `Dir.open_reader`, `Dir.open_writer` and their forms with a flag word) is fresh the same way.
+
+## Callback results
+
+A callback can return a handle that it captures without consuming that handle.
+A borrowed callback can therefore lend a handle to a generic call result.
+Both checkers retain that borrow through local aliases and helper returns.
+An own callback parameter does not transfer ownership of its captures.
+
+A scalar callback result remains a copy.
+The explicit shared-owner contract remains valid inside an unsafe block.
+
+The `diag_e051_generic_callback_*` cases check these borrowed results.
+The `generic_callback_copies_and_shared_results` case checks scalar reads and explicit shared results.
 
 ## Names and ownership
 
