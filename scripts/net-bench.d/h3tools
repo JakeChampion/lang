@@ -13,6 +13,9 @@
 # - h2load is nghttp2's load client, built with HTTP/3 over ngtcp2 and
 #   nghttp3. Both take their QUIC TLS from OpenSSL 3.5, the first
 #   OpenSSL release with a QUIC TLS API.
+# - ngtcp2-client is ngtcp2's example HTTP/3 client (osslclient), which
+#   scripts/net-quic-interop uses: it keeps a session in a file and sends
+#   0-RTT with it on its next run.
 # - h2o is built from its main branch, the only line with HTTP/3 (quicly),
 #   without mruby, so net-bench answers its hello from a file.
 #
@@ -34,7 +37,7 @@ H2O_SHA256=be4a7792211ab0d70513e5a2eea4e360b223dd1f8e43af4eacac214d1fba011b
 root="${1:-${FERN_H3_TOOLS:-$HOME/.cache/fern-h3-tools}}"
 pins="$(printf '%s\n' "$OPENSSL_VERSION" "$NGHTTP3_VERSION" "$NGTCP2_VERSION" "$NGHTTP2_VERSION" "$H2O_COMMIT" | sha256sum | cut -c1-16)"
 prefix="$root/$pins"
-if [ -x "$prefix/bin/h2load" ] && [ -x "$prefix/bin/h2o" ]; then
+if [ -x "$prefix/bin/h2load" ] && [ -x "$prefix/bin/h2o" ] && [ -x "$prefix/bin/ngtcp2-client" ]; then
   echo "$prefix"
   exit 0
 fi
@@ -73,7 +76,8 @@ log="$src/build.log"
     cd "$src/nghttp3-$NGHTTP3_VERSION" &&
     ./configure --prefix="$prefix" --enable-lib-only && make -j"$jobs" install &&
     cd "$src/ngtcp2-$NGTCP2_VERSION" &&
-    ./configure --prefix="$prefix" --enable-lib-only --with-openssl && make -j"$jobs" install &&
+    ./configure --prefix="$prefix" --with-openssl && make -j"$jobs" install &&
+    cp examples/osslclient "$prefix/bin/ngtcp2-client" &&
     cd "$src/nghttp2-$NGHTTP2_VERSION" &&
     ./configure --prefix="$prefix" --enable-app --enable-http3 && make -j"$jobs" install &&
     cmake -S "$src/h2o-$H2O_COMMIT" -B "$src/h2o-build" -DCMAKE_BUILD_TYPE=Release -DWITH_MRUBY=OFF \
