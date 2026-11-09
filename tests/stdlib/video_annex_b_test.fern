@@ -1,0 +1,150 @@
+import "std/video/nal";
+import "std/video/frame";
+import "std/test";
+import "video_nal_vectors";
+import "std/hex";
+
+function framing(): test.TestOutcome {
+  let limits = frame.default_limits();
+  let bytes: u8[] = [0, 0, 0, 0, 1, 103, 0, 0, 3, 1, 128, 0, 0, 0, 0, 0, 1, 104, 128, 0, 0];
+  let Ok(Some(first)) = nal.next_annex_b(bytes, 0, limits) else {
+    return test.fail("first unit");
+  };
+  if (first.offset != 5 || first.size != 6 || first.next_offset != 11) {
+    return test.fail("leading zeros and emulation prevention");
+  }
+  let Ok(Some(second)) = nal.next_annex_b(bytes, first.next_offset, limits) else {
+    return test.fail("second unit");
+  };
+  if (second.offset != 17 || second.size != 2 || second.next_offset != bytes.len()) {
+    return test.fail("trailing zeros");
+  }
+  if let Ok(None()) = nal.next_annex_b(bytes, second.next_offset, limits) {} else {
+    return test.fail("end cursor");
+  }
+  if let Ok(None()) = nal.next_annex_b([], 0, limits) {} else {
+    return test.fail("empty view");
+  }
+  return test.pass();
+}
+
+function conversions(): test.TestOutcome {
+  let limits = frame.default_limits();
+  let annex: u8[] = [0, 0, 1, 103, 128, 0, 0, 0, 1, 104, 128, 0, 0];
+  for prefix in [1, 2, 4] {
+    let Ok(packet) = nal.to_length_prefixed(annex, prefix, limits) else {
+      return test.fail("length conversion");
+    };
+    if (packet.len() != 4 + 2 * prefix) {
+      return test.fail("output extent");
+    }
+    let Ok(restored) = nal.to_annex_b(packet, prefix, limits) else {
+      return test.fail("start code conversion");
+    };
+    if (restored != [0u8, 0, 0, 1, 103, 128, 0, 0, 0, 1, 104, 128]) {
+      return test.fail("canonical start codes");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for bytes in [[0u8], [0u8, 0], [0u8, 0, 1], [0u8, 0, 0, 1]] {
+    if let Err(frame.Truncated) = nal.next_annex_b(bytes, 0, limits) {} else {
+      return test.fail("incomplete start code or payload");
+    }
+  }
+  let bad: u8[][] = [[9, 0, 0, 1, 103], [0, 1, 103], [0, 0, 2, 103], [0, 0, 1, 0, 0, 1, 103], [0, 0, 1, 0]];
+  for bytes in bad {
+    if let Err(frame.Header) = nal.next_annex_b(bytes, 0, limits) {} else {
+      return test.fail("invalid prefix or empty unit");
+    }
+  }
+  for offset in [-1, 5] {
+    if let Err(frame.Header) = nal.next_annex_b([0u8, 0, 1, 103], offset, limits) {} else {
+      return test.fail("invalid cursor");
+    }
+  }
+  if let Err(frame.Header) = nal.to_length_prefixed([], 4, limits) {} else {
+    return test.fail("empty conversion");
+  }
+  if let Err(frame.Truncated) = nal.to_length_prefixed([0u8, 0, 1, 103, 0, 0, 1], 4, limits) {} else {
+    return test.fail("incomplete later unit");
+  }
+  if let Err(frame.Header) = nal.to_length_prefixed([0u8, 0, 1, 103, 0, 0, 1, 0, 0, 1, 104], 4, limits) {} else {
+    return test.fail("empty later unit");
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let bytes: u8[] = [0, 0, 1, 103, 0, 0, 1, 104];
+  let exact = frame.Limits { max_pixels: 0, max_packet_bytes: 10 };
+  let Ok(packet) = nal.to_length_prefixed(bytes, 4, exact) else {
+    return test.fail("exact output limit");
+  };
+  if (packet.len() != 10) {
+    return test.fail("expanded output");
+  }
+  for budget in [-1, 7, 9] {
+    if let Err(frame.Limit) = nal.to_length_prefixed(bytes, 4, frame.Limits { ...exact, max_packet_bytes: budget }) {} else {
+      return test.fail("input or output byte limit");
+    }
+  }
+  for prefix in [0, 3, 5] {
+    if let Err(frame.Unsupported) = nal.to_length_prefixed(bytes, prefix, exact) {} else {
+      return test.fail("reserved prefix width");
+    }
+  }
+  return test.pass();
+}
+
+function prefix_capacity(): test.TestOutcome {
+  for prefix in [1, 2] {
+    let maximum = if (prefix == 1) { 255 } else { 65535 };
+    let bytes: u8[] = [0, 0, 1];
+    for _ in 0..maximum {
+      bytes = bytes.append(128);
+    }
+    let limits = frame.Limits { max_pixels: 0, max_packet_bytes: maximum + 4 };
+    if (nal.to_length_prefixed(bytes, prefix, limits).is_err()) {
+      return test.fail("exact prefix capacity");
+    }
+    bytes = bytes.append(128);
+    if let Err(frame.Limit) = nal.to_length_prefixed(bytes, prefix, limits) {} else {
+      return test.fail("prefix length overflow");
+    }
+  }
+  return test.pass();
+}
+
+function reference(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for v in video_nal_vectors.vectors() {
+    let Ok(packet) = hex.decode(v.packet) else {
+      return test.fail("reference packet");
+    };
+    let Ok(annex) = nal.to_annex_b(packet, 4, limits) else {
+      return test.fail("reference start codes");
+    };
+    let Ok(restored) = nal.to_length_prefixed(annex, 4, limits) else {
+      return test.fail("reference length prefixes");
+    };
+    if (restored != packet) {
+      return test.fail("FFmpeg packet equality");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Annex B NAL input");
+  runner = runner.it("start codes, zero bytes, and borrowed ranges", framing);
+  runner = runner.it("one, two, and four byte length prefixes", conversions);
+  runner = runner.it("malformed and truncated byte streams", malformed);
+  runner = runner.it("input, output, and prefix budgets", budgets);
+  runner = runner.it("exact prefix capacity and one byte overflow", prefix_capacity);
+  runner = runner.it("independent AVC and HEVC packet equality", reference);
+  return runner.finish();
+}
