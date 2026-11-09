@@ -367,7 +367,7 @@ func TestSelfHostIntrinsicNamesAreInternal(t *testing.T) {
 	quoted := regexp.MustCompile(`"([^"]*)"`)
 	names := map[string]bool{}
 	for _, fn := range []string{"intrinsic_result", "intrinsic_params", "is_f64_primitive", "is_bit_count", "byte_kernel_arity", "is_sha_hw_builtin"} {
-		body := regexp.MustCompile(`(?s)\nfunction ` + fn + `\(.*?\n\}`).FindString(src)
+		body := regexp.MustCompile(`(?s)\n(?:pub )?function ` + fn + `\(.*?\n\}`).FindString(src)
 		if body == "" {
 			t.Fatalf("checker.fern has no function %s — point this test at what replaced it", fn)
 		}
