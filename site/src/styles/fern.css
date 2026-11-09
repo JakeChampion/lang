@@ -944,6 +944,121 @@ site-search dialog h2 {
   overflow-wrap: anywhere;
 }
 
+/* --- Benchmark trends --------------------------------------------- */
+
+/* The series colours: the first four slots of the data-viz reference
+ * palette, which pass its checks on this site's surfaces in both modes.
+ * The site's own greens and ochre fail them: too gray, and too close. */
+.fern-trend {
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  position: relative;
+  margin: 1.5rem 0 1rem;
+}
+
+:root[data-theme="dark"] .fern-trend {
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+}
+
+.fern-trend svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.fern-trend__note {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+.fern-trend__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0.4rem 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-2);
+}
+
+.fern-trend__key {
+  display: inline-block;
+  width: 0.9rem;
+  height: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.fern-trend__grid line {
+  stroke: var(--sl-color-hairline);
+  stroke-width: 1;
+}
+
+.fern-trend text {
+  fill: var(--sl-color-gray-3);
+  font-family: var(--fern-font-mono);
+  font-size: 11px;
+}
+
+.fern-trend__end {
+  fill: var(--sl-color-gray-2);
+}
+
+.fern-trend__ref line {
+  stroke: var(--sl-color-gray-4);
+  stroke-dasharray: 4 4;
+}
+
+.fern-trend__series polyline {
+  fill: none;
+  stroke-width: 2;
+}
+
+.fern-trend__series circle {
+  stroke: var(--sl-color-black);
+  stroke-width: 2;
+}
+
+.fern-trend__series.s1 polyline { stroke: var(--s1); }
+.fern-trend__series.s2 polyline { stroke: var(--s2); }
+.fern-trend__series.s3 polyline { stroke: var(--s3); }
+.fern-trend__series.s4 polyline { stroke: var(--s4); }
+.fern-trend__series.s1 circle, .fern-trend__key.s1 { fill: var(--s1); background: var(--s1); }
+.fern-trend__series.s2 circle, .fern-trend__key.s2 { fill: var(--s2); background: var(--s2); }
+.fern-trend__series.s3 circle, .fern-trend__key.s3 { fill: var(--s3); background: var(--s3); }
+.fern-trend__series.s4 circle, .fern-trend__key.s4 { fill: var(--s4); background: var(--s4); }
+
+.fern-trend__hit {
+  fill: transparent;
+}
+
+.fern-trend__cross {
+  stroke: var(--sl-color-gray-4);
+  stroke-width: 1;
+}
+
+.fern-trend__tip {
+  position: absolute;
+  top: 2.5rem;
+  padding: 0.5rem 0.7rem;
+  border: var(--fern-rule);
+  border-radius: 0.4rem;
+  background: var(--sl-color-black);
+  color: var(--sl-color-white);
+  font-size: var(--sl-text-sm);
+  pointer-events: none;
+}
+
+.fern-trend-table {
+  font-size: var(--sl-text-sm);
+}
+
 /* --- Landing reveal --------------------------------------------- */
 
 .hero .stack,

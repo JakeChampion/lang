@@ -429,3 +429,13 @@ test("a stdlib page links each declaration and its edit link to the source", asy
     "https://github.com/JakeChampion/lang/edit/main/internal/stdlib/std/json.fern.md",
   );
 });
+
+test("the benchmarks page lists every run with its machine", async ({ page }) => {
+  await page.goto("benchmarks/");
+  const tables = page.locator("table.fern-trend-table");
+  await expect(tables).toHaveCount(2);
+  // The run by hand on 2026-10-12 is in the table, but not on a trend line.
+  await expect(tables.first()).toContainText("2026-10-12");
+  await expect(tables.first()).toContainText("another machine");
+  await expect(tables.first()).toContainText("GitHub-hosted runner");
+});
