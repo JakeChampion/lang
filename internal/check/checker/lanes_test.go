@@ -64,3 +64,20 @@ func TestLanesAccepted(t *testing.T) {
 		}
 	}
 }
+
+func TestLaneWidenLoadTypes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		source string
+		valid  bool
+	}{
+		"address":         {`function f(p: usize): f64x2 { unsafe { return __f64x2_load_f32_ptr(p); } }`, true},
+		"unsafe required": {`function f(p: usize): f64x2 { return __f64x2_load_f32_ptr(p); }`, false},
+		"float address":   {`function f(p: f64): f64x2 { unsafe { return __f64x2_load_f32_ptr(p); } }`, false},
+		"missing address": {`function f(): f64x2 { unsafe { return __f64x2_load_f32_ptr(); } }`, false},
+		"float result":    {`function f(p: usize): f32x4 { unsafe { return __f64x2_load_f32_ptr(p); } }`, false},
+	} {
+		if err := checkSource(t, tc.source); (err == nil) != tc.valid {
+			t.Errorf("%s: valid=%v, got %v", name, tc.valid, err)
+		}
+	}
+}

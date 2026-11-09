@@ -465,7 +465,7 @@ pub function lane_builtin_params(name: string): Type[] {
   if (v == "zip_lo" || v == "zip_hi") {
     return [lt, lt];
   }
-  if (v == "load_ptr") {
+  if (v == "load_ptr" || v == "load_f32_ptr") {
     return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }];
   }
   if (v == "store") {
