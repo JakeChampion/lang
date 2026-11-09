@@ -71,16 +71,22 @@ pub function inspect(input: [u8], at: i32, limits: pcm.Limits): Result[header.He
 
 function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, scale: layer.Scale, h: header.Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
   let Decoder { qmf, sample_rate, channels } = d;
+  let scratch = spectral.zeros(1152);
+  let lines = spectral.zeros(1728);
+  let transform = spectral.zeros(128);
   for part in 0..3 {
-    let decoded = layer.granule(input, b, scale, part);
+    let decoded = layer.granule_into(input, b, scale, part, scratch);
     let (next_bits, samples) = match (decoded) {
       Ok(value) => value,
       Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0 }, Err(e)); },
     };
     b = next_bits;
-    let (next_qmf, pcm) = synthesis.granule12(qmf, samples, h.channels, output, part * 384 * h.channels);
+    let (next_qmf, pcm, values, synthesis_lines, transform_values) = synthesis.granule12_into(qmf, samples, h.channels, output, part * 384 * h.channels, lines, transform);
     qmf = next_qmf;
     output = pcm;
+    scratch = values;
+    lines = synthesis_lines;
+    transform = transform_values;
   }
   return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
 }

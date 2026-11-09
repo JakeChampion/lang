@@ -260,7 +260,11 @@ function butterfly8x4(own t: f32[], at: i32): f32[] {
 }
 
 function dct32x4(own samples: f32[], base: i32, groups: i32): f32[] {
-  let t = spectral.zeros(128);
+  let (values, _) = dct32x4_into(samples, base, groups, spectral.zeros(128));
+  return values;
+}
+
+function dct32x4_into(own samples: f32[], base: i32, groups: i32, own t: f32[]): (f32[], f32[]) {
   for group in 0..groups {
     let k = group * 4;
     for i in 0..8 {
@@ -301,7 +305,7 @@ function dct32x4(own samples: f32[], base: i32, groups: i32): f32[] {
       samples = __f32x4_with(samples, at + 54, y3);
     }
   }
-  return samples;
+  return (samples, t);
 }
 
 function pair(z: [f32], at: i32): (f32, f32) {
@@ -392,7 +396,11 @@ function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, colu
       samples = dct32_tail(samples, ch * 576);
     }
   }
-  let lines = spectral.zeros((15 + columns) * 64);
+  let (history, pcm, _) = synthesize(qmf, samples, channels, columns, output, out_at, spectral.zeros((15 + columns) * 64));
+  return (history, pcm);
+}
+
+function synthesize(own qmf: f32[], samples: [f32], channels: i32, columns: i32, own output: f32[], out_at: i32, own lines: f32[]): (f32[], f32[], f32[]) {
   for i in 0..15 * 64 {
     lines = lines.with(i, qmf[i]);
   }
@@ -407,6 +415,17 @@ function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, colu
       qmf = qmf.with(i, lines[columns * 64 + i]);
     }
   }
-  return (qmf, output);
+  return (qmf, output, lines);
+}
+
+// Reuse frame-local Layer II scratch. The caller supplies 1,728 line and 128 transform values.
+pub function granule12_into(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32, own lines: f32[], own transform: f32[]): (f32[], f32[], f32[], f32[], f32[]) {
+  for ch in 0..channels {
+    let (values, scratch) = dct32x4_into(samples, ch * 576, 3, transform);
+    samples = values;
+    transform = scratch;
+  }
+  let (history, pcm, scratch) = synthesize(qmf, samples, channels, 12, output, out_at, lines);
+  return (history, pcm, samples, scratch, transform);
 }
 ```
