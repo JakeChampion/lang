@@ -1,0 +1,9 @@
+stage0: /workspace/fern-scalar-fill/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux (local, sha256 4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3)
+stage0: /workspace/fern-scalar-fill/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux (local, sha256 4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3)
+stage1: 35 s, 2487 MB peak RSS, 16230400 bytes
+smoke: /workspace/scratch/scalar-fill-baseline-source/build/bootstrap/stage1 compiles a program and coreutils/tr, and both run
+installed bin/fern-selfhost (x86-64-linux, sha256 f179c94c5ca9d6164c569c747ad2f2cd2318936e7e439d5edb8344ed3b906d14)
+stage2: 41 s, 2493 MB peak RSS, 16223712 bytes
+stage3: 43 s, 2407 MB peak RSS, 16223712 bytes
+stage1 != stage2: stage0 generates different code from the current source (its pin predates a code generator change)
+stage2 == stage3: fixed point reached (sha256 d6a2ad95872b4f003c43a60c980c58ccde31a1d4f833c95046cd7a75d38c42eb)

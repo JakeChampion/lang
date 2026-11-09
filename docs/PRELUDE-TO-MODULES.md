@@ -194,7 +194,7 @@ Tasks:
 ### Phase 6 — Documentation + onboarding
 
 - `docs/STDLIB.md` explains library conventions. The
-  [generated reference](https://jakechampion.github.io/lang/stdlib/) lists modules and public APIs.
+  [generated reference](https://fern-lang.netlify.app/stdlib/) lists modules and public APIs.
 - `docs/LANGUAGE-DIRECTION.md`: replace the "Phase B prelude"
   section with the new module strategy.
 - `CLAUDE.md`: drop the prelude.fern reference; point at the
@@ -226,7 +226,7 @@ Tasks:
       now consults each call site's import closure (see
       `MethodSources` in `internal/check/checker/checker.go`).
 - [x] Phase 4 — remaining modules carved out. The phase recorded this layout.
-      The [generated reference](https://jakechampion.github.io/lang/stdlib/) shows the current modules:
+      The [generated reference](https://fern-lang.netlify.app/stdlib/) shows the current modules:
       - `std/` (20): `i32`, `i64`, `u32`, `u64`, `string`, `array`,
         `log`, `sort`, `csv`, `format`, `http`, `io`, `path`,
         `base64`, `hex`, `url`, `json`, `math`, `float`, `tcp`.

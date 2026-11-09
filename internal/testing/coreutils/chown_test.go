@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,60 @@ printf leaf > leaf
 	mk.Dir = dir
 	if out, err := mk.CombinedOutput(); err != nil {
 		t.Fatalf("building longpath: %v\n%s", err, out)
+	}
+}
+
+func chownSetIDTree(t *testing.T, dir string) {
+	t.Helper()
+	chownTree(t, dir)
+	for _, name := range []string{"f", "d/a", "d/sub/b"} {
+		if err := os.Chmod(filepath.Join(dir, name), 0o755|os.ModeSetuid|os.ModeSetgid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("loop", filepath.Join(dir, "loop")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func ownerQuietCases(add func(invocation), groupOnly bool) {
+	gid := strconv.Itoa(os.Getgid())
+	uid := strconv.Itoa(os.Getuid())
+	specs := []string{"", gid}
+	group := gid
+	if !groupOnly {
+		specs = []string{"", ":", uid, ":" + gid, uid + ":" + gid}
+		group = ":" + gid
+	}
+	for _, spec := range specs {
+		for _, flag := range []string{"", "-v", "-c", "-f", "-R", "-Rv", "-Rc"} {
+			var args []string
+			if flag != "" {
+				args = append(args, flag)
+			}
+			args = append(args, spec, "f", "d")
+			add(invocation{name: "set-id-effects-" + spec + "-" + flag, args: args, seedTree: chownSetIDTree, ownership: true})
+		}
+	}
+	for _, traversal := range []string{"-H", "-L", "-P"} {
+		for _, flag := range []string{"", "-v", "-c", "-f"} {
+			for _, name := range []string{"lnk", "broken", "loop"} {
+				args := []string{"-h", traversal}
+				if flag != "" {
+					args = append(args, flag)
+				}
+				args = append(args, group, name)
+				add(invocation{name: "nonrecursive-link-" + traversal + "-" + flag + "-" + name, args: args, seedTree: chownSetIDTree, ownership: true})
+			}
+		}
+	}
+	for _, flag := range []string{"", "-f"} {
+		args := []string{}
+		if flag != "" {
+			args = append(args, flag)
+		}
+		args = append(args, group, "missing", "f", "broken", "d", "loop")
+		add(invocation{name: "quiet-continue-after-errors-" + flag, args: args, seedTree: chownSetIDTree, ownership: true})
 	}
 }
 
@@ -160,6 +215,7 @@ func chownCases(t *testing.T) []invocation {
 	chownSpecCases(add, "chown")
 	chownOptionCases(add, "root")
 	chownRootCases(add, "root")
+	ownerQuietCases(add, false)
 
 	tree := func(name string, args ...string) {
 		add(invocation{name: name, args: args, seedTree: chownTree, ownership: true})

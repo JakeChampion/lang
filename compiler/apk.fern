@@ -74,10 +74,6 @@ pub const TARGET_SDK: i32 = 34;
 
 // Byte encodings, little-endian.
 
-function put8(out: u8[], v: i32): u8[] {
-  return out.append((v & 255) as u8);
-}
-
 function put16(out: u8[], v: i32): u8[] {
   return out.append((v & 255) as u8).append((v >> 8 & 255) as u8);
 }
@@ -90,13 +86,6 @@ function put64(out: u8[], v: i64): u8[] {
   return put32(put32(out, (v & 4294967295i64) as i32), (v >> 32) as i32);
 }
 
-function cat(out: u8[], b: [u8]): u8[] {
-  for x in b {
-    out = out.append(x);
-  }
-  return out;
-}
-
 function text(s: string): u8[] {
   let out: u8[] = [];
   for i in 0..s.len() {
@@ -107,7 +96,7 @@ function text(s: string): u8[] {
 
 // A field with a 32-bit length in front of it.
 function prefixed(b: [u8]): u8[] {
-  return cat(put32([], b.len()), b);
+  return util.append_bytes(put32([], b.len()), b);
 }
 
 // The binary manifest. The pool starts with the names of the framework
@@ -289,7 +278,7 @@ function string_pool(strings: string[]): u8[] {
   let head = put16(put16([], 1), 28);
   head = put32(head, 28 + offs.len() + data.len());
   head = put32(put32(put32(put32(put32(head, strings.len()), 0), 0), 28 + offs.len()), 0);
-  return cat(cat(head, offs), data);
+  return util.append_bytes(util.append_bytes(head, offs), data);
 }
 
 function resource_map(): u8[] {
@@ -329,7 +318,7 @@ function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
       raw = a.data;
     }
     out = put32(put32(put32(out, ns), a.name), raw);
-    out = put32(put8(put8(put16(out, 8), 0), a.kind), a.data);
+    out = put32(util.put_u8(util.put_u8(put16(out, 8), 0), a.kind), a.data);
   }
   return out;
 }
@@ -407,8 +396,8 @@ pub function manifest(app: App): u8[] {
   }
   body = end(end(body, 11, application), 12, manifest_tag);
   body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
-  let rest = cat(cat(string_pool(s), resource_map()), body);
-  return cat(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+  let rest = util.append_bytes(util.append_bytes(string_pool(s), resource_map()), body);
+  return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
 }
 
 // The resource table of the icon: one package 0x7f with one type,
@@ -423,7 +412,7 @@ const ICON_ID: i32 = 2130771968;
 // A chunk: its type, the size of its header, and the header and body.
 function chunk(kind: i32, header: [u8], body: [u8]): u8[] {
   let out = put32(put16(put16([], kind), 8 + header.len()), 8 + header.len() + body.len());
-  return cat(cat(out, header), body);
+  return util.append_bytes(util.append_bytes(out, header), body);
 }
 
 // The 128 UTF-16 units of a package name, padded with zeros.
@@ -443,19 +432,19 @@ function package_name(name: string): u8[] {
 function resource_table(package: string): u8[] {
   let types = string_pool(["drawable"]);
   let keys = string_pool(["icon"]);
-  let spec = chunk(514, put32(put16(put8(put8([], 1), 0), 0), 1), put32([], 0));
+  let spec = chunk(514, put32(put16(util.put_u8(util.put_u8([], 1), 0), 0), 1), put32([], 0));
   let config: u8[] = put32([], 64);
   while (config.len() < 64) {
     config = config.append(0 as u8);
   }
-  let type_header = cat(put32(put32(put16(put8(put8([], 1), 0), 0), 1), 8 + 12 + config.len() + 4), config);
+  let type_header = util.append_bytes(put32(put32(put16(util.put_u8(util.put_u8([], 1), 0), 0), 1), 8 + 12 + config.len() + 4), config);
   let entry = put32(put16(put16([], 8), 0), 0);
-  entry = put32(put8(put8(put16(entry, 8), 0), 3), 0);
-  let type_chunk = chunk(513, type_header, cat(put32([], 0), entry));
-  let pkg_header = cat(put32([], 127), package_name(package));
+  entry = put32(util.put_u8(util.put_u8(put16(entry, 8), 0), 3), 0);
+  let type_chunk = chunk(513, type_header, util.append_bytes(put32([], 0), entry));
+  let pkg_header = util.append_bytes(put32([], 127), package_name(package));
   pkg_header = put32(put32(put32(put32(put32(pkg_header, 288), 1), 288 + types.len()), 1), 0);
-  let pkg = chunk(512, pkg_header, cat(cat(cat(types, keys), spec), type_chunk));
-  return chunk(2, put32([], 1), cat(string_pool([ICON_PATH]), pkg));
+  let pkg = chunk(512, pkg_header, util.append_bytes(util.append_bytes(util.append_bytes(types, keys), spec), type_chunk));
+  return chunk(2, put32([], 1), util.append_bytes(string_pool([ICON_PATH]), pkg));
 }
 
 // The zip archive. The data of each entry starts at a multiple of its
@@ -487,14 +476,14 @@ function add_entry(z: Zip, e: Entry): Zip {
   let pad = (align - (off + 36 + e.name.len()) % align) % align;
   let head = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), method), 0), 33);
   head = put16(put16(put32(put32(put32(head, crc), data.len()), e.data.len()), e.name.len()), 6 + pad);
-  head = put16(put16(put16(cat(head, text(e.name)), 55605), 2 + pad), align);
+  head = put16(put16(put16(util.append_bytes(head, text(e.name)), 55605), 2 + pad), align);
   for k in 0..pad {
     head = head.append(0 as u8);
   }
   let cd = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), method), 0), 33);
   cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), data.len()), e.data.len()), e.name.len()), 0), 0), 0);
-  cd = cat(put32(put32(put16(cd, 0), 0), off), text(e.name));
-  return Zip { body: cat(cat(z.body, head), data), central: cd, count: z.count + 1 };
+  cd = util.append_bytes(put32(put32(put16(cd, 0), 0), off), text(e.name));
+  return Zip { body: util.append_bytes(util.append_bytes(z.body, head), data), central: cd, count: z.count + 1 };
 }
 
 function slice_bytes(b: [u8], from: i32, to: i32): u8[] {
@@ -522,22 +511,22 @@ pub function eocd(count: i32, size: i32, offset: i32): u8[] {
 // The DER encoding of the certificate, the key, and the signatures.
 
 function der(tag: i32, content: [u8]): u8[] {
-  let out = put8([], tag);
+  let out = util.put_u8([], tag);
   let n = content.len();
   if (n < 128) {
-    out = put8(out, n);
+    out = util.put_u8(out, n);
   } else if (n < 256) {
-    out = put8(put8(out, 129), n);
+    out = util.put_u8(util.put_u8(out, 129), n);
   } else {
-    out = put8(put8(put8(out, 130), n >> 8), n);
+    out = util.put_u8(util.put_u8(util.put_u8(out, 130), n >> 8), n);
   }
-  return cat(out, content);
+  return util.append_bytes(out, content);
 }
 
 function seq(parts: u8[][]): u8[] {
   let out: u8[] = [];
   for p in parts {
-    out = cat(out, p);
+    out = util.append_bytes(out, p);
   }
   return der(48, out);
 }
@@ -559,7 +548,7 @@ function ecdsa_sha256(): u8[] {
 }
 
 function bit_string(b: [u8]): u8[] {
-  return der(3, cat([0 as u8], b));
+  return der(3, util.append_bytes([0 as u8], b));
 }
 
 // The SubjectPublicKeyInfo of the P-256 point `point`.
@@ -711,7 +700,7 @@ function chunk_digests(out: u8[], b: [u8]): (u8[], i32) {
     if (to > b.len()) {
       to = b.len();
     }
-    out = cat(out, crypto.sha256(cat(put32([165 as u8], to - at), b[at:to])));
+    out = util.append_bytes(out, crypto.sha256(util.append_bytes(put32([165 as u8], to - at), b[at:to])));
   }
   return (out, n);
 }
@@ -721,7 +710,7 @@ pub function content_digest(entries: [u8], central: [u8], end_record: [u8]): u8[
   let (d1, n1) = chunk_digests([], entries);
   let (d2, n2) = chunk_digests(d1, central);
   let (d3, n3) = chunk_digests(d2, end_record);
-  return crypto.sha256(cat(put32([90 as u8], n1 + n2 + n3), d3));
+  return crypto.sha256(util.append_bytes(put32([90 as u8], n1 + n2 + n3), d3));
 }
 
 const ECDSA_SHA256: i32 = 513;
@@ -730,14 +719,14 @@ const V2_BLOCK_ID: i32 = 1896449818;
 
 // The APK Signing Block with one v2 signer.
 pub function signing_block(key: ecdsa.PrivateKey, cert: [u8], digest: [u8]): u8[] {
-  let digests = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(digest))));
-  let signed = cat(cat(digests, prefixed(prefixed(cert))), put32([], 0));
-  let sigs = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
-  let signer = cat(cat(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
+  let digests = prefixed(prefixed(util.append_bytes(put32([], ECDSA_SHA256), prefixed(digest))));
+  let signed = util.append_bytes(util.append_bytes(digests, prefixed(prefixed(cert))), put32([], 0));
+  let sigs = prefixed(prefixed(util.append_bytes(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
+  let signer = util.append_bytes(util.append_bytes(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
   let value = prefixed(prefixed(signer));
-  let pair = cat(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
+  let pair = util.append_bytes(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
   let size = (pair.len() + 24) as i64;
-  return cat(put64(cat(put64([], size), pair), size), text("APK Sig Block 42"));
+  return util.append_bytes(put64(util.append_bytes(put64([], size), pair), size), text("APK Sig Block 42"));
 }
 
 // The signed APK of `app`, with the manifest, then one library for each
@@ -771,5 +760,5 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   let at = z.body.len();
   let digest = content_digest(z.body, z.central, eocd(z.count, z.central.len(), at));
   let block = signing_block(key, certificate(key), digest);
-  return cat(cat(cat(z.body, block), z.central), eocd(z.count, z.central.len(), at + block.len()));
+  return util.append_bytes(util.append_bytes(util.append_bytes(z.body, block), z.central), eocd(z.count, z.central.len(), at + block.len()));
 }

@@ -1,0 +1,33 @@
+File: go-parser.test
+Build ID: aeaaa15f675d601896ff757d9cab6168b7fdbe3e
+Type: cpu
+Time: 2026-11-09 17:51:53 UTC
+Duration: 12.44s, Total samples = 15.90s (127.86%)
+Showing nodes accounting for 11.23s, 70.63% of 15.90s total
+Dropped 259 nodes (cum <= 0.08s)
+Showing top 24 nodes out of 177
+      flat  flat%   sum%        cum   cum%
+     1.63s 10.25% 10.25%      1.63s 10.25%  memeqbody
+     1.44s  9.06% 19.31%      4.72s 29.69%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).next
+     1.12s  7.04% 26.35%      3.13s 19.69%  github.com/jakechampion/lang/internal/syntax/parser.(*parser).parseBinaryLeft
+     0.95s  5.97% 32.33%      0.95s  5.97%  runtime.memclrNoHeapPointers
+     0.79s  4.97% 37.30%      6.73s 42.33%  github.com/jakechampion/lang/internal/syntax/lexer.Tokenize
+     0.49s  3.08% 40.38%      0.49s  3.08%  runtime.asyncPreempt
+     0.41s  2.58% 42.96%      0.41s  2.58%  runtime.memequal
+     0.39s  2.45% 45.41%      0.53s  3.33%  github.com/jakechampion/lang/internal/syntax/parser.(*parser).match (inline)
+     0.38s  2.39% 47.80%      0.38s  2.39%  runtime.madvise
+     0.37s  2.33% 50.13%      0.56s  3.52%  github.com/jakechampion/lang/internal/syntax/ast.walkChildren
+     0.36s  2.26% 52.39%      0.36s  2.26%  runtime.tgkill
+     0.33s  2.08% 54.47%      0.33s  2.08%  runtime.futex
+     0.33s  2.08% 56.54%      0.60s  3.77%  runtime.scanObject
+     0.30s  1.89% 58.43%      2.11s 13.27%  internal/stringslite.HasPrefix (inline)
+     0.29s  1.82% 60.25%      0.41s  2.58%  runtime.lock2
+     0.25s  1.57% 61.82%      0.25s  1.57%  runtime.procyieldAsm
+     0.25s  1.57% 63.40%      0.28s  1.76%  runtime.unlock2
+     0.24s  1.51% 64.91%      0.26s  1.64%  github.com/jakechampion/lang/internal/syntax/parser.(*parser).peek (inline)
+     0.22s  1.38% 66.29%      0.26s  1.64%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).advance (inline)
+     0.16s  1.01% 67.30%      0.17s  1.07%  runtime.typePointers.next
+     0.14s  0.88% 68.18%      0.14s  0.88%  runtime.osyield
+     0.14s  0.88% 69.06%      0.21s  1.32%  runtime.tryDeferToSpanScan
+     0.13s  0.82% 69.87%      0.31s  1.95%  github.com/jakechampion/lang/internal/syntax/lexer.(*lexer).skipTrivia
+     0.12s  0.75% 70.63%      0.18s  1.13%  runtime.scanblock

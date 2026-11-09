@@ -274,9 +274,175 @@ pub unsafe function store_float_samples(destination: usize, samples: u8[], chann
 }
 
 // The caller provides one writable output span for the validated sample buffer.
+// Ambiguous groups retain the scalar reconstruction precision and clipping order.
+@inline
+unsafe function store_pcm_group[const CONFIG: i32](destination: usize, first_address: usize, second_address: usize): i32 {
+  let stereo = (CONFIG & 1) != 0;
+  let bits = CONFIG & ~1;
+  let scale = 1 << bits - 1;
+  let multiplier = __f64x2_splat(INVERSE_SCALE * (scale as f64));
+  let lower = __f64x2_splat(-(scale as f64));
+  let upper = __f64x2_splat((scale - 1) as f64);
+  let bias = __f64x2_splat(6755399441055744.0);
+  let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+  let valid = 3;
+  unsafe {
+    let first = first_address;
+    let second = second_address;
+    let out = destination;
+    for pair in 0..if (stereo) { 4 } else { 2 } {
+      let a = get(first, 0);
+      let b = get(second, 0);
+      let values = if (stereo) { __f64x2_of(a + b, a - b) } else { __f64x2_of(a, b) };
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(values), infinity));
+      let clipped = __f64x2_min(__f64x2_max(values * multiplier, lower), upper);
+      // All rounded PCM values keep the bias exponent. The low word holds the signed integer.
+      let words = __f64x2_round(clipped) + bias;
+      let left = __f64x2_lane_bits(words, 0) as i32;
+      let right = __f64x2_lane_bits(words, 1) as i32;
+      if (bits == 8) {
+        __store_u8(out, (left + 128) as u8);
+        __store_u8(out + 1 as usize, (right + 128) as u8);
+      } else if (bits == 16) {
+        __store_i32(out, left & 65535 | right << 16);
+      } else {
+        __store_i32(out, left & 16777215 | right << 24);
+        __store_u8(out + 4 as usize, (right >> 8) as u8);
+        __store_u8(out + 5 as usize, (right >> 16) as u8);
+      }
+      first += (if (stereo) { 4 } else { 8 }) as usize;
+      second += (if (stereo) { 4 } else { 8 }) as usize;
+      out += (bits / 4) as usize;
+    }
+  }
+  return valid;
+}
+
+@inline
+unsafe function store_narrow4[const CONFIG: i32](destination: usize, words: f32x4): void {
+  unsafe {
+    let a = __f32x4_lane_bits(words, 0) as i32;
+    let b = __f32x4_lane_bits(words, 1) as i32;
+    let c = __f32x4_lane_bits(words, 2) as i32;
+    let d = __f32x4_lane_bits(words, 3) as i32;
+    if ((CONFIG & ~1) == 8) {
+      __store_i32(destination, a + 128 & 255 | (b + 128 & 255) << 8 | (c + 128 & 255) << 16 | (d + 128 & 255) << 24);
+    } else {
+      __store_i32(destination, a & 65535 | b << 16);
+      __store_i32(destination + 4 as usize, c & 65535 | d << 16);
+    }
+  }
+}
+
+unsafe function store_pcm_narrow[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
+  let stereo = (CONFIG & 1) != 0;
+  let bits = CONFIG & ~1;
+  let scale = 1 << bits - 1;
+  let multiplier = __f32x4_splat((INVERSE_SCALE * (scale as f64)) as f32);
+  let lower = __f32x4_splat(-(scale as f32));
+  let upper = __f32x4_splat((scale - 1) as f32);
+  let bias = __f32x4_splat(12582912.0 as f32);
+  let half = __f32x4_splat(0.5 as f32);
+  let infinity = __f32x4_splat(f32_from_bits(2139095040));
+  unsafe {
+    let first = samples as usize + 8 as usize;
+    let second = first + (if (stereo) { samples.len() / 2 } else { 0 }) as usize;
+    let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
+    let out = destination;
+    while (first < end) {
+      let a = __f32x4_load_ptr(first);
+      let b = if (stereo) { __f32x4_load_ptr(second) } else { a };
+      let left = if (stereo) { a + b } else { a };
+      let right = if (stereo) { a - b } else { a };
+      let l = __f32x4_min(__f32x4_max(left * multiplier, lower), upper);
+      let r = __f32x4_min(__f32x4_max(right * multiplier, lower), upper);
+      // The bias packs nearest-even integers within the PCM8 and PCM16 bounds.
+      // Exact half-integers use the double-precision fallback.
+      let lwords = l + bias;
+      let rwords = r + bias;
+      let rounded_l = lwords - bias;
+      let rounded_r = rwords - bias;
+      // A float sum can change integer rounding only at an exact half-integer.
+      let unambiguous = __f32x4_bitmask(__f32x4_ne(__f32x4_abs(l - rounded_l), half)) == 15
+        && __f32x4_bitmask(__f32x4_ne(__f32x4_abs(r - rounded_r), half)) == 15;
+      let finite = __f32x4_bitmask(__f32x4_lt(__f32x4_abs(a), infinity)) == 15
+        && __f32x4_bitmask(__f32x4_lt(__f32x4_abs(b), infinity)) == 15;
+      if (unambiguous && finite) {
+        if (stereo) {
+          store_narrow4[CONFIG](out, __f32x4_zip_lo(lwords, rwords));
+          store_narrow4[CONFIG](out + (bits / 2) as usize, __f32x4_zip_hi(lwords, rwords));
+        } else {
+          store_narrow4[CONFIG](out, lwords);
+        }
+      } else if (store_pcm_group[CONFIG](out, first, if (stereo) { second } else { first + 4 as usize }) != 3) {
+        return Err("nonfinite output sample");
+      }
+      first += 16 as usize;
+      second += 16 as usize;
+      out += (if (stereo) { bits } else { bits / 2 }) as usize;
+    }
+  }
+  return Ok(());
+}
+
+// Four PCM24 samples share three stores. Reconstruction retains double precision.
+unsafe function store_pcm24_tiled[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
+  let stereo = (CONFIG & 1) != 0;
+  let multiplier = __f64x2_splat(INVERSE_SCALE * 8388608.0);
+  let lower = __f64x2_splat(-8388608.0);
+  let upper = __f64x2_splat(8388607.0);
+  let bias = __f64x2_splat(6755399441055744.0);
+  let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+  let valid = 3;
+  unsafe {
+    let first = samples as usize + 8 as usize;
+    let second = first + (if (stereo) { samples.len() / 2 } else { 8 }) as usize;
+    let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
+    let out = destination;
+    while (first < end) {
+      let a = __f64x2_load_f32_ptr(first);
+      let b = __f64x2_load_f32_ptr(second);
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(a), infinity));
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(b), infinity));
+      let left = if (stereo) { a + b } else { a };
+      let right = if (stereo) { a - b } else { b };
+      let l = __f64x2_round(__f64x2_min(__f64x2_max(left * multiplier, lower), upper)) + bias;
+      let r = __f64x2_round(__f64x2_min(__f64x2_max(right * multiplier, lower), upper)) + bias;
+      let a0 = __f64x2_lane_bits(l, 0) as i32;
+      let a1 = __f64x2_lane_bits(l, 1) as i32;
+      let b0 = __f64x2_lane_bits(r, 0) as i32;
+      let b1 = __f64x2_lane_bits(r, 1) as i32;
+      let x0 = a0;
+      let x1 = if (stereo) { b0 } else { a1 };
+      let x2 = if (stereo) { a1 } else { b0 };
+      let x3 = b1;
+      __store_i32(out, x0 & 16777215 | x1 << 24);
+      __store_i32(out + 4 as usize, x1 >> 8 & 65535 | x2 << 16);
+      __store_i32(out + 8 as usize, x2 >> 16 & 255 | x3 << 8);
+      first += (if (stereo) { 8 } else { 16 }) as usize;
+      second += (if (stereo) { 8 } else { 16 }) as usize;
+      out += 12 as usize;
+    }
+  }
+  if (valid != 3) {
+    return Err("nonfinite output sample");
+  }
+  return Ok(());
+}
+
 unsafe function store_pcm[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
   let stereo = (CONFIG & 1) != 0;
   let bits = CONFIG & ~1;
+  if (bits <= 16 && samples.len() % (if (stereo) { 32 } else { 16 }) == 0) {
+    unsafe {
+      return store_pcm_narrow[CONFIG](destination, samples);
+    }
+  }
+  if (bits == 24 && samples.len() % 16 == 0) {
+    unsafe {
+      return store_pcm24_tiled[CONFIG](destination, samples);
+    }
+  }
   let scale = 1 << bits - 1;
   let multiplier = __f64x2_splat(INVERSE_SCALE * (scale as f64));
   let lower = __f64x2_splat(-(scale as f64));

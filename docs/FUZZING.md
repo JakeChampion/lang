@@ -172,6 +172,7 @@ block changes their scope.
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | EMI mutants | a miscompile of a real program, in shapes that fernsmith does not write: the corpus cases' own types, stdlib calls and control flow, with dead and wrapped code around them. The interpreter must give the case's expected output first, so a fault in the mutator or the interpreter is a failure too. The sanitize leg builds the same mutants under `-sanitize` | `TestDifferential_SelfHostEMIX86_64`, `TestDifferential_SelfHostEMISanitizeX86_64` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
+| Coverage feedback, readers | steers hostile bytes toward new paths in the stdlib readers and the compiler's fuzz drivers, and judges every input by the budgets and the oracle of its Go target | `TestSelfHostReaderCoverageGuidedFuzz`, `TestSelfHostReaderCoverageBeatsBlind` |
 
 ### Bisecting a failure to one decision
 
@@ -246,16 +247,18 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Thirty targets feed hostile bytes to the boundaries after the front end,
-through the CLI, four drivers and one program the shipped CLI builds. They
-are the build manifest reader, the IR verifiers, both in-process assemblers,
+Thirty-three targets feed hostile bytes to the boundaries after the front end,
+through five drivers and one program the shipped CLI builds. They
+are the build manifest reader, the IR verifiers, both in-process assemblers
+and, through them, the linker and the ELF writer, whose images Go's
+`debug/elf` must read,
 the package layer's manifest, lock, index and archive readers, the literate
 tangle and weave that read a `.fern.md` module a package can ship, and the
 stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
 and server connection, HPACK and QPACK decoders, QUIC packet and frame
 readers, TLS record, handshake message, server and client handshake, PEM,
 X.509 and chain verifier readers, DEFLATE, gzip, zlib, zstd and Brotli
-decoders, DNS message, protobuf and JPEG readers, JSON parser and URL parser. The DEFLATE, gzip and zlib targets
+decoders, DNS message, protobuf and JPEG readers, JSON parser, URL parser and UTF-8 validator. The DEFLATE, gzip and zlib targets
 must agree with Go's decoders on every input. Each input runs in a child process under a time and
 a memory budget. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
@@ -376,6 +379,13 @@ regression test where the bug lived:
   read past the file. A scan with an undefined Huffman table read the empty
   table. `std/jpeg` now refuses a frame over its pixel limit, checks each
   segment length, and decodes such a scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
+- **Four faults in the image writer** (`FuzzSelfHostX86Image`,
+  `FuzzSelfHostArm64Image`, November 2026). The relro step stopped the
+  compiler with exit 3 on text that was not compiled with `-pie`. An arm64
+  image with no `_start` entered past its code, and on both ISAs a `_start`
+  with no code after it did the same. The `PT_GNU_RELRO` header of a `-pie`
+  image and of a shared object gave a file range past the end of the file.
+  Each is now a refusal with a cause, or a header inside the file.
 
 Earlier: the closure-dispatch cluster (#5001, #5007, #5009, #5026), the
 `i64[]` narrowing (#5729), the u32 shift that miscompiled SHA-256, the float

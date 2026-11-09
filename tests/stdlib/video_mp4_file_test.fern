@@ -1,0 +1,20 @@
+import "std/test";
+import "video_mp4_vectors";
+import "video_mp4_file_check" as check;
+
+function references(): test.TestOutcome {
+  for v in video_mp4_vectors.vectors() {
+    for short in [1, 3, 0] {
+      if let Err(message) = check.reference(v, short) {
+        return test.fail(v.name + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded MP4 video file references");
+  runner = runner.it("AVC and HEVC metadata match without media payload reads", references);
+  return runner.finish();
+}

@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**135 of 138** claims are pinned by a conformance case. The remaining
+**136 of 139** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -124,6 +124,7 @@ of them.
 | `CC-01` | `docs/CLOSURE-CAPTURE.md` | A mutation of a captured scalar inside a closure is visible outside | `closure_capture_shared_cell` |
 | `CC-02` | `docs/CLOSURE-CAPTURE.md` | A write to the outer variable is visible inside the closure | `closure_capture_shared_cell` |
 | `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |
+| `CE-01` | `docs/CELL-TYPE-PLAN.md` | A Cell snapshot retains native descriptor values and nested cycle-free data without duplicating the OS resource | `cell_native_descriptor_snapshots` |
 | `DI-01` | `docs/INITIALIZATION.md` | Every local scalar declaration requires an initializer | `init_missing_scalar` |
 | `DI-02` | `docs/INITIALIZATION.md` | A local binding is unavailable in its own initializer (`E001`) | `init_self_reference` |
 | `DI-03` | `docs/INITIALIZATION.md` | A branch-local binding cannot escape its block (`E001`) | `init_branch_scope_escape` |
@@ -204,7 +205,7 @@ of them.
 | `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
 | `RH-25` | `docs/security/HANDLE-AUDIT.md` | A write to a built-in `Writer` after its close is refused (`E051`) | `diag_e051_builtin_writer_written_after_close` |
 | `RH-26` | `docs/security/HANDLE-AUDIT.md` | A variant constructor carries its payload, so a result that wraps a borrowed value cannot pass to an `own` parameter (`E051`) | `diag_e051_variant_result_borrows_its_payload` |
-| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`) | `diag_e051_local_from_borrowing_call` |
+| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters and elements retain this borrow | `diag_e051_local_from_borrowing_call` |
 | `RH-28` | `docs/security/HANDLE-AUDIT.md` | A call to a function that never returns ends the path, so an own parameter it consumes in a loop is not used again | `handle_consumed_before_a_call_that_never_returns` |
 | `RH-29` | `docs/security/HANDLE-AUDIT.md` | A name a match arm binds is declared afresh each round, so a payload taken in a loop closes once each round | `handle_payload_closes_in_loop_from_unpack` |
 | `RH-30` | `docs/security/HANDLE-AUDIT.md` | A field moves to a consuming call while the same call reads other fields of its owner | `handle_field_closes_beside_other_field_reads` |

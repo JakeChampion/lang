@@ -1,3 +1,7 @@
+# 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
+# 2026-11-09: own_takes_replaced_field_of_owned_base is clean under RC trace.
+# 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
+# 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
 # 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
 # 2026-11-08: must_consume_destructure_of_a_moved_payload is clean under RC trace.
@@ -33,6 +37,7 @@
 # record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
+# 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_float_literal_array_takes_the_width_of_its_first_use 0
@@ -192,6 +197,7 @@ cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_in_container                                    0
+cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
 cell_string_accumulate                               0
 cell_struct_field_wide                               0
@@ -376,6 +382,7 @@ general_reuse_crossblock                             0
 general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
+generic_arms_agree_in_type_argument                  0
 generic_array_callbacks_keep_their_types              0
 generic_array_method_chain                           0
 generic_array_methods                                0
@@ -412,6 +419,7 @@ generic_promotion_ignores_shadowed_names             0
 generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_array_drop                          0
 generic_receiver_methods                             0
+generic_result_owned_and_handle_free                 0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
@@ -713,6 +721,7 @@ own_param_superseded_field_nested                    0
 own_parameter_compared_then_moved                    0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
+own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
 owned_state_restored_on_each_loop_jump               0
@@ -1134,6 +1143,7 @@ shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
 shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             0
+share_unchecked_gives_own_a_shared_value             0
 shared_quotient_runtime                              0
 shared_variant_name                                  0
 shared_variant_payload                               0
@@ -1233,6 +1243,7 @@ tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
+tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0

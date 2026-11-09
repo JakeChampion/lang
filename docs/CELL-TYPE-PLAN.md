@@ -13,7 +13,12 @@ Date: 2026-06-07 (scalar-array extension 2026-10-06, composite extension
 and structs and enums whose fields and payloads are built the same way.
 Recursive types are fine. The element is refused (E057) when any part of it
 is a function type, a `Cell`, `dyn Trait`, a type parameter, a borrowed view
-(`str`, `[T]`), a resource handle.
+(`str`, `[T]`), or a handle of an explicitly declared `resource R`.
+
+Native descriptor structs such as `Reader`, `Writer`, `Dir`, and `Socket` are valid cycle-free elements.
+A Cell snapshot retains the descriptor value. It does not duplicate the OS resource.
+The resource ownership rules still apply to each use.
+The case `cell_native_descriptor_snapshots` checks this contract on each backend.
 
 Why that line: a reference cycle under RC needs a back-edge into a mutable
 slot, and a cell is the only mutable slot the language has. Every value other

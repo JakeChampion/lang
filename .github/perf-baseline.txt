@@ -1,3 +1,14 @@
+# 2026-11-09: PR #14906, perf-x86_64 job 129318795686 on b8cebe345e.
+# The string-count kernel adds 50 text lines and uses 39.5% fewer instructions.
+# Pin both measured values after the merge of main 97af82fcbe.
+# 2026-11-09: PR #14906, perf-aarch64 job 129295354221 on 9f5ed23c4b.
+# array_with.text and record_update.text fall 22.1%. deflate_decode.ir falls 1.72%.
+# Pin these improvements at their measured values.
+# 2026-11-09: PR #14874 at 2d7d444e94. CI jobs 129298782292 and 129298782302
+# measure eight changed rows after the merge of main d04e79179f. Bank each value.
+# The string count kernel grows in size and uses fewer instructions. Keep all tolerances.
+# 2026-11-09: PR #14844, perf-x86_64 job 129042235560 on 87517f9d. x86_64/array_append.ir falls 10.2% with the counted-append reserve of #14829. Pinned at the measured value.
+# 2026-11-09: PR #14836, perf-aarch64 job 129036824048 on 6a490f9b. aarch64 array_append.ir and deflate_decode.ir fall 15.0% and 1.3% under the strict gate. Each is pinned at its measured value.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641) keeps a primitive's to_string only for a call that reaches it. The nine .text rows that #14756 pinned high fall back on both targets: x86_64 from scripts/perf-bench, aarch64 from the lines of -target arm64-linux assembly, which is what perf-bench counts. Each is pinned at its measured value.
 # 2026-11-09: PR #14797, perf-aarch64 job 128935982726 on 81290273 and perf-x86_64 job 128939680803 on 801b4a44. The eighteen .text rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
@@ -223,14 +234,14 @@
 # perf-aarch64 lanes' measurements of the branch.
 
 x86_64/array_append.text	1187
-x86_64/array_append.ir	13371022
+x86_64/array_append.ir	12005460
 x86_64/array_index.text	1188
 x86_64/array_index.ir	16315371
 x86_64/array_scale_f64.text	1313
 x86_64/array_scale_f64.ir	21309613
 # 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	36120760
-x86_64/array_with.text	1342
+x86_64/array_with.text	981
 x86_64/ascii_scan.text	1396
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1287
@@ -242,7 +253,7 @@ x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	963
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
-x86_64/deflate_decode.ir	33837238
+x86_64/deflate_decode.ir	32877120
 x86_64/deflate_decode.text	12725
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
@@ -267,7 +278,7 @@ x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2957
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	36120760
-x86_64/record_update.text	1342
+x86_64/record_update.text	981
 x86_64/sort_inplace.text	1538
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1778
@@ -276,8 +287,8 @@ x86_64/sort_strings.text	3098
 x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1926
 x86_64/string_build.ir	42886116
-x86_64/string_count_byte.text	1226
-x86_64/string_count_byte.ir	135589355
+x86_64/string_count_byte.text	1321
+x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
@@ -510,12 +521,12 @@ x86_64/utf8_ingest_validated.ir	5207391
 # utf8_ingest_validated row was 7828 where main itself measures 7751.
 #
 aarch64/array_append.text	1405
-aarch64/array_append.ir	17880204
+aarch64/array_append.ir	15205840
 aarch64/array_index.text	1403
 aarch64/array_index.ir	18388238
 aarch64/array_scale_f64.text	1500
 aarch64/array_scale_f64.ir	25340945
-aarch64/array_with.text	1561
+aarch64/array_with.text	1216
 aarch64/array_with.ir	34494442
 aarch64/ascii_scan.text	1702
 aarch64/ascii_scan.ir	68639570
@@ -529,7 +540,7 @@ aarch64/closure_call.text	1201
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
-aarch64/deflate_decode.ir	35961899
+aarch64/deflate_decode.ir	34895281
 aarch64/deflate_decode.text	13575
 aarch64/deflate_encode.ir	43566583
 aarch64/deflate_encode.text	7818
@@ -555,7 +566,7 @@ aarch64/pmap_insert.text	3251
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3213
 aarch64/pvec_with.ir	58556365
-aarch64/record_update.text	1561
+aarch64/record_update.text	1216
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1727
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
@@ -617,3 +628,7 @@ x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6027
 aarch64/video_qtrle.ir 1662057925
+# 2026-11-09: PR #14917, CI job 129321185181. The merged byte-count kernel
+# from #14910 changes the string-count rows. Parent 97af82fc and IVF head
+# cbed65e0 produce identical assembly, binaries, and Callgrind counts.
+# Pin both measured rows. Keep the 1% tolerance.

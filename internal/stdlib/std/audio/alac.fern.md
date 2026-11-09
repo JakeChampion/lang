@@ -12,6 +12,7 @@ The valid prefix contains `frame.frames * frame.format.channels` samples.
 
 The convenience method allocates exactly that prefix.
 `packet_frames` reads the first audio-element header without residual decode.
+`inspect_packet` performs the same check from configuration bytes without predictor scratch arrays.
 It checks the input and sample budgets. A packet read validates all channels and the complete payload.
 
 Errors consume decoder state. Input, frame, and output limits apply before allocation.
@@ -91,7 +92,17 @@ function element_channels(tag: u32, available: i32): Result[i32, pcm.AudioError]
 }
 
 pub function (value: Decoder) packet_frames(input: [u8], limits: pcm.Limits): Result[i32, pcm.AudioError] {
-  check_input(input, value.info, limits)?;
+  return packet_frame_count(input, value.info, limits);
+}
+
+// Inspect a packet header without allocation of predictor scratch arrays.
+pub function inspect_packet(input: [u8], configuration: [u8], limits: pcm.Limits): Result[i32, pcm.AudioError] {
+  let info = config.read(configuration, limits)?;
+  return packet_frame_count(input, info, limits);
+}
+
+function packet_frame_count(input: [u8], info: config.Info, limits: pcm.Limits): Result[i32, pcm.AudioError] {
+  check_input(input, info, limits)?;
   let at = 0i64;
   while (true) {
     let (next, tag) = bits.read(input, at, 3)?;
@@ -100,9 +111,9 @@ pub function (value: Decoder) packet_frames(input: [u8], limits: pcm.Limits): Re
       at = ancillary(input, at, tag)?;
       continue;
     }
-    let _ = element_channels(tag, value.info.format.channels)?;
-    let fields = header(input, at, value.info)?;
-    let _ = pcm.sample_count(fields.frames, value.info.format.channels, limits)?;
+    let _ = element_channels(tag, info.format.channels)?;
+    let fields = header(input, at, info)?;
+    let _ = pcm.sample_count(fields.frames, info.format.channels, limits)?;
     return Ok(fields.frames);
   }
 }

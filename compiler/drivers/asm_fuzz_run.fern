@@ -1,16 +1,22 @@
 import "../x86_native";
 import "../arm64_native";
+import "../elfimage";
 import "../util";
 
 // Feeds a text file to one in-process assembler. The assemblers consume the
 // compiler's own output, so on foreign text the accepted outcomes are exit 0
 // with a summary on stdout, or an abort with a cause line. Exit 2 is a usage
 // or read error.
+//
+// x86-image and arm64-image take the text on through the linker and the ELF
+// writer, as a native compile does. They write a static, a -pie and a -g image
+// beside FILE, as FILE.static, FILE.pie and FILE.g, and print the size of
+// each. Size 0 is a refusal with a cause line.
 
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: asm_fuzz_run x86|arm64 FILE");
+    eprint("usage: asm_fuzz_run x86|arm64|x86-image|arm64-image FILE");
     return 2;
   }
   let src = "";
@@ -33,6 +39,31 @@ function main(): i32 {
   if (av[1] == "arm64") {
     let p = arm64_native.arm64_gas_program(src);
     print("arm64 code_end " + util.i32_to_string(p.code_end) + " data " + util.i32_to_string(p.data.len()));
+    return 0;
+  }
+  if (av[1] == "x86-image" || av[1] == "arm64-image") {
+    let x86 = av[1] == "x86-image";
+    let words: u8[] = [];
+    let line = av[1];
+    for kind in ["static", "pie", "g"] {
+      let image = "";
+      if (x86) {
+        image = elfimage.x86_elf_binary(src, words, kind == "g", "input.s", "/fuzz", kind == "pie");
+      } else {
+        image = elfimage.arm64_elf_binary(src, words, kind == "g", "input.s", "/fuzz", false, kind == "pie");
+      }
+      if (image.len() > 0) {
+        match (write_file(av[2] + "." + kind, image)) {
+          Err(_) => {
+            eprint("asm_fuzz_run: cannot write " + av[2] + "." + kind);
+            return 2;
+          },
+          Ok(_) => {}
+        }
+      }
+      line += " " + kind + " " + util.i32_to_string(image.len());
+    }
+    print(line);
     return 0;
   }
   eprint("asm_fuzz_run: unknown assembler " + av[1]);

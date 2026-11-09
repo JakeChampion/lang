@@ -1,0 +1,11 @@
+// The arms of a match expression must have one type. Box[i32] and
+// Box[string] have one name, but different type arguments.
+
+struct Box[T] { v: T }
+
+function main(): i32 {
+  let a: Box[i32] = Box { v: 1 };
+  let b: Box[string] = Box { v: "x" };
+  let c = match (a.v > 0) { true => a, false => b };
+  return 0;
+}

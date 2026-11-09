@@ -1,0 +1,65 @@
+[
+  {
+    "metric": "profile/x86-64-linux/deflate_decode.hardened.ir",
+    "first_candidate": 33840579,
+    "matched": [
+      {
+        "name": "baseline",
+        "instructions": 34557885,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "8e7f78c2846f9cd11aecdd5fad122c9c4bca7613016feba347ed6ffc06344884"
+      },
+      {
+        "name": "candidate",
+        "instructions": 33840967,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "593a3e5ab9eef6ba600d09b2ed74e9f8badf45867271894581692037b4aab2e6"
+      }
+    ],
+    "repeat_relative_difference": 1.1465524865972299e-05
+  },
+  {
+    "metric": "profile/x86-64-linux/deflate_decode.minimal.ir",
+    "first_candidate": 39191644,
+    "matched": [
+      {
+        "name": "baseline",
+        "instructions": 39906492,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "fd7f2107fddc1dd9711bb526ef217af4849926914811a8182786c6a366b6ca62"
+      },
+      {
+        "name": "candidate",
+        "instructions": 39191644,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "c28ef8cd0b4591929cfc8319bb2d89ec632a309f6be5b6c36b8680e4c698bdab"
+      }
+    ],
+    "repeat_relative_difference": 0.0
+  },
+  {
+    "metric": "profile/x86-64-linux/deflate_decode.safe.ir",
+    "first_candidate": 32880607,
+    "matched": [
+      {
+        "name": "baseline",
+        "instructions": 33595455,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "28f1298f77c5e19a4d64aa64569e507e8fc1f0da6dbe865377b257899bf0a5b2"
+      },
+      {
+        "name": "candidate",
+        "instructions": 32880607,
+        "exit": 37,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "1f9f09fb786190ab85991893ff4591ca0f3045fc39b201e2923f42ada0b106ee"
+      }
+    ],
+    "repeat_relative_difference": 0.0
+  }
+]

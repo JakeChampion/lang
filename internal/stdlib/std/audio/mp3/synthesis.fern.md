@@ -259,49 +259,15 @@ function butterfly8x4(own t: f32[], at: i32): f32[] {
   return __f32x4_with(t, at + 28, (xt - x7) * __f32x4_splat(2.56291556f32));
 }
 
-function dct32x4(own samples: f32[], base: i32): f32[] {
+function dct32x4(own samples: f32[], base: i32, groups: i32): f32[] {
   let t = spectral.zeros(128);
-  for group in 0..4 {
-    let k = group * 4;
-    for i in 0..8 {
-      let x0 = __f32x4_load(samples, base + k + i * 18);
-      let x1 = __f32x4_load(samples, base + k + (15 - i) * 18);
-      let x2 = __f32x4_load(samples, base + k + (16 + i) * 18);
-      let x3 = __f32x4_load(samples, base + k + (31 - i) * 18);
-      let t0 = x0 + x3;
-      let t1 = x1 + x2;
-      let t2 = (x1 - x2) * __f32x4_splat(tables.G_SEC[3 * i]);
-      let t3 = (x0 - x3) * __f32x4_splat(tables.G_SEC[3 * i + 1]);
-      let factor = __f32x4_splat(tables.G_SEC[3 * i + 2]);
-      t = __f32x4_with(t, i * 4, t0 + t1);
-      t = __f32x4_with(t, (8 + i) * 4, (t0 - t1) * factor);
-      t = __f32x4_with(t, (16 + i) * 4, t3 + t2);
-      t = __f32x4_with(t, (24 + i) * 4, (t3 - t2) * factor);
-    }
-    for i in 0..4 {
-      t = butterfly8x4(t, i * 32);
-    }
-    for i in 0..8 {
-      let at = base + k + i * 4 * 18;
-      let y0 = __f32x4_load(t, i * 4);
-      let a = __f32x4_load(t, (16 + i) * 4);
-      let b = __f32x4_load(t, (24 + i) * 4);
-      let y1 = a + b;
-      let y2 = __f32x4_load(t, (8 + i) * 4);
-      let y3 = b;
-      if (i < 7) {
-        let c = __f32x4_load(t, (24 + i + 1) * 4);
-        y1 += c;
-        y2 += __f32x4_load(t, (8 + i + 1) * 4);
-        y3 = __f32x4_load(t, (16 + i + 1) * 4) + b + c;
-      }
-      samples = __f32x4_with(samples, at, y0);
-      samples = __f32x4_with(samples, at + 18, y1);
-      samples = __f32x4_with(samples, at + 36, y2);
-      samples = __f32x4_with(samples, at + 54, y3);
-    }
-  }
+<<four-lane DCT body>>
   return samples;
+}
+
+function dct32x4_into(own samples: f32[], base: i32, groups: i32, own t: f32[]): (f32[], f32[]) {
+<<four-lane DCT body>>
+  return (samples, t);
 }
 
 function pair(z: [f32], at: i32): (f32, f32) {
@@ -377,24 +343,112 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
 }
 
 pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  return granule_columns(qmf, samples, channels, 18, output, out_at);
+}
+
+// Layer II supplies twelve columns with the same 18-column subband stride.
+pub function granule12(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  return granule_columns(qmf, samples, channels, 12, output, out_at);
+}
+
+function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, columns: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
   for ch in 0..channels {
-    samples = dct32_tail(dct32x4(samples, ch * 576), ch * 576);
-  }
-  let lines = spectral.zeros(33 * 64);
-  for i in 0..15 * 64 {
-    lines = lines.with(i, qmf[i]);
-  }
-  for block in 0..9 {
-    let i = block * 2;
-    let (next, pcm) = synth(samples, i, channels, lines, i * 64, output, out_at + 32 * channels * i);
-    lines = next;
-    output = pcm;
-  }
-  for i in 0..15 * 64 {
-    if (channels == 2 || (i & 1) == 0) {
-      qmf = qmf.with(i, lines[18 * 64 + i]);
+    samples = dct32x4(samples, ch * 576, columns / 4);
+    if (columns == 18) {
+      samples = dct32_tail(samples, ch * 576);
     }
   }
+  let lines = spectral.zeros((15 + columns) * 64);
+<<polyphase synthesis body>>
   return (qmf, output);
+}
+
+function synthesize(own qmf: f32[], samples: [f32], channels: i32, columns: i32, own output: f32[], out_at: i32, own lines: f32[]): (f32[], f32[], f32[]) {
+<<polyphase synthesis body>>
+  return (qmf, output, lines);
+}
+
+// Reuse Layer II scratch within one frame.
+// Supply 1,728 line values and 128 transform values. Initialize line storage to zero before its first use.
+pub function granule12_into(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32, own lines: f32[], own transform: f32[]): (f32[], f32[], f32[], f32[], f32[]) {
+  for ch in 0..channels {
+    let (values, scratch) = dct32x4_into(samples, ch * 576, 3, transform);
+    samples = values;
+    transform = scratch;
+  }
+  let (history, pcm, scratch) = synthesize(qmf, samples, channels, 12, output, out_at, lines);
+  return (history, pcm, samples, scratch, transform);
+}
+```
+
+## Shared transform body
+
+Both transform entry points use the same arithmetic.
+The MP3 entry point keeps its original allocation and return path.
+
+```fern
+<<four-lane DCT body>>=
+for group in 0..groups {
+  let k = group * 4;
+  for i in 0..8 {
+    let x0 = __f32x4_load(samples, base + k + i * 18);
+    let x1 = __f32x4_load(samples, base + k + (15 - i) * 18);
+    let x2 = __f32x4_load(samples, base + k + (16 + i) * 18);
+    let x3 = __f32x4_load(samples, base + k + (31 - i) * 18);
+    let t0 = x0 + x3;
+    let t1 = x1 + x2;
+    let t2 = (x1 - x2) * __f32x4_splat(tables.G_SEC[3 * i]);
+    let t3 = (x0 - x3) * __f32x4_splat(tables.G_SEC[3 * i + 1]);
+    let factor = __f32x4_splat(tables.G_SEC[3 * i + 2]);
+    t = __f32x4_with(t, i * 4, t0 + t1);
+    t = __f32x4_with(t, (8 + i) * 4, (t0 - t1) * factor);
+    t = __f32x4_with(t, (16 + i) * 4, t3 + t2);
+    t = __f32x4_with(t, (24 + i) * 4, (t3 - t2) * factor);
+  }
+  for i in 0..4 {
+    t = butterfly8x4(t, i * 32);
+  }
+  for i in 0..8 {
+    let at = base + k + i * 4 * 18;
+    let y0 = __f32x4_load(t, i * 4);
+    let a = __f32x4_load(t, (16 + i) * 4);
+    let b = __f32x4_load(t, (24 + i) * 4);
+    let y1 = a + b;
+    let y2 = __f32x4_load(t, (8 + i) * 4);
+    let y3 = b;
+    if (i < 7) {
+      let c = __f32x4_load(t, (24 + i + 1) * 4);
+      y1 += c;
+      y2 += __f32x4_load(t, (8 + i + 1) * 4);
+      y3 = __f32x4_load(t, (16 + i + 1) * 4) + b + c;
+    }
+    samples = __f32x4_with(samples, at, y0);
+    samples = __f32x4_with(samples, at + 18, y1);
+    samples = __f32x4_with(samples, at + 36, y2);
+    samples = __f32x4_with(samples, at + 54, y3);
+  }
+}
+```
+
+## Shared synthesis body
+
+Both synthesis entry points use the same arithmetic and history update.
+The Layer II entry point returns its temporary arrays for reuse within one frame.
+
+```fern
+<<polyphase synthesis body>>=
+for i in 0..15 * 64 {
+  lines = lines.with(i, qmf[i]);
+}
+for block in 0..columns / 2 {
+  let i = block * 2;
+  let (next, pcm) = synth(samples, i, channels, lines, i * 64, output, out_at + 32 * channels * i);
+  lines = next;
+  output = pcm;
+}
+for i in 0..15 * 64 {
+  if (channels == 2 || (i & 1) == 0) {
+    qmf = qmf.with(i, lines[columns * 64 + i]);
+  }
 }
 ```

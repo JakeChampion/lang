@@ -238,7 +238,7 @@ function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][
       if (spends(ins.kind_tag)) {
         let modes: i32[] = [];
         if (lent && ins.kind_tag == ssasem.call()) {
-          modes = callee_modes(f, ins);
+          modes = ssasem.callee_modes(f, ins);
         }
         for k in 0..ins.args.len() {
           if (!lent_to(f, modes, ins.args, k)) {
@@ -262,14 +262,6 @@ function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][
 // still be one the callee keeps.
 function lent_to(f: ssasem.Func, modes: i32[], args: i32[], k: i32): boolean {
   return k < modes.len() && modes[k] == ssasem.borrow_mode() && args[k] >= 0 && ssasem.owned_shape(f.values[args[k]]);
-}
-
-function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  let at = ssasem.find_contract_in(f.calls, ins.str);
-  if (at < 0) {
-    return [];
-  }
-  return f.calls[at].modes;
 }
 
 function spends(k: i32): boolean {

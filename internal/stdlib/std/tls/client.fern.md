@@ -72,6 +72,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides TLS client sessions and connections.
+// A closed connection rejects read, write, offload, and update_keys with NetFailed(ConnectionAborted).
+// Copies share the closed flag. Repeated close calls return Ok.
 ```
 
 ### `dependencies 2`
@@ -661,6 +663,9 @@ function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
 ```fern
 <<18 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]>>=
 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   if (c.session.offloaded()) {
     __send_fd(c.sock, data)?;
     return Ok(c);
@@ -671,6 +676,9 @@ pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]
 }
 
 pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   if let Some(o) = c.session.offload() {
     match (ktls.attach(c.sock, o.keys)) {
       ktls.Kernel => {
@@ -692,6 +700,9 @@ pub function (c: Connection) offloaded(): boolean {
 }
 
 pub function (c: Connection) update_keys(request: boolean): Result[Connection, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   let step = c.session.update_keys(request)?;
   __send_out(c.sock, c.session, step.output)?;
   let r = ktls.install(c.sock, step.rekeyed);
@@ -704,6 +715,9 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
 }
 
 pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError] {
+  if (!c.open.get()) {
+    return Err(tls.NetFailed(net.ConnectionAborted));
+  }
   let deadline = monotonic_ns() + wait.as_nanos();
   if (c.session.offloaded()) {
     return __read_kernel(c, deadline);

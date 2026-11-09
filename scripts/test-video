@@ -14,7 +14,7 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/video
-for suite in video video_mp4 video_mp4_boundary android_video_policy android_video_source; do
+for suite in video video_ivf_input video_ivf_input_boundary video_mp4 video_mp4_boundary video_mp4_file video_mp4_file_boundary android_video_policy android_video_source; do
   source="tests/stdlib/${suite}_test.fern"
   "$fern_video_compiler" -check "$source" internal/stdlib
   "$fern_video_compiler" -target "$target" -sanitize -o "build/video/${suite}-tests" "$source" internal/stdlib

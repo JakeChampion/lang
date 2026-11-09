@@ -15,6 +15,10 @@ Pending steps let the application pause or cancel between operations.
 An error consumes the input state. The caller retains and closes the source.
 
 The reader validates checksums and a constant output format as frames arrive.
+Free-format discovery retains bounded lookahead before the first PCM event.
+Each discovery step checks at most 256 byte positions.
+It performs at most one source read.
+The decoder retains the unpadded frame extent after discovery.
 It checks declared frame counts, padding, and trailing metadata at physical EOF.
 Earlier PCM events can precede a later validation error.
 `End` confirms complete validation. Subsequent reads return `Finished` without source reads.
@@ -30,6 +34,7 @@ import "std/audio/source";
 import "std/audio/wire";
 import "std/audio/mp3";
 import "std/audio/mp3/header";
+import "std/audio/mp3/framing";
 import "std/audio/mp3/metadata";
 
 pub struct Limits { audio: pcm.Limits, input: source.Limits, max_metadata_bytes: i64 }
@@ -44,7 +49,7 @@ pub enum Event { Begin(Info), Samples(Audio), End(Summary) }
 
 pub enum ReadEvent { Pending, Output(Event), Finished }
 
-enum Stage { Scan, SkipTag, TagEnd, ReadHeader, ReadFrame, Decode, ReadTrailer, Complete }
+enum Stage { Scan, SkipTag, TagEnd, ReadHeader, Discover, ReadFrame, Decode, ReadTrailer, Complete }
 
 pub struct Input {
   limits: Limits,
@@ -62,6 +67,7 @@ pub struct Input {
   metadata_bytes: i64,
   trailer: metadata.Trailer,
   frame_bytes: i32,
+  probe: Option[framing.Search],
   failure: pcm.AudioError,
 }
 
@@ -79,7 +85,7 @@ pub function create(limits: Limits): Result[Input, source.ReadError] {
   }
   let buffer = source.create(limits.input)?;
   let trailer = match (metadata.trailer(limits.max_metadata_bytes)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
-  return Ok(Input { limits: limits, buffer: buffer, codec: mp3.decoder(), stage: Scan, remaining: 0, id3: [], info: None, tail: [], raw_frames: 0i64, encoded_frames: 0i64, position: 0i64, offset: 0i64, metadata_bytes: 0i64, trailer: trailer, frame_bytes: 0, failure: pcm.Header });
+  return Ok(Input { limits: limits, buffer: buffer, codec: mp3.decoder(), stage: Scan, remaining: 0, id3: [], info: None, tail: [], raw_frames: 0i64, encoded_frames: 0i64, position: 0i64, offset: 0i64, metadata_bytes: 0i64, trailer: trailer, frame_bytes: 0, probe: None, failure: pcm.Header });
 }
 
 function consume(own state: Input, count: i32): Result[Input, source.ReadError] {
@@ -127,7 +133,8 @@ function tag_header(own state: Input, read: (i32) => Result[u8[], IoError]): Res
     bytes = bytes.append(byte);
   }
   let next = consume(ready, 10)?;
-  return pending(Input { ...next, metadata_bytes: next.metadata_bytes + total, id3: bytes, remaining: value.payload_bytes, stage: SkipTag });
+  let seen = next.metadata_bytes + total;
+  return pending(Input { ...next, metadata_bytes: seen, id3: bytes, remaining: value.payload_bytes, stage: SkipTag });
 }
 
 function skip_tag(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {
@@ -204,20 +211,84 @@ function read_header(own state: Input, read: (i32) => Result[u8[], IoError]): Re
 }
 
 function frame_header(own ready: Input): Result[(Input, ReadEvent), source.ReadError] {
-  if let Some(info) = ready.info {
-    if (info.declared_frames != 0u32 && ready.encoded_frames == info.declared_frames as i64) {
-      return begin_trailer(ready, pcm.Header);
-    }
+  if (declared_complete(ready)) {
+    return begin_trailer(ready, pcm.Header);
   }
   let h = match (header.parse(ready.buffer.view(), 0)) { Ok(value) => value, Err(e) => { return begin_trailer(ready, e); } };
+  check_format(h, ready.info)?;
+  if (h.bitrate == 0 && ready.codec.free_bytes == 0) {
+    return pending(Input { ...ready, stage: Discover, probe: Some(framing.begin(h)) });
+  }
+  h = match (framing.sized(h, ready.codec.free_bytes, ready.limits.audio.max_input_bytes)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  return framed(ready, h);
+}
+
+function declared_complete(state: Input): boolean {
+  return match (state.info) { Some(info) => info.declared_frames != 0u32 && state.encoded_frames == info.declared_frames as i64, None => false };
+}
+
+function check_format(h: header.Header, expected: Option[Info]): Result[void, source.ReadError] {
+  if let Some(info) = expected {
+    if (h.sample_rate != info.sample_rate || h.channels != info.channels) {
+      return Err(audio_error(pcm.Unsupported));
+    }
+  }
+  return Ok(());
+}
+
+function framed(own ready: Input, h: header.Header): Result[(Input, ReadEvent), source.ReadError] {
   if (h.bytes > ready.limits.audio.max_input_bytes) {
     return Err(audio_error(pcm.Limit));
   }
-  return pending(Input { ...ready, stage: ReadFrame, frame_bytes: h.bytes });
+  return pending(Input { ...ready, stage: ReadFrame, frame_bytes: h.bytes, probe: None });
+}
+
+function discover(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {
+  let Some(search) = state.probe else {
+    return Err(audio_error(pcm.Header));
+  };
+  let maximum = (state.limits.input.max_buffer_bytes - 6) / 2;
+  if (maximum > state.limits.audio.max_input_bytes) {
+    maximum = state.limits.audio.max_input_bytes;
+  }
+  let end = discovery_end(state)?;
+  let result = match (framing.probe(state.buffer.view()[:end], search, maximum, state.buffer.eof)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  match (result) {
+    framing.Found(base) => {
+      return discovered_frame(state, base);
+    },
+    framing.Pending(next) => {
+      return pending(Input { ...state, probe: Some(next) });
+    },
+    framing.Need(next, count) => {
+      let (buffer, _) = state.buffer.ensure(count, read)?;
+      return pending(Input { ...state, buffer: buffer, probe: Some(next) });
+    }
+  }
+}
+
+function discovered_frame(own state: Input, base: i32): Result[(Input, ReadEvent), source.ReadError] {
+  let h = match (header.parse(state.buffer.view(), 0)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  h = match (framing.sized(h, base, state.limits.audio.max_input_bytes)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  let codec = mp3.Decoder { ...state.codec, free_bytes: base };
+  return framed(Input { ...state, codec: codec }, h);
+}
+
+function discovery_end(state: Input): Result[i32, source.ReadError] {
+  let available = state.buffer.available();
+  if (!state.buffer.eof) {
+    return Ok(available);
+  }
+  let count = if (available < 160) { available } else { 160 };
+  let tail = match (metadata.inspect_tail(state.buffer.view()[available - count:], available as i64)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  if (tail.bytes > state.limits.max_metadata_bytes - state.metadata_bytes) {
+    return Err(audio_error(pcm.Limit));
+  }
+  return Ok(available - tail.bytes as i32);
 }
 
 function initial(own state: Input): Result[(Input, ReadEvent), source.ReadError] {
-  let track = match (mp3.inspect_first_frame(state.buffer.view()[:state.frame_bytes], 0, state.limits.audio)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
+  let track = match (mp3.inspect_first_frame_cached(state.buffer.view()[:state.frame_bytes], 0, state.codec.free_bytes, state.limits.audio)) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
   let Some(offset) = state.offset +? track.data_offset as i64 else {
     return Err(audio_error(pcm.Limit));
   };
@@ -326,6 +397,9 @@ pub function (own state: Input) step_with(read: (i32) => Result[u8[], IoError]):
     },
     ReadFrame => {
       return read_frame(state, read);
+    },
+    Discover => {
+      return discover(state, read);
     },
     Decode => {
       return decode(state);

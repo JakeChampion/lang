@@ -138,7 +138,7 @@ function input_case(f: ssa.SFunc, checked: graph.Graph, consumer: string, input:
     let previous = index;
     let active = b.id == f.entry;
     for p in b.preds {
-      let pi = graph.block_index(f, p);
+      let pi = ssa.block_with_id(f, p);
       if (destinations[pi] == b.id) {
         if (active) {
           return State { ...empty, error: "ambiguous incoming boundary flow" };

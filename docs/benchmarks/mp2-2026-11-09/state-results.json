@@ -1,0 +1,18 @@
+{
+  "1": {
+    "allocs": 3,
+    "fresh_bytes": 8304,
+    "native_peak_rss_kb": 76,
+    "decoders": 1
+  },
+  "100": {
+    "allocs": 206,
+    "fresh_bytes": 826904,
+    "native_peak_rss_kb": 872,
+    "decoders": 100
+  },
+  "reference": {
+    "decoder_bytes": 6668,
+    "qmf_bytes": 3840
+  }
+}

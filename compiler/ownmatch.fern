@@ -56,6 +56,36 @@ function keep(e: ast.Expr, count: i32): (ast.Expr, i32, boolean) {
 }
 
 pub function source(body: ast.Stmt[]): ast.Stmt[] {
+  if (!sugared(body)) {
+    return body;
+  }
   let (result, _) = astwalk.map_stmts_where(body, 0, visit, keep, astwalk.descend_all);
   return result;
+}
+
+// Some statement in body still holds the match it was written as.
+function sugared(body: ast.Stmt[]): boolean {
+  for st in body {
+    if (astwalk.fold_stmt_nodes(st, false, sugared_stmt, no_sugar, astwalk.descend_all)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sugared_stmt(st: ast.Stmt, own found: boolean): boolean {
+  if (found) {
+    return true;
+  }
+  if let ast.StmtMatch(m) = st {
+    return m.sugar.len() > 0;
+  }
+  if let ast.StmtIf(f) = st {
+    return f.sugar.arms.len() > 0 || f.sugar.tup.len() > 0;
+  }
+  return false;
+}
+
+function no_sugar(e: ast.Expr, own found: boolean): boolean {
+  return found;
 }

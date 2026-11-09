@@ -4,10 +4,10 @@ import "../irverifystack";
 import "../irverifyrc";
 import "../util";
 
-// Decodes a byte file into an op sequence and runs the three op-stream
-// verifiers over it. Each verifier must return a problem list for any
-// sequence, so the only accepted outcomes are exit 0 with the counts on
-// stdout, or exit 2 for a missing or unreadable file.
+// `irverify_fuzz_run verify FILE` decodes a byte file into an op sequence and
+// runs the three op-stream verifiers over it. Each verifier must return a
+// problem list for any sequence, so the only accepted outcomes are exit 0 with
+// the counts on stdout, or exit 2 for a usage error or an unreadable file.
 //
 // The first two bytes choose the parameter and local counts. Every later
 // group of four bytes is one op: the kind, a small signed immediate, a
@@ -71,17 +71,17 @@ function decode(bytes: u8[]): ir.Op[] {
 
 function main(): i32 {
   let av = args();
-  if (av.len() < 2) {
-    eprint("usage: irverify_fuzz_run FILE");
+  if (av.len() < 3 || av[1] != "verify") {
+    eprint("usage: irverify_fuzz_run verify FILE");
     return 2;
   }
   let bytes: u8[] = [];
-  match (read_file_bytes(av[1])) {
+  match (read_file_bytes(av[2])) {
     Ok(b) => {
       bytes = b;
     },
     Err(_) => {
-      eprint("irverify_fuzz_run: cannot read " + av[1]);
+      eprint("irverify_fuzz_run: cannot read " + av[2]);
       return 2;
     }
   }
@@ -99,7 +99,7 @@ function main(): i32 {
   let structural = irverify.verify_fn("f", ops, n_params, n_locals, sigs).len();
   let stack = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
   let rc = irverifyrc.verify_rc_fn("f", ops);
-  print("ops " + util.i32_to_string(ops.len())
+  print("verify ops " + util.i32_to_string(ops.len())
     + " structural " + util.i32_to_string(structural)
     + " stack " + util.i32_to_string(stack.problems.len())
     + " rc " + util.i32_to_string(rc.problems.len()));

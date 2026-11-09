@@ -5,8 +5,9 @@ description: How this documentation site is built, and how to add or edit a page
 
 This site is an [Astro](https://astro.build) +
 [Starlight](https://starlight.astro.build) project living under `site/`
-in the [repository][repo]. It publishes to GitHub Pages, with the
-interactive [playground](/lang/playground/) bundled alongside it. This
+in the [repository][repo]. Netlify publishes it at
+[fern-lang.netlify.app](https://fern-lang.netlify.app), with the
+interactive [playground](../playground/) bundled alongside it. This
 page is for anyone improving the docs themselves.
 
 ## Run the site locally
@@ -19,13 +20,10 @@ cd site
 npm install
 
 # Build the in-browser playground and stage it under public/.
-( cd .. && ./web/build.sh )
-mkdir -p public/playground
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && ./web/build.sh && web/stage.sh site/public/playground )
 
 # Generate the standard-library reference pages (see below).
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
+scripts/stdlib-docs.sh
 
 npm run dev      # live-reload dev server
 ```
@@ -39,9 +37,8 @@ every `.html`, `.js` and `.wasm` file: `index.html` imports
 `wasi-shim.js` and `wasi-http-shim.js`, and without them the playground
 stops at "loading runtime…".
 
-Open `http://localhost:4321/lang/` — Starlight serves under the
-configured `base`. `npm run build` produces the production output in
-`site/dist/`.
+Open `http://localhost:4321/`. `npm run build` produces the production
+output in `site/dist/`.
 
 ## Add or edit a page
 

@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: CAF ALAC source bounds and I/O
+ok 1 - every incomplete prefix
+ok 2 - malformed chunks, configuration, and packet tables
+ok 3 - file, window, packet, and sample budgets
+ok 4 - distinct I/O, EOF, seek, and callback-size errors
+ok 5 - invalid seeks and undersized output
+ok 6 - exact PCM beyond 4 GiB without unknown-payload reads
+1..6
+# tests 6
+# pass 6
+# fail 0

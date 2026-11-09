@@ -145,4 +145,34 @@ function main(): i32 {
 lists the combinators on both types; `let … else` and `defer` /
 `errdefer` are in [Language features](../../reference/language-features/).
 
+## Exercise
+
+Add a `Triangle(base, height)` variant to `Shape`, with an area of `base * height / 2`, and print the area of `Triangle(4, 3)`. When you add the variant, the compiler shows each `match` that must handle it.
+
+<FernPlayground
+  code={`import "std/i32";
+
+enum Shape {
+    Square(i32),
+}
+
+function area(s: Shape): i32 {
+    match (s) {
+        Square(side) => { return side * side; },
+    }
+}
+
+function main(): i32 {
+    print(area(Square(3)).to_string());
+    // Add a Triangle(base, height) variant with an area of
+    // base * height / 2, and print the area of Triangle(4, 3).
+    return 0;
+}`}
+  expect={`9
+6
+`}
+  autoRun={false}
+  height="560px"
+/>
+
 [Next: Modules →](../modules/)

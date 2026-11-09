@@ -1,0 +1,14 @@
+/workspace/lang/build/parser-research-20261109/go-lexer.test: go1.27.3
+	path	github.com/jakechampion/lang/internal/syntax/lexer.test
+	mod	github.com/jakechampion/lang	(devel)	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS=
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1

@@ -37,7 +37,7 @@ function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
         initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
       }
     }
-    let (ns, na, nh) = astwalk.map_stmt_where(stmt, initctx, stmt_at, expr_at, astwalk.every_expr);
+    let (ns, na, nh) = astwalk.map_stmt_where(stmt, initctx, stmt_at, expr_at, astwalk.descend_all);
     out = out.append(ns);
     if let ast.StmtVar(v) = stmt {
       ctx = shadow(ctx, astwalk.append_bound_name([], v.name));
@@ -52,7 +52,7 @@ pub function subst_fcall_stmts(stmts: ast.Stmt[], fname: string, lname: string, 
 }
 
 function expr(e: ast.Expr, ctx: Context): ast.Expr {
-  let (out, a, h) = astwalk.map_expr_where(e, ctx, stmt_at, expr_at, astwalk.every_expr);
+  let (out, a, h) = astwalk.map_expr_where(e, ctx, stmt_at, expr_at, astwalk.descend_all);
   return out;
 }
 

@@ -274,6 +274,35 @@ pub function expr_ty(e: Expr): string {
   }
 }
 
+// receiver_tag is the type name of a struct literal, or the inferred type of any other expression.
+pub function receiver_tag(e: Expr): string {
+  if let ExprStructLit(lit) = e {
+    return lit.type_name;
+  }
+  return expr_ty(e);
+}
+
+pub function is_call(e: Expr): boolean {
+  if let ExprCall(_) = e {
+    return true;
+  }
+  return false;
+}
+
+pub function is_unknown(e: Expr): boolean {
+  if let ExprUnknown(_) = e {
+    return true;
+  }
+  return false;
+}
+
+pub function is_true_literal(e: Expr): boolean {
+  if let ExprBool(b) = e {
+    return b.value;
+  }
+  return false;
+}
+
 pub function expr_col(e: Expr): i32 {
   match (e) {
     ExprNumber(n) => {

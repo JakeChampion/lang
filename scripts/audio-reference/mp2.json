@@ -1,0 +1,603 @@
+{
+  "minimp3_revision": "ea99364f61c14656440e8d77e9c233ccf3124633",
+  "minimp3_sha256": "57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad",
+  "reference_source_sha256": "04a3a1dbdbbefe055d6948cdf09e523cca1b847d51d3a7ce538e6c6f69a7f1a6",
+  "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "ffmpeg_input": "RIFF/WAVE tag 0x50 with unchanged MPEG audio payload",
+  "vectors": [
+    {
+      "name": "libtwolame-16000-0-tone",
+      "input_sha256": "26e43089f48c45d98c8368c89a36da7d57f43ab334be6774af4d39f185775816",
+      "pcm_sha256": "f926d6a1a01da044e086a73ac54564386f22148ecae9caffa9803bef9385c172",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 1.0132789611816406e-06
+    },
+    {
+      "name": "mp2-16000-0-tone",
+      "input_sha256": "62b009ea93ac672b9a9a5a261d4595b60ad9e79fe7699faed576becc6d7d70eb",
+      "pcm_sha256": "df2d9f719edc75a23a27d8c73eb2c32f13432878dd0dbfa70627420ac27c3e31",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 8.940696716308594e-07
+    },
+    {
+      "name": "libtwolame-16000-0-noise-low",
+      "input_sha256": "db0fc83af57be6ecc5a20a57a8e11ec45965081990e151f9b866e4dc504402d5",
+      "pcm_sha256": "8fc9a1030425f9f1013e485842e842b6743c1c659b2e47c03efb961c5c6a3ad6",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3709068298339844e-06
+    },
+    {
+      "name": "libtwolame-16000-0-silence",
+      "input_sha256": "cbc47b0ab82240056bced71e7d61a93793d9dff03924a3c23295d8ec71adcc9d",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-16000-1-tone",
+      "input_sha256": "bd54ba850ff838a55a5a5acb31bc6f49ac9b3df500242fd3f0f6e4725e57c3c9",
+      "pcm_sha256": "9d9db196c1758471d3e131168844aaee84d2305d4d7b0b9f2e33fbab9b8b7a74",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 9.834766387939453e-07
+    },
+    {
+      "name": "libtwolame-16000-1-noise-low",
+      "input_sha256": "becfcdcfa18227a0c7f9127344f2ad6bbe69fdd722696cb6b8210ac5501d3583",
+      "pcm_sha256": "13187bc240c8d4afc2f9010f56f50ac903c4cc951e896eeeaf0e274c7d7f0f89",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.9371509552001953e-06
+    },
+    {
+      "name": "libtwolame-16000-2-tone",
+      "input_sha256": "207ffcbef1f1fe2b95f239c00131df101b3e660d2ba5c16d69c7342ef2df4aa2",
+      "pcm_sha256": "f926d6a1a01da044e086a73ac54564386f22148ecae9caffa9803bef9385c172",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 1.0132789611816406e-06
+    },
+    {
+      "name": "libtwolame-16000-2-noise-low",
+      "input_sha256": "df8a86ad0c5ae0fc0af21b80d81ce2cafc894592f1d96d20534b9f8d3b80a144",
+      "pcm_sha256": "8fc9a1030425f9f1013e485842e842b6743c1c659b2e47c03efb961c5c6a3ad6",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3709068298339844e-06
+    },
+    {
+      "name": "libtwolame-16000-3-tone",
+      "input_sha256": "0477ef3eece121336be743c5946a87ee576bc1bd48ed623d752cd7794f361afb",
+      "pcm_sha256": "e59176a150071e071e403aef74c956d074c30d5be3e47e7b59c068cb121e38a6",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 8.642673492431641e-07
+    },
+    {
+      "name": "mp2-16000-3-tone",
+      "input_sha256": "c05bbd7a4a0f50a308e2410b0cfcba53999d04015c912bb4e732ebdb8b8272be",
+      "pcm_sha256": "d3a25bb9daeaab2c62e08a9968b99b73328ce965c2f3472337203f53b99a4c60",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 8.344650268554688e-07
+    },
+    {
+      "name": "libtwolame-16000-3-noise-low",
+      "input_sha256": "3430e05f609026aaecf3ee4c143f3bf0e69fdb3b78639c1be5ad8870cdbd7767",
+      "pcm_sha256": "1eff0455f8d13815f03d241cb43ef68046527e466cc7d8511c40854ec59ed566",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 1.2218952178955078e-06
+    },
+    {
+      "name": "libtwolame-22050-0-tone",
+      "input_sha256": "f47396ec037f64273aee3046c9171ab1b7400e47cd4b1d9f87e29e2a702d10da",
+      "pcm_sha256": "0208030c5a4f3dbe9de0bc5ea23a80ae56ac15095813db097737f98e2dd8d5d4",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 9.238719940185547e-07
+    },
+    {
+      "name": "mp2-22050-0-tone",
+      "input_sha256": "c174e46c303030b37fb86e980837b1cafaa30869e7b8acba37060f2dc3f2e54d",
+      "pcm_sha256": "1b214454f6477ae8b8a8a65fae8c263594feb75cda27d64d497748e38bfcd6ce",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 9.5367431640625e-07
+    },
+    {
+      "name": "libtwolame-22050-0-noise-low",
+      "input_sha256": "d0f1c54a370193ee0acb13cf560c4e24bf766465e4263124b674ddea21fdb038",
+      "pcm_sha256": "56c0755df086dcf3d581c8d2a95aa87feec99f74ef6d07c7511844dab8a29b9f",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 3.8743019104003906e-07
+    },
+    {
+      "name": "libtwolame-22050-0-silence",
+      "input_sha256": "091f796c4760a632ac705effc438c17785a2cb84c5d0e48e282e430e3a3a9daa",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-22050-1-tone",
+      "input_sha256": "0d4d8c9ee66f83a2515bd7da3043eb0d9afc1564d24cd8c97bbfea3fc0ce46c2",
+      "pcm_sha256": "de070664d39404d2a8e3fd928886c8f7e7fc35d840c3123e29c3a135b51c4921",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 1.0132789611816406e-06
+    },
+    {
+      "name": "libtwolame-22050-1-noise-low",
+      "input_sha256": "b53e3903dfe5aa5ed99252c06d1d6bb2948aff5d2d97a1080af7ef3afdb2371f",
+      "pcm_sha256": "5f0b3c8766a284cf7cceeebfae088c83e37830f2eee07a11a0cf8928ad0717a7",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.4901161193847656e-06
+    },
+    {
+      "name": "libtwolame-22050-2-tone",
+      "input_sha256": "db6b0109ba281ff7913e0616b8075399a45a674911bf1d8abe6dc4d00e767c2c",
+      "pcm_sha256": "0208030c5a4f3dbe9de0bc5ea23a80ae56ac15095813db097737f98e2dd8d5d4",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 9.238719940185547e-07
+    },
+    {
+      "name": "libtwolame-22050-2-noise-low",
+      "input_sha256": "636ecba63293a4e386d1b2e665449e2cb7d4e579539f5861f0e61d1837e321f7",
+      "pcm_sha256": "56c0755df086dcf3d581c8d2a95aa87feec99f74ef6d07c7511844dab8a29b9f",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 3.8743019104003906e-07
+    },
+    {
+      "name": "libtwolame-22050-3-tone",
+      "input_sha256": "697ad0dafc92ae0fb39956a5884c061d916788f2af9d3d0955e28b456b1f8d6a",
+      "pcm_sha256": "e649a472208c9c5a4e3762c9d3d591f662a586437d1511fb22faff63e5819861",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 5.662441253662109e-07
+    },
+    {
+      "name": "mp2-22050-3-tone",
+      "input_sha256": "ec1b25ef541055c3f2fef19b6d17e7181e7c89ced6f9b31b973f2965d0920e0b",
+      "pcm_sha256": "061e85782c30fcf76e1d2121bf3465b628c10c83aec8c1f232eadbd1825926fc",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 5.960464477539062e-07
+    },
+    {
+      "name": "libtwolame-22050-3-noise-low",
+      "input_sha256": "330085197e4632fcf0be9f040ddbfd4a1a58cbb1b7cddfd583356c3d9aa20545",
+      "pcm_sha256": "fd8e2dbdc179b46b72bfe2df8341ca9752732194f026ed0eafdddbefb013944b",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 3.5762786865234375e-07
+    },
+    {
+      "name": "libtwolame-24000-0-tone",
+      "input_sha256": "dc101a6a73727edb5a3fdc8c6d5a0e32d1dcecccfbd8df00bf6400303dca1321",
+      "pcm_sha256": "e67c1972e6a201f4a2c31d7627821187523ddc41e0ef99ae943869e4aedbc6f2",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 7.450580596923828e-07
+    },
+    {
+      "name": "mp2-24000-0-tone",
+      "input_sha256": "8324f7dd34a6bc1a2a66892018dab9e0e668cf428260b2e3b20668d9631f4828",
+      "pcm_sha256": "f37f6b56d0a118c73f75aa46010210deb5f37866d2a368d2546695a73d91d1fe",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 7.152557373046875e-07
+    },
+    {
+      "name": "libtwolame-24000-0-noise-low",
+      "input_sha256": "e75aa9a2ec3cfecc12e91defc1043291b8b260cd750e88925ee201f43fdde007",
+      "pcm_sha256": "1aed4586bd3ccc5b22582ad799caa857016e70d3726159ffe685fb3b26366c4d",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 1.4603137969970703e-06
+    },
+    {
+      "name": "libtwolame-24000-0-silence",
+      "input_sha256": "0a46b53b6f5e1377bc81ea4c97d7e33364675d18b5a14a3cf9e97abd0bfaff4b",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-24000-1-tone",
+      "input_sha256": "e92dde638b18bbbec7a6bc32d4cd1941578949d60d7b557742b57c8749664ee6",
+      "pcm_sha256": "b4a2a508eebdc3bfc398413b5b45084613644c79c47078963b0fe48422c17511",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 8.642673492431641e-07
+    },
+    {
+      "name": "libtwolame-24000-1-noise-low",
+      "input_sha256": "5b404133f9886e43709a517ea112f865ed81b158554021e49838a4148d2eda37",
+      "pcm_sha256": "507f8427dfeef661bec5f715976c4168c119227efbe35ecf25f254094bc6b367",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.4007091522216797e-06
+    },
+    {
+      "name": "libtwolame-24000-2-tone",
+      "input_sha256": "7c2e4b62d6a323ce7ac7408fe0963aa3b2dd2e391116ed9b9c722aac306c20ec",
+      "pcm_sha256": "e67c1972e6a201f4a2c31d7627821187523ddc41e0ef99ae943869e4aedbc6f2",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 7.450580596923828e-07
+    },
+    {
+      "name": "libtwolame-24000-2-noise-low",
+      "input_sha256": "717c49e26feefd1e72e6ea1caa5791d2ed6042c2e7b625e776c31f23dbf858e0",
+      "pcm_sha256": "1aed4586bd3ccc5b22582ad799caa857016e70d3726159ffe685fb3b26366c4d",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 1.4603137969970703e-06
+    },
+    {
+      "name": "libtwolame-24000-3-tone",
+      "input_sha256": "5dc4b05fd9474f39d51fc710455878896b5dffb62d05d02e9542805ea8a5c67f",
+      "pcm_sha256": "dfc954c1b2fc6d9f45858e5f0f1dd7d0a95699ec57cd94d074050c9d4a38b8f2",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 7.152557373046875e-07
+    },
+    {
+      "name": "mp2-24000-3-tone",
+      "input_sha256": "bffe2707312895a653d5e2930178b31c19f1d49265acb87bb66f1b614b8b4c55",
+      "pcm_sha256": "0a4945e9df2e0e176126a2038d2ced227b8bcf1fbbe17907c3b10109eca01b62",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 6.258487701416016e-07
+    },
+    {
+      "name": "libtwolame-24000-3-noise-low",
+      "input_sha256": "f7487fef0a9e01306d3f1890469d56e32dcd106da16856132280f384aa486264",
+      "pcm_sha256": "8ecf4c9e24de89b2a42332467e0e5be58904811572bdafb87b93a37329f2a35b",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 3.8743019104003906e-07
+    },
+    {
+      "name": "libtwolame-32000-0-tone",
+      "input_sha256": "9ed386190083250efeac3b3382a62caffe07877e4e0f01fb55bc17b38c0b5618",
+      "pcm_sha256": "2a1e4c3d8d447a85960fac87b1fafb74ac01dc13cb98413be61c4d1245d7c96a",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 7.450580596923828e-07
+    },
+    {
+      "name": "mp2-32000-0-tone",
+      "input_sha256": "b185655b24bee3d06616a0f86e1ed974ad2e058082ef6b44b8e8310b013ba4ae",
+      "pcm_sha256": "20d9a0d2f3f01947a48f1f03945e36bf7d49488f8887c6bd26e47808f4a4028f",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 6.92903995513916e-07
+    },
+    {
+      "name": "libtwolame-32000-0-noise-low",
+      "input_sha256": "fdb5e495fa52c54c512a1fc7eb20d4c077c5460c263b73412acc7b1709561a47",
+      "pcm_sha256": "fe5b8ec926645a17f38a772e5f3c329ad9809ad4631aed5401f9c775bbfba974",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 1.430511474609375e-06
+    },
+    {
+      "name": "libtwolame-32000-0-silence",
+      "input_sha256": "3d6d884a376dc8e5aa989798c6297bdacb3e1215fcc9c25719ec4b0d4ef77a4f",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-32000-1-tone",
+      "input_sha256": "fbc03e621239226e5b882bde0ca845616d5c7d9e6f75af9904076f4fad90f640",
+      "pcm_sha256": "d118bd3f3e3234e5c23567b83970aabaf18324c1ba55e83febb9f242f4f20242",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 8.344650268554688e-07
+    },
+    {
+      "name": "libtwolame-32000-1-noise-low",
+      "input_sha256": "df7739b1c30c8593b34bdcd1421b83fc3839ffc543a012491cd84ea6b287e52c",
+      "pcm_sha256": "f24397509507eca7f96af7a132cf8d1766191ee6e65b33368db2177207757c55",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.430511474609375e-06
+    },
+    {
+      "name": "libtwolame-32000-2-tone",
+      "input_sha256": "947c96399c555fd49e79ffd60e83267039476c9729074ef4784d24d959f6df0b",
+      "pcm_sha256": "2a1e4c3d8d447a85960fac87b1fafb74ac01dc13cb98413be61c4d1245d7c96a",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 7.450580596923828e-07
+    },
+    {
+      "name": "libtwolame-32000-2-noise-low",
+      "input_sha256": "ea3a8f99353969f7a2d141356b451479340bcfaec6f880d38aec0da1c6180fae",
+      "pcm_sha256": "fe5b8ec926645a17f38a772e5f3c329ad9809ad4631aed5401f9c775bbfba974",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 1.430511474609375e-06
+    },
+    {
+      "name": "libtwolame-32000-3-tone",
+      "input_sha256": "54e78c632c4c80f5054e5e031d6aae595a7303e83717f8a37b68f4d50162bc71",
+      "pcm_sha256": "51a4e566dc366b27ab25f4f6ddc8a08e060f252d50278e40cfb76af7656782c1",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 8.046627044677734e-07
+    },
+    {
+      "name": "mp2-32000-3-tone",
+      "input_sha256": "b91f43a8f4227780903d497a0a58fceaacf949b45b23c18f7afafdc69a7e7930",
+      "pcm_sha256": "705694c562e979dfe07e8d020ca2dc22e7a82b4a483e0055eb21b871f3463c35",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 7.534399628639221e-07
+    },
+    {
+      "name": "libtwolame-32000-3-noise-low",
+      "input_sha256": "ace264217926c912e4d0b3ae0ad20201ca4a80e316cdb785415f20c86ac3ae6f",
+      "pcm_sha256": "5b2edb6272984c37aedeee346276237e2dfd3caf808a0a0726949e28a61d35f0",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 1.2218952178955078e-06
+    },
+    {
+      "name": "libtwolame-44100-0-tone",
+      "input_sha256": "84eb64512069fe41e26d2f507952abe1222f067bf27a5fb7a2cdee268f328c8a",
+      "pcm_sha256": "4acfe6f51741e1d7a19140a82989019a86b0c2ffd62f8843b5a7bee13b0ebe88",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 7.748603820800781e-07
+    },
+    {
+      "name": "mp2-44100-0-tone",
+      "input_sha256": "7a8cecff3e8027c369181f5c50bafd2c5bbd91179ba8c464e4a200a18a1c9336",
+      "pcm_sha256": "68dbc5a6271f61a513618a5a8094f7616ef3bb7c2f24f13ed3b70a86bfc91fa2",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 6.854534149169922e-07
+    },
+    {
+      "name": "libtwolame-44100-0-noise-low",
+      "input_sha256": "f298fb6761d58b5627cc8fe2c73f2964748b19da36029b9082348f3c644b8887",
+      "pcm_sha256": "01aec2ad49d2e2917a8d6386a3158660159359becb838b7a81459431f28b88d5",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3709068298339844e-06
+    },
+    {
+      "name": "libtwolame-44100-0-silence",
+      "input_sha256": "1bf2cdcd853d6f57472bd1732afa8ca807b1fa2c24cd09208da00962ebe67d44",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-44100-1-tone",
+      "input_sha256": "97f19800311a5a3ccea47fc3e06b0dd1aaa221c3db3d0190c65a6d1c98944858",
+      "pcm_sha256": "f13201f271c16758cb5010ba9b04e79ad77ed3ff8d6ca8dbacdeab95dca4921f",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 6.854534149169922e-07
+    },
+    {
+      "name": "libtwolame-44100-1-noise-low",
+      "input_sha256": "dc7fc2543f36515c35083348c0f45c7b7a41f7b98f02d1ef9828e3066845f06b",
+      "pcm_sha256": "ac61fa96de642aa93a60e0d921c58bf99802c264d9bd90c7b95262be84bf32fd",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.214444637298584e-06
+    },
+    {
+      "name": "libtwolame-44100-2-tone",
+      "input_sha256": "dc5b2bcac884b55f01802ca7f17df63ad7b8026c19930f48f53b97b79183fd56",
+      "pcm_sha256": "4acfe6f51741e1d7a19140a82989019a86b0c2ffd62f8843b5a7bee13b0ebe88",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 7.748603820800781e-07
+    },
+    {
+      "name": "libtwolame-44100-2-noise-low",
+      "input_sha256": "7ca8d774469ae1b9b24e9c2702f6ab34aa7b2df4b3391633b1a4abf7c5a15be9",
+      "pcm_sha256": "01aec2ad49d2e2917a8d6386a3158660159359becb838b7a81459431f28b88d5",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3709068298339844e-06
+    },
+    {
+      "name": "libtwolame-44100-3-tone",
+      "input_sha256": "08303949fcc73ff82c64c8ffb5ac2719af6a00d6718548c3652f3be3e71f5290",
+      "pcm_sha256": "cdef4ebe7dd4ebde6561f71b6cd16686ad1509ff0d5f7d213ae8b4ae27e361fa",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 6.854534149169922e-07
+    },
+    {
+      "name": "mp2-44100-3-tone",
+      "input_sha256": "6fd1f2a338dfe98350f0f0fe325a591e28990562c5527b6717880d9b71d69502",
+      "pcm_sha256": "180d94edf6a8fdfae555c8acde145ea03ce2305fc4cc2e0a0d0acd9321bffd64",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 5.960464477539062e-07
+    },
+    {
+      "name": "libtwolame-44100-3-noise-low",
+      "input_sha256": "ae49e5dfd1392bb902f7a1d1f8d8e2513f48fb92b3610302377cbeb979b01600",
+      "pcm_sha256": "7f08375b83d9588a2931865e42b85ecf7ee24ca7ca2a35f810a9435718d45aab",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 1.4007091522216797e-06
+    },
+    {
+      "name": "libtwolame-48000-0-tone",
+      "input_sha256": "71e45ad01b3ec726b4ef7bd9f28927634e7e03fa140ee57ca523d0e91e8409d5",
+      "pcm_sha256": "dfdd9799a065810edd6c197bb6e6e4a10c236bb66b653625499d568f496361bf",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 8.046627044677734e-07
+    },
+    {
+      "name": "mp2-48000-0-tone",
+      "input_sha256": "e4f73738c46b1b33b72df9b30af5dbb6654d80606b3ccc0fd39842d1ba3e6c28",
+      "pcm_sha256": "2a0dde436dcaf1bb2c83b83c8f1f047eb0b1206deb128b13f0db51e290a970d2",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 5.960464477539062e-07
+    },
+    {
+      "name": "libtwolame-48000-0-noise-low",
+      "input_sha256": "52f13db3acbcfe3f41149c48b9c9356a3ea88fac0378e3dca5d053bf95b64d0c",
+      "pcm_sha256": "a321503987d6a405c4932e3ee138414f2139a937494d36867f843c6207693527",
+      "frames": 2,
+      "mode": 0,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3187527656555176e-06
+    },
+    {
+      "name": "libtwolame-48000-0-silence",
+      "input_sha256": "57169417b5aed89f6c53b1550e76a1788cfae48279e0e73f52feb9ea52411d7b",
+      "pcm_sha256": "f7b586904e3678145aa47e4232587c913139cef0102d6d8e9276fc80c35cbad3",
+      "frames": 2,
+      "mode": 0,
+      "protected": false,
+      "ffmpeg_max_abs": 0.0
+    },
+    {
+      "name": "libtwolame-48000-1-tone",
+      "input_sha256": "3b1ccb9c53ff4e7dfdb769c0285dbcb89c44642bdf5ea3bc1bb267d55c89d491",
+      "pcm_sha256": "7c4ee656505d6bb6f9d30384d7ca70eae6abf57272e02b13735d7c2d28fe7970",
+      "frames": 2,
+      "mode": 1,
+      "protected": false,
+      "ffmpeg_max_abs": 7.748603820800781e-07
+    },
+    {
+      "name": "libtwolame-48000-1-noise-low",
+      "input_sha256": "4db2e79f6d3ed59d53010e0d622575493c127e47314afe4fecda83666572d2e0",
+      "pcm_sha256": "f4d28a9c23838c72cc5f4e8663bc17aa8801f76ee7c45137168bb6c928d624b2",
+      "frames": 2,
+      "mode": 1,
+      "protected": true,
+      "ffmpeg_max_abs": 1.385807991027832e-06
+    },
+    {
+      "name": "libtwolame-48000-2-tone",
+      "input_sha256": "ec6a5bd08cd81af5080ed7eb92ad942a3bda7ff59061fcac613faefe6a0500a4",
+      "pcm_sha256": "dfdd9799a065810edd6c197bb6e6e4a10c236bb66b653625499d568f496361bf",
+      "frames": 2,
+      "mode": 2,
+      "protected": false,
+      "ffmpeg_max_abs": 8.046627044677734e-07
+    },
+    {
+      "name": "libtwolame-48000-2-noise-low",
+      "input_sha256": "3a0fa4093e025214042913627171a09ec5e0aea6ebf1db426032d671536f6f0c",
+      "pcm_sha256": "a321503987d6a405c4932e3ee138414f2139a937494d36867f843c6207693527",
+      "frames": 2,
+      "mode": 2,
+      "protected": true,
+      "ffmpeg_max_abs": 1.3187527656555176e-06
+    },
+    {
+      "name": "libtwolame-48000-3-tone",
+      "input_sha256": "a07e34c48f2a5193b941f1b2c94ee9263c3cdb2de0cbc42946489f1eafc155d3",
+      "pcm_sha256": "22cb2d2a82d49d2b0af5d3c6d2fc99da7d27c216c6998da5f683efeb6a46f6ef",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 6.50063157081604e-07
+    },
+    {
+      "name": "mp2-48000-3-tone",
+      "input_sha256": "3f80e95884ca361b8bf72c94c54bc564f2322946fe02ad740bcb63add197f8cc",
+      "pcm_sha256": "d785837c4c2f422e1ac6aac9768005eef8c80391fa170b5daf5dbfb357603a20",
+      "frames": 2,
+      "mode": 3,
+      "protected": false,
+      "ffmpeg_max_abs": 8.046627044677734e-07
+    },
+    {
+      "name": "libtwolame-48000-3-noise-low",
+      "input_sha256": "541a47eb05b8bb4172f09bf8db2dfa0d090818e34d5f2ea1aabe69faa9abe904",
+      "pcm_sha256": "8e376f6de8036ed6d1ad659a5523da236ab4c2cc16a25383979e1f737e34845c",
+      "frames": 2,
+      "mode": 3,
+      "protected": true,
+      "ffmpeg_max_abs": 1.259148120880127e-06
+    }
+  ]
+}

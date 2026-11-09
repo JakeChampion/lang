@@ -1,0 +1,11 @@
+==8648== Callgrind, a call-graph generating cache profiler
+==8648== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==8648== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==8648== Command: /workspace/lang/build/liveness-main-20261109/base-native -target x86-64-linux -o /workspace/lang/build/liveness-main-20261109/checker /workspace/lang-liveness-main-base-20261109/compiler/checker.fern /workspace/lang-liveness-main-base-20261109/internal/stdlib
+==8648== 
+==8648== For interactive control, run 'callgrind_control -h'.
+==8648== 
+==8648== Events    : Ir
+==8648== Collected : 29470445406
+==8648== 
+==8648== I   refs:      29,470,445,406

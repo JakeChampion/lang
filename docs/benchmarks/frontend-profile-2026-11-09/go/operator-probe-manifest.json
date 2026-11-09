@@ -1,0 +1,21 @@
+{
+  "binary_sha256": "c6850b8e78fcd05e2ab6fe10258460ef9b8001f7ce7d8fa65c5a06e193ad59e0",
+  "source_sha256": "a359dffadfda0994d5e08a899949a200b42d7f52575b0e907e46705256cf400e",
+  "results_sha256": "d6eed8ad0940b690cb7aea0d617eabc0d0e26ac0799893603e3ea7d9ebdf9fbf",
+  "build_args": [
+    "go",
+    "build",
+    "-o",
+    "/workspace/lang/build/operator-prefix-probe-20261109/probe",
+    "./build/_operator-prefix-probe-20261109"
+  ],
+  "run_args": [
+    "/workspace/lang/build/operator-prefix-probe-20261109/probe",
+    "/workspace/lang-semantic-base-20261109",
+    "/workspace/lang/build/operator-prefix-probe-20261109/results.json"
+  ],
+  "cwd": "/workspace/lang-semantic-liveness-20261109",
+  "exit_code": 0,
+  "go_version": "go1.27.3",
+  "production_lexer_modified": false
+}

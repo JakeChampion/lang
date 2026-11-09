@@ -48,14 +48,6 @@ function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
   return v;
 }
 
-function x86_le32(own buf: i32[], v: i32): i32[] {
-  buf = buf.append(v & 255);
-  buf = buf.append(v >> 8 & 255);
-  buf = buf.append(v >> 16 & 255);
-  buf = buf.append(v >> 24 & 255);
-  return buf;
-}
-
 function x86_modrm(md: i32, reg: i32, rm: i32): i32 {
   return (md & 3) << 6 | (reg & 7) << 3 | rm & 7;
 }
@@ -65,14 +57,14 @@ function x86_mov_r32_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
     buf = buf.append(x86_rex(0, 0, 0, reg));
   }
   buf = buf.append(184 + (reg & 7));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_mov_r64_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
   buf = buf.append(x86_rex(1, 0, 0, reg));
   buf = buf.append(199);
   buf = buf.append(x86_modrm(3, 0, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_mov_r64_r64(own buf: i32[], dst: i32, src: i32): i32[] {
@@ -105,7 +97,7 @@ function x86_push_r64(own buf: i32[], reg: i32): i32[] {
 
 function x86_push_imm32(own buf: i32[], imm: i32): i32[] {
   buf = buf.append(104);
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_pop_r64(own buf: i32[], reg: i32): i32[] {
@@ -190,14 +182,14 @@ function x86_imm_wide(own buf: i32[], size: i32, imm: i32): i32[] {
     buf = buf.append(imm & 255);
     return buf.append(imm >> 8 & 255);
   }
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_grp1_imm32_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
   buf = x86_rex_r(buf, size, reg);
   buf = buf.append(129);
   buf = buf.append(x86_modrm(3, ext, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_grp1_imm_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
@@ -306,7 +298,7 @@ function x86_emit_mem(own buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
     buf = buf.append(disp & 255);
   } else {
     if (md == 2) {
-      buf = x86_le32(buf, disp);
+      buf = util.le32(buf, disp);
     }
   }
   return buf;
@@ -347,7 +339,7 @@ function x86_lea_idx_nobase(own buf: i32[], dst: i32, index: i32, scale: i32, di
   buf = buf.append(141);
   buf = buf.append(x86_modrm(0, dst, 4));
   buf = buf.append(x86_sib(x86_scale_bits(scale), index, 5));
-  return x86_le32(buf, disp);
+  return util.le32(buf, disp);
 }
 
 function x86_scale_bits(scale: i32): i32 {
@@ -382,7 +374,7 @@ function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale
     buf = buf.append(disp & 255);
   } else {
     if (md == 2) {
-      buf = x86_le32(buf, disp);
+      buf = util.le32(buf, disp);
     }
   }
   return buf;
@@ -641,7 +633,7 @@ function x86_alu_r64_imm32(own buf: i32[], slash: i32, reg: i32, imm: i32): i32[
   buf = buf.append(x86_rex(1, 0, 0, reg));
   buf = buf.append(129);
   buf = buf.append(x86_modrm(3, slash, reg));
-  return x86_le32(buf, imm);
+  return util.le32(buf, imm);
 }
 
 function x86_add_r64_imm32(own buf: i32[], reg: i32, imm: i32): i32[] {
@@ -697,17 +689,17 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
 function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
-  gas.push_arr(a.code, x86_rex_opt([], dst, 0, 0));
+  util.push_bytes(a.code, x86_rex_opt([], dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -719,7 +711,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   }
   buf_push_byte(a.code, opcode);
   buf_push_byte(a.code, x86_modrm(0, 0, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name + "");
   a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
@@ -728,7 +720,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  gas.push_arr(a.code, x86_le32([], imm));
+  util.push_bytes(a.code, util.le32([], imm));
   return a;
 }
 
@@ -747,7 +739,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   buf_push_byte(a.code, x86_rex(1, src, 0, 0));
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -759,7 +751,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   }
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   return x86_queue_fixup(a, patch_off, 4, name);
 }
@@ -874,7 +866,7 @@ function x86_nop_pad(own buf: i32[], n: i32): i32[] {
 function x86_jcc_rel32(own buf: i32[], cc: i32, rel: i32): i32[] {
   buf = buf.append(15);
   buf = buf.append(128 + (cc & 15));
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_je_rel32(own buf: i32[], rel: i32): i32[] {
@@ -887,7 +879,7 @@ function x86_jne_rel32(own buf: i32[], rel: i32): i32[] {
 
 function x86_jmp_rel32(own buf: i32[], rel: i32): i32[] {
   buf = buf.append(233);
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
@@ -896,7 +888,7 @@ function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 
 
 function x86_call_rel32(own buf: i32[], rel: i32): i32[] {
   buf = buf.append(232);
-  return x86_le32(buf, rel);
+  return util.le32(buf, rel);
 }
 
 function x86_patch_rel32(own buf: i32[], at: i32, rel: i32): i32[] {
@@ -969,25 +961,13 @@ pub struct X86Asm {
   pad_marks: i32[],
 }
 
-function x86_name_bucket(name: string): i32 {
-  return (__str_hash(name, 0) & 1073741823) % 4093;
-}
-
 function x86_asm_new(): X86Asm {
   return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: gas.empty_buckets(), lab_tail: gas.empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
-}
-
-function x86_filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  while (out.len() < n) {
-    out = out.append(v);
-  }
-  return out;
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: util.filled_i32(n, -1), lab_offs: util.filled_i32(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 pub function x86_eh_frame(a: X86Asm, text_vaddr: i64, eh_vaddr: i64): i32[] {
@@ -1028,7 +1008,7 @@ function x86_align4(n: i32): i32 {
 
 function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm {
   let at = a.lab_names.len();
-  let b = x86_name_bucket(name);
+  let b = util.hash_bucket(name, 4093);
   let prev = a.lab_tail[b];
   a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
   a = X86Asm { ...a, lab_secs: a.lab_secs.append(sec) };
@@ -1152,7 +1132,7 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
 }
 
 function x86_label_idx(a: X86Asm, name: string): i32 {
-  let i = a.lab_head[x86_name_bucket(name)];
+  let i = a.lab_head[util.hash_bucket(name, 4093)];
   while (i >= 0) {
     if (a.lab_names[i] == name) {
       return i;
@@ -1381,7 +1361,7 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 141);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  gas.push_arr(a.code, x86_le32([], 0));
+  util.push_bytes(a.code, util.le32([], 0));
   let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
@@ -1399,7 +1379,7 @@ function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86As
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
-  gas.push_arr(a.code, x86_jcc_rel32([], cc, 0));
+  util.push_bytes(a.code, x86_jcc_rel32([], cc, 0));
   let at4 = buf_len(a.code) - 4;
   a = x86_queue_rel32_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
@@ -1413,7 +1393,7 @@ function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
-  gas.push_arr(a.code, x86_jmp_rel32([], 0));
+  util.push_bytes(a.code, x86_jmp_rel32([], 0));
   let at4 = buf_len(a.code) - 4;
   a = x86_queue_rel32_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
@@ -1440,7 +1420,7 @@ function x86_call_label(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_call_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  gas.push_arr(a.code, x86_call_rel32([], 0));
+  util.push_bytes(a.code, x86_call_rel32([], 0));
   return x86_queue_rel32_at(a, name, idx);
 }
 
@@ -1539,10 +1519,6 @@ function x86_fold_relro(own a: X86Asm): X86Asm {
   return X86Asm { ...a, rodata: data, relro: [], relro_pad: pad, dfix_offs: dfix_offs, dfix_names: dfix_names, dfix_idx: dfix_idx, rfix_offs: [], rfix_names: [], rfix_idx: [], lab_offs: offs };
 }
 
-function x86_unwind_hdr_len(a: X86Asm): i32 {
-  return gas.cfi_eh_frame_hdr_len(a.cfi);
-}
-
 function x86_unwind_eh_len(a: X86Asm): i32 {
   if (gas.cfi_empty(a.cfi)) {
     return 0;
@@ -1555,7 +1531,7 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
     return a.data_offset;
   }
   let end = text_len;
-  let hdr_len = x86_unwind_hdr_len(a);
+  let hdr_len = x86_eh_frame_hdr_len(a);
   let eh_len = x86_unwind_eh_len(a);
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;
@@ -1742,18 +1718,6 @@ struct GasMem {
   index: i32,
   scale: i32,
   no_base: boolean,
-}
-
-function x86_gas_trim(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
-    b -= 1;
-  }
-  return slice_unchecked(s, a, b) + "";
 }
 
 function x86_gas_trimmed(s: str): str {
@@ -2192,7 +2156,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
   let src_xmm = x86_gas_is_xmm(src);
   let dst_xmm = x86_gas_is_xmm(dst);
   if (dst_xmm && src_xmm) {
-    gas.push_arr(a.code, x86_sse_any_rr([], 243, 126, x86_gas_xmm(dst), x86_gas_xmm(src)));
+    util.push_bytes(a.code, x86_sse_any_rr([], 243, 126, x86_gas_xmm(dst), x86_gas_xmm(src)));
     return a;
   }
   if (dst_xmm && !src_xmm) {
@@ -2202,7 +2166,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
       buf_push_byte(a.code, 102);
-      gas.push_arr(a.code, x86_gas_mem_rex([], 64, x86_gas_xmm(dst), xm, false));
+      util.push_bytes(a.code, x86_gas_mem_rex([], 64, x86_gas_xmm(dst), xm, false));
       buf_push_byte(a.code, 15);
       buf_push_byte(a.code, 110);
       return x86_gas_membytes(a, x86_gas_xmm(dst), xm, 0);
@@ -2211,7 +2175,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     if (gs < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_movq_gpr_to_xmm([], x86_gas_xmm(dst), gs));
+    util.push_bytes(a.code, x86_movq_gpr_to_xmm([], x86_gas_xmm(dst), gs));
     return a;
   }
   if (src_xmm && !dst_xmm) {
@@ -2221,7 +2185,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
       buf_push_byte(a.code, 102);
-      gas.push_arr(a.code, x86_gas_mem_rex([], 64, x86_gas_xmm(src), xm2, false));
+      util.push_bytes(a.code, x86_gas_mem_rex([], 64, x86_gas_xmm(src), xm2, false));
       buf_push_byte(a.code, 15);
       buf_push_byte(a.code, 126);
       return x86_gas_membytes(a, x86_gas_xmm(src), xm2, 0);
@@ -2230,7 +2194,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     if (gd < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_movq_xmm_to_gpr([], x86_gas_xmm(src), gd));
+    util.push_bytes(a.code, x86_movq_xmm_to_gpr([], x86_gas_xmm(src), gd));
     return a;
   }
   return x86_gas_mov_rm(a, "movq", 64, src, dst);
@@ -2803,7 +2767,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     return x86_gas_bad(a, "movext " + src + ", " + dst);
   }
   if (size == 16) {
-    gas.push_arr(a.code, x86_osz([], 16));
+    util.push_bytes(a.code, x86_osz([], 16));
   }
   if (x86_gas_has_paren(src)) {
     let m = x86_gas_parse_mem(src);
@@ -2813,7 +2777,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     if (m.is_rip) {
       return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) };
     }
-    gas.push_arr(a.code, x86_movext_mem([], op, w, d, m.base, m.has_index, m.index, m.scale, m.disp));
+    util.push_bytes(a.code, x86_movext_mem([], op, w, d, m.base, m.has_index, m.index, m.scale, m.disp));
     return a;
   }
   let sr = x86_gas_reg8(src);
@@ -2823,7 +2787,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
   if (sr < 0) {
     return x86_gas_bad(a, "movext " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_movext_reg([], op, w, d, sr));
+  util.push_bytes(a.code, x86_movext_reg([], op, w, d, sr));
   return a;
 }
 
@@ -2898,7 +2862,7 @@ function x86_gas_mem_rex(own buf: i32[], size: i32, reg: i32, m: GasMem, force8:
 function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm {
   if (m.is_rip) {
     buf_push_byte(a.code, x86_modrm(0, reg, 5));
-    gas.push_arr(a.code, x86_le32([], 0));
+    util.push_bytes(a.code, util.le32([], 0));
     let patch_off = buf_len(a.code) - 4;
     if (tail > 0) {
       a = x86_queue_fixup(a, patch_off, 4, m.label);
@@ -2907,17 +2871,17 @@ function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm
     }
     return x86_queue_fixup(a, patch_off, 4, m.label);
   }
-  gas.push_arr(a.code, x86_byte_mem_operand([], reg, m.base, m.has_index, m.index, m.scale, m.disp));
+  util.push_bytes(a.code, x86_byte_mem_operand([], reg, m.base, m.has_index, m.index, m.scale, m.disp));
   return a;
 }
 
 function x86_gas_mem_op(own a: X86Asm, size: i32, op0f: boolean, op: i32, reg: i32, m: GasMem, force8: boolean, tail: i32): X86Asm {
   if (!m.is_rip) {
-    gas.push_arr(a.code, x86_mem_op_bytes([], size, op0f, op, reg, m, force8));
+    util.push_bytes(a.code, x86_mem_op_bytes([], size, op0f, op, reg, m, force8));
     return a;
   }
-  gas.push_arr(a.code, x86_osz([], size));
-  gas.push_arr(a.code, x86_gas_mem_rex([], size, reg, m, force8));
+  util.push_bytes(a.code, x86_osz([], size));
+  util.push_bytes(a.code, x86_gas_mem_rex([], size, reg, m, force8));
   if (op0f) {
     buf_push_byte(a.code, 15);
   }
@@ -2964,7 +2928,7 @@ pub function x86_rec_alu_ia(ext: i32, size: i32, dst: i32): i32[] {
 }
 
 pub function x86_rec_alu_ima(ext: i32, size: i32, base: i32, disp: i32): i32[] {
-  return x86_le32(x86_mem_op_bytes([], size, false, 129, ext, x86_mem_at(base, disp), false), 0);
+  return util.le32(x86_mem_op_bytes([], size, false, 129, ext, x86_mem_at(base, disp), false), 0);
 }
 
 pub function x86_rec_alu_im(ext: i32, size: i32, imm: i32, base: i32, disp: i32): i32[] {
@@ -3023,7 +2987,7 @@ pub function x86_rec_call(): i32[] {
 }
 
 pub function x86_rec_lea_rip(dst: i32): i32[] {
-  return x86_le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
+  return util.le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
 }
 
 pub function x86_rec_movslq_rr(dst: i32, src: i32): i32[] {
@@ -3096,7 +3060,7 @@ pub function x86_rec_mov(size: i32, src: string, dst: string): i32[] {
 function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
   let b = x86_rec_mov(size, src, dst);
   if (b.len() > 0) {
-    gas.push_arr(a.code, b);
+    util.push_bytes(a.code, b);
     return a;
   }
   if (src.len() > 0 && src[0] == b'$') {
@@ -3124,7 +3088,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
         buf_push_byte(a.code, imm & 255);
         return a;
       }
-      gas.push_arr(a.code, x86_imm_wide([], size, imm));
+      util.push_bytes(a.code, x86_imm_wide([], size, imm));
       return a;
     }
     let rd = x86_gas_reg_w(dst, size);
@@ -3134,21 +3098,21 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     if (size == 64) {
       let iv = x86_gas_atoi64(src);
       if (iv >= (-2147483648) as i64 && iv <= 2147483647 as i64) {
-        gas.push_arr(a.code, x86_mov_r64_imm32([], rd, iv as i32));
+        util.push_bytes(a.code, x86_mov_r64_imm32([], rd, iv as i32));
         return a;
       }
-      gas.push_arr(a.code, x86_movabsq([], rd, iv));
+      util.push_bytes(a.code, x86_movabsq([], rd, iv));
       return a;
     }
-    gas.push_arr(a.code, x86_osz([], size));
-    gas.push_arr(a.code, x86_rex_r([], size, rd));
+    util.push_bytes(a.code, x86_osz([], size));
+    util.push_bytes(a.code, x86_rex_r([], size, rd));
     if (size == 8) {
       buf_push_byte(a.code, 176 + (rd & 7));
       buf_push_byte(a.code, imm & 255);
       return a;
     }
     buf_push_byte(a.code, 184 + (rd & 7));
-    gas.push_arr(a.code, x86_imm_wide([], size, imm));
+    util.push_bytes(a.code, x86_imm_wide([], size, imm));
     return a;
   }
   let src_mem = x86_gas_has_paren(src);
@@ -3181,11 +3145,11 @@ function x86_gas_split_ops(rest: string): string[] {
   let s = rest;
   let c = x86_gas_top_comma(s);
   while (c >= 0) {
-    out = out.append(x86_gas_trim(slice_unchecked(s, 0, c)));
+    out = out.append(slice_unchecked(s, 0, c).trim());
     s = slice_unchecked(s, c + 1, s.len()) + "";
     c = x86_gas_top_comma(s);
   }
-  return out.append(x86_gas_trim(s));
+  return out.append(s.trim());
 }
 
 // BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.
@@ -3490,7 +3454,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
       }
       bs = m.base >= 8;
     }
-    gas.push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, w, vvvv, l, pp));
+    util.push_bytes(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, w, vvvv, l, pp));
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, reg, m, 0);
   }
@@ -3499,7 +3463,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     return x86_gas_bad(a, mnem + " " + rm);
   }
   let rr = rv & 15;
-  gas.push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, w, vvvv, l, pp));
+  util.push_bytes(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, w, vvvv, l, pp));
   buf_push_byte(a.code, op);
   buf_push_byte(a.code, x86_modrm(3, reg, rr));
   return a;
@@ -3515,7 +3479,7 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     if (qd < 0 || qs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_vex([], qd >= 8, false, qs >= 8, 1, true, 0, false, 1));
+    util.push_bytes(a.code, x86_vex([], qd >= 8, false, qs >= 8, 1, true, 0, false, 1));
     buf_push_byte(a.code, 110);
     buf_push_byte(a.code, x86_modrm(3, qd & 7, qs & 7));
     return a;
@@ -3541,7 +3505,7 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     let bd = bv & 15;
-    gas.push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, bv >= 16, 1));
+    util.push_bytes(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, bv >= 16, 1));
     buf_push_byte(a.code, x86_broadcast_op(mnem));
     buf_push_byte(a.code, x86_modrm(3, bd, bx));
     return a;
@@ -3552,7 +3516,7 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   let ys = vs & 15;
-  gas.push_arr(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, vs >= 16, 1));
+  util.push_bytes(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, vs >= 16, 1));
   if (mnem == "vmovmskpd") {
     buf_push_byte(a.code, 80);
     buf_push_byte(a.code, x86_modrm(3, rd, ys));
@@ -3608,9 +3572,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502];
 
 // Each shift by an immediate: its 0F opcode times 8, plus the /digit.
 const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrlq", "vpsllq"];
@@ -3658,7 +3622,7 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   let shift = x86_vex_shift_imm(mnem);
   if (shift >= 0) {
-    gas.push_arr(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
+    util.push_bytes(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
     buf_push_byte(a.code, shift / 8);
     buf_push_byte(a.code, x86_modrm(3, shift % 8, v1 & 15));
     buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
@@ -3689,7 +3653,7 @@ function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86
     }
     let ix = !m.is_rip && m.has_index && m.index >= 8;
     let bs = !m.is_rip && m.base >= 8;
-    gas.push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, 0));
+    util.push_bytes(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, 0));
     buf_push_byte(a.code, 242);
     return x86_gas_membytes(a, dst, m, 0);
   }
@@ -3697,7 +3661,7 @@ function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86
   if (other < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  gas.push_arr(a.code, x86_rec_andn_rr(size, dst, inv, other));
+  util.push_bytes(a.code, x86_rec_andn_rr(size, dst, inv, other));
   return a;
 }
 
@@ -3734,7 +3698,7 @@ function x86_gas_shiftx(own a: X86Asm, mnem: string, ext: i32, rest: string): X8
     }
     let ix = !m.is_rip && m.has_index && m.index >= 8;
     let bs = !m.is_rip && m.base >= 8;
-    gas.push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, count, false, pp));
+    util.push_bytes(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, count, false, pp));
     buf_push_byte(a.code, 247);
     return x86_gas_membytes(a, dst, m, 0);
   }
@@ -3742,7 +3706,7 @@ function x86_gas_shiftx(own a: X86Asm, mnem: string, ext: i32, rest: string): X8
   if (src < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  gas.push_arr(a.code, x86_rec_shiftx_rr(size, pp, dst, src, count));
+  util.push_bytes(a.code, x86_rec_shiftx_rr(size, pp, dst, src, count));
   return a;
 }
 
@@ -3779,7 +3743,7 @@ function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86
       }
       bs = m.base >= 8;
     }
-    gas.push_arr(a.code, x86_vex([], rd >= 8, ix, bs, 3, size == 64, 0, false, 3));
+    util.push_bytes(a.code, x86_vex([], rd >= 8, ix, bs, 3, size == 64, 0, false, 3));
     buf_push_byte(a.code, 240);
     a = x86_gas_membytes(a, rd, m, 1);
     buf_push_byte(a.code, imm & 255);
@@ -3789,7 +3753,7 @@ function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  gas.push_arr(a.code, x86_rec_rorx_rr(size, rd, rs, imm));
+  util.push_bytes(a.code, x86_rec_rorx_rr(size, rd, rs, imm));
   return a;
 }
 
@@ -4088,19 +4052,19 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
       if (!x86_gas_mem_ok(mi) || mi.is_rip) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
-      gas.push_arr(a.code, x86_le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
+      util.push_bytes(a.code, util.le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
       return x86_queue_abs32_at(a, name, -1);
     }
     let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_grp1_imm32_r([], size, ext, rd, 0));
+    util.push_bytes(a.code, x86_grp1_imm32_r([], size, ext, rd, 0));
     return x86_queue_abs32_at(a, name, -1);
   }
   let b = x86_rec_alu(ext, size, src, dst);
   if (b.len() > 0) {
-    gas.push_arr(a.code, b);
+    util.push_bytes(a.code, b);
     return a;
   }
   if (src.len() > 0 && src[0] == b'$') {
@@ -4126,7 +4090,7 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
       ib = 2;
     }
     a = x86_gas_mem_op(a, size, false, 129, ext, mi, false, ib);
-    gas.push_arr(a.code, x86_imm_wide([], size, imm));
+    util.push_bytes(a.code, x86_imm_wide([], size, imm));
     return a;
   }
   let src_mem = x86_gas_has_paren(src);
@@ -4205,7 +4169,7 @@ pub function x86_rec_alu(ext: i32, size: i32, src: string, dst: string): i32[] {
 function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
   let b = x86_rec_test(size, src, dst);
   if (b.len() > 0) {
-    gas.push_arr(a.code, b);
+    util.push_bytes(a.code, b);
     return a;
   }
   if (src.len() > 0 && src[0] == b'$') {
@@ -4229,7 +4193,7 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
       buf_push_byte(a.code, imm & 255);
       return a;
     }
-    gas.push_arr(a.code, x86_imm_wide([], size, imm));
+    util.push_bytes(a.code, x86_imm_wide([], size, imm));
     return a;
   }
   let src_mem = x86_gas_has_paren(src);
@@ -4308,7 +4272,7 @@ function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + op);
   }
-  gas.push_arr(a.code, x86_unary_r([], size, opbase, ext, r));
+  util.push_bytes(a.code, x86_unary_r([], size, opbase, ext, r));
   return a;
 }
 
@@ -4348,10 +4312,10 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (by_cl) {
-    gas.push_arr(a.code, x86_shift_r_cl([], size, ext, r));
+    util.push_bytes(a.code, x86_shift_r_cl([], size, ext, r));
     return a;
   }
-  gas.push_arr(a.code, x86_shift_r_imm([], size, ext, r, imm));
+  util.push_bytes(a.code, x86_shift_r_imm([], size, ext, r, imm));
   return a;
 }
 
@@ -4394,7 +4358,7 @@ function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32,
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  gas.push_arr(a.code, x86_op0f_rr([], size, op, rs, rd));
+  util.push_bytes(a.code, x86_op0f_rr([], size, op, rs, rd));
   if (!by_cl) {
     buf_push_byte(a.code, imm & 255);
     return a;
@@ -4421,7 +4385,7 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_op0f_rr([], size, 186, 4 + idx, rd));
+    util.push_bytes(a.code, x86_op0f_rr([], size, 186, 4 + idx, rd));
     buf_push_byte(a.code, imm & 255);
     return a;
   }
@@ -4441,7 +4405,7 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
   if (rd2 < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_op0f_rr([], size, regop, rs, rd2));
+  util.push_bytes(a.code, x86_op0f_rr([], size, regop, rs, rd2));
   return a;
 }
 
@@ -4462,7 +4426,7 @@ function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32,
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_op0f_rr([], size, op, rs, rd));
+  util.push_bytes(a.code, x86_op0f_rr([], size, op, rs, rd));
   return a;
 }
 
@@ -4488,7 +4452,7 @@ function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string
   if (r1 < 0 || r2 < 0 || src_mem) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_op_rr([], size, 134, r1, r2));
+  util.push_bytes(a.code, x86_op_rr([], size, 134, r1, r2));
   return a;
 }
 
@@ -4529,7 +4493,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_cmovcc_rr([], size, cc, rd, rs));
+  util.push_bytes(a.code, x86_cmovcc_rr([], size, cc, rd, rs));
   return a;
 }
 
@@ -4565,7 +4529,7 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
     if (rs < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    gas.push_arr(a.code, x86_op0f_rr([], size, 175, rd, rs));
+    util.push_bytes(a.code, x86_op0f_rr([], size, 175, rd, rs));
     return a;
   }
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
@@ -4577,8 +4541,8 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   if (rs3 < 0 || rd3 < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  gas.push_arr(a.code, x86_osz([], size));
-  gas.push_arr(a.code, x86_rex_rr([], size, rd3, rs3));
+  util.push_bytes(a.code, x86_osz([], size));
+  util.push_bytes(a.code, x86_rex_rr([], size, rd3, rs3));
   if (x86_imm_fits8(imm)) {
     buf_push_byte(a.code, 107);
     buf_push_byte(a.code, x86_modrm(3, rd3, rs3));
@@ -4587,7 +4551,7 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   }
   buf_push_byte(a.code, 105);
   buf_push_byte(a.code, x86_modrm(3, rd3, rs3));
-  gas.push_arr(a.code, x86_imm_wide([], size, imm));
+  util.push_bytes(a.code, x86_imm_wide([], size, imm));
   return a;
 }
 
@@ -4642,7 +4606,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, "crc32 " + src);
     }
-    gas.push_arr(a.code, x86_gas_mem_rex([], dsize, rd, m, false));
+    util.push_bytes(a.code, x86_gas_mem_rex([], dsize, rd, m, false));
     buf_push_byte(a.code, 15);
     buf_push_byte(a.code, 56);
     buf_push_byte(a.code, op);
@@ -5023,7 +4987,7 @@ function x86_gas_sse_mem(own a: X86Asm, pfx: i32, op: i32, reg: i32, m: GasMem, 
   if (pfx != 0) {
     buf_push_byte(a.code, pfx);
   }
-  gas.push_arr(a.code, x86_gas_mem_rex([], 32, reg, m, false));
+  util.push_bytes(a.code, x86_gas_mem_rex([], 32, reg, m, false));
   buf_push_byte(a.code, 15);
   buf_push_byte(a.code, op);
   return x86_gas_membytes(a, reg, m, tail);
@@ -5045,7 +5009,7 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_sse_any_rr([], pfx, op, xd, xs));
+  util.push_bytes(a.code, x86_sse_any_rr([], pfx, op, xd, xs));
   return a;
 }
 
@@ -5083,7 +5047,7 @@ function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: str
   if (rd < 0 || xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  gas.push_arr(a.code, x86_sse_any_rr([], pfx, op, rd, xs));
+  util.push_bytes(a.code, x86_sse_any_rr([], pfx, op, rd, xs));
   return a;
 }
 
@@ -5138,11 +5102,11 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   let op3a = x86_gas_imm3a_op(mnem);
   if (op3a >= 0) {
-    gas.push_arr(a.code, x86_sse_3a_imm([], 0, op3a, xd, xs, imm));
+    util.push_bytes(a.code, x86_sse_3a_imm([], 0, op3a, xd, xs, imm));
     return a;
   }
   let sh = x86_gas_shuf_op(mnem);
-  gas.push_arr(a.code, x86_sse_any_rr([], sh / 256, sh & 255, xd, xs));
+  util.push_bytes(a.code, x86_sse_any_rr([], sh / 256, sh & 255, xd, xs));
   buf_push_byte(a.code, imm & 255);
   return a;
 }
@@ -5193,7 +5157,7 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (w == 1) {
       msz = 64;
     }
-    gas.push_arr(a.code, x86_gas_mem_rex([], msz, xs, m, false));
+    util.push_bytes(a.code, x86_gas_mem_rex([], msz, xs, m, false));
     buf_push_byte(a.code, 15);
     buf_push_byte(a.code, 58);
     buf_push_byte(a.code, op);
@@ -5206,11 +5170,11 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (mnem == "pextrw") {
-    gas.push_arr(a.code, x86_sse_any_rr([], 102, 197, rd, xs));
+    util.push_bytes(a.code, x86_sse_any_rr([], 102, 197, rd, xs));
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  gas.push_arr(a.code, x86_sse_3a_imm([], w, op, xs, rd, imm));
+  util.push_bytes(a.code, x86_sse_3a_imm([], w, op, xs, rd, imm));
   return a;
 }
 
@@ -5246,7 +5210,7 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (w == 1) {
       msz = 64;
     }
-    gas.push_arr(a.code, x86_gas_mem_rex([], msz, xd, m, false));
+    util.push_bytes(a.code, x86_gas_mem_rex([], msz, xd, m, false));
     buf_push_byte(a.code, 15);
     if (legacy) {
       buf_push_byte(a.code, 196);
@@ -5263,11 +5227,11 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (legacy) {
-    gas.push_arr(a.code, x86_sse_any_rr([], 102, 196, xd, rs));
+    util.push_bytes(a.code, x86_sse_any_rr([], 102, 196, xd, rs));
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  gas.push_arr(a.code, x86_sse_3a_imm([], w, op, xd, rs, imm));
+  util.push_bytes(a.code, x86_sse_3a_imm([], w, op, xd, rs, imm));
   return a;
 }
 
@@ -5350,7 +5314,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     let lr = "";
     if (lsp >= 0) {
       lm = slice_unchecked(rest, 0, lsp) + "";
-      lr = x86_gas_trim(slice_unchecked(rest, lsp + 1, rest.len()));
+      lr = slice_unchecked(rest, lsp + 1, rest.len()).trim();
     }
     let lb = lm;
     if (x86_gas_suffix_size(lm) > 0) {
@@ -5363,19 +5327,19 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_emit(a, lm, lr);
   }
   if (k == GK_SETCC) {
-    gas.push_arr(a.code, x86_setcc_reg8([], 144 + l.ext, x86_gas_reg8(rest)));
+    util.push_bytes(a.code, x86_setcc_reg8([], 144 + l.ext, x86_gas_reg8(rest)));
     return a;
   }
   if (k == GK_BRANCH) {
     let ext = l.ext;
     if (rest.len() > 0 && rest[0] == b'*') {
-      let ind = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
+      let ind = slice_unchecked(rest, 1, rest.len()).trim();
       if (x86_gas_has_paren(ind)) {
         let cm = x86_gas_parse_mem(ind);
         if (!x86_gas_mem_ok(cm)) {
           return x86_gas_bad(a, mnem + " " + rest);
         }
-        gas.push_arr(a.code, x86_gas_mem_rex([], 32, 0, cm, false));
+        util.push_bytes(a.code, x86_gas_mem_rex([], 32, 0, cm, false));
         buf_push_byte(a.code, 255);
         return x86_gas_membytes(a, ext, cm, 0);
       }
@@ -5384,9 +5348,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         return x86_gas_bad(a, mnem + " " + rest);
       }
       if (ext == 4) {
-        gas.push_arr(a.code, x86_jmp_reg([], ireg));
+        util.push_bytes(a.code, x86_jmp_reg([], ireg));
       } else {
-        gas.push_arr(a.code, x86_call_reg([], ireg));
+        util.push_bytes(a.code, x86_call_reg([], ireg));
       }
       return a;
     }
@@ -5406,7 +5370,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         buf_push_byte(a.code, pv & 255);
         return a;
       }
-      gas.push_arr(a.code, x86_push_imm32([], pv));
+      util.push_bytes(a.code, x86_push_imm32([], pv));
     } else {
       if (x86_gas_has_paren(rest)) {
         let pm = x86_gas_parse_mem(rest);
@@ -5416,9 +5380,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         if (pm.is_rip) {
           return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + rest) };
         }
-        gas.push_arr(a.code, x86_push_mem([], pm.base, pm.has_index, pm.index, pm.scale, pm.disp));
+        util.push_bytes(a.code, x86_push_mem([], pm.base, pm.has_index, pm.index, pm.scale, pm.disp));
       } else {
-        gas.push_arr(a.code, x86_push_r64([], x86_gas_reg(rest)));
+        util.push_bytes(a.code, x86_push_r64([], x86_gas_reg(rest)));
       }
     }
     return a;
@@ -5432,9 +5396,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       if (qm.is_rip) {
         return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + rest) };
       }
-      gas.push_arr(a.code, x86_pop_mem([], qm.base, qm.has_index, qm.index, qm.scale, qm.disp));
+      util.push_bytes(a.code, x86_pop_mem([], qm.base, qm.has_index, qm.index, qm.scale, qm.disp));
     } else {
-      gas.push_arr(a.code, x86_pop_r64([], x86_gas_reg(rest)));
+      util.push_bytes(a.code, x86_pop_r64([], x86_gas_reg(rest)));
     }
     return a;
   }
@@ -5485,10 +5449,10 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       if (lsz != 64) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
-      gas.push_arr(a.code, x86_lea_idx_nobase([], ld, m.index, m.scale, m.disp));
+      util.push_bytes(a.code, x86_lea_idx_nobase([], ld, m.index, m.scale, m.disp));
       return a;
     }
-    gas.push_arr(a.code, x86_lea_load([], lsz, ld, m.base, m.has_index, m.index, m.scale, m.disp));
+    util.push_bytes(a.code, x86_lea_load([], lsz, ld, m.base, m.has_index, m.index, m.scale, m.disp));
     return a;
   }
   if (k == GK_MOVQ) {
@@ -5498,7 +5462,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_mov_rm(a, mnem, l.ext, src, dst);
   }
   if (k == GK_MOVABS) {
-    gas.push_arr(a.code, x86_movabsq([], x86_gas_reg(dst), x86_gas_atoi64(src)));
+    util.push_bytes(a.code, x86_movabsq([], x86_gas_reg(dst), x86_gas_atoi64(src)));
     return a;
   }
   if (k == GK_VEX_TWO) {
@@ -5526,14 +5490,14 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     if (bsd < 0 || bss < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_bitscan_rr([], bsc / 65536, bsc / 256 % 256, bsw, bsd, bss));
+    util.push_bytes(a.code, x86_bitscan_rr([], bsc / 65536, bsc / 256 % 256, bsw, bsd, bss));
     return a;
   }
   if (k == GK_MOVQD) {
     if (x86_gas_is_xmm(dst)) {
-      gas.push_arr(a.code, x86_movd_gpr_to_xmm([], x86_gas_xmm(dst), x86_gas_reg32(src)));
+      util.push_bytes(a.code, x86_movd_gpr_to_xmm([], x86_gas_xmm(dst), x86_gas_reg32(src)));
     } else {
-      gas.push_arr(a.code, x86_movd_xmm_to_gpr([], x86_gas_xmm(src), x86_gas_reg32(dst)));
+      util.push_bytes(a.code, x86_movd_xmm_to_gpr([], x86_gas_xmm(src), x86_gas_reg32(dst)));
     }
     return a;
   }
@@ -5557,7 +5521,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     if (cvx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_cvt_to_gpr([], f2i / 256, f2i % 256, cvw, cvd, cvx));
+    util.push_bytes(a.code, x86_cvt_to_gpr([], f2i / 256, f2i % 256, cvw, cvd, cvx));
     return a;
   }
   if (k == GK_CVT2S) {
@@ -5578,7 +5542,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         csz = 64;
       }
       buf_push_byte(a.code, cpfx);
-      gas.push_arr(a.code, x86_gas_mem_rex([], csz, cxd, cm2, false));
+      util.push_bytes(a.code, x86_gas_mem_rex([], csz, cxd, cm2, false));
       buf_push_byte(a.code, 15);
       buf_push_byte(a.code, 42);
       return x86_gas_membytes(a, cxd, cm2, 0);
@@ -5590,7 +5554,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     if (crs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    gas.push_arr(a.code, x86_cvt_to_xmm([], cpfx, cw, cxd, crs));
+    util.push_bytes(a.code, x86_cvt_to_xmm([], cpfx, cw, cxd, crs));
     return a;
   }
   if (k == GK_ALU) {
@@ -5636,9 +5600,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       if (sm.is_rip) {
         return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) };
       }
-      gas.push_arr(a.code, x86_movslq_load([], x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp));
+      util.push_bytes(a.code, x86_movslq_load([], x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp));
     } else {
-      gas.push_arr(a.code, x86_movslq_rr([], x86_gas_reg(dst), x86_gas_reg32(src)));
+      util.push_bytes(a.code, x86_movslq_rr([], x86_gas_reg(dst), x86_gas_reg32(src)));
     }
     return a;
   }
@@ -5702,7 +5666,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     return x86_gas_bad(a, line);
   }
   let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
-  let n = x86_gas_atoi(x86_gas_trim(parts[0]));
+  let n = x86_gas_atoi(parts[0].trim());
   let align = n;
   if (line.starts_with(".p2align")) {
     if (n > 30) {
@@ -5736,7 +5700,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   }
   let max: i32 = -1;
   if (parts.len() >= 3) {
-    let ms = x86_gas_trim(parts[2]);
+    let ms = parts[2].trim();
     if (ms.len() > 0) {
       max = x86_gas_atoi(ms);
     }
@@ -5747,7 +5711,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   if (pad == 0) {
     return a;
   }
-  gas.push_arr(a.code, x86_nop_pad([], pad));
+  util.push_bytes(a.code, x86_nop_pad([], pad));
   return a;
 }
 
@@ -5975,15 +5939,15 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
     buf_push_bytes_range(out, text, pos, s);
     let e = l.ev[i];
     if (e < 0) {
-      gas.push_arr(out, x86_nop_pad([], st.new_size[i]));
+      util.push_bytes(out, x86_nop_pad([], st.new_size[i]));
       pos = s + l.size[i];
     } else {
       if (st.short[e]) {
         buf_push_bytes_range(out, text, s, s + 2);
       } else if (text[s] as i32 == 235) {
-        gas.push_arr(out, x86_jmp_rel32([], 0));
+        util.push_bytes(out, x86_jmp_rel32([], 0));
       } else {
-        gas.push_arr(out, x86_jcc_rel32([], text[s] as i32 & 15, 0));
+        util.push_bytes(out, x86_jcc_rel32([], text[s] as i32 & 15, 0));
       }
       pos = s + 2;
     }
@@ -6347,7 +6311,7 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
       twice = twice.append(name);
     }
     let at = names.len();
-    let b = x86_name_bucket(name);
+    let b = util.hash_bucket(name, 4093);
     let prev = tail[b];
     names = names.append(name);
     next = next.append(-1);
@@ -6378,7 +6342,7 @@ function x86_gas_number_label(name: string): boolean {
 }
 
 function x86_bucket_find(names: string[], head: i32[], next: i32[], name: string): i32 {
-  let i = head[x86_name_bucket(name)];
+  let i = head[util.hash_bucket(name, 4093)];
   while (i >= 0) {
     if (names[i] == name) {
       return i;
@@ -6406,7 +6370,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
         ref_idx = x86_gas_label_lookup(labs, l.rest);
       }
     } else if (l.kind == GK_NONE && l.body.starts_with(".quad")) {
-      let qop = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
+      let qop = slice_unchecked(l.body, 6, l.body.len()).trim();
       if (x86_gas_is_symbol(qop)) {
         ref_idx = x86_gas_label_lookup(labs, qop);
       }
@@ -6422,7 +6386,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
 struct MnemIndex { names: string[], head: i32[], next: i32[] }
 
 function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
-  let i = ix.head[x86_name_bucket(mnem)];
+  let i = ix.head[util.hash_bucket(mnem, 4093)];
   while (i >= 0) {
     if (ix.names[i] == mnem) {
       return i;
@@ -6433,7 +6397,7 @@ function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
 }
 
 function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
-  let b = x86_name_bucket(mnem);
+  let b = util.hash_bucket(mnem, 4093);
   let at = ix.names.len();
   return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
 }
@@ -6712,8 +6676,8 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
   }
-  let src = x86_gas_trim(slice_unchecked(rest, 0, ci));
-  let dst = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  let src = slice_unchecked(rest, 0, ci).trim();
+  let dst = slice_unchecked(rest, ci + 1, rest.len()).trim();
   l = GasLine { ...l, src: src, dst: dst };
   if (v.b_kind != GK_NONE) {
     return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
@@ -6827,7 +6791,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         let before = slice_unchecked(line, 0, colon);
         if (util.index_of_sub(before, " ") < 0 && util.index_of_sub(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
           label = before + "";
-          line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
+          line = slice_unchecked(line, colon + 1, line.len()).trim();
         }
       }
     }
@@ -6841,7 +6805,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       let sp = util.index_of_sub(line, " ");
       if (sp >= 0) {
         mnem = slice_unchecked(line, 0, sp) + "";
-        rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
+        rest = slice_unchecked(line, sp + 1, line.len()).trim();
       }
     }
     let gl = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: -1, sfx: 0, src: "", dst: "", def_idx: -1, ref_idx: -1 };
@@ -6887,15 +6851,15 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   let bci = 0;
   while (bci < brest.len()) {
     if (brest[bci] == b',') {
-      rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+      rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
       btok = "";
     } else {
       btok += slice_unchecked(brest, bci, bci + 1);
     }
     bci += 1;
   }
-  if (x86_gas_trim(btok).len() > 0) {
-    rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+  if (btok.trim().len() > 0) {
+    rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
   }
   return X86Asm { ...a, rodata: rodata };
 }
@@ -6905,7 +6869,7 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
 function x86_gas_longs(own a: X86Asm, section: i32, vals: string[]): X86Asm {
   if (section != 0) {
     for v in vals {
-      a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(v)) };
+      a = X86Asm { ...a, rodata: util.le32(a.rodata, x86_gas_atoi(v)) };
     }
     return a;
   }
@@ -6937,7 +6901,7 @@ function x86_gas_values(line: string): string[] {
   while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
     start += 1;
   }
-  return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
+  return x86_gas_split_ops(slice_unchecked(line, start, line.len()).trim());
 }
 
 function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u8[]): X86Asm {
@@ -7053,18 +7017,18 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       } else if (line.starts_with(".long")) {
         a = x86_gas_longs(a, section, x86_gas_values(line));
       } else if (line.starts_with(".double")) {
-        a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, util.parse_f64_bits(x86_gas_trim(slice_unchecked(line, 8, line.len())))) };
+        a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, util.parse_f64_bits(slice_unchecked(line, 8, line.len()).trim())) };
       } else if (line.starts_with(".ascii")) {
         a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
       } else if (line.starts_with(".skip") || line.starts_with(".zero") || line.starts_with(".space")) {
-        let zn = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, util.index_of_sub(line, " "), line.len())));
+        let zn = x86_gas_atoi(slice_unchecked(line, util.index_of_sub(line, " "), line.len()).trim());
         if (section == 2) {
           a = x86_bss_skip(a, zn);
         } else if (gas.data_like(section)) {
           a = x86_rodata_zero(a, zn);
         }
       } else if (line.starts_with(".byte")) {
-        a = x86_rodata_bytes(a, x86_gas_trim(slice_unchecked(line, 5, line.len())));
+        a = x86_rodata_bytes(a, slice_unchecked(line, 5, line.len()).trim());
       } else if (line.starts_with(".align") || line.starts_with(".balign") || line.starts_with(".p2align")) {
         let np = a.pads.len();
         a = x86_gas_align(a, section, line);

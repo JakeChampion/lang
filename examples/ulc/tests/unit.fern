@@ -477,6 +477,62 @@ function deferred_plan_tests(): void {
   }
 }
 
+function packed_output_tests(): void {
+  for n in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768] {
+    let input = __alloc_u8(4 * n + 8);
+    let output = __alloc_u8(4 * n + 8);
+    let re = __alloc_u8(2 * n + 8);
+    let im = __alloc_u8(2 * n + 8);
+    for buffer in [output, re, im] {
+      unsafe {
+        for i in 0..4 {
+          __store_u8(buffer as usize + 8 as usize + i as usize, 165);
+          __store_u8(buffer as usize + 8 as usize + (buffer.len() - 1 - i) as usize, 165);
+        }
+      }
+    }
+    let precise = transform.zeros(n);
+    for i in 0..n {
+      let value = ((i as f64 * 0.19).sin() * 0.01 + (i as f64 * 0.071).cos() * 0.003) as f32;
+      precise = precise.with(i, value as f64);
+      unsafe {
+        __store_i32(input as usize + 12 as usize + (4 * i) as usize, f32_bits(value));
+      }
+    }
+    let expected = transform.dct4(precise);
+    unsafe {
+      packed_transform.dct4_packed(input as usize + 12 as usize, output as usize + 12 as usize, re as usize + 12 as usize, im as usize + 12 as usize, packed_transform.plan(n));
+    }
+    // The unsafe FFT borrows addresses. Keep the input owner alive through the call.
+    for i in 0..n {
+      let bits = f32_bits(precise[i] as f32) as u32;
+      for byte in 0..4 {
+        require(input[4 + 4 * i + byte] == (bits >> (8 * byte) as u32) as u8, "packed FFT preserves its input bytes");
+      }
+    }
+    let peak = 1.0;
+    let error = 0.0;
+    for i in 0..n {
+      if (expected[i].abs() > peak) {
+        peak = expected[i].abs();
+      }
+      unsafe {
+        let value = f32_from_bits(__load_i32(output as usize + 12 as usize + (4 * i) as usize)) as f64;
+        require(value.is_finite(), "packed FFT output stays finite");
+        if ((expected[i] - value).abs() > error) {
+          error = (expected[i] - value).abs();
+        }
+      }
+    }
+    require(error < peak * 0.000003, "packed output order matches the double FFT at every size");
+    for buffer in [output, re, im] {
+      for i in 0..4 {
+        require(buffer[i] == 165u8 && buffer[buffer.len() - 1 - i] == 165u8, "unaligned FFT spans preserve their boundary bytes");
+      }
+    }
+  }
+}
+
 function packed_tests(): void {
   for n in [32, 256, 2048, 32768] {
     let input = transform.zeros(n);
@@ -843,6 +899,56 @@ function packed_file_tests(): void {
   }
 }
 
+function pcm_random_tests(): void {
+  let seed = 1234567u32;
+  for bits in [8, 16, 24] {
+    let scale = (1 << bits - 1) as f64;
+    for channels in [1, 2] {
+      for mode in [0, 1, 2] {
+        let frames = 32768;
+        let source = __alloc_u8(4 * frames * channels);
+        let floats = transform.zeros(frames * channels);
+        unsafe {
+          let input = source as usize + 8 as usize;
+          for channel in 0..channels {
+            for i in 0..frames {
+              seed ^= seed << 13u32;
+              seed ^= seed >> 17u32;
+              seed ^= seed << 5u32;
+              let value = f32_from_bits(((seed & 2147483647u32) % 2139095040u32 | seed & 2147483648u32) as i32);
+              if (mode != 0) {
+                let integer = i * 251 % (1 << bits - 1);
+                let edge = (integer as f64 + 0.5) * (if (mode == 1) { 1.0 } else { -1.0 });
+                let sample = if (channel == 0) { edge } else if (i % 3 == 0) { -0.00000001 } else if (i % 3 == 1) { 0.0 } else { 0.00000001 };
+                value = (sample / scale * 79228162514264337593543950336.0) as f32;
+              }
+              __store_i32(input + (4 * (channel * frames + i)) as usize, f32_bits(value));
+            }
+          }
+          for i in 0..frames {
+            let a = f32_from_bits(__load_i32(input + (4 * i) as usize)) as f64;
+            let b = if (channels == 2) { f32_from_bits(__load_i32(input + (4 * (frames + i)) as usize)) as f64 } else { 0.0 };
+            floats = floats.with(i * channels, (a + b) * 1.2621774483536189e-29);
+            if (channels == 2) {
+              floats = floats.with(i * channels + 1, (a - b) * 1.2621774483536189e-29);
+            }
+          }
+        }
+        let size = frames * channels * (bits / 8);
+        let Ok(actual) = packed_decoder.write_samples(__alloc_u8(size + 7), 3, source, channels, bits) else {
+          exit(1);
+        };
+        let Ok(expected) = audio.write_samples(__alloc_u8(size + 7), 3, floats, bits) else {
+          exit(1);
+        };
+        for i in 0..actual.len() {
+          require(actual[i] == expected[i], "SIMD matches scalar PCM across random values and half-integer boundaries");
+        }
+      }
+    }
+  }
+}
+
 function pcm_output_tests(): void {
   for bits in [8, 16, 24] {
     let scale = (1 << bits - 1) as f64;
@@ -904,10 +1010,12 @@ pub function run_tests(): i32 {
   transform_tests();
   print("ok - transform definition and lapping");
   packed_tests();
+  packed_output_tests();
   coefficient_parser_tests();
   parser_properties();
   packed_file_tests();
   pcm_output_tests();
+  pcm_random_tests();
   print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");

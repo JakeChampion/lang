@@ -13,10 +13,10 @@ playground `web/`, running `compiler/playground_run.fern` built for WASI; and
 `__fern_*`.
 
 The **only** things still on the old `lang` name are the Go module path
-`github.com/jakechampion/lang` and the GitHub repo + Pages URLs
-(`jakechampion.github.io/lang`). Both cross the GitHub-repo boundary, so they
-must follow a rename of the repo itself — otherwise `go install` and the Pages
-site break. Do not rename them piecemeal.
+`github.com/jakechampion/lang` and the GitHub repo URL. Both cross the
+GitHub-repo boundary, so they must follow a rename of the repo itself —
+otherwise `go install` breaks. Do not rename them piecemeal. The docs site is
+`fern-lang.netlify.app`, at the domain root.
 
 ## Language direction
 

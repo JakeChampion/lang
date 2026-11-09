@@ -126,15 +126,15 @@ pub const TERM_BRIF: i32 = 3;
 
 pub const TERM_UNREACHABLE: i32 = 4;
 
-function t_ret(value: i32): STerm {
+pub function t_ret(value: i32): STerm {
   return STerm { kind_tag: TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
 }
 
-function t_br(target: i32): STerm {
+pub function t_br(target: i32): STerm {
   return STerm { kind_tag: TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
-function t_brif(cond: i32, t: i32, f: i32): STerm {
+pub function t_brif(cond: i32, t: i32, f: i32): STerm {
   return STerm { kind_tag: TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
@@ -350,6 +350,7 @@ const SEMANTIC_KIND_NAMES: string[] = [
   "truncate",  // -56
   "checked_present",  // -57
   "checked_value",  // -58
+  "array_zero",  // -59
 ];
 
 pub function kind_name(id: i32): string {
@@ -1153,7 +1154,7 @@ pub function lane_param_mark(): string {
 }
 
 pub function lane_memory(b: string): boolean {
-  return util.has_str(["vload", "vstore", "vget", "vset"], b);
+  return util.has_str(["vload", "vload_f32", "vstore", "vget", "vset"], b);
 }
 
 pub function lane_result(ins: SInst): boolean {
@@ -1842,7 +1843,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         free = remove_reg(free, reg);
       } else {
         reg = free_s[free_s.len() - 1];
-        free_s = drop_last_i(free_s);
+        free_s = util.drop_last_i32(free_s);
       }
       reg_of = reg_of.with(v, reg);
       act_val = act_val.append(v);
@@ -2008,16 +2009,6 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
   return w >= 0 && w != v && reg_of[w] == -1;
 }
 
-function drop_last_i(a: i32[]): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 1) {
-    out = out.append(a[i]);
-    i += 1;
-  }
-  return out;
-}
-
 pub function spill_code(slot: i32): i32 {
   return -2 - slot;
 }
@@ -2121,7 +2112,7 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
             if (dying < 0 && hi[a] < pos) {
               dying = a;
             }
-            if (hi[a] < pos && ai - 1 < blk.preds.len() && pred_index(at, blk.preds[ai - 1]) == bi - 1) {
+            if (hi[a] < pos && ai - 1 < blk.preds.len() && position_of(at, blk.preds[ai - 1]) == bi - 1) {
               through = a;
             }
             if (outliving < 0 && hi[a] >= pos) {
@@ -2150,13 +2141,6 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
     bi += 1;
   }
   return Mates { hint: hint, carried: carried, alt: alt, through: fell };
-}
-
-function pred_index(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id];
 }
 
 // live_masks gives, for each position of `at` in ascending order, the
@@ -2273,7 +2257,7 @@ function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   return position_of(at, id);
 }
 
-function position_of(at: i32[], id: i32): i32 {
+pub function position_of(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return -1;
   }
@@ -3649,7 +3633,7 @@ pub function refreshed_preds(f: SFunc): SBlock[] {
         nb = trim_phi_edges(b, preds[i]);
         fresh = true;
       }
-    } else if (!same_preds(b.preds, preds[i])) {
+    } else if (!util.same_i32s(b.preds, preds[i])) {
       nb = SBlock { ...b, preds: preds[i] };
       fresh = true;
     }
@@ -3675,20 +3659,6 @@ function every_pred(ps: i32[], edges: i32[]): boolean {
     if (!has_pred(edges, p)) {
       return false;
     }
-  }
-  return true;
-}
-
-function same_preds(a: i32[], b: i32[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < a.len()) {
-    if (a[i] != b[i]) {
-      return false;
-    }
-    i += 1;
   }
   return true;
 }
@@ -5281,7 +5251,7 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
@@ -5326,12 +5296,55 @@ function high_operands(d: SInst): i32 {
   return 0;
 }
 
-function term_operand(t: STerm): i32 {
+pub function term_operand(t: STerm): i32 {
   if (t.kind_tag == TERM_RET) {
     return t.value;
   }
   if (t.kind_tag == TERM_BRIF) {
     return t.cond;
+  }
+  return -1;
+}
+
+// term_targets lists the blocks a terminator can branch to.
+pub function term_targets(t: STerm): i32[] {
+  if (t.kind_tag == TERM_BR) {
+    return [t.target];
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
+// next_block_id is one more than the largest block id in g.
+pub function next_block_id(g: SFunc): i32 {
+  let hi = 0;
+  for b in g.blocks {
+    if (b.id >= hi) {
+      hi = b.id + 1;
+    }
+  }
+  return hi;
+}
+
+pub function t_unreachable(): STerm {
+  return STerm { kind_tag: TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}
+
+// branches_to is true when t can branch to block id.
+pub function branches_to(t: STerm, id: i32): boolean {
+  return t.kind_tag == TERM_BR && t.target == id || t.kind_tag == TERM_BRIF && (t.t == id || t.f == id);
+}
+
+// block_with_id is the index of the block whose id is id, or -1.
+pub function block_with_id(f: SFunc, id: i32): i32 {
+  let i = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i += 1;
   }
   return -1;
 }
@@ -5386,7 +5399,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
   return m;
 }
 
-function no_inst(): SInst {
+pub function no_inst(): SInst {
   return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
@@ -5750,7 +5763,7 @@ function zero_extends_u32(ins: SInst): boolean {
 
 function def_of(defs: SInst[], v: i32): SInst {
   if (v < 0 || v >= defs.len()) {
-    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return no_inst();
   }
   return defs[v];
 }

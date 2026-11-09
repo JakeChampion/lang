@@ -2297,6 +2297,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
+	// share_unchecked(v) is v, as a value an own parameter accepts. It names a
+	// copy that shares the handles v holds; checkCall types it from v.
+	c.info.FuncSigs["share_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{cellParam},
+		Result: cellParam,
+	}
 	c.info.FuncSigs["string_from_bytes_range_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.StringType{},
@@ -2467,7 +2473,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	c.info.FuncSigs["__sysreg_read"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: i64T}
 	c.info.FuncSigs["__sysreg_write"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}, i64T}, Result: ast.VoidType{}}
-	for _, name := range []string{"__cache_clean", "__cache_flush", "__tlb_flush"} {
+	for _, name := range []string{"__cache_clean", "__cache_flush", "__cache_sync_code", "__tlb_flush"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__tlb_flush_all"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
@@ -2475,6 +2481,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__irq_pending"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
+	c.info.FuncSigs["__user_run"] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: i64T}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
@@ -9420,16 +9427,16 @@ var UnsafeBuiltinMethods = []string{
 var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__alloc_u8_uninit": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
-	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__store_i64": true, "__store_ptr": true,
+	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__f64x2_load_f32_ptr": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
-	"__cache_clean": true, "__cache_flush": true,
+	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__user_run": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
-	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true,
+	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
@@ -10679,6 +10686,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	selfMoveArgs := map[ast.Expr]bool{}
 	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle, c.scalarArgs)
+	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10691,6 +10699,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return x.IsStringConcat
 		case *ast.TryOp:
 			return isOwnedExpr(x.Inner)
+		case *ast.BlockExpr:
+			return x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil && isOwnedExpr(x.Tail)
 		case *ast.Ident:
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
@@ -10703,15 +10713,19 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if id, ok := x.Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
 				return true
 			}
+			if lit := replaced[x]; lit != nil && isOwnedExpr(lit.Base) {
+				return true
+			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if x.Method != nil && (id.Name == "__method_Array_set" || id.Name == "__method_Array_push" || id.Name == "__method_Array_truncate") {
-					if array, ok := x.Method.Receiver.(ast.ArrayType); ok && c.holdsNoHandle(array.Elem) {
-						return true
-					}
+				if c.arrayUpdateOwned(x, isOwnedExpr, isOwnedExpr) {
+					return true
 				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+					return true
+				}
+				if id.Name == "share_unchecked" {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
@@ -14769,6 +14783,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.checkExpr(n.Args[0], s)
 			return ast.VoidType{}
 		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "share_unchecked" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "share_unchecked expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			c.checkUnsafeCallee(n, s)
+			return c.checkExpr(n.Args[0], s)
+		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_copy" {
 			if len(n.Args) != 1 {
 				c.errfCode(n.P, "E004", "__send_copy expects 1 argument, got %d", len(n.Args))
@@ -17934,6 +17956,7 @@ func (c *checker) registerLaneBuiltins() {
 		}
 	}
 	wide := ast.LanesType{Width: 64}
+	c.info.FuncSigs["__f64x2_load_f32_ptr"] = &ast.FuncType{Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: wide}
 	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
 }
 

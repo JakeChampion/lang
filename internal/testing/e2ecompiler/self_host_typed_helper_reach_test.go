@@ -11,12 +11,13 @@ import (
 func TestSelfHostTypedHelperReachability(t *testing.T) {
 	const src = `import "./ir";
 import "./irtables";
+import "./sourcepos";
 import "./physicalbody";
 import "./semhelperreach";
 import "./typeinfo";
 
 function body(name: string, ops: ir.Op[]): irtables.LowerResult {
-  return irtables.LowerResult { source_positions: irtables.no_source(), ok: true, ops: ops, n_locals: 0, n_params: 0,
+  return irtables.LowerResult { source_positions: sourcepos.no_source(), ok: true, ops: ops, n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], v128_slots: [],
     why: "", name: name, result_kind: 0, dbg_slots: [], dbg_names: [], dbg_types: [] };
 }
@@ -61,6 +62,11 @@ function main(): i32 {
   if (!check([], failed, [true, true], "release;")) { return 11; }
   let superseded = [irtables.LowerResult { ...body("main", [ir.op_call_direct("release", 1)]), superseded: true }];
   if (!check(superseded, helpers, [true, true], "")) { return 12; }
+  let mangled = [body("__sem_drop_p", []), body("__sem_release_p", [ir.op_call_direct("__sem_drop_p", 1)])];
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&fn:__sem_release_p}")])], mangled, [true, true], "__sem_drop_p;__sem_release_p;")) { return 13; }
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&str|7061}")])], mangled, [true, true], "")) { return 14; }
+  let mixed = [body("__sem_drop_p", []), body("plain", [])];
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&fn:plain}")])], mixed, [true, true], "plain;")) { return 15; }
   return 0;
 }`
 	dir := writeSelfHostAsmProject(t)

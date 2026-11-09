@@ -261,7 +261,7 @@ function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
     ast.StmtIf(f) => {
       let tb = cover_stmts(f.then_body, c, exprs);
       let eb = cover_stmts(f.else_body, c, exprs);
-      if (f.line > 0 && f.origin == "" && !literal_true(f.cond)) {
+      if (f.line > 0 && f.origin == "" && !ast.is_true_literal(f.cond)) {
         let taken = branch_key(c, f.line, start_col(f.cond), "T");
         return ast.StmtIf { ...f, cond: guarded(f.cond, c, f.line, exprs), then_body: opened(taken, tb), else_body: eb };
       }
@@ -269,7 +269,7 @@ function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
     },
     ast.StmtWhile(w) => {
       let body = cover_stmts(w.body, c, exprs);
-      if (w.line > 0 && !w.is_loop && !literal_true(w.cond)) {
+      if (w.line > 0 && !w.is_loop && !ast.is_true_literal(w.cond)) {
         let taken = branch_key(c, w.line, start_col(w.cond), "T");
         return ast.StmtWhile { ...w, cond: guarded(w.cond, c, w.line, exprs), body: opened(taken, body) };
       }
@@ -291,17 +291,6 @@ function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
     },
     _ => {
       return st;
-    }
-  }
-}
-
-function literal_true(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprBool(b) => {
-      return b.value;
-    },
-    _ => {
-      return false;
     }
   }
 }

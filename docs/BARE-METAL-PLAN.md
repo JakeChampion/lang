@@ -259,6 +259,13 @@ each one with E066:
   `__fence()`.
   - On arm64, they are `dc cvac` and `dc civac`.
   - On x86-64, both are `clflush`, because the baseline has no `clwb`.
+- `__cache_sync_code(address)` makes instruction fetch see the code that the
+  kernel wrote to the line of the address. A kernel calls it for each line of
+  the code that it loads for a process.
+  - On arm64, it cleans the data line with `dc cvau` and then invalidates the
+    instruction line with `ic ivau`, with `dsb ish` after each and an `isb`.
+  - On x86-64, it emits no instruction, because instruction fetch sees each
+    store.
 - `__tlb_flush(address)` drops the translation of the page that holds the
   address, and `__tlb_flush_all()` drops every translation. A kernel calls one
   after it changes a page table.
@@ -667,8 +674,8 @@ check time, in the same mechanism that enforces the OS boundary today.
   Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
   reads the header and the program headers of an ELF64 image, and
   `TestSelfHostElfReaderMatchesDebugElf` holds it to Go's `debug/elf` on the
-  images of every ELF target. The loader that maps the segments is milestone 5
-  (#14264).
+  images of every ELF target. `std/user_process` maps the segments of a static
+  executable into the tables of a process and runs it (sequencing, step 19).
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
   reads a device tree and `std/pvh` reads the PVH start info (#14260).
@@ -845,7 +852,113 @@ and three `mmap` reservations at start.
    requests. The x86-64 image also reads the same archive as its initrd.
    Then both images write the last sector, and the Go test reads it in the
    disk file. The ELF loader is the other half of the milestone.
-18. Beside those: the panic scope is decided (#14257, see the north-star
+18. **User mode runs on arm64** (#14263, the first slice of milestone 4).
+   `__user_run(frame)` enters EL0 with the state of a trap frame, much as a
+   VMM runs a guest. Each exception from EL0 goes through a lower-EL slot of
+   the vector table. The slot saves the user state back into the frame, and
+   `__user_run` returns with the kind of the trap. Thus the syscall
+   dispatch, demand paging and preemption are ordinary Fern code in a loop
+   around `__user_run`, and a timer IRQ during EL0 returns to that loop. The
+   kernel heap is never preempted:
+   - The frame holds x0 to x30, `SP_EL0`, the PC, PSTATE, `TPIDR_EL0`, FPSR,
+     FPCR and q0 to q31, 816 bytes in all.
+   - `__user_run` keeps the callee-saved registers and the DAIF of the kernel.
+     It also keeps the `TPIDR_EL0`, FPCR and FPSR of the kernel, because the
+     frame gives the process its own values of them.
+     It masks the exceptions before it writes `ELR_EL1` and `SPSR_EL1`, so
+     that no nested exception overwrites them.
+   - `std/pagetable` maps user pages with `map_user`. Each virtual page goes
+     to a physical page, at AP 01 or AP 11 and PXN. The kernel mapping stays
+     kernel-only, so a load of a kernel address from EL0 faults.
+
+   `TestSelfHostKernelUserModeOnQemu` runs EL0 code that makes two `svc`
+   calls. The kernel answers them through the frame. Then the code loads a
+   kernel address and takes a data abort. x86-64 refuses `__user_run` until
+   its slice, which uses `syscall` and `iretq`.
+19. **Linux programs run as user processes on arm64** (#14263, the second
+   slice of milestone 4). `std/user_process` loads a static `arm64-linux`
+   executable into a fresh `std/pagetable` mapping, which holds the kernel
+   mapping, and runs it with `__user_run`:
+   - The pages that hold bytes of the file are copied at load, and
+     `__cache_sync_code` makes the code reach instruction fetch. The rest of
+     each segment, the start stack and each `mmap` reservation get a zeroed
+     frame when the program first touches them. Thus the 16 GiB heap and the
+     1 GiB stack of the Fern runtime cost only the pages that it uses.
+   - The kernel answers the start calls of the runtime (`mmap`, `mprotect`,
+     `sigaltstack`, `rt_sigaction`) and `ioctl`. `write`, `writev` and
+     `exit_group` return to the caller as events. It reads each pointer
+     argument through the tables of the process, so a bad pointer gives
+     `EFAULT`.
+   - A fault outside the regions of the process ends only that process, and
+     `release` gives back each frame that it used.
+   - `std/pagetable` gains `leaf`, `protect_user` and `free_user` for this.
+
+   `TestSelfHostKernelProcessOnQemu` runs three programs from the initrd: a
+   Fern program that prints its argument, uses its heap and its stack, and
+   exits with 3, a hand-made ELF that gets `EFAULT`, and a Fern program that
+   is killed for a load of a kernel address.
+20. **Processes are preempted on arm64** (#14263, the third slice of
+   milestone 4). Each process has its own tables and its own Fern heap. A
+   timer tick during EL0 returns to the kernel loop as `Interrupted`. The
+   top half then runs at EL1 and acknowledges the line, and the loop runs
+   the next process. The top half touches no RC value, so the kernel heap is
+   never preempted, and RC stays non-atomic.
+
+   `TestSelfHostKernelSchedulerOnQemu` checks the three "done when" items of
+   #14263 on arm64:
+   - Two Fern workers allocate and free strings under a timer of 1 ms. Both
+     are preempted, and both get the correct total.
+   - A process with a bad syscall argument ends, and the workers continue.
+   - A process that loads from the code address of a worker takes a fault,
+     because that address is not in its tables, and the kernel ends it.
+21. **A process reads the initrd through the Linux calls** (#14265, the
+   first slice of milestone 6). `with_root` gives a process a `std/cpio`
+   archive as a read-only root. The kernel answers `openat`, `close`,
+   `read`, `lseek`, `getdents64`, `fstat`, `newfstatat` and `getcwd` from
+   the archive. A path resolves `.`, `..` and symbolic links. A call that
+   can change the filesystem gives `EROFS`. `std/cpio` gains
+   `children`, the entries directly in a directory.
+
+   `TestSelfHostKernelProcessOnQemu` runs a Fern program that reads files by
+   an absolute path, a relative path and a symbolic link with the hosted
+   `read_file`, and lists `/etc` with `read_dir`. A missing file and a
+   `write_file` both fail.
+
+   The kernel also answers `statx`, `readlinkat` and `clock_gettime`.
+   `with_exe` makes `/proc/self/exe` a link to the program, so the compiler
+   can read its own image for the key of its cache. The monotonic clocks
+   read the generic timer, and `with_clock` sets the wall clock, which the
+   test reads from the PL031 real-time clock of qemu-virt. The arm64
+   baseline has no `RNDR`, so `std/virtio_rng` reads random bytes from the
+   host, and `with_random` makes it the source of `getrandom`. A process
+   with no source gets `ENOSYS`, not bytes that are not random.
+22. **A process writes files in memory** (#14265, the next slice of
+   milestone 6). The root of a process has a layer in memory above the
+   archive. The kernel answers `mkdirat`, `openat` with `O_CREAT`, `write`,
+   `renameat`, `unlinkat`, `fchmod` and `fsync` in that layer, and the
+   archive stays read-only. `written` gives the kernel a file of the layer,
+   such as the output of a compile. The compiler writes its cache of
+   certified functions in `$HOME/.cache/fern` and its output at `-o`, so it
+   needs only this layer.
+
+   `TestSelfHostKernelProcessOnQemu` runs a Fern program that makes a
+   directory tree, writes, renames, reads back, sets a mode, lists and
+   removes files there. A change of the archive fails, and the kernel reads
+   the output that the program leaves.
+23. **The compiler compiles a program on the kernel** (#14265, the first
+   "done when" item of milestone 6). The initrd holds the `arm64-linux`
+   compiler, unmodified, with its stdlib embedded, and a source file. The
+   compiler extracts its stdlib into the layer in memory, compiles the file,
+   and writes the output there. The kernel then runs the output as a second
+   process.
+   - The compile needs more RAM than the other boot tests. qemu-virt puts
+     the initrd 128 MiB above the start of its RAM. Thus `std/frames` gains
+     `reserve`, and the kernel reserves the frames of the initrd before it
+     allocates.
+   - `TestSelfHostKernelCompilesOnQemu` compares the size and the FNV-1a
+     hash of the output with the output of the same compiler on Linux,
+     under qemu-user.
+24. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

@@ -147,7 +147,9 @@ function add_free(base: usize, delta: i64): void {
 
 ### `alloc and free`
 
-`alloc` gives the lowest free frame at or after the hint word, or 0 when every frame is in use. `free` returns a frame. Neither checks its argument: a frame outside the region, or a frame freed twice, corrupts the bitmap. The methods of `Frames` check.
+`alloc` gives the lowest free frame at or after the hint word, or 0 when every frame is in use. `free` returns a frame.
+
+`reserve` marks the free frames of a range in use, so that `alloc` never gives them. A kernel reserves the memory that its loader put in its RAM, such as an initrd, before it allocates. Neither checks its argument: a frame outside the region, or a frame freed twice, corrupts the bitmap. The methods of `Frames` check.
 
 ```fern
 <<alloc and free>>=
@@ -170,6 +172,33 @@ pub function alloc(base: usize): usize {
     }
     return ZERO;
   }
+}
+
+// Marks each free frame that overlaps [start, start + len) in use, and gives
+// how many it marked. The part of the range outside the region marks nothing.
+@norc
+pub function reserve(base: usize, start: usize, len: usize): usize {
+  let limit = base + count(base) * FRAME_BYTES;
+  let end = start + len;
+  if (end > limit) {
+    end = limit;
+  }
+  let at = start;
+  if (at < base) {
+    at = base;
+  }
+  at -= (at - base) % FRAME_BYTES;
+  let n = ZERO;
+  while (at < end) {
+    let index = (at - base) / FRAME_BYTES;
+    if (!in_use(base, index)) {
+      set_bit(base, index);
+      n += ONE;
+    }
+    at += FRAME_BYTES;
+  }
+  add_free(base, 0i64 - n as i64);
+  return n;
 }
 
 @norc
@@ -271,6 +300,12 @@ pub function (f: Frames) alloc_run(n: usize): Option[usize] {
     return None;
   }
   return Some(frame);
+}
+
+// Marks the free frames that overlap [start, start + len) in use, and gives
+// how many it marked.
+pub function (f: Frames) reserve(start: usize, len: usize): usize {
+  return reserve(f.base, start, len);
 }
 
 // Whether `frame` is the address of a frame of the region that is in use.

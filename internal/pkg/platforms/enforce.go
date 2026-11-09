@@ -216,9 +216,9 @@ var gatedBuiltins = map[string]string{
 	"__raw_vg_request": "rawmem",
 	"__wfi":            "privileged", "__hvc": "privileged", "__smc": "privileged",
 	"__boot_info": "privileged", "__sysreg_read": "privileged", "__sysreg_write": "privileged",
-	"__cache_clean": "privileged", "__cache_flush": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
+	"__cache_clean": "privileged", "__cache_flush": "privileged", "__cache_sync_code": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
 	"__breakpoint": "privileged",
-	"__irq_mask":   "privileged", "__irq_unmask": "privileged", "__irq_wait": "privileged", "__irq_pending": "privileged",
+	"__irq_mask":   "privileged", "__irq_unmask": "privileged", "__irq_wait": "privileged", "__irq_pending": "privileged", "__user_run": "privileged",
 	"__port_in8": "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
 	"__mem_load8": "privileged", "__mem_load16": "privileged", "__mem_load32": "privileged", "__mem_load64": "privileged",
@@ -287,6 +287,7 @@ var coreBuiltins = map[string]bool{
 	"f64_from_bits": true,
 
 	"string_from_bytes_range_unchecked": true,
+	"share_unchecked":                   true,
 }
 
 func CoreBuiltin(name string) bool { return coreBuiltins[name] }

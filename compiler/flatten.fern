@@ -307,17 +307,9 @@ function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportG
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches, reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: parser.import_paths(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches, reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs), reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
-}
-
-function import_path_list(mod: parser.Module): string[] {
-  let out: string[] = [];
-  for im in mod.imports {
-    out = out.append(im.path);
-  }
-  return out;
+  return out.append(parser.ModuleSight { module: "", imports: parser.import_paths(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs), reexport_keys: rx.keys, reexport_targets: rx.targets, package: "" });
 }
 
 function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module {
@@ -326,28 +318,6 @@ function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module
     enums = enums.append(parser.EnumDecl { ...ed, visible_from: viewers });
   }
   return parser.Module { ...mod, enums: enums };
-}
-
-function first_dot(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'.') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function first_bracket(s: string): i32 {
-  let i = 0;
-  while (i < s.len()) {
-    if (s[i] == b'[') {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function is_in(name: string, list: string[]): boolean {
@@ -359,18 +329,6 @@ function is_in(name: string, list: string[]): boolean {
     i += 1;
   }
   return false;
-}
-
-function basename(path: string): string {
-  let start = 0;
-  let i = 0;
-  while (i < path.len()) {
-    if (path[i] == b'/') {
-      start = i + 1;
-    }
-    i += 1;
-  }
-  return slice_unchecked(path, start, path.len()) + "";
 }
 
 // The parser's range desugar qualifies its call with the import path
@@ -487,7 +445,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     return entry;
   }
   let si = top_fn_index(entry, "shutdown");
-  if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) {
+  if (si >= 0 && entry.funcs[si].params.len() != 1 + util.bool_i32(takes_state)) {
     return entry;
   }
   let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
@@ -533,13 +491,6 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
-}
-
-function bool_i32(b: boolean): i32 {
-  if (b) {
-    return 1;
-  }
-  return 0;
 }
 
 function top_fn_index(mod: parser.Module, name: string): i32 {
@@ -609,7 +560,7 @@ function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
   if (error_pfx.len() == 0) {
     return false;
   }
-  return strip_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
+  return parser.strip_type_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
 }
 
 function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
@@ -632,12 +583,12 @@ function path_is(p: string, want: string): boolean {
 }
 
 function result_of_response(t: string): boolean {
-  let s = strip_spaces(t);
+  let s = parser.strip_type_spaces(t);
   return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
 }
 
 function tuple_halves(t: string): (string, string) {
-  let s = strip_spaces(t);
+  let s = parser.strip_type_spaces(t);
   if (s.len() < 4 || s[0] != b'(' || s[s.len() - 1] != b')') {
     return ("", "");
   }
@@ -659,18 +610,6 @@ function tuple_halves(t: string): (string, string) {
   return ("", "");
 }
 
-function strip_spaces(t: string): string {
-  let out = "";
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] != b' ') {
-      out += slice_unchecked(t, i, i + 1);
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
@@ -689,7 +628,7 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
     if (k >= 0) {
       out = out.append(pfxs[k]);
     } else {
-      out = out.append(util.mangle_prefix(basename(mod.imports[i].path)));
+      out = out.append(util.mangle_prefix(util.path_base(mod.imports[i].path)));
     }
     i += 1;
   }
@@ -715,7 +654,7 @@ pub function assign_prefixes(imports: LoadedModule[]): string[] {
   for k in order {
     let base = imports[k].name;
     if (imports[k].ident.len() > 0) {
-      base = basename(imports[k].ident);
+      base = util.path_base(imports[k].ident);
     }
     let pf = unique_prefix(util.mangle_prefix(base), used);
     used = used.append(pf);
@@ -888,13 +827,13 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return gout;
   }
-  let dot = first_dot(tn);
+  let dot = util.index_of_byte(tn, b'.', 0);
   if (dot >= 0) {
     let qual = slice_unchecked(tn, 0, dot);
     if (is_in(qual, ctx.modnames)) {
       let prefix = resolve_prefix(qual, ctx);
       let rest = slice_unchecked(tn, dot + 1, tn.len());
-      let member_dot = first_dot(rest);
+      let member_dot = util.index_of_byte(rest, b'.', 0);
       if (member_dot >= 0) {
         let en = lookup_reexport(prefix + "__" + slice_unchecked(rest, 0, member_dot), ctx);
         let owner = imported_enum_prefix(en, ctx);
@@ -902,7 +841,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
           return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()) + "");
         }
       }
-      let rb = first_bracket(rest);
+      let rb = parser.first_bracket(rest);
       if (rb < 0) {
         return lookup_reexport(prefix + "__" + rest, ctx);
       }
@@ -914,7 +853,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return tn;
   }
-  let br = first_bracket(tn);
+  let br = parser.first_bracket(tn);
   if (br < 0) {
     return bare_type(tn, ctx);
   }
@@ -935,7 +874,7 @@ function bare_type(tn: string, ctx: RewriteCtx): string {
 }
 
 function rewrite_variant_name(tn: string, ctx: RewriteCtx): string {
-  if (first_dot(tn) < 0 && first_bracket(tn) < 0) {
+  if (util.index_of_byte(tn, b'.', 0) < 0 && parser.first_bracket(tn) < 0) {
     return mangle_bare(tn, ctx);
   }
   return rewrite_type_name(tn, ctx);
@@ -1785,7 +1724,7 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
       k = util.index_of_str(ids, mod.imports[i].resolved);
     }
     if (k < 0) {
-      k = loaded_index_by_name(imports, basename(mod.imports[i].path));
+      k = loaded_index_by_name(imports, util.path_base(mod.imports[i].path));
     }
     if (k >= 0) {
       for t in imports[k].mod.trait_decls {
@@ -2023,7 +1962,7 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
         if (imps[j].resolved.len() > 0) {
           ok = util.index_of_str(ids, imps[j].resolved);
         }
-        let origin = util.mangle_prefix(basename(imps[j].path));
+        let origin = util.mangle_prefix(util.path_base(imps[j].path));
         if (ok >= 0) {
           origin = pfxs[ok];
         }

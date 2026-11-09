@@ -158,7 +158,7 @@ function method_edge(fd: parser.FuncDecl, callee: parser.FuncDecl): boolean {
   if (parser.array_method_element(callee.receiver_type).len() > 0) {
     return true;
   }
-  let want = canonical_tag(util.base_type_name(callee.receiver_type));
+  let want = treeshake.canonical_tag(util.base_type_name(callee.receiver_type));
   if (want.len() == 0 || util.has_str(callee.type_params, want) || util.has_str(callee.all_type_params, want)) {
     return true;
   }
@@ -187,25 +187,8 @@ function method_edge_call(e: ast.Expr, own edge: MethodEdge): MethodEdge {
   if let ast.ExprArray(_) = fa.obj {
     return edge;
   }
-  let tag = canonical_tag(util.base_type_name(receiver_tag(fa.obj)));
+  let tag = treeshake.canonical_tag(util.base_type_name(ast.receiver_tag(fa.obj)));
   return MethodEdge { ...edge, hit: tag.len() == 0 || tag == edge.receiver };
-}
-
-function receiver_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
-}
-
-function canonical_tag(tag: string): string {
-  if (tag == "str") {
-    return "string";
-  }
-  if (tag == "bool") {
-    return "boolean";
-  }
-  return tag;
 }
 
 // A trait method of an impl is declared as `Trait.method`.

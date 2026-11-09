@@ -1,0 +1,6 @@
+{
+  "assembly_sha256": "34f10cc7bb14483356a6381be71c13aa989472ae51f4182d65d157dacfcb64c9",
+  "alloc_count_symbol_references": 0,
+  "executed_for_measurement": false,
+  "purpose": "Offline emitted-assembly audit confirms no allocation counter symbol in this CPU-profile harness."
+}

@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Compare bounded IVF input with FFprobe packets and FFmpeg decoded pixels."""
+import importlib.util
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location("ivf_fixtures", ROOT / "scripts/gen-video-ivf-fixtures.py")
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/ivf-input-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
+                "scripts/video-reference/ivf-input.fern", "internal/stdlib"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm),
+                "scripts/video-reference/ivf-input.fern", "internal/stdlib"], check=True)
+
+
+def decode(path):
+    return subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
+                                    "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+
+
+with tempfile.TemporaryDirectory() as directory:
+    directory = Path(directory)
+    for codec, path in fixtures.generate(directory):
+        data = path.read_bytes()
+        metadata = fixtures.reference(path)
+        lines = subprocess.check_output([str(binary), str(path)], text=True).splitlines()
+        assert lines == subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                                cwd=directory, text=True).splitlines()
+        header = lines[0].split()
+        rate, scale = struct.unpack_from("<II", data, 16)
+        stream = metadata["streams"][0]
+        assert header == ["H", codec, str(stream["width"]), str(stream["height"]), str(rate), str(scale)]
+        output = bytearray(data[:32])
+        assert len(lines) == len(metadata["packets"]) + 1
+        for line, packet in zip(lines[1:], metadata["packets"], strict=True):
+            tag, offset, timestamp, payload = line.split()
+            payload = bytes.fromhex(payload)
+            assert tag == "P" and int(offset) == int(packet["pos"]) + 12
+            assert len(payload) == int(packet["size"]) and int(timestamp) == int(packet["pts"])
+            output += struct.pack("<IQ", len(payload), int(timestamp)) + payload
+        assert output == data
+        restored = directory / (codec.lower() + "-fern.ivf")
+        restored.write_bytes(output)
+        pixels = decode(restored)
+        assert len(pixels) == 6 * 32 * 32 * 3 and pixels == decode(path)
+        print(f"{codec}: native and WASI packets match FFprobe; FFmpeg pixels match", flush=True)

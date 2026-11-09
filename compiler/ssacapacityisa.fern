@@ -448,16 +448,12 @@ function array_box_operands(name: string, a: string, b: string): Op {
   return index_only_lea(name, a, b);
 }
 
-function constructor_symbol_byte(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function constructor_symbol(s: string): boolean {
   if (s == "" || s[0] >= b'0' && s[0] <= b'9') {
     return false;
   }
   for c in s {
-    if (!constructor_symbol_byte(c)) {
+    if (!util.is_symbol_byte(c)) {
       return false;
     }
   }

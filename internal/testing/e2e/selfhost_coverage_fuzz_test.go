@@ -1,20 +1,16 @@
 package e2e
 
 import (
-	"bufio"
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
 	"github.com/jakechampion/lang/internal/envflag"
-	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
@@ -24,51 +20,6 @@ const (
 	selfHostCoverFuzzTimeEnv   = "FERN_SELFHOST_COVER_FUZZ_TIME"
 	selfHostCoverFuzzCorpusEnv = "FERN_SELFHOST_COVER_FUZZ_CORPUS"
 )
-
-type coverBits struct {
-	words []uint64
-	rows  int
-}
-
-func (c *coverBits) set(i int) {
-	w := i / 64
-	for len(c.words) <= w {
-		c.words = append(c.words, 0)
-	}
-	c.words[w] |= 1 << (uint(i) % 64)
-}
-
-func (c *coverBits) addAll(other *coverBits) int {
-	gained := 0
-	for w, bits := range other.words {
-		for len(c.words) <= w {
-			c.words = append(c.words, 0)
-		}
-		newBits := bits &^ c.words[w]
-		if newBits != 0 {
-			gained += popcount(newBits)
-			c.words[w] |= newBits
-		}
-	}
-	return gained
-}
-
-func (c *coverBits) count() int {
-	n := 0
-	for _, w := range c.words {
-		n += popcount(w)
-	}
-	return n
-}
-
-func popcount(x uint64) int {
-	n := 0
-	for x != 0 {
-		x &= x - 1
-		n++
-	}
-	return n
-}
 
 func buildInstrumentedSelfHost(t *testing.T, dir string) string {
 	t.Helper()
@@ -81,7 +32,7 @@ func buildInstrumentedSelfHost(t *testing.T, dir string) string {
 	return binPath
 }
 
-func runInstrumented(bin, stdlibRoot, srcPath, src string) (*coverBits, error) {
+func runInstrumented(bin, stdlibRoot, srcPath, src string) (*e2eharness.CoverBits, error) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		return nil, fmt.Errorf("write src: %w", err)
 	}
@@ -95,27 +46,9 @@ func runInstrumented(bin, stdlibRoot, srcPath, src string) (*coverBits, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	bits := &coverBits{}
-	sc := bufio.NewScanner(pipe)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	row := 0
-	for sc.Scan() {
-		line := sc.Bytes()
-		if !bytes.HasPrefix(line, []byte(ast.CoverLinePrefix)) && !bytes.HasPrefix(line, []byte(ast.CoverBranchPrefix)) {
-			continue
-		}
-		if sp := bytes.LastIndexByte(line, ' '); sp >= 0 && !bytes.Equal(line[sp+1:], []byte("0")) {
-			bits.set(row)
-		}
-		row++
-	}
-	scanErr := sc.Err()
+	bits, _, err := e2eharness.ReadCoverReport(pipe)
 	_ = cmd.Wait()
-	if scanErr != nil {
-		return nil, fmt.Errorf("read coverage report: %w", scanErr)
-	}
-	bits.rows = row
-	return bits, nil
+	return bits, err
 }
 
 func coverFuzzSeeds() [][]byte {
@@ -159,13 +92,13 @@ func runCoverageCampaign(t *testing.T, bin, stdlibRoot, srcPath string, seeds []
 	t.Helper()
 	rng := rand.New(rand.NewSource(rngSeed))
 	corpus := append([][]byte(nil), seeds...)
-	total := &coverBits{}
+	total := &e2eharness.CoverBits{}
 	for _, entry := range corpus {
 		bits, err := runInstrumented(bin, stdlibRoot, srcPath, fernsmith.GenMainBytes(entry))
 		if err != nil {
 			t.Fatalf("seed run: %v", err)
 		}
-		total.addAll(bits)
+		total.AddAll(bits)
 	}
 	done := 0
 	for ; done < iterations; done++ {
@@ -175,12 +108,12 @@ func runCoverageCampaign(t *testing.T, bin, stdlibRoot, srcPath string, seeds []
 		if err != nil {
 			t.Fatalf("iteration %d: %v", done, err)
 		}
-		gained := total.addAll(bits)
+		gained := total.AddAll(bits)
 		if guided && gained > 0 {
 			corpus = append(corpus, input)
 		}
 	}
-	return fuzzRun{iterations: done, covered: total.count(), corpus: corpus}
+	return fuzzRun{iterations: done, covered: total.Count(), corpus: corpus}
 }
 
 func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
@@ -212,9 +145,9 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	srcPath := filepath.Join(work, "main.fern")
 
 	corpusDir := os.Getenv(selfHostCoverFuzzCorpusEnv)
-	corpus := append(coverFuzzSeeds(), loadCoverCorpus(t, corpusDir)...)
+	corpus := append(coverFuzzSeeds(), e2eharness.LoadCoverCorpus(corpusDir)...)
 
-	total := &coverBits{}
+	total := &e2eharness.CoverBits{}
 	rng := rand.New(rand.NewSource(1))
 	var iterations, discoveries int
 	deadline := time.Now().Add(budget)
@@ -226,14 +159,14 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 			t.Fatalf("iteration %d: %v", iterations, err)
 		}
 		iterations++
-		if total.rows == 0 {
-			total.rows = bits.rows
-		} else if bits.rows != total.rows {
+		if total.Rows == 0 {
+			total.Rows = bits.Rows
+		} else if bits.Rows != total.Rows {
 			t.Fatalf("iteration %d reported %d counter rows, previous runs reported %d — "+
 				"the counter table must be fixed for a given binary",
-				iterations, bits.rows, total.rows)
+				iterations, bits.Rows, total.Rows)
 		}
-		if total.addAll(bits) > 0 {
+		if total.AddAll(bits) > 0 {
 			corpus = append(corpus, input)
 			discoveries++
 			judgeDiscovery(t, fernBin, stdlibRoot, discoveries, input)
@@ -243,18 +176,18 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	if iterations == 0 {
 		t.Fatalf("budget %s ran no iterations", budget)
 	}
-	if total.rows == 0 {
+	if total.Rows == 0 {
 		t.Fatal("the self-host driver emitted no coverage rows — the build is not instrumented, " +
 			"so nothing here is coverage-guided")
 	}
-	if total.count() == 0 {
+	if total.Count() == 0 {
 		t.Fatalf("%d iterations reached zero counters out of %d — the report is being read wrong",
-			iterations, total.rows)
+			iterations, total.Rows)
 	}
 	t.Logf("coverage-guided self-host fuzz: %d iterations in %s, %d corpus entries (+%d found), %d/%d counters (%.1f%%)",
-		iterations, budget, len(corpus), discoveries, total.count(), total.rows,
-		100*float64(total.count())/float64(total.rows))
-	saveCoverCorpus(t, corpusDir, corpus)
+		iterations, budget, len(corpus), discoveries, total.Count(), total.Rows,
+		100*float64(total.Count())/float64(total.Rows))
+	e2eharness.SaveCoverCorpus(t, corpusDir, corpus)
 }
 
 func judgeDiscovery(t *testing.T, fernBin, stdlibRoot string, n int, input []byte) {
@@ -326,54 +259,4 @@ func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
 			"the corpus is not steering anything (per stream: guided %v, blind %v)",
 			streams, g, b, guided, blind)
 	}
-}
-
-func loadCoverCorpus(t *testing.T, dir string) [][]byte {
-	t.Helper()
-	if dir == "" {
-		return nil
-	}
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, e := range ents {
-		if !e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	var out [][]byte
-	for _, n := range names {
-		b, err := os.ReadFile(filepath.Join(dir, n))
-		if err != nil {
-			continue
-		}
-		out = append(out, b)
-	}
-	return out
-}
-
-func saveCoverCorpus(t *testing.T, dir string, corpus [][]byte) {
-	t.Helper()
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("corpus dir %s: %v (discoveries not persisted)", dir, err)
-		return
-	}
-	for _, entry := range corpus {
-		name := fmt.Sprintf("%x", sha256Sum(entry))
-		if err := os.WriteFile(filepath.Join(dir, name), entry, 0o644); err != nil {
-			t.Logf("write corpus entry: %v", err)
-			return
-		}
-	}
-}
-
-func sha256Sum(b []byte) []byte {
-	sum := sha256.Sum256(b)
-	return sum[:]
 }

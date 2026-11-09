@@ -375,7 +375,7 @@ function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision 
   if (c.stages.len() == 0 && c.roots.len() == 0) {
     return absent_producer(f, cx, defs, c);
   }
-  if (c.hi < 0 && !is_array(f.values[c.base])) {
+  if (c.hi < 0 && !typeinfo.is_array(f.values[c.base])) {
     return Decision { reason: semarrayreport.fusion_no_producer(), stage: first_pos(c) };
   }
   let between = effect_between(f.graph.blocks[c.block], c);
@@ -590,20 +590,6 @@ function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boo
   return out;
 }
 
-function is_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = t {
-    return true;
-  }
-  return false;
-}
-
-function element(t: typeinfo.Type): typeinfo.Type {
-  if let typeinfo.TypeArray(a) = t {
-    return a.elem;
-  }
-  return typeinfo.unchecked();
-}
-
 function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   let b = f.graph.blocks[c.block];
   let sink = b.insts[c.sink];
@@ -617,7 +603,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
       e = ssasem.func_result(f.values[c.fns[j]]);
     }
     if (c.verbs[j] == "flat_map") {
-      e = element(ssasem.func_result(f.values[c.fns[j]]));
+      e = typeinfo.array_elem(ssasem.func_result(f.values[c.fns[j]]));
     }
     if (!ssasem.is_scalar(e)) {
       return c.stages[j];
@@ -638,16 +624,16 @@ function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean
     return !ssasem.is_scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
   }
   if (verb == "scan") {
-    return !ssasem.is_scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result]));
+    return !ssasem.is_scalar(typeinfo.array_elem(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], typeinfo.array_elem(f.values[sink.result]));
   }
   return false;
 }
 
 function base_element(f: ssasem.Func, c: Chain): typeinfo.Type {
   if (c.hi >= 0) {
-    return int32();
+    return typeinfo.t_i32();
   }
-  return element(f.values[c.base]);
+  return typeinfo.array_elem(f.values[c.base]);
 }
 
 function first_pos(c: Chain): i32 {
@@ -697,38 +683,6 @@ function prepend_str(x: string, xs: string[]): string[] {
     out = out.append(y);
   }
   return out;
-}
-
-function next_block_id(g: ssa.SFunc): i32 {
-  let hi = 0;
-  for b in g.blocks {
-    if (b.id >= hi) {
-      hi = b.id + 1;
-    }
-  }
-  return hi;
-}
-
-function br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
-}
-
-function brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
-}
-
-function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == ssa.TERM_BR) {
-    return [t.target];
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return [t.t, t.f];
-  }
-  return [];
-}
-
-function int32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 struct Build { values: typeinfo.Type[], blocks: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next: i32 }
@@ -794,8 +748,8 @@ function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
 
 function count(st: Stepped, k: i32): Stepped {
   let at = st.l.count_at + k;
-  let one = emit(st.s, 1, int32(), [], 1, "");
-  let more = emit(one.s, 9, int32(), [st.l.cur[at], one.v], 0, "+");
+  let one = emit(st.s, 1, typeinfo.t_i32(), [], 1, "");
+  let more = emit(one.s, 9, typeinfo.t_i32(), [st.l.cur[at], one.v], 0, "+");
   return Stepped { ...st, s: more.s, l: Loop { ...st.l, cur: st.l.cur.with(at, more.v) } };
 }
 
@@ -808,11 +762,11 @@ function call_step(f: ssasem.Func, st: Stepped, v: string, fn: i32): Stepped {
   let from = keep.s.id;
   let yes = keep.s.next;
   if (v == "take_while") {
-    let s = open(close(fresh(keep.s, 1), brif(keep.v, yes, pipeline_exit(st))), yes, [from]);
+    let s = open(close(fresh(keep.s, 1), ssa.t_brif(keep.v, yes, pipeline_exit(st))), yes, [from]);
     return Stepped { ...st, s: s, l: stop(st.l, from) };
   }
-  let s = close(fresh(keep.s, 2), brif(keep.v, yes, yes + 1));
-  s = close(open(s, yes + 1, [from]), br(st.l.head));
+  let s = close(fresh(keep.s, 2), ssa.t_brif(keep.v, yes, yes + 1));
+  s = close(open(s, yes + 1, [from]), ssa.t_br(st.l.head));
   return Stepped { ...st, s: open(s, yes, [from]), l: back(st.l, yes + 1, st.l.cur) };
 }
 
@@ -827,22 +781,22 @@ function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
   let fn = c.fns[j];
   let arr_t = ssasem.func_result(f.values[fn]);
   let ys = emit(st.s, ssasem.call_value(), arr_t, [fn, st.e], 0, "");
-  let n = emit(ys.s, ssasem.length(), int32(), [ys.v], 0, "");
-  let zero = emit(n.s, 1, int32(), [], 0, "");
+  let n = emit(ys.s, ssasem.length(), typeinfo.t_i32(), [ys.v], 0, "");
+  let zero = emit(n.s, 1, typeinfo.t_i32(), [], 0, "");
   let s = zero.s;
   let o = st.l;
   let head = s.next;
   let l = Loop { ...o, head: head, i: s.values.len(), start: zero.v, entry: s.id, inits: o.cur, backs: [], rows: [], exits: [], exit_rows: [] };
-  s = Build { ...fresh(s, 3), values: s.values.append(int32()) };
+  s = Build { ...fresh(s, 3), values: s.values.append(typeinfo.t_i32()) };
   let vars: i32[] = [];
   for v in o.vars {
     vars = vars.append(s.values.len());
     s = Build { ...s, values: s.values.append(s.values[v]) };
   }
   l = Loop { ...l, vars: vars, cur: vars };
-  let h = loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: -1 }, n.v);
+  let h = loop_head(Opened { s: open(close(s, ssa.t_br(head)), head, []), l: l, yes: -1 }, n.v);
   h = guards(c, h, j + 1, pipeline_exit(st));
-  let fetched = emit(h.s, ssasem.array_get(), element(arr_t), [ys.v, h.l.i], 1, "");
+  let fetched = emit(h.s, ssasem.array_get(), typeinfo.array_elem(arr_t), [ys.v, h.l.i], 1, "");
   return Stepped { s: fetched.s, l: h.l, e: fetched.v, outer: st.outer.append(o) };
 }
 
@@ -854,7 +808,7 @@ function unwind(st: Stepped): Stepped {
     let o = st.outer[k];
     s = header(s, l);
     let exit = l.head + 2;
-    s = close(open(s, exit, [l.head]), br(o.head));
+    s = close(open(s, exit, [l.head]), ssa.t_br(o.head));
     o = back(o, exit, l.vars);
     l = Loop { ...o, exits: util.append_all(o.exits, l.exits), exit_rows: util.append_all(o.exit_rows, l.exit_rows) };
     k -= 1;
@@ -868,7 +822,7 @@ function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i
   if (c.verb == "len") {
     let one = emit(s, 1, t, [], 1, "");
     let more = emit(one.s, 9, t, [l.cur[0], one.v], 0, "+");
-    return Stepped { ...st, s: close(more.s, br(l.head)), l: back(l, more.s.id, l.cur.with(0, more.v)) };
+    return Stepped { ...st, s: close(more.s, ssa.t_br(l.head)), l: back(l, more.s.id, l.cur.with(0, more.v)) };
   }
   if (c.verb == "fold" || l.seen_at < 0) {
     let a = emit(s, ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
@@ -879,16 +833,16 @@ function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i
       s = out.s;
       cur = cur.with(l.out_at, out.v);
     }
-    return Stepped { ...st, s: close(s, br(l.head)), l: back(l, s.id, cur) };
+    return Stepped { ...st, s: close(s, ssa.t_br(l.head)), l: back(l, s.id, cur) };
   }
   let from = s.id;
   let comb = s.next;
-  s = close(fresh(s, 3), brif(l.cur[l.seen_at], comb, comb + 1));
+  s = close(fresh(s, 3), ssa.t_brif(l.cur[l.seen_at], comb, comb + 1));
   let a = emit(open(s, comb, [from]), ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
-  s = close(a.s, br(comb + 2));
-  s = close(open(s, comb + 1, [from]), br(comb + 2));
+  s = close(a.s, ssa.t_br(comb + 2));
+  s = close(open(s, comb + 1, [from]), ssa.t_br(comb + 2));
   let joined = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
-  return Stepped { ...st, s: close(joined.s, br(l.head)), l: back(l, comb + 2, l.cur.with(0, joined.v).with(l.seen_at, yes)) };
+  return Stepped { ...st, s: close(joined.s, ssa.t_br(l.head)), l: back(l, comb + 2, l.cur.with(0, joined.v).with(l.seen_at, yes)) };
 }
 
 struct Ended { s: Build, finals: i32[] }
@@ -934,11 +888,11 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, finals: i32[], resu
   let whole = f.values[result];
   let from = s.id;
   let some = s.next;
-  s = close(fresh(s, 3), brif(finals[l.seen_at], some, some + 1));
+  s = close(fresh(s, 3), ssa.t_brif(finals[l.seen_at], some, some + 1));
   let vs = emit(open(s, some, [from]), ssasem.variant_new(), whole, [finals[0]], 0, "Some");
-  s = close(vs.s, br(some + 2));
+  s = close(vs.s, ssa.t_br(some + 2));
   let vn = emit(open(s, some + 1, [from]), ssasem.variant_new(), whole, [], 0, "None");
-  s = close(vn.s, br(some + 2));
+  s = close(vn.s, ssa.t_br(some + 2));
   return emit_at(open(s, some + 2, [some, some + 1]), 8, [vs.v, vn.v], result);
 }
 
@@ -975,7 +929,7 @@ function header(s: Build, l: Loop): Build {
 struct Opened { s: Build, l: Loop, yes: i32 }
 
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
-  let i32t = int32();
+  let i32t = typeinfo.t_i32();
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let n = Emitted { s: s, v: c.hi };
   if (c.hi < 0) {
@@ -1024,7 +978,7 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
     }
   }
   l = Loop { ...l, inits: inits, cur: l.vars };
-  return loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: yes }, n.v);
+  return loop_head(Opened { s: open(close(s, ssa.t_br(head)), head, []), l: l, yes: yes }, n.v);
 }
 
 function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Type, seed: i32, start: i32): Opened {
@@ -1047,9 +1001,9 @@ function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Typ
 function loop_head(o: Opened, n: i32): Opened {
   let head = o.l.head;
   let more = emit(o.s, 9, typeinfo.TypeBool { tag: 0 }, [o.l.i, n], 0, "<");
-  let s = close(more.s, brif(more.v, head + 1, head + 2));
-  let one = emit(open(s, head + 1, [head]), 1, int32(), [], 1, "");
-  let step = emit(one.s, 9, int32(), [o.l.i, one.v], 0, "+");
+  let s = close(more.s, ssa.t_brif(more.v, head + 1, head + 2));
+  let one = emit(open(s, head + 1, [head]), 1, typeinfo.t_i32(), [], 1, "");
+  let step = emit(one.s, 9, typeinfo.t_i32(), [o.l.i, one.v], 0, "+");
   return Opened { ...o, s: step.s, l: Loop { ...o.l, next_i: step.v } };
 }
 
@@ -1063,7 +1017,7 @@ function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
       let below = emit(s, 9, typeinfo.TypeBool { tag: 0 }, [l.cur[l.count_at + k], c.fns[j]], 0, "<");
       let at = below.s.id;
       let on = below.s.next;
-      s = open(close(fresh(below.s, 1), brif(below.v, on, exit)), on, [at]);
+      s = open(close(fresh(below.s, 1), ssa.t_brif(below.v, on, exit)), on, [at]);
       l = stop(l, at);
     }
     if (c.verbs[j] == "take") {
@@ -1086,17 +1040,17 @@ function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   if (c.verb != "reduce") {
     return out;
   }
-  let i32t = int32();
+  let i32t = typeinfo.t_i32();
   let n = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   let zero = emit(n.s, 1, i32t, [], 0, "");
   let nonempty = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
   let from = s.id;
   let empty = s.next;
-  s = close(fresh(nonempty.s, 3), brif(nonempty.v, empty + 1, empty));
+  s = close(fresh(nonempty.s, 3), ssa.t_brif(nonempty.v, empty + 1, empty));
   let result = f.graph.blocks[c.block].insts[c.sink].result;
   let none = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
-  s = open(close(none.s, br(empty + 2)), empty + 1, [from]);
-  let value = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
+  s = open(close(none.s, ssa.t_br(empty + 2)), empty + 1, [from]);
+  let value = emit(s, ssasem.array_get(), typeinfo.array_elem(f.values[c.base]), [c.base, zero.v], 1, "");
   let st = steps(f, c, value.s, no_loop(), value.v);
   return Peeled { s: st.s, seed: st.e, empty: empty, none: none.v, join: empty + 2 };
 }
@@ -1107,7 +1061,7 @@ function finish_seeded(f: ssasem.Func, c: Chain, e: Ended, l: Loop, p: Peeled, r
   }
   let some = emit(e.s, ssasem.variant_new(), f.values[result], [e.finals[0]], 0, "Some");
   let from = e.s.id;
-  return emit_at(open(close(some.s, br(p.join)), p.join, [p.empty, from]), 8, [p.none, some.v], result);
+  return emit_at(open(close(some.s, ssa.t_br(p.join)), p.join, [p.empty, from]), 8, [p.none, some.v], result);
 }
 
 @noinline
@@ -1117,18 +1071,18 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   let sink = b.insts[c.sink];
   let acc_t = f.values[sink.result];
   if (c.verb == "reduce") {
-    acc_t = element(f.values[sink.args[0]]);
+    acc_t = typeinfo.array_elem(f.values[sink.args[0]]);
   }
   if (c.verb == "scan") {
-    acc_t = element(f.values[sink.result]);
+    acc_t = typeinfo.array_elem(f.values[sink.result]);
   }
-  let s = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
+  let s = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: ssa.next_block_id(g) };
   let peeled = peel_seed(f, c, s);
   let o = enter(f, c, peeled.s, acc_t, peeled.seed);
   o = guards(c, o, 0, o.l.head + 2);
   let fetched = Emitted { s: o.s, v: o.l.i };
   if (c.hi < 0) {
-    fetched = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.i], 1, "");
+    fetched = emit(o.s, ssasem.array_get(), typeinfo.array_elem(f.values[c.base]), [c.base, o.l.i], 1, "");
   }
   let st = steps(f, c, fetched.s, o.l, fetched.v);
   st = unwind(sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes));
@@ -1164,7 +1118,7 @@ function kept_before(b: ssa.SBlock, c: Chain): ssa.SInst[] {
 function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
   let old = g.blocks[at];
   let last = built[built.len() - 1].id;
-  let targets = term_targets(old.term);
+  let targets = ssa.term_targets(old.term);
   let out: ssa.SBlock[] = [];
   let i = 0;
   while (i < g.blocks.len()) {

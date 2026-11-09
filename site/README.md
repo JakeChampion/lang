@@ -1,8 +1,8 @@
 # Fern docs site
 
-Astro + Starlight build of the documentation that publishes to
-GitHub Pages at the repo root, with the playground bundled at
-`/playground/`.
+Astro + Starlight build of the documentation at
+[fern-lang.netlify.app](https://fern-lang.netlify.app), with the
+playground bundled at `/playground/`.
 
 ## Layout
 
@@ -11,6 +11,7 @@ site/
 ├── astro.config.mjs            Starlight + sidebar + meta config
 ├── package.json
 ├── scripts/
+│   ├── capture.mjs             Record compiler output for the home page
 │   ├── fetch-fonts.mjs         Refresh the self-hosted webfonts
 │   └── render-og.mjs           Render the social card to public/og.png
 ├── src/
@@ -87,15 +88,10 @@ npm install
 # build.sh needs bin/fern-selfhost and runs `make selfhost-cli` when it
 # is missing (or set FERN_SELFHOST to a compiler you already have).
 ( cd .. && ./web/build.sh )
-mkdir -p public/playground
-# Copy every .html/.js/.wasm, as pages.yml does: index.html statically
-# imports both wasi shims, so a missing one breaks the whole ES module
-# and the playground hangs on "loading runtime…".
-cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+( cd .. && web/stage.sh site/public/playground )
 
 # Generate the stdlib reference pages.
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
-../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
+scripts/stdlib-docs.sh
 
 # Run the dev server (live-reload on .md changes).
 npm run dev
@@ -105,8 +101,7 @@ npm run dev
 which checks, runs and compiles the editor's program and serves its
 diagnostics, hover and completion.
 
-Open `http://localhost:4321/lang/` (Starlight serves under the
-configured `base`).
+Open `http://localhost:4321/`.
 
 ## Build for production
 
@@ -114,19 +109,73 @@ configured `base`).
 npm run build    # → site/dist/
 ```
 
-The GitHub Actions `Pages` workflow runs this on every push to
-main that touches the site, the playground, the compiler, anything
-under `internal/` (the stdlib included), the syntax grammar, or the
-toolchain pins. On pull requests the `Docs build` lane runs the same
-build and then the Playwright suite in `test/playwright/`.
+`npm run build` runs `scripts/capture.mjs` first. The script runs the
+compiler (`$FERN_SELFHOST`, else `../bin/fern-selfhost`) and records its
+output in `src/generated/captures.json`, which is not in git. The home
+page shows that output: the assembly for `src/captures/area.fern`, the
+size of the executable, the `fern -help` usage text, and the
+capabilities of `fern -lsp`, and the diagnostics for the programs in
+`src/captures/diagnostics/`. The script stops the build when `main` no
+longer loads the folded constant that the home page names, or when a
+diagnostic program stops failing.
 
-The same bundle also deploys to Netlify, via `netlify.toml` at the
-repo root and `scripts/netlify-build` (which mirrors the `Pages`
-workflow's steps). The one host-specific wrinkle is `base`: Astro
-bakes the `/lang` prefix into every internal link but does *not*
-nest `dist/` to match, so Pages lines the two up by serving `dist/`
-at `/lang/`, while Netlify serves `dist/` at the domain root and
-rewrites `/lang/*` back down. Keep the two build recipes in step.
+`scripts/startup-bench` times a hello-world program from process start
+to exit in Fern and in other languages. `.github/workflows/startup-bench.yml`
+runs it each week on a Linux x86-64 runner and opens a pull request with
+the log in `docs/startup-log/`. The home page shows the newest log, and
+shows no startup table before the first one.
+
+`public/install.sh` is the install script that the home page and the
+install tutorial give. `test/install.test.mjs` runs it against a fake
+release.
+
+Netlify builds and deploys the site from `main`, through
+`netlify.toml` at the repo root and `scripts/netlify-build`. On pull
+requests the `Docs build` lane runs the same build and then the
+Playwright suite in `test/playwright/`. `netlify.toml` redirects old
+`/lang/...` links to the root.
+
+`scripts/check-links.mjs --dist dist` finds each internal link in a
+build that names no file. The Docs build lane runs it. With
+`--site URL`, it reads the sitemap of a deployed site and requests each
+internal link. `.github/workflows/site-links.yml` runs that against the
+site every 6 hours, and opens an issue when a link is broken.
+`.github/workflows/preview-links.yml` runs it against the Netlify deploy
+preview of each pull request, when Netlify reports the preview as ready,
+and sets a `site-links/preview` status on the commit.
+
+## Error codes
+
+`scripts/error-docs.mjs` turns each explanation in
+`internal/syntax/diag/explanations/`, the text that `fern -explain`
+prints, into a page under `/errors/`, with an index of the codes.
+`npm run build` runs it first, and the pages are not in git. Edit the
+explanation, not the page.
+
+## Playground short links
+
+The playground's Share button asks `/api/share` for a short link, such
+as `/p/zjxLsMlmJF`. `netlify/functions/share.mjs` is that Netlify
+Function: it stores the playground hash in the `playground-shares`
+Netlify Blobs store, and `/p/ID` redirects to the playground with it.
+The id comes from a hash of the snippet. Where the function is not
+there, as on a local server of `web/`, Share copies the long link.
+`netlify functions:serve --functions site/netlify/functions` runs it
+locally.
+
+## Social cards and llms.txt
+
+Each docs page except the home page has a social card at
+`/og/PAGE.png`, which `src/pages/og/[...slug].png.ts` renders during
+the build. `src/lib/og-card.mjs` draws the text as SVG paths from the
+static TTFs in `src/assets/fonts/card/`, so a card does not depend on
+the fonts of the build machine. The home page keeps `public/og.png`.
+
+`/llms.txt` is an index of the docs in the llmstxt.org format.
+`/llms-full.txt` holds the text of every guide and reference page, and
+`/llms-stdlib.txt` holds every standard-library module.
+`src/lib/llms.mjs` makes them from the Markdown sources, and changes
+MDX components to plain Markdown.
 
 ## Embed a live snippet
 
@@ -147,7 +196,22 @@ import FernPlayground from "../../components/FernPlayground.astro";
 
 The component base64-URL-encodes the snippet into the iframe's
 hash — same codec the standalone playground's Share button uses,
-so URLs are interchangeable.
+so URLs are interchangeable. Give `args="…"` and `stdin={`…`}` to
+run the snippet with arguments and standard input. The embed then
+shows its program-input panel, so the reader can change both.
+
+Give `expect={`…`}` to make the snippet an exercise. The embed shows
+the expected output as the goal, and after each run says whether the
+output is the goal. An exercise is not autorun: give `autoRun={false}`.
+
+Every ```` ```fern ```` fence that defines `main` gets an "Open in
+playground" link, from `src/lib/ec-playground-link.mjs`. That rehype
+plugin runs after Expressive Code, and takes the code from the copy
+button of the block.
+
+Code fences and the playground editor take their token colours from
+`web/editor/fern-themes.json`, so a snippet and a fence colour the same
+token the same way.
 
 ## Add a new tutorial / reference page
 
@@ -178,6 +242,13 @@ would put generated content under review with no source-of-truth.
 If you want to expand or correct the reference, edit the doc
 comments in the source `.fern` files. The next build will pick
 them up.
+
+`scripts/stdlib-docs.sh` runs `fern -doc` with `-doc-source`, so each
+declaration links to its line in the source on GitHub. For a literate
+`.fern.md` module, the link names the line in the document, not in the
+tangled source. The "Edit page" link of a module page names the
+module's source too. `/stdlib/functions/` searches every declaration,
+from the `/stdlib-index.json` that the build makes.
 
 The stdlib sidebar is grouped by purpose through `STDLIB_GROUPS` in
 `astro.config.mjs`. A module missing from that table still gets a

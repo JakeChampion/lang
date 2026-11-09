@@ -1,6 +1,6 @@
 # Compiler performance
 
-Status: [plan] measurement process and priorities, updated 2026-11-08.
+Status: [plan] measurement process and priorities, updated 2026-11-09.
 
 Fern aims to have one of the fastest parsers and self-hosted compilers in the world.
 Correct diagnostics, ownership proofs, and generated code remain requirements.
@@ -71,6 +71,35 @@ The combined changes remove 88,545 cold allocation events and 354,975,385 warm i
 These reductions are 0.1700% and 1.1925%, respectively, with identical generated output.
 The inliner comparison retains the rejected worklist trial and the direct-allocation control.
 Fresh heap growth remains unchanged relative to the graph-only parent.
+
+A new profile at `49056c6e39` contains 1,093 CPU samples and no dropped samples.
+Semantic substitution accounts for 36.69% of inclusive samples, and ownership certification accounts for 20.77%.
+
+The [liveness comparison](benchmarks/compiler-liveness-2026-11-09/README.md) reuses block positions and definition sites that the certifier already holds.
+It removes 16,644 allocations and 125,065,828 cold guest instructions from the fixed checker compile.
+The reductions are 0.0317% and 0.3003%, respectively.
+Warm guest instructions decrease by 11,966,410, or 0.0406%.
+Both comparisons retain ownership certification and produce identical output.
+
+The [updated liveness comparison](benchmarks/compiler-liveness-main-2026-11-09/README.md) checks the same change after the merge of main `d04e79179f`.
+The candidate code source is `2d7d444e94`.
+It removes 16,652 cold allocation events, 125,074,176 cold guest instructions, and 11,855,020 warm guest instructions.
+The reductions are 0.0317%, 0.3004%, and 0.0402%, respectively.
+
+Allocation runs emit assembly, and instruction runs emit native executables.
+The output hashes match within each comparison.
+The allocation runs free all allocations and report zero live bytes.
+
+These work counts do not establish a wall-time speedup or an external rank.
+The earlier archives retain their original source identities.
+Do not add reductions from different snapshots.
+
+A [fresh warm profile](benchmarks/compiler-main-profile-2026-11-09/README.md) uses compiler source `6bca1d48f3` and the same fixed input `d04e79179f`.
+It contains 1,095 CPU samples and no dropped samples.
+Semantic substitution accounts for 46.67% of inclusive samples.
+Its separate cache probe confirms 2,391 hits and zero misses.
+The profile and metadata audit identify possible reuse of checked graph facts in semantic liveness.
+No further optimization follows from this diagnostic profile alone.
 
 ## Priorities
 

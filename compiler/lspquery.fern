@@ -525,19 +525,8 @@ function scope_in_match(m: ast.StmtMatch, s: checker.Scope, site: Site): checker
   return scope_in_expr(m.scrutinee, s, site);
 }
 
-function collect_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  if let ast.ExprLambda(lm) = e {
-    return acc.append(lm);
-  }
-  return acc;
-}
-
-function skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
-  return acc;
-}
-
 pub function lambdas(e: ast.Expr): ast.ExprLambda[] {
-  return astwalk.fold_expr_nodes(e, [], skip_stmt, collect_lambda, astwalk.not_lambda);
+  return astwalk.fold_expr_nodes(e, [], astwalk.keep_lambdas, astwalk.collect_lambda, astwalk.not_lambda);
 }
 
 function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope {
@@ -569,7 +558,7 @@ pub function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
     return true;
   }
   for st in fd.body {
-    for lm in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_lambda, astwalk.descend_all) {
+    for lm in astwalk.fold_stmt_nodes(st, [], astwalk.keep_lambdas, astwalk.collect_lambda, astwalk.descend_all) {
       if (b.line == lm.line && b.col == lm.col) {
         return true;
       }
@@ -771,7 +760,7 @@ function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
 }
 
 function struct_text(st: checker.StructSig): string {
-  let out = "struct " + st.name + type_params(st.type_params) + " {";
+  let out = "struct " + st.name + ferndoc.join_type_params(st.type_params) + " {";
   let i = 0;
   while (i < st.field_names.len()) {
     if (i > 0) {
@@ -784,7 +773,7 @@ function struct_text(st: checker.StructSig): string {
 }
 
 function enum_text(s: checker.Scope, u: checker.UnionSig): string {
-  let out = "enum " + u.name + type_params(u.type_params) + " {";
+  let out = "enum " + u.name + ferndoc.join_type_params(u.type_params) + " {";
   let i = 0;
   while (i < u.variants.len()) {
     if (i > 0) {
@@ -801,22 +790,6 @@ function closed(out: string, members: i32): string {
     return out + " }";
   }
   return out + "}";
-}
-
-pub function type_params(tps: string[]): string {
-  if (tps.len() == 0) {
-    return "";
-  }
-  let out = "[";
-  let i = 0;
-  while (i < tps.len()) {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += tps[i];
-    i += 1;
-  }
-  return out + "]";
 }
 
 pub function label(t: typeinfo.Type, spelling: string): string {

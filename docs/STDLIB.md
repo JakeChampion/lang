@@ -2,7 +2,7 @@
 
 Status: [reference] library conventions and links to the generated API reference.
 
-The [generated standard library reference](https://jakechampion.github.io/lang/stdlib/) is the API reference.
+The [generated standard library reference](https://fern-lang.netlify.app/stdlib/) is the API reference.
 It includes every published module, its declarations, and its source documentation.
 This guide covers conventions across modules.
 

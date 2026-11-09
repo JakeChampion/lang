@@ -1,0 +1,41 @@
+// Emit bounded IVF input packets for independent metadata and pixel checks.
+import "std/video/ivf/input";
+import "std/audio/source";
+import "std/hex";
+
+function emit(reader: Reader): Result[void, string] {
+  let limits = input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: 3, max_buffer_bytes: 1048576 } };
+  let stream = match (input.create(limits)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  loop {
+    let step = match (stream.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    stream = step.stream;
+    match (step.event) {
+      input.Header(header) => {
+        print("H " + header.codec.to_debug() + " " + header.format.width.to_string() + " " + header.format.height.to_string() + " " + header.rate.to_string() + " " + header.scale.to_string());
+      },
+      input.PacketReady(packet) => {
+        print("P " + packet.offset.to_string() + " " + packet.timestamp.to_string() + " " + hex.encode(packet.bytes));
+      },
+      input.Waiting => {},
+      input.End => {
+        return Ok(());
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = emit(reader);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 1; } },
+    Err(message) => { eprint(message); return 1; },
+  };
+}
