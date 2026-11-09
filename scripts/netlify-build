@@ -48,8 +48,7 @@ echo "==> staging playground assets"
 web/stage.sh "$stage"
 
 echo "==> generating stdlib reference"
-bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
-bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
+site/scripts/stdlib-docs.sh
 
 echo "==> building site"
 cd site

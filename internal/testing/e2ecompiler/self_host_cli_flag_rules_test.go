@@ -19,6 +19,7 @@ func TestSelfHostCLIFlagRules(t *testing.T) {
 		{[]string{"-w"}, "fern: -w takes effect only with -fmt\n"},
 		{[]string{"-check", "-d"}, "fern: -d takes effect only with -fmt\n"},
 		{[]string{"-chunk", "x"}, "fern: -chunk takes effect only with -tangle\n"},
+		{[]string{"-doc-source", "x"}, "fern: -doc-source takes effect only with -doc\n"},
 		{[]string{"-qemu", "q"}, "fern: -qemu takes effect only with -run\n"},
 		{[]string{"-lint-set", "x=deny"}, "fern: -lint-set takes effect only with -lint\n"},
 		{[]string{"-apk-label", "x"}, "fern: -apk-label takes effect only with -apk\n"},

@@ -2385,6 +2385,7 @@ function flag_groups(): FlagGroup[] {
     ] },
     FlagGroup { title: "doc", flags: [
       mode_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
+      sub_flag("-doc-source", "TEMPLATE", ["-doc"], "with -doc: link each declaration to its source, TEMPLATE with {path} and {line} in it"),
       mode_flag("-tangle", "", "the Fern source a literate DOC.fern.md tangles to"),
       sub_flag("-chunk", "NAME", ["-tangle"], "with -tangle: only the named chunk"),
       mode_flag("-weave", "", "the woven Markdown of a literate DOC.fern.md"),
@@ -4466,9 +4467,9 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
   return 0;
 }
 
-function run_doc(path: string, out_path: string): i32 {
+function run_doc(path: string, out_path: string, links: string): i32 {
   if (util.is_dir(path)) {
-    return doc_tree(path, out_path);
+    return doc_tree(path, out_path, links);
   }
   let src = "";
   let read_ok = false;
@@ -4483,12 +4484,12 @@ function run_doc(path: string, out_path: string): i32 {
     eprint("fern: -doc: cannot read " + path);
     return 1;
   }
-  let (code, terr) = doc_source(path, src);
+  let (code, map, terr) = doc_source(path, src);
   if (terr.len() > 0) {
     eprint(terr);
     return 1;
   }
-  let page = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  let page = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))), ferndoc.SourceLinks { template: links, path: path, map: map });
   if (out_path.len() == 0) {
     write(page);
     return 0;
@@ -4504,7 +4505,7 @@ function run_doc(path: string, out_path: string): i32 {
   }
 }
 
-function doc_tree(dir: string, out_dir: string): i32 {
+function doc_tree(dir: string, out_dir: string, links: string): i32 {
   if (out_dir.len() == 0) {
     eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
     return 2;
@@ -4579,13 +4580,13 @@ function doc_tree(dir: string, out_dir: string): i32 {
         continue;
       }
       let stem = doc_stem(child_rel);
-      let (code, terr) = doc_source(child, src);
+      let (code, map, terr) = doc_source(child, src);
       if (terr.len() > 0) {
         eprint(terr);
         status = 1;
         continue;
       }
-      let page = ferndoc.render_page(code, doc_module_path(ns, stem));
+      let page = ferndoc.render_page(code, doc_module_path(ns, stem), ferndoc.SourceLinks { template: links, path: child, map: map });
       if (page.len() == 0) {
         continue;
       }
@@ -4609,12 +4610,14 @@ function is_doc_module(name: string): boolean {
   return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
-function doc_source(path: string, src: string): (string, string) {
+// The Fern source of a module, a literate one tangled, and the map from its
+// lines to the lines of the file.
+function doc_source(path: string, src: string): (string, util.LineMap, string) {
   let (mods, terr) = entry_sources(path, src);
   if (terr.len() > 0) {
-    return ("", terr);
+    return ("", util.no_line_map(), terr);
   }
-  return (mods.srcs[0], "");
+  return (mods.srcs[0], mods.maps[0], "");
 }
 
 function doc_stem(p: string): string {
@@ -6756,6 +6759,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let chunk = "";
   let grant = "";
   let mode_doc = false;
+  let doc_links = "";
   let mode_add = false;
   let mode_vendor = false;
   let mode_fetch = false;
@@ -6892,6 +6896,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       mode_tangle = f.on;
     } else if (f.name == "-doc") {
       mode_doc = f.on;
+    } else if (f.name == "-doc-source") {
+      doc_links = f.value;
     } else if (f.name == "-add") {
       mode_add = f.on;
     } else if (f.name == "-fetch") {
@@ -6985,7 +6991,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (!have_entry) {
       return usage(embedded);
     }
-    return run_doc(entry_path, out_path);
+    return run_doc(entry_path, out_path, doc_links);
   }
 
   if (mode_add) {
