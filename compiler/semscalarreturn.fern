@@ -93,10 +93,6 @@ pub function word_type(): typeinfo.Type {
   return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false, polymorphic: false };
 }
 
-function dummy_type(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
-}
-
 function value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
   return ssasem.Func { ...f, values: f.values.append(t), graph: ssa.SFunc { ...f.graph, nvals: f.values.len() + 1 } };
 }
@@ -138,7 +134,7 @@ function lower_return(f: ssasem.Func, b: ssa.SBlock, parts: Parts): Build {
     if (i == 0) {
       primary = out.result;
     } else {
-      out = call(out, set_prefix() + util.i32_to_string(i - 1), out.result, word_type(), dummy_type());
+      out = call(out, set_prefix() + util.i32_to_string(i - 1), out.result, word_type(), typeinfo.t_i32());
     }
   }
   return Build { ...out, result: primary };
@@ -340,7 +336,7 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
       out = Build { ...out, f: value(out.f, parts[i]), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.tuple_get(), result: part, args: [payload], imm: i, str: "" }) };
     }
     out = call(out, conversion(bits_name(), parts[i]), part, parts[i], word_type());
-    out = call(out, set_prefix() + util.i32_to_string(i), out.result, word_type(), dummy_type());
+    out = call(out, set_prefix() + util.i32_to_string(i), out.result, word_type(), typeinfo.t_i32());
     i += 1;
   }
   return Lanes { f: out.f, insts: out.insts, value: -1 };
@@ -348,13 +344,13 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
 
 pub function tag_word(f: ssasem.Func, insts: ssa.SInst[], at: i32): Lanes {
   let tag = f.values.len();
-  let out = Build { f: value(f, dummy_type()), insts: insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: tag, args: [], imm: at, str: "" }), result: tag };
-  out = call(out, conversion(bits_name(), dummy_type()), tag, dummy_type(), word_type());
+  let out = Build { f: value(f, typeinfo.t_i32()), insts: insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: tag, args: [], imm: at, str: "" }), result: tag };
+  out = call(out, conversion(bits_name(), typeinfo.t_i32()), tag, typeinfo.t_i32(), word_type());
   return Lanes { f: out.f, insts: out.insts, value: out.result };
 }
 
 pub function word_tag(f: ssasem.Func, insts: ssa.SInst[], w: i32): Lanes {
-  let out = call(Build { f: f, insts: insts, result: w }, conversion(as_name(), dummy_type()), w, word_type(), dummy_type());
+  let out = call(Build { f: f, insts: insts, result: w }, conversion(as_name(), typeinfo.t_i32()), w, word_type(), typeinfo.t_i32());
   return Lanes { f: out.f, insts: out.insts, value: out.result };
 }
 
@@ -379,7 +375,7 @@ pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typ
 // k, beside the pair words that carry its other parts.
 pub function lane_set(f: ssasem.Func, insts: ssa.SInst[], v: i32, t: typeinfo.Type, k: i32): Lanes {
   let out = call(Build { f: f, insts: insts, result: v }, conversion(bits_name(), t), v, t, word_type());
-  out = call(out, set_prefix() + util.i32_to_string(k), out.result, word_type(), dummy_type());
+  out = call(out, set_prefix() + util.i32_to_string(k), out.result, word_type(), typeinfo.t_i32());
   return Lanes { f: out.f, insts: out.insts, value: -1 };
 }
 
@@ -747,8 +743,8 @@ pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
 
 function flag_constant(b: Build): Build {
   let v = b.f.values.len();
-  let out = Build { f: value(b.f, dummy_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: 1, str: "" }), result: v };
-  return call(out, conversion(bits_name(), dummy_type()), v, dummy_type(), word_type());
+  let out = Build { f: value(b.f, typeinfo.t_i32()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: 1, str: "" }), result: v };
+  return call(out, conversion(bits_name(), typeinfo.t_i32()), v, typeinfo.t_i32(), word_type());
 }
 
 pub function flag_pair(f: ssasem.Func, insts: ssa.SInst[], lo: i32, hi: i32, slot: i32): Lanes {
@@ -762,7 +758,7 @@ pub function flag_pair(f: ssasem.Func, insts: ssa.SInst[], lo: i32, hi: i32, slo
   b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: shifted, args: [high, b.result], imm: 0, str: "<<" }), result: shifted };
   let packed = b.f.values.len();
   b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: packed, args: [low, shifted], imm: 0, str: "|" }), result: packed };
-  b = call(b, set_prefix() + util.i32_to_string(slot), packed, word_type(), dummy_type());
+  b = call(b, set_prefix() + util.i32_to_string(slot), packed, word_type(), typeinfo.t_i32());
   return Lanes { f: b.f, insts: b.insts, value: -1 };
 }
 

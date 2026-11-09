@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -25,11 +26,13 @@ import (
 const stdDecodeLimit = 1 << 20
 
 // goDecoded is what a Go decoder gives for one input: the output when it
-// accepts the input, and whether the output passed the limit.
+// accepts the input, and whether Go cannot judge the input. Go cannot judge it
+// when its output passes the limit, or when it refuses the input for a limit
+// of its own that the format does not set.
 type goDecoded struct {
-	out  []byte
-	ok   bool
-	over bool
+	out      []byte
+	ok       bool
+	unjudged bool
 }
 
 func goDecode(open func(io.Reader) (io.Reader, error), input []byte) goDecoded {
@@ -39,7 +42,7 @@ func goDecode(open func(io.Reader) (io.Reader, error), input []byte) goDecoded {
 	}
 	out, err := io.ReadAll(io.LimitReader(r, stdDecodeLimit+1))
 	if len(out) > stdDecodeLimit {
-		return goDecoded{over: true}
+		return goDecoded{unjudged: true}
 	}
 	return goDecoded{out: out, ok: err == nil}
 }
@@ -50,6 +53,42 @@ func goInflate(input []byte) goDecoded {
 
 // goGunzip rejects gzip members with reserved flag bits.
 // RFC 1952 requires zero reserved bits, but compress/gzip accepts them.
+// gzipStringLimit is the size of the buffer in which compress/gzip reads the
+// name and the comment of a member header, the terminating zero included.
+const gzipStringLimit = 512
+
+// gzipHeaderPastGo reports whether the header of member has a name or a
+// comment that compress/gzip refuses for its buffer. RFC 1952 sets no limit.
+func gzipHeaderPastGo(member []byte) bool {
+	if len(member) < 10 {
+		return false
+	}
+	flags, p := member[3], 10
+	if flags&4 != 0 {
+		if len(member) < p+2 {
+			return false
+		}
+		p += 2 + int(binary.LittleEndian.Uint16(member[p:]))
+	}
+	for _, field := range []byte{8, 16} {
+		if flags&field == 0 {
+			continue
+		}
+		if p > len(member) {
+			return false
+		}
+		n := bytes.IndexByte(member[p:], 0)
+		if n < 0 {
+			return false
+		}
+		if n >= gzipStringLimit {
+			return true
+		}
+		p += n + 1
+	}
+	return false
+}
+
 func goGunzip(input []byte) goDecoded {
 	cursor := bytes.NewReader(input)
 	var out []byte
@@ -57,6 +96,9 @@ func goGunzip(input []byte) goDecoded {
 		at := len(input) - cursor.Len()
 		if cursor.Len() >= 4 && input[at+3]&0xe0 != 0 {
 			return goDecoded{}
+		}
+		if gzipHeaderPastGo(input[at:]) {
+			return goDecoded{unjudged: true}
 		}
 		r, err := gzip.NewReader(cursor)
 		if err != nil {
@@ -67,7 +109,7 @@ func goGunzip(input []byte) goDecoded {
 		part, readErr := io.ReadAll(io.LimitReader(r, int64(stdDecodeLimit-len(out)+1)))
 		r.Close()
 		if len(out)+len(part) > stdDecodeLimit {
-			return goDecoded{over: true}
+			return goDecoded{unjudged: true}
 		}
 		if readErr != nil {
 			return goDecoded{}
@@ -96,8 +138,8 @@ func TestGzipOracleHeaderPolicy(t *testing.T) {
 				}
 				got := goGunzip(input)
 				ok := flag&0xe0 == 0
-				if got.ok != ok || got.over || ok && !bytes.Equal(got.out, want) {
-					t.Fatalf("gzip oracle: ok=%v over=%v output=%q, want ok=%v output=%q", got.ok, got.over, got.out, ok, want)
+				if got.ok != ok || got.unjudged || ok && !bytes.Equal(got.out, want) {
+					t.Fatalf("gzip oracle: ok=%v unjudged=%v output=%q, want ok=%v output=%q", got.ok, got.unjudged, got.out, ok, want)
 				}
 			})
 		}
@@ -105,15 +147,30 @@ func TestGzipOracleHeaderPolicy(t *testing.T) {
 	badCRC := append([]byte(nil), valid...)
 	badCRC[len(badCRC)-8] ^= 1
 	for _, input := range [][]byte{nil, valid[:len(valid)-1], badCRC, append(append([]byte(nil), valid...), 0)} {
-		if got := goGunzip(input); got.ok || got.over {
+		if got := goGunzip(input); got.ok || got.unjudged {
 			t.Errorf("gzip oracle accepts malformed input %x", input)
+		}
+	}
+	for _, c := range []struct {
+		name, comment int
+		unjudged      bool
+	}{{511, 0, false}, {512, 0, true}, {2000, 0, true}, {0, 511, false}, {0, 512, true}} {
+		var b bytes.Buffer
+		gw := gzip.NewWriter(&b)
+		gw.Name = strings.Repeat("n", c.name)
+		gw.Comment = strings.Repeat("c", c.comment)
+		gw.Write(plain)
+		gw.Close()
+		got := goGunzip(append(append([]byte(nil), valid...), b.Bytes()...))
+		if got.unjudged != c.unjudged || !c.unjudged && (!got.ok || !bytes.Equal(got.out, bytes.Repeat(plain, 2))) {
+			t.Errorf("a second member with a name of %d bytes and a comment of %d: ok=%v unjudged=%v, want unjudged=%v", c.name, c.comment, got.ok, got.unjudged, c.unjudged)
 		}
 	}
 	var large bytes.Buffer
 	if err := writeGzip(&large, flate.BestSpeed, bytes.Repeat([]byte{'a'}, stdDecodeLimit/2+1)); err != nil {
 		t.Fatal(err)
 	}
-	if got := goGunzip(bytes.Repeat(large.Bytes(), 2)); !got.over || got.ok {
+	if got := goGunzip(bytes.Repeat(large.Bytes(), 2)); !got.unjudged || got.ok {
 		t.Fatal("gzip oracle does not limit the total output across members")
 	}
 }
@@ -127,7 +184,7 @@ func goZlib(input []byte) goDecoded {
 func agreeWithGo(reader string, input []byte, summary string, g goDecoded) string {
 	fields := strings.Fields(summary)
 	switch {
-	case g.over:
+	case g.unjudged:
 		return ""
 	case len(fields) >= 5 && fields[1] == "ok":
 		want := fmt.Sprintf("%d crc %d", len(g.out), crc32.ChecksumIEEE(g.out))

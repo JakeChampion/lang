@@ -1,0 +1,53 @@
+import "std/test";
+import "mp3_freeformat_vectors";
+import "mp3_freeformat_check" as check;
+
+function independent(): test.TestOutcome {
+  for v in mp3_freeformat_vectors.cases() {
+    if let Err(e) = check.whole(v) {
+      return test.fail(v.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function packets(): test.TestOutcome {
+  for v in mp3_freeformat_vectors.cases() {
+    if let Err(e) = check.packets(v) {
+      return test.fail(v.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function sources(): test.TestOutcome {
+  for v in mp3_freeformat_vectors.cases() {
+    for chunk in [1, 17, 4096] {
+      if let Err(e) = check.stream(v, chunk, chunk == 4096) {
+        return test.fail(v.name + ": " + e);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function seeks(): test.TestOutcome {
+  for v in mp3_freeformat_vectors.cases() {
+    if let Err(e) = check.memory(v, true) {
+      return test.fail(v.name + ": " + e);
+    }
+    if let Err(e) = check.files(v, true) {
+      return test.fail(v.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Independent free-format MP3 and protected Info frames");
+  runner = runner.it("independent raw and gapless PCM across rates and modes", independent);
+  runner = runner.it("discovery, isolated packets, output tails, and reset", packets);
+  runner = runner.it("one-byte and irregular sources with bounded steps", sources);
+  runner = runner.it("memory and file seeks across every frame boundary", seeks);
+  return runner.finish();
+}
