@@ -1,0 +1,17 @@
+{
+  "bytes": 459863,
+  "sha256": "91eb45e20230416e854c5278ac34be1e8827facb86babf276a8b9d03a88ba0b4",
+  "manifest_files": 94,
+  "parts": [
+    {
+      "name": "2026-11-09-version-prefix-integrated-data.tar.gz.part-00",
+      "bytes": 262144,
+      "sha256": "128d05fce09b816405d77a9869f4a353441d8c0ab63c56de5f68069ae94bee3a"
+    },
+    {
+      "name": "2026-11-09-version-prefix-integrated-data.tar.gz.part-01",
+      "bytes": 197719,
+      "sha256": "1cac7246f0908c97104d2de6259270ca8af04a20c456fe847ad7e3794778a955"
+    }
+  ]
+}
