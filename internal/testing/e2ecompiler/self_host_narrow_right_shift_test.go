@@ -16,6 +16,8 @@ const narrowRightShiftFunctions = `
 @noinline function self_shift(x: i64): i64 { let n=x as i32; return (n >> n) as i64; }
 @noinline function wide_signed(x: i64, n: i32): i64 { return x >> n as i64; }
 @noinline function wide_unsigned(x: i64, n: i32): i64 { return (x as u64 >> n as u64) as i64; }
+@noinline function wide_known_signed(x: i64, n: i32): i64 { return ((x as i32) as i64) >> n as i64; }
+@noinline function wide_known_unsigned(x: i64, n: i32): i64 { return (((x as u32) as u64) >> n as u64) as i64; }
 @noinline function unproven(x: i32, n: i32): i64 { return (x >> n) as i64; }
 @noinline function pressure(x0:i64,x1:i64,x2:i64,x3:i64,x4:i64,x5:i64,x6:i64,x7:i64,x8:i64,x9:i64,x10:i64,x11:i64,n:i32):i64 {
  let a0=x0 as i32;let a1=x1 as i32;let a2=x2 as i32;let a3=x3 as i32;
@@ -60,7 +62,7 @@ func narrowRightShiftProgram() string {
 				sum += int64(a)
 				xor ^= int64(a >> shift)
 			}
-			for _, value := range []int64{int64(int32(x) >> shift), int64(uint32(x) >> shift), int64(uint8(x) >> shift), x >> (uint32(n) & 63), int64(uint64(x) >> (uint32(n) & 63)), xor ^ sum} {
+			for _, value := range []int64{int64(int32(x) >> shift), int64(uint32(x) >> shift), int64(uint8(x) >> shift), x >> (uint32(n) & 63), int64(uint64(x) >> (uint32(n) & 63)), xor ^ sum, int64(int32(x)) >> (uint32(n) & 63), int64(uint64(uint32(x)) >> (uint32(n) & 63))} {
 				fmt.Fprintf(&src, "%di64,", value)
 			}
 		}
@@ -79,7 +81,8 @@ func narrowRightShiftProgram() string {
    if (wide_signed(x,n)!=expected[at+3] || wide_unsigned(x,n)!=expected[at+4]) { return 4; }
    if (pressure(x,x+1i64,x+2i64,x+3i64,x+4i64,x+5i64,x+6i64,x+7i64,x+8i64,x+9i64,x+10i64,x+11i64,n)!=expected[at+5]) { return 5; }
    if (unproven(x as i32,n)!=expected[at]) { return 6; }
-   at+=6;
+   if (wide_known_signed(x,n)!=expected[at+6] || wide_known_unsigned(x,n)!=expected[at+7]) { return 8; }
+   at+=8;
   }
  }
 `)
@@ -138,13 +141,18 @@ func TestSelfHostNarrowRightShiftShape(t *testing.T) {
 			t.Errorf("%s did not use narrow hardware count masking:\n%s", name, body)
 		}
 	}
-	if body := asmFuncBody(t, text, "__fn_pressure"); !strings.Contains(body, "(%rbp),") {
-		t.Fatalf("pressure test does not exercise a spilled shift source:\n%s", body)
+	pressureBody := asmFuncBody(t, text, "__fn_pressure")
+	spilled := false
+	for _, line := range strings.Split(pressureBody, "\n") {
+		spilled = spilled || strings.Contains(line, "sarxl ") && strings.Contains(line, "(%rbp)")
 	}
-	for _, name := range []string{"wide_signed", "wide_unsigned", "unproven"} {
+	if !spilled {
+		t.Fatalf("pressure test does not exercise a spilled shift source:\n%s", pressureBody)
+	}
+	for _, name := range []string{"wide_signed", "wide_unsigned", "wide_known_signed", "wide_known_unsigned", "unproven"} {
 		body := asmFuncBody(t, text, "__fn_"+name)
 		op := "sarxq"
-		if name == "wide_unsigned" {
+		if name == "wide_unsigned" || name == "wide_known_unsigned" {
 			op = "shrxq"
 		}
 		if !strings.Contains(body, op) {
