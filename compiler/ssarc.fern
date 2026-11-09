@@ -3180,7 +3180,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return emit(r, ir.op_arr_reserve(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   }
   if (ins.kind_tag == ssasem.array_zero()) {
-    return emit(r, ir.op_alloc_slots(elem_width(elem_type(f.values[ins.result]))));
+    return emit(r, ir.op_alloc_slots(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   }
   if (variant_op(ins.kind_tag)) {
     return variant(r, f, ins, structs);
