@@ -77,7 +77,7 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean, client_path: u8[], drop_client: i32, retry_key: u8[] }
+struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean, client_path: u8[], drop_client: i32, retry_key: u8[], path_ecn: i32, mark_in: i32 }
 
 function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
   return start_at(cc, sc, WALL_MS);
@@ -85,7 +85,7 @@ function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
 
 function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, string] {
   let c = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(unix_ms))?;
-  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false, client_path: [1u8], drop_client: 0, retry_key: [] });
+  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false, client_path: [1u8], drop_client: 0, retry_key: [], path_ecn: 0, mark_in: 0 });
 }
 
 function noted(who: string, c: conn.Conn): string {
@@ -124,7 +124,7 @@ function noted(who: string, c: conn.Conn): string {
 function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
-      let step = s.receive_from(d, p.client_path, at_ns(p.now));
+      let step = s.receive_from(d, p.client_path, p.mark_in, at_ns(p.now));
       return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step) };
     },
     None => {
@@ -181,15 +181,14 @@ function wall_at(p: Pair): time.Timestamp {
 const SERVER_PATH: u8 = 1u8;
 
 function to_client(p: Pair, d: u8[]): Pair {
-  let step = p.client.receive_from(d, [SERVER_PATH], at_ns(p.now));
+  let step = p.client.receive_from(d, [SERVER_PATH], p.mark_in, at_ns(p.now));
   return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step) };
 }
 
 function exchange(p: Pair): (Pair, boolean) {
   let c = p.client.transmit(at_ns(p.now));
   let out = c.datagrams();
-  c = c.sent();
-  let cur = Pair { ...p, client: c, client_sent: p.client_sent + out.len() };
+  let cur = Pair { ...p, client: c.sent(), client_sent: p.client_sent + out.len(), mark_in: on_path(p, c.ecn_codepoint()) };
   for d in in_order(cur, out) {
     let (next, lost) = carried(cur);
     cur = next;
@@ -204,8 +203,7 @@ function exchange(p: Pair): (Pair, boolean) {
     Some(s) => {
       let s2 = s.transmit(at_ns(cur.now));
       let sout = s2.datagrams();
-      s2 = s2.sent();
-      cur = Pair { ...cur, server: Some(s2), server_sent: cur.server_sent + sout.len() };
+      cur = Pair { ...cur, server: Some(s2.sent()), server_sent: cur.server_sent + sout.len(), mark_in: on_path(cur, s2.ecn_codepoint()) };
       for d in in_order(cur, sout) {
         let (next, lost) = carried(cur);
         cur = next;
@@ -220,6 +218,19 @@ function exchange(p: Pair): (Pair, boolean) {
     None => {}
   }
   return (cur, moved);
+}
+
+// on_path is the mark a datagram sent with `mark` arrives with: path_ecn 0
+// carries it, 1 clears it, as a bleaching middlebox does, and 2 turns
+// ECT(0) into ECN-CE, as a congested router does.
+function on_path(p: Pair, mark: i32): i32 {
+  if (p.path_ecn == 1) {
+    return 0;
+  }
+  if (p.path_ecn == 2 && mark == 2) {
+    return 3;
+  }
+  return mark;
 }
 
 function carried(p: Pair): (Pair, boolean) {
@@ -311,6 +322,29 @@ function test_handshake(): test.TestOutcome {
       return test.fail(e);
     }
   }
+}
+
+// Over a path that carries the marks, both ends keep marking ECT(0) through
+// the handshake. Over a path that clears them, the peer's ACKs bring no
+// counts for marked packets, and both ends stop marking. Over a congested
+// path the counts arrive as ECN-CE: validation holds, and the window
+// shrinks as it does for a loss.
+function test_ecn(): test.TestOutcome {
+  let lines = "";
+  for mode in 0..3 {
+    let Ok(p0) = start(client_config("tls.example", ["h3"]).with_ecn(), server_config(["h3"]).with_ecn()) else {
+      return test.fail("start failed");
+    };
+    let p = settle(Pair { ...p0, path_ecn: mode }, 12, 10000 * MS);
+    let s = server_of(p);
+    lines = lines + p.client.connected().to_string() + " " + p.client.ecn_codepoint().to_string() + " " + s.ecn_codepoint().to_string() + " " + (p.client.recovery.window() < 12000i64).to_string() + "; ";
+  }
+  let Ok(q0) = start(client_config("tls.example", ["h3"]), server_config(["h3"])) else {
+    return test.fail("start failed");
+  };
+  let q = settle(q0, 12, 10000 * MS);
+  lines = lines + q.client.ecn_codepoint().to_string() + " " + server_of(q).ecn_codepoint().to_string();
+  return test.assert_eq(lines, "true 2 2 false; true 0 0 false; true 2 2 true; 0 0");
 }
 
 function test_amplification(): test.TestOutcome {
@@ -891,8 +925,8 @@ function test_client_ignores_unknown_server_path(): test.TestOutcome {
     return test.fail("start failed");
   };
   let d = server_frame(p, frames.encode(frames.Ping));
-  let ignored = p.client.receive_from(d, [9u8], at_ns(p.now));
-  let taken = p.client.receive_from(d, [SERVER_PATH], at_ns(p.now));
+  let ignored = p.client.receive_from(d, [9u8], 0, at_ns(p.now));
+  let taken = p.client.receive_from(d, [SERVER_PATH], 0, at_ns(p.now));
   return test.assert_eq((ignored.accepted - p.client.accepted).to_string() + "," + (taken.accepted - p.client.accepted).to_string(), "0,1");
 }
 
@@ -1191,6 +1225,7 @@ function main(): i32 {
   r = r.it("a path that does not answer is abandoned", test_path_validation_fails);
   r = r.it("a client drops datagrams from an unknown server address", test_client_ignores_unknown_server_path);
   r = r.it("retire_prior_to retires the connection IDs below it", test_retire_prior_to);
+  r = r.it("ECN marks are counted, validated, and read as congestion", test_ecn);
   return r.finish();
 }
 

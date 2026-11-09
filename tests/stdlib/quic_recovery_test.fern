@@ -24,7 +24,7 @@ function due_ns(r: recovery.Recovery): i64 {
 }
 
 function sent(pn: i64, at: i64): recovery.Sent {
-  return recovery.Sent { pn: pn, at: at_ns(at), size: 1200, ack_eliciting: true, in_flight: true, resend: [] };
+  return recovery.Sent { pn: pn, at: at_ns(at), size: 1200, ack_eliciting: true, in_flight: true, ect: true, resend: [] };
 }
 
 function ack(low: i64, high: i64): frames.Ack {
@@ -99,6 +99,30 @@ function test_window(): test.TestOutcome {
   return test.assert_eq(start + " " + grown + " " + halved + " " + p.window().to_string(), "12000 13200 4800 0");
 }
 
+function marked(low: i64, high: i64, ce: i64): frames.Ack {
+  return frames.Ack { delay: 0 as i64, ranges: [frames.AckRange { low: low, high: high }], ecn: Some(frames.Ecn { ect0: high + 1 - ce, ect1: 0 as i64, ce: ce }) };
+}
+
+// A rise in the ECN-CE count halves the window, as a loss does, once per
+// recovery period; an ACK without counts, or with the same count, does not.
+function test_ecn_ce(): test.TestOutcome {
+  let r = sending(recovery.new(1200, true).confirmed(), 0 as i64, 0 as i64, 0 as i64);
+  r = acked(r, marked(0 as i64, 0 as i64, 0 as i64), 20 * MS, 0 as i64);
+  let clean = r.window().to_string();
+  r = sending(r, 1 as i64, 2 as i64, 20 * MS);
+  r = acked(r, marked(1 as i64, 2 as i64, 1 as i64), 40 * MS, 2 as i64);
+  let halved = r.window().to_string();
+  r = sending(r, 3 as i64, 3 as i64, 30 * MS);
+  r = acked(r, marked(3 as i64, 3 as i64, 2 as i64), 50 * MS, 3 as i64);
+  let in_recovery = r.window().to_string();
+  r = sending(r, 4 as i64, 4 as i64, 60 * MS);
+  r = acked(r, marked(4 as i64, 4 as i64, 2 as i64), 70 * MS, 4 as i64);
+  let same = r.window().to_string();
+  r = sending(r, 5 as i64, 5 as i64, 80 * MS);
+  r = acked(r, marked(5 as i64, 5 as i64, 3 as i64), 90 * MS, 5 as i64);
+  return test.assert_eq(clean + " " + halved + " " + in_recovery + " " + same + " " + r.window().to_string(), "13200 6600 6600 6818 3409");
+}
+
 function test_refusal_and_discard(): test.TestOutcome {
   let r = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
   let refused = r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), time.DURATION_ZERO, at_ns(MS), 1 as i64);
@@ -115,5 +139,6 @@ function main(): i32 {
   r = r.it("the probe timeout", test_probe_timeout);
   r = r.it("the congestion window", test_window);
   r = r.it("a bad ACK, and discarding a space", test_refusal_and_discard);
+  r = r.it("an ECN-CE count that rises", test_ecn_ce);
   return r.finish();
 }

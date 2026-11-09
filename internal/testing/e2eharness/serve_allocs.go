@@ -562,3 +562,146 @@ const serveAllocsH3Identity = `const ROOT: string = "3082011c3081cfa003020102020
 const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
 const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n" + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n" + "-----END PRIVATE KEY-----\n";
 `
+
+// ServeH3EcnClientSource is an HTTP/3 client that carries ECN marks both
+// ways: it sends each flight in a net.Batch with its connection's ECN
+// codepoint and receives through a net.Inbox that reads the TOS byte. It
+// connects to 127.0.0.1 on the port in its first argument, makes its
+// second argument's hello requests one at a time, and prints `ecn` with
+// its codepoint and whether the server's packets arrived marked ECT(0).
+var ServeH3EcnClientSource = `import "std/net";
+import "std/quic/conn";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/tls/verify";
+import "std/headers";
+import "std/async";
+import "std/clock";
+import "std/hex";
+import "std/time";
+import "std/i32";
+import "std/rand";
+` + serveAllocsH3Identity + `
+function now(): Instant {
+  return clock.instant();
+}
+
+function request(path: string): HttpRequest {
+  return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new().append("host", "tls.example"), trailers: headers.new() };
+}
+
+struct Cli { c: h3q.Conn, sock: Socket, to: u8[], inbox: net.Inbox }
+
+function pump(k: Cli, ms: i32): Cli {
+  let built: h3q.Conn = k.c.transmit(now());
+  let out: u8[][] = built.datagrams();
+  let mark: i32 = built.ecn_codepoint();
+  let c: h3q.Conn = built.sent();
+  if (out.len() > 0) {
+    let sent = net.batch().add(k.to, out, mark).send(k.sock);
+  }
+  let woke: async.Wake = async.wait_any([k.sock.fd, 1], Some(clock.instant().add(time.duration_millis(ms))));
+  let ib: net.Inbox = k.inbox;
+  let going: boolean = true;
+  while (going) {
+    let r = ib.receive(k.sock);
+    ib = r.0;
+    match (r.1) {
+      Ok(n) => {
+        let i: i32 = 0;
+        while (i < n) {
+          let f: i32 = ib.sender_at(i);
+          let s: i32 = 0;
+          while (s < ib.segments(i)) {
+            let (at, len) = ib.segment(i, s);
+            c = c.receive_from(ib.buf[at:at + len], ib.froms[f:f + net.SENDER_BYTES], ib.tos_of(i), now());
+            s = s + 1;
+          }
+          i = i + 1;
+        }
+      },
+      Err(_) => {
+        going = false;
+      }
+    }
+  }
+  if let Some(at) = c.deadline() {
+    if (now().cmp(at) >= 0) {
+      c = c.tick(now());
+    }
+  }
+  return Cli { ...k, c: c, inbox: ib };
+}
+
+function get(k0: Cli, path: string): (Cli, string) {
+  let Ok(sent) = k0.c.request(request(path).outgoing("https")) else {
+    return (k0, "ERR request");
+  };
+  let k: Cli = Cli { ...k0, c: sent.0 };
+  let id: i64 = sent.1;
+  let started: Instant = now();
+  while (clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
+    k = pump(k, 10);
+    let evs: h3q.Event[] = k.c.events;
+    k = Cli { ...k, c: k.c.events_taken() };
+    for e in evs {
+      match (e) {
+        h3q.Responded(rid, resp) => {
+          if (rid == id) {
+            return (k, unsafe { string_from_bytes_unchecked(resp.body_bytes()) });
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  return (k, "ERR timeout");
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Ok(port) = i32.parse_i32(argv[1]) else {
+    return 2;
+  };
+  let Ok(rounds) = i32.parse_i32(argv[2]) else {
+    return 2;
+  };
+  let Ok(root) = hex.decode(ROOT) else { return 2; };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root]))).with_ecn();
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+    return 2;
+  };
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
+    return 2;
+  };
+  let Ok(sock) = net.udp_socket(any) else {
+    return 2;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let Ok(marks) = net.set_recv_tos(sock, true) else {
+    return 3;
+  };
+  let to: u8[] = [4u8, 127u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, (port >> 8) as u8, (port & 255) as u8];
+  let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, to: to, inbox: net.inbox(8, 65536) };
+  let started: Instant = now();
+  while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
+    k = pump(k, 10);
+  }
+  if (!k.c.ready()) {
+    print("handshake failed");
+    return 1;
+  }
+  let i: i32 = 0;
+  while (i < rounds) {
+    let r: (Cli, string) = get(k, "/");
+    k = r.0;
+    if (r.1 != "hello") {
+      print("request " + i.to_string() + " answered " + r.1);
+      return 1;
+    }
+    i = i + 1;
+  }
+  print("ecn " + k.c.ecn_codepoint().to_string() + " " + (k.c.quic.ecn_counts(2).ect0 > 0i64).to_string());
+  return 0;
+}
+`

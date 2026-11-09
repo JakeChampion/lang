@@ -1258,22 +1258,53 @@ function simd_opcode(op: string): i32 {
   return -1;
 }
 
+function shuffle_digits(text: string, start: i32, radix: i32): Option[i32] {
+  let value = 0;
+  let previous_digit = false;
+  for i in start..text.len() {
+    if (text[i] == b'_') {
+      if (!previous_digit) {
+        return None;
+      }
+      previous_digit = false;
+      continue;
+    }
+    let Some(digit) = digit_value(text[i] as i32, radix) else {
+      return None;
+    };
+    value = value * radix + digit;
+    if (value > 31) {
+      return None;
+    }
+    previous_digit = true;
+  }
+  return if (previous_digit) { Some(value) } else { None };
+}
+
+function shuffle_index(text: string): Option[i32] {
+  if (text.len() == 0) {
+    return None;
+  }
+  let start = if (text[0] == b'+') { 1 } else { 0 };
+  let radix = 10;
+  if (text.len() > start + 1 && text[start] == b'0' && text[start + 1] == b'x') {
+    start += 2;
+    radix = 16;
+  }
+  return shuffle_digits(text, start, radix);
+}
+
 function shuffle_indices(own out: i32[], nodes: SExpr[], start: i32): i32[] {
   if (start < 0 || start + 16 > nodes.len()) {
     eprint("watbin: shuffle requires 16 byte indices");
     exit(1);
   }
   for i in start..start + 16 {
-    let text = nodes[i].text;
-    let valid = text.len() > 0 && text.len() <= 2;
-    for c in text {
-      valid = valid && c >= b'0' && c <= b'9';
-    }
-    let index = parse_dec(text);
-    if (!valid || index < 0 || index > 31) {
+    let Some(index) = shuffle_index(nodes[i].text) else {
       eprint("watbin: shuffle byte index must be from 0 to 31");
       exit(1);
-    }
+      return out;
+    };
     out = out.append(index);
   }
   return out;

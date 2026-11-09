@@ -140,7 +140,71 @@ function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 }
 
 function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
+  if (always_built(callee)) {
+    return false;
+  }
   return whole[value] || semscalarreturn.eligible(callee, callee.result) && scalar_whole[value];
+}
+
+// always_built says f builds every value it returns, and takes no value of
+// that type whose box the build could reuse. A caller that keeps the result
+// whole builds it again from the returned words, and that is the one value f
+// would have built.
+function always_built(f: ssasem.Func): boolean {
+  for p in f.params {
+    if (semtypes.equal(p, f.result)) {
+      return false;
+    }
+  }
+  let defs = ssa.inst_defs(f.graph);
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == ssa.TERM_RET && !built_value(defs, b.term.value, 0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function built_value(defs: ssa.SInst[], v: i32, depth: i32): boolean {
+  if (v < 0 || v >= defs.len() || depth > 8) {
+    return false;
+  }
+  let d = ssa.copy_source(defs, v);
+  let k = d.kind_tag;
+  if (k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new()) {
+    return !constant_value(defs, v, 0);
+  }
+  if (k != ssa.PHI) {
+    return false;
+  }
+  for a in d.args {
+    if (!built_value(defs, a, depth + 1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// constant_value says v is made of constants only. Such a value can be a
+// static constant, which costs no box where the callee returns it.
+function constant_value(defs: ssa.SInst[], v: i32, depth: i32): boolean {
+  if (v < 0 || v >= defs.len() || depth > 8) {
+    return false;
+  }
+  let d = ssa.copy_source(defs, v);
+  let k = d.kind_tag;
+  if (k >= ssa.CONST_INT && k <= ssa.CONST_STR) {
+    return true;
+  }
+  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != ssasem.array_new() && k != ssasem.bytes_new()) {
+    return false;
+  }
+  for a in d.args {
+    if (!constant_value(defs, a, depth + 1)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {

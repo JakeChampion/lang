@@ -7,19 +7,22 @@ function __fern_create_dir_all(path: string): Result[void, IoError] {
     i += 1;
   }
   __raw_store8(pathz, plen, 0);
-  let rc = 0;
-  let j = 1;
-  while (j < plen) {
-    if (path[j] == 47) {
-      if (path[j - 1] != 47) {
-        __raw_store8(pathz, j, 0);
-        rc = __syscall3(475, -2, pathz as i64, 511) as i32;
-        __raw_store8(pathz, j, 47);
+  // The full path first: its parent usually exists, and then one call does it.
+  let rc = __syscall3(475, -2, pathz as i64, 511) as i32;
+  if (rc == -2) {
+    let j = 1;
+    while (j < plen) {
+      if (path[j] == 47) {
+        if (path[j - 1] != 47) {
+          __raw_store8(pathz, j, 0);
+          rc = __syscall3(475, -2, pathz as i64, 511) as i32;
+          __raw_store8(pathz, j, 47);
+        }
       }
+      j += 1;
     }
-    j += 1;
+    rc = __syscall3(475, -2, pathz as i64, 511) as i32;
   }
-  rc = __syscall3(475, -2, pathz as i64, 511) as i32;
   let pathz_own = __raw_string(pathz, plen + 1);
   if (rc < 0) {
     if (rc != -17) {

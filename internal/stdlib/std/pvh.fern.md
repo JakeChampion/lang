@@ -8,11 +8,13 @@ The VMM puts the address of the start info in `%ebx` at entry, and `__boot_info(
 
 The start info gives the physical address and the count of the entries of the memory map. A board copies `MEMMAP_ENTRY_BYTES` bytes for each entry from that address, and `parse_memmap` reads them into a list of `MemoryRegion` values. A region has an E820 type, and `is_ram` is true for usable RAM.
 
+The start info also gives the physical address and the count of the boot modules. A VMM loads a module for the kernel: qemu and Firecracker load the `-initrd` image as module 0. A board copies `MODULE_ENTRY_BYTES` bytes for each entry from `modlist_address`, and `parse_modules` reads them into a list of `Module` values. A module gives the address and the size of its bytes, and the address of its command line, which is 0 when it has none.
+
 The command line is a NUL-terminated string at `cmdline_address`. A board copies its bytes, and `command_line` reads the text before the first NUL.
 
 ## Contracts
 
-`parse` refuses bytes that do not start with the magic `0x336ec578`, and bytes that end before the fields of their version. Version 0 has no memory map, so `memmap_address` and `memmap_entries` are zero. A version above 1 can add fields after the version 1 fields, and `parse` reads only the version 1 fields. `parse_memmap` refuses bytes that end before the last entry. `command_line` refuses bytes with no NUL and text that is not UTF-8. Each error gives the byte offset of the problem.
+`parse` refuses bytes that do not start with the magic `0x336ec578`, and bytes that end before the fields of their version. Version 0 has no memory map, so `memmap_address` and `memmap_entries` are zero. A version above 1 can add fields after the version 1 fields, and `parse` reads only the version 1 fields. `parse_memmap` and `parse_modules` refuse bytes that end before the last entry. `command_line` refuses bytes with no NUL and text that is not UTF-8. Each error gives the byte offset of the problem.
 
 ## Executable example
 
@@ -48,6 +50,8 @@ function main(): i32 {
 
 <<the memory map>>
 
+<<the modules>>
+
 <<the command line>>
 ```
 
@@ -65,7 +69,7 @@ import "std/utf8";
 
 ### `model`
 
-The offsets come from the `hvm_start_info` and `hvm_memmap_table_entry` structures of the Xen public headers.
+The offsets come from the `hvm_start_info`, `hvm_memmap_table_entry` and `hvm_modlist_entry` structures of the Xen public headers.
 
 ```fern
 <<model>>=
@@ -89,6 +93,9 @@ pub const START_INFO_BYTES: i32 = 56;
 // The bytes of one memory map entry.
 pub const MEMMAP_ENTRY_BYTES: i32 = 24;
 
+// The bytes of one module list entry.
+pub const MODULE_ENTRY_BYTES: i32 = 32;
+
 // The E820 type of usable RAM.
 pub const RAM: u32 = 1;
 
@@ -109,6 +116,9 @@ pub struct MemoryRegion { address: u64, size: u64, kind: u32 }
 pub function (r: MemoryRegion) is_ram(): boolean {
   return r.kind == RAM;
 }
+
+// One boot module, such as an initrd.
+pub struct Module { address: u64, size: u64, cmdline_address: u64 }
 ```
 
 ### `the start info`
@@ -167,6 +177,26 @@ pub function parse_memmap(b: [u8], entries: u32): Result[MemoryRegion[], PvhErro
   for i in 0..entries as i32 {
     let at = i * MEMMAP_ENTRY_BYTES;
     out = out.append(MemoryRegion { address: u64_at(b, at)?, size: u64_at(b, at + 8)?, kind: u32_at(b, at + 16)? });
+  }
+  return Ok(out);
+}
+```
+
+### `the modules`
+
+An entry has a fourth field of 8 bytes, which is reserved.
+
+```fern
+<<the modules>>=
+// Reads `entries` module list entries that start at byte 0 of `b`.
+pub function parse_modules(b: u8[], entries: u32): Result[Module[], PvhError] {
+  if (entries as i64 * (MODULE_ENTRY_BYTES as i64) > b.len() as i64) {
+    return Err(PvhError { offset: b.len(), reason: "the bytes end before the last module" });
+  }
+  let out: Module[] = [];
+  for i in 0..entries as i32 {
+    let at = i * MODULE_ENTRY_BYTES;
+    out = out.append(Module { address: u64_at(b, at)?, size: u64_at(b, at + 8)?, cmdline_address: u64_at(b, at + 16)? });
   }
   return Ok(out);
 }

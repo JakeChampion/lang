@@ -1430,8 +1430,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// udp_sendmmsg(sock, addrs, data, lens): sendmmsg. addrs holds one 19-byte
 	// address per message as udp_recvfrom writes it, or nothing for a
 	// connected socket; data holds every message's bytes in order; lens holds
-	// each message's byte count and its UDP_SEGMENT size, 0 for one datagram.
-	// Messages sent, or -errno.
+	// three words per message: its byte count, its UDP_SEGMENT size (0 for one
+	// datagram) and its TOS byte (0 for none). Messages sent, or -errno.
 	c.info.FuncSigs["udp_sendmmsg"] = &ast.FuncType{
 		Params: []ast.Type{sock, u8s, u8s, ast.ArrayType{Elem: ast.NumberType{}}},
 		Result: ast.NumberType{},
@@ -10734,6 +10734,34 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// every other use. deferMoved holds those names and field paths.
 	deferMoved := movedSet{}
 	loopDepth := 0
+	// A loop frame holds the moved sets at the jumps that target the loop.
+	type loopFrame struct {
+		label     string
+		scopes    int
+		continues []movedSet
+		breaks    []movedSet
+	}
+	var loops []*loopFrame
+	// scopes holds the match-arm scopes open at this point of the walk.
+	var scopes []*ownedBindingScope
+	// jumpState is the moved set that a jump to label takes to its loop:
+	// the arm scopes that the jump leaves end, as at the end of each arm.
+	jumpState := func(label string, moved movedSet) (*loopFrame, movedSet) {
+		for i := len(loops) - 1; i >= 0; i-- {
+			if label != "" && loops[i].label != label {
+				continue
+			}
+			at := make(movedSet, len(moved))
+			for path, pos := range moved {
+				at[path] = pos
+			}
+			for k := len(scopes) - 1; k >= loops[i].scopes; k-- {
+				scopes[k].settle(at)
+			}
+			return loops[i], at
+		}
+		return nil, nil
+	}
 	// replaced names the fields an update literal writes over, which the
 	// literal does not read from its base.
 	movedPrefix := func(moved movedSet, name string, replaced map[string]bool) (string, ast.Position, bool) {
@@ -10775,7 +10803,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			delete(moved, p.Name)
 		}
+		outer := loops
+		loops = nil
 		walkStmts(body.Stmts, moved)
+		loops = outer
 		for name, b := range shadowed {
 			if b.wasOwned {
 				owned[name] = true
@@ -10882,6 +10913,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		taken := takesTag(tag)
 		_, temporary := tag.(*ast.Call)
 		scope := shadowOwnedBindings(bindings, owned, borrowedParam, armMoved, deferMoved)
+		scopes = append(scopes, scope)
 		for i, bname := range bindings {
 			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) || temporary && c.holdsNoHandle(types[i]) {
 				continue
@@ -10931,6 +10963,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			recordExprUses(arm.Body, armMoved)
 			scope.restore()
+			scopes = scopes[:len(scopes)-1]
 			branches = append(branches, armMoved)
 			continues = append(continues, !c.ownedExprDiverges(arm.Body))
 		}
@@ -11128,20 +11161,40 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 
-	loopBody := func(body ast.Stmt, step ast.Stmt, moved movedSet) {
+	// A later iteration starts from the end of the body, when the end is
+	// reachable, and from each continue. Each break joins the state after
+	// the loop.
+	loopBody := func(label string, body ast.Stmt, step ast.Stmt, moved movedSet) {
+		frame := &loopFrame{label: label, scopes: len(scopes)}
+		loops = append(loops, frame)
 		inner := cloneMoved(moved)
 		loopDepth++
 		if body != nil {
 			walkStmt(body, inner)
 		}
-		if step != nil {
-			walkStmt(step, inner)
+		loops = loops[:len(loops)-1]
+		var back movedSet
+		if body == nil || !c.stmtLeaves(body, c.info.NoReturn) {
+			back = inner
+		}
+		for _, at := range frame.continues {
+			if back == nil {
+				back = cloneMoved(at)
+			} else {
+				joinInto(back, at, false)
+			}
+		}
+		if back != nil && step != nil {
+			walkStmt(step, back)
 		}
 		loopDepth--
-		for name, at := range inner {
+		for name, at := range back {
 			if _, wasLive := moved[name]; !wasLive {
 				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
 			}
+		}
+		for _, at := range frame.breaks {
+			joinInto(moved, at, false)
 		}
 	}
 
@@ -11258,15 +11311,23 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			settleBranches(moved, []movedSet{thenMoved, elseMoved}, []bool{!c.stmtLeaves(x.Then, c.info.NoReturn), x.Else == nil || !c.stmtLeaves(x.Else, c.info.NoReturn)})
 		case *ast.While:
 			recordExprUses(x.Cond, moved)
-			loopBody(x.Body, nil, moved)
+			loopBody(x.Label, x.Body, nil, moved)
 		case *ast.Loop:
-			loopBody(x.Body, nil, moved)
+			loopBody(x.Label, x.Body, nil, moved)
 		case *ast.For:
 			if x.Init != nil {
 				walkStmt(x.Init, moved)
 			}
 			recordExprUses(x.Cond, moved)
-			loopBody(x.Body, x.Step, moved)
+			loopBody(x.Label, x.Body, x.Step, moved)
+		case *ast.Continue:
+			if frame, at := jumpState(x.Label, moved); frame != nil {
+				frame.continues = append(frame.continues, at)
+			}
+		case *ast.Break:
+			if frame, at := jumpState(x.Label, moved); frame != nil {
+				frame.breaks = append(frame.breaks, at)
+			}
 		case *ast.Match:
 			scrutOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
 			whole := cloneMoved(moved)
@@ -11299,6 +11360,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				scope.restore()
+				scopes = scopes[:len(scopes)-1]
 				branches = append(branches, armMoved)
 				continues = append(continues, !(arm.Body != nil && c.blockLeaves(arm.Body, c.info.NoReturn)))
 			}
@@ -11318,8 +11380,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 	walkStmts = func(stmts []ast.Stmt, moved movedSet) {
+		var locals []*ownedBindingScope
 		for _, st := range stmts {
 			walkStmt(st, moved)
+			if local, ok := st.(*ast.Var); ok && (owned[local.Name] || borrowedParam[local.Name]) {
+				scope := shadowOwnedBindings([]string{local.Name}, owned, borrowedParam, moved, deferMoved)
+				locals = append(locals, scope)
+				scopes = append(scopes, scope)
+			}
+		}
+		for i := len(locals) - 1; i >= 0; i-- {
+			locals[i].restore()
+			scopes = scopes[:len(scopes)-1]
 		}
 	}
 
@@ -15312,6 +15384,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if genericFn != nil {
+			var opened map[string]ast.Type
+			if sub != nil && !recvIsArg0 {
+				opened = c.unbindOpenVariantParams(n, ft, genericFn, sub)
+			}
 			if callExpected != nil && sub != nil {
 				c.unifyType(ft.Result, callExpected, sub)
 			}
@@ -15370,7 +15446,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if c.openCallLet == n {
-				if result, open := c.openGenericResult(n, genericFn, ft, sub); open {
+				if result, open := c.openGenericResult(n, genericFn, ft, sub, opened); open {
 					return result
 				}
 			}

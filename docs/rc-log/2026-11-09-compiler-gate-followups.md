@@ -1,0 +1,48 @@
+# Compiler gate follow-ups
+
+Fresh main controls exposed two compiler defects and three stale expectations.
+The shared audio CI branch carries these repairs so the codec branches can use one tested compiler.
+
+Constant substitution removes global reference nodes from the checked tree.
+LSP queries now recover a real constant reference from the original source when ordinary lookup finds no node.
+The query retains its containing function and the qualified constant identity.
+Local and parameter shadow scopes retain their existing lookup path.
+Tests cover declaration sites, nested blocks, module-local references, qualified imports, hover, and definition queries.
+
+The seccomp argument filters now permit the runtime values for UDP GRO and receive traffic classes.
+The added levels are SOL_IP and SOL_UDP.
+The added options are IP_RECVTOS, IPV6_RECVTCLASS, and UDP_GRO.
+The syscall filter and the argument filters remain active.
+The controls retain refusal of unknown levels, unknown options, and nonzero upper argument bits.
+
+A native test enables the three options on IPv4 and IPv6 UDP sockets under the sandbox.
+The same native test selects ARM64 on an ARM64 Linux host.
+
+The constant-fold control now checks the unary AST node for a negative literal.
+The freestanding platform control checks the exact MMIO capability.
+The semantic graph golden now records a folded constant and the existing unboxed option paths.
+A separate runtime control checks the constant value, option payloads, and retained array contents.
+
+Issues: #14790, #14791, and #14792. Main gate: #14566. Roadmap: #14508.
+
+The combined tree merges main at `ae23097387d6a3e7bea49e117e722637f7f8b0c5`.
+Its supported compiler build passes.
+The core SHA-256 is `883c0164c8858007288869b772eb05942b125bf782d27a5d09b334f2ba96cdaf`.
+The full Go checker and source-lint packages pass.
+The prior module-loader package also passes after the merge.
+
+All 40 native static performance measurements pass the strict gate.
+The branch includes the lower size limits from #14794.
+It raises no limit.
+
+All 120 emitted-size measurements complete.
+The two advisory deflate size warnings match a fresh main compiler exactly: 7,206 native instructions and 11,811 WASI body lines.
+Local dynamic instruction counts remain unmeasured because Valgrind is absent.
+
+The driver now places document, REPL, and interpreter modes in separate helpers.
+The branch and diagnostic order remain unchanged.
+This reduces `run_with_gate` from complexity 233 to its prior ceiling of 221.
+The exact repository complexity gate passes without a ceiling change.
+The supported build passes with core SHA-256 `65ead4d702d1ee8a3f96985c7cb8277847a7d50d4db37b32eff2ec4d51f83ba8`.
+
+Issue: #14800.

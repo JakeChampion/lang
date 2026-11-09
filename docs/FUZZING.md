@@ -246,14 +246,17 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Eighteen targets feed hostile bytes to the boundaries after the front end,
+Twenty-seven targets feed hostile bytes to the boundaries after the front end,
 through the CLI, four drivers and one program the shipped CLI builds. They
 are the build manifest reader, the IR verifiers, both in-process assemblers,
 the package layer's manifest, lock, index and archive readers, the literate
 tangle and weave that read a `.fern.md` module a package can ship, and the
 stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
 and server connection, HPACK and QPACK decoders, QUIC packet and frame
-readers, JSON parser and URL parser. Each input runs in a child process under a time and
+readers, TLS record, handshake message, server and client handshake, PEM,
+X.509 and chain verifier readers, DEFLATE, gzip, zlib, zstd and Brotli
+decoders, JSON parser and URL parser. The DEFLATE, gzip and zlib targets
+must agree with Go's decoders on every input. Each input runs in a child process under a time and
 a memory budget. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
 targets, the encoding the verifier driver reads, the accepted outcomes and

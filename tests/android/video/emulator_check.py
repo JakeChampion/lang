@@ -59,14 +59,18 @@ def verify_screen(data):
 def main(apk, out_dir, content_uri=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    assert int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 29
+    sdk = int(adb("shell", "getprop", "ro.build.version.sdk").strip())
+    assert sdk >= 29
     adb("install", "-r", apk)
     adb("shell", "am", "force-stop", PACKAGE)
     adb("logcat", "-c")
     command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity"]
     if content_uri is not None:
         assert content_uri.startswith("content://"), content_uri
-        command += ["--es", "uri", content_uri, "--grant-read-uri-permission", "-d", content_uri]
+        # The shell owns the MediaStore fixture and cannot grant its URI.
+        permission = "READ_MEDIA_VIDEO" if sdk >= 33 else "READ_EXTERNAL_STORAGE"
+        adb("shell", "pm", "grant", PACKAGE, "android.permission." + permission)
+        command += ["--es", "uri", content_uri, "-d", content_uri]
     adb(*command)
     log = ""
     try:

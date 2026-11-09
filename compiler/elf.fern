@@ -1017,6 +1017,81 @@ pub function elf_image_kernel(text: u8[], data: i32[], machine: i32, entry_off: 
   return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, elf_no_note(), true, elf_page_align(), relro, 4096);
 }
 
+// A little-endian field of `n` bytes at `at`.
+function elf_read_le(b: [u8], at: i32, n: i32): i64 {
+  let v = 0i64;
+  let i = n - 1;
+  while (i >= 0) {
+    v = v << 8i64 | b[at + i] as i64;
+    i -= 1;
+  }
+  return v;
+}
+
+// The arm64 Linux Image of the kernel ELF `image` that loads at `base`. Each
+// load segment is at its address minus base, and the 64-byte Image header
+// takes the place of the ELF header. The text offset is 2 MiB, so a loader
+// puts the Image 2 MiB above the start of its RAM, which must be base. It
+// enters the Image at byte 0 with the device tree address in x0. The header
+// claims `size` bytes, so a loader keeps the device tree and the initrd out of
+// the RAM of the image. Empty when the segments do not ascend.
+pub function elf_arm64_linux_image(image: [u8], base: i64, size: i64): u8[] {
+  let phoff = elf_read_le(image, 32, 8) as i32;
+  let phnum = elf_read_le(image, 56, 2) as i32;
+  let flat: u8[] = [];
+  let i = 0;
+  while (i < phnum) {
+    let ph = phoff + i * elf_ph_size();
+    if (elf_read_le(image, ph, 4) == 1i64) {
+      let off = elf_read_le(image, ph + 8, 8) as i32;
+      let at = (elf_read_le(image, ph + 16, 8) - base) as i32;
+      let end = off + elf_read_le(image, ph + 32, 8) as i32;
+      if (at < flat.len()) {
+        return [];
+      }
+      while (flat.len() < at) {
+        flat = flat.append(0 as u8);
+      }
+      while (off < end) {
+        flat = flat.append(image[off]);
+        off += 1;
+      }
+    }
+    i += 1;
+  }
+  let headers = elf_eh_size() + phnum * elf_ph_size();
+  let entry = (elf_read_le(image, 24, 8) - base) as i32;
+  if (flat.len() < headers || entry < headers) {
+    return [];
+  }
+  // code0 is a branch to the entry, the flags give little-endian 4 KiB pages,
+  // and the magic is "ARM\x64".
+  let h: i32[] = [];
+  h = elf_le32(h, 0x14000000 | entry / 4);
+  h = elf_le32(h, 0);
+  h = elf_le64(h, 2097152i64);
+  h = elf_le64(h, size);
+  h = elf_le64(h, 2i64);
+  h = elf_le64(h, 0i64);
+  h = elf_le64(h, 0i64);
+  h = elf_le64(h, 0i64);
+  h = elf_le32(h, 0x644d5241);
+  h = elf_le32(h, 0);
+  let out: u8[] = [];
+  for x in h {
+    out = out.append(x as u8);
+  }
+  while (out.len() < headers) {
+    out = out.append(0 as u8);
+  }
+  let k = headers;
+  while (k < flat.len()) {
+    out = out.append(flat[k]);
+    k += 1;
+  }
+  return out;
+}
+
 // The text offset of a PVH kernel image, which has one note header more.
 pub function elf_text_off_pvh(): i32 {
   return elf_align16(elf_eh_size() + elf_image_phnum(false, true, true) * elf_ph_size());

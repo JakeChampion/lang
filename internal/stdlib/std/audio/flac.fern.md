@@ -1,4 +1,4 @@
-# Native FLAC decoder
+# Native FLAC audio
 
 The decoder reads native FLAC streams with integer PCM at 4 through 32 bits and up to eight channels.
 It supports constant, verbatim, fixed predictor, and LPC subframes, Rice and Rice2 residuals, wasted bits, and all stereo assignments.
@@ -6,7 +6,9 @@ It supports constant, verbatim, fixed predictor, and LPC subframes, Rice and Ric
 It checks the header CRC-8, frame CRC-16, zero alignment bits, sample ranges, and frame sequence.
 `decode` also checks the STREAMINFO MD5 when the stream supplies one.
 
-Ogg FLAC and FLAC encoding are outside this module.
+`encode` writes native FLAC with constant, verbatim, or fixed-predictor subframes and a complete PCM MD5.
+The encoder submodule supplies frame and streaming-header APIs and exact Rice/Rice2 cost selection.
+Ogg FLAC and encoder LPC analysis remain outside this module.
 
 `inspect` reads STREAMINFO and skips bounded metadata without sample allocation.
 `decode_frame` reads one frame at a byte offset. The result supplies the next offset and frame or sample number.
@@ -23,6 +25,8 @@ Limits apply before sample allocation. They also bound streams with an unknown s
 
 import "std/audio/pcm";
 import "std/audio/wire";
+import "std/audio/flac/checksum";
+import "std/audio/flac/encoder";
 import "std/crypto";
 import "std/u32";
 
@@ -33,22 +37,6 @@ pub struct Frame { format: pcm.Format, frames: i32, bytes_read: i32, number: u64
 struct Bits { at: i32, bit: i32, bad: boolean }
 
 struct FrameHeader { bits: Bits, frames: i32, assignment: i32, number: u64, variable: boolean }
-
-const CRC8: i32[] = [0, 7, 14, 9, 28, 27, 18, 21, 56, 63, 54, 49, 36, 35, 42, 45, 112, 119, 126, 121, 108, 107, 98, 101, 72, 79, 70, 65, 84, 83, 90, 93, 224, 231, 238, 233, 252, 251, 242, 245, 216, 223, 214, 209, 196, 195, 202, 205, 144, 151, 158, 153, 140, 139, 130, 133, 168, 175, 166, 161, 180, 179, 186, 189, 199, 192, 201, 206, 219, 220, 213, 210, 255, 248, 241, 246, 227, 228, 237, 234, 183, 176, 185, 190, 171, 172, 165, 162, 143, 136, 129, 134, 147, 148, 157, 154, 39, 32, 41, 46, 59, 60, 53, 50, 31, 24, 17, 22, 3, 4, 13, 10, 87, 80, 89, 94, 75, 76, 69, 66, 111, 104, 97, 102, 115, 116, 125, 122, 137, 142, 135, 128, 149, 146, 155, 156, 177, 182, 191, 184, 173, 170, 163, 164, 249, 254, 247, 240, 229, 226, 235, 236, 193, 198, 207, 200, 221, 218, 211, 212, 105, 110, 103, 96, 117, 114, 123, 124, 81, 86, 95, 88, 77, 74, 67, 68, 25, 30, 23, 16, 5, 2, 11, 12, 33, 38, 47, 40, 61, 58, 51, 52, 78, 73, 64, 71, 82, 85, 92, 91, 118, 113, 120, 127, 106, 109, 100, 99, 62, 57, 48, 55, 34, 37, 44, 43, 6, 1, 8, 15, 26, 29, 20, 19, 174, 169, 160, 167, 178, 181, 188, 187, 150, 145, 152, 159, 138, 141, 132, 131, 222, 217, 208, 215, 194, 197, 204, 203, 230, 225, 232, 239, 250, 253, 244, 243];
-
-const CRC16: i32[] = [0, 32773, 32783, 10, 32795, 30, 20, 32785, 32819, 54, 60, 32825, 40, 32813, 32807, 34, 32867, 102, 108, 32873, 120, 32893, 32887, 114, 80, 32853, 32863, 90, 32843, 78, 68, 32833, 32963, 198, 204, 32969, 216, 32989, 32983, 210, 240, 33013, 33023, 250, 33003, 238, 228, 32993, 160, 32933, 32943, 170, 32955, 190, 180, 32945, 32915, 150, 156, 32921, 136, 32909, 32903, 130, 33155, 390, 396, 33161, 408, 33181, 33175, 402, 432, 33205, 33215, 442, 33195, 430, 420, 33185, 480, 33253, 33263, 490, 33275, 510, 500, 33265, 33235, 470, 476, 33241, 456, 33229, 33223, 450, 320, 33093, 33103, 330, 33115, 350, 340, 33105, 33139, 374, 380, 33145, 360, 33133, 33127, 354, 33059, 294, 300, 33065, 312, 33085, 33079, 306, 272, 33045, 33055, 282, 33035, 270, 260, 33025, 33539, 774, 780, 33545, 792, 33565, 33559, 786, 816, 33589, 33599, 826, 33579, 814, 804, 33569, 864, 33637, 33647, 874, 33659, 894, 884, 33649, 33619, 854, 860, 33625, 840, 33613, 33607, 834, 960, 33733, 33743, 970, 33755, 990, 980, 33745, 33779, 1014, 1020, 33785, 1000, 33773, 33767, 994, 33699, 934, 940, 33705, 952, 33725, 33719, 946, 912, 33685, 33695, 922, 33675, 910, 900, 33665, 640, 33413, 33423, 650, 33435, 670, 660, 33425, 33459, 694, 700, 33465, 680, 33453, 33447, 674, 33507, 742, 748, 33513, 760, 33533, 33527, 754, 720, 33493, 33503, 730, 33483, 718, 708, 33473, 33347, 582, 588, 33353, 600, 33373, 33367, 594, 624, 33397, 33407, 634, 33387, 622, 612, 33377, 544, 33317, 33327, 554, 33339, 574, 564, 33329, 33299, 534, 540, 33305, 520, 33293, 33287, 514];
-
-function crc(input: [u8], wide: boolean): i32 {
-  let c = 0;
-  for b in input {
-    if (wide) {
-      c = c << 8 & 65535 ^ CRC16[c >> 8 ^ b as i32];
-    } else {
-      c = CRC8[c ^ b as i32];
-    }
-  }
-  return c;
-}
 
 // fern-lint: allow cyclomatic-complexity
 // One check per field of the stream header and its metadata blocks.
@@ -72,7 +60,7 @@ pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioE
   let max_frame = wire.be(input, 15, 3);
   let packed = wire.be(input, 18, 8);
   let format = pcm.Format { sample_rate: (packed >> 44) as i32, channels: ((packed >> 41 & 7u64) + 1u64) as i32, bits_per_sample: ((packed >> 36 & 31u64) + 1u64) as i32 };
-  if (!pcm.valid(format) || format.sample_rate > 655350 || format.bits_per_sample < 4
+  if (!pcm.valid(format) || format.bits_per_sample < 4
     || min_block < 16 || max_block < min_block || min_frame > max_frame && max_frame != 0u64) {
     return Err(pcm.Header);
   }
@@ -256,7 +244,7 @@ function header(input: [u8], at: i32, stream: Header, limits: pcm.Limits): Resul
     return Err(pcm.Header);
   }
   let _ = pcm.sample_count(frames, cc, limits)?;
-  if (crc(input[at:b.at], false) != input[b.at] as i32) {
+  if (checksum.crc(input[at:b.at], false) != input[b.at] as i32) {
     return Err(pcm.Checksum);
   }
   return Ok(FrameHeader { bits: Bits { at: b.at + 1, bit: 0, bad: false }, frames: frames, assignment: assignment, number: num, variable: variable });
@@ -450,7 +438,7 @@ pub function decode_frame_into(input: [u8], at: i32, stream: Header, own output:
   if (b.bad || input.len() - b.at < 2) {
     return Err(pcm.Truncated);
   }
-  if (crc(input[at:b.at], true) != wire.be(input, b.at, 2) as i32) {
+  if (checksum.crc(input[at:b.at], true) != wire.be(input, b.at, 2) as i32) {
     return Err(pcm.Checksum);
   }
   for i in 0..h.frames {
@@ -549,5 +537,9 @@ pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.Audi
     }
   }
   return Ok(pcm.Block { format: stream.format, samples: output });
+}
+
+pub function encode(samples: [i32], format: pcm.Format, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
+  return encoder.encode(samples, format, encoder.default_options(), limits);
 }
 ```

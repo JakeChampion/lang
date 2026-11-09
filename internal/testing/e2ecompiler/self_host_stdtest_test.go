@@ -88,6 +88,8 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// The full FLAC encoder bank includes 65,535-frame blocks. Small smoke stays here.
+	"flac_encoder": true,
 	// The full CAF corpus includes repeated seeks. Independent trim smoke stays here.
 	"caf": true, "caf_shard1": true, "caf_shard2": true, "caf_shard3": true,
 	// The CAF boundary campaign takes 89 seconds. Exact trim smoke stays here.
@@ -351,6 +353,10 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"linear_audio_boundary", langSrcAbs(t, "tests/stdlib/linear_audio_boundary_test.fern"), ""},
 		{"caf_linear", langSrcAbs(t, "tests/stdlib/caf_linear_test.fern"), ""},
 		{"caf_linear_boundary", langSrcAbs(t, "tests/stdlib/caf_linear_boundary_test.fern"), ""},
+		{"flac_encoder", langSrcAbs(t, "tests/stdlib/flac_encoder_test.fern"), ""},
+		{"flac_encoder_cost", langSrcAbs(t, "tests/stdlib/flac_encoder_cost_test.fern"), ""},
+		{"flac_encoder_boundary", langSrcAbs(t, "tests/stdlib/flac_encoder_boundary_test.fern"), ""},
+		{"flac_encoder_smoke", langSrcAbs(t, "tests/stdlib/flac_encoder_smoke_test.fern"), ""},
 		{"wav_linear", langSrcAbs(t, "tests/stdlib/wav_linear_test.fern"), ""},
 		{"wav_linear_boundary", langSrcAbs(t, "tests/stdlib/wav_linear_boundary_test.fern"), ""},
 		{"caf", langSrcAbs(t, "tests/stdlib/caf_test.fern"), ""},
@@ -547,6 +553,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"filetime", langSrcAbs(t, "tests/stdlib/filetime_test.fern"), ""},
 		{"fdt", langSrcAbs(t, "tests/stdlib/fdt_test.fern"), ""},
 		{"pvh", langSrcAbs(t, "tests/stdlib/pvh_test.fern"), ""},
+		{"cpio", langSrcAbs(t, "tests/stdlib/cpio_test.fern"), ""},
 		{"elf", langSrcAbs(t, "tests/stdlib/elf_test.fern"), ""},
 		{"binary", langSrcAbs(t, "tests/stdlib/binary_test.fern"), ""},
 		{"tz", langSrcAbs(t, "tests/stdlib/tz_test.fern"), ""},

@@ -117,6 +117,9 @@ function main():i32 {let code=run(1i64,2i64,3i64,4i64,5i64,6i64,7i64,8i64,9i64,1
 
 var scalarReturnCases = []struct{ name, source, want string }{
 	{"four-wide", scalarRecordWide, "0\n2008000\n"},
+	{"unrelated-record-donor", scalarRecordUnrelatedDonor, "10000\n200040000\n"},
+	{"unrelated-same-layout-donor", scalarRecordUnrelatedSameLayout, "1000\n"},
+	{"unrelated-tuple-donor", scalarTupleUnrelatedDonor, "1000\n"},
 	{"mixed-float-bits", scalarRecordMixed, "0\n"},
 	{"narrow-float", scalarRecordNarrow, "0\n"},
 	{"one-two-three-phis", scalarRecordSmallPhis, "0\n"},
@@ -295,4 +298,44 @@ struct Quad {a:i64,b:i64,c:i64,d:i64}
 @noinline function pass(own q:Quad):Quad{return q;}
 @noinline function consume(q:Quad):i64{return q.a+q.b+q.c+q.d;}
 function main():i32{let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {a:q.a+1i64,b:q.b,c:q.c,d:q.d};if(consume(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+`
+
+const scalarRecordUnrelatedDonor = `import "std/i64";
+struct Costs { first: i64, second: i64, a: i32, b: i32 }
+struct Plan { cost: i64, a: i32, b: i32, c: i32, d: i32 }
+@noinline function costs(i: i32): Costs { return Costs { first: i as i64, second: (i + 1) as i64, a: i + 2, b: i + 3 }; }
+@noinline function take(own plan: Plan): i64 { return plan.cost + (plan.a + plan.b + plan.c + plan.d) as i64; }
+function main(): i32 {
+  let before = __heap_alloc_count();
+  let sum = 0i64;
+  for i in 0..10000 {
+    let c = costs(i);
+    sum += take(Plan { cost: c.first + c.second, a: c.a, b: c.b, c: 0, d: 0 });
+  }
+  let count = __heap_alloc_count() - before;
+  print(count.to_string());
+  print(sum.to_string());
+  return 0;
+}
+`
+
+const scalarRecordUnrelatedSameLayout = `import "std/i64";
+struct Source { a:i64,b:i64,c:i64,d:i64 }
+struct Target { a:i64,b:i64,c:i64,d:i64 }
+@noinline function make(i:i32):Source {return Source {a:i as i64,b:2i64,c:3i64,d:4i64};}
+@noinline function keep(own x:Target,own held:Target[]):Target[] {return held.with(0,x);}
+function main():i32 {
+ let held:Target[]=[Target {a:0i64,b:0i64,c:0i64,d:0i64}];
+ held=keep(Target {a:0i64,b:0i64,c:0i64,d:0i64},held);
+ let before=__heap_alloc_count();
+ for i in 0..1000 {let q=make(i);let alias=q;held=keep(Target {a:alias.a,b:q.b,c:q.c,d:q.d},held);if(held[0].a!=i as i64||held[0].b!=2i64||held[0].c!=3i64||held[0].d!=4i64){return 71;}}
+ let count=__heap_alloc_count()-before;print(count.to_string());return 0;
+}
+`
+
+const scalarTupleUnrelatedDonor = `import "std/i64";
+struct Target { a:i64,b:i64,c:i64,d:i64,e:i64 }
+@noinline function make(i:i32):(i64,i64) {return (i as i64,2i64);}
+@noinline function take(own x:Target):i64 {return x.a+x.b+x.c+x.d+x.e;}
+function main():i32 {let before=__heap_alloc_count();for i in 0..1000 {let q=make(i);if(take(Target {a:q.0,b:q.1,c:3i64,d:4i64,e:5i64})!=(i as i64)+14i64){return 72;}}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
 `

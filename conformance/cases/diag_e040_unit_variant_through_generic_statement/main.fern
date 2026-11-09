@@ -1,0 +1,13 @@
+// A call of id on a unit variant of a generic enum is a statement here. It has
+// no expected type, so nothing gives its T.
+
+enum Opt[T] { No, Yes(T) }
+
+function id[T](x: T): T {
+  return x;
+}
+
+function main(): i32 {
+  id(No);
+  return 0;
+}

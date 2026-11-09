@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"syscall"
+	"unsafe"
 )
 
 func numberArgs(name string, args []Value, want int) ([]int64, error) {
@@ -427,10 +428,11 @@ func builtinUdpSendmmsg(i *Interp, args []Value) (Value, error) {
 	}
 	elems := lens.Elems()
 	off, sent := 0, 0
-	for m := 0; 2*m+1 < len(elems); m++ {
-		size, ok1 := elems[2*m].(Number)
-		seg, ok2 := elems[2*m+1].(Number)
-		if !ok1 || !ok2 {
+	for m := 0; 3*m+2 < len(elems); m++ {
+		size, ok1 := elems[3*m].(Number)
+		seg, ok2 := elems[3*m+1].(Number)
+		tos, ok3 := elems[3*m+2].(Number)
+		if !ok1 || !ok2 || !ok3 {
 			return nil, fmt.Errorf("%s: expected number lens elements", name)
 		}
 		if size < 0 || off+int(size) > len(data) {
@@ -453,7 +455,7 @@ func builtinUdpSendmmsg(i *Interp, args []Value) (Value, error) {
 			if end > len(payload) {
 				end = len(payload)
 			}
-			if err := syscall.Sendto(fd, payload[at:end], 0, to); err != nil {
+			if err := sendMarked(fd, payload[at:end], to, int(tos)); err != nil {
 				if sent > 0 {
 					return Number(sent), nil
 				}
@@ -547,4 +549,47 @@ func builtinUdpRecvmmsg(i *Interp, args []Value) (Value, error) {
 		count++
 	}
 	return Number(count), nil
+}
+
+// sendMarked sends one datagram to `to`, or to the connected peer when `to`
+// is nil, with the TOS byte in an IP_TOS control message for an IPv4 or a
+// v4-mapped peer and in IPV6_TCLASS otherwise.
+func sendMarked(fd int, p []byte, to syscall.Sockaddr, tos int) error {
+	if tos == 0 {
+		return syscall.Sendto(fd, p, 0, to)
+	}
+	peer := to
+	if peer == nil {
+		got, err := getpeername(fd)
+		if err != nil {
+			return err
+		}
+		peer = got
+	}
+	level, kind := ipprotoIPv6, ipv6Tclass
+	switch a := peer.(type) {
+	case *syscall.SockaddrInet4:
+		level, kind = ipprotoIP, ipTOS
+	case *syscall.SockaddrInet6:
+		if a.Addr[10] == 0xff && a.Addr[11] == 0xff && allZero(a.Addr[:10]) {
+			level, kind = ipprotoIP, ipTOS
+		}
+	}
+	oob := make([]byte, syscall.CmsgSpace(4))
+	h := (*syscall.Cmsghdr)(unsafe.Pointer(&oob[0]))
+	h.Level = int32(level)
+	h.Type = int32(kind)
+	h.SetLen(syscall.CmsgLen(4))
+	oob[syscall.CmsgLen(0)] = byte(tos)
+	_, err := syscall.SendmsgN(fd, p, oob, to, 0)
+	return err
+}
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }

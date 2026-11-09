@@ -12,12 +12,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // Three messages in one call: a datagram of five bytes, a message of 303
 // bytes with a segment size of 100 that the kernel splits into four
-// datagrams, and an empty datagram; then one message on the connected socket
-// with no address. The receiver sees seven datagrams, in order.
+// datagrams, marked TOS 2, and an empty datagram; then one message on the
+// connected socket with no address, marked TOS 2. The receiver sees seven
+// datagrams, in order, each with the TOS byte of its message.
 const udpSendmmsgProgram = `function main(): i32 {
     let addr: u8[] = UDP_ADDRESS;
     let fd: Socket = udp_bind(addr, 0);
@@ -31,13 +34,13 @@ const udpSendmmsgProgram = `function main(): i32 {
     for m in 0..3 { for b in to { addrs = addrs.append(b); } }
     let data: u8[] = [1u8, 2u8, 3u8, 4u8, 5u8];
     for i in 0..303 { data = data.append((i % 251) as u8); }
-    let lens: i32[] = [5, 0, 303, 100, 0, 0];
+    let lens: i32[] = [5, 0, 0, 303, 100, 2, 0, 0, 0];
     assert(udp_sendmmsg(fd, addrs, data, lens) == 3);
     assert(udp_connect(fd, addr, port) == 0);
     let none: u8[] = [];
-    assert(udp_sendmmsg(fd, none, [7u8, 8u8], [2, 0]) == 1);
+    assert(udp_sendmmsg(fd, none, [7u8, 8u8], [2, 0, 2]) == 1);
     assert(udp_sendmmsg(fd, none, none, []) == 0);
-    assert(udp_sendmmsg(fd, none, [1u8], [2, 0]) == -22);
+    assert(udp_sendmmsg(fd, none, [1u8], [2, 0, 0]) == -22);
     assert(tcp_close(fd) == 0);
     assert(data.len() == 308 && addrs.len() == 57);
     return 0;
@@ -92,6 +95,10 @@ func checkUDPSendmmsgFamilies(t *testing.T, compile func(string, string) *exec.C
 				train[i] = byte(i % 251)
 			}
 			want := [][]byte{{1, 2, 3, 4, 5}, train[0:100], train[100:200], train[200:300], train[300:303], {}, {7, 8}}
+			wantTOS := []int{0, 2, 2, 2, 2, 0, 2}
+			if err := e2eharness.RecvTOS(peer, family.network == "udp6"); err != nil {
+				t.Fatal(err)
+			}
 			program := strings.NewReplacer("UDP_ADDRESS", family.address, "UDP_PORT", port, "UDP_FAMILY", family.fam).Replace(udpSendmmsgProgram)
 			dir := t.TempDir()
 			src, bin := filepath.Join(dir, "send.fern"), filepath.Join(dir, "send")
@@ -106,13 +113,17 @@ func checkUDPSendmmsgFamilies(t *testing.T, compile func(string, string) *exec.C
 			go func() {
 				buf := make([]byte, 65536)
 				for i, expected := range want {
-					n, _, err := peer.ReadFromUDP(buf)
+					n, tos, err := e2eharness.ReadTOS(peer, buf)
 					if err != nil {
 						received <- fmt.Errorf("datagram %d: %w", i, err)
 						return
 					}
 					if !bytes.Equal(buf[:n], expected) {
 						received <- fmt.Errorf("datagram %d: got %d bytes, want %d exact bytes", i, n, len(expected))
+						return
+					}
+					if tos != wantTOS[i] {
+						received <- fmt.Errorf("datagram %d: TOS %d, want %d", i, tos, wantTOS[i])
 						return
 					}
 				}
