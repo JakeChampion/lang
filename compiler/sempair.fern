@@ -290,7 +290,7 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
   for a in phi.args {
     let d = ssa.copy_source(defs, a);
     let k = d.kind_tag;
-    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
+    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != ssa.PHI && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
       return false;
     }
   }

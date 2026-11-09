@@ -1132,7 +1132,7 @@ pub function lane_op(op: string): boolean {
 
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return (k == 9 || k == 10 || k == 61 || k == 62) && lane_op(ins.str);
+  return (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && lane_op(ins.str);
 }
 
 pub function lane_param(f: SFunc, p: i32): boolean {
@@ -1179,7 +1179,7 @@ function lane_results(f: SFunc): boolean[] {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      let maybe = k == 6 || k == 11 && ins.imm == 6 || (k == 9 || k == 10 || k == 61 || k == 62) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -1322,13 +1322,13 @@ function float_tolerant(ins: SInst): boolean {
 
 function float_def(ins: SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 4 || k == 6 || k == 8 || float_load(ins)) {
+  if (k == CONST_FLOAT || k == PARAM || k == PHI || float_load(ins)) {
     return true;
   }
-  if (k == 9) {
+  if (k == BINARY) {
     return float_arith(ins.str);
   }
-  if (k == 10) {
+  if (k == UNARY) {
     return float_math(ins.str) || util.str_has_prefix(ins.str, "i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
   return false;
@@ -1340,10 +1340,10 @@ function float_load(ins: SInst): boolean {
 
 function float_use(ins: SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 9) {
+  if (k == BINARY) {
     return float_arith(ins.str) || float_cmp(ins.str);
   }
-  if (k == 10) {
+  if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
   return false;
@@ -4127,13 +4127,13 @@ function select_arm(b: SBlock, from: i32): boolean {
 
 function speculable(ins: SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 1 || k == 2 || k == 3 || k == 7) {
+  if (k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == COPY) {
     return true;
   }
-  if (k == 9) {
+  if (k == BINARY) {
     return int_binary(ins.str);
   }
-  if (k == 10) {
+  if (k == UNARY) {
     return int_unary(ins.str);
   }
   return false;
@@ -4860,22 +4860,22 @@ function holds_result(ins: SInst, held: i32): boolean {
 
 function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
   let k = ins.kind_tag;
-  if (k >= 1 && k <= 3) {
+  if (k >= CONST_INT && k <= CONST_I64) {
     return constant_facts(ins);
   }
-  if (k == 7 || k == 8) {
+  if (k == COPY || k == PHI) {
     return shared_facts(facts, ins.args, 0);
   }
-  if (k == 36) {
+  if (k == SELECT) {
     return shared_facts(facts, ins.args, 1);
   }
   if (byte_source(f, def_b, def_k, ins)) {
     return EXT_BYTE;
   }
-  if (k == 9) {
+  if (k == BINARY) {
     return binary_facts(f, def_b, def_k, facts, ins);
   }
-  if (k == 10 && ins.args.len() == 1) {
+  if (k == UNARY && ins.args.len() == 1) {
     return unary_facts(ins, fact_of(facts, ins.args[0]));
   }
   return 0;

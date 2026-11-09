@@ -3774,10 +3774,10 @@ function pops_of(fixed: i32, o: Op): i32 {
     return fixed;
   }
   let t = o.kind_tag;
-  if (t == 87 || t == 138 || t == 142 || t == 149) {
+  if (t == K_ARR_MAKE || t == K_STRUCT_MAKE || t == K_TUPLE_MAKE || t == K_CALL_DIRECT) {
     return o.i32_imm;
   }
-  if (t == 150) {
+  if (t == K_CALL_INDIRECT) {
     return o.i32_imm + 1;
   }
   return -1;
@@ -3862,13 +3862,13 @@ function kind_pops(t: i32): i32 {
 
 pub function pure_value_op(o: Op): boolean {
   let t = o.kind_tag;
-  if (t == 1 || t == 3 || t == 4 || t == 5 || t == 6 || t == 218 || t == 18) {
+  if (t == K_CONST_I32 || t == K_CONST_I64 || t == K_CONST_F64 || t == K_CONST_STR || t == K_CONST_FUNC || t == K_CONST_STRUCT || t == K_LOAD_LOCAL) {
     return true;
   }
-  if (t == 88 || t == 139 || t == 143 || t == 90 || t == 97 || t == 101) {
+  if (t == K_ARR_GET || t == K_STRUCT_GET || t == K_TUPLE_GET || t == K_ARR_LEN || t == K_STR_LEN || t == K_STR_INDEX) {
     return true;
   }
-  if (t == 19 || t == 20) {
+  if (t == K_STORE_LOCAL || t == K_TEE_LOCAL) {
     return false;
   }
   return pops2_arith(t) || pops1_conv(t);
@@ -3876,19 +3876,19 @@ pub function pure_value_op(o: Op): boolean {
 
 pub function op_pushes(o: Op): i32 {
   let t = o.kind_tag;
-  if (t == 19 || t == 159 || lane_writes(t)) {
+  if (t == K_STORE_LOCAL || t == K_DROP || lane_writes(t)) {
     return 0;
   }
-  if (t == 288) {
+  if (t == K_LINE) {
     return 0;
   }
-  if (t == 89 || t == 124 || t == 140 || t == 144) {
+  if (t == K_ARR_SET || t == K_OPT_SET_PAYLOAD || t == K_STRUCT_SET || t == K_TUPLE_SET) {
     return 0;
   }
-  if (t == 152 || t == 153 || t == 154 || t == 155 || t == 156) {
+  if (t == K_BLOCK || t == K_LOOP || t == K_IF || t == K_ELSE || t == K_END) {
     return 0;
   }
-  if (t == 157 || t == 158 || t == 160) {
+  if (t == K_BR || t == K_BRIF || t == K_RETURN) {
     return 0;
   }
   return 1;

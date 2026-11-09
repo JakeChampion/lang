@@ -1724,7 +1724,7 @@ function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
 
 function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, array: boolean): boolean {
   let k = ins.kind_tag;
-  if (k == 9 || k == ssasem.append_range() || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
+  if (k == ssa.BINARY || k == ssasem.append_range() || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
     return true;
   }
   if (k == ssasem.slice()) {
@@ -2855,8 +2855,8 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
     for ins in b.insts {
       let k = ins.kind_tag;
       if (ins.result >= 0 && ins.result < out.len()) {
-        let yes = k == 7 || k == 8;
-        if (k == 6) {
+        let yes = k == ssa.COPY || k == ssa.PHI;
+        if (k == ssa.PARAM) {
           yes = ins.str == "own";
         } else if (!yes && k < 0) {
           yes = construction(k);

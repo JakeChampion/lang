@@ -62,9 +62,9 @@ function decidable(g: ssa.SFunc): boolean {
         continue;
       }
       let k = ins.kind_tag;
-      if (k == 2) {
+      if (k == ssa.CONST_BOOL) {
         constant = constant.with(ins.result, true);
-      } else if (ins.args.len() == 1 && (k == 7 || k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get())) {
+      } else if (ins.args.len() == 1 && (k == ssa.COPY || k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get())) {
         up = up.with(ins.result, ins.args[0]);
       } else if (k == ssasem.variant_is() && ins.args.len() == 1) {
         tested = tested.append(ins.args[0]);
@@ -855,7 +855,7 @@ function dead_copy(uses: i32[], ins: ssa.SInst): boolean {
 
 function movable_constant(ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  return ins.args.len() == 0 && ins.result >= 0 && (k == 1 || k == 2 || k == 3 || k == 5 || k == ssasem.zero());
+  return ins.args.len() == 0 && ins.result >= 0 && (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.CONST_STR || k == ssasem.zero());
 }
 
 function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], dom: ssadeps.Dom, ji: i32): Join {
@@ -1059,7 +1059,7 @@ function same_pick(defs: ssa.SInst[], a: i32, b: i32): boolean {
   let da = through_copies(defs, a);
   let db = through_copies(defs, b);
   let k = da.kind_tag;
-  if (k != db.kind_tag || k != 1 && k != 2 && k != 3 && k != 5) {
+  if (k != db.kind_tag || k != ssa.CONST_INT && k != ssa.CONST_BOOL && k != ssa.CONST_I64 && k != ssa.CONST_STR) {
     return false;
   }
   return da.args.len() == 0 && db.args.len() == 0 && da.imm == db.imm && da.str == db.str;

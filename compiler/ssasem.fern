@@ -3073,19 +3073,19 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   if (kind == checked_present() || kind == checked_value()) {
     return checked_scalar_error(ins, f, result);
   }
-  if (kind == 6) {
+  if (kind == ssa.PARAM) {
     return parameter_error(ins, f, result);
   }
-  if (kind == 7 || kind == 8) {
+  if (kind == ssa.COPY || kind == ssa.PHI) {
     return copy_error(ins, f, result);
   }
-  if (kind == 1 || kind == 2 || kind == 5) {
+  if (kind == ssa.CONST_INT || kind == ssa.CONST_BOOL || kind == ssa.CONST_STR) {
     return constant_error(ins, result);
   }
   if (scalar_op(kind)) {
     return scalar_error(ins, f, result);
   }
-  if (kind == 35) {
+  if (kind == ssa.LINE) {
     return line_error(ins, result);
   }
   return composite_error(ins, f, result);
@@ -5303,10 +5303,10 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
 
 pub function reorderable(ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return ins.str != "/" && ins.str != "%";
   }
-  return k == 1 || k == 2 || k == 5 || k == 7 || k == 10 || k == zero() || k == cast()
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssa.COPY || k == ssa.UNARY || k == zero() || k == cast()
     || k == variant_get() || k == variant_is() || k == record_get() || k == tuple_get() || k == length();
 }
 

@@ -1561,7 +1561,7 @@ function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (k == ssasem.param() || line_mark(k)) {
     return 0;
   }
-  if (literal_kind(k) || k == 7 || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
+  if (literal_kind(k) || k == ssa.COPY || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
     return 1;
   }
   if (k == ssasem.record_new() && record_param(f, ssasem.update_base(ins))) {

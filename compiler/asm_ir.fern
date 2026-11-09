@@ -5862,16 +5862,16 @@ function ssa_nargs(): i32 {
 
 function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   let k = ins.kind_tag;
-  if (k == 1 || k == 3 || k == 7 || k == 35) {
+  if (k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.LINE) {
     return 0;
   }
-  if (k == 6 || k == 8) {
+  if (k == ssa.PARAM || k == ssa.PHI) {
     return 7;
   }
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return ssa_binary_nospill_mask(ins, imm);
   }
-  if (k == 10 && ssa_integer_unary(ins.str)) {
+  if (k == ssa.UNARY && ssa_integer_unary(ins.str)) {
     return 0;
   }
   return -1;
@@ -7181,13 +7181,13 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (ssa.lane_inst(ins)) {
     return true;
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return ssa_unary_known(ins.str);
   }
-  if (k >= 40 && k <= 60) {
+  if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
+  return k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.CONST_FLOAT || k == ssa.PARAM || k == ssa.COPY || k == ssa.PHI || k == ssa.BINARY || k == ssa.CALL || k == ssa.LINE;
 }
 
 function ssa_unsupported(f: ssa.SFunc): string {
@@ -8308,25 +8308,25 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   let a = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let d = ssa_dst(reg_of, ins.result);
-  if (k == 40) {
+  if (k == ssa.LD_AT) {
     s = ssa_mov_rm(s, 64, true, d, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k >= 42 && imm.is_imm[ins.args[1]]) {
+  if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
     return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
   }
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  if (k == 41 && ins.str == "i32") {
+  if (k == ssa.ST_AT && ins.str == "i32") {
     return ssa_mov_rm0(s, 32, false, b, a);
   }
-  if (k == 41 && ins.str == "u8") {
+  if (k == ssa.ST_AT && ins.str == "u8") {
     return ssa_mov_rm(s, 8, false, b, a, ins.imm);
   }
-  if (k == 41) {
+  if (k == ssa.ST_AT) {
     return ssa_mov_rm(s, 64, false, b, a, ins.imm);
   }
-  if (k == 42) {
+  if (k == ssa.ARR_AT) {
     s = s.need("heap");
     if (ins.imm != 1) {
       s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
@@ -8341,7 +8341,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     }
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 44) {
+  if (k == ssa.STR_AT) {
     s = s.need("heap");
     if (ins.imm != 1) {
       s = ssa_trap_jump(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_str_oob_abort");
@@ -8370,21 +8370,21 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   if (ins.imm != 1) {
     let len_at = 0;
     let trap = "__fern_oob_abort";
-    if (k == 44) {
+    if (k == ssa.STR_AT) {
       len_at = 8;
       trap = "__fern_str_oob_abort";
     }
     s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", trap);
   }
-  if (k != 43 && ins.imm == 2) {
+  if (k != ssa.ARR_ST && ins.imm == 2) {
     return s;
   }
-  if (k == 44) {
+  if (k == ssa.STR_AT) {
     s = ssa_mov_rm0(s, 64, true, "%rdx", a);
     s = s.write("    movzbl " + util.i32_to_string(c) + "(%rdx), " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 42) {
+  if (k == ssa.ARR_AT) {
     if (ins.str == "u8") {
       s = s.write("    movzbl " + util.i32_to_string(8 + c) + "(" + a + "), " + ssa_r32(d) + "\n");
     } else {
@@ -8786,7 +8786,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
-  if (kind == 112) {
+  if (kind == ir.K_TCP_POLLABLE) {
     s = ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_load(reg_of, ins.args[0], d, s);
@@ -9528,7 +9528,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   let a = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let offset = imm.value[ins.args[1]];
-  if (k == 52 || k == 53) {
+  if (k == ssa.LD_IDX || k == ssa.ST_IDX) {
     offset *= 8i64;
   }
   let at = util.i64_to_string(offset) + "(" + a + ")";
@@ -9536,22 +9536,22 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     let b = ssa_src(reg_of, ins.args[1], "%rcx");
     s = ssa_load(reg_of, ins.args[1], b, s);
     at = "(" + a + "," + b + ")";
-    if (k == 52 || k == 53) {
+    if (k == ssa.LD_IDX || k == ssa.ST_IDX) {
       at = "(" + a + "," + b + ",8)";
     }
   }
   let d = ssa_dst(reg_of, ins.result);
-  if (k == 52) {
+  if (k == ssa.LD_IDX) {
     s = s.write("    movq " + at + ", " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 54) {
+  if (k == ssa.LD_BYTE) {
     s = s.write("    movzbl " + at + ", " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
-  if (k == 53) {
+  if (k == ssa.ST_IDX) {
     return s.write("    movq " + c + ", " + at + "\n");
   }
   return s.write("    movb " + ssa_r8(c) + ", " + at + "\n");
@@ -9630,17 +9630,17 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   s = ssa_x0_forget(s);
   let k = ins.kind_tag;
   let label = "";
-  if (k == 45) {
+  if (k == ssa.FN_ADDR) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".r";
     if (s.harden) {
       s = asmcore.with_cfi_stub(s, label, ins.imm);
       label = asmcore.cfi_stub_label(s, label);
     }
-  } else if (k == 46) {
+  } else if (k == ssa.SHAPE_ADDR) {
     let sh = asmcore.shape_ref(s, ins.str);
     s = sh.state;
     label = sh.label;
-  } else if (k == 47) {
+  } else if (k == ssa.STR_LIT) {
     let lo = asmcore.add_string_lit(s, ins.str);
     s = lo.state;
     label = asmcore.str_box_label(s, lo.idx);
@@ -9681,80 +9681,80 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base, save: fr.nsave }, s);
   }
-  if (k == 11) {
+  if (k == ssa.CALL) {
     return ssa_call(ins, reg_of, lp, s);
   }
-  if (k == 59) {
+  if (k == ssa.FLAT_OP) {
     return ssa_flat_op(ins, reg_of, lp, r, s);
   }
-  if (k == 60) {
+  if (k == ssa.DYN_DISPATCH) {
     return ssa_dyn_dispatch(ins, reg_of, lp, s);
   }
-  if (k == 51) {
+  if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
-  if (k >= 40 && k <= 44) {
+  if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
-  if (k == 46 && fr.imm.is_imm[ins.result]) {
+  if (k == ssa.SHAPE_ADDR && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  if (k >= 45 && k <= 48) {
+  if (k >= ssa.FN_ADDR && k <= ssa.ARR_BOX) {
     return ssa_addr_inst(ins, reg_of, s);
   }
-  if (k == 49 && ins.str == "str_eq") {
+  if (k == ssa.STR_CALL && ins.str == "str_eq") {
     return ssa_str_eq(ins, reg_of, lp, fr, s);
   }
-  if (k == 49) {
+  if (k == ssa.STR_CALL) {
     return ssa_str_call(ins, reg_of, s);
   }
-  if (k == 50 && ssa_host_kind(ins.str)) {
+  if (k == ssa.RT_CALL && ssa_host_kind(ins.str)) {
     return ssa_host_call(ins, reg_of, fr.imm, s);
   }
   if (ssa_is_rt_call(ins)) {
     return ssa_rt_call(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base, save: fr.nsave }, s);
   }
-  if (k == 58) {
+  if (k == ssa.SYM_ADDR) {
     return ssa_sym_addr(ins, reg_of, s);
   }
-  if (k >= 52 && k <= 55) {
+  if (k >= ssa.LD_IDX && k <= ssa.ST_BYTE) {
     return ssa_raw_inst(ins, reg_of, fr.imm, s);
   }
-  if (k == 56) {
+  if (k == ssa.CALL_IND) {
     return ssa_call_ind(ins, reg_of, s);
   }
-  if (k == 57) {
+  if (k == ssa.AGG_LIT) {
     return ssa_agg_lit(ins, reg_of, s);
   }
-  if (k == 35) {
+  if (k == ssa.LINE) {
     return ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
     return ssa_lane_arm(ins, reg_of, s);
   }
-  if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
+  if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  if (k == 9 && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+  if (k == ssa.BINARY && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
     return ssa_fbin(ins, reg_of, s);
   }
-  if (k == 10 && ssa_fmath_op(ins.str) != "") {
+  if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
     return ssa_fmath(ins, reg_of, s);
   }
   let d = ssa_dst(reg_of, ins.result);
-  if (k == 1) {
+  if (k == ssa.CONST_INT) {
     s = ssa_const_reg(util.i32_to_string(ins.imm), false, d, s);
-  } else if (k == 3) {
+  } else if (k == ssa.CONST_I64) {
     s = ssa_const_reg(ins.str, ins.imm == 64, d, s);
-  } else if (k == 4) {
+  } else if (k == ssa.CONST_FLOAT) {
     s = s.write("    movabsq $" + ins.str + ", " + d + "\n");
-  } else if (k == 7) {
+  } else if (k == ssa.COPY) {
     s = ssa_load(reg_of, ins.args[0], d, s);
-  } else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && ssa_direct_bin(ir.kind_id(ins.str))) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && ssa_shift_tag(ir.kind_id(ins.str))) {
     return ssa_shift(ins, reg_of, fr, s);
-  } else if (k == 9) {
+  } else if (k == ssa.BINARY) {
     d = ssa_bin_work(ins.str);
     if (!fr.imm.is_imm[ins.args[1]]) {
       s = ssa_load(reg_of, ins.args[1], "%rcx", s);

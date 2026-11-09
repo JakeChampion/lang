@@ -1105,7 +1105,7 @@ function scalar(f: ssasem.Func, v: i32): boolean {
 
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
-  if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == 35 || k == ssasem.param()) {
+  if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.param()) {
     return true;
   }
   if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
@@ -1115,10 +1115,10 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   let t = f.values[ins.result];
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return ins.str != "/" && ins.str != "%" && scalar(f, ins.result);
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return scalar(f, ins.result);
   }
   if (k == ssasem.cast()) {

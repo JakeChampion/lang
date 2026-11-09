@@ -384,7 +384,7 @@ function site_free(t: Tx, ops: ir.Op[], at: i32): boolean {
   }
   for j in at..end + 1 {
     let k = ops[j].kind_tag;
-    if ((k == 152 || k == 153 || k == 154) && ops[j].i32_imm != 0) {
+    if ((k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) && ops[j].i32_imm != 0) {
       return false;
     }
   }
@@ -398,7 +398,7 @@ function guarded(seg: ir.Op[]): ir.Op[] {
   let depth = 0;
   for o in seg {
     let k = o.kind_tag;
-    if ((k == 157 || k == 158) && o.i32_imm >= depth) {
+    if ((k == ir.K_BR || k == ir.K_BRIF) && o.i32_imm >= depth) {
       out = out.append(ir.Op { ...o, i32_imm: o.i32_imm + 1 });
     } else {
       out = out.append(o);
@@ -683,9 +683,9 @@ function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
     next = next.append(next_op(ops, i, open, end_of));
     jump = jump.append(jump_op(ops, i, open, else_of, end_of));
     let k = ops[i].kind_tag;
-    if (k == 152 || k == 153 || k == 154) {
+    if (k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) {
       open = open.append(i);
-    } else if (k == 156) {
+    } else if (k == ir.K_END) {
       open = sub_i32(open, 0, open.len() - 1);
     }
     i += 1;
@@ -695,13 +695,13 @@ function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
 
 function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
   let k = ops[at].kind_tag;
-  if (k == 157) {
+  if (k == ir.K_BR) {
     return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
   }
   if (k == ir.K_RETURN || k == ir.K_EXIT) {
     return ops.len();
   }
-  if (k == 155) {
+  if (k == ir.K_ELSE) {
     return end_of[open[open.len() - 1]];
   }
   return at + 1;
@@ -709,10 +709,10 @@ function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
 
 function jump_op(ops: ir.Op[], at: i32, open: i32[], else_of: i32[], end_of: i32[]): i32 {
   let k = ops[at].kind_tag;
-  if (k == 158) {
+  if (k == ir.K_BRIF) {
     return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
   }
-  if (k != 154) {
+  if (k != ir.K_IF) {
     return -1;
   }
   if (else_of[at] >= 0) {

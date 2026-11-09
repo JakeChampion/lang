@@ -180,7 +180,7 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
   let k = ins.kind_tag;
-  if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
+  if (k == ssasem.call() || k == ssasem.closure_new() || k == ssa.FUNCADDR) {
     return call_arrives(ins, ix, usable);
   }
   if (is_option_enum(result, u) && !moves_option(k)) {
@@ -189,7 +189,7 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
   if (k < 0) {
     return semantic_arrives(k, result, u);
   }
-  return !(k >= 1 && k <= 10 || k == 35 || k == 36);
+  return !(k >= ssa.CONST_INT && k <= ssa.UNARY || k == ssa.LINE || k == ssa.SELECT);
 }
 
 // An Option or a Result that a built-in makes, such as the Some of a map
@@ -748,22 +748,22 @@ function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.S
 
 function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
   let k = ins.kind_tag;
-  if (k == 1 || k == 2) {
+  if (k == ssa.CONST_INT || k == ssa.CONST_BOOL) {
     return konst(ins.imm);
   }
-  if (k == 7) {
+  if (k == ssa.COPY) {
     return wk.vals[ins.args[0]];
   }
-  if (k == 8) {
+  if (k == ssa.PHI) {
     return phi_value(wk, pos, ins);
   }
-  if (k == 36) {
+  if (k == ssa.SELECT) {
     return select_value(wk, ins);
   }
-  if (k == 9) {
+  if (k == ssa.BINARY) {
     return binary(f, wk, ins);
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return unary(f, wk, ins);
   }
   return any();

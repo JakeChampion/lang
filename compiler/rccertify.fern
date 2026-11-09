@@ -1072,19 +1072,19 @@ function named_origin(w: Walk, ins: ssa.SInst): i32 {
 
 function simple_origin(w: Walk, ins: ssa.SInst): i32 {
   let k = ins.kind_tag;
-  if (k == 8) {
+  if (k == ssa.PHI) {
     return org_merged();
   }
-  if (k == 48) {
+  if (k == ssa.ARR_BOX) {
     return org_fresh();
   }
-  if (k == 51) {
+  if (k == ssa.STR_VIEW) {
     if (ins.imm == 0) {
       return org_fresh();
     }
     return org_none();
   }
-  if (k == 56 || k == 60) {
+  if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
     return org_unknown();
   }
   if (is_named_op(k) && ins.str != "call_word") {
@@ -1671,7 +1671,7 @@ function touch_named(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
 
 function touch_inst(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
   let k = ins.kind_tag;
-  if (k == 11) {
+  if (k == ssa.CALL) {
     return touch_call(t, w, ins);
   }
   if (is_store(k) && ins.args.len() > 0) {
@@ -1680,7 +1680,7 @@ function touch_inst(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
   if (is_named_op(k)) {
     return touch_named(t, w, ins);
   }
-  if (k == 56 || k == 60) {
+  if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
     return touch_all(t, w, ins.args);
   }
   return t;
@@ -2481,7 +2481,7 @@ function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
 
 function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
   let k = ins.kind_tag;
-  if (k == 11) {
+  if (k == ssa.CALL) {
     return apply_call(p, w, ins, block);
   }
   if (is_named_op(k)) {
@@ -2490,7 +2490,7 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
   if (is_store(k) && ins.args.len() >= 2) {
     return apply_store(p, w, ins, block, taken);
   }
-  if (k == 56 || k == 60) {
+  if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
     p = poison_all(p, w, ins.args);
     return define(p, w, ins.result, block);
   }

@@ -2430,13 +2430,13 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (ssa.lane_inst(ins)) {
     return true;
   }
-  if (k == 10) {
+  if (k == ssa.UNARY) {
     return ssa_unary_known(ins.str);
   }
-  if (k >= 40 && k <= 60) {
+  if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
+  return k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.CONST_FLOAT || k == ssa.PARAM || k == ssa.COPY || k == ssa.PHI || k == ssa.BINARY || k == ssa.CALL || k == ssa.LINE;
 }
 
 function ssa_unsupported(f: ssa.SFunc): string {
@@ -3472,19 +3472,19 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (ins.result >= 0 && ssa_fhome(reg_of, ins.result) != "") {
     d = ssa_fhome(reg_of, ins.result);
   }
-  if (k == 40) {
+  if (k == ssa.LD_AT) {
     s = ssa_ldst(s, true, d, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k >= 42 && imm.is_imm[ins.args[1]]) {
+  if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
     return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
   }
   let b = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  if (k == 41 && ins.str == "i32") {
+  if (k == ssa.ST_AT && ins.str == "i32") {
     return ssa_ldst0(s, false, ssa_wreg(b), a);
   }
-  if (k == 41 && ins.str == "u8") {
+  if (k == ssa.ST_AT && ins.str == "u8") {
     if (ins.imm <= 4095) {
       return ssa_strb(s, ssa_wreg(b), a, ins.imm);
     }
@@ -3494,10 +3494,10 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     }
     return s.write("    strb " + ssa_wreg(b) + ", [" + a + ", x17]\n");
   }
-  if (k == 41) {
+  if (k == ssa.ST_AT) {
     return ssa_ldst(s, false, b, a, ins.imm);
   }
-  if (k == 42) {
+  if (k == ssa.ARR_AT) {
     if (ins.imm != 1) {
       s = s.need("heap");
       s = ssa_ldst0(s, true, "x6", a);
@@ -3519,7 +3519,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     }
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 44) {
+  if (k == ssa.STR_AT) {
     s = s.need("heap");
     if (ins.imm != 1) {
       s = ssa_ldst(s, true, "x6", a, 8);
@@ -3551,28 +3551,28 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
-  if (k != 42 || ins.imm != 1) {
+  if (k != ssa.ARR_AT || ins.imm != 1) {
     s = s.need("heap");
   }
   if (ins.imm != 1) {
     let len_at = 0;
     let trap = "__fern_oob_abort";
-    if (k == 44) {
+    if (k == ssa.STR_AT) {
       len_at = 8;
       trap = "__fern_str_oob_abort";
     }
     s = ssa_cmp_imm(ssa_ldst(s, true, "x6", a, len_at), "x6", c);
     s = ssa_trap_guard(s, CC_HI, trap);
   }
-  if (k != 43 && ins.imm == 2) {
+  if (k != ssa.ARR_ST && ins.imm == 2) {
     return s;
   }
-  if (k == 44) {
+  if (k == ssa.STR_AT) {
     s = ssa_ldst0(s, true, "x6", a);
     s = ssa_ldrb(s, ssa_wreg(d), "x6", c);
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 42) {
+  if (k == ssa.ARR_AT) {
     if (ins.str == "u8") {
       s = ssa_ldrb(s, ssa_wreg(d), a, 8 + c);
     } else {
@@ -4432,7 +4432,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   let a = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let offset = imm.value[ins.args[1]];
-  if (k == 52 || k == 53) {
+  if (k == ssa.LD_IDX || k == ssa.ST_IDX) {
     offset *= 8i64;
   }
   let at = "[" + a + ", #" + util.i64_to_string(offset) + "]";
@@ -4440,22 +4440,22 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     let b = ssa_src(reg_of, ins.args[1], "x5");
     s = ssa_load(reg_of, ins.args[1], b, s);
     at = "[" + a + ", " + b + "]";
-    if (k == 52 || k == 53) {
+    if (k == ssa.LD_IDX || k == ssa.ST_IDX) {
       at = "[" + a + ", " + b + ", lsl #3]";
     }
   }
   let d = ssa_dst(reg_of, ins.result);
-  if (k == 52) {
+  if (k == ssa.LD_IDX) {
     s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == 54) {
+  if (k == ssa.LD_BYTE) {
     s = s.write("    ldrb " + ssa_wreg(d) + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
-  if (k == 53) {
+  if (k == ssa.ST_IDX) {
     return s.write("    str " + c + ", " + at + "\n");
   }
   return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
@@ -4517,17 +4517,17 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   s = ssa_x0_forget(s);
   let k = ins.kind_tag;
   let label = "";
-  if (k == 45) {
+  if (k == ssa.FN_ADDR) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".k";
     if (s.harden) {
       s = asmcore.with_cfi_stub(s, label, ins.imm);
       label = asmcore.cfi_stub_label(s, label);
     }
-  } else if (k == 46) {
+  } else if (k == ssa.SHAPE_ADDR) {
     let sh = asmcore.shape_ref(s, ins.str);
     s = sh.state;
     label = sh.label;
-  } else if (k == 47) {
+  } else if (k == ssa.STR_LIT) {
     s = s.need("heap");
     let lo = asmcore.add_string_lit(s, ins.str);
     s = lo.state;
@@ -4569,91 +4569,91 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
   }
-  if (k == 11) {
+  if (k == ssa.CALL) {
     return ssa_call(ins, reg_of, lp, s);
   }
-  if (k == 59) {
+  if (k == ssa.FLAT_OP) {
     return ssa_flat_op(ins, reg_of, lp, r, s);
   }
-  if (k == 60) {
+  if (k == ssa.DYN_DISPATCH) {
     return ssa_dyn_dispatch(ins, reg_of, lp, s);
   }
-  if (k == 51) {
+  if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
-  if (k >= 40 && k <= 44) {
+  if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
-  if (k >= 45 && k <= 48) {
+  if (k >= ssa.FN_ADDR && k <= ssa.ARR_BOX) {
     return ssa_addr_inst(ins, reg_of, s);
   }
-  if (k == 49 && ins.str == "str_eq") {
+  if (k == ssa.STR_CALL && ins.str == "str_eq") {
     return ssa_str_eq(ins, reg_of, lp, fr, s);
   }
-  if (k == 49) {
+  if (k == ssa.STR_CALL) {
     return ssa_str_call(ins, reg_of, s);
   }
-  if (k == 50 && ssa_host_kind(ins.str)) {
+  if (k == ssa.RT_CALL && ssa_host_kind(ins.str)) {
     return ssa_host_call(ins, reg_of, fr.imm, s);
   }
-  if (k == 50) {
+  if (k == ssa.RT_CALL) {
     return ssa_rt_call(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
   }
-  if (k == 58) {
+  if (k == ssa.SYM_ADDR) {
     return ssa_sym_addr(ins, reg_of, s);
   }
-  if (k >= 52 && k <= 55) {
+  if (k >= ssa.LD_IDX && k <= ssa.ST_BYTE) {
     return ssa_raw_inst(ins, reg_of, fr.imm, s);
   }
-  if (k == 56) {
+  if (k == ssa.CALL_IND) {
     return ssa_call_ind(ins, reg_of, s);
   }
-  if (k == 57) {
+  if (k == ssa.AGG_LIT) {
     return ssa_agg_lit(ins, reg_of, s);
   }
-  if (k == 35) {
+  if (k == ssa.LINE) {
     return ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
     return ssa_lane_arm(ins, reg_of, s);
   }
-  if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
+  if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  if (k == 9 && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+  if (k == ssa.BINARY && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
     return ssa_fbin(ins, reg_of, s);
   }
-  if (k == 10 && ssa_funary_direct(ins.str)) {
+  if (k == ssa.UNARY && ssa_funary_direct(ins.str)) {
     return ssa_funary(ins, reg_of, s);
   }
-  if (k == 10 && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) {
+  if (k == ssa.UNARY && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) {
     let rd = ssa_fhome(reg_of, ins.result);
     if (rd == "") {
       rd = ssa_dst(reg_of, ins.result);
     }
     return ssa_store(reg_of, ins.result, rd, ssa_load(reg_of, ins.args[0], rd, s));
   }
-  if (k == 4 && ssa_fhome(reg_of, ins.result) != "") {
+  if (k == ssa.CONST_FLOAT && ssa_fhome(reg_of, ins.result) != "") {
     return s.write("    ldr " + ssa_fhome(reg_of, ins.result) + ", =" + ins.str + "\n");
   }
   let d = ssa_dst(reg_of, ins.result);
-  if (k == 1) {
+  if (k == ssa.CONST_INT) {
     s = ssa_const_reg(util.i32_to_string(ins.imm), d, s);
-  } else if (k == 3) {
+  } else if (k == ssa.CONST_I64) {
     s = ssa_const_reg(ins.str, d, s);
-  } else if (k == 4) {
+  } else if (k == ssa.CONST_FLOAT) {
     s = s.write("    ldr " + d + ", =" + ins.str + "\n");
-  } else if (k == 7) {
+  } else if (k == ssa.COPY) {
     s = ssa_load(reg_of, ins.args[0], d, s);
-  } else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && ssa_direct_bin(ir.kind_id(ins.str))) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
+  } else if (k == ssa.BINARY && ssa_shift_tag(ir.kind_id(ins.str)) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == 9 && ssa_div_tag(ir.kind_id(ins.str)) && fr.imm.konst[ins.args[1]]) {
+  } else if (k == ssa.BINARY && ssa_div_tag(ir.kind_id(ins.str)) && fr.imm.konst[ins.args[1]]) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
     s = ssa_div_const(ir.kind_id(ins.str), ins.imm, fr.imm.value[ins.args[1]], s);
-  } else if (k == 9) {
+  } else if (k == ssa.BINARY) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
     s = ssa_load(reg_of, ins.args[1], "x5", s);
@@ -6000,7 +6000,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
-  if (kind == 112) {
+  if (kind == ir.K_TCP_POLLABLE) {
     s = ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_load(reg_of, ins.args[0], d, s);
