@@ -1,5 +1,7 @@
 # The Linux system calls of the compiler
 
+Status: [record] the measured Linux system calls of the compiler on 2026-11-08.
+
 Milestone 6 of `docs/BARE-METAL-PLAN.md` (#14265) runs the `arm64-linux` compiler, unmodified, on FernOS. FernOS then must implement the Linux system calls that the compiler makes. This document records that set, measured on 2026-11-08. The first step of #14265 asks for this measurement.
 
 ## How to measure

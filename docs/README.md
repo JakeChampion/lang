@@ -89,6 +89,7 @@ which ones.
 | `ITERATOR-FUSION-CONTRACT.md` | [policy] | The contract lazy iterator chains must meet before adoption; the eager fusion pass and part of the lazy surface are built. |
 | `ARRAY-FUSION-OPERATORS.md` | [reference] | Per-operator proof behind `compiler/semfuse.fern`: what map, filter, fold, reduce, scan, take, take_while and flat_map each contribute to a fused loop. |
 | `BACKEND-PARITY.md` | [reference] | The targets, CPU baselines, syscall floor, macOS support stance and known limitations of each backend. |
+| `FERNOS-LINUX-ABI.md` | [record] | The measured Linux system calls of the compiler for the FernOS host milestone. |
 | `BYTE-COPY-LOOPS.md` | [reference] | The `compiler/sembytecopy.fern` pass that replaces zero-based byte-copy loops over owned `u8[]` values with bulk copies. |
 | `INTERP-ARRAY-INPLACE-WRITE.md` | [reference] | How the interpreter's arrays carry an owner count so `arr.with(i, v)` writes in place (#7287). |
 | `NATIVE-REGISTER-POOLS.md` | [reference] | Register homes, emitter temporaries and fixed clobbers of the SSA register allocator on arm64 and x86-64 (#12210). |
