@@ -1,3 +1,6 @@
+# 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
 # string_count_byte after main updates. Bank the reported size and work counts.
 # Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
@@ -267,7 +270,7 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15234
+x86_64/http_hello.text	15591
 x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
@@ -630,9 +633,9 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 # 2026-11-08: #14770. The corrected display roots remove unused numeric formatters.
 # Pin the measured x86-64 reduction. No performance limit increases.
-x86_64/video_qtrle.text 5371
+x86_64/video_qtrle.text 5234
 x86_64/video_qtrle.ir 1717224731
-aarch64/video_qtrle.text 5682
+aarch64/video_qtrle.text 5600
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.
 # Pinned to local native Callgrind and cross-target assembly measurements.
