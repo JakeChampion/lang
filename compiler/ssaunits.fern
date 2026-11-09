@@ -1501,7 +1501,7 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
     return cast_word(f, defs, arg, t);
   }
   if (d.kind_tag == ssa.CONST_INT && d.str != "") {
-    return small_decimal(d.str);
+    return narrow_integer_word(t, util.lit_to_i64(d.str));
   }
   if (d.kind_tag == ssa.CONST_INT || d.kind_tag == ssa.CONST_BOOL) {
     return util.i32_to_string(d.imm);
@@ -1521,12 +1521,9 @@ function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
     return "";
   }
   if (src.str != "") {
-    return small_decimal(src.str);
+    return narrow_integer_word(t, util.lit_to_i64(src.str));
   }
-  if (src.imm < 0) {
-    return "";
-  }
-  return util.i32_to_string(src.imm);
+  return narrow_integer_word(t, src.imm as i64);
 }
 
 function constant_cast_arg(ins: ssa.SInst): i32 {
@@ -1676,18 +1673,18 @@ function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
   return util.i32_to_string(0 - k.imm);
 }
 
-function small_decimal(text: string): string {
-  if (text.len() == 0 || text.len() > 9) {
-    return "";
+// Constant fields have the same wrapped representation as runtime integer casts.
+function narrow_integer_word(t: typeinfo.Type, bits: i64): string {
+  if (ssasem.is_u8(t)) {
+    return util.i32_to_string((bits as u8) as i32);
   }
-  let i = 0;
-  while (i < text.len()) {
-    if (text[i] < b'0' || text[i] > b'9') {
-      return "";
-    }
-    i += 1;
+  if (ssasem.is_u32(t)) {
+    return util.i64_to_string((bits as u32) as i64);
   }
-  return text;
+  if (ssasem.is_i32(t) || ssasem.is_char(t)) {
+    return util.i32_to_string(bits as i32);
+  }
+  return "";
 }
 
 function narrow_scalar(t: typeinfo.Type): boolean {
