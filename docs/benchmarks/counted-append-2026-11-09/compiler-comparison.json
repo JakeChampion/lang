@@ -1,0 +1,28 @@
+{
+  "fixed_source": "compiler/checker.fern",
+  "fixed_source_root": "/workspace/fern-counted-append",
+  "baseline_compiler_sources": "a067260b6eff5fd463991cca32cb3390cfe2095a",
+  "candidate_compiler_sources": "c63b8da8e803cc437ebd470154c48dda23ad9fd6",
+  "compiler_source_note": "The baseline and feature base differ only in boxed ABI proof drivers. Production compiler sources match.",
+  "certification": "disabled for allocation and append-copy counts, as in the CI lanes",
+  "baseline": {
+    "allocs": 41857882,
+    "frees": 41857882,
+    "live_bytes": 0,
+    "shared_append_bytes": 40124160,
+    "shared_append_count": 397567
+  },
+  "candidate": {
+    "allocs": 41722599,
+    "frees": 41722599,
+    "live_bytes": 0,
+    "shared_append_bytes": 40126728,
+    "shared_append_count": 397570
+  },
+  "candidate_core_sha256": "e45db7860ca628d5b0b36a6102c7685028cdc3d9b44776322640c5572d4c8b71",
+  "baseline_core_sha256": "b888ea5fe864d17c077e02bc10efe2c3c76dde47d88814c2951b936098a99e3e",
+  "fixed_input_sha256": {
+    "compiler/checker.fern": "4bbaac055bd30cb794c1e93658d9f383e4d87b1d7376b94268612b05990fbf44",
+    "compiler/typeinfo.fern": "e684efda24923a0e5f416bbb2b0b79cff77459a1728c48fe7da4238ebc6cad16"
+  }
+}

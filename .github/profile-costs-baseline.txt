@@ -1,3 +1,4 @@
+# 2026-11-09: PR #14829. Local Valgrind 3.24.0 measurements reduce scalar append and deflate instruction counts. The scalar append counts repeat exactly.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
 # 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The http_hello and map_string profile rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The five rows moved with the drift of main since the last bank. Each is pinned at its measured value.
@@ -157,16 +158,16 @@ profile/arm64-linux/startup.safe.bytes	2168
 profile/arm64-linux/startup.safe.emit	364
 profile/x86-64-linux/array_append.diagnostic.bytes	11592
 profile/x86-64-linux/array_append.diagnostic.emit	1472
-profile/x86-64-linux/array_append.diagnostic.ir	68240505
+profile/x86-64-linux/array_append.diagnostic.ir	50410800
 profile/x86-64-linux/array_append.hardened.bytes	6928
 profile/x86-64-linux/array_append.hardened.emit	1560
-profile/x86-64-linux/array_append.hardened.ir	16656023
+profile/x86-64-linux/array_append.hardened.ir	12827529
 profile/x86-64-linux/array_append.minimal.bytes	5088
 profile/x86-64-linux/array_append.minimal.emit	1100
-profile/x86-64-linux/array_append.minimal.ir	13370822
+profile/x86-64-linux/array_append.minimal.ir	12005260
 profile/x86-64-linux/array_append.safe.bytes	5456
 profile/x86-64-linux/array_append.safe.emit	1183
-profile/x86-64-linux/array_append.safe.ir	13371022
+profile/x86-64-linux/array_append.safe.ir	12005460
 profile/x86-64-linux/call_overhead.diagnostic.bytes	5904
 profile/x86-64-linux/call_overhead.diagnostic.emit	575
 profile/x86-64-linux/call_overhead.diagnostic.ir	8551046
@@ -194,10 +195,10 @@ profile/x86-64-linux/closure_call.safe.ir	41178167
 profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12743
-profile/x86-64-linux/deflate_decode.diagnostic.ir	47046218
+profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
 profile/x86-64-linux/deflate_decode.hardened.bytes	55872
 profile/x86-64-linux/deflate_decode.hardened.emit	13293
-profile/x86-64-linux/deflate_decode.hardened.ir	34908106
+profile/x86-64-linux/deflate_decode.hardened.ir	34557387
 profile/x86-64-linux/deflate_decode.minimal.bytes	46688
 profile/x86-64-linux/deflate_decode.minimal.emit	11402
 profile/x86-64-linux/deflate_decode.minimal.ir	40070279

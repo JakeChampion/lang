@@ -1,0 +1,22 @@
+{
+  "fixed_source": "compiler/checker.fern",
+  "fixed_source_root": "/workspace/fern-counted-append",
+  "baseline_compiler_sources": "a067260b6eff5fd463991cca32cb3390cfe2095a",
+  "candidate_compiler_sources": "e073da87472783724120dfddd7fe9f5c4effd46f",
+  "compiler_source_note": "The baseline and feature base differ only in boxed ABI proof drivers. Production compiler sources match.",
+  "certification": "disabled for allocation and append-copy counts, as in the CI lanes",
+  "baseline": {
+    "allocs": 41857882,
+    "frees": 41857882,
+    "live_bytes": 0,
+    "shared_append_bytes": 40124160,
+    "shared_append_count": 397567
+  },
+  "candidate": {
+    "allocs": 43997532,
+    "frees": 43997532,
+    "live_bytes": 0,
+    "shared_append_bytes": 53492008,
+    "shared_append_count": 407233
+  }
+}
