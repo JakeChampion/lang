@@ -46,6 +46,17 @@ The [toolchain record](toolchain.json) identifies this fresh environment.
 The native test wrapper retains its core-dump controls without an overlay.
 These local checks do not replace the exact-head full CI verdict.
 
+## Native self-host control
+
+A separate normal compiler rebuild uses source `7475e34909f93a9b36181a11f12bacd7dbad3b3e`.
+Its compiler, standard library, and regression test sources match allocation candidate `20a9a0dbed`.
+The [bootstrap record](bootstrap/bootstrap.json) retains all three stages and their exact commands and identities.
+
+The complete stage-2 and stage-3 executables match byte for byte.
+Their SHA-256 is `89069b7a7b3f40dc26f18f29831047089584e1204cb7b07d69ecdf62b5034776`.
+These builds omit `-g`, disable profiles and leak counters, retain certification, and disable the proof cache.
+These executables are correctness controls, separate from the allocation-count compilers.
+
 ## Reproduction
 
 Create clean checkouts of the recorded candidate, baseline, and fixed input revisions.
@@ -54,3 +65,5 @@ Set local paths in [measure.py](measure.py) for those checkouts and a new output
 Run the script with Python 3.
 Run the commands from [validation-result.json](validation-result.json) with the recorded tools.
 Retain all raw logs and allocation counts.
+
+Run the [bootstrap control](bootstrap/bootstrap.py) from its recorded source checkout after the allocation controls finish.
