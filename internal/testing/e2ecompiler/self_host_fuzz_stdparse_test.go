@@ -39,46 +39,86 @@ func fuzzStdParse(f testing.TB) string {
 	})
 }
 
-// stdCheck returns the fault that the summary of one input shows, or "".
-type stdCheck func(reader string, input []byte, summary string) string
-
-// stdReader is one reader of tests/fuzz/stdparse.fern as a fuzz target. Go's
-// fuzzer runs it as target, and TestSelfHostStdCoverageGuidedFuzz runs it with
-// the same seeds and the same check. check can be nil.
-type stdReader struct {
-	target string
-	reader string
-	seeds  func(testing.TB) [][]byte
-	check  stdCheck
+// readerRun is one run of a reader that exited 0 with a summary: the input,
+// the summary, the program's own stderr, and the path of the input, beside
+// which the program can write files.
+type readerRun struct {
+	reader  string
+	input   []byte
+	summary string
+	stderr  string
+	path    string
 }
 
-var stdReaders = []stdReader{
-	{"FuzzSelfHostStdHTTP", "http", httpSeeds, nil},
-	{"FuzzSelfHostStdHPACK", "hpack", hpackSeeds, nil},
-	{"FuzzSelfHostStdH2", "h2", h2Seeds, nil},
-	{"FuzzSelfHostStdQPACK", "qpack", qpackSeeds, nil},
-	{"FuzzSelfHostStdQUIC", "quic", quicSeeds, nil},
-	{"FuzzSelfHostStdQUICFrames", "frames", quicFrameSeeds, nil},
-	{"FuzzSelfHostStdJSON", "json", jsonSeeds, nil},
-	{"FuzzSelfHostStdURL", "url", urlSeeds, nil},
-	{"FuzzSelfHostStdTLS", "tls", tlsSeeds, nil},
-	{"FuzzSelfHostStdTLSServer", "tls-server", tlsServerSeeds, nil},
-	{"FuzzSelfHostStdTLSClient", "tls-client", tlsClientSeeds, nil},
-	{"FuzzSelfHostStdX509", "x509", x509Seeds, nil},
-	{"FuzzSelfHostStdInflate", "inflate", inflateSeeds, agreesWithGo(goInflate)},
-	{"FuzzSelfHostStdGunzip", "gunzip", gunzipSeeds, agreesWithGo(goGunzip)},
-	{"FuzzSelfHostStdZlib", "zlib", zlibSeeds, agreesWithGo(goZlib)},
-	{"FuzzSelfHostStdZstd", "zstd", zstdSeeds, roundTrips},
-	{"FuzzSelfHostStdBrotli", "brotli", brotliSeeds, roundTrips},
-	{"FuzzSelfHostStdDNS", "dns", dnsSeeds, dnsRoundTrips},
-	{"FuzzSelfHostStdProtobuf", "protobuf", protobufSeeds, nil},
-	{"FuzzSelfHostStdJPEG", "jpeg", jpegSeeds, jpegAgreesWithGo},
+// readerCheck returns the fault that one run shows, or "".
+type readerCheck func(r readerRun) string
+
+// readerTarget is one reader of a program as a fuzz target: of
+// tests/fuzz/stdparse.fern, or of a driver in compiler/drivers. The program
+// reads a file with `PROGRAM READER FILE`, and refuses foreign bytes with a
+// message, so the accepted outcome is exit 0 with a summary that opens with
+// the reader's name. With aborts, an abort with a `fern:` cause is accepted
+// too: the assemblers read the compiler's own output, and a bounds abort on
+// foreign text is the language's defined trap. Go's fuzzer runs it as target,
+// and TestSelfHostReaderCoverageGuidedFuzz runs it with the same seeds and the
+// same check. check can be nil.
+type readerTarget struct {
+	target  string
+	program string
+	reader  string
+	seeds   func(testing.TB) [][]byte
+	check   readerCheck
+	aborts  bool
 }
 
-// fuzzStdReader runs the reader of stdReaders whose target is f.
-func fuzzStdReader(f *testing.F) {
-	r := stdReaderOf(f, f.Name())
-	bin := fuzzStdParse(f)
+const stdparse = "stdparse"
+
+var readerTargets = []readerTarget{
+	{"FuzzSelfHostStdHTTP", stdparse, "http", httpSeeds, nil, false},
+	{"FuzzSelfHostStdHPACK", stdparse, "hpack", hpackSeeds, nil, false},
+	{"FuzzSelfHostStdH2", stdparse, "h2", h2Seeds, nil, false},
+	{"FuzzSelfHostStdQPACK", stdparse, "qpack", qpackSeeds, nil, false},
+	{"FuzzSelfHostStdQUIC", stdparse, "quic", quicSeeds, nil, false},
+	{"FuzzSelfHostStdQUICFrames", stdparse, "frames", quicFrameSeeds, nil, false},
+	{"FuzzSelfHostStdJSON", stdparse, "json", jsonSeeds, nil, false},
+	{"FuzzSelfHostStdURL", stdparse, "url", urlSeeds, nil, false},
+	{"FuzzSelfHostStdTLS", stdparse, "tls", tlsSeeds, nil, false},
+	{"FuzzSelfHostStdTLSServer", stdparse, "tls-server", tlsServerSeeds, nil, false},
+	{"FuzzSelfHostStdTLSClient", stdparse, "tls-client", tlsClientSeeds, nil, false},
+	{"FuzzSelfHostStdX509", stdparse, "x509", x509Seeds, nil, false},
+	{"FuzzSelfHostStdInflate", stdparse, "inflate", inflateSeeds, agreesWithGo(goInflate), false},
+	{"FuzzSelfHostStdGunzip", stdparse, "gunzip", gunzipSeeds, agreesWithGo(goGunzip), false},
+	{"FuzzSelfHostStdZlib", stdparse, "zlib", zlibSeeds, agreesWithGo(goZlib), false},
+	{"FuzzSelfHostStdZstd", stdparse, "zstd", zstdSeeds, roundTrips, false},
+	{"FuzzSelfHostStdBrotli", stdparse, "brotli", brotliSeeds, roundTrips, false},
+	{"FuzzSelfHostStdDNS", stdparse, "dns", dnsSeeds, dnsRoundTrips, false},
+	{"FuzzSelfHostStdProtobuf", stdparse, "protobuf", protobufSeeds, nil, false},
+	{"FuzzSelfHostStdJPEG", stdparse, "jpeg", jpegSeeds, jpegAgreesWithGo, false},
+	{"FuzzSelfHostToml", "pkg_fuzz_run", "toml", tomlSeeds, nil, false},
+	{"FuzzSelfHostLock", "pkg_fuzz_run", "lock", lockSeeds, nil, false},
+	{"FuzzSelfHostIndex", "pkg_fuzz_run", "index", indexSeeds, nil, false},
+	{"FuzzSelfHostArchive", "pkg_fuzz_run", "archive", archiveSeeds, nil, false},
+	{"FuzzSelfHostTangle", "literate_fuzz_run", "tangle", literateSeeds, nil, false},
+	{"FuzzSelfHostWeave", "literate_fuzz_run", "weave", literateSeeds, nil, false},
+	{target: "FuzzSelfHostIRVerify", program: "irverify_fuzz_run", reader: "verify", seeds: irSeeds, check: irOpCount},
+	{target: "FuzzSelfHostX86Assembler", program: "asm_fuzz_run", reader: "x86", seeds: assemblerSeeds("x86-64-linux"), aborts: true},
+	{target: "FuzzSelfHostArm64Assembler", program: "asm_fuzz_run", reader: "arm64", seeds: assemblerSeeds("arm64-linux"), aborts: true},
+	{target: "FuzzSelfHostX86Image", program: "asm_fuzz_run", reader: "x86-image", seeds: assemblerSeeds("x86-64-linux"), check: imageCheck(x86Layout), aborts: true},
+	{target: "FuzzSelfHostArm64Image", program: "asm_fuzz_run", reader: "arm64-image", seeds: assemblerSeeds("arm64-linux"), check: imageCheck(arm64Layout), aborts: true},
+}
+
+// readerProgram builds the program of r.
+func readerProgram(f testing.TB, r readerTarget) string {
+	if r.program == stdparse {
+		return fuzzStdParse(f)
+	}
+	return fuzzDriver(f, r.program)
+}
+
+// fuzzReaderTarget runs the reader of readerTargets whose target is f.
+func fuzzReaderTarget(f *testing.F) {
+	r := readerTargetOf(f, f.Name())
+	bin := readerProgram(f, r)
 	for _, seed := range r.seeds(f) {
 		f.Add(seed)
 	}
@@ -90,33 +130,37 @@ func fuzzStdReader(f *testing.F) {
 		if err := os.WriteFile(path, input, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if fault := stdFault(r, input, runUnderBudget(exec.Command(bin, r.reader, path))); fault != "" {
+		if fault := readerFault(r, input, path, runUnderBudget(exec.Command(bin, r.reader, path))); fault != "" {
 			t.Error(fault)
 		}
 	})
 }
 
-func stdReaderOf(tb testing.TB, target string) stdReader {
-	for _, r := range stdReaders {
+func readerTargetOf(tb testing.TB, target string) readerTarget {
+	for _, r := range readerTargets {
 		if r.target == target {
 			return r
 		}
 	}
-	tb.Fatalf("%s is not in stdReaders", target)
-	return stdReader{}
+	tb.Fatalf("%s is not in readerTargets", target)
+	return readerTarget{}
 }
 
-// stdFault returns the fault of one run of a reader, or "". A run must stay
-// in its budgets and exit 0 with a summary that passes the reader's check.
-func stdFault(r stdReader, input []byte, run fuzzRun) string {
-	if fault := budgetFault("stdparse "+r.reader, run, input); fault != "" {
+// readerFault returns the fault of one run of a reader on the input at path,
+// or "". A run must stay in its budgets and exit 0 with a summary that passes
+// the reader's check, or abort with a cause where the reader allows it.
+func readerFault(r readerTarget, input []byte, path string, run fuzzRun) string {
+	if fault := budgetFault(r.program+" "+r.reader, run, input); fault != "" {
 		return fault
+	}
+	if r.aborts && run.code == 134 && strings.HasPrefix(run.stderr, "fern: ") {
+		return ""
 	}
 	if run.code != 0 || !strings.HasPrefix(run.stdout, r.reader+" ") {
 		return fmt.Sprintf("exit %d on %d bytes, want 0 with a %s summary\nstdout: %q\nstderr: %q", run.code, len(input), r.reader, run.stdout, run.stderr)
 	}
 	if r.check != nil {
-		return r.check(r.reader, input, strings.TrimSpace(run.stdout))
+		return r.check(readerRun{reader: r.reader, input: input, summary: strings.TrimSpace(run.stdout), stderr: run.stderr, path: path})
 	}
 	return ""
 }
@@ -132,7 +176,7 @@ func hexSeed(f testing.TB, s string) []byte {
 // FuzzSelfHostStdHTTP feeds hostile bytes to the HTTP/1 request framer, and
 // the same bytes to the chunked-body decoder in pieces of seven.
 func FuzzSelfHostStdHTTP(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func httpSeeds(testing.TB) [][]byte {
@@ -162,7 +206,7 @@ func httpSeeds(testing.TB) [][]byte {
 // FuzzSelfHostStdHPACK feeds hostile header blocks to the HPACK decoder, twice on one
 // decoder so the second block reads the dynamic table the first one filled.
 func FuzzSelfHostStdHPACK(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func hpackSeeds(f testing.TB) [][]byte {
@@ -194,7 +238,7 @@ func h2Frame(kind, flags byte, stream uint32, payload []byte) []byte {
 // FuzzSelfHostStdH2 feeds hostile bytes to the HTTP/2 frame reader, and the
 // client preface and the same bytes in pieces of nine to a server connection.
 func FuzzSelfHostStdH2(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func h2Seeds(f testing.TB) [][]byte {
@@ -230,7 +274,7 @@ func h2Seeds(f testing.TB) [][]byte {
 // byte gives the length of the encoder-stream bytes that follow it, and the
 // rest is one header section on stream 0.
 func FuzzSelfHostStdQPACK(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func qpackSeeds(f testing.TB) [][]byte {
@@ -296,7 +340,7 @@ func quicInitial(f testing.TB, dcid, payload []byte) []byte {
 // walks the coalesced packets and opens each Initial packet with the client
 // Initial keys of its destination connection ID.
 func FuzzSelfHostStdQUIC(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func quicSeeds(f testing.TB) [][]byte {
@@ -322,7 +366,7 @@ func quicSeeds(f testing.TB) [][]byte {
 // FuzzSelfHostStdQUICFrames feeds hostile packet payloads to the QUIC frame
 // reader.
 func FuzzSelfHostStdQUICFrames(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func quicFrameSeeds(testing.TB) [][]byte {
@@ -349,7 +393,7 @@ func quicFrameSeeds(testing.TB) [][]byte {
 
 // FuzzSelfHostStdJSON feeds hostile documents to the JSON parser.
 func FuzzSelfHostStdJSON(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func jsonSeeds(testing.TB) [][]byte {
@@ -375,7 +419,7 @@ func jsonSeeds(testing.TB) [][]byte {
 
 // FuzzSelfHostStdURL feeds hostile strings to the URL parser and the query parser.
 func FuzzSelfHostStdURL(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func urlSeeds(testing.TB) [][]byte {

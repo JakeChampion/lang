@@ -23,8 +23,7 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	emitBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "lxemit")
 
-	native := string(mustRead(t, "../../../compiler/arm64_native.fern"))
-	elfsrc := string(mustRead(t, "../../../compiler/elf.fern"))
+	joined := joinedSource(t, "arm64_native.fern", "elf.fern")
 	const driverMain = `
 function main(): i32 {
     let asm: string = ""; let ok: boolean = false;
@@ -52,8 +51,8 @@ function main(): i32 {
 }
 `
 	edir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, edir, "arm64_native.fern")
-	if err := os.WriteFile(filepath.Join(edir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+driverMain), 0o644); err != nil {
+	copySelfHostDriver(t, edir, "arm64_native.fern", "elf.fern")
+	if err := os.WriteFile(filepath.Join(edir, "drv.fern"), []byte(joined+"\n"+driverMain), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}
 	drvBin := buildSelfHostBin(t, gcc, edir, "drv.fern", "drv")
@@ -79,7 +78,8 @@ function main(): i32 {
 }
 `
 	pdir := writeSelfHostAsmProject(t)
-	if err := os.WriteFile(filepath.Join(pdir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+pieDriverMain), 0o644); err != nil {
+	copySelfHostDriver(t, pdir, "arm64_native.fern", "elf.fern")
+	if err := os.WriteFile(filepath.Join(pdir, "drv.fern"), []byte(joined+"\n"+pieDriverMain), 0o644); err != nil {
 		t.Fatalf("write pie driver: %v", err)
 	}
 	drvPieBin := buildSelfHostBin(t, gcc, pdir, "drv.fern", "drvpie")

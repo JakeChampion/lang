@@ -1,0 +1,8 @@
+TAP version 13
+# Suite: Layer II independent interpreter smoke
+ok 1 - exact independent PCM and reusable output suffix
+ok 2 - protected checksum and PCM budget
+1..2
+# tests 2
+# pass 2
+# fail 0

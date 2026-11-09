@@ -98,7 +98,7 @@ pub function parse_index(src: string): Result[Index, string] {
       serial = match (index_top_level(line, serial)) { Ok(value) => value, Err(message) => { return Err("line " + util.i32_to_string(ln) + ": " + message); } };
       continue;
     }
-    let eq: i32 = index_of_char(line, b'=', 0);
+    let eq: i32 = util.index_of_byte(line, b'=', 0);
     if (eq < 0) {
       return Err("line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
     }
@@ -135,7 +135,7 @@ pub function parse_index(src: string): Result[Index, string] {
 
 // A line above the first section: only `serial = N`.
 function index_top_level(line: string, serial: string): Result[string, string] {
-  let eq = index_of_char(line, b'=', 0);
+  let eq = util.index_of_byte(line, b'=', 0);
   if (eq < 0 || (slice_unchecked(line, 0, eq) + "").trim() != "serial") {
     return Err("version entry outside a [package] section");
   }
@@ -164,7 +164,7 @@ function parse_source(val: string): Result[Source, string] {
     if (part.len() == 0) {
       continue;
     }
-    let eq = index_of_char(part, b'=', 0);
+    let eq = util.index_of_byte(part, b'=', 0);
     if (eq < 0) {
       return Err("expected `key = value`, got " + docsummary.quote(part));
     }
@@ -527,17 +527,6 @@ pub function lock_text(serial: string, sel: Sel[]): string {
 
 pub function split_char(s: string, c: u8): string[] {
   return util.split_char(s, c);
-}
-
-function index_of_char(s: string, c: u8, from: i32): i32 {
-  let i = from;
-  while (i < s.len()) {
-    if (s[i] == c) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 pub function quoted(s: string): string {

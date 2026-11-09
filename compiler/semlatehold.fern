@@ -4,6 +4,7 @@ import "./ssalive";
 import "./ssasem";
 import "./sourcepos";
 import "./typeinfo";
+import "./util";
 
 // A read off a value that a later call consumes, and that is used past the
 // call, holds its own count from the read on. When the call is on one arm
@@ -177,7 +178,7 @@ function chain_of(f: ssasem.Func, gr: Graph, r: i32, v: i32): i32[] {
 
 function used_after(b: ssa.SBlock, k: i32, v: i32): boolean {
   for j in k + 1..b.insts.len() {
-    if (has(b.insts[j].args, v)) {
+    if (util.has_i32(b.insts[j].args, v)) {
       return true;
     }
   }
@@ -328,15 +329,6 @@ function without(cands: Cand[], i: i32): Cand[] {
     }
   }
   return out;
-}
-
-function has(xs: i32[], v: i32): boolean {
-  for x in xs {
-    if (x == v) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function minus_ones(n: i32): i32[] {

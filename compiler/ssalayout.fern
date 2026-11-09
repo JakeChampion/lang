@@ -6,23 +6,16 @@ pub struct Layout { ok: boolean, order: i32[], loop_end: i32[] }
 
 struct Loops { n: i32, header: boolean[], members: boolean[], at: i32[], succ: i32[][] }
 
-function position(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id];
-}
-
 function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
   let out: i32[][] = [];
   for b in f.blocks {
     let t = b.term;
     if (t.kind_tag == ssa.TERM_BR) {
-      out = out.append([position(at, t.target)]);
+      out = out.append([ssa.position_of(at, t.target)]);
     } else if (t.kind_tag == ssa.TERM_BRIF && t.t == t.f) {
-      out = out.append([position(at, t.t)]);
+      out = out.append([ssa.position_of(at, t.t)]);
     } else if (t.kind_tag == ssa.TERM_BRIF) {
-      out = out.append([position(at, t.t), position(at, t.f)]);
+      out = out.append([ssa.position_of(at, t.t), ssa.position_of(at, t.f)]);
     } else {
       out = out.append([]);
     }
@@ -41,21 +34,14 @@ function absorb(f: ssa.SFunc, own l: Loops, h: i32, u: i32, reachable: boolean[]
     }
     l = Loops { ...l, members: l.members.with(h * l.n + x, true) };
     for pred in f.blocks[x].preds {
-      let pi = position(l.at, pred);
+      let pi = ssa.position_of(l.at, pred);
       if (reachable[pi]) {
-        work = pushed_at(work, sp, pi);
+        work = ssadeps.push_at(work, sp, pi);
         sp += 1;
       }
     }
   }
   return l;
-}
-
-function pushed_at(own stack: i32[], d: i32, v: i32): i32[] {
-  if (d < stack.len()) {
-    return stack.with(d, v);
-  }
-  return stack.append(v);
 }
 
 function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops {
@@ -270,7 +256,7 @@ function region_order(l: Loops, region: boolean[], list: i32[], root: i32, out: 
 pub function compute(f: ssa.SFunc, dom: ssadeps.Dom): Layout {
   let reachable = ssadeps.reachable_blocks(f);
   let l = find_loops(f, reachable, dom);
-  return region_order(l, reachable, marked(reachable), position(l.at, f.entry), Layout { ok: true, order: [], loop_end: [] });
+  return region_order(l, reachable, marked(reachable), ssa.position_of(l.at, f.entry), Layout { ok: true, order: [], loop_end: [] });
 }
 
 function marked(region: boolean[]): i32[] {

@@ -247,7 +247,7 @@ func hsMessage(kind byte, body []byte) []byte {
 // FuzzSelfHostStdTLS feeds hostile bytes to the TLS record deframer, and the
 // handshake records to the message reader and the extension readers.
 func FuzzSelfHostStdTLS(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func tlsSeeds(f testing.TB) [][]byte {
@@ -273,7 +273,7 @@ func tlsSeeds(f testing.TB) [][]byte {
 // FuzzSelfHostStdTLSServer feeds hostile bytes to a server handshake in pieces
 // of eleven, starting from a ClientHello that Go's client wrote.
 func FuzzSelfHostStdTLSServer(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func tlsServerSeeds(f testing.TB) [][]byte {
@@ -299,7 +299,7 @@ func tlsServerSeeds(f testing.TB) [][]byte {
 // server's flight, starting from the reply of Go's server to the client's own
 // ClientHello.
 func FuzzSelfHostStdTLSClient(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func tlsClientSeeds(f testing.TB) [][]byte {
@@ -324,7 +324,7 @@ func tlsClientSeeds(f testing.TB) [][]byte {
 // FuzzSelfHostStdX509 feeds hostile bytes to the PEM reader, the X.509 reader
 // and the chain verifier.
 func FuzzSelfHostStdX509(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func x509Seeds(f testing.TB) [][]byte {

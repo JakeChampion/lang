@@ -35,6 +35,7 @@
 # record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
+# 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_float_literal_array_takes_the_width_of_its_first_use 0
@@ -1237,6 +1238,7 @@ tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
+tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0

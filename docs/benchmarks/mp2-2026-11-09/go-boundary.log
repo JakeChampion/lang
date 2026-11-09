@@ -1,0 +1,13 @@
+TAP version 13
+# Suite: MPEG Layer II boundaries and state
+ok 1 - frame prefixes and invalid offsets
+ok 2 - reserved and unsupported header fields
+ok 3 - input and cumulative PCM budgets
+ok 4 - protected fields and history reset after CRC errors
+ok 5 - output-size retry and explicit reset preserve exact history
+ok 6 - rate and channel changes reset the synthesis filter
+ok 7 - payload mutations remain finite and bounded
+1..7
+# tests 7
+# pass 7
+# fail 0

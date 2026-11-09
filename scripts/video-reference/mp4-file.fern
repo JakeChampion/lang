@@ -1,0 +1,47 @@
+// Emit file packet metadata and Annex B bytes for an independent decoder.
+import "std/video/mp4";
+import "std/video/mp4/file" as mp4file;
+import "std/video/nal";
+import "std/video/frame";
+import "std/audio/file";
+import "std/audio/source";
+import "std/hex";
+
+function packet(reader: Reader, p: mp4.Packet, config: mp4.Description): Result[void, string] {
+  let window = match (file.create(p.offset, p.bytes, source.Limits { chunk_size: 31, max_buffer_bytes: 1048576 })) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  while (!window.ready) {
+    window = match (window.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+  let data = match (nal.to_annex_b(window.view(), config.config.length_size, frame.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  print("P " + p.offset.to_string() + " " + p.bytes.to_string() + " " + p.decode_time.to_string() + " " + p.presentation_time.to_string() + " " + p.duration.to_string() + " " + p.sync.to_string() + " " + hex.encode(data));
+  return Ok(());
+}
+
+function emit(reader: Reader): Result[void, string] {
+  let index = match (mp4file.inspect(reader, mp4file.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  for track in index.tracks {
+    let config = track.descriptions[0];
+    print("T " + track.clock.scale.to_string() + " " + config.codec.to_debug() + " " + config.format.width.to_string() + " " + config.format.height.to_string());
+    print("C " + hex.encode(config.config.csd0) + hex.encode(config.config.csd1));
+    for p in track.packets {
+      packet(reader, p, config)?;
+    }
+  }
+  return Ok(());
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = emit(reader);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 1; } },
+    Err(message) => { eprint(message); return 1; },
+  };
+}

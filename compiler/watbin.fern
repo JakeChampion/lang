@@ -125,15 +125,6 @@ function wat_parse(toks: WatTok[]): SExpr {
   return r.node;
 }
 
-pub function wcat(buf: i32[], src: i32[]): i32[] {
-  let i = 0;
-  while (i < src.len()) {
-    buf = buf.append(src[i]);
-    i += 1;
-  }
-  return buf;
-}
-
 function wstr_bytes(buf: i32[], s: string): i32[] {
   let i = 0;
   while (i < s.len()) {
@@ -152,13 +143,13 @@ pub function wsection(id: i32, contents: i32[]): i32[] {
   let o: i32[] = [];
   o = o.append(id);
   o = leb_u32(o, contents.len());
-  return wcat(o, contents);
+  return util.append_all(o, contents);
 }
 
 function wvec(count: i32, elems: i32[]): i32[] {
   let o: i32[] = [];
   o = leb_u32(o, count);
-  return wcat(o, elems);
+  return util.append_all(o, elems);
 }
 
 function global_valtype(gn: SExpr): string {
@@ -1272,12 +1263,12 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return leb_u32(out, flat_idx(node.items[1].text, lnames));
   }
   if (op == "local.set") {
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
     out = out.append(33);
     return leb_u32(out, flat_idx(node.items[1].text, lnames));
   }
   if (op == "local.tee") {
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
     out = out.append(34);
     return leb_u32(out, flat_idx(node.items[1].text, lnames));
   }
@@ -1286,7 +1277,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return leb_u32(out, name_idx(gnames, node.items[1].text));
   }
   if (op == "global.set") {
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
     out = out.append(36);
     return leb_u32(out, name_idx(gnames, node.items[1].text));
   }
@@ -1296,20 +1287,20 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
   }
   if (op == "return") {
     if (node.items.len() > 1) {
-      out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+      out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     }
     out = out.append(15);
     return out;
   }
   if (op == "drop") {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     out = out.append(26);
     return out;
   }
   if (op == "call") {
     let k = 2;
     while (k < node.items.len()) {
-      out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
+      out = util.append_all(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
       k += 1;
     }
     out = out.append(16);
@@ -1319,10 +1310,10 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     let lasti = node.items.len() - 1;
     let k = 2;
     while (k < lasti) {
-      out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
+      out = util.append_all(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
       k += 1;
     }
-    out = wcat(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
     out = out.append(17);
     out = leb_u32(out, name_idx(tnames, node.items[1].items[1].text));
     return leb_u32(out, 0);
@@ -1332,7 +1323,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return out.append(0);
   }
   if (op == "memory.grow") {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     out = out.append(64);
     return out.append(0);
   }
@@ -1341,7 +1332,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return leb_u32(out, label_depth(labels, node.items[1].text));
   }
   if (op == "br_if") {
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
     out = out.append(13);
     return leb_u32(out, label_depth(labels, node.items[1].text));
   }
@@ -1365,7 +1356,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(bt);
     let inner = labels_push(labels, label);
     while (bi < node.items.len()) {
-      out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
+      out = util.append_all(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
       bi += 1;
     }
     out = out.append(11);
@@ -1378,14 +1369,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       ibt = valtype_byte(node.items[1].items[1].text);
       ci = 2;
     }
-    out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
     out = out.append(4);
     out = out.append(ibt);
     let iinner = labels_push(labels, "");
     let thenN = node.items[ci + 1];
     let tk = 1;
     while (tk < thenN.items.len()) {
-      out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
+      out = util.append_all(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
       tk += 1;
     }
     if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
@@ -1393,7 +1384,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       let elseN = node.items[ci + 2];
       let ek = 1;
       while (ek < elseN.items.len()) {
-        out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
+        out = util.append_all(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
         ek += 1;
       }
     }
@@ -1408,7 +1399,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       loff = offset_atom_value(node.items[1]);
       lopnd = 2;
     }
-    out = wcat(out, enc_instr(node.items[lopnd], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[lopnd], lnames, fnames, gnames, labels, tnames));
     out = out.append(ml);
     out = leb_u32(out, memarg_align(op));
     out = leb_u32(out, loff);
@@ -1422,23 +1413,23 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       soff = offset_atom_value(node.items[1]);
       sbase = 2;
     }
-    out = wcat(out, enc_instr(node.items[sbase], lnames, fnames, gnames, labels, tnames));
-    out = wcat(out, enc_instr(node.items[sbase + 1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[sbase], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[sbase + 1], lnames, fnames, gnames, labels, tnames));
     out = out.append(ms);
     out = leb_u32(out, memarg_align(op));
     out = leb_u32(out, soff);
     return out;
   }
   if (op == "select") {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-    out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
     out = out.append(27);
     return out;
   }
   let stf = sat_trunc_opcode(op);
   if (stf >= 0) {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     out = out.append(252);
     return leb_u32(out, stf);
   }
@@ -1454,7 +1445,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     let sk = first;
     while (sk < first + sa) {
-      out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
+      out = util.append_all(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
       sk += 1;
     }
     out = out.append(253);
@@ -1473,17 +1464,17 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
   }
   let blk = bulk_mem_opcode(op);
   if (blk >= 0) {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-    out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-    out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
     out = out.append(252);
     return bulk_mem_tail(out, blk);
   }
   let ao = arith_opcode(op);
   if (ao != 0) {
-    out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+    out = util.append_all(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     if (op != "i32.eqz" && node.items.len() > 2) {
-      out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+      out = util.append_all(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
     }
     out = out.append(ao);
     return out;
@@ -1671,14 +1662,14 @@ function enc_functype(params: string[], results: string[]): i32[] {
     pb = pb.append(valtype_byte(params[i]));
     i += 1;
   }
-  o = wcat(o, wvec(params.len(), pb));
+  o = util.append_all(o, wvec(params.len(), pb));
   let rb: i32[] = [];
   i = 0;
   while (i < results.len()) {
     rb = rb.append(valtype_byte(results[i]));
     i += 1;
   }
-  o = wcat(o, wvec(results.len(), rb));
+  o = util.append_all(o, wvec(results.len(), rb));
   return o;
 }
 
@@ -1724,7 +1715,7 @@ function emit_binary(mod: SExpr): i32[] {
       let tn = mod.items[i];
       tnames = tnames.append(tn.items[1].text);
       let tf = tn.items[2];
-      namedTypeBody = wcat(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
+      namedTypeBody = util.append_all(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
     }
     i += 1;
   }
@@ -1735,12 +1726,12 @@ function emit_binary(mod: SExpr): i32[] {
   i = 0;
   while (i < importNodes.len()) {
     let fn = func_node(importNodes[i]);
-    typeBody = wcat(typeBody, enc_functype(func_param_types(fn), func_result_types(fn)));
+    typeBody = util.append_all(typeBody, enc_functype(func_param_types(fn), func_result_types(fn)));
     i += 1;
   }
   i = 0;
   while (i < definedNodes.len()) {
-    typeBody = wcat(typeBody, enc_functype(func_param_types(definedNodes[i]), func_result_types(definedNodes[i])));
+    typeBody = util.append_all(typeBody, enc_functype(func_param_types(definedNodes[i]), func_result_types(definedNodes[i])));
     i += 1;
   }
 
@@ -1784,7 +1775,7 @@ function emit_binary(mod: SExpr): i32[] {
       let gn = mod.items[i];
       globBody = globBody.append(valtype_byte(global_valtype(gn)));
       globBody = globBody.append(1);
-      globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
+      globBody = util.append_all(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
       globBody = globBody.append(11);
       globCount += 1;
     }
@@ -1826,17 +1817,17 @@ function emit_binary(mod: SExpr): i32[] {
     let fbody = enc_locals_vec(local_decl_types(fnode));
     let instrs = body_instrs(fnode);
     if (instrs.len() > 0 && instrs[0].kind != 0) {
-      fbody = wcat(fbody, enc_flat_body(instrs, lnames, fnames, gnames, tnames));
+      fbody = util.append_all(fbody, enc_flat_body(instrs, lnames, fnames, gnames, tnames));
     } else {
       let k = 0;
       while (k < instrs.len()) {
-        fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
+        fbody = util.append_all(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
         k += 1;
       }
     }
     fbody = fbody.append(11);
     codeBody = leb_u32(codeBody, fbody.len());
-    codeBody = wcat(codeBody, fbody);
+    codeBody = util.append_all(codeBody, fbody);
     i += 1;
   }
 
@@ -1847,11 +1838,11 @@ function emit_binary(mod: SExpr): i32[] {
     if (node_head(mod.items[i]) == "data") {
       let dn = mod.items[i];
       dataBody = dataBody.append(0);
-      dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], []));
+      dataBody = util.append_all(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], []));
       dataBody = dataBody.append(11);
       let bytes = data_bytes(dn.items[2].text);
       dataBody = leb_u32(dataBody, bytes.len());
-      dataBody = wcat(dataBody, bytes);
+      dataBody = util.append_all(dataBody, bytes);
       dataCount += 1;
     }
     i += 1;
@@ -1878,7 +1869,7 @@ function emit_binary(mod: SExpr): i32[] {
     if (node_head(mod.items[i]) == "elem") {
       let en = mod.items[i];
       elemBody = elemBody.append(0);
-      elemBody = wcat(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
+      elemBody = util.append_all(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
       elemBody = elemBody.append(11);
       let fb: i32[] = [];
       let ei = 2;
@@ -1886,34 +1877,34 @@ function emit_binary(mod: SExpr): i32[] {
         fb = leb_u32(fb, name_idx(fnames, en.items[ei].text));
         ei += 1;
       }
-      elemBody = wcat(elemBody, wvec(en.items.len() - 2, fb));
+      elemBody = util.append_all(elemBody, wvec(en.items.len() - 2, fb));
       elemCount += 1;
     }
     i += 1;
   }
 
   let out = wmagic();
-  out = wcat(out, wsection(1, wvec(ntypes + nfuncs, typeBody)));
-  out = wcat(out, wsection(2, wvec(importNodes.len(), impBody)));
-  out = wcat(out, wsection(3, wvec(definedNodes.len(), funcBody)));
+  out = util.append_all(out, wsection(1, wvec(ntypes + nfuncs, typeBody)));
+  out = util.append_all(out, wsection(2, wvec(importNodes.len(), impBody)));
+  out = util.append_all(out, wsection(3, wvec(definedNodes.len(), funcBody)));
   if (tableCount > 0) {
-    out = wcat(out, wsection(4, wvec(tableCount, tableBody)));
+    out = util.append_all(out, wsection(4, wvec(tableCount, tableBody)));
   }
   if (memCount > 0) {
-    out = wcat(out, wsection(5, wvec(memCount, memBody)));
+    out = util.append_all(out, wsection(5, wvec(memCount, memBody)));
   }
   if (globCount > 0) {
-    out = wcat(out, wsection(6, wvec(globCount, globBody)));
+    out = util.append_all(out, wsection(6, wvec(globCount, globBody)));
   }
   if (expCount > 0) {
-    out = wcat(out, wsection(7, wvec(expCount, expBody)));
+    out = util.append_all(out, wsection(7, wvec(expCount, expBody)));
   }
   if (elemCount > 0) {
-    out = wcat(out, wsection(9, wvec(elemCount, elemBody)));
+    out = util.append_all(out, wsection(9, wvec(elemCount, elemBody)));
   }
-  out = wcat(out, wsection(10, wvec(definedNodes.len(), codeBody)));
+  out = util.append_all(out, wsection(10, wvec(definedNodes.len(), codeBody)));
   if (dataCount > 0) {
-    out = wcat(out, wsection(11, wvec(dataCount, dataBody)));
+    out = util.append_all(out, wsection(11, wvec(dataCount, dataBody)));
   }
   return out;
 }
@@ -2006,35 +1997,35 @@ pub function component_preamble(): i32[] {
 
 function component_wrap(core: i32[]): i32[] {
   let o = component_preamble();
-  return wcat(o, wsection(1, core));
+  return util.append_all(o, wsection(1, core));
 }
 
 pub function component_full(core: i32[]): i32[] {
   let o = component_preamble();
-  o = wcat(o, wsection(1, core));
+  o = util.append_all(o, wsection(1, core));
 
-  o = wcat(o, wsection(2, [1, 0, 0, 0]));
+  o = util.append_all(o, wsection(2, [1, 0, 0, 0]));
 
   let al: i32[] = [1, 0, 0, 1, 0];
   al = wname(al, "_lang_run");
-  o = wcat(o, wsection(6, al));
+  o = util.append_all(o, wsection(6, al));
 
-  o = wcat(o, wsection(7, [2, 106, 0, 0, 64, 0, 0, 0]));
+  o = util.append_all(o, wsection(7, [2, 106, 0, 0, 64, 0, 0, 0]));
 
-  o = wcat(o, wsection(8, [1, 0, 0, 0, 0, 1]));
+  o = util.append_all(o, wsection(8, [1, 0, 0, 0, 0, 1]));
 
   let inst: i32[] = [1, 1, 1, 0];
   inst = wname(inst, "run");
   inst = inst.append(1);
   inst = inst.append(0);
-  o = wcat(o, wsection(5, inst));
+  o = util.append_all(o, wsection(5, inst));
 
   let ex: i32[] = [1, 0];
   ex = wname(ex, "wasi:cli/run@0.2.0");
   ex = ex.append(5);
   ex = ex.append(0);
   ex = ex.append(0);
-  o = wcat(o, wsection(11, ex));
+  o = util.append_all(o, wsection(11, ex));
 
   return o;
 }
@@ -2065,23 +2056,23 @@ function fs_write_tail(): i32[] {
 
 function io_fs_read_head(): i32[] {
   let o = component_preamble();
-  o = wcat(o, tb_io_error());
-  o = wcat(o, tb_io_streams_inout());
-  return wcat(o, fs_read_tail());
+  o = util.append_all(o, tb_io_error());
+  o = util.append_all(o, tb_io_streams_inout());
+  return util.append_all(o, fs_read_tail());
 }
 
 function io_fs_rw_head(): i32[] {
   let o = component_preamble();
-  o = wcat(o, tb_io_error());
-  o = wcat(o, tb_io_streams_inout());
-  return wcat(o, fs_rw_tail());
+  o = util.append_all(o, tb_io_error());
+  o = util.append_all(o, tb_io_streams_inout());
+  return util.append_all(o, fs_rw_tail());
 }
 
 function io_fs_write_head(): i32[] {
   let o = component_preamble();
-  o = wcat(o, tb_io_error());
-  o = wcat(o, tb_io_streams_out());
-  return wcat(o, fs_write_tail());
+  o = util.append_all(o, tb_io_error());
+  o = util.append_all(o, tb_io_streams_out());
+  return util.append_all(o, fs_write_tail());
 }
 
 function tb_cli_stdout(): i32[] {
@@ -2090,9 +2081,9 @@ function tb_cli_stdout(): i32[] {
 
 function io_stdout_head(): i32[] {
   let o = component_preamble();
-  o = wcat(o, tb_io_error());
-  o = wcat(o, tb_io_streams_out());
-  return wcat(o, tb_cli_stdout());
+  o = util.append_all(o, tb_io_error());
+  o = util.append_all(o, tb_io_streams_out());
+  return util.append_all(o, tb_cli_stdout());
 }
 
 function tb_random(): i32[] {
@@ -2123,16 +2114,12 @@ function tb_cli_stderr(): i32[] {
   return type_block("\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stderr\x01\x03", "\n\x1a\x01\x00\x15wasi:cli/stderr@0.2.0\x05\x05");
 }
 
-function tb_fsread_env_tail(): i32[] {
+function tb_env_tail(): i32[] {
   return type_block("\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
-function tb_fsread_args_tail(): i32[] {
+function tb_args_tail(): i32[] {
   return type_block("\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
-}
-
-function tb_fsrw_env_tail(): i32[] {
-  return type_block("\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
 function tb_fswrite_random_tail(): i32[] {
@@ -2140,7 +2127,7 @@ function tb_fswrite_random_tail(): i32[] {
 }
 
 function type_block(body: string, rest: string): i32[] {
-  return wcat(wsection(7, blob_to_bytes(body)), blob_to_bytes(rest));
+  return util.append_all(wsection(7, blob_to_bytes(body)), blob_to_bytes(rest));
 }
 
 pub function hex_to_bytes(s: string): i32[] {
@@ -2165,105 +2152,105 @@ pub function blob_to_bytes(s: string): i32[] {
 
 pub function component_full_io(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_stdout());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_stdout());
 }
 
 pub function component_full_io_fs(core: i32[]): i32[] {
   let o = io_fs_read_head();
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_read());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_read());
 }
 
 pub function component_full_io_fs_write(core: i32[]): i32[] {
   let o = io_fs_write_head();
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_write());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_write());
 }
 
 pub function component_full_io_fs_rw(core: i32[]): i32[] {
   let o = io_fs_rw_head();
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_rw());
 }
 
 pub function component_full_io_random(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_random());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_random());
+  o = util.append_all(o, tb_random());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_random());
 }
 
 pub function component_full_io_env(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_cli_environment_env());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_env());
+  o = util.append_all(o, tb_cli_environment_env());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_env());
 }
 
 pub function component_full_io_args(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_cli_environment_args());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_args());
+  o = util.append_all(o, tb_cli_environment_args());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_args());
 }
 
 pub function component_full_io_clock(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_wall_clock());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_clock());
+  o = util.append_all(o, tb_wall_clock());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_clock());
 }
 
 pub function component_full_io_clock_mono(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_monotonic_clock());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_clock_mono());
+  o = util.append_all(o, tb_monotonic_clock());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_clock_mono());
 }
 
 pub function component_full_io_fs_read_env(core: i32[]): i32[] {
   let o = io_fs_read_head();
-  o = wcat(o, tb_fsread_env_tail());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_read_env());
+  o = util.append_all(o, tb_env_tail());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_read_env());
 }
 
 pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
   let o = io_fs_rw_head();
-  o = wcat(o, tb_fsrw_env_tail());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw_env());
+  o = util.append_all(o, tb_env_tail());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_rw_env());
 }
 
 pub function component_full_io_random_write(core: i32[]): i32[] {
   let o = io_fs_write_head();
-  o = wcat(o, tb_fswrite_random_tail());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_random_write());
+  o = util.append_all(o, tb_fswrite_random_tail());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_random_write());
 }
 
 pub function component_full_io_eprint(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_cli_stderr());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_eprint());
+  o = util.append_all(o, tb_cli_stderr());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_eprint());
 }
 
 pub function component_full_io_exit(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_cli_exit());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_exit());
+  o = util.append_all(o, tb_cli_exit());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_exit());
 }
 
 pub function component_full_io_eprint_exit(core: i32[]): i32[] {
   let o = io_stdout_head();
-  o = wcat(o, tb_cli_stderr());
-  o = wcat(o, type_block("\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01", "\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
-  o = wcat(o, wsection(1, core));
+  o = util.append_all(o, tb_cli_stderr());
+  o = util.append_all(o, type_block("\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01", "\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
+  o = util.append_all(o, wsection(1, core));
   let none: i32[] = [];
-  return wcat(o, component_suffix_io(
+  return util.append_all(o, component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/exit@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-stderr", "exit"],
     [1, 0, 0, 0],
@@ -2276,35 +2263,31 @@ pub function component_full_io_eprint_exit(core: i32[]): i32[] {
 
 pub function component_full_io_fs_args_read(core: i32[]): i32[] {
   let o = io_fs_read_head();
-  o = wcat(o, tb_fsread_args_tail());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_args_read());
-}
-
-function tb_fsrw_args_tail(): i32[] {
-  return type_block("\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
+  o = util.append_all(o, tb_args_tail());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_args_read());
 }
 
 pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
   let o = io_fs_rw_head();
-  o = wcat(o, tb_fsrw_args_tail());
-  o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw_args());
+  o = util.append_all(o, tb_args_tail());
+  o = util.append_all(o, wsection(1, core));
+  return util.append_all(o, component_suffix_fs_rw_args());
 }
 
 function functype(params: i32[], results: i32[]): i32[] {
   let t: i32[] = [96];
   t = leb_u32(t, params.len());
-  t = wcat(t, params);
+  t = util.append_all(t, params);
   t = leb_u32(t, results.len());
-  return wcat(t, results);
+  return util.append_all(t, results);
 }
 
 function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   let o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
-  o = wcat(o, wsection(1, wvec(1, functype(params, results))));
-  o = wcat(o, wsection(3, [1, 0]));
-  o = wcat(o, wsection(4, [1, 112, 1, 1, 1]));
+  o = util.append_all(o, wsection(1, wvec(1, functype(params, results))));
+  o = util.append_all(o, wsection(3, [1, 0]));
+  o = util.append_all(o, wsection(4, [1, 112, 1, 1, 1]));
   let ex: i32[] = [2];
   ex = wname(ex, "0");
   ex = ex.append(0);
@@ -2312,7 +2295,7 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   ex = wname(ex, "$imports");
   ex = ex.append(1);
   ex = ex.append(0);
-  o = wcat(o, wsection(7, ex));
+  o = util.append_all(o, wsection(7, ex));
   let body: i32[] = [0];
   let k = 0;
   while (k < params.len()) {
@@ -2328,13 +2311,13 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   body = body.append(11);
   let fe: i32[] = [];
   fe = leb_u32(fe, body.len());
-  fe = wcat(fe, body);
-  return wcat(o, wsection(10, wvec(1, fe)));
+  fe = util.append_all(fe, body);
+  return util.append_all(o, wsection(10, wvec(1, fe)));
 }
 
 function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
   let o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
-  o = wcat(o, wsection(1, wvec(1, functype(params, results))));
+  o = util.append_all(o, wsection(1, wvec(1, functype(params, results))));
   let im: i32[] = [2];
   im = im.append(0);
   im = wname(im, "0");
@@ -2347,8 +2330,8 @@ function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
   im = im.append(1);
   im = im.append(1);
   im = im.append(1);
-  o = wcat(o, wsection(2, im));
-  return wcat(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
+  o = util.append_all(o, wsection(2, im));
+  return util.append_all(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
 }
 
 pub function comp_core_module_section(mod: i32[]): i32[] {
@@ -2489,7 +2472,7 @@ function comp_resultlist(b: i32[], vt: i32[]): i32[] {
     b = b.append(1);
     return b.append(0);
   }
-  return wcat(b.append(0), vt);
+  return util.append_all(b.append(0), vt);
 }
 
 function comp_canon_task_return(vt: i32): i32[] {
@@ -2507,7 +2490,7 @@ function async_functype(b: i32[], names: string[], vts: i32[][], result: i32[]):
   b = leb_u32(b, vts.len());
   let i = 0;
   while (i < vts.len()) {
-    b = wcat(wname(b, names[i]), vts[i]);
+    b = util.append_all(wname(b, names[i]), vts[i]);
     i += 1;
   }
   return comp_resultlist(b, result);
@@ -2523,7 +2506,7 @@ function instance_valtype(it: InstanceTypes, t: i32[]): (InstanceTypes, i32[]) {
   if (t.len() <= 1) {
     return (it, t);
   }
-  let b = wcat(it.b.append(1), t);
+  let b = util.append_all(it.b.append(1), t);
   return (InstanceTypes { b: b, n: it.n + 1 }, leb_u32([], it.n));
 }
 
@@ -2538,11 +2521,11 @@ pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
     }
     let (it3, rvt) = instance_valtype(it, l.result);
     let fb = async_functype(it3.b.append(1), l.param_names, vts, rvt);
-    let eb = wname(wcat(fb, [4, 0]), l.name);
+    let eb = wname(util.append_all(fb, [4, 0]), l.name);
     eb = eb.append(1);
     it = InstanceTypes { b: leb_u32(eb, it3.n), n: it3.n + 1 };
   }
-  return wsection(7, wcat(leb_u32([1, 66], it.n + lowers.len()), it.b));
+  return wsection(7, util.append_all(leb_u32([1, 66], it.n + lowers.len()), it.b));
 }
 
 pub function comp_type_stream(vt: i32): i32[] {
@@ -2605,12 +2588,12 @@ pub function lowered_name(name: string): string {
 
 function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: i32, n_cfunc: i32, realloc_f: i32): (i32[], i32) {
   if (k == 7) {
-    return (wcat(o, wsection(8, [1, 32, 0, 0])), n_cfunc);
+    return (util.append_all(o, wsection(8, [1, 32, 0, 0])), n_cfunc);
   }
   if (k == 9 || k == 10) {
-    return (wcat(o, wsection(8, wcat(leb_u32([1, k + 6], typeop), [2, 6, 3, 0]))), n_cfunc);
+    return (util.append_all(o, wsection(8, util.append_all(leb_u32([1, k + 6], typeop), [2, 6, 3, 0]))), n_cfunc);
   }
-  o = wcat(o, comp_alias_inst_func(inst, lowered_name(name)));
+  o = util.append_all(o, comp_alias_inst_func(inst, lowered_name(name)));
   let opts: i32[] = [3, 0];
   let n_opts = 1;
   if (k == 5 || k == 6) {
@@ -2625,7 +2608,7 @@ function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: 
   let b: i32[] = [1, 1, 0];
   b = leb_u32(b, n_cfunc);
   b = leb_u32(b, n_opts);
-  return (wcat(o, wsection(8, wcat(b, opts))), n_cfunc + 1);
+  return (util.append_all(o, wsection(8, util.append_all(b, opts))), n_cfunc + 1);
 }
 
 function comp_export_one_func(name: string, funcidx: i32): i32[] {
@@ -2679,10 +2662,10 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     if (trampolined(imp_kind[i])) {
       tramp_mod = tramp_mod.with(i, n_mod);
       n_mod += 1;
-      o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
+      o = util.append_all(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
       fixup_mod = fixup_mod.with(i, n_mod);
       n_mod += 1;
-      o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
+      o = util.append_all(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
     }
     i += 1;
   }
@@ -2691,7 +2674,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     if (trampolined(imp_kind[i])) {
       tramp_inst = tramp_inst.with(i, n_coreinst);
       n_coreinst += 1;
-      o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
+      o = util.append_all(o, comp_core_instance_instantiate(tramp_mod[i]));
     }
     i += 1;
   }
@@ -2703,19 +2686,19 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     let k = imp_kind[i];
     let idx = 0;
     if (k == 0) {
-      o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+      o = util.append_all(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
       let cf = n_cfunc;
       n_cfunc += 1;
       idx = n_corefunc;
-      o = wcat(o, comp_canon_lower_noopts(cf));
+      o = util.append_all(o, comp_canon_lower_noopts(cf));
       n_corefunc += 1;
     } else if (trampolined(k)) {
       idx = n_corefunc;
-      o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
+      o = util.append_all(o, comp_alias_core_func(tramp_inst[i], "0"));
       n_corefunc += 1;
     } else {
       idx = n_corefunc;
-      o = wcat(o, comp_canon_typed(k, imp_typeop[i]));
+      o = util.append_all(o, comp_canon_typed(k, imp_typeop[i]));
       n_corefunc += 1;
     }
     let gi = suffix_group_find(order, imp_iface[i]);
@@ -2740,13 +2723,13 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       sorts = sorts.append(0);
       s += 1;
     }
-    o = wcat(o, comp_core_instance_from_exports(gn, sorts, gx));
+    o = util.append_all(o, comp_core_instance_from_exports(gn, sorts, gx));
     arg_insts = arg_insts.append(n_coreinst);
     n_coreinst += 1;
     g += 1;
   }
   let user_inst = n_coreinst;
-  o = wcat(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
+  o = util.append_all(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
   n_coreinst += 1;
   let need_mem = false;
   let need_realloc = false;
@@ -2757,12 +2740,12 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     i += 1;
   }
   if (need_mem) {
-    o = wcat(o, comp_alias_core_export(2, user_inst, "memory"));
+    o = util.append_all(o, comp_alias_core_export(2, user_inst, "memory"));
   }
   let realloc_f = 0;
   if (need_realloc) {
     realloc_f = n_corefunc;
-    o = wcat(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
+    o = util.append_all(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
     n_corefunc += 1;
   }
   i = 0;
@@ -2770,7 +2753,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     if (trampolined(imp_kind[i])) {
       tbl = tbl.with(i, n_coretab);
       n_coretab += 1;
-      o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
+      o = util.append_all(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
     }
     i += 1;
   }
@@ -2789,9 +2772,9 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   while (i < n) {
     if (trampolined(imp_kind[i])) {
       let arg = n_coreinst;
-      o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
+      o = util.append_all(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
       n_coreinst += 1;
-      o = wcat(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
+      o = util.append_all(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
       n_coreinst += 1;
     }
     i += 1;
@@ -2803,19 +2786,19 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
   let w = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
   let o = w.o;
   let run_core_f = w.n_corefunc;
-  o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
-  o = wcat(o, comp_type_result_unit(n_type0));
+  o = util.append_all(o, comp_alias_core_func(w.user_inst, core_export));
+  o = util.append_all(o, comp_type_result_unit(n_type0));
   let lifted = w.n_cfunc;
-  o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
+  o = util.append_all(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
   let run_inst = w.n_inst;
-  o = wcat(o, comp_instance_one_func("run", lifted));
-  o = wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+  o = util.append_all(o, comp_instance_one_func("run", lifted));
+  o = util.append_all(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
   let i = 0;
   while (i < lifts.len()) {
-    o = wcat(o, comp_alias_core_func(w.user_inst, "[async-lift]" + lifts[i].core_name));
-    o = wcat(o, comp_type_async_func(lifts[i]));
-    o = wcat(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
-    o = wcat(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
+    o = util.append_all(o, comp_alias_core_func(w.user_inst, "[async-lift]" + lifts[i].core_name));
+    o = util.append_all(o, comp_type_async_func(lifts[i]));
+    o = util.append_all(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
+    o = util.append_all(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
     i += 1;
   }
   return o;
@@ -2825,15 +2808,15 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
   let w = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
   let o = w.o;
   let handle_core_f = w.n_corefunc;
-  o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
-  o = wcat(o, comp_type_own(req_t));
-  o = wcat(o, comp_type_own(out_t));
-  o = wcat(o, comp_type_handle_func(n_type0, n_type0 + 1));
+  o = util.append_all(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
+  o = util.append_all(o, comp_type_own(req_t));
+  o = util.append_all(o, comp_type_own(out_t));
+  o = util.append_all(o, comp_type_handle_func(n_type0, n_type0 + 1));
   let lifted = w.n_cfunc;
-  o = wcat(o, comp_canon_lift_noopts(handle_core_f, n_type0 + 2));
+  o = util.append_all(o, comp_canon_lift_noopts(handle_core_f, n_type0 + 2));
   let handler_inst = w.n_inst;
-  o = wcat(o, comp_instance_one_func("handle", lifted));
-  return wcat(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
+  o = util.append_all(o, comp_instance_one_func("handle", lifted));
+  return util.append_all(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
 }
 
 function no_results(n: i32): i32[][] {

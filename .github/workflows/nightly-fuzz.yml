@@ -458,6 +458,9 @@ jobs:
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65
+    env:
+      # The targets of readerTargets in internal/testing/e2ecompiler.
+      READER_COVER: ${{ startsWith(matrix.target, 'FuzzSelfHostStd') || contains(fromJSON('["FuzzSelfHostToml", "FuzzSelfHostLock", "FuzzSelfHostIndex", "FuzzSelfHostArchive", "FuzzSelfHostTangle", "FuzzSelfHostWeave", "FuzzSelfHostIRVerify", "FuzzSelfHostX86Assembler", "FuzzSelfHostArm64Assembler", "FuzzSelfHostX86Image", "FuzzSelfHostArm64Image"]'), matrix.target) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -494,27 +497,28 @@ jobs:
           gotestsum --format testname -- -timeout=40m \
             -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}
 
-      # A stdlib reader also runs under the loop that steers by the coverage
-      # of the Fern process, which Go's fuzzer cannot see. Its corpus is its
-      # own, in the same night-to-night cache shape as Go's. A failing input
-      # goes into testdata/fuzz/<Target>/, which the upload below collects.
+      # A reader of stdparse.fern or of a driver also runs under the loop
+      # that steers by the coverage of the Fern process, which Go's fuzzer
+      # cannot see. Its corpus is its own, in the same night-to-night cache
+      # shape as Go's. A failing input goes into testdata/fuzz/<Target>/,
+      # which the upload below collects.
       - name: Restore coverage-guided corpus
-        if: ${{ !cancelled() && startsWith(matrix.target, 'FuzzSelfHostStd') }}
+        if: ${{ !cancelled() && env.READER_COVER == 'true' }}
         uses: actions/cache@v6
         with:
-          path: ${{ runner.temp }}/std-cover-corpus
-          key: stdcover-${{ matrix.slug }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/reader-cover-corpus
+          key: readercover-${{ matrix.slug }}-${{ github.run_id }}
           restore-keys: |
-            stdcover-${{ matrix.slug }}-
+            readercover-${{ matrix.slug }}-
       - name: Coverage-guided ${{ matrix.target }}
-        if: ${{ !cancelled() && startsWith(matrix.target, 'FuzzSelfHostStd') }}
+        if: ${{ !cancelled() && env.READER_COVER == 'true' }}
         env:
-          FERN_STD_COVER_FUZZ: "1"
-          FERN_STD_COVER_FUZZ_TIME: "15m"
-          FERN_STD_COVER_FUZZ_CORPUS: ${{ runner.temp }}/std-cover-corpus
+          FERN_READER_COVER_FUZZ: "1"
+          FERN_READER_COVER_FUZZ_TIME: "15m"
+          FERN_READER_COVER_FUZZ_CORPUS: ${{ runner.temp }}/reader-cover-corpus
         run: |
           gotestsum --format testname -- -timeout=25m \
-            -run '^TestSelfHostStdCoverageGuidedFuzz$/^${{ matrix.target }}$' ${{ matrix.pkg }}
+            -run '^TestSelfHostReaderCoverageGuidedFuzz$/^${{ matrix.target }}$' ${{ matrix.pkg }}
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

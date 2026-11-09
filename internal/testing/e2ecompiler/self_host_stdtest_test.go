@@ -89,6 +89,8 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// Layer II has 66 streams and a full mutation campaign. Protected-frame smoke stays here.
+	"mp2": true, "mp2_shard1": true, "mp2_shard2": true, "mp2_shard3": true, "mp2_boundary": true,
 	// The full FLAC encoder bank includes 65,535-frame blocks. Small smoke stays here.
 	"flac_encoder": true,
 	// The full LPC bank searches all 32 orders. Small independent LPC controls stay here.
@@ -435,10 +437,18 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"video_mp4", langSrcAbs(t, "tests/stdlib/video_mp4_test.fern"), ""},
 		{"video_mp4_boundary", langSrcAbs(t, "tests/stdlib/video_mp4_boundary_test.fern"), ""},
+		{"video_mp4_file", langSrcAbs(t, "tests/stdlib/video_mp4_file_test.fern"), ""},
+		{"video_mp4_file_boundary", langSrcAbs(t, "tests/stdlib/video_mp4_file_boundary_test.fern"), ""},
 		{"android_player", langSrcAbs(t, "tests/stdlib/android_player_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
 		{"android_video_source", langSrcAbs(t, "tests/stdlib/android_video_source_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
+		{"mp2", langSrcAbs(t, "tests/stdlib/mp2_test.fern"), ""},
+		{"mp2_shard1", langSrcAbs(t, "tests/stdlib/mp2_shard1_test.fern"), ""},
+		{"mp2_shard2", langSrcAbs(t, "tests/stdlib/mp2_shard2_test.fern"), ""},
+		{"mp2_shard3", langSrcAbs(t, "tests/stdlib/mp2_shard3_test.fern"), ""},
+		{"mp2_boundary", langSrcAbs(t, "tests/stdlib/mp2_boundary_test.fern"), ""},
+		{"mp2_smoke", langSrcAbs(t, "tests/stdlib/mp2_smoke_test.fern"), ""},
 		{"mp3_freeformat", langSrcAbs(t, "tests/stdlib/mp3_freeformat_test.fern"), ""},
 		{"mp3_freeformat_boundary", langSrcAbs(t, "tests/stdlib/mp3_freeformat_boundary_test.fern"), ""},
 		{"mp3_freeformat_smoke", langSrcAbs(t, "tests/stdlib/mp3_freeformat_smoke_test.fern"), ""},
