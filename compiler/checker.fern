@@ -26847,8 +26847,11 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     }
     return [dg_at("E021", "@derive(" + tr + "): unknown trait", ln, cl)];
   }
-  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default") {
-    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", ln, cl)];
+  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default" && kind != "CLayout") {
+    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, Default, and CLayout are derivable", ln, cl)];
+  }
+  if (kind == "CLayout") {
+    return e021_clayout_diags(tr, tname, labels, ftys, tps, ln, cl);
   }
   let ctys = ftys;
   if (kind == "FromJson") {
@@ -26876,6 +26879,22 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
       }
     }
     fi += 1;
+  }
+  return [];
+}
+
+// A struct with a C layout has no type parameters, and each field has a C
+// form.
+function e021_clayout_diags(tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
+  if (tps.len() > 0) {
+    return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": a struct with a C layout has no type parameters", ln, cl)];
+  }
+  let i = 0;
+  while (i < ftys.len()) {
+    if (parser.clayout_width(ftys[i]) == 0) {
+      return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[i] + " has type " + ftys[i] + ", which has no C form; a field of a C layout is u8, i32, u32, i64, u64, usize, f32 or f64", ln, cl)];
+    }
+    i += 1;
   }
   return [];
 }
@@ -26970,6 +26989,9 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
     }
     for ederive in ederives {
       let edd = e021_derive_one_diag(mod, ederive, ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
+      if (edd.len() == 0 && parser.derive_simple_name(ederive) == "CLayout") {
+        edd = [dg_at("E021", "cannot @derive(" + ederive + ") for " + ed.name + ": only a struct has a C layout", ed.line, ed.col)];
+      }
       if (edd.len() > 0) {
         let emn = derive_method_name(parser.derive_simple_name(ederive));
         if (emn.len() > 0) {

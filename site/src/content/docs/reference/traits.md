@@ -379,7 +379,9 @@ enum Status { Idle, Running(i32), Done(i32, i32) }
 The derivable traits are **`cmp.Eq`, `cmp.Ord`, `cmp.Hash`,
 `cmp.Display`, `cmp.Debug`, `cmp.Default`**, and from
 [`std/json`](../../stdlib/json/) **`json.Json`** (`to_json()`) and
-**`json.FromJson`** (`T.from_json(text)`). Each composes structurally:
+**`json.FromJson`** (`T.from_json(text)`). From [`std/ffi`](../../stdlib/ffi/),
+**`ffi.CLayout`** gives a struct the memory layout of the same struct in C
+(`T.c_load(p)`, `t.c_store(p)`). All but `CLayout` compose structurally:
 
 - **`Eq` / `Ord` / `Hash`** fold field-by-field (and, for enums, over the
   variant tag then its payload), so a type is comparable/hashable as soon

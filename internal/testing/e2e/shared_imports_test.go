@@ -572,3 +572,73 @@ func runImportLoader(t *testing.T, src, clib string) {
 		})
 	}
 }
+
+// A struct with fields of each width and with padding, in the layout of C.
+const clayoutLib = `#include <stddef.h>
+#include <stdint.h>
+struct mixed { uint8_t a; int32_t b; uint8_t c; double d; uint32_t e; void* f; float g; };
+int64_t mixed_bump(struct mixed* m) {
+  int ok = m->a == 7 && m->b == -3 && m->c == 200 && m->d == 2.5 && m->e == 4000000000u && m->f == (void*)99 && m->g == 1.5f;
+  m->a += 1; m->b -= 1; m->c += 1; m->d *= 2; m->e += 1; m->f = (char*)m->f + 1; m->g *= 2;
+  return ok ? (int64_t)sizeof(struct mixed) : -1;
+}
+int64_t mixed_e(struct mixed* m) { return m->e; }
+int64_t mixed_g_offset(void) { return offsetof(struct mixed, g); }
+`
+
+const clayoutSrc = `import "std/ffi";
+
+@derive(ffi.CLayout)
+struct Mixed { a: u8, b: i32, c: u8, d: f64, e: u32, f: usize, g: f32 }
+
+@import("libmix.so", "mixed_bump")
+function c_mixed_bump(p: usize): i64;
+
+@import("libmix.so", "mixed_e")
+function c_mixed_e(p: usize): i64;
+
+@import("libmix.so", "mixed_g_offset")
+function c_mixed_g_offset(): i64;
+
+// Each check is a digit of the result: the size and an offset agree with C,
+// C reads what Fern writes, Fern reads what C writes, and C reads one field
+// that Fern writes.
+pub function check(): i32 {
+  let n = 0;
+  if (Mixed.c_size() as i64 == 48i64 && Mixed.c_offset_g() as i64 == c_mixed_g_offset()) {
+    n += 1;
+  }
+  let p = unsafe { __alloc(Mixed.c_size() as i32) };
+  let m = Mixed { a: 7u8, b: -3, c: 200u8, d: 2.5f64, e: 4000000000u32, f: 99 as usize, g: 1.5f32 };
+  unsafe {
+    m.c_store(p);
+  }
+  if (c_mixed_bump(p) == 48i64) {
+    n += 10;
+  }
+  let back = unsafe { Mixed.c_load(p) };
+  if (back.a == 8u8 && back.b == -4 && back.c == 201u8 && back.d == 5.0f64 && back.e == 4000000001u32 && back.f == 100 as usize && back.g == 3.0f32) {
+    n += 100;
+  }
+  if (unsafe { Mixed.c_load_g(p) } == 3.0f32) {
+    n += 1000;
+  }
+  unsafe {
+    Mixed.c_store_e(p, 12345u32);
+  }
+  if (c_mixed_e(p) == 12345i64) {
+    n += 10000;
+  }
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+// A struct with @derive(ffi.CLayout) has the offsets and the size of the same
+// struct in C, so C and Fern read and write each other's fields.
+func TestSharedCImportsCLayout(t *testing.T) {
+	runImportLoader(t, clayoutSrc, clayoutLib)
+}

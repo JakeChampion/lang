@@ -327,6 +327,27 @@ argument where they put a fixed argument of its type. So each declaration
 is a correct call. Pass an `f64` for a C `float`, and an `i64` or `i32` for
 the smaller integers, as C promotes them.
 
+A C function often takes the address of a struct. `@derive(ffi.CLayout)` from
+[`std/ffi`](../../stdlib/ffi/) gives a struct the offsets and the size of the
+same struct in C:
+
+```fern
+import "std/ffi";
+
+@derive(ffi.CLayout)
+struct Rect { left: i32, top: i32, right: i32, bottom: i32 }
+
+function width(p: usize): i32 {
+  let r = unsafe { Rect.c_load(p) };
+  return r.right - r.left;
+}
+```
+
+The derive gives `Rect.c_size()`, `Rect.c_load(p)` and `r.c_store(p)`. For each
+field `f` it also gives `Rect.c_offset_f()`, `Rect.c_load_f(p)` and
+`Rect.c_store_f(p, v)`. A field is `u8`, `i32`, `u32`, `i64`, `u64`, `usize`,
+`f32` or `f64`. The loads and the stores are `unsafe`.
+
 `@jni("dev.fern.demo.Native", "static long add(long, int)")` on a function
 binds it to a Java native method. The compiler checks each Fern type against
 the width of its Java type, and exports the function under its JNI symbol.

@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -2663,13 +2664,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.info.Generics[fn.Name] = fn
 		}
 	}
-	c.unsafeFuncs = map[string]bool{}
+	c.unsafeFuncs = map[string]string{}
 	for _, name := range UnsafeBuiltinMethods {
-		c.unsafeFuncs[name] = true
+		c.unsafeFuncs[name] = name
 	}
 	for _, fn := range prog.Funcs {
 		if fn.Unsafe {
-			c.unsafeFuncs[fn.Name] = true
+			c.unsafeFuncs[fn.Name] = cmp.Or(fn.MethodSimpleName, demangle(fn.Name))
 		}
 	}
 	c.checkUnsafeImpls(prog)
@@ -4123,7 +4124,7 @@ func deriveHint(tn, derive, trait string) string {
 
 func deriveKind(name string) string {
 	switch simple := SimpleTraitName(name); simple {
-	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
+	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug", "CLayout":
 		return simple
 	}
 	return ""
@@ -4348,7 +4349,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			}
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, Default, and CLayout are derivable", demangle(dn))
 				continue
 			}
 			labels := make([]string, len(sd.Fields))
@@ -4356,6 +4357,10 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			for i, f := range sd.Fields {
 				labels[i] = "field " + f.Name
 				types[i] = f.Type
+			}
+			if kind == "CLayout" {
+				c.deriveCLayout(prog, sd, dn, recvType)
+				continue
 			}
 			if kind == "FromJson" {
 				elems, ok := c.fromJsonDeriveTypes(prog, sd.P, dn, sd.Name, labels, types)
@@ -4428,6 +4433,10 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 					types = append(types, pt)
 				}
 			}
+			if deriveKind(dn) == "CLayout" {
+				c.errfCode(ed.P, "E021", "cannot @derive(%s) for %s: only a struct has a C layout", demangle(dn), demangle(ed.Name))
+				continue
+			}
 			if deriveKind(dn) == "FromJson" {
 				elems, ok := c.fromJsonDeriveTypes(prog, ed.P, dn, ed.Name, labels, types)
 				if !ok {
@@ -4467,7 +4476,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				}
 				method = m
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, Default, and CLayout are derivable", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -5880,7 +5889,7 @@ type checker struct {
 	current           *ast.FuncDecl
 	loopDepth         int
 	unsafeDepth       int
-	unsafeFuncs       map[string]bool
+	unsafeFuncs       map[string]string
 	// builtinFuncs holds the builtin functions, which a program may call but not name as a value.
 	builtinFuncs map[string]bool
 	tryConvN     int
@@ -9459,10 +9468,10 @@ func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 		c.errfCode(n.P, "E095", "raw builtin %q is called outside an unsafe block", id.Name)
 		return
 	}
-	if !c.unsafeFuncs[id.Name] {
+	name := c.unsafeFuncs[id.Name]
+	if name == "" {
 		return
 	}
-	name := demangle(id.Name)
 	if n.Method != nil {
 		name = n.Method.Field
 	} else if n.SourceCallee != "" {
@@ -14482,7 +14491,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if reserved {
 			c.errfCode(n.P, "E097", "builtin %q is reserved for the standard library; call %s instead", n.Name, wrapper)
 		}
-		if c.unsafeFuncs[n.Name] && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
+		if c.unsafeFuncs[n.Name] != "" && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
 			c.errfCode(n.P, "E095", "unsafe function %q cannot be used as a value; a function value carries no unsafe obligation", demangle(n.Name))
 		}
 		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen && c.funcVisibleHere(n.Name) {
