@@ -37,6 +37,11 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdTLSServer` | a server handshake of `std/tls/handshake` fed the input in pieces of eleven bytes | `tests/fuzz/stdparse.fern tls-server` | the same |
 | `FuzzSelfHostStdTLSClient` | a client handshake of `std/tls/handshake` fed the input as the server flight, in pieces of eleven bytes | `tests/fuzz/stdparse.fern tls-client` | the same |
 | `FuzzSelfHostStdX509` | the PEM reader of `std/tls/pem`, the certificate reader of `std/tls/x509`, and the chain verifier of `std/tls/verify` with each certificate as its own root | `tests/fuzz/stdparse.fern x509` | the same |
+| `FuzzSelfHostStdInflate` | the raw DEFLATE decoder of `std/deflate`, compared with Go's `compress/flate` | `tests/fuzz/stdparse.fern inflate` | the same, and agreement with Go |
+| `FuzzSelfHostStdGunzip` | the gzip decoder of `std/deflate`, compared with Go's `compress/gzip` | `tests/fuzz/stdparse.fern gunzip` | the same, and agreement with Go |
+| `FuzzSelfHostStdZlib` | the zlib decoder of `std/deflate`, compared with Go's `compress/zlib` | `tests/fuzz/stdparse.fern zlib` | the same, and agreement with Go |
+| `FuzzSelfHostStdZstd` | the decoder of `std/zstd`, and a round trip of the input through its compressor | `tests/fuzz/stdparse.fern zstd` | the same, and a round trip that gives the input back |
+| `FuzzSelfHostStdBrotli` | the decoder of `std/brotli`, and a round trip of the input through its compressor | `tests/fuzz/stdparse.fern brotli` | the same, and a round trip that gives the input back |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -101,6 +106,18 @@ They also carry a HelloRetryRequest from a Go server that accepts only P-256.
 The certificate seeds carry a name of 250 bytes, a truncated certificate and a byte after the certificate.
 They also carry PEM text that is not base64 and a DER length of four bytes.
 
+The decoder targets have an oracle as well as the budgets.
+Each decoder has an output limit of 1 MiB.
+The DEFLATE, gzip and zlib targets decode every input with Go's `compress` packages too.
+When both accept the input, the length and the CRC-32 of the two outputs must be the same.
+When one accepts the input, the other must accept it too, unless the Go output passes the limit.
+Go has no zstd or Brotli decoder, so those targets compress each input with the Fern compressor and decode it back.
+
+The DEFLATE, gzip and zlib seeds are text, random bytes, runs and an empty input, written by Go at four levels.
+Each seed also has three damaged copies: the last byte flipped, the stream cut in half, and a byte after the end.
+Other seeds carry stored blocks with a good and a bad length check, two gzip members, a zlib preset dictionary and bad headers.
+The zstd and Brotli seeds are the frames of the codec tests, their damaged copies, and plain inputs for the round trip.
+
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
 An input over 64 KiB is skipped.
@@ -150,6 +167,11 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdTLSServer` | 48819 | 3 | none |
 | `FuzzSelfHostStdTLSClient` | 47367 | 4 | none |
 | `FuzzSelfHostStdX509` | 57720 | 0 | none |
+| `FuzzSelfHostStdInflate` | 48612 | 23 | none |
+| `FuzzSelfHostStdGunzip` | 30298 | 11 | none |
+| `FuzzSelfHostStdZlib` | 17732 | 15 | none |
+| `FuzzSelfHostStdZstd` | 23013 | 1 | none |
+| `FuzzSelfHostStdBrotli` | 43762 | 2 | none |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
@@ -163,9 +185,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the twenty-two targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the twenty-seven targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the twenty-two targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the twenty-seven targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits
