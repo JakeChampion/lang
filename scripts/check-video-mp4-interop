@@ -2,6 +2,7 @@
 """Compare native MP4 packet metadata and extracted AVC/HEVC pixels with FFmpeg."""
 import importlib.util
 import os
+import struct
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,6 +18,40 @@ binary.parent.mkdir(parents=True, exist_ok=True)
 target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
 subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
                 "scripts/video-reference/mp4.fern", "internal/stdlib"], check=True)
+file_binary = ROOT / "build/video/mp4-file-reference"
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(file_binary),
+                "scripts/video-reference/mp4-file.fern", "internal/stdlib"], check=True)
+file_wasm = file_binary.with_suffix(".wasm")
+subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(file_wasm),
+                "scripts/video-reference/mp4-file.fern", "internal/stdlib"], check=True)
+
+
+def sparse_movie(original, path):
+    data = original.read_bytes()
+    top = {}
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from(">I4s", data, at)
+        assert 8 <= size <= len(data) - at
+        top[tag] = (at, data[at:at + size])
+        at += size
+    base = 8 * 1024**3
+    shift = base - top[b"mdat"][0]
+    movie = bytearray(top[b"moov"][1])
+    table = movie.index(b"co64") + 4
+    count = struct.unpack_from(">I", movie, table + 4)[0]
+    for i in range(count):
+        entry = table + 8 + 8 * i
+        offset = struct.unpack_from(">Q", movie, entry)[0]
+        struct.pack_into(">Q", movie, entry, offset + shift)
+    with path.open("wb") as output:
+        output.write(top[b"ftyp"][1])
+        output.write(struct.pack(">I4sQ", 1, b"free", base - output.tell()))
+        output.seek(base)
+        output.write(top[b"mdat"][1])
+        output.write(movie)
+    assert path.stat().st_size > 8 * 1024**3
+    assert path.stat().st_blocks * 512 < 1024**2
 
 
 def decode(path, track=0, raw=False):
@@ -30,9 +65,18 @@ def decode(path, track=0, raw=False):
 
 with tempfile.TemporaryDirectory() as directory:
     directory = Path(directory)
-    for name, path in fixtures.generate(directory):
+    cases = fixtures.generate(directory)
+    sparse = directory / "avc-sparse-co64.mp4"
+    sparse_movie(cases[-1][1], sparse)
+    cases.append(("avc-sparse-co64", sparse))
+    for name, path in cases:
         metadata = fixtures.packets(path)
-        lines = subprocess.check_output([str(binary), str(path)], text=True).splitlines()
+        lines = subprocess.check_output([str(file_binary), str(path)], text=True).splitlines()
+        assert lines == subprocess.check_output(["wasmtime", "run", "--dir", ".",
+                                                str(file_wasm), path.name], cwd=directory,
+                                               text=True).splitlines(), name
+        if path != sparse:
+            assert lines == subprocess.check_output([str(binary), str(path)], text=True).splitlines(), name
         track = -1
         packet_number = 0
         output = bytearray()
@@ -71,4 +115,4 @@ with tempfile.TemporaryDirectory() as directory:
             expected = decode(path, track=i)
             assert len(actual) == 6 * 32 * 32 * 3
             assert actual == expected, (name, i, "decoded pixels differ")
-        print(name + ": FFprobe packet metadata and FFmpeg decoded pixels match", flush=True)
+        print(name + ": file packet metadata and FFmpeg decoded pixels match", flush=True)

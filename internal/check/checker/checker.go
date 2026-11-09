@@ -2467,7 +2467,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	c.info.FuncSigs["__sysreg_read"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: i64T}
 	c.info.FuncSigs["__sysreg_write"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}, i64T}, Result: ast.VoidType{}}
-	for _, name := range []string{"__cache_clean", "__cache_flush", "__tlb_flush"} {
+	for _, name := range []string{"__cache_clean", "__cache_flush", "__cache_sync_code", "__tlb_flush"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__tlb_flush_all"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
@@ -2475,6 +2475,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__irq_pending"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
+	c.info.FuncSigs["__user_run"] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: i64T}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
@@ -9426,7 +9427,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
-	"__cache_clean": true, "__cache_flush": true,
+	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__user_run": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
 	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true,

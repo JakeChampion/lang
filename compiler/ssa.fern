@@ -350,6 +350,7 @@ const SEMANTIC_KIND_NAMES: string[] = [
   "truncate",  // -56
   "checked_present",  // -57
   "checked_value",  // -58
+  "array_zero",  // -59
 ];
 
 pub function kind_name(id: i32): string {
