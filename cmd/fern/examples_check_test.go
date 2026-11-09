@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,10 @@ import (
 func TestEveryExampleChecks(t *testing.T) {
 	root := repoRoot(t)
 	files, err := corpus.Files(root, append(append([]string{}, corpus.Programs...), "scripts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err = corpus.Shard(files, os.Getenv("FERN_CHECK_CORPUS_SHARD"))
 	if err != nil {
 		t.Fatal(err)
 	}
