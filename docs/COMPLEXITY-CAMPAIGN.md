@@ -120,9 +120,9 @@ broken register allocator.
 emit-hash run. Its gate is a driver that imports it — compile
 `-target x86-64-linux`, run both sides, compare exit codes and output.
 
-**A self-test `main`** (`parser.fern`, `printer.fern`, `interp.fern` each carry
-one) is gated by compiling and running it: it exits 0, and each case returns
-its own error code on failure.
+**A self-test `main`** (`parser.fern` and `interp.fern` each carry one, and
+`drivers/printer_check_run.fern` holds the printer's) is gated by compiling and
+running it: it exits 0, and each case returns its own error code on failure.
 
 **A slice that moves `own`-threaded state must also run `scripts/cliff-bench`.**
 The round-trip below proves the statements did not change; it proves nothing

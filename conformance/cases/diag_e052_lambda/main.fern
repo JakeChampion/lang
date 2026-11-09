@@ -1,0 +1,9 @@
+function main(): i32 {
+    let f = (x: i32): string => {
+        if (x > 0) {
+            return "a";
+        }
+    };
+    print(f(0));
+    return 0;
+}

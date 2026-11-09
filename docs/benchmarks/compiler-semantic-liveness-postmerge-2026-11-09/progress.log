@@ -1,0 +1,9 @@
+build-base-count: exit 0
+build-candidate-count: exit 0
+base-alloc: exit 0
+base-alloc: 52703024 balanced allocations
+candidate-alloc: exit 0
+candidate-alloc: 52685747 balanced allocations
+base-native-output: exit 0
+candidate-native-output: exit 0
+All post-merge allocation and output controls complete.

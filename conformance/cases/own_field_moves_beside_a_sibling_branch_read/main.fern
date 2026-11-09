@@ -1,0 +1,26 @@
+// A field of an own parameter moves in one branch of an `if`, and the other
+// branch reads the same field. No path from the move reaches that read, so
+// the move is allowed.
+
+struct P { n: i32 }
+struct S { p: P, k: i32, flag: boolean }
+
+function take(own p: P): P {
+  return P { n: p.n + 10 };
+}
+
+function step(own s: S): i32 {
+  let n = 0;
+  if (s.flag) {
+    n = take(s.p).n;
+  } else {
+    n = s.p.n;
+  }
+  return n + s.k;
+}
+
+function main(): i32 {
+  print(step(S { p: P { n: 1 }, k: 100, flag: true }));
+  print(step(S { p: P { n: 2 }, k: 100, flag: false }));
+  return 0;
+}

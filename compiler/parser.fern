@@ -435,10 +435,6 @@ function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]
   return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
 }
 
-function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
-  return e_lambda_at(params, ret_type, body, ast.ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys);
-}
-
 function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string): ast.Expr {
   return e_lambda_at(params, ret_type, body, origin, 0, 0, "", "");
 }
@@ -6614,7 +6610,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       }
       return (s_unknown_at("decl:" + malformed_fn_decl_message(), fr_func.line, fr_func.col), p);
     }
-    let lam = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
+    let lam = e_lambda_at(fr_func.params, fr_func.ret_type, fr_func.body, ast.ORIGIN_NESTED_FN, fr_func.line, fr_func.col, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
     if (p.verbatim) {
       return (s_var_at(fr_func.name, "@fndecl", lam, fr_func.line, fr_func.col), p);
     }

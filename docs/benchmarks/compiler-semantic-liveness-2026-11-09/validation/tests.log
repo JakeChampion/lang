@@ -1,0 +1,136 @@
+=== RUN   TestSelfHostSSADependencyVerificationIRArm64
+--- PASS: TestSelfHostSSADependencyVerificationIRArm64 (58.60s)
+=== RUN   TestSelfHostSSADependencyVerificationIRX86_64
+--- PASS: TestSelfHostSSADependencyVerificationIRX86_64 (2.57s)
+=== RUN   TestSelfHostSSADependencyVerificationIRWasm
+--- PASS: TestSelfHostSSADependencyVerificationIRWasm (2.76s)
+=== RUN   TestSelfHostSSADependencyVerification
+=== RUN   TestSelfHostSSADependencyVerification/dominator-reuse
+=== RUN   TestSelfHostSSADependencyVerification/nested-projection
+=== RUN   TestSelfHostSSADependencyVerification/phi-edges
+=== RUN   TestSelfHostSSADependencyVerification/loop-anchor
+=== RUN   TestSelfHostSSADependencyVerification/rebound-value
+=== RUN   TestSelfHostSSADependencyVerification/wide
+=== RUN   TestSelfHostSSADependencyVerification/explicit-params-sparse
+=== RUN   TestSelfHostSSADependencyVerification/missing-transitive-root
+=== RUN   TestSelfHostSSADependencyVerification/self-dependency
+=== RUN   TestSelfHostSSADependencyVerification/cycle
+=== RUN   TestSelfHostSSADependencyVerification/wrong-phi-edge
+=== RUN   TestSelfHostSSADependencyVerification/branch-root-at-join
+=== RUN   TestSelfHostSSADependencyVerification/forward-local-root
+=== RUN   TestSelfHostSSADependencyVerification/duplicate-definition
+=== RUN   TestSelfHostSSADependencyVerification/undefined-operand
+=== RUN   TestSelfHostSSADependencyVerification/phi-after-use
+--- PASS: TestSelfHostSSADependencyVerification (29.71s)
+    --- PASS: TestSelfHostSSADependencyVerification/dominator-reuse (1.75s)
+    --- PASS: TestSelfHostSSADependencyVerification/nested-projection (1.78s)
+    --- PASS: TestSelfHostSSADependencyVerification/phi-edges (1.74s)
+    --- PASS: TestSelfHostSSADependencyVerification/loop-anchor (1.94s)
+    --- PASS: TestSelfHostSSADependencyVerification/rebound-value (2.12s)
+    --- PASS: TestSelfHostSSADependencyVerification/wide (2.09s)
+    --- PASS: TestSelfHostSSADependencyVerification/explicit-params-sparse (1.89s)
+    --- PASS: TestSelfHostSSADependencyVerification/missing-transitive-root (1.82s)
+    --- PASS: TestSelfHostSSADependencyVerification/self-dependency (1.86s)
+    --- PASS: TestSelfHostSSADependencyVerification/cycle (1.79s)
+    --- PASS: TestSelfHostSSADependencyVerification/wrong-phi-edge (1.85s)
+    --- PASS: TestSelfHostSSADependencyVerification/branch-root-at-join (1.83s)
+    --- PASS: TestSelfHostSSADependencyVerification/forward-local-root (1.80s)
+    --- PASS: TestSelfHostSSADependencyVerification/duplicate-definition (1.83s)
+    --- PASS: TestSelfHostSSADependencyVerification/undefined-operand (1.86s)
+    --- PASS: TestSelfHostSSADependencyVerification/phi-after-use (1.76s)
+=== RUN   TestSelfHostSSADependencyVerificationOff
+=== RUN   TestSelfHostSSADependencyVerificationOff/nested-projection
+=== RUN   TestSelfHostSSADependencyVerificationOff/params-sparse
+=== RUN   TestSelfHostSSADependencyVerificationOff/wide
+--- PASS: TestSelfHostSSADependencyVerificationOff (5.62s)
+    --- PASS: TestSelfHostSSADependencyVerificationOff/nested-projection (1.81s)
+    --- PASS: TestSelfHostSSADependencyVerificationOff/params-sparse (1.94s)
+    --- PASS: TestSelfHostSSADependencyVerificationOff/wide (1.88s)
+=== RUN   TestSelfHostSSALifetimeIRArm64
+=== RUN   TestSelfHostSSALifetimeIRArm64/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRArm64/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRArm64/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRArm64/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRArm64/wide
+=== RUN   TestSelfHostSSALifetimeIRArm64/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRArm64 (13.22s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/nested-projection (1.96s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/phi-edges (1.86s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/loop-anchor (2.04s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/rebound-value (2.89s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/wide (1.77s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/params-sparse (1.92s)
+=== RUN   TestSelfHostSSALifetimeIRX86_64
+=== RUN   TestSelfHostSSALifetimeIRX86_64/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRX86_64/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRX86_64/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRX86_64/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRX86_64/wide
+=== RUN   TestSelfHostSSALifetimeIRX86_64/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRX86_64 (13.13s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/nested-projection (1.77s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/phi-edges (1.87s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/loop-anchor (2.57s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/rebound-value (1.83s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/wide (2.24s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/params-sparse (2.11s)
+=== RUN   TestSelfHostSSALifetimeIRWasm
+=== RUN   TestSelfHostSSALifetimeIRWasm/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRWasm/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRWasm/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRWasm/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRWasm/wide
+=== RUN   TestSelfHostSSALifetimeIRWasm/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRWasm (13.07s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/nested-projection (2.77s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/phi-edges (1.72s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/loop-anchor (2.02s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/rebound-value (1.81s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/wide (2.08s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/params-sparse (1.78s)
+=== RUN   TestSelfHostSSALifetimeDependencies
+=== RUN   TestSelfHostSSALifetimeDependencies/nested-projection
+=== RUN   TestSelfHostSSALifetimeDependencies/phi-edges
+=== RUN   TestSelfHostSSALifetimeDependencies/loop-anchor
+=== RUN   TestSelfHostSSALifetimeDependencies/rebound-value
+=== RUN   TestSelfHostSSALifetimeDependencies/wide
+=== RUN   TestSelfHostSSALifetimeDependencies/params-sparse
+--- PASS: TestSelfHostSSALifetimeDependencies (12.40s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/nested-projection (2.13s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/phi-edges (2.28s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/loop-anchor (2.12s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/rebound-value (2.08s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/wide (1.97s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/params-sparse (1.82s)
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/dimensions
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/dependency-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/entry
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/predecessor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/terminator
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/negative-successor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/missing-successor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/phi-arity
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/operand-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/result-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/return-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/condition-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/duplicate-block
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/negative-block
+--- PASS: TestSelfHostSSALifetimeInvalidMetadata (28.32s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/dimensions (1.77s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/dependency-id (1.92s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/entry (1.90s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/predecessor (2.58s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/terminator (2.50s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/negative-successor (2.49s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/missing-successor (1.98s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/phi-arity (1.88s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/operand-id (1.86s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/result-id (1.96s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/return-id (1.87s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/condition-id (1.89s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/duplicate-block (1.85s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/negative-block (1.88s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	179.449s

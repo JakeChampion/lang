@@ -1,0 +1,18 @@
+base-prime: exit0, output matches
+base-probe: exit0, output matches
+candidate-prime: exit0, output matches
+candidate-probe: exit0, output matches
+Traceback (most recent call last):
+  File "/workspace/lang/build/semantic-liveness-20261109/time-memory.py", line 84, in <module>
+    run(label, mode, mode + '-' + str(pair+1) + '-' + label, sample=True)
+  File "/workspace/lang/build/semantic-liveness-20261109/time-memory.py", line 57, in run
+    done = subprocess.run(cmd, cwd=repo, env=env, stdout=stdout, stderr=stderr)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/usr/bin/time'
