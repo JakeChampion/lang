@@ -108,5 +108,7 @@
 # assembly under QEMU. Both counts balance with zero live bytes.
 # This lowers the prior branch measurement of 35,915,045. No timing claim.
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/checker.allocs	41013194
-x86_64/checker.frees	41013194
+x86_64/checker.allocs	40405424
+x86_64/checker.frees	40405424
+# 2026-11-09: PR #14904, perf-x86_64 job 129289189295 on a main base of 180c8416.
+# The checker makes 1.5% fewer allocations and frees. This PR touches no checker code. Pin the measured values.
