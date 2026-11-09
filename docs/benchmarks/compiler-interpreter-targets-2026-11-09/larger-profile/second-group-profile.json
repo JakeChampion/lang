@@ -1,0 +1,22 @@
+{
+  "args": [
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-cpu",
+    "-stdlib",
+    "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+    "-interp",
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "binary_sha256": "33ef9cb99cd702019cfa18221211a7c2089ea0f7e0fc217153447fa366c9ae3e",
+  "source_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+  "started": "2026-11-09T22:19:38.477536+00:00",
+  "note": "Diagnostic group1,32records, not full corpus. CPU build counters off. Normal exit required for profile completeness. Started after baseline full-control deadline to limit concurrent host load.",
+  "budget_seconds": 1980,
+  "exit_code": 0,
+  "timed_out": false,
+  "wall_seconds": 245.42914180499974,
+  "cpu_user": 243.279787,
+  "cpu_system": 1.770519,
+  "peak_rss_kib": 155836,
+  "finished": "2026-11-09T22:23:43.907171+00:00"
+}

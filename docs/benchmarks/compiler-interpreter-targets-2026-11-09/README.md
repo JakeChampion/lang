@@ -58,6 +58,18 @@ The [concurrency note](concurrency-note.json) describes these overlaps.
 These results establish a benefit for this diagnostic subset only.
 They do not establish full-corpus completion, a complete-compilation gain, or an external rank.
 
+The [larger profile](larger-profile/second-group-breakdown.json) uses the second reference group, with 32 records and 127,126 decoded bytes.
+It exits normally with the expected TAP result.
+The reservoir retains 8,192 samples and omits 5,257 samples, including replacements.
+There are 5,685 retained samples at the 64-frame limit.
+`call_target` accounts for 5,269 exclusive samples, or 64.32% of retained samples.
+These reservoir and frame limits constrain attribution.
+
+The [corpus census](larger-profile/corpus-census.json) records all 60 groups, 1,896 packet records, and 4,792,877 decoded bytes.
+The larger profile remains diagnostic evidence, rather than a paired time comparison.
+Its first collector stopped before execution because it read an incomplete monitor record.
+The archive retains that failure and the complete retry separately.
+
 The callable-value suite and the complete x86-64 and ARM64 driver suites report passes in [the test log](tests-corrected.log).
 The tool lost that parent session before the last two Go suites finished.
 The [session record](session-loss.json) retains this interruption without an overall suite verdict.
