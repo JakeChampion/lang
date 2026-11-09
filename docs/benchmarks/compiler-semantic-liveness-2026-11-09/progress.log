@@ -1,0 +1,21 @@
+build-base-native: exit 0
+build-base-count: exit 0
+build-candidate-native: exit 0
+build-candidate-count: exit 0
+base-alloc: exit 0
+base-alloc: 52792150 balanced allocations
+candidate-alloc: exit 0
+candidate-alloc: 52774873 balanced allocations
+base-prime: exit 0
+base-cache-probe: exit 0
+candidate-prime: exit 0
+candidate-cache-probe: exit 0
+cold-base-callgrind: exit 0
+cold-base-callgrind: 41834404466 instructions; output matches
+cold-candidate-callgrind: exit 0
+cold-candidate-callgrind: 41805242401 instructions; output matches
+warm-candidate-callgrind: exit 0
+warm-candidate-callgrind: 29655628581 instructions; output matches
+warm-base-callgrind: exit 0
+warm-base-callgrind: 29684725848 instructions; output matches
+All fixed-input comparisons complete.
