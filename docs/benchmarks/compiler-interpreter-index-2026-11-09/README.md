@@ -67,6 +67,13 @@ The [allocation comparison](allocation-controls/allocation-summary.json) retains
 The fresh shortcut control reproduces its earlier first-group total of 28,676,955 events.
 The counter executables are separate from the normal timing executables.
 
+One [instruction sample](instruction-control/instruction-summary.json) records 23,717,071,286 guest instructions for the shortcut and 18,366,256,684 for the index.
+This removes 5,350,814,602 instructions, or 22.56%, on the first diagnostic group.
+Both use the same Valgrind 3.24.0 binary and policy, with child tracing, cache simulation, and branch simulation disabled.
+The normal executables produce identical TAP output and exit zero.
+The raw Callgrind data uses lossless gzip storage, with original byte hashes in [the raw-data identities](instruction-control/raw-data-identities.json).
+This work-count comparison makes no wall-time or external-rank claim.
+
 ## Correctness controls
 
 All eight targeted Go suites pass with exit zero in 270.880 seconds.
@@ -94,8 +101,36 @@ Different concurrent workloads prevent a paired full-corpus timing claim.
 
 The test corpus and CI package budget stay unchanged.
 The direct full-corpus control retains its 1,980-second diagnostic limit.
-The exact Go oracle/native subtest control and exact-head CI remain incomplete at this archive revision.
-The direct result does not replace either check.
+
+The [Go oracle/native subtest](go-oracle-control/full-go-control-result.json) also completes with exit zero under the unchanged 33-minute package timeout.
+`TestSelfHostStdTestInterp/opus_delimited` passes in 439.89 seconds.
+The complete filtered Go command reports 443.161 seconds, with zero skips.
+Other subtests remain outside this filtered control.
+Exact-head CI remains incomplete at this archive revision.
+
+## Complete compilation controls
+
+The final [compilation controls](compilation-controls/summary.json) compare original source `ebb50c78` with index source `db4308a1`.
+They compile the same fixed checker and imports to the same native executable in all 16 commands.
+The output SHA-256 is `ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068`.
+Three pairs alternate compiler order in each cache mode.
+Each binary primes its own cache, and both probes record 2,410 hits and zero misses.
+The measured commands use normal verifier defaults without the reporting flag.
+
+| Measurement | Original baseline | Index candidate |
+| --- | ---: | ---: |
+| Cold median wall time | 15.039303504 s | 14.176383716 s |
+| Cold wall time range | 14.906041274–15.538241930 s | 13.787340586–14.742470354 s |
+| Cold median CPU time | 15.037078 s | 14.174824 s |
+| Cold median peak RSS | 585,604 KiB | 585,480 KiB |
+| Warm median wall time | 11.514601125 s | 11.401592027 s |
+| Warm wall time range | 10.826896589–12.600782931 s | 11.257115651–11.589937346 s |
+| Warm median CPU time | 11.513360 s | 11.384784 s |
+| Warm median peak RSS | 582,788 KiB | 582,792 KiB |
+
+These controls run concurrently with Go tests and instruction collectors.
+They establish output correctness on this input but do not establish a complete-compilation performance gain.
+The archive retains every sample and all raw logs.
 
 ## Reproduction
 

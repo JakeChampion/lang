@@ -1,0 +1,58 @@
+{
+  "baseline_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068",
+  "cache_probes": {
+    "base": {
+      "hits": 2410,
+      "misses": 0
+    },
+    "cand": {
+      "hits": 2410,
+      "misses": 0
+    }
+  },
+  "measurements": {
+    "cold": {
+      "base": {
+        "median_wall_s": 15.039303504,
+        "range_wall_s": [
+          14.906041274,
+          15.53824193
+        ],
+        "median_cpu_s": 15.037078,
+        "median_peak_rss_kib": 585604
+      },
+      "cand": {
+        "median_wall_s": 14.176383716,
+        "range_wall_s": [
+          13.787340586,
+          14.742470354
+        ],
+        "median_cpu_s": 14.174824,
+        "median_peak_rss_kib": 585480
+      }
+    },
+    "warm": {
+      "base": {
+        "median_wall_s": 11.514601125,
+        "range_wall_s": [
+          10.826896589,
+          12.600782931
+        ],
+        "median_cpu_s": 11.51336,
+        "median_peak_rss_kib": 582788
+      },
+      "cand": {
+        "median_wall_s": 11.401592027,
+        "range_wall_s": [
+          11.257115651,
+          11.589937346
+        ],
+        "median_cpu_s": 11.384784,
+        "median_peak_rss_kib": 582792
+      }
+    }
+  },
+  "note": "Three alternating pairs per cache mode. Originalebb versus finalindexdb4308, same pinnedproducer/fixedinput. Concurrent Go tests and instruction collectors. No compiler timing gain claim."
+}

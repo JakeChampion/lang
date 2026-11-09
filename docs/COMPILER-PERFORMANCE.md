@@ -22,7 +22,9 @@ Five pairs reduce CPU time by 16.83% to 25.60% on the first 32-record diagnostic
 All eight targeted suites pass, including a same-count REPL replacement on three targets.
 Three further pairs reduce CPU time by 60.72% to 61.93% on the larger 32-record group.
 The indexed normal interpreter completes all 1,896 reference records in 527.217 seconds with exit zero.
-The direct control does not replace the Go oracle comparison or exact-head CI.
+The original Go oracle/native `opus_delimited` subtest also passes in 439.89 seconds under its unchanged 33-minute package timeout.
+The index removes 22.56% of guest instructions on the first diagnostic group, relative to the shortcut version.
+Exact-head CI remains the merge gate.
 
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |

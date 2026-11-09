@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostStdTestInterp
+=== RUN   TestSelfHostStdTestInterp/opus_delimited
+=== PAUSE TestSelfHostStdTestInterp/opus_delimited
+=== CONT  TestSelfHostStdTestInterp/opus_delimited
+--- PASS: TestSelfHostStdTestInterp (3.24s)
+    --- PASS: TestSelfHostStdTestInterp/opus_delimited (439.89s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	443.161s

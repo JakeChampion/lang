@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-09T23:05:28Z",
+  "finished": "2026-11-09T23:12:53.683714+00:00",
+  "command": "go test ./internal/testing/e2ecompiler -run '^TestSelfHostStdTestInterp$/^opus_delimited$' -count=1 -v -timeout=33m",
+  "scope": "Exact failing Opus subtest through the Go oracle/native self-host comparison. Other subtests are filtered, not reported as passed. Existing33minutepackagebudget, no exclusion changes."
+}

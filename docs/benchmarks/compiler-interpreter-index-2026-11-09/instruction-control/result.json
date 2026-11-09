@@ -1,0 +1,35 @@
+{
+  "source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "tool_version": "valgrind-3.24.0",
+  "tool_sha256": "340065228e4a322aacbc4e11fcd39162a3e20fba4b4aa965708e50012175a8c5",
+  "binary_sha256": "cdc5289233e4fe4dc6f3f2da8c9cd5eaf6400ae35e9f7520ad963eb7a7b05be0",
+  "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+  "args": [
+    "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--cache-sim=no",
+    "--branch-sim=no",
+    "--trace-children=no",
+    "--callgrind-out-file=/workspace/lang-interpreter-index-20261109/build/interpreter-index-instructions-20261109/index.callgrind",
+    "--log-file=/workspace/lang-interpreter-index-20261109/build/interpreter-index-instructions-20261109/valgrind.log",
+    "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+    "-stdlib",
+    "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+    "-interp",
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "environment": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0",
+    "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+  },
+  "started": "2026-11-09T23:00:06.952700+00:00",
+  "note": "One normal-binary guest-instruction sample on the first diagnostic group. Same Valgrind/input/policy as shortcut sample. Trace children, cache and branch simulation off. Not a wall-time benchmark.",
+  "exit_code": 0,
+  "finished": "2026-11-09T23:04:03.730412+00:00",
+  "guest_instructions": 18366256684,
+  "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+}
