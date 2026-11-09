@@ -52,6 +52,7 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__bytes_data(b)` | `[u8] -> usize` | The address of the bytes of the view `b`. A later use of `b` must keep it alive while the address is in use. Nothing may write the bytes through the address while another value can read them. |
 | `__account_entry(k, p)` | `i32, usize -> usize` | `p` must be an allocator block header. |
 | `string_from_bytes_unchecked(b)`, `string_from_bytes_range_unchecked(b, from, end)` | `u8[] -> string`, `u8[], i32, i32 -> string` | The bytes must be well-formed UTF-8. A `string` is always valid UTF-8, and `std/utf8.from_bytes` is the safe constructor. |
+| `share_unchecked(v)` | `T -> T` | The result shares what `v` holds, and an own parameter accepts it. No copy of a handle in `v` may be used after a holder closes it. |
 | `__fern_rc_inc(p)`, `__fern_arr_dec(p, n)`, `__fern_box_free(p, n)`, `__fern_drop_arr_ptr(p, n)`, `__fern_str_dec(s)` | box pointer and count | `p` must be a live box with a correct count. A wrong count double-frees or leaks. |
 
 The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).

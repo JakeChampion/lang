@@ -2297,6 +2297,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
+	// share_unchecked(v) is v, as a value an own parameter accepts. It names a
+	// copy that shares the handles v holds; checkCall types it from v.
+	c.info.FuncSigs["share_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{cellParam},
+		Result: cellParam,
+	}
 	c.info.FuncSigs["string_from_bytes_range_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.StringType{},
@@ -9430,7 +9436,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__user_run": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
-	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true,
+	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
@@ -10693,6 +10699,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return x.IsStringConcat
 		case *ast.TryOp:
 			return isOwnedExpr(x.Inner)
+		case *ast.BlockExpr:
+			return x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil && isOwnedExpr(x.Tail)
 		case *ast.Ident:
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
@@ -10715,6 +10723,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+					return true
+				}
+				if id.Name == "share_unchecked" {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
@@ -14771,6 +14782,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			c.checkExpr(n.Args[0], s)
 			return ast.VoidType{}
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "share_unchecked" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "share_unchecked expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			c.checkUnsafeCallee(n, s)
+			return c.checkExpr(n.Args[0], s)
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_copy" {
 			if len(n.Args) != 1 {

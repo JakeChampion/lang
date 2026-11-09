@@ -1,3 +1,4 @@
+# 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
 # 2026-11-09: own_takes_replaced_field_of_owned_base is clean under RC trace.
 # 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
 # 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
@@ -1141,6 +1142,7 @@ shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
 shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             0
+share_unchecked_gives_own_a_shared_value             0
 shared_quotient_runtime                              0
 shared_variant_name                                  0
 shared_variant_payload                               0

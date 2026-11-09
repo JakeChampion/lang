@@ -3697,6 +3697,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (name == "__socket_from_fd") {
     return socket_from_fd(c, s);
   }
+  if (name == "share_unchecked" && c.args.len() == 1) {
+    return expr(c.args[0], s, expected);
+  }
   if (parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin(name, c, s, expected);
   }

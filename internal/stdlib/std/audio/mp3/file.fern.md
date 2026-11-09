@@ -116,7 +116,7 @@ function read_tail(own builder: Builder, seek: (i64) => Result[i64, IoError], re
   if let Tail = stage {
     return inspect_tail(remainder, current);
   }
-  let next_trailer = metadata.Trailer { ...remainder.trailer, first: bytes(current.view()) };
+  let next_trailer = metadata.Trailer { ...trailer, first: bytes(current.view()) };
   return finish_tail(Builder { ...remainder, trailer: next_trailer });
 }
 
