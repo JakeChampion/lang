@@ -5248,7 +5248,8 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     }
   }
   let targs = bound_type_args(c.type_args, env);
-  let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
+  let need_target = call_needs_target(c, is_method, is_closure, targs);
+  let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env, need_target);
   let arg_vals: Value[] = [];
   let i = 0;
   while (i < c.args.len()) {
@@ -5334,9 +5335,25 @@ function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: bo
   return eval_expr(c.args[i], env);
 }
 
-function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+// Argument evaluation uses the target for nested calls and implicit free-call type arguments.
+function call_needs_target(c: ast.ExprCall, is_method: boolean, is_closure: boolean, targs: string[]): boolean {
   if (is_closure) {
+    return false;
+  }
+  if (!is_method && c.args.len() > 0 && targs.len() == 0) {
+    return true;
+  }
+  for arg in c.args {
+    if let ast.ExprCall(_) = arg {
+      return true;
+    }
+  }
+  return false;
+}
+
+function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env, needed: boolean): (parser.FuncDecl, boolean) {
+  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  if (is_closure || !needed) {
     return (none, false);
   }
   let idx: i32 = -1;
@@ -8989,8 +9006,8 @@ function in_place_array_write(a: ast.StmtAssign, env: Env): boolean {
   if (av.view || interpheap.get(av.store).words.len() > 0) {
     return false;
   }
-  let (fd, known) = call_target("with", true, false, value, env);
-  let (fd2, known2) = call_target("append", true, false, value, env);
+  let (fd, known) = call_target("with", true, false, value, env, true);
+  let (fd2, known2) = call_target("append", true, false, value, env, true);
   return !known && !known2;
 }
 
