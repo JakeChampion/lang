@@ -487,13 +487,16 @@ function names_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): 
 }
 
 function function_names(f: ssasem.Func, ix: util.NameIndex): Names {
-  let nm = Names { first: util.minus_ones(f.graph.nvals), count: __alloc_i32(f.graph.nvals), targets: [], map_fns: [] };
+  let first = util.minus_ones(f.graph.nvals);
+  let count = __alloc_i32(f.graph.nvals);
+  let targets: i32[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.str.len() > 0 && ins.result >= 0 && ins.result < f.graph.nvals) {
-        let at = nm.targets.len();
-        let targets = with_named(nm.targets, ix, ins.str);
-        nm = Names { ...nm, first: nm.first.with(ins.result, at), count: nm.count.with(ins.result, targets.len() - at), targets: targets };
+        let at = targets.len();
+        targets = with_named(targets, ix, ins.str);
+        first = first.with(ins.result, at);
+        count = count.with(ins.result, targets.len() - at);
       }
     }
   }
@@ -503,7 +506,7 @@ function function_names(f: ssasem.Func, ix: util.NameIndex): Names {
       map_fns = with_target(with_target(map_fns, ix, ssasem.keyed_map_key_fn(m.key, "hash")), ix, ssasem.keyed_map_key_fn(m.key, "eq"));
     }
   }
-  return Names { ...nm, map_fns: map_fns };
+  return Names { first: first, count: count, targets: targets, map_fns: map_fns };
 }
 
 function with_named(own targets: i32[], ix: util.NameIndex, name: string): i32[] {
