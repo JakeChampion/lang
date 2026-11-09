@@ -201,8 +201,8 @@ function wmagic(): i32[] {
   return o;
 }
 
-function name_idx(names: string[], n: string): i32 {
-  let k = util.index_of_str(names, n);
+function name_idx(names: util.NameIndex, n: string): i32 {
+  let k = names.find(n);
   if (k < 0) {
     eprint("watbin: reference to undefined " + n);
     exit(1);
@@ -1237,7 +1237,7 @@ function mem_store_opcode(op: string): i32 {
   return 0;
 }
 
-function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[], tnames: string[]): i32[] {
+function enc_instr(node: SExpr, lnames: util.NameIndex, fnames: util.NameIndex, gnames: util.NameIndex, labels: string[], tnames: util.NameIndex): i32[] {
   let out: i32[] = [];
   let op = node.items[0].text;
   if (op == "i32.const") {
@@ -1486,14 +1486,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
   return out;
 }
 
-function flat_idx(text: string, names: string[]): i32 {
+function flat_idx(text: string, names: util.NameIndex): i32 {
   if (text.len() > 0 && text[0] == b'$') {
     return name_idx(names, text);
   }
   return parse_dec(text);
 }
 
-function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnames: string[], tnames: string[]): i32[] {
+function enc_flat_body(instrs: SExpr[], lnames: util.NameIndex, fnames: util.NameIndex, gnames: util.NameIndex, tnames: util.NameIndex): i32[] {
   let out: i32[] = [];
   let i = 0;
   while (i < instrs.len()) {
@@ -1684,15 +1684,16 @@ function body_instrs(fnode: SExpr): SExpr[] {
 }
 
 function emit_binary(mod: SExpr): i32[] {
-  let fnames = collect_func_names(mod);
-  let gnames: string[] = [];
+  let fnames = util.name_index(collect_func_names(mod));
+  let global_names: string[] = [];
   let gi = 0;
   while (gi < mod.items.len()) {
     if (node_head(mod.items[gi]) == "global") {
-      gnames = gnames.append(mod.items[gi].items[1].text);
+      global_names = global_names.append(mod.items[gi].items[1].text);
     }
     gi += 1;
   }
+  let gnames = util.name_index(global_names);
 
   let importNodes: SExpr[] = [];
   let definedNodes: SExpr[] = [];
@@ -1707,19 +1708,20 @@ function emit_binary(mod: SExpr): i32[] {
     i += 1;
   }
 
-  let tnames: string[] = [];
+  let type_names: string[] = [];
   let namedTypeBody: i32[] = [];
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "type") {
       let tn = mod.items[i];
-      tnames = tnames.append(tn.items[1].text);
+      type_names = type_names.append(tn.items[1].text);
       let tf = tn.items[2];
       namedTypeBody = util.append_all(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
     }
     i += 1;
   }
-  let ntypes = tnames.len();
+  let ntypes = type_names.len();
+  let tnames = util.name_index(type_names);
 
   let nfuncs = importNodes.len() + definedNodes.len();
   let typeBody = namedTypeBody;
@@ -1775,7 +1777,7 @@ function emit_binary(mod: SExpr): i32[] {
       let gn = mod.items[i];
       globBody = globBody.append(valtype_byte(global_valtype(gn)));
       globBody = globBody.append(1);
-      globBody = util.append_all(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
+      globBody = util.append_all(globBody, enc_instr(gn.items[gn.items.len() - 1], util.name_index([]), fnames, gnames, [], util.name_index([])));
       globBody = globBody.append(11);
       globCount += 1;
     }
@@ -1813,7 +1815,7 @@ function emit_binary(mod: SExpr): i32[] {
   i = 0;
   while (i < definedNodes.len()) {
     let fnode = definedNodes[i];
-    let lnames = local_names(fnode);
+    let lnames = util.name_index(local_names(fnode));
     let fbody = enc_locals_vec(local_decl_types(fnode));
     let instrs = body_instrs(fnode);
     if (instrs.len() > 0 && instrs[0].kind != 0) {
@@ -1838,7 +1840,7 @@ function emit_binary(mod: SExpr): i32[] {
     if (node_head(mod.items[i]) == "data") {
       let dn = mod.items[i];
       dataBody = dataBody.append(0);
-      dataBody = util.append_all(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], []));
+      dataBody = util.append_all(dataBody, enc_instr(dn.items[1], util.name_index([]), fnames, gnames, [], util.name_index([])));
       dataBody = dataBody.append(11);
       let bytes = data_bytes(dn.items[2].text);
       dataBody = leb_u32(dataBody, bytes.len());
@@ -1869,7 +1871,7 @@ function emit_binary(mod: SExpr): i32[] {
     if (node_head(mod.items[i]) == "elem") {
       let en = mod.items[i];
       elemBody = elemBody.append(0);
-      elemBody = util.append_all(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
+      elemBody = util.append_all(elemBody, enc_instr(en.items[1], util.name_index([]), fnames, gnames, [], util.name_index([])));
       elemBody = elemBody.append(11);
       let fb: i32[] = [];
       let ei = 2;
