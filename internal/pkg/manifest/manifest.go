@@ -224,6 +224,9 @@ func Parse(src string) (*Manifest, error) {
 			}
 			switch key {
 			case "name":
+				if !validDepName(s) {
+					return nil, lineError(ln+1, "invalid [package] name %q (letters, digits, `_`, `-`; must not start with a digit)", s)
+				}
 				m.Name = s
 			case "version":
 				m.Version = s
