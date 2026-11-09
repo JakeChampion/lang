@@ -24,7 +24,7 @@ function cpu(fs: face.Fonts, nodes: ui.Node[], m: ui.Metrics): draw.Frame {
 }
 
 // The frame that the painter shows for `passes`, and the painter.
-function gpu_frame(p: gpu.Painter, passes: ui.Pass[]): (draw.Frame, gpu.Painter) {
+function gpu_frame(own p: gpu.Painter, passes: ui.Pass[]): (draw.Frame, gpu.Painter) {
   let q = gpu.present(p, passes);
   if let Some(c) = q.canvas {
     return (c.read(), q);

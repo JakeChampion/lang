@@ -106,7 +106,7 @@ pub function wall_width(p: Painter): i32 {
 }
 
 // Draws the passes in their order and shows the frame.
-pub function present(p: Painter, passes: ui.Pass[]): Painter {
+pub function present(own p: Painter, passes: ui.Pass[]): Painter {
   let Some(c0) = p.canvas else {
     return p;
   };

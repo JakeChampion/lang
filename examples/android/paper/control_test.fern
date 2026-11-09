@@ -116,7 +116,7 @@ function fake(dir: string, now: i64): control.Device {
       gpu_line(dir, "attach");
       return p;
     },
-    present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
+    present: (own p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
       let ok = write_file(dir + "/frames", testkit.read_text(dir + "/frames") + frame_line(passes) + "\n");
       return p;
     },
