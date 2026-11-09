@@ -9,7 +9,8 @@ text over an illustrated wallpaper. The app is in Fern only. It is a NativeActiv
 
 | Gesture | Result |
 | --- | --- |
-| Swipe up | Opens the app list, with the search field ready. Paper is in the list too. |
+| Swipe up, left or right | Opens the app list, with the search field ready. Paper is in the list too. |
+| Tap or drag a letter at either edge of the app list | Goes to the apps that start with that letter. |
 | Type | Filters the list. When one app matches, it opens. |
 | Enter | Opens the first match, or searches the web when no app matches. |
 | Swipe down | Opens the notification shade. |
