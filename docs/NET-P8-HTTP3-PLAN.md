@@ -1,6 +1,6 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
-Status: [plan] in progress. Slices 1 to 7 and the h3spec half of 8 landed. Open: 4b, the rest of 8 (more interop peers), 9 (the client), the rest of 10 (speed) and the h3spec case of 0-RTT.
+Status: [plan] in progress. Slices 1 to 7, 4b, 9, 0-RTT and the h3spec half of 8 landed. Open: the rest of 8 (more interop peers), the rest of 10 (speed) and the h3spec case of 0-RTT.
 
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
