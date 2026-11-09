@@ -281,3 +281,26 @@ test("coreutils page sorts, filters and opens a utility's workloads", async ({
   await expect(details).toHaveAttribute("open", "");
   await expect(details.locator("tbody tr").first()).toBeVisible();
 });
+
+test("the sidebar numbers the tutorial steps without renaming the links", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  const install = page.getByRole("link", { name: "Install", exact: true }).first();
+  await expect(install).toBeVisible();
+  const before = await install.evaluate((el) => getComputedStyle(el, "::before").content);
+  expect(before).toContain("counter(fern-step");
+});
+
+test("the stdlib sidebar nests a module family under its parent", async ({ page }) => {
+  await page.goto("stdlib/opus_silk_tables/");
+  const current = page.locator('a[aria-current="page"]');
+  await expect(current).toHaveText("opus_silk_tables");
+  // The page sits in the opus_silk group, inside the opus group.
+  const groups = await current.evaluate((el) => {
+    const out = [];
+    for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+      out.push(d.querySelector(":scope > summary")?.textContent?.trim());
+    }
+    return out;
+  });
+  expect(groups.slice(0, 2)).toEqual(["opus_silk", "opus"]);
+});

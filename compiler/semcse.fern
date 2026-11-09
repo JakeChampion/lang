@@ -158,7 +158,7 @@ function renamed_inst(ins: ssa.SInst, same: i32[]): ssa.SInst {
 
 pub function same_slot(a: ssa.SInst, b: ssa.SInst, same: i32[], values: typeinfo.Type[]): boolean {
   return read(a.kind_tag) && a.kind_tag == b.kind_tag && a.imm == b.imm && a.str == b.str
-    && same_args(renamed(a.args, same), renamed(b.args, same)) && semtypes.equal(values[a.result], values[b.result]);
+    && util.same_i32s(renamed(a.args, same), renamed(b.args, same)) && semtypes.equal(values[a.result], values[b.result]);
 }
 
 function read(kind: i32): boolean {
@@ -167,25 +167,11 @@ function read(kind: i32): boolean {
 
 function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinfo.Type[]): i32 {
   for s in seen {
-    if (s.kind_tag == ins.kind_tag && s.imm == ins.imm && s.str == ins.str && same_args(s.args, args) && semtypes.equal(values[s.result], values[ins.result])) {
+    if (s.kind_tag == ins.kind_tag && s.imm == ins.imm && s.str == ins.str && util.same_i32s(s.args, args) && semtypes.equal(values[s.result], values[ins.result])) {
       return s.result;
     }
   }
   return -1;
-}
-
-function same_args(a: i32[], b: i32[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < a.len()) {
-    if (a[i] != b[i]) {
-      return false;
-    }
-    i += 1;
-  }
-  return true;
 }
 
 function renamed(args: i32[], same: i32[]): i32[] {

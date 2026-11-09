@@ -9372,7 +9372,7 @@ pub function init_return_kind(rt: string, qual: string): i32 {
   return 1;
 }
 
-function strip_type_spaces(t: string): string {
+pub function strip_type_spaces(t: string): string {
   let out = "";
   let i = 0;
   while (i < t.len()) {
@@ -10798,7 +10798,7 @@ function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, 
   if (pt.len() == 0) {
     return binds;
   }
-  return bind_unify(strip_ws(pargs[slot]), pt, vars, binds, funcs);
+  return bind_unify(pargs[slot].trim(), pt, vars, binds, funcs);
 }
 
 function func_ret_of(funcs: MFns, name: string): string {
@@ -11999,7 +11999,7 @@ function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string 
   let n = sty.len();
   if (n >= 8 && slice_unchecked(sty, 0, 7) == "Option[" && sty[n - 1] == b']') {
     if (bare == "Some") {
-      return strip_ws(slice_unchecked(sty, 7, n - 1) + "");
+      return (slice_unchecked(sty, 7, n - 1) + "").trim();
     }
     return "";
   }
@@ -12009,10 +12009,10 @@ function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string 
       return "";
     }
     if (bare == "Ok") {
-      return strip_ws(parts[0]);
+      return parts[0].trim();
     }
     if (bare == "Err") {
-      return strip_ws(parts[1]);
+      return parts[1].trim();
     }
   }
   return "";
@@ -12075,7 +12075,7 @@ function type_args_of(ty: string): string[] {
   let parts = split_top_commas(slice_unchecked(ty, lb + 1, ty.len() - 1));
   let i = 0;
   while (i < parts.len()) {
-    out = out.append(strip_ws(parts[i]));
+    out = out.append(parts[i].trim());
     i += 1;
   }
   return out;
@@ -12191,8 +12191,8 @@ function menv_bind_destructure(env: MEnv, names: string, ty: string): MEnv {
   let e = env;
   let i = 0;
   while (i < parts.len()) {
-    let nm = strip_ws(parts[i]);
-    let et = strip_ws(tys[i]);
+    let nm = parts[i].trim();
+    let et = tys[i].trim();
     if (nm.len() > 1 && slice_unchecked(nm, 0, 1) == "(") {
       e = menv_bind_destructure(e, slice_unchecked(nm, 1, nm.len() - 1) + "", et);
     } else if (nm.len() > 0) {
@@ -20655,11 +20655,13 @@ function retag_type_arg_indexes(mod: Module): Module {
   if (generics.len() == 0) {
     return mod;
   }
-  let any_site = rta_has_index_call(mod.top_stmts);
+  let top_site = rta_has_index_call(mod.top_stmts);
+  let sites: boolean[] = [];
+  let any_site = top_site;
   for fd in mod.funcs {
-    if (!any_site && rta_has_index_call(fd.body)) {
-      any_site = true;
-    }
+    let site = rta_has_index_call(fd.body);
+    sites = sites.append(site);
+    any_site = any_site || site;
   }
   if (!any_site) {
     return mod;
@@ -20680,8 +20682,9 @@ function retag_type_arg_indexes(mod: Module): Module {
     }
   }
   let funcs: FuncDecl[] = [];
-  for fd in mod.funcs {
-    if (!rta_has_index_call(fd.body)) {
+  for k in 0..mod.funcs.len() {
+    let fd = mod.funcs[k];
+    if (!sites[k]) {
       funcs = funcs.append(fd);
       continue;
     }
@@ -20703,7 +20706,7 @@ function retag_type_arg_indexes(mod: Module): Module {
     }
     funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
   }
-  if (!rta_has_index_call(mod.top_stmts)) {
+  if (!top_site) {
     return Module { ...mod, funcs: funcs };
   }
   let top_shadow = astwalk.collect_bound_stmts(mod.top_stmts, consts);
@@ -23073,6 +23076,25 @@ pub function derive_simple_name(name: string): string {
   return name;
 }
 
+pub function split_type_list(csv: string): string[] {
+  let out: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let i = 0;
+  while (i <= csv.len()) {
+    if (i == csv.len() || csv[i] == b',' && depth == 0) {
+      out = out.append(slice_unchecked(csv, start, i) + "");
+      start = i + 1;
+    } else if (csv[i] == b'(' || csv[i] == b'[') {
+      depth += 1;
+    } else if (csv[i] == b')' || csv[i] == b']') {
+      depth -= 1;
+    }
+    i += 1;
+  }
+  return out;
+}
+
 function dv_self_field(f: string): ast.Expr {
   return e_field_access(e_ident("self"), f);
 }
@@ -24752,7 +24774,7 @@ function has_fn_param_arg_var(params: ast.ParamDecl[], name: string): boolean {
   while (i < params.len()) {
     if (is_fn_contract_tag(params[i].type_name) && params[i].fn_param_types.len() > 0) {
       for seg in split_top_commas(params[i].fn_param_types) {
-        if (token_at_paren_depth0(strip_ws(seg), name)) {
+        if (token_at_paren_depth0(seg.trim(), name)) {
           return true;
         }
       }
@@ -24784,18 +24806,6 @@ function has_any_bare_scalar_param(params: ast.ParamDecl[], tps: string[]): bool
   return false;
 }
 
-function strip_ws(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
-    b -= 1;
-  }
-  return slice_unchecked(s, a, b) + "";
-}
-
 function result_two_bare_vars(ret_type: string, unbounded_tps: string[]): boolean {
   if (unbounded_tps.len() != 2) {
     return false;
@@ -24822,8 +24832,8 @@ function result_two_bare_vars(ret_type: string, unbounded_tps: string[]): boolea
   if (ci < 0) {
     return false;
   }
-  let a = strip_ws(slice_unchecked(inner, 0, ci) + "");
-  let b = strip_ws(slice_unchecked(inner, ci + 1, inner.len()) + "");
+  let a = (slice_unchecked(inner, 0, ci) + "").trim();
+  let b = (slice_unchecked(inner, ci + 1, inner.len()) + "").trim();
   let t0 = unbounded_tps[0];
   let t1 = unbounded_tps[1];
   return a == t0 && b == t1 || a == t1 && b == t0;
@@ -25892,6 +25902,7 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   if (t.names.len() == 0) {
     return mod;
   }
+  let named = util.name_index(t.names);
   let funcs: FuncDecl[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
@@ -25909,6 +25920,10 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
     }
     if (fd.receiver_name.len() > 0) {
       bound = bound.append(fd.receiver_name);
+    }
+    if (!astwalk.names_any(fd.body, named)) {
+      funcs = funcs.append(FuncDecl { ...fd, params: params });
+      continue;
     }
     funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
   }

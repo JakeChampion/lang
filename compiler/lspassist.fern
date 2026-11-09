@@ -9,6 +9,7 @@ import "./parser";
 import "./typeinfo";
 import "./util";
 import "std/string";
+import "./ferndoc";
 
 pub struct Item { label: string, kind: i32, detail: string }
 
@@ -108,7 +109,7 @@ function offered_struct(sd: parser.StructDecl): boolean {
 
 function struct_item(sd: parser.StructDecl, prefix: string): Item {
   let shown = lspquery.unprefixed(sd.name, prefix);
-  return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + lspquery.type_params(sd.type_params) };
+  return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + ferndoc.join_type_params(sd.type_params) };
 }
 
 function func_item(s: checker.Scope, name: string, shown: string): Item {

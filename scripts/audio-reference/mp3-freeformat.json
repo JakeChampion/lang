@@ -1,0 +1,471 @@
+{
+  "lame": "3.100",
+  "lame_sha256": "98d0d7579c760053242a1deac2ebe335b8f8636f44235580f05b732f5fa207bb",
+  "mpg123_sha256": "b5963c5d72f19d4c86010150277a9630a13ce784b4f8af27659b66b69b25b3b8",
+  "minimp3_revision": "ea99364f61c14656440e8d77e9c233ccf3124633",
+  "minimp3_header_sha256": "57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad",
+  "cases": [
+    {
+      "name": "mpeg1-44100-joint-500",
+      "settings": {
+        "in_samplerate": 44100,
+        "out_samplerate": 44100,
+        "num_channels": 2,
+        "brate": 500,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 5512,
+      "encoded_sha256": "650802a7bafd36fdd5949bd2a5519c4b804ab0ef49bd07a302fae9e691309356",
+      "raw_pcm_sha256": "9b4cfd99a1483f5c0e0d0ce2a415580dfc4c860f754c5e9d4c2a41bad223f9b4",
+      "playable_pcm_sha256": "9b4cfd99a1483f5c0e0d0ce2a415580dfc4c860f754c5e9d4c2a41bad223f9b4",
+      "mpg123_pcm_sha256": "0e7241ff54e9eb24892f935744cacb708170e70f9af78b09c1a54e473450f229",
+      "mpg123_max_absolute_error": 5.960464477539062e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 0,
+      "encoded_frames": 6
+    },
+    {
+      "name": "mpeg1-48000-mono-384",
+      "settings": {
+        "in_samplerate": 48000,
+        "out_samplerate": 48000,
+        "num_channels": 1,
+        "brate": 384,
+        "quality": 2,
+        "mode": 3,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 6000,
+      "encoded_sha256": "d559653d50a6fb7c48306b5efb9c92784df5e1aaf99a37f1c59414803751566d",
+      "raw_pcm_sha256": "891254a1c538cf4342ac06ac33f2f86b94911f828055559302eafbd6df9b181b",
+      "playable_pcm_sha256": "891254a1c538cf4342ac06ac33f2f86b94911f828055559302eafbd6df9b181b",
+      "mpg123_pcm_sha256": "69f201d9a43a7ba353d6781f1740014fa477d90abe85b65cca874cf1c63ca166",
+      "mpg123_max_absolute_error": 8.940696716308594e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 0,
+      "encoded_frames": 7
+    },
+    {
+      "name": "mpeg1-32000-stereo-192",
+      "settings": {
+        "in_samplerate": 32000,
+        "out_samplerate": 32000,
+        "num_channels": 2,
+        "brate": 192,
+        "quality": 2,
+        "mode": 0,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 4000,
+      "encoded_sha256": "9ce9564a61a8610e6002efa73ec59cb543c93a3ce989a906cee29b41ae62a486",
+      "raw_pcm_sha256": "004ef26d93ef6d0647979b6a0a7fbd56430394e2eaba41c837c95dcc3f222edc",
+      "playable_pcm_sha256": "004ef26d93ef6d0647979b6a0a7fbd56430394e2eaba41c837c95dcc3f222edc",
+      "mpg123_pcm_sha256": "ed83f292dc641b1ece780aa83963b3c96bb2b2aec5ad6f5e6705cf8295557235",
+      "mpg123_max_absolute_error": 8.195638656616211e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 222,
+      "encoded_frames": 5
+    },
+    {
+      "name": "mpeg1-44100-joint-crc",
+      "settings": {
+        "in_samplerate": 44100,
+        "out_samplerate": 44100,
+        "num_channels": 2,
+        "brate": 128,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 1
+      },
+      "input_frames": 5512,
+      "encoded_sha256": "c5358b337e7efb06c83453aa91563dd6cdd52715dc63558c0e773c5a95094531",
+      "raw_pcm_sha256": "fea5aa81b6059cc79e97726be5c864bee8c6436e5e4a7688fce0fa6e5788067b",
+      "playable_pcm_sha256": "fea5aa81b6059cc79e97726be5c864bee8c6436e5e4a7688fce0fa6e5788067b",
+      "mpg123_pcm_sha256": "4adcdff4f2dd813b976446ef7db444fc465a19710a5398faee9d5ee7fe4a300c",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 74,
+      "encoded_frames": 6
+    },
+    {
+      "name": "mpeg2-22050-joint-80",
+      "settings": {
+        "in_samplerate": 22050,
+        "out_samplerate": 22050,
+        "num_channels": 2,
+        "brate": 80,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 2756,
+      "encoded_sha256": "fb5b2e650e004e00e7540c631bb3f1a904039deff3bc0a6a9e13898e20324bba",
+      "raw_pcm_sha256": "e7308322dcb19a3499427268850de817485d36c0cc57866026cee22dc0ef2632",
+      "playable_pcm_sha256": "e7308322dcb19a3499427268850de817485d36c0cc57866026cee22dc0ef2632",
+      "mpg123_pcm_sha256": "6d18872fa93e2f741d6ba249655b0fc7925fa08ea6cb27c1b203c4892259eed0",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 94,
+      "encoded_frames": 7
+    },
+    {
+      "name": "mpeg2-24000-stereo-80",
+      "settings": {
+        "in_samplerate": 24000,
+        "out_samplerate": 24000,
+        "num_channels": 2,
+        "brate": 80,
+        "quality": 2,
+        "mode": 0,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 3000,
+      "encoded_sha256": "ea9d3a7cd7d88deb80b312bdf12d5a86c3e0e84b5cb80d3a4a3a7a642dff6253",
+      "raw_pcm_sha256": "81ea2acd43eec2ae3f96cf0ecabf95b33b2b3699ac29655444eec04b498ada0b",
+      "playable_pcm_sha256": "81ea2acd43eec2ae3f96cf0ecabf95b33b2b3699ac29655444eec04b498ada0b",
+      "mpg123_pcm_sha256": "097d6244e9a56920972e88cd3c2975e471aba8e1cdfad1467d2826a48ae630d3",
+      "mpg123_max_absolute_error": 8.046627044677734e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 65,
+      "encoded_frames": 8
+    },
+    {
+      "name": "mpeg2-16000-mono-crc",
+      "settings": {
+        "in_samplerate": 16000,
+        "out_samplerate": 16000,
+        "num_channels": 1,
+        "brate": 96,
+        "quality": 2,
+        "mode": 3,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 1
+      },
+      "input_frames": 2000,
+      "encoded_sha256": "e63d8bc03255539961e5475fa31e3a7577721710fe99384b1c4b1486915ce131",
+      "raw_pcm_sha256": "40d32d65504521a2aa60063cc485165b8f8b8e19e979d9505de59b5a1ff7a015",
+      "playable_pcm_sha256": "40d32d65504521a2aa60063cc485165b8f8b8e19e979d9505de59b5a1ff7a015",
+      "mpg123_pcm_sha256": "b2a74cc7aafa4956bbbe40ebc2ab37079efe13d0788dad2a2e908892fc5b34a3",
+      "mpg123_max_absolute_error": 5.066394805908203e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 216,
+      "encoded_frames": 6
+    },
+    {
+      "name": "mpeg25-11025-joint-48",
+      "settings": {
+        "in_samplerate": 11025,
+        "out_samplerate": 11025,
+        "num_channels": 2,
+        "brate": 48,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 1378,
+      "encoded_sha256": "981bca23206d67d1f6f115210c77cadb0acb10c1e80f99b7889cda5cdcce58ef",
+      "raw_pcm_sha256": "6d3a722b6e1bc1de61dd9a88a6084515e3b2750689ff1b00f72230b593e5577e",
+      "playable_pcm_sha256": "6d3a722b6e1bc1de61dd9a88a6084515e3b2750689ff1b00f72230b593e5577e",
+      "mpg123_pcm_sha256": "74ecbafe3b9eba96498c8f1c02b3eb293315a4ae0362bd64bbec908ac3365ad8",
+      "mpg123_max_absolute_error": 4.867324605584145e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 110,
+      "encoded_frames": 5
+    },
+    {
+      "name": "mpeg25-12000-stereo-48",
+      "settings": {
+        "in_samplerate": 12000,
+        "out_samplerate": 12000,
+        "num_channels": 2,
+        "brate": 48,
+        "quality": 2,
+        "mode": 0,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 1500,
+      "encoded_sha256": "45e4af44602ed58f31925abc19fcb1b78ccd62522167d7338d0bde7fe147f60a",
+      "raw_pcm_sha256": "7d8c3822eddf46c062c4de4872e37de200570f4e6195273fd0a34546088980e4",
+      "playable_pcm_sha256": "7d8c3822eddf46c062c4de4872e37de200570f4e6195273fd0a34546088980e4",
+      "mpg123_pcm_sha256": "4b129c5e213657ee3ca534ec7d74af2f7fb1cc6747a8fe84cae7e1a9fca936fa",
+      "mpg123_max_absolute_error": 4.516914486885071e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 107,
+      "encoded_frames": 5
+    },
+    {
+      "name": "mpeg25-8000-mono-48",
+      "settings": {
+        "in_samplerate": 8000,
+        "out_samplerate": 8000,
+        "num_channels": 1,
+        "brate": 48,
+        "quality": 2,
+        "mode": 3,
+        "free_format": 1,
+        "bWriteVbrTag": 0,
+        "error_protection": 0
+      },
+      "input_frames": 1000,
+      "encoded_sha256": "9b3a6161e82e180f070379d3d0f28c24a15d7d02248976d60fafcb1a097bb7d8",
+      "raw_pcm_sha256": "0ce53d02ac2ef1134b17909651fd3fab41d6d1de33f06c381ff3e467e02cd5db",
+      "playable_pcm_sha256": "0ce53d02ac2ef1134b17909651fd3fab41d6d1de33f06c381ff3e467e02cd5db",
+      "mpg123_pcm_sha256": "e9014cef909090a61c1a60d4f0c9ac11c874a5cd2b6ae260a787e34509908931",
+      "mpg123_max_absolute_error": 2.682209014892578e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 190,
+      "encoded_frames": 4
+    },
+    {
+      "name": "mpeg1-44100-gapless",
+      "settings": {
+        "in_samplerate": 44100,
+        "out_samplerate": 44100,
+        "num_channels": 2,
+        "brate": 128,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 1,
+        "error_protection": 0
+      },
+      "input_frames": 5512,
+      "encoded_sha256": "ac1dc4688be6f059d7d1f733805f46d9a6a482ed2f22e27f107db92cbc371bc2",
+      "raw_pcm_sha256": "63f73f009b8d477a4b6230856920f7f78f87a971460abf61defd998a12f4a773",
+      "playable_pcm_sha256": "4ae71be837562f748016357459e16e60112451ad7f97b70023ec16e1e9a8d7a8",
+      "mpg123_pcm_sha256": "3fea1dce41c7ff7b0f42d4541cb02a0a3fa75b9b00dbd6479f1fefa47f94cb70",
+      "mpg123_max_absolute_error": 7.748603820800781e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "scalar minimp3",
+      "max_reservoir_bytes": 79,
+      "encoded_frames": 7
+    },
+    {
+      "name": "mpeg2-22050-gapless-crc",
+      "settings": {
+        "in_samplerate": 22050,
+        "out_samplerate": 22050,
+        "num_channels": 2,
+        "brate": 80,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 2756,
+      "encoded_sha256": "be17cd142fcc6aebf77a28a8c5738e232808d78c2d7faf3f13317767bb232a56",
+      "raw_pcm_sha256": "1fb1dc2e802e7c31f6f7584a21e19cb33333dacf8d203e51b1e610b0cfc521b9",
+      "playable_pcm_sha256": "3efddbfecdae523ef77f49f2caba7c35a351ee387f84734468300b510a30d97a",
+      "mpg123_pcm_sha256": "490d75488100a195480170c43c441e34c87ebe657ac8dc0c3712d3c62f5f6ee2",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 67,
+      "encoded_frames": 8
+    },
+    {
+      "name": "mpeg1-44100-gapless-crc",
+      "settings": {
+        "in_samplerate": 44100,
+        "out_samplerate": 44100,
+        "num_channels": 2,
+        "brate": 128,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 1,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 5512,
+      "encoded_sha256": "c61d446edfc672977cf63fe1858c28f7d53f81ccd2ced750e612389798a92a3d",
+      "raw_pcm_sha256": "84c1d6a65859d2403a7da9b1a10bbc7b54c4afb7aa1a098dc92c2a6f90650fef",
+      "playable_pcm_sha256": "9848570570272e38b894c44dc29670894622bc375d7c7bfb4f3f5c70f47f5cd6",
+      "mpg123_pcm_sha256": "72f48adc465f96fd0a668ab10b1f864f098b52d953e3d47c4f39cab94d818191",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 74,
+      "encoded_frames": 7
+    },
+    {
+      "name": "mpeg1-48000-mono-gapless-crc",
+      "settings": {
+        "in_samplerate": 48000,
+        "out_samplerate": 48000,
+        "num_channels": 1,
+        "brate": 128,
+        "quality": 2,
+        "mode": 3,
+        "free_format": 1,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 6000,
+      "encoded_sha256": "38f3c9296727abe452da3f17d73dc4697bbff301752bebb1dbf16857050a512a",
+      "raw_pcm_sha256": "810053c0e9ec69f010a6df0fc28343d423c9841f5da8d72eacb67125b0725e65",
+      "playable_pcm_sha256": "d4bf4db3bd55189f56e2050ed2ec2297a75d36c0dfd48cfe281afc2b19cad0ca",
+      "mpg123_pcm_sha256": "85697878a72915aace0010ce9f2201b5753db413bf4279ea8bc9331fb453aa13",
+      "mpg123_max_absolute_error": 8.344650268554688e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 210,
+      "encoded_frames": 8
+    },
+    {
+      "name": "mpeg25-8000-mono-gapless-crc",
+      "settings": {
+        "in_samplerate": 8000,
+        "out_samplerate": 8000,
+        "num_channels": 1,
+        "brate": 48,
+        "quality": 2,
+        "mode": 3,
+        "free_format": 1,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 1000,
+      "encoded_sha256": "472d9bbc11469f20bb5d4c75abfb321481f2adec6f28a32013595a18d3a1af3c",
+      "raw_pcm_sha256": "6c893782db3ec66989cda346002183ba5d6e3fa6de9c9e854b6e32b081524b2b",
+      "playable_pcm_sha256": "374e33c4f987fb600c0b2c1c7e7b23b614b810d249883eae66d3f5b69165d7fa",
+      "mpg123_pcm_sha256": "66226756a29df6577b51b60382664698cd4e252ba829f22c86a797a420d1a4ee",
+      "mpg123_max_absolute_error": 2.980232238769531e-07,
+      "padding_bits": [
+        0
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 123,
+      "encoded_frames": 5
+    },
+    {
+      "name": "indexed-mpeg2-gapless-crc",
+      "settings": {
+        "in_samplerate": 22050,
+        "out_samplerate": 22050,
+        "num_channels": 2,
+        "brate": 80,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 0,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 2756,
+      "encoded_sha256": "3f9c1729c057ad3879a74e6878b49e6bacbefd0820814905716786f3ee4eed65",
+      "raw_pcm_sha256": "1fb1dc2e802e7c31f6f7584a21e19cb33333dacf8d203e51b1e610b0cfc521b9",
+      "playable_pcm_sha256": "3efddbfecdae523ef77f49f2caba7c35a351ee387f84734468300b510a30d97a",
+      "mpg123_pcm_sha256": "490d75488100a195480170c43c441e34c87ebe657ac8dc0c3712d3c62f5f6ee2",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 67,
+      "encoded_frames": 8
+    },
+    {
+      "name": "indexed-mpeg1-gapless-crc",
+      "settings": {
+        "in_samplerate": 44100,
+        "out_samplerate": 44100,
+        "num_channels": 2,
+        "brate": 128,
+        "quality": 2,
+        "mode": 1,
+        "free_format": 0,
+        "bWriteVbrTag": 1,
+        "error_protection": 1
+      },
+      "input_frames": 5512,
+      "encoded_sha256": "e662ac6603941d9f9b0694141b9c649b458cabfe6638441923ead4336b1d52d5",
+      "raw_pcm_sha256": "84c1d6a65859d2403a7da9b1a10bbc7b54c4afb7aa1a098dc92c2a6f90650fef",
+      "playable_pcm_sha256": "9848570570272e38b894c44dc29670894622bc375d7c7bfb4f3f5c70f47f5cd6",
+      "mpg123_pcm_sha256": "72f48adc465f96fd0a668ab10b1f864f098b52d953e3d47c4f39cab94d818191",
+      "mpg123_max_absolute_error": 6.556510925292969e-07,
+      "padding_bits": [
+        0,
+        1
+      ],
+      "metadata_reference": "raw minimp3 and independent LAME trim",
+      "max_reservoir_bytes": 74,
+      "encoded_frames": 7
+    }
+  ],
+  "smoke": {
+    "input_sha256": "451e0fa8b911a43b5759ce0c273b0331dcc44f102303a5b79eda08236f1590a4",
+    "indexed_input_sha256": "3599474ff0d3a872bdc5f5a03a05e977698add037af040991bbef48dedd62325",
+    "raw_pcm_sha256": "6158394e50a6ed76156df23026c5331cfcbf1179b62c8de5f487e09cb91bb229",
+    "first_frame_pcm_sha256": "6b3d119cfae1a3cbafaa317cc481c31c24110090ef7a3298a093cd3d36dc78c2",
+    "mpg123_pcm_sha256": "33832bb6d3856d38037d66b2688198aebc2dc8c86074a21f505c57d16f6e0172",
+    "frame_bytes": 288,
+    "position": 537,
+    "mpg123_compared_samples": 576,
+    "mpg123_max_absolute_error": 2.5704503059387207e-07
+  }
+}

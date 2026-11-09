@@ -61,6 +61,11 @@ function main(): i32 {
   if (!check([], failed, [true, true], "release;")) { return 11; }
   let superseded = [irtables.LowerResult { ...body("main", [ir.op_call_direct("release", 1)]), superseded: true }];
   if (!check(superseded, helpers, [true, true], "")) { return 12; }
+  let mangled = [body("__sem_drop_p", []), body("__sem_release_p", [ir.op_call_direct("__sem_drop_p", 1)])];
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&fn:__sem_release_p}")])], mangled, [true, true], "__sem_drop_p;__sem_release_p;")) { return 13; }
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&str|7061}")])], mangled, [true, true], "")) { return 14; }
+  let mixed = [body("__sem_drop_p", []), body("plain", [])];
+  if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&fn:plain}")])], mixed, [true, true], "plain;")) { return 15; }
   return 0;
 }`
 	dir := writeSelfHostAsmProject(t)

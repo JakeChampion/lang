@@ -294,7 +294,7 @@ function join_plus(names: string[]): string {
   return out;
 }
 
-function join_type_params(tps: string[]): string {
+pub function join_type_params(tps: string[]): string {
   if (tps.len() == 0) {
     return "";
   }
