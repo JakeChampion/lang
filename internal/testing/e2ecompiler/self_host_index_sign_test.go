@@ -16,7 +16,8 @@ import (
 // `fern -sign-index -key KEY INDEX` writes the signature that Go's
 // crypto/ed25519 gives for the same seed, and prints the index_key line. Both
 // loaders then resolve the signed tree. A key that is not one PKCS#8 ed25519
-// key is refused, and no signature is written.
+// key is refused, and no signature is written. `fern -index-keygen KEY` makes
+// a key that Go reads and that the sign command takes.
 func TestSelfHostSignIndex(t *testing.T) {
 	nativeBin, driverBin := resolveBins(t)
 	seed := make([]byte, ed25519.SeedSize)
@@ -72,6 +73,83 @@ func TestSelfHostSignIndex(t *testing.T) {
 				"fern.toml":      "[package]\nname = \"app\"\nindex = \"index.toml\"\n" + keyLine + "[dependencies]\nfoo = \"1.0.0\"\n",
 				"index.toml":     index,
 				"index.toml.sig": string(got),
+			},
+			wantOK: true,
+		})
+	})
+
+	t.Run("keygen", func(t *testing.T) {
+		dir := t.TempDir()
+		keygen := func(path string) (string, string, int) {
+			cmd := exec.Command(driverBin, "-index-keygen", path)
+			var out, errb strings.Builder
+			cmd.Stdout, cmd.Stderr = &out, &errb
+			_ = cmd.Run()
+			return out.String(), errb.String(), cmd.ProcessState.ExitCode()
+		}
+		var publics []string
+		for _, name := range []string{"a.pem", "b.pem"} {
+			path := filepath.Join(dir, name)
+			stdout, stderr, code := keygen(path)
+			if code != 0 {
+				t.Fatalf("keygen %s: exit %d\n%s", name, code, stderr)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Fatalf("%s has mode %v, want 0600", name, info.Mode().Perm())
+			}
+			text, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			block, _ := pem.Decode(text)
+			if block == nil || block.Type != "PRIVATE KEY" {
+				t.Fatalf("%s is not one PRIVATE KEY block:\n%s", name, text)
+			}
+			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+			if err != nil {
+				t.Fatalf("Go cannot read %s: %v", name, err)
+			}
+			edKey, ok := key.(ed25519.PrivateKey)
+			if !ok {
+				t.Fatalf("%s holds a %T, want an ed25519 key", name, key)
+			}
+			line := "index_key = \"ed25519:" + hex.EncodeToString(edKey.Public().(ed25519.PublicKey)) + "\"\n"
+			if stdout != line {
+				t.Fatalf("keygen printed %q, the key is %q", stdout, line)
+			}
+			publics = append(publics, line)
+		}
+		if publics[0] == publics[1] {
+			t.Fatal("two keygen runs made the same key")
+		}
+		before, err := os.ReadFile(filepath.Join(dir, "a.pem"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stdout, stderr, code := keygen(filepath.Join(dir, "a.pem")); code != 1 || stdout != "" || !strings.Contains(stderr, "cannot create the key") {
+			t.Fatalf("keygen over a present file: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		if after, _ := os.ReadFile(filepath.Join(dir, "a.pem")); string(after) != string(before) {
+			t.Fatal("keygen changed a present key file")
+		}
+		signDir, stdout, stderr, code := sign(t, string(before))
+		if code != 0 || stdout != publics[0] {
+			t.Fatalf("sign with the new key: exit %d, stdout %q, want %q\n%s", code, stdout, publics[0], stderr)
+		}
+		sig, err := os.ReadFile(filepath.Join(signDir, "index.toml.sig"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		runResolveBoth(t, nativeBin, driverBin, map[string]string{"pkgs/foo-1.0.0/fern.toml": "[package]\nname = \"foo\"\n"}, resolveCase{
+			name: "keygen-signed",
+			files: map[string]string{
+				"fern.toml":      "[package]\nname = \"app\"\nindex = \"index.toml\"\n" + publics[0] + "[dependencies]\nfoo = \"1.0.0\"\n",
+				"index.toml":     index,
+				"index.toml.sig": string(sig),
 			},
 			wantOK: true,
 		})
