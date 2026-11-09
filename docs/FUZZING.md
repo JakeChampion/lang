@@ -247,9 +247,11 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Thirty targets feed hostile bytes to the boundaries after the front end,
+Thirty-two targets feed hostile bytes to the boundaries after the front end,
 through the CLI, four drivers and one program the shipped CLI builds. They
-are the build manifest reader, the IR verifiers, both in-process assemblers,
+are the build manifest reader, the IR verifiers, both in-process assemblers
+and, through them, the linker and the ELF writer, whose images Go's
+`debug/elf` must read,
 the package layer's manifest, lock, index and archive readers, the literate
 tangle and weave that read a `.fern.md` module a package can ship, and the
 stdlib's HTTP/1 request framer, chunked-body decoder, HTTP/2 frame reader
