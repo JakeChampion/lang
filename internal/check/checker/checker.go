@@ -9427,7 +9427,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
-	"__cache_clean": true, "__cache_flush": true,
+	"__cache_clean": true, "__cache_flush": true, "__user_run": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
 	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true,

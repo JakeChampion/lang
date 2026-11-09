@@ -10082,7 +10082,7 @@ pub function unsafe_intrinsics(): string[] {
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
     "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
-    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
+    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__user_run",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",

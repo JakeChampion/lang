@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -195,6 +196,7 @@ func TestSelfHostUserRunVectors(t *testing.T) {
 
 // x86-64 enters ring 3 in a later slice. Until then the emitter refuses the op
 // by name, and a hosted target refuses the intrinsic at the capability gate.
+// A call outside an unsafe block is E095, as for __sysreg_write.
 func TestSelfHostUserRunRefusals(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -202,7 +204,19 @@ func TestSelfHostUserRunRefusals(t *testing.T) {
 	if err := os.WriteFile(src, []byte(userRunSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cli.compileCmd("x86-64-kernel", filepath.Join(dir, "x86.elf"), src, "-ram", kernelX86RAM).CombinedOutput()
+	const outside = "function main(): i32 {\n  return __user_run(0x1000 as usize) as i32;\n}\n"
+	bare := filepath.Join(dir, "outside.fern")
+	if err := os.WriteFile(bare, []byte(outside), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cli.compileCmd("arm64-kernel", filepath.Join(dir, "outside.elf"), bare, "-ram", kernelRAM).CombinedOutput()
+	if err == nil || !strings.Contains(string(msg), "E095") || !strings.Contains(string(msg), "__user_run") {
+		t.Errorf("outside unsafe: err %v; want E095 for __user_run in:\n%s", err, msg)
+	}
+	if got := goCheckerCodes(t, t.TempDir(), outside); !slices.Contains(got, "E095") {
+		t.Errorf("outside unsafe: Go checker codes = %v, want E095", got)
+	}
+	msg, err = cli.compileCmd("x86-64-kernel", filepath.Join(dir, "x86.elf"), src, "-ram", kernelX86RAM).CombinedOutput()
 	if err == nil || !strings.Contains(string(msg), "user_run") {
 		t.Errorf("x86-64-kernel: err %v; want a refusal that names user_run in:\n%s", err, msg)
 	}
