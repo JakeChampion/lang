@@ -262,6 +262,8 @@ jobs:
     if: ${{ contains(fromJSON(inputs.groups || '["heavy","rest"]'), 'rest') && (inputs.packages == '' || inputs.packages == '[]' || contains(fromJSON(inputs.packages), './cmd/fern')) }}
     name: check-corpus-${{ matrix.host }}-${{ matrix.shard }}
     runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
