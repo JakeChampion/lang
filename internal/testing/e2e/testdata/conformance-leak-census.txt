@@ -197,6 +197,7 @@ cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_in_container                                    0
+cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
 cell_string_accumulate                               0
 cell_struct_field_wide                               0

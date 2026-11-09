@@ -1,0 +1,27 @@
+// spec: CE-01
+struct Descriptors { files: Reader[], output: Writer, socket: Socket }
+
+function main(): i32 {
+  let reader = stdin();
+  let readers = cell_new(reader);
+  let first = readers.get();
+  readers.set(stdin());
+  print((first.fd == reader.fd && readers.get().fd == reader.fd).to_string());
+
+  let writer = stdout();
+  let writers = cell_new(writer);
+  print((writers.get().fd == writer.fd).to_string());
+
+  let socket = unsafe { __socket_from_fd(-11) };
+  let sockets = cell_new(socket);
+  print((sockets.get().fd == -11).to_string());
+
+  let bundle = cell_new(Descriptors { files: [reader], output: writer, socket: socket });
+  let snapshot = bundle.get();
+  bundle.set(Descriptors { ...snapshot, files: [] });
+  print((snapshot.files.len() == 1 && snapshot.files[0].fd == reader.fd && bundle.get().files.len() == 0).to_string());
+
+  let read_fd = (): i32 => first.fd;
+  print((read_fd() == reader.fd).to_string());
+  return 0;
+}

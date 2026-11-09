@@ -1270,7 +1270,7 @@ function cell_for(heap: interpheap.Heap, v: Value): Value {
 }
 
 function cell_value(heap: interpheap.Heap, v: Value): Value {
-  let encoded = encoded_value(v);
+  let encoded = encoded_value(v, heap);
   if (encoded.ok) {
     let c = VCell { kind: cell_value_kind(v), root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
     return c;
@@ -1332,7 +1332,7 @@ function cell_as_declared(c: VCell, type_name: string): Value {
   if (!cell_kind_numeric(want) || !cell_kind_numeric(c.kind) || want == c.kind) {
     return VCell { ...c };
   }
-  let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want));
+  let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want), c.root.heap);
   if (encoded.ok) {
     interpheap.replace(c.root, encoded.text, [], encoded.edges);
     return VCell { ...c, kind: want };
@@ -1412,10 +1412,10 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
+function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
-    let (ok, next) = cell_any_text(h, v, edges, heap);
+    let (ok, next) = cell_any_text(h, v, edges, heap, captures);
     edges = next;
     if (!ok) {
       return (false, edges);
@@ -1424,8 +1424,14 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   return (true, edges);
 }
 
-function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
-  if let Some(owner) = heap {
+function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
+  if let VHandle(value) = v {
+    let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
+    let root = interpheap.allocate_handle(heap, handle);
+    cell_bits_text(h, 72, edges.len() as i64);
+    return (true, edges.append(root));
+  }
+  if (captures) {
     match (v) {
       VCellV(cv) => {
         cell_bits_text(h, 118, edges.len() as i64);
@@ -1436,19 +1442,13 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
         cell_name_text(h, c.kind);
         return (true, edges.append(c.root));
       },
-      VHandle(value) => {
-        let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
-        let root = interpheap.allocate_handle(owner, handle);
-        cell_bits_text(h, 72, edges.len() as i64);
-        return (true, edges.append(root));
-      },
       VFunc(f) => {
-        let captured = encoded_captures(f.captured_values, owner);
+        let captured = encoded_captures(f.captured_values, heap);
         if (!captured.ok) {
           return (false, edges);
         }
         let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name };
-        let root = interpheap.allocate_closure(owner, code, captured.text, captured.edges);
+        let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
       },
@@ -1468,19 +1468,19 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
       cell_name_text(h, a.elem);
       let store = a.store;
       edges = edges.append(store);
-      return cell_parts_text(h, a.items, edges, heap);
+      return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
-      return cell_parts_text(h, t.elements, edges, heap);
+      return cell_parts_text(h, t.elements, edges, heap, captures);
     },
     VMap(m) => {
       buf_push_byte(h, 109);
-      let (ok, next) = cell_parts_text(h, m.keys, edges, heap);
+      let (ok, next) = cell_parts_text(h, m.keys, edges, heap, captures);
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next, heap);
+      return cell_parts_text(h, m.values, next, heap, captures);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1494,7 +1494,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
       for name in st.field_names {
         cell_name_text(h, name);
       }
-      return cell_parts_text(h, st.field_values, edges, heap);
+      return cell_parts_text(h, st.field_values, edges, heap, captures);
     },
     _ => {
       return (cell_scalar_text(h, v), edges);
@@ -1505,24 +1505,24 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: O
 struct EncodedValue { ok: boolean, text: string, edges: interpheap.Root[] }
 
 // Public Cell values cannot contain functions or cells.
-function encoded_value(v: Value): EncodedValue {
-  return encoded_value_mode(v, None);
+function encoded_value(v: Value, heap: interpheap.Heap): EncodedValue {
+  return encoded_value_mode(v, heap, false);
 }
 
 // Internal slots store captures through managed edges, which the collector can trace.
 function encoded_binding(v: Value, heap: interpheap.Heap): EncodedValue {
-  return encoded_value_mode(v, Some(heap));
+  return encoded_value_mode(v, heap, true);
 }
 
 function encoded_captures(values: Value[], heap: interpheap.Heap): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_parts_text(h, values, [], Some(heap));
+  let (ok, edges) = cell_parts_text(h, values, [], heap, true);
   return encoded_buffer(h, ok, edges);
 }
 
-function encoded_value_mode(v: Value, heap: Option[interpheap.Heap]): EncodedValue {
+function encoded_value_mode(v: Value, heap: interpheap.Heap, captures: boolean): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_any_text(h, v, [], heap);
+  let (ok, edges) = cell_any_text(h, v, [], heap, captures);
   return encoded_buffer(h, ok, edges);
 }
 
@@ -1673,7 +1673,7 @@ function cell_set_value(c: VCell, v: Value): Value {
   if (c.kind != "value" && cell_value_kind(value) != c.kind) {
     return v_err("Cell.set: the value is not a " + c.kind);
   }
-  let encoded = encoded_value(value);
+  let encoded = encoded_value(value, c.root.heap);
   if (!encoded.ok) {
     return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
@@ -2650,7 +2650,7 @@ function worker_contract(heap: interpheap.Heap, name: string, args: Value[]): Va
     return send_copy_value(arg_at(args, 0));
   }
   if (name == "__send_root") {
-    let encoded = encoded_value(arg_at(args, 0));
+    let encoded = encoded_value(arg_at(args, 0), heap);
     if (!encoded.ok) {
       return v_err("__send_root: the interpreter cannot hand over a function value");
     }
