@@ -42,6 +42,12 @@ function hardware_queries(): i32;
 @import("libmediandk.so", "mock_sample_reads")
 function reads(): i32;
 
+@import("libmediandk.so", "mock_output_format")
+function output_format(width: i32, height: i32, right: i32, bottom: i32): void;
+
+@import("libmediandk.so", "mock_released")
+function released(): i32;
+
 function config(): video.Config {
   return video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [0, 0, 0, 1, 103], csd1: [0, 0, 0, 1, 103] };
 }
@@ -689,6 +695,44 @@ function scheduled_output(): i32 {
   return 0;
 }
 
+function playback_output_limit(): i32 {
+  mode(16);
+  jni_mode(0);
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  let Ok(p) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+    return 801;
+  };
+  output_format(32, 8, 15, 7);
+  let step = p.tick(9876543210i64);
+  match (step.event) {
+    player.Failure(frame.Limit) => {},
+    _ => {
+      return 802;
+    }
+  }
+  if (!step.player.failed || step.player.scheduled_frames != 0i64 || released() != 0) {
+    return 803;
+  }
+  let submitted = queued();
+  let again = step.player.tick(9876543210i64);
+  match (again.event) {
+    player.Failure(frame.State) => {},
+    _ => {
+      return 804;
+    }
+  }
+  if (queued() != submitted || released() != 0) {
+    return 805;
+  }
+  let Ok(_) = again.player.close() else {
+    return 806;
+  };
+  if (live() != 0) {
+    return 807;
+  }
+  return 0;
+}
+
 function main(): i32 {
   let result = discovery();
   if (result != 0) {
@@ -714,5 +758,9 @@ function main(): i32 {
   if (result != 0) {
     return result;
   }
-  return scheduled_output();
+  result = scheduled_output();
+  if (result != 0) {
+    return result;
+  }
+  return playback_output_limit();
 }
