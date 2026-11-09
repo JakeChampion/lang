@@ -1,0 +1,65 @@
+name: Site links
+
+# Checks each internal link on the deployed docs site. The Docs build lane
+# checks the build of a pull request. This workflow checks what the hosts
+# serve, which can differ: a redirect rule, a file that a deploy did not
+# copy, or a host-specific base. Netlify reports no deploy event to GitHub,
+# so the check runs on a schedule. A failure opens an issue, or adds a
+# comment to the open one.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: site-links
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        site:
+          - https://fern-lang.netlify.app
+          - https://jakechampion.github.io/lang
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Check the deployed links
+        id: check
+        run: |
+          set -o pipefail
+          node site/scripts/check-links.mjs --site "${{ matrix.site }}" | tee report.txt
+
+      - name: Report broken links in an issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SITE: ${{ matrix.site }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Broken links on $SITE"
+          fence='```'
+          body="The scheduled link check found broken links. Run: $RUN
+
+          $fence
+          $(cat report.txt)
+          $fence"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
