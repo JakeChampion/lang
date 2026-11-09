@@ -1,13 +1,14 @@
 // Run the compiler at build time and record what it prints, for the home
 // page: the assembly and the executable size of src/captures/area.fern, the
-// usage text of `fern -help`, and the capabilities that `fern -lsp`
-// reports. The output is src/generated/captures.json.
+// usage text of `fern -help`, the capabilities that `fern -lsp` reports, and
+// the diagnostics for the programs in src/captures/diagnostics/. The output
+// is src/generated/captures.json.
 //
 // `npm run build` runs this first. The compiler is $FERN_SELFHOST, or
 // ../bin/fern-selfhost, which every build recipe makes before the site build.
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +60,25 @@ function lspCapabilities() {
   throw new Error("fern -lsp gave no initialize result");
 }
 
+// What `fern -check` prints for each program in src/captures/diagnostics/.
+// It runs in that directory, so the output names the file and not a
+// temporary path. The home page says that each program fails, and that the
+// compiler suggests the fix for the typo.
+function diagnostics() {
+  const dir = join(site, "src/captures/diagnostics");
+  return readdirSync(dir).filter((f) => f.endsWith(".fern")).sort().map((file) => {
+    const res = spawnSync(fern, ["-check", file, stdlib], { cwd: dir, encoding: "utf8" });
+    const output = (res.stdout + res.stderr).trimEnd();
+    if (res.status === 0 || !output.includes("error[")) {
+      throw new Error(`capture: ${file} no longer fails to check; update the home page`);
+    }
+    if (file === "typo.fern" && !output.includes("help:")) {
+      throw new Error("capture: the typo no longer gets a help line; update the home page");
+    }
+    return { file, code: readFileSync(join(dir, file), "utf8"), output };
+  });
+}
+
 function capture() {
   const work = mkdtempSync(join(tmpdir(), "fern-capture-"));
   const code = readFileSync(source, "utf8");
@@ -80,6 +100,7 @@ function capture() {
     compiled,
     usage: help.slice(0, help.indexOf("Flags go before FILE")).trimEnd(),
     lsp: lspCapabilities(),
+    diagnostics: diagnostics(),
   };
 }
 

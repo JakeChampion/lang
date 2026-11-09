@@ -28,6 +28,7 @@ hero:
 
 import BenchHeadline from "../../components/BenchHeadline.astro";
 import CompiledOutput from "../../components/CompiledOutput.astro";
+import Diagnostics from "../../components/Diagnostics.astro";
 import EditorFeatures from "../../components/EditorFeatures.astro";
 import Facet from "../../components/Facet.astro";
 import FacetRail from "../../components/FacetRail.astro";
@@ -35,6 +36,7 @@ import FernPlayground from "../../components/FernPlayground.astro";
 import InstallCard from "../../components/InstallCard.astro";
 import NextSteps from "../../components/NextSteps.astro";
 import SpecSheet from "../../components/SpecSheet.astro";
+import StartupTable from "../../components/StartupTable.astro";
 import ToolUsage from "../../components/ToolUsage.astro";
 
 <div class="fern-lead">
@@ -205,6 +207,13 @@ function double(s: string): Option[i32] {
 The [Reference](reference/syntax/) has the full grammar, the type
 system, and the error-handling rules.
 
+## Errors that point at the fix
+
+A diagnostic names the problem, shows the line, and suggests the change
+when the compiler can find one. These are from the build of this page:
+
+<Diagnostics />
+
 ## Measured speed
 
 Fern's standard library aims to be the fastest at everything it
@@ -213,6 +222,8 @@ rewrite of the GNU coreutils in Fern, timed against GNU and against
 uutils on every utility:
 
 <BenchHeadline />
+
+<StartupTable />
 
 ## One binary, every tool
 

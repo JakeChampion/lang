@@ -1,0 +1,23 @@
+import "std/i32";
+
+enum Shape {
+  Circle(i32),
+  Rectangle(i32, i32),
+  Triangle(i32, i32),
+}
+
+function area(s: Shape): i32 {
+  match (s) {
+    Circle(r) => {
+      return 3 * r * r;
+    },
+    Rectangle(w, h) => {
+      return w * h;
+    }
+  }
+}
+
+function main(): i32 {
+  print(area(Circle(5)).to_string());
+  return 0;
+}
