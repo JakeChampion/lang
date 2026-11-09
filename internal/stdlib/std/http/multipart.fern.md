@@ -465,7 +465,9 @@ function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] 
       if (at > room) {
         return Err(PartHeadersTooLarge(cur.limits.header_bytes));
       }
-      let text = unsafe { string_from_bytes_unchecked(array.slice(cur.carry, 0, at)) };
+      let Ok(text) = utf8.from_bytes(array.slice(cur.carry, 0, at)) else {
+        return Err(MultipartBody(http.NotUtf8));
+      };
       return Ok((text, Reader { ...cur, carry: array.slice(cur.carry, at + 2, cur.carry.len()) }));
     }
     if (cur.carry.len() > room + 1) {
