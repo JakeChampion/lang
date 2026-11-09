@@ -1968,6 +1968,9 @@ type FuncDecl struct {
 	NoRC bool
 	// Interrupt is the vector slot that @interrupt("irq") names. It implies NoRC.
 	Interrupt string
+	// Early is @early: the reset entry calls the function before the heap
+	// starts. It implies NoRC.
+	Early bool
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
 	JNIClass                 string

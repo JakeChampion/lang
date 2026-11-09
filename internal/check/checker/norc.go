@@ -75,6 +75,27 @@ func (c *checker) checkInterruptFunctions(prog *ast.Program) {
 	}
 }
 
+// checkEarlyFunctions reports E104: the @early hook takes no parameters and
+// returns void, and a program has at most one. compiler/norc.fern also
+// refuses it on a target with no reset entry.
+func (c *checker) checkEarlyFunctions(prog *ast.Program) {
+	first := ""
+	for _, fn := range prog.Funcs {
+		if !fn.Early {
+			continue
+		}
+		what := fmt.Sprintf("`@early` function %q", fn.Name)
+		if first != "" {
+			c.errfCode(fn.P, "E104", "%s is a second hook: %q is the first, and the reset entry calls one", what, first)
+		} else {
+			first = fn.Name
+		}
+		if _, void := fn.ReturnType.(ast.VoidType); len(fn.Params) > 0 || (fn.ReturnType != nil && !void) {
+			c.errfCode(fn.P, "E104", "%s must take no parameters and return void", what)
+		}
+	}
+}
+
 // checkNoRCFunctions reports E102 in each @norc function: a value that is not
 // a scalar, or a call to a function that is not @norc. Such a function
 // allocates nothing and does no RC operation.
@@ -104,6 +125,8 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 	attr := "norc"
 	if fn.Interrupt != "" {
 		attr = "interrupt"
+	} else if fn.Early {
+		attr = "early"
 	}
 	bad := func(p ast.Position, format string, args ...any) {
 		c.errfCode(p, "E102", "`@%s` function %q %s", attr, fn.Name, fmt.Sprintf(format, args...))

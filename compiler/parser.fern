@@ -225,7 +225,7 @@ pub function named_outside(mod: Module, name: string): boolean {
     }
   }
   for m in mod.marks {
-    if (m.attr == "interrupt" && m.func_name == name) {
+    if ((m.attr == "interrupt" || m.attr == "early") && m.func_name == name) {
       return true;
     }
   }
@@ -24089,10 +24089,10 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (name == "provide" || name == "interrupt") {
     return parse_string_arg(name, "", p);
   }
-  if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline" || name == "norc") {
+  if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline" || name == "norc" || name == "early") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @must_consume, @try, @inline, and @noinline are supported)")], p);
 }
 
 function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -24245,7 +24245,7 @@ function attr_misplaced(name: string): string {
   if (name == "provide") {
     return "@provide only applies to a function declaration";
   }
-  if (name == "norc" || name == "interrupt") {
+  if (name == "norc" || name == "interrupt" || name == "early") {
     return "@" + name + " only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
@@ -26195,7 +26195,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit, import_weak: attr.weak };
       }
       exports = with_attr_export(exports, attr, fr_func);
-      if (attr.name == "provide" || attr.name == "norc" || attr.name == "interrupt") {
+      if (attr.name == "provide" || attr.name == "norc" || attr.name == "interrupt" || attr.name == "early") {
         marks = marks.append(FuncMark { attr: attr.name, arg: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
       }
       let fr_out = fr_pub;

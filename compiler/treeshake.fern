@@ -828,11 +828,14 @@ pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
   return refs;
 }
 
-// main and each `@interrupt` handler, which the vector table calls.
+// main, each `@interrupt` handler, which the vector table calls, and the
+// `@early` hook, which the reset entry calls.
 pub function entry_roots(mod: parser.Module): string[] {
   let roots = ["main"];
-  for m in parser.marked(mod, "interrupt") {
-    roots = roots.append(m.func_name);
+  for m in mod.marks {
+    if (m.attr == "interrupt" || m.attr == "early") {
+      roots = roots.append(m.func_name);
+    }
   }
   return roots;
 }

@@ -374,7 +374,27 @@ On `x86-64-kernel`:
 - `__breakpoint()` is `int3`, a trap, so the handler returns to the next
   instruction. On arm64 it is `brk #0`, which takes the sync exception.
 
-`naked` comes next.
+**The decision on `naked` (#14253): an early-setup hook instead.** Fern has no
+asm block. So a `naked` Fern function cannot control its registers, and the
+register allocator can spill to a stack that does not exist yet. The reset
+entry already sets the stack, clears `.bss` and builds the translation. So the
+early setup is a hook that this code calls, and `naked` is not part of the
+language:
+
+- `@early` marks the hook. It implies `@norc`, so E102 applies to its body.
+- E104 refuses a hook with a parameter or a result, a second hook, and a hook
+  on a target that is not a kernel.
+- The reset entry calls the hook after the stack, `.bss`, the translation and
+  the vector table exist, and before the heap starts. On x86-64 the IDT now
+  loads before the hook, as `VBAR_EL1` does on arm64. Thus a fault in the hook
+  reaches a handler, and is not a triple fault.
+- The hook is a root of the tree shake and of the lowering, as a handler is.
+
+`internal/testing/e2ecompiler/self_host_early_test.go` checks the rules on both
+checkers and the order of the reset code on both ISAs.
+`TestSelfHostKernelEarlyHookOnQemu` and `TestSelfHostKernelX86EarlyHookOnQemu`
+boot a hook that writes a system register and takes a breakpoint, and `main`
+prints both results.
 
 ### 4. Memory layout
 
@@ -576,7 +596,7 @@ free.
 
 Today Fern *consumes* a syscall ABI (`__syscall3`/`4`/`5`). An OS makes it the
 *provider*: trap entry, register save, dispatch, return-to-user. That is the
-`naked` / `interrupt` attribute work plus a stable ABI decision, and it is the
+`interrupt` attribute work plus a stable ABI decision, and it is the
 point at which Fern's two roles need spelling separately.
 
 **#6529 already built the slot.** Targets are `<isa>-<environment>` with
@@ -705,8 +725,7 @@ and three `mmap` reservations at start.
    bottom half in the reactor.
 4. **Done: capability providers** (#14251). A board module supplies `log` with a
    `@provide("log")` function (section 6).
-5. **Done: the no-RC property** (#14253), as `@norc` (section 3). The
-   `interrupt` and `naked` attributes wait for a kernel environment.
+5. **Done: the no-RC property** (#14253), as `@norc` (section 3).
 6. **Done: memory layout and the reset entry** (#14254), as `arm64-kernel`
    and `x86-64-kernel` (section 4). The image layout tests read the program
    headers and the entry point of both.
@@ -717,7 +736,8 @@ and three `mmap` reservations at start.
    image` form of the arm64 image (#14767). It stays the production target. **Done: the effect intrinsics** (#14252), with
    `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info`, the system register,
    cache, TLB and port ops, `__breakpoint` and the IRQ ops (section 2).
-   **Done: `@interrupt`** (#14253) on both kernel targets. `naked` remains.
+   **Done: `@interrupt`** (#14253) on both kernel targets, and the `@early`
+   hook in place of `naked` (section 3).
 8. **Done: milestone 2** (#14261). On qemu-virt, the generic timer ticks through
    a GICv3 into an `@interrupt("irq")` top half. On qemu microvm, the local APIC
    timer ticks into an `@interrupt("32")` top half. A `std/async` task takes 20
@@ -729,7 +749,6 @@ and three `mmap` reservations at start.
    package can follow when a second board needs one. The x86-64 identity map is
    write-back everywhere, so the local APIC is cached until `main` activates
    the kernel mapping of step 9, which maps the device window uncached. Then:
-   `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
 9. **Done: milestone 3** (#14262). `std/frames` is a page-frame allocator
    over raw memory. Its header and bitmap live in the first frames of its

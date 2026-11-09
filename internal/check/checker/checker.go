@@ -3095,6 +3095,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.checkFipFunctions(prog)
 	c.checkNoRCFunctions(prog)
 	c.checkInterruptFunctions(prog)
+	c.checkEarlyFunctions(prog)
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
