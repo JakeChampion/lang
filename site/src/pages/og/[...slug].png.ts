@@ -13,7 +13,7 @@ export const getStaticPaths = (async () => {
     .map((e) => ({ params: { slug: e.id }, props: { title: e.data.title, section: sectionOf(e.id) } }));
 }) satisfies GetStaticPaths;
 
-const host = new URL(process.env.CANONICAL_SITE ?? import.meta.env.SITE).host;
+const host = new URL(import.meta.env.SITE).host;
 
 export const GET: APIRoute = async ({ props }) =>
   new Response(await renderCard({ ...(props as { title: string; section: string }), host }), {

@@ -10,8 +10,8 @@ import { fileFor, linksIn } from "../scripts/check-links.mjs";
 
 test("reads href and src values without the fragment or query", () => {
   assert.deepEqual(
-    linksIn('<a href="/lang/why/#costs">x</a> <img src="/lang/og.png?v=2"> <a href="#top">'),
-    ["/lang/why/", "/lang/og.png"],
+    linksIn('<a href="/why/#costs">x</a> <img src="/og.png?v=2"> <a href="#top">'),
+    ["/why/", "/og.png"],
   );
 });
 
@@ -20,9 +20,7 @@ test("resolves a site path to a page, an index or a file in the build", () => {
   mkdirSync(join(dist, "why"));
   writeFileSync(join(dist, "why", "index.html"), "");
   writeFileSync(join(dist, "install.sh"), "");
-  assert.equal(fileFor(dist, "/lang", "/lang/why/"), join(dist, "why", "index.html"));
-  assert.equal(fileFor(dist, "/lang", "/lang/install.sh"), join(dist, "install.sh"));
-  assert.equal(fileFor(dist, "/lang", "/lang/favicon.svg"), null);
-  // A path outside the base is not this site's to check.
-  assert.equal(fileFor(dist, "/lang", "/other/"), undefined);
+  assert.equal(fileFor(dist, "/why/"), join(dist, "why", "index.html"));
+  assert.equal(fileFor(dist, "/install.sh"), join(dist, "install.sh"));
+  assert.equal(fileFor(dist, "/favicon.svg"), null);
 });

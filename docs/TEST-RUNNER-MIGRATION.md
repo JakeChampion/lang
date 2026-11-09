@@ -328,4 +328,4 @@ Two consequences for anyone migrating a suite:
   mistake: its cases are in the stream and the plan, but not in
   the parent's counts, so the run exits 1 with the WARNING.
 
-See the [generated stdlib reference](https://jakechampion.github.io/lang/stdlib/) for the public API.
+See the [generated stdlib reference](https://fern-lang.netlify.app/stdlib/) for the public API.

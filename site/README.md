@@ -1,8 +1,8 @@
 # Fern docs site
 
-Astro + Starlight build of the documentation that publishes to
-GitHub Pages at the repo root, with the playground bundled at
-`/playground/`.
+Astro + Starlight build of the documentation at
+[fern-lang.netlify.app](https://fern-lang.netlify.app), with the
+playground bundled at `/playground/`.
 
 ## Layout
 
@@ -102,8 +102,7 @@ npm run dev
 which checks, runs and compiles the editor's program and serves its
 diagnostics, hover and completion.
 
-Open `http://localhost:4321/lang/` (Starlight serves under the
-configured `base`).
+Open `http://localhost:4321/`.
 
 ## Build for production
 
@@ -131,31 +130,17 @@ shows no startup table before the first one.
 install tutorial give. `test/install.test.mjs` runs it against a fake
 release.
 
-The GitHub Actions `Pages` workflow runs this on every push to
-main that touches the site, the playground, the compiler, anything
-under `internal/` (the stdlib included), the syntax grammar, or the
-toolchain pins. On pull requests the `Docs build` lane runs the same
-build and then the Playwright suite in `test/playwright/`.
+Netlify builds and deploys the site from `main`, through
+`netlify.toml` at the repo root and `scripts/netlify-build`. On pull
+requests the `Docs build` lane runs the same build and then the
+Playwright suite in `test/playwright/`. `netlify.toml` redirects old
+`/lang/...` links to the root.
 
-The same bundle also deploys to Netlify, via `netlify.toml` at the
-repo root and `scripts/netlify-build` (which mirrors the `Pages`
-workflow's steps). The two hosts use a different `base`. GitHub
-Pages serves the project from the repository subpath, so `base` is
-`/lang` there, the default in `astro.config.mjs`. The Netlify site is
-at the domain root: `scripts/netlify-build` sets `SITE_BASE=/`, and
-`netlify.toml` redirects old `/lang/...` links to the root. Write a
-hero link or a sidebar link as a site path such as `/tutorial/install/`,
-and the build adds the base. Keep the two build recipes in step.
-
-fern-lang.netlify.app is the main site. The Pages build sets
-`CANONICAL_SITE`, so each Pages page names its Netlify page as
-canonical, and search engines list one copy.
-
-`scripts/check-links.mjs --dist dist --base /lang` finds each internal
-link in a build that names no file. The Docs build lane runs it. With
+`scripts/check-links.mjs --dist dist` finds each internal link in a
+build that names no file. The Docs build lane runs it. With
 `--site URL`, it reads the sitemap of a deployed site and requests each
-internal link. `.github/workflows/site-links.yml` runs that against both
-hosts every 6 hours, and opens an issue when a link is broken.
+internal link. `.github/workflows/site-links.yml` runs that against the
+site every 6 hours, and opens an issue when a link is broken.
 
 ## Social cards and llms.txt
 

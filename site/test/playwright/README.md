@@ -25,9 +25,7 @@ npm test
 ```
 
 `playwright.config.ts` launches `astro preview` against
-`site/dist/` on port 4321, serving the site at the configured
-`base` (`/lang/`). Tests navigate against that prefix via the
-`baseURL` config.
+`site/dist/` on port 4321.
 
 ## What's covered
 

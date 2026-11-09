@@ -1,10 +1,6 @@
 // Scripted regressions for the lang docs site. Asserts behaviour
 // the build step doesn't catch: navigation, sidebar groups, the
 // embedded playground iframe loading, stdlib pages reachable.
-//
-// page.goto() paths are RELATIVE (no leading slash) so they
-// resolve against the baseURL's `/lang/` prefix. A leading `/`
-// would be absolute and drop the prefix — see playwright.config.ts.
 
 import { test, expect } from "@playwright/test";
 
@@ -64,14 +60,14 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
 }) => {
   await page.goto("tutorial/first-steps/");
   // The <FernPlayground> Astro component renders <figure class="fern-playground">
-  // wrapping an iframe pointing at /lang/playground/?embed=1...#src=…
+  // wrapping an iframe pointing at /playground/?embed=1...#src=…
   const figure = page.locator("figure.fern-playground").first();
   await expect(figure).toBeVisible();
   const iframe = figure.locator("iframe");
   // Embed-mode flag + hash payload — both have to be present.
   await expect(iframe).toHaveAttribute(
     "data-src",
-    /\/lang\/playground\/\?[^#]*embed=1[^#]*#src=/,
+    /\/playground\/\?[^#]*embed=1[^#]*#src=/,
   );
 });
 
@@ -120,7 +116,7 @@ test("the home page install card points at this site's install script", async ({
 }) => {
   await page.goto("./");
   const card = page.locator(".fern-install");
-  await expect(card.locator(".fern-cmd__text").first()).toHaveText(/^curl -fsSL \S+\/lang\/install\.sh \| sh$/);
+  await expect(card.locator(".fern-cmd__text").first()).toHaveText(/^curl -fsSL \S+\/install\.sh \| sh$/);
   const res = await page.request.get("install.sh");
   expect(res.status()).toBe(200);
   expect(await res.text()).toMatch(/^#!\/bin\/sh\n/);
@@ -162,11 +158,11 @@ test("minimal playground embed is wired read-only + autorun on the home page", a
   // URL — minimal snippets have no Run button, so autorun is mandatory.
   await expect(iframe).toHaveAttribute(
     "data-src",
-    /\/lang\/playground\/\?[^#]*minimal=1[^#]*#src=/,
+    /\/playground\/\?[^#]*minimal=1[^#]*#src=/,
   );
   await expect(iframe).toHaveAttribute(
     "data-src",
-    /\/lang\/playground\/\?[^#]*autorun=1[^#]*#src=/,
+    /\/playground\/\?[^#]*autorun=1[^#]*#src=/,
   );
 });
 
@@ -211,20 +207,13 @@ test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
 });
 
-// Regression guard for the "links 404 on the deployed site"
-// bug: markdown body links written with absolute paths (`/foo/`)
-// emit `href="/foo/"` verbatim, which 404s under the `/lang/`
-// base path. Clicking each link surfaces the issue — the prior
-// suite navigated directly via page.goto so it missed this.
-//
-// Same bug bites Starlight's hero actions: the YAML `link:` is
-// passed verbatim to `<a href>` (no base prefix), so a bare
-// `/tutorial/install/` 404s. The hero-button click tests below
-// cover that path — toBeVisible() alone wouldn't catch it.
+// The tests below click each link, because a link can name a page that
+// page.goto() reaches but the link itself does not. toBeVisible() alone
+// would not find such a link.
 test("home → hero Get started button navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /Get started/i }).first().click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/install\/?$/);
   await expect(page.locator("h1")).toContainText("Install");
 });
 
@@ -236,27 +225,27 @@ test("home → hero Try in browser button targets the playground", async ({
   // The playground bundle is a separate Astro `public/` drop-in,
   // not a Starlight content page — asserting the href is enough
   // (clicking would race the wasm boot and isn't worth the flake).
-  await expect(link).toHaveAttribute("href", /^\/lang\/playground\/?$/);
+  await expect(link).toHaveAttribute("href", /^\/playground\/?$/);
 });
 
 test("home → tutorial link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Tutorial$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/install\/?$/);
   await expect(page.locator("h1")).toContainText("Install");
 });
 
 test("home → why link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Why Fern$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/why\/?$/);
+  await expect(page).toHaveURL(/\/why\/?$/);
   await expect(page.locator("h1")).toContainText("Why Fern");
 });
 
 test("home → cookbook link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Cookbook$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/cookbook\/?$/);
+  await expect(page).toHaveURL(/\/cookbook\/?$/);
   await expect(page.locator("h1")).toContainText("Cookbook");
   // Recipes are Fern code fences; the grammar registration means they
   // render as highlighted <code>, not as plain text.
@@ -285,13 +274,13 @@ test("stdlib sidebar groups modules by purpose", async ({ page }) => {
 test("home → reference link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Reference$/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/reference\/syntax\/?$/);
+  await expect(page).toHaveURL(/\/reference\/syntax\/?$/);
 });
 
 test("home → standard library link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /Standard library/ }).first().click();
-  await expect(page).toHaveURL(/\/lang\/stdlib\/?$/);
+  await expect(page).toHaveURL(/\/stdlib\/?$/);
 });
 
 test("tutorial install → first-steps next-link navigates", async ({ page }) => {
@@ -303,7 +292,7 @@ test("tutorial install → first-steps next-link navigates", async ({ page }) =>
     .getByRole("link", { name: /Next: First steps/ })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/lang\/tutorial\/first-steps\/?$/);
+  await expect(page).toHaveURL(/\/tutorial\/first-steps\/?$/);
 });
 
 test("coreutils page sorts, filters and opens a utility's workloads", async ({

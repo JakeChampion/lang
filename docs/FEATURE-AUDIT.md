@@ -207,7 +207,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 ## D. Standard library — `std/`
 
 The original function lists came from the former `docs/STDLIB.md` catalog.
-Use the [generated reference](https://jakechampion.github.io/lang/stdlib/) for current APIs.
+Use the [generated reference](https://fern-lang.netlify.app/stdlib/) for current APIs.
 Each module gets a row. The audit checks individual functions as needed and
 records their bugs in the audit log.
 

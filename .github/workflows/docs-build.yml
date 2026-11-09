@@ -18,8 +18,7 @@ name: Docs build
 # site-links.yml checks the deployed site on a schedule.
 #
 # Path-filtered in ci.yml's lane table so unrelated edits don't
-# burn minutes; the same filter the Pages workflow uses, kept in
-# sync manually for now.
+# burn minutes.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -80,7 +79,7 @@ jobs:
           npm install
           npm run build
           npm test
-          node scripts/check-links.mjs --dist dist --base /lang
+          node scripts/check-links.mjs --dist dist
 
       # The browser is a ~170 MB download; caching it keeps most runs off the
       # network for that half. The shared apt action routes the uncached
@@ -102,8 +101,6 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Run docs Playwright suite
-        # `astro preview` (started by playwright.config.ts's
-        # webServer) serves site/dist/ at /lang/.
         working-directory: site/test/playwright
         run: npx playwright test
 

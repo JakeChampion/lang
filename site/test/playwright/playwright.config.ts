@@ -1,7 +1,7 @@
 // Playwright config for the lang docs site.
 //
-// Drives `astro preview` (serves the built site/dist/ under the
-// configured `base` of `/lang/`) on a fixed port. Single chromium
+// Drives `astro preview` (serves the built site/dist/) on a fixed
+// port. Single chromium
 // project — docs render the same everywhere, so per-browser
 // matrix is overkill.
 //
@@ -22,13 +22,7 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    // The docs site builds under `base: "/lang"`, so navigation
-    // happens via this prefix. Trailing slash matters: per the
-    // WHATWG URL spec, `new URL("/foo", "http://x/lang/")` drops
-    // the `/lang` segment, whereas relative paths
-    // ("tutorial/install/" — no leading slash) resolve against
-    // the base path. Specs use the relative form throughout.
-    baseURL: `http://127.0.0.1:${port}/lang/`,
+    baseURL: `http://127.0.0.1:${port}/`,
     trace: "on-first-retry",
     actionTimeout: 5_000,
     navigationTimeout: 15_000,
@@ -40,12 +34,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // `astro preview` serves site/dist/ under the site's
-    // configured base. `--port` overrides the default 4321.
+    // `--port` overrides the default 4321.
     // Run from the site/ directory; cwd is two levels up from
     // this config (site/test/playwright/ → site/).
     command: `astro preview --host 127.0.0.1 --port ${port}`,
-    url: `http://127.0.0.1:${port}/lang/`,
+    url: `http://127.0.0.1:${port}/`,
     cwd: "../..",
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

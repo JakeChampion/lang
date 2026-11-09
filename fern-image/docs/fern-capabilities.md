@@ -55,7 +55,7 @@ The audit inspected https://fern-lang.netlify.app/.
 The home page describes reference counts and native compilation.
 Its last-update field reports 2026-10-15.
 
-The checkout README now links to https://jakechampion.github.io/lang/.
+The checkout README now links to https://fern-lang.netlify.app/.
 The audit also inspected these source documents at the checkout commit:
 
 - `site/src/content/docs/reference/types.md`
