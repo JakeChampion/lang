@@ -97,6 +97,9 @@ import "std/time";
 <<3 const MAX_PATH: i32>>=
 const MAX_PATH: i32 = 8;
 
+// The signature checks that one verification makes before it stops.
+const MAX_CHECKS: i32 = 100;
+
 pub const DENIED_SPKI: string[] = ["ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105", "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f", "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41", "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0", "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b", "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8", "ec4ffa1ad0ac88081314b7aaffef6a91f97cd57291bb5ba686c5415f5eb4f6b6", "92c063d67e8f14db71d288e11266ffdaf69cbf115f7bab14f3bc2f68d25e0e30"];
 
 pub enum VerifyError {
@@ -119,6 +122,7 @@ pub enum VerifyError {
   UnsupportedAlgorithm(string),
   Distrusted(i32),
   DeniedKey(i32),
+  SearchLimit,
 }
 ```
 
@@ -203,6 +207,9 @@ pub function (e: VerifyError) message(): string {
     },
     DeniedKey(i) => {
       return "tls verify: certificate " + i.to_string() + "'s key is known to be compromised";
+    },
+    SearchLimit => {
+      return "tls verify: the certificates need too many signature checks to find a path";
     }
   }
   return "";
@@ -588,7 +595,7 @@ function __issuer_ok(c: x509.Certificate, at: i32, now: i64): Result[boolean, Ve
 
 ```fern
 <<16 struct Search>>=
-struct Search { found: boolean, err: VerifyError }
+struct Search { found: boolean, err: VerifyError, checks: i32 }
 ```
 
 ### `17 function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, se...`
@@ -597,7 +604,7 @@ struct Search { found: boolean, err: VerifyError }
 <<17 function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, se...>>=
 function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, server: boolean, s: Search): Search {
   if (at >= MAX_PATH) {
-    return Search { found: false, err: PathTooLong(at) };
+    return Search { found: false, err: PathTooLong(at), checks: s.checks };
   }
   let i = 0;
   while (i < roots.certs.len()) {
@@ -605,26 +612,44 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
     if (r.found && !(server && __distrusted(roots, i, below[0]))) {
       return r;
     }
-    s = Search { found: false, err: r.err };
+    s = Search { found: false, err: r.err, checks: r.checks };
     if (r.found) {
-      s = Search { found: false, err: Distrusted(at) };
+      s = Search { found: false, err: Distrusted(at), checks: r.checks };
     }
     i += 1;
   }
   i = 0;
   while (i < inter.len()) {
+    if (s.checks >= MAX_CHECKS) {
+      return Search { found: false, err: SearchLimit, checks: s.checks };
+    }
+    if (__in_path(below, inter[i])) {
+      i += 1;
+      continue;
+    }
     let r = __try(below, inter[i], at, now, s);
     if (r.found) {
-      let up = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err });
+      let up = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err, checks: r.checks });
       if (up.found) {
         return up;
       }
       r = up;
     }
-    s = Search { found: false, err: r.err };
+    s = Search { found: false, err: r.err, checks: r.checks };
     i += 1;
   }
   return s;
+}
+
+// A certificate with the name and the key of one already in the path adds
+// nothing to it.
+function __in_path(below: x509.Certificate[], candidate: x509.Certificate): boolean {
+  for b in below {
+    if (__same_bytes(b.subject.raw, candidate.subject.raw) && __same_bytes(b.spki, candidate.spki)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function __distrusted(roots: Roots, i: i32, leaf: x509.Certificate): boolean {
@@ -638,27 +663,27 @@ function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, 
     return s;
   }
   if (denied_key(candidate)) {
-    return Search { found: false, err: DeniedKey(at) };
+    return Search { found: false, err: DeniedKey(at), checks: s.checks };
   }
   match (__issuer_ok(candidate, at, now)) {
     Ok(ok) => {
       if (!__constraints_ok(candidate, below)) {
-        return Search { found: false, err: NameConstraint(at) };
+        return Search { found: false, err: NameConstraint(at), checks: s.checks };
       }
     },
     Err(e) => {
-      return Search { found: false, err: e };
+      return Search { found: false, err: e, checks: s.checks };
     }
   }
   match (__signed_by(c, candidate)) {
     Ok(ok) => {
       if (ok) {
-        return Search { found: true, err: s.err };
+        return Search { found: true, err: s.err, checks: s.checks + 1 };
       }
-      return Search { found: false, err: BadSignature(at - 1) };
+      return Search { found: false, err: BadSignature(at - 1), checks: s.checks + 1 };
     },
     Err(e) => {
-      return Search { found: false, err: e };
+      return Search { found: false, err: e, checks: s.checks + 1 };
     }
   }
   return s;
@@ -829,7 +854,7 @@ pub function denied_key(c: x509.Certificate): boolean {
 <<22 function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boolean): Result[x509.Certific...>>=
 function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boolean): Result[x509.Certificate, VerifyError] {
   let leaf = certs[0];
-  let s = __extend([leaf], 1, certs.drop(1), roots, now, server, Search { found: false, err: UnknownIssuer });
+  let s = __extend([leaf], 1, certs.drop(1), roots, now, server, Search { found: false, err: UnknownIssuer, checks: 0 });
   if (!s.found) {
     return Err(s.err);
   }
