@@ -9,11 +9,12 @@ import (
 func TestSelfHostNdarrayAdapterPrune(t *testing.T) {
 	const src = `import "./ir";
 import "./irtables";
+import "./sourcepos";
 import "./lexer";
 import "./parser";
 import "./semndprune";
 function body(name: string, ops: ir.Op[]): irtables.LowerResult {
-  return irtables.LowerResult { source_positions: irtables.no_source(),  ok: true, ops: ops, n_locals: 0, n_params: 0,
+  return irtables.LowerResult { source_positions: sourcepos.no_source(),  ok: true, ops: ops, n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], v128_slots: [],
     why: "", name: name, result_kind: 0, dbg_slots: [], dbg_names: [], dbg_types: [] };
 }

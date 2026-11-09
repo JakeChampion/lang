@@ -5551,7 +5551,3 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
   }
   return ssa.SInst { kind_tag: ssa.PHI, result: result, args: ops, imm: 0, str: "" };
 }
-
-pub function no_source(): sourcepos.SourceInfo {
-  return sourcepos.no_source();
-}

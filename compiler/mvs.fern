@@ -372,7 +372,7 @@ pub function selected(st: State): Result[Sel[], string] {
 }
 
 function raise(st: State, pkg: string, min: string, via: string): State {
-  let v = match (parse_version(min)) { Ok(value) => value, Err(message) => { return with_err(st, via + "dependency " + quoted(pkg) + ": " + message); } };
+  let v = match (parse_version(min)) { Ok(value) => value, Err(message) => { return with_err(st, via + "dependency " + util.quoted(pkg) + ": " + message); } };
   let ver = version_string(v);
   if (banned(st, pkg, ver)) {
     let avail = index_versions(st.ix, pkg);
@@ -388,14 +388,14 @@ function raise(st: State, pkg: string, min: string, via: string): State {
       }
     }
     if (up.len() == 0) {
-      return with_err(st, via + "dependency " + quoted(pkg) + ": version " + ver
+      return with_err(st, via + "dependency " + util.quoted(pkg) + ": version " + ver
         + " is excluded by the top-level manifest and the index has no higher non-excluded version (available: "
         + vers_list(avail) + ")");
     }
     ver = up;
   }
   if (!index_has(st.ix, pkg, ver)) {
-    return with_err(st, via + "dependency " + quoted(pkg) + " has no version " + ver
+    return with_err(st, via + "dependency " + util.quoted(pkg) + " has no version " + ver
       + " in the index (available: " + vers_list(index_versions(st.ix, pkg)) + ")");
   }
   let cur = selected_version(st, pkg);
@@ -512,13 +512,13 @@ pub function lock_text(serial: string, sel: Sel[]): string {
   let i = 0;
   while (i < sel.len()) {
     out += "\n[[package]]\n";
-    out = out + "name = " + quoted(sel[i].name) + "\n";
-    out = out + "version = " + quoted(sel[i].ver) + "\n";
+    out = out + "name = " + util.quoted(sel[i].name) + "\n";
+    out = out + "version = " + util.quoted(sel[i].ver) + "\n";
     if (sel[i].src.path.len() > 0) {
-      out = out + "path = " + quoted(sel[i].src.path) + "\n";
+      out = out + "path = " + util.quoted(sel[i].src.path) + "\n";
     } else {
-      out = out + "url = " + quoted(sel[i].src.url) + "\n";
-      out = out + "hash = " + quoted(sel[i].src.hash) + "\n";
+      out = out + "url = " + util.quoted(sel[i].src.url) + "\n";
+      out = out + "hash = " + util.quoted(sel[i].src.hash) + "\n";
     }
     i += 1;
   }
@@ -527,10 +527,6 @@ pub function lock_text(serial: string, sel: Sel[]): string {
 
 pub function split_char(s: string, c: u8): string[] {
   return util.split_char(s, c);
-}
-
-pub function quoted(s: string): string {
-  return "\"" + s + "\"";
 }
 
 pub function is_abs(p: string): boolean {

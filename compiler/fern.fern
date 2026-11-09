@@ -3162,7 +3162,7 @@ function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
   }
   dir = abs_dir(dir);
   if (!fern_toml.valid_dep_name(name)) {
-    eprint("fern: -add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    eprint("fern: -add: invalid dependency name " + util.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
     return 1;
   }
   let mdir = find_manifest_dir(dir);
@@ -3177,7 +3177,7 @@ function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
     return 1;
   }
   if (fern_toml.has_dep(man, name)) {
-    eprint("fern: -add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+    eprint("fern: -add: " + util.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
     return 1;
   }
   let line = dep_line(name, spec, grant, fetcher);
@@ -3236,7 +3236,7 @@ function dep_line(name: string, spec: string, grant: string, fetcher: Fetcher): 
   }
   if (grant.len() == 0) {
     if (spec.starts_with("version:")) {
-      return name + " = " + mvs.quoted(slice_unchecked(spec, 8, spec.len()) + "");
+      return name + " = " + util.quoted(slice_unchecked(spec, 8, spec.len()) + "");
     }
     return name + " = { " + fields + " }";
   }
@@ -3253,21 +3253,21 @@ function dep_source(spec: string, fetcher: Fetcher): string {
   } else if (spec.starts_with("path:")) {
     let p = slice_unchecked(spec, 5, spec.len()) + "";
     if (p.len() == 0) {
-      eprint("fern: -add: empty path in " + mvs.quoted(spec));
+      eprint("fern: -add: empty path in " + util.quoted(spec));
       return "";
     }
-    return "path = " + mvs.quoted(p);
+    return "path = " + util.quoted(p);
   } else if (spec.starts_with("version:")) {
     let v = slice_unchecked(spec, 8, spec.len()) + "";
     if (!fern_toml.is_version(v)) {
-      eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + mvs.quoted(v));
+      eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + util.quoted(v));
       return "";
     }
-    return "version = " + mvs.quoted(v);
+    return "version = " + util.quoted(v);
   } else if (spec.starts_with("url:")) {
     let u = slice_unchecked(spec, 4, spec.len()) + "";
     if (!u.starts_with("https://") && !u.starts_with("http://")) {
-      eprint("fern: -add: url must be http(s), got " + mvs.quoted(u));
+      eprint("fern: -add: url must be http(s), got " + util.quoted(u));
       return "";
     }
     eprint("fetching " + u + " to compute its hash…");
@@ -3276,9 +3276,9 @@ function dep_source(spec: string, fetcher: Fetcher): string {
       eprint("fern: -add: " + got.err);
       return "";
     }
-    return "url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash);
+    return "url = " + util.quoted(u) + ", hash = " + util.quoted(got.hash);
   }
-  eprint("fern: -add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z");
+  eprint("fern: -add: unrecognised source " + util.quoted(spec) + " — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z");
   return "";
 }
 
@@ -3291,7 +3291,7 @@ function grant_list(grant: string): string {
     if (quoted.len() > 0) {
       quoted += ", ";
     }
-    quoted += mvs.quoted(name);
+    quoted += util.quoted(name);
   }
   match (fern_toml.parse_capabilities("[" + quoted + "]")) {
     Ok(caps) => {
@@ -3300,7 +3300,7 @@ function grant_list(grant: string): string {
         if (out.len() > 0) {
           out += ", ";
         }
-        out += mvs.quoted(cap);
+        out += util.quoted(cap);
       }
       return "[" + out + "]";
     },
@@ -3396,7 +3396,7 @@ function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       }
       let got = fetch_into_store(fetcher, d.url, d.hash);
       if (got.err.len() > 0) {
-        return FetchWalk { ...out, err: "dependency " + mvs.quoted(d.name) + ": " + got.err };
+        return FetchWalk { ...out, err: "dependency " + util.quoted(d.name) + ": " + got.err };
       }
       ddir = got.dir;
     } else if (d.kind == "path") {
@@ -3426,7 +3426,7 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
       let got = fetcher.fetch(e.url, e.hash);
       if (got.err.len() > 0) {
-        return FetchWalk { ...out, err: "locked dependency " + mvs.quoted(e.name) + ": " + got.err };
+        return FetchWalk { ...out, err: "locked dependency " + util.quoted(e.name) + ": " + got.err };
       }
       out = FetchWalk { ...out, fetched: out.fetched + 1 };
     }
@@ -3474,7 +3474,7 @@ function run_vendor(start: string): i32 {
         mem = mvs.join_path(mdir, rel);
       }
       if (!has_manifest(mem)) {
-        eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
+        eprint("vendor: workspace member " + util.quoted(rel) + " has no fern.toml");
         return 1;
       }
       starts = starts.append(mem + "");
@@ -3499,7 +3499,7 @@ function run_vendor(start: string): i32 {
   while (i < set.names.len()) {
     let err = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
     if (err.len() > 0) {
-      eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
+      eprint("vendor: copying " + util.quoted(set.names[i]) + ": " + err);
       return 1;
     }
     i += 1;
@@ -3546,7 +3546,7 @@ function vendor_collect(starts: string[]): VendorSet {
         if (srcs[at] != src.dir) {
           return VendorSet {
             names: names, srcs: srcs,
-            err: "vendor: two different packages both named " + mvs.quoted(key)
+            err: "vendor: two different packages both named " + util.quoted(key)
               + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor",
           };
         }
@@ -3569,7 +3569,7 @@ function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
   if (d.kind == "url") {
     let store = store_dir(d.hash);
     if (store.len() == 0) {
-      return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
+      return VendorSrc { dir: "", err: "dependency " + util.quoted(d.name) + " (" + d.hash
         + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
     }
     return VendorSrc { dir: store, err: "" };
@@ -3591,12 +3591,12 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     Err(e) => {}
   }
   if (!have) {
-    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
+    return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is versioned but " + mdir
       + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
   let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(lock) => lock.entries, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
   if (!fern_toml.lock_has(entries, name)) {
-    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+    return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is not in " + mdir
       + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
   match (fern_toml.lock_path_of(entries, name)) {
@@ -3609,7 +3609,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     Some(h) => {
       let store = store_dir(h);
       if (store.len() == 0) {
-        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
+        return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + "@"
           + fern_toml.lock_version_of(entries, name) + " (" + h
           + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
       }
@@ -3617,7 +3617,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     },
     None => {}
   }
-  return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+  return VendorSrc { dir: "", err: "dependency " + util.quoted(name) + " is not in " + mdir
     + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
 }
 

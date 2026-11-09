@@ -12,16 +12,12 @@ function failure(message: string): Body {
   return Body { lines: [], register_entry: -1, unguarded_entry: -1, error: message };
 }
 
-function symbol_byte(c: u8): boolean {
-  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
-}
-
 function symbol(s: string): boolean {
   if (s.len() == 0 || s[0] >= b'0' && s[0] <= b'9') {
     return false;
   }
   for c in s {
-    if (!symbol_byte(c)) {
+    if (!util.is_symbol_byte(c)) {
       return false;
     }
   }
@@ -30,7 +26,7 @@ function symbol(s: string): boolean {
 
 function definition(line: string): string {
   let at = 0;
-  while (at < line.len() && symbol_byte(line[at])) {
+  while (at < line.len() && util.is_symbol_byte(line[at])) {
     at += 1;
   }
   let name = slice_unchecked(line, 0, at) + "";
