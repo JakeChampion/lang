@@ -668,9 +668,18 @@ function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
   return unfolded(ins);
 }
 
-// The i32 sum, difference or product of two constants, when it does not
-// overflow. A negation is the difference from 0.
+// Constant i32 arithmetic that does not overflow, and bitwise operations.
+// A negation is the difference from 0.
 pub function folded_i32(op: string, a: i32, b: i32): Option[i32] {
+  if (op == "&") {
+    return Some(a & b);
+  }
+  if (op == "|") {
+    return Some(a | b);
+  }
+  if (op == "^") {
+    return Some(a ^ b);
+  }
   if let Some(v) = arithmetic(op, a as i64, b as i64) {
     if (fits_i32(v)) {
       return Some(v as i32);
