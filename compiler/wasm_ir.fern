@@ -158,6 +158,7 @@ pub function need_ops(): string[] {
 }
 
 pub function needs_of(cache: irtables.LowerResult[]): string[] {
+  let kinds = op_kinds(cache);
   let out: string[] = [];
   let ops = need_ops();
   let oi = 0;
@@ -169,34 +170,34 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
       if (module_emits_push(cache, ops[oi], true)) {
         out = out.append(ops[oi] + "_u8");
       }
-    } else if (module_emits_op_cached(cache, ops[oi])) {
+    } else if (has_kind(kinds, ops[oi])) {
       out = out.append(ops[oi]);
     }
     oi += 1;
   }
-  if (module_emits_op_cached(cache, "random_i32") || module_emits_op_cached(cache, "map_hash_seed") || module_emits_op_cached(cache, "temp_dir")) {
+  if (has_kind(kinds, "random_i32") || has_kind(kinds, "map_hash_seed") || has_kind(kinds, "temp_dir")) {
     out = out.append("random_i32");
   }
-  if (module_emits_op_cached(cache, "open_reader_with") || module_emits_op_cached(cache, "open_writer_with")) {
+  if (has_kind(kinds, "open_reader_with") || has_kind(kinds, "open_writer_with")) {
     out = out.append("open_with");
   }
-  if (module_emits_op_cached(cache, "udp_bind_with") && !module_emits_op_cached(cache, "udp_bind")) {
+  if (has_kind(kinds, "udp_bind_with") && !has_kind(kinds, "udp_bind")) {
     out = out.append("udp_bind");
   }
   if (module_calls_direct(cache, "__fern_set_args")) {
     out = out.append("@calls_set_args");
   }
-  if (module_emits_op_cached(cache, "heap_alloc_count")) {
+  if (has_kind(kinds, "heap_alloc_count")) {
     out = out.append("@heap_alloc_count");
   }
-  if (module_emits_op_cached(cache, "ret_word") || module_emits_op_cached(cache, "call_word")) {
+  if (has_kind(kinds, "ret_word") || has_kind(kinds, "call_word")) {
     out = out.append("@ret_word");
   }
   if (module_allocates(cache)) {
     out = out.append("@allocates");
   }
-  if (module_emits_op_cached(cache, "arr_get") || module_emits_op_cached(cache, "arr_set")
-    || module_emits_op_cached(cache, "vget") || module_emits_op_cached(cache, "vset")) {
+  if (has_kind(kinds, "arr_get") || has_kind(kinds, "arr_set")
+    || has_kind(kinds, "vget") || has_kind(kinds, "vset")) {
     out = out.append("@abort_checks");
   }
   if (module_uses_arr_slice(cache)) {
@@ -236,10 +237,10 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_i64_udivrem(cache)) {
     out = out.append("@uses_i64_udivrem");
   }
-  if (module_emits_op_cached(cache, "mulhi_u")) {
+  if (has_kind(kinds, "mulhi_u")) {
     out = out.append("@uses_mulhi_u");
   }
-  if (module_emits_op_cached(cache, "mulhi_s")) {
+  if (has_kind(kinds, "mulhi_s")) {
     out = out.append("@uses_mulhi_s");
   }
   if (module_uses_random(cache)) {
@@ -272,34 +273,34 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_memchr(cache)) {
     out = out.append("@uses_memchr");
   }
-  if (module_emits_op_cached(cache, "count_byte_bytes")) {
+  if (has_kind(kinds, "count_byte_bytes")) {
     out = out.append("@uses_count_byte_bytes");
   }
-  if (module_emits_op_cached(cache, "count_below_u64")) {
+  if (has_kind(kinds, "count_below_u64")) {
     out = out.append("@uses_count_below_u64");
   }
-  if (module_emits_op_cached(cache, "sum_bytes_array")) {
+  if (has_kind(kinds, "sum_bytes_array")) {
     out = out.append("@uses_sum_bytes_array");
   }
-  if (module_emits_op_cached(cache, "bsd_sum_bytes")) {
+  if (has_kind(kinds, "bsd_sum_bytes")) {
     out = out.append("@uses_bsd_sum_bytes");
   }
-  if (module_emits_op_cached(cache, "memchr_bytes")) {
+  if (has_kind(kinds, "memchr_bytes")) {
     out = out.append("@uses_memchr_bytes");
   }
-  if (module_emits_op_cached(cache, "rmemchr_bytes")) {
+  if (has_kind(kinds, "rmemchr_bytes")) {
     out = out.append("@uses_rmemchr_bytes");
   }
-  if (module_emits_op_cached(cache, "count_runs_bytes")) {
+  if (has_kind(kinds, "count_runs_bytes")) {
     out = out.append("@uses_count_runs_bytes");
   }
-  if (module_emits_op_cached(cache, "scan_set_bytes")) {
+  if (has_kind(kinds, "scan_set_bytes")) {
     out = out.append("@uses_scan_set_bytes");
   }
-  if (module_emits_op_cached(cache, "mismatch_bytes")) {
+  if (has_kind(kinds, "mismatch_bytes")) {
     out = out.append("@uses_mismatch_bytes");
   }
-  if (module_emits_op_cached(cache, "mismatch_bytes_str")) {
+  if (has_kind(kinds, "mismatch_bytes_str")) {
     out = out.append("@uses_mismatch_bytes_str");
   }
   if (module_uses_rmemchr(cache)) {
@@ -329,19 +330,19 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_scale_f64(cache)) {
     out = out.append("@uses_scale_f64");
   }
-  if (module_emits_op_cached(cache, "outer_mul_f64")) {
+  if (has_kind(kinds, "outer_mul_f64")) {
     out = out.append("@uses_outer_mul_f64");
   }
-  if (module_emits_op_cached(cache, "inner_mul_add_f64")) {
+  if (has_kind(kinds, "inner_mul_add_f64")) {
     out = out.append("@uses_inner_mul_add_f64");
   }
   if (module_uses_crc32_cksum(cache)) {
     out = out.append("@uses_crc32_cksum");
   }
-  if (module_emits_op_cached(cache, "crc32_cksum_array")) {
+  if (has_kind(kinds, "crc32_cksum_array")) {
     out = out.append("@uses_crc32_cksum_array");
   }
-  if (module_emits_op_cached(cache, "crc32_ieee") || module_emits_op_cached(cache, "crc32_ieee_array")) {
+  if (has_kind(kinds, "crc32_ieee") || has_kind(kinds, "crc32_ieee_array")) {
     out = out.append("@uses_crc32_ieee");
   }
   if (module_uses_aes_gcm(cache)) {
@@ -350,7 +351,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_sha_hw_blocks(cache)) {
     out = out.append("@uses_sha_hw_blocks");
   }
-  if (module_uses_aes_gcm(cache) || module_emits_op_cached(cache, "bswap")) {
+  if (module_uses_aes_gcm(cache) || has_kind(kinds, "bswap")) {
     out = out.append("@uses_bswap");
   }
   if (module_uses_ascii_run(cache)) {
@@ -366,6 +367,28 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
     out = out.append("@uses_strings");
   }
   return out;
+}
+
+// op_kinds marks, by kind tag, each op kind that some body of the module emits.
+function op_kinds(cache: irtables.LowerResult[]): i32[] {
+  let seen: i32[] = [];
+  for r in cache {
+    for o in r.ops {
+      if (o.kind_tag < 0) {
+        continue;
+      }
+      while (seen.len() <= o.kind_tag) {
+        seen = seen.append(0);
+      }
+      seen = seen.with(o.kind_tag, 1);
+    }
+  }
+  return seen;
+}
+
+function has_kind(seen: i32[], kind: string): boolean {
+  let k = ir.kind_id(kind);
+  return k < seen.len() && seen[k] != 0;
 }
 
 pub function union_strs(a: string[], b: string[]): string[] {

@@ -36,6 +36,7 @@ import "./x86_native";
 import "./elf";
 import "./elfimage";
 import "./imagemanifest";
+import "./indexsign";
 import "./apk";
 import "./dex";
 import "./ircore";
@@ -2401,6 +2402,8 @@ function flag_groups(): FlagGroup[] {
       mode_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL, workspace or version:X.Y.Z)"),
       sub_flag("-grant", "CAPS", ["-add"], "with -add: the comma-separated capabilities the dependency may reach, or none"),
       mode_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
+      mode_flag("-sign-index", "", "write INDEX.sig, the ed25519 signature over the package index INDEX, and print its index_key line"),
+      sub_flag("-key", "FILE", ["-sign-index"], "with -sign-index: the ed25519 private key in PKCS#8 PEM, as `openssl genpkey -algorithm ed25519` writes it"),
       mode_flag("-vendor", "", "flatten the dependency graph into vendor/"),
       mode_flag("-fetch", "", "download the url dependencies into the package store"),
     ] },
@@ -6669,6 +6672,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let fmt_diff = false;
   let mode_caps = false;
   let mode_manifest = false;
+  let mode_sign_index = false;
+  let sign_key = "";
   let profile_name = "";
   let mode_effects = false;
   let mode_targets = false;
@@ -6796,6 +6801,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       profile_name = f.value;
     } else if (f.name == "-manifest") {
       mode_manifest = f.on;
+    } else if (f.name == "-sign-index") {
+      mode_sign_index = f.on;
+    } else if (f.name == "-key") {
+      sign_key = f.value;
     } else if (f.name == "-shared") {
       shared = f.on;
     } else if (f.name == "-export") {
@@ -6871,6 +6880,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
   if (mode_manifest) {
     return run_manifest(entry_path);
+  }
+  if (mode_sign_index) {
+    return indexsign.run(entry_path, sign_key);
   }
   if (tf.version) {
     return print_version(root);
