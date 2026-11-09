@@ -200,6 +200,14 @@ function test_byte_range(): test.TestOutcome {
   return test.assert_eq(got + range_shown(static.byte_range("bytes=-5", 0 as i64, 200)), "0+100 0+100 99+1 unsat 99+1 unsat 0+100 1+2 1+2 5+2 unsat unsat 10+10,0+5,95+5, whole whole whole unsat");
 }
 
+function test_byte_range_past_i64(): test.TestOutcome {
+  let got = "";
+  for v in ["bytes=18446744073709551616-18446744073709551620", "bytes=9223372036854775808-", "bytes=46116860184273879040-", "bytes=0-18446744073709551616", "bytes=-18446744073709551616"] {
+    got = got + range_shown(static.byte_range(v, 1000 as i64, 200)) + " ";
+  }
+  return test.assert_eq(got, "unsat unsat unsat 0+1000 0+1000 ");
+}
+
 function test_content_type(): test.TestOutcome {
   let got = "";
   for p in ["www/app.JS", "x.wasm", "logo.png", "font.woff2", "data.json", "noext", "dir.d/file", "archive.tar.gz"] {
@@ -233,6 +241,7 @@ function main(): i32 {
   r = r.it("Cache-Control on the file and its 304", test_cache_control);
   r = r.it("serve_path takes a router's rest parameter", test_serve_path);
   r = r.it("byte_range reads RFC 9110 ranges", test_byte_range);
+  r = r.it("byte_range saturates a number past i64", test_byte_range_past_i64);
   r = r.it("content_type by extension", test_content_type);
   r = r.it("the same handler on the simulated platform", test_sim_platform);
   return r.finish();

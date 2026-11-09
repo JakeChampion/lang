@@ -69,6 +69,17 @@ function test_edges(): test.TestOutcome {
     && glob.is_match("**", "any/thing"));
 }
 
+function test_many_stars_finish(): test.TestOutcome {
+  let text = "";
+  for i in 0..80 {
+    text = text + "a";
+  }
+  return test.assert_true(!glob.is_match("*a*a*a*a*a*a*a*a*a*a*b", text)
+    && glob.is_match("*a*a*a*a*a*a*a*a*a*a*", text)
+    && !glob.is_match("**a**a**a**a**a**a**a**a**b", text)
+    && glob.is_match("**/a*a*a*a", "x/y/" + text));
+}
+
 function main(): i32 {
   let r = test.new("std/glob");
   r = r.it("literal", test_literal);
@@ -78,5 +89,6 @@ function main(): i32 {
   r = r.it("char class", test_char_class);
   r = r.it("negated class", test_negated_class);
   r = r.it("edges", test_edges);
+  r = r.it("many stars finish", test_many_stars_finish);
   return r.finish();
 }

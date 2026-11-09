@@ -180,6 +180,9 @@ function with_package_key(m: Manifest, key: string, val: string): Manifest {
   match (parse_string(val)) {
     Ok(value) => {
       if (key == "name") {
+        if (!valid_dep_name(value)) {
+          return failed(m, "invalid [package] name " + docsummary.quote(value) + " (letters, digits, `_`, `-`; must not start with a digit)");
+        }
         return Manifest { ...m, name: value };
       }
       if (key == "lib") {

@@ -84,6 +84,9 @@ under `DIR` (creating subdirectories), so the generated tree can be
 inspected or built directly; a single-`<<*>>` document writes
 `-tangle -o FILE`. `-weave -o FILE` writes the woven Markdown.
 
+A `file=` name is a path below the output directory. An absolute path
+or a name with a `..` segment is an error (`E092`) at the fence line.
+
 ```sh
 fern -tangle -o gen/ prog.fern.md    # eject each module under gen/
 fern -tangle -o prog.fern one.fern.md
