@@ -69,3 +69,40 @@ func TestCheckerCorpusMatricesCoverEveryShard(t *testing.T) {
 		t.Fatal("stdlib checker timeout changed")
 	}
 }
+
+func TestStdTestCorpusMatrixCoversEveryShard(t *testing.T) {
+	job := jobBlocks(readWorkflow(t, mustRepoRoot(t), "test-e2e-selfhost.yml"))["selfhost-stdtest"]
+	for _, required := range []string{
+		`FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"`,
+		`name: selfhost-stdtest-${{ matrix.leg }}-${{ matrix.shard }}`,
+		`slot: stdtest-${{ matrix.leg }}-${{ matrix.shard }}`,
+	} {
+		if !strings.Contains(job, required) {
+			t.Errorf("stdlib corpus jobs omit %q", required)
+		}
+	}
+	expected := map[string]int{"x86-64": 8, "arm64": 8, "interp": 4, "x86-64-tls": 1, "arm64-tls": 1, "crypto-wasm": 1}
+	rows := regexp.MustCompile(`\{ leg: ([a-z0-9-]+), shard: ([0-9]+), count: ([0-9]+) \}`).FindAllStringSubmatch(job, -1)
+	seen := map[string]bool{}
+	for _, row := range rows {
+		count, _ := strconv.Atoi(row[3])
+		index, _ := strconv.Atoi(row[2])
+		want, ok := expected[row[1]]
+		key := row[1] + "/" + row[2]
+		if !ok || count != want || index >= count || seen[key] {
+			t.Errorf("invalid or duplicate stdlib corpus row %s", row[0])
+		}
+		seen[key] = true
+	}
+	for leg, count := range expected {
+		for index := 0; index < count; index++ {
+			key := leg + "/" + strconv.Itoa(index)
+			if !seen[key] {
+				t.Errorf("missing stdlib corpus shard %s", key)
+			}
+		}
+	}
+	if strings.Count(job, "-test.timeout 33m") != 6 {
+		t.Error("stdlib corpus timeouts changed")
+	}
+}

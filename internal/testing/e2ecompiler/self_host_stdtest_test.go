@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/testing/corpus"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -40,7 +41,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	cases := selfHostStdTestCases(t, tls)
+	cases := selfHostStdTestShard(t, selfHostStdTestCases(t, tls))
 
 	t.Run("cases", func(t *testing.T) {
 		for _, tc := range cases {
@@ -144,7 +145,7 @@ func TestSelfHostStdTestInterp(t *testing.T) {
 			t.Errorf("interpSlowStdTests names %q, which is not a std/test case", name)
 		}
 	}
-	for _, tc := range selfHostStdTestCases(t, false) {
+	for _, tc := range selfHostStdTestShard(t, selfHostStdTestCases(t, false)) {
 		if interpSlowStdTests[tc.name] {
 			continue
 		}
@@ -189,7 +190,7 @@ func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	cases := selfHostStdTestCases(t, tls)
+	cases := selfHostStdTestShard(t, selfHostStdTestCases(t, tls))
 	t.Run("cases", func(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -250,6 +251,15 @@ type selfHostStdTestCase struct {
 	name        string
 	src         string
 	stripPrefix string
+}
+
+func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
+	t.Helper()
+	selected, err := corpus.Shard(cases, os.Getenv("FERN_STDTEST_SHARD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return selected
 }
 
 func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {

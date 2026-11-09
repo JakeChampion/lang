@@ -258,13 +258,38 @@ jobs:
   # timed out two workers that each held one of them.
   selfhost-stdtest:
     needs: [driver-sizes]
-    name: selfhost-stdtest-${{ matrix.leg }}
+    name: selfhost-stdtest-${{ matrix.leg }}-${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        leg: [x86-64, x86-64-tls, arm64, arm64-tls, crypto-wasm, interp]
+        include:
+          - { leg: x86-64, shard: 0, count: 8 }
+          - { leg: x86-64, shard: 1, count: 8 }
+          - { leg: x86-64, shard: 2, count: 8 }
+          - { leg: x86-64, shard: 3, count: 8 }
+          - { leg: x86-64, shard: 4, count: 8 }
+          - { leg: x86-64, shard: 5, count: 8 }
+          - { leg: x86-64, shard: 6, count: 8 }
+          - { leg: x86-64, shard: 7, count: 8 }
+          - { leg: arm64, shard: 0, count: 8 }
+          - { leg: arm64, shard: 1, count: 8 }
+          - { leg: arm64, shard: 2, count: 8 }
+          - { leg: arm64, shard: 3, count: 8 }
+          - { leg: arm64, shard: 4, count: 8 }
+          - { leg: arm64, shard: 5, count: 8 }
+          - { leg: arm64, shard: 6, count: 8 }
+          - { leg: arm64, shard: 7, count: 8 }
+          - { leg: interp, shard: 0, count: 4 }
+          - { leg: interp, shard: 1, count: 4 }
+          - { leg: interp, shard: 2, count: 4 }
+          - { leg: interp, shard: 3, count: 4 }
+          - { leg: x86-64-tls, shard: 0, count: 1 }
+          - { leg: arm64-tls, shard: 0, count: 1 }
+          - { leg: crypto-wasm, shard: 0, count: 1 }
+    env:
+      FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -273,7 +298,7 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/oracle-verdict-cache
         with:
-          slot: stdtest-${{ matrix.leg }}
+          slot: stdtest-${{ matrix.leg }}-${{ matrix.shard }}
       - name: aarch64 cross-gcc + qemu
         if: startsWith(matrix.leg, 'arm64')
         uses: ./.github/actions/apt-cross-toolchain
