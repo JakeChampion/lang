@@ -1,0 +1,22 @@
+// Emit native AVC sequence metadata for independent syntax checks.
+import "std/video/avc";
+import "std/video/frame";
+import "../../tests/stdlib/video_avc_check" as check;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let sequence = match (avc.inspect_sps(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for value in check.values(sequence) {
+    print(value.to_string());
+  }
+  return 0;
+}
