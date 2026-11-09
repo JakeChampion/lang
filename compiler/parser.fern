@@ -25892,6 +25892,7 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   if (t.names.len() == 0) {
     return mod;
   }
+  let named = util.name_index(t.names);
   let funcs: FuncDecl[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
@@ -25909,6 +25910,10 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
     }
     if (fd.receiver_name.len() > 0) {
       bound = bound.append(fd.receiver_name);
+    }
+    if (!astwalk.names_any(fd.body, named)) {
+      funcs = funcs.append(FuncDecl { ...fd, params: params });
+      continue;
     }
     funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
   }
