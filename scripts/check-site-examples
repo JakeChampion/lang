@@ -2,8 +2,10 @@
 """Compile every complete Fern program on the docs site.
 
 A ```fern fence counts as a complete program when it imports something and
-defines `main` or `handle`; fragments are skipped. A program that imports a
-sibling module by relative path ("./x", "../x") is skipped too, since the
+defines `main` or `handle`; fragments are skipped. The code of each
+<FernPlayground> live snippet is a complete program too, because the
+playground runs it. A program that imports a
+sibling module by relative path ("./x", "../x") is skipped, since the
 other file is not on the page. Each program is compiled, not just checked,
 for x86-64-linux, or for T when the fence's info string carries `target=T`.
 
@@ -23,6 +25,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FENCE = re.compile(r"^```fern([^\n]*)\n(.*?)^```", re.S | re.M)
 RELATIVE = re.compile(r'^\s*import\s+"\.{1,2}/', re.M)
 PROGRAM = re.compile(r"\bfunction (main|handle)\b")
+# The code={`...`} template literal of a live snippet, up to its first
+# unescaped backtick.
+SNIPPET = re.compile(r"<FernPlayground\b[^>]*?\bcode=\{`((?:\\.|[^`\\])*)`\}", re.S)
+TEMPLATE_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0"}
+
+
+def template_text(raw):
+    """The string that a JavaScript template literal with this source gives."""
+    return re.sub(r"\\(.)", lambda m: TEMPLATE_ESCAPES.get(m.group(1), m.group(1)), raw, flags=re.S)
 
 
 def compiler():
@@ -57,6 +68,12 @@ def programs(paths):
             target = re.search(r"\btarget=(\S+)", info)
             where = os.path.relpath(page, ROOT) + ":" + str(text.count("\n", 0, m.start()) + 1)
             yield where, body, target.group(1) if target else "x86-64-linux"
+        for m in SNIPPET.finditer(text):
+            body = template_text(m.group(1))
+            if RELATIVE.search(body):
+                continue
+            where = os.path.relpath(page, ROOT) + ":" + str(text.count("\n", 0, m.start()) + 1)
+            yield where, body, "x86-64-linux"
 
 
 def compile_one(fern, tmp, i, prog):

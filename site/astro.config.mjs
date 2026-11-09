@@ -17,6 +17,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "astro/config";
+import mdx from "@astrojs/mdx";
 import starlight from "@astrojs/starlight";
 
 import { stdlibItems } from "./src/lib/stdlib-sidebar.mjs";
@@ -214,6 +215,7 @@ export default defineConfig({
       sidebar: [
         { label: "Overview", link: "/" },
         { label: "Why Fern", link: "/why/" },
+        { label: "Coming from Go, Rust or TypeScript", link: "/compare/" },
         // Starlight 0.39 removed the `{label, autogenerate}`
         // shorthand — groups now wrap autogenerate inside their
         // items list. Same end result; one extra layer.
@@ -256,5 +258,10 @@ export default defineConfig({
           "https://github.com/JakeChampion/lang/edit/main/site/",
       },
     }),
+    // Starlight adds MDX itself unless the config has it. In Astro 6 the
+    // MDX integration takes `gfm` from `markdown.gfm`, which is now unset,
+    // so without this an .mdx page renders no tables. After Starlight, as
+    // its docs require.
+    mdx({ gfm: true, optimize: true }),
   ],
 });
