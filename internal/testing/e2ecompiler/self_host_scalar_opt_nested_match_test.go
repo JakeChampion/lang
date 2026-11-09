@@ -195,24 +195,27 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 			t.Fatalf("%s: parse %q: %v", name, summary, err)
 		}
-		if allocs == 0 {
-			t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
-		}
 		return allocs, frees, live
 	}
 
-	for _, tc := range []struct{ name, src string }{
-		{"nested_in_if", scalarOptNestedIfSrc},
-		{"nested_in_while", scalarOptNestedWhileSrc},
-		{"call_init_nested_in_if", scalarOptCallNestedIfSrc},
-		{"flat_control", scalarOptFlatSrc},
-		{"call_init_flat_control", scalarOptCallFlatSrc},
-		{"block_scoped_nested", scalarOptBlockNestedSrc},
-		{"block_scoped_flat_control", scalarOptBlockFlatSrc},
-		{"read_after_the_enclosing_if", scalarOptUsedAfterSrc},
+	for _, tc := range []struct {
+		name, src string
+		allocs    int64
+	}{
+		{"nested_in_if", scalarOptNestedIfSrc, 0},
+		{"nested_in_while", scalarOptNestedWhileSrc, 0},
+		{"call_init_nested_in_if", scalarOptCallNestedIfSrc, 100},
+		{"flat_control", scalarOptFlatSrc, 0},
+		{"call_init_flat_control", scalarOptCallFlatSrc, 100},
+		{"block_scoped_nested", scalarOptBlockNestedSrc, 400},
+		{"block_scoped_flat_control", scalarOptBlockFlatSrc, 400},
+		{"read_after_the_enclosing_if", scalarOptUsedAfterSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
+			if allocs != tc.allocs {
+				t.Errorf("%s: allocs=%d, want %d", tc.name, allocs, tc.allocs)
+			}
 			if live != 0 || allocs != frees {
 				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
 					tc.name, allocs, frees, live)
