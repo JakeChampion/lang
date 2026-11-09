@@ -178,14 +178,14 @@ after the steering stopped working.
 ## Coverage-guided fuzzing of the readers
 
 The `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
-`tests/fuzz/stdparse.fern`. The package, literate, IR, assembler and image
-targets feed them to the readers of four drivers in `compiler/drivers/`. Go's
-fuzzer steers them blind for the same reason.
+`tests/fuzz/stdparse.fern`. The manifest, package, literate, IR, assembler
+and image targets feed them to the readers of five drivers in
+`compiler/drivers/`. Go's fuzzer steers them blind for the same reason.
 `TestSelfHostReaderCoverageGuidedFuzz` runs the same loop on a `-cover` build
 of each program.
 
-The rows cover the modules that the program imports: 56,249 for
-`stdparse.fern`, and from 13,491 to 32,864 for the drivers. A run of
+The rows cover the modules that the program imports: 56,347 for
+`stdparse.fern`, and from 10,080 to 32,837 for the drivers. A run of
 `stdparse.fern` costs about 45 ms, and most of that is the report. An abort
 ends a program before it writes the report, so an aborted run adds no rows.
 
