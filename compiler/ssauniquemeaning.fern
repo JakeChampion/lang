@@ -303,13 +303,13 @@ function constant_value(n: i32): i32 {
 }
 
 function unary_value(kind: i32, v: i32, unique: boolean): i32 {
-  if (kind == 7 || kind == 8) {
+  if (kind == ssa.COPY || kind == ssa.PHI) {
     return v;
   }
-  if (kind == 10 && (v == 3 || v == 4)) {
+  if (kind == ssa.UNARY && (v == 3 || v == 4)) {
     return if (v == 3) { 4 } else { 3 };
   }
-  if (kind == 11 && v == 1) {
+  if (kind == ssa.CALL && v == 1) {
     return if (unique) { 4 } else { 3 };
   }
   return 0;

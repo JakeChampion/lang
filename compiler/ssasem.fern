@@ -3667,7 +3667,7 @@ function guard_error(f: Func): string {
 }
 
 function projects(kind: i32): boolean {
-  return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
+  return kind == ssa.COPY || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
     || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as();
 }
@@ -3780,7 +3780,7 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
 }
 
 function gathers_views(kind: i32): boolean {
-  return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
+  return kind == ssa.PHI || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
     || kind == append() || kind == with() || kind == map_new() || kind == map_insert() || kind == dyn_box();
 }
 

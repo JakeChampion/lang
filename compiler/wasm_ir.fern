@@ -720,73 +720,73 @@ pub function module_uses_str_slice(cache: irtables.LowerResult[]): boolean {
 }
 
 function wasm_binop(tag: i32): string {
-  if (tag == 21) {
+  if (tag == ir.K_ADD) {
     return "i32.add";
   }
-  if (tag == 22) {
+  if (tag == ir.K_SUB) {
     return "i32.sub";
   }
-  if (tag == 23) {
+  if (tag == ir.K_MUL) {
     return "i32.mul";
   }
-  if (tag == 24) {
+  if (tag == ir.K_DIV_S) {
     return "call $__fern_idiv";
   }
-  if (tag == 26) {
+  if (tag == ir.K_REM_S) {
     return "call $__fern_irem";
   }
-  if (tag == 28) {
+  if (tag == ir.K_AND) {
     return "i32.and";
   }
-  if (tag == 29) {
+  if (tag == ir.K_OR) {
     return "i32.or";
   }
-  if (tag == 30) {
+  if (tag == ir.K_XOR) {
     return "i32.xor";
   }
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "i32.shl";
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "i32.shr_s";
   }
-  if (tag == 33) {
+  if (tag == ir.K_SHR_U) {
     return "i32.shr_u";
   }
-  if (tag == 25) {
+  if (tag == ir.K_DIV_U) {
     return "call $__fern_udiv";
   }
-  if (tag == 27) {
+  if (tag == ir.K_REM_U) {
     return "call $__fern_urem";
   }
-  if (tag == 35) {
+  if (tag == ir.K_EQ) {
     return "i32.eq";
   }
-  if (tag == 36) {
+  if (tag == ir.K_NE) {
     return "i32.ne";
   }
-  if (tag == 37) {
+  if (tag == ir.K_LT_S) {
     return "i32.lt_s";
   }
-  if (tag == 38) {
+  if (tag == ir.K_LE_S) {
     return "i32.le_s";
   }
-  if (tag == 39) {
+  if (tag == ir.K_GT_S) {
     return "i32.gt_s";
   }
-  if (tag == 40) {
+  if (tag == ir.K_GE_S) {
     return "i32.ge_s";
   }
-  if (tag == 41) {
+  if (tag == ir.K_LT_U) {
     return "i32.lt_u";
   }
-  if (tag == 42) {
+  if (tag == ir.K_LE_U) {
     return "i32.le_u";
   }
-  if (tag == 43) {
+  if (tag == ir.K_GT_U) {
     return "i32.gt_u";
   }
-  if (tag == 44) {
+  if (tag == ir.K_GE_U) {
     return "i32.ge_u";
   }
   return ircore.unsupported_op_refuse(tag, "wasm");
@@ -796,121 +796,121 @@ function wasm_binop_w(tag: i32, width: i32): string {
   if (width != 64) {
     return wasm_binop(tag);
   }
-  if (tag == 21) {
+  if (tag == ir.K_ADD) {
     return "i64.add";
   }
-  if (tag == 22) {
+  if (tag == ir.K_SUB) {
     return "i64.sub";
   }
-  if (tag == 23) {
+  if (tag == ir.K_MUL) {
     return "i64.mul";
   }
-  if (tag == 24) {
+  if (tag == ir.K_DIV_S) {
     return "call $__fern_idiv64";
   }
-  if (tag == 26) {
+  if (tag == ir.K_REM_S) {
     return "call $__fern_irem64";
   }
-  if (tag == 25) {
+  if (tag == ir.K_DIV_U) {
     return "call $__fern_udiv64";
   }
-  if (tag == 27) {
+  if (tag == ir.K_REM_U) {
     return "call $__fern_urem64";
   }
-  if (tag == 28) {
+  if (tag == ir.K_AND) {
     return "i64.and";
   }
-  if (tag == 29) {
+  if (tag == ir.K_OR) {
     return "i64.or";
   }
-  if (tag == 30) {
+  if (tag == ir.K_XOR) {
     return "i64.xor";
   }
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "i64.shl";
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "i64.shr_s";
   }
-  if (tag == 33) {
+  if (tag == ir.K_SHR_U) {
     return "i64.shr_u";
   }
-  if (tag == 35) {
+  if (tag == ir.K_EQ) {
     return "i64.eq";
   }
-  if (tag == 36) {
+  if (tag == ir.K_NE) {
     return "i64.ne";
   }
-  if (tag == 37) {
+  if (tag == ir.K_LT_S) {
     return "i64.lt_s";
   }
-  if (tag == 38) {
+  if (tag == ir.K_LE_S) {
     return "i64.le_s";
   }
-  if (tag == 39) {
+  if (tag == ir.K_GT_S) {
     return "i64.gt_s";
   }
-  if (tag == 40) {
+  if (tag == ir.K_GE_S) {
     return "i64.ge_s";
   }
-  if (tag == 41) {
+  if (tag == ir.K_LT_U) {
     return "i64.lt_u";
   }
-  if (tag == 42) {
+  if (tag == ir.K_LE_U) {
     return "i64.le_u";
   }
-  if (tag == 43) {
+  if (tag == ir.K_GT_U) {
     return "i64.gt_u";
   }
-  if (tag == 44) {
+  if (tag == ir.K_GE_U) {
     return "i64.ge_u";
   }
-  if (tag == 45) {
+  if (tag == ir.K_FADD) {
     return "f64.add";
   }
-  if (tag == 46) {
+  if (tag == ir.K_FSUB) {
     return "f64.sub";
   }
-  if (tag == 47) {
+  if (tag == ir.K_FMUL) {
     return "f64.mul";
   }
-  if (tag == 48) {
+  if (tag == ir.K_FDIV) {
     return "f64.div";
   }
-  if (tag == 57) {
+  if (tag == ir.K_FSQRT) {
     return "f64.sqrt";
   }
-  if (tag == 59) {
+  if (tag == ir.K_FFLOOR) {
     return "f64.floor";
   }
-  if (tag == 58) {
+  if (tag == ir.K_FCEIL) {
     return "f64.ceil";
   }
-  if (tag == 60) {
+  if (tag == ir.K_FTRUNC) {
     return "f64.trunc";
   }
-  if (tag == 56) {
+  if (tag == ir.K_FABS) {
     return "f64.abs";
   }
-  if (tag == 55) {
+  if (tag == ir.K_FNEG) {
     return "f64.neg";
   }
-  if (tag == 49) {
+  if (tag == ir.K_FEQ) {
     return "f64.eq";
   }
-  if (tag == 50) {
+  if (tag == ir.K_FNE) {
     return "f64.ne";
   }
-  if (tag == 51) {
+  if (tag == ir.K_FLT) {
     return "f64.lt";
   }
-  if (tag == 52) {
+  if (tag == ir.K_FLE) {
     return "f64.le";
   }
-  if (tag == 53) {
+  if (tag == ir.K_FGT) {
     return "f64.gt";
   }
-  if (tag == 54) {
+  if (tag == ir.K_FGE) {
     return "f64.ge";
   }
   return ircore.unsupported_op_refuse(tag, "wasm");
@@ -4151,12 +4151,12 @@ function emit_map_hash_seed_wat(): string {
 }
 
 function is_host_op_kind(tag: i32): boolean {
-  return tag == 163 || tag == 164 || tag == 182 || tag == 184
-    || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 169 || tag == 233 || tag == 170 || tag == 352
-    || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
-    || tag == 171 || tag == 310 || tag == 391 || tag == 432 || tag == 172 || tag == 180 || tag == 249 || tag == 166
-    || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
-    || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 405;
+  return tag == ir.K_PRINT_STR || tag == ir.K_EPRINT_STR || tag == ir.K_MONOTONIC_NS || tag == ir.K_NOW_UNIX_MS
+    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == 209 || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
+    || tag == ir.K_OPEN_FILE || tag == ir.K_OPEN_READER_WITH || tag == ir.K_OPEN_WRITER_WITH || tag == ir.K_WRITER_WRITE || tag == ir.K_WRITE_SOME || tag == ir.K_ENV || tag == ir.K_STAT || tag == ir.K_LSTAT || tag == ir.K_REMOVE_FILE || tag == ir.K_CREATE_DIR_ALL
+    || tag == ir.K_READ_DIR || tag == ir.K_READ_DIR_ALL || tag == ir.K_READ_DIR_INO || tag == ir.K_READ_DIR_INO_ALL || tag == ir.K_REMOVE_DIR_ALL || tag == ir.K_ARGS || tag == ir.K_ENVIRON || tag == ir.K_EXIT
+    || tag == ir.K_CREATE_DIR || tag == ir.K_REMOVE_DIR || tag == ir.K_CREATE_LINK || tag == ir.K_CREATE_SYMLINK || tag == ir.K_READ_LINK
+    || tag == ir.K_RENAME || tag == ir.K_SET_FILE_TIMES || tag == ir.K_WRITER_SET_TIMES || tag == ir.K_TRUNCATE || tag == ir.K_CLONE_FILE;
 }
 
 function emit_host_op_wat(o: ir.Op): string {

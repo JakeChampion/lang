@@ -633,7 +633,7 @@ function taken(t: typeinfo.Type): boolean {
 }
 
 function fresh_unit(kind: i32): boolean {
-  return kind == 8 || kind == 9 || kind == ssasem.append_range() || kind == ssasem.zero() || construction(kind) || hands_out(kind);
+  return kind == ssa.PHI || kind == ssa.BINARY || kind == ssasem.append_range() || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
 
 function hands_out(kind: i32): boolean {
@@ -1758,7 +1758,7 @@ function is_record(t: typeinfo.Type): boolean {
 }
 
 function projection(kind: i32): boolean {
-  return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
+  return kind == ssa.COPY || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
     || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
     || kind == ssasem.slice() || kind == ssasem.arr_slice() || kind == ssasem.str_as() || kind == ssasem.array_lend() || kind == ssasem.str_byte_view() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
 }

@@ -940,10 +940,10 @@ pub function buf_helper(kind: i32): string {
 }
 
 pub function buf_table_helper(kind: i32, packed: boolean): string {
-  if (packed && kind == 347) {
+  if (packed && kind == ir.K_BUF_TAKE_BYTES) {
     return "__fern_buf_take_bytes_u8";
   }
-  if (packed && kind == 351) {
+  if (packed && kind == ir.K_BUF_PUSH_BYTES_RANGE) {
     return "__fern_buf_push_bytes_range_u8";
   }
   return buf_helper(kind);

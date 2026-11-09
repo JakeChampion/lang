@@ -273,7 +273,7 @@ function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
 }
 
 function spends(k: i32): boolean {
-  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != 8;
+  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != ssa.PHI;
 }
 
 function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {

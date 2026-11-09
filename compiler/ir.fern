@@ -1757,7 +1757,7 @@ pub function op_aes_gcm_open_into(): Op {
 }
 
 pub function is_aes_gcm_op(tag: i32): boolean {
-  return tag == 402 || tag == 403 || tag == 404 || tag == 444 || tag == 445;
+  return tag == K_AES_EXPAND_KEY || tag == K_AES_CTR32 || tag == K_GHASH || tag == K_AES_GCM_SEAL_INTO || tag == K_AES_GCM_OPEN_INTO;
 }
 
 pub function op_sha256_hw(): Op {
@@ -5779,121 +5779,121 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
-  if (tag == 381 || tag == 382 || tag == 383) {
+  if (tag == K_OUTER_MUL_F64 || tag == K_INNER_MUL_ADD_F64 || tag == K_ARR_RESERVE) {
     return true;
   }
   if (is_aes_gcm_op(tag) || is_sha_blocks_op(tag)) {
     return true;
   }
-  if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {
+  if (tag == K_READ_CHUNK_BYTES || tag == K_WRITE_BYTES || tag == K_WRITE_SOME_BYTES || tag == K_WRITE_FILE_BYTES) {
     return true;
   }
-  if (tag == 218) {
+  if (tag == K_CONST_STRUCT) {
     return true;
   }
-  if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
+  if (tag == K_ALLOC || tag == K_ALLOC_U8 || tag == K_ARR_MAKE || tag == K_ARR_PUSH || tag == K_ARR_PUSH_OWNED || tag == K_ARR_PUSH_I64 || tag == K_ARR_PUSH_F64 || tag == K_ARR_PUSH_OWNED_I64 || tag == K_ARR_PUSH_OWNED_F64) {
     return true;
   }
-  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 380) {
+  if (tag == K_CONST_STR || tag == K_STR_CONCAT || tag == K_STR_SLICE || tag == K_STR_FROM_BYTES || tag == K_STR_FROM_BYTES_RANGE) {
     return true;
   }
-  if (tag == 138 || tag == 142) {
+  if (tag == K_STRUCT_MAKE || tag == K_TUPLE_MAKE) {
     return true;
   }
-  if (tag == 120) {
+  if (tag == K_OPT_MAKE) {
     return true;
   }
-  if (tag == 185 || tag == 104 || tag == 105) {
+  if (tag == K_RANDOM_BYTES || tag == K_STR_BYTES || tag == K_STR_SPLIT) {
     return true;
   }
-  if (tag == 180) {
+  if (tag == K_ARGS) {
     return true;
   }
-  if (tag == 169 || tag == 170) {
+  if (tag == K_READ_FILE || tag == K_WRITE_FILE) {
     return true;
   }
-  if (tag == 203 || tag == 304 || tag == 305) {
+  if (tag == K_OPEN_FILE || tag == K_OPEN_READER_WITH || tag == K_OPEN_WRITER_WITH) {
     return true;
   }
-  if (tag == 202 || tag == 308 || tag == 431) {
+  if (tag == K_WRITER_WRITE || tag == K_WRITE_SOME || tag == K_WRITER_SPLICE_FOREVER) {
     return true;
   }
-  if (tag == 233) {
+  if (tag == K_READ_FILE_BYTES) {
     return true;
   }
-  if (tag == 172) {
+  if (tag == K_REMOVE_DIR_ALL) {
     return true;
   }
-  if (tag == 173) {
+  if (tag == K_REMOVE_FILE) {
     return true;
   }
-  if (tag == 174) {
+  if (tag == K_TEMP_DIR) {
     return true;
   }
-  if (tag == 231) {
+  if (tag == K_CREATE_DIR_ALL) {
     return true;
   }
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363 || tag == 364 || tag == 365 || tag == 405) {
+  if (tag == K_CREATE_DIR || tag == K_REMOVE_DIR || tag == K_CREATE_LINK || tag == K_CREATE_SYMLINK || tag == K_READ_LINK || tag == K_RENAME || tag == K_SET_FILE_TIMES || tag == K_WRITER_SET_TIMES || tag == K_TRUNCATE || tag == K_RENAME_NOREPLACE || tag == K_RENAME_EXCHANGE || tag == K_GETXATTR || tag == K_LGETXATTR || tag == K_SETXATTR || tag == K_LSETXATTR || tag == K_CLONE_FILE) {
     return true;
   }
-  if (tag == 171 || tag == 310 || tag == 391 || tag == 432) {
+  if (tag == K_READ_DIR || tag == K_READ_DIR_ALL || tag == K_READ_DIR_INO || tag == K_READ_DIR_INO_ALL) {
     return true;
   }
-  if (tag == 176) {
+  if (tag == K_ENV) {
     return true;
   }
-  if (tag == 175) {
+  if (tag == K_STAT) {
     return true;
   }
-  if (tag == 270) {
+  if (tag == K_STATFS) {
     return true;
   }
-  if (tag == 398) {
+  if (tag == K_MOUNTS) {
     return true;
   }
-  if (tag == 401) {
+  if (tag == K_SYSCTL) {
     return true;
   }
-  if (tag == 276 || tag == 408) {
+  if (tag == K_WINDOW_SIZE || tag == K_PIPE) {
     return true;
   }
-  if (tag >= 420 && tag <= 428) {
+  if (tag >= K_OPEN_DIR && tag <= K_DIR_OPEN_FILE) {
     return true;
   }
   if (util.index_of_i32([241, 242, 281, 490, 307, 330, 407, 366], tag) >= 0) {
     return true;
   }
-  if (tag == 177) {
+  if (tag == K_SUBPROCESS) {
     return true;
   }
-  if (tag == 240 || tag == 250 || tag == 251) {
+  if (tag == K_HOSTNAME || tag == K_UNAME_FIELD || tag == K_GETCWD) {
     return true;
   }
-  if (tag == 248 || tag == 249) {
+  if (tag == K_GETGROUPS || tag == K_ENVIRON) {
     return true;
   }
-  if (tag == 106 || tag == 107) {
+  if (tag == K_STR_TO_UPPER || tag == K_STR_TO_LOWER) {
     return true;
   }
-  if (tag == 108 || tag == 109) {
+  if (tag == K_STR_REPEAT || tag == K_STR_TRIM) {
     return true;
   }
-  if (tag == 111 || tag == 113) {
+  if (tag == K_STR_REPLACE || tag == K_STR_LINES) {
     return true;
   }
-  if (tag == 146) {
+  if (tag == K_DYN_BOX) {
     return true;
   }
-  if (tag == 80 || tag == 315) {
+  if (tag == K_HEAP_BUMP_BYTES || tag == K_HEAP_ALLOC_COUNT) {
     return true;
   }
-  if (tag == 229 || tag == 230 || tag == 491) {
+  if (tag == K_HEAP_MARK || tag == K_HEAP_RELEASE_TO || tag == K_HEAP_ADOPT) {
     return true;
   }
-  if (tag == 216 || tag == 217) {
+  if (tag == K_ARR_PUSH_SHARED_COUNT || tag == K_ARR_PUSH_SHARED_BYTES) {
     return true;
   }
-  if (tag == 222) {
+  if (tag == K_MAP_HASH_SEED) {
     return true;
   }
   return false;
@@ -5901,12 +5901,12 @@ pub function op_allocates(tag: i32): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 385 || tag == 384 || tag == 383 || tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 482 || tag == 358 || tag == 97 || tag == 101 || tag == 102
-    || tag == 104 || tag == 105 || tag == 106
-    || tag == 107 || tag == 108 || tag == 109
-    || tag == 111 || tag == 113 || tag == 98
-    || tag == 99 || tag == 100 || tag == 225 || tag == 227
-    || tag == 234 || tag == 235 || tag == 245 || tag == 253 || tag == 446
-    || tag == 309 || tag == 480 || tag == 481 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
-    || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == 433;
+  return tag == K_CALL_WORD || tag == K_RET_WORD || tag == K_ARR_RESERVE || tag == K_INNER_MUL_ADD_F64 || tag == K_OUTER_MUL_F64 || tag == K_STR_FROM_BYTES_RANGE || tag == K_CRC32_CKSUM_ARRAY || tag == K_SUM_BYTES_ARRAY || tag == K_BSD_SUM_BYTES || tag == K_SCAN_SET_BYTES || tag == K_COUNT_RUNS_BYTES || tag == K_MISMATCH_BYTES || tag == K_RMEMCHR_BYTES || tag == K_COUNT_BYTE_BYTES || tag == K_COUNT_BELOW_U64 || tag == K_MEMCHR_BYTES || tag == K_STR_LEN || tag == K_STR_INDEX || tag == K_STR_SLICE
+    || tag == K_STR_BYTES || tag == K_STR_SPLIT || tag == K_STR_TO_UPPER
+    || tag == K_STR_TO_LOWER || tag == K_STR_REPEAT || tag == K_STR_TRIM
+    || tag == K_STR_REPLACE || tag == K_STR_LINES || tag == K_STR_CONCAT
+    || tag == K_STR_EQ || tag == K_STR_CMP || tag == K_MEMCHR || tag == K_ASCII_RUN
+    || tag == K_RMEMCHR || tag == K_COUNT_BYTE || tag == K_MISMATCH || tag == K_SUM_BYTES || tag == K_MISMATCH_BYTES_STR
+    || tag == K_CRC32_CKSUM || tag == K_CRC32_IEEE || tag == K_CRC32_IEEE_ARRAY || tag == K_SCALE_F64 || tag == K_SCAN_SET || tag == K_COUNT_RUNS || tag == K_BSD_SUM || tag == K_STR_HASH
+    || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == K_UTF8_BLOCKS;
 }

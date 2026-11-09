@@ -288,7 +288,7 @@ function kept_fields(f: ssasem.Func, whole: boolean[]): Kept {
 }
 
 function donation_edges(reference: boolean, kind: i32): boolean {
-  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new() || kind == ssasem.tuple_new();
+  return !reference || kind == ssa.COPY || kind == ssa.PHI || kind == ssasem.record_new() || kind == ssasem.tuple_new();
 }
 
 pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {

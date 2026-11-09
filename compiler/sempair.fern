@@ -348,7 +348,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
 
 // These instructions carry data names or parameter labels, never function references.
 function names_data(k: i32): boolean {
-  return k == 5 || k == 8 || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
+  return k == ssa.CONST_STR || k == ssa.PHI || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
 }
 
 function shaped(f: ssasem.Func): boolean {

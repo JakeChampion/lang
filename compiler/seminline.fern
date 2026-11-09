@@ -1394,7 +1394,7 @@ function leaf_call(f: ssasem.Func, ins: ssa.SInst): boolean {
 }
 
 function leaf_kind(k: i32): boolean {
-  return k >= 1 && k <= 10 && k != 5 || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
+  return k >= ssa.CONST_INT && k <= ssa.UNARY && k != ssa.CONST_STR || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new()
     || line_mark(k);
 }
@@ -1638,7 +1638,7 @@ function constructor_body(f: ssasem.Func): boolean {
 }
 
 function constructor_kind(k: i32): boolean {
-  return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || built_kind(k);
+  return literal_kind(k) || k == ssasem.param() || k == ssa.COPY || line_mark(k) || k == ssasem.call() || built_kind(k);
 }
 
 function built_kind(k: i32): boolean {

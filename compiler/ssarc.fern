@@ -2559,7 +2559,7 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 }
 
 function value_op(k: i32): boolean {
-  return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8 || k == 35 || k == ssasem.zero() || k == ssasem.call()
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssa.PARAM || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.zero() || k == ssasem.call()
     || k == ssasem.append_range() || ssasem.scalar_op(k) || ssasem.is_function_op(k)
     || k == ssasem.checked_present() || k == ssasem.checked_value();
 }
@@ -3838,7 +3838,7 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
 }
 
 function constant_op(k: i32): boolean {
-  return k == 1 || k == 2 || k == 5 || k == ssasem.zero();
+  return k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_STR || k == ssasem.zero();
 }
 
 function instruction(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, token: i32, tested: boolean): irtables.LowerState {

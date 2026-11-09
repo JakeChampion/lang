@@ -220,8 +220,8 @@ function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameInde
 }
 
 function aborting_kind(k: i32): boolean {
-  if (k >= 1) {
-    return k > 10;
+  if (k >= ssa.CONST_INT) {
+    return k > ssa.UNARY;
   }
   return k != ssasem.call() && k != ssasem.cast() && k != ssasem.tuple_get() && k != ssasem.record_get() && k != ssasem.zero();
 }

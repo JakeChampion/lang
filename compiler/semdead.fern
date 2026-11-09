@@ -113,7 +113,7 @@ function in_range(v: i32, n: i32): boolean {
 }
 
 function droppable(k: i32): boolean {
-  return k == 8 || k == 7 || k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new()
+  return k == ssa.PHI || k == ssa.COPY || k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new()
     || k == ssasem.checked_present() || k == ssasem.checked_value();
 }
 

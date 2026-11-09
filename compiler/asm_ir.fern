@@ -7990,10 +7990,10 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 }
 
 function ssa_shiftx_mnem(tag: i32): string {
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "shlxq";
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "sarxq";
   }
   return "shrxq";
