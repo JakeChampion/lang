@@ -3,7 +3,7 @@
   "libFLAC": "1.5.0",
   "sources": {
     "internal/stdlib/std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
-    "internal/stdlib/std/audio/flac/plan.fern.md": "afb46d11ae7b414430ec009feaac554d7dca2540852d40f8765147f6476fc919",
+    "internal/stdlib/std/audio/flac/plan.fern.md": "9f5ded4923a45d8d9ca434a87ee2fb578aa49aa8c44831b19cec1b836ae17f23",
     "internal/stdlib/std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
     "internal/stdlib/std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
     "internal/stdlib/std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53"

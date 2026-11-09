@@ -18,6 +18,10 @@ A zero integer mean uses parameter zero.
 
 The encoder compares those exact costs and the Rice-one parameter cap in one scan.
 The complete search also checks raw escapes and every permitted partition order.
+Cost scans reuse one bounded parameter cache.
+Only a smaller plan retains its selected parameter array.
+The cache uses eight bytes per permitted partition.
+Block divisibility, predictor order, and the requested partition limit cap that count.
 
 Source samples must fit the declared PCM depth before plan selection.
 The public encoder validates that range before it constructs any plan.
@@ -157,8 +161,31 @@ function predictor_cost(base: Channel, order: i32): i64 {
     + (if (base.kind >= 32) { 9i64 + order as i64 * 15i64 } else { 0i64 });
 }
 
+function partition_parameters(candidates: [i32], partition: i32, wide: boolean): i32[] {
+  let count = 1 << partition;
+  let method = if (wide) { 1 } else { 0 };
+  let output: i32[] = [];
+  for part in 0..count {
+    output = output.append(candidates[part * 2 + method]);
+  }
+  return output;
+}
+
+function partition_capacity(frames: i32, order: i32, maximum: i32): i32 {
+  let power = (frames as u32).trailing_zeros();
+  if (power > maximum) {
+    power = maximum;
+  }
+  let count = 1 << power;
+  while (frames / count < order) {
+    count >>= 1;
+  }
+  return count * 2;
+}
+
 function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Channel {
   let best = base;
+  let candidates = __alloc_i32(partition_capacity(base.frames, order, maximum));
   let p = 0;
   while (p <= maximum) {
     let count = 1 << p;
@@ -166,22 +193,19 @@ function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Cha
       break;
     }
     let per = base.frames / count;
-    let first: i32[] = [];
-    let second: i32[] = [];
     let first_cost = 6i64;
     let second_cost = 6i64;
     for part in 0..count {
       let start = part * per + (if (part == 0) { order } else { 0 });
       let selected = rice(values, start, (part + 1) * per);
-      first = first.append(selected.first);
-      second = second.append(selected.second);
+      candidates = candidates.with(part * 2, selected.first).with(part * 2 + 1, selected.second);
       first_cost += selected.first_cost;
       second_cost += selected.second_cost;
     }
     let wide = second_cost < first_cost;
     let cost = predictor_cost(base, order) + (if (wide) { second_cost } else { first_cost });
     if (cost < best.cost) {
-      best = Channel { ...base, kind: if (base.kind >= 32) { base.kind } else { 8 + order }, cost: cost, partition: p, rice2: wide, parameters: if (wide) { second } else { first } };
+      best = Channel { ...base, kind: if (base.kind >= 32) { base.kind } else { 8 + order }, cost: cost, partition: p, rice2: wide, parameters: partition_parameters(candidates, p, wide) };
     }
     p += 1;
   }
