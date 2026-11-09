@@ -4354,7 +4354,20 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
   return false;
 }
 
+// A component of a container type keeps its type: a variant does not widen
+// to its union there, and a value does not box to a dyn.
 function nested_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if let typeinfo.TypeUnion(_) = to {
+    if let typeinfo.TypeStruct(_) = from {
+      return false;
+    }
+  }
+  return element_assignable(from, to, unions);
+}
+
+// An element of a literal or a constructor takes the type of its slot, so a
+// variant widens to its union there. A value does not box to a dyn.
+function element_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
   if let typeinfo.TypeDyn(_) = to {
     return type_eq(from, to);
   }
@@ -10538,7 +10551,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
   while (i < a.args.len()) {
     let x = a.args[i];
     let y = b.args[i];
-    if (!is_unknown(x) && !is_unknown(y) && !mx_arm_compatible(VbStore { t: x, e: none }, VbStore { t: y, e: none }, elem, assigns, unions, enums)) {
+    if (!is_unknown(x) && !is_unknown(y) && !mx_component_compatible(VbStore { t: x, e: none }, VbStore { t: y, e: none }, elem, assigns, unions, enums)) {
       return false;
     }
     i += 1;
@@ -10575,7 +10588,7 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeArray(aa) => {
       match (b.t) {
         typeinfo.TypeArray(ba) => {
-          return mx_arm_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), false, assigns, unions, enums);
+          return mx_component_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), false, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -10610,6 +10623,24 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
       return false;
     }
   }
+}
+
+// A component of an arm keeps its type: a variant does not widen to its
+// union to join a sibling arm.
+function mx_component_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  if (mx_variant_beside_union(a.t, b.t) || mx_variant_beside_union(b.t, a.t)) {
+    return false;
+  }
+  return mx_arm_compatible(a, b, elem, assigns, unions, enums);
+}
+
+function mx_variant_beside_union(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(_) = a {
+    if let typeinfo.TypeUnion(_) = b {
+      return true;
+    }
+  }
+  return false;
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
@@ -12978,7 +13009,7 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
   if let typeinfo.TypeTuple(_) = want {
     if let ast.ExprCall(c) = e {
       if (parser.is_value_block(c)) {
-        return nested_assignable(check_expr(e, s), want, s.unions.unions);
+        return element_assignable(check_expr(e, s), want, s.unions.unions);
       }
     }
   }
@@ -13015,7 +13046,7 @@ function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     while (i < ga.len()) {
       if (typeinfo.is_dyn(wa[i]) && !is_unknown(ga[i]) && !typeinfo.is_dyn(ga[i])) {
         boxed = true;
-      } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !nested_assignable(ga[i], wa[i], s.unions.unions)) {
+      } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !element_assignable(ga[i], wa[i], s.unions.unions)) {
         return false;
       }
       i += 1;
@@ -13082,7 +13113,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    return view_free_settle(c.args[0], wa[at], s) && settles_to(c.args[0], wa[at], s);
+    return view_free_settle(c.args[0], wa[at], s) && settles_or_nested(c.args[0], wa[at], s);
   }
   return false;
 }
@@ -13182,7 +13213,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
     return true;
   }
   let t = check_expr(e, s);
-  return is_unknown(t) || nested_assignable(t, want, s.unions.unions);
+  return is_unknown(t) || element_assignable(t, want, s.unions.unions);
 }
 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
