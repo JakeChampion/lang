@@ -390,6 +390,72 @@ func TestSharedCImportsWeak(t *testing.T) {
 	runImportLoader(t, weakImportSrc, "")
 }
 
+// variadicImportSrc calls snprintf, a variadic C function, through three
+// imports of the same symbol: one for each set of argument types.
+const variadicImportSrc = `@import("libc.so.6", "snprintf")
+function c_format_int(buf: usize, size: usize, format: usize, value: i64): i32;
+
+@import("libc.so.6", "snprintf")
+function c_format_float(buf: usize, size: usize, format: usize, value: f64): i32;
+
+@import("libc.so.6", "snprintf")
+function c_format_mixed(buf: usize, size: usize, format: usize, a: i32, b: f64, c: usize): i32;
+
+// A NUL-terminated copy of s in C memory.
+function cstr(s: string): usize {
+  unsafe {
+    let p: usize = __alloc(s.len() + 1);
+    for i in 0..s.len() {
+      __store_u8(p + i as usize, s[i] as i32);
+    }
+    __store_u8(p + s.len() as usize, 0);
+    return p;
+  }
+}
+
+function text(p: usize): string {
+  let out: u8[] = [];
+  unsafe {
+    let i = 0;
+    while (__load_u8(p + i as usize) != 0) {
+      out = out.append(__load_u8(p + i as usize) as u8);
+      i += 1;
+    }
+    return string_from_bytes_unchecked(out);
+  }
+}
+
+pub function check(): i32 {
+  let n = 0;
+  unsafe {
+    let buf: usize = __alloc(64);
+    let r1 = c_format_int(buf, 64 as usize, cstr("[%ld]"), -42i64);
+    if (text(buf) == "[-42]" && r1 == 5) {
+      n += 1;
+    }
+    let r2 = c_format_float(buf, 64 as usize, cstr("%.2f"), 2.5);
+    if (text(buf) == "2.50" && r2 == 4) {
+      n += 10;
+    }
+    let r3 = c_format_mixed(buf, 64 as usize, cstr("%d %.1f %s"), 7, 1.25, cstr("ok"));
+    if (text(buf) == "7 1.2 ok") {
+      n += 100;
+    }
+  }
+  return n + 11000;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+// A variadic C function takes its variadic arguments where it takes fixed
+// arguments of their types, so an import with fixed parameters calls it.
+func TestSharedCImportsVariadic(t *testing.T) {
+	runImportLoader(t, variadicImportSrc, "")
+}
+
 // The integer arguments after the last argument register go on the stack
 // in their order, beside floats in their own registers.
 const manyArgsLib = `#include <stdint.h>
