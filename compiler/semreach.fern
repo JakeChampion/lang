@@ -697,10 +697,10 @@ function none_held(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst)
 
 function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Walk {
   let t = b.term;
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return entered(g, at, wk, b.id, t.target);
   }
-  if (t.kind_tag != 3) {
+  if (t.kind_tag != ssa.TERM_BRIF) {
     return wk;
   }
   let c = wk.vals[t.cond];
@@ -1069,7 +1069,7 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
   }
   if (wk.exec[pos] && b.term.kind_tag == ssa.TERM_BRIF) {
     let t = decided(b.term, wk.vals[b.term.cond], dead);
-    if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
+    if (t.kind_tag != ssa.TERM_BRIF || t.t != b.term.t || t.f != b.term.f) {
       return (ssa.SBlock { ...b, term: t }, true);
     }
   }

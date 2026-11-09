@@ -203,10 +203,10 @@ function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
 }
 
 function is_site(o: ir.Op, set: Set): boolean {
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == ir.K_CALL_DIRECT) {
     return o.str == "__task_park" || o.str == "__fern_task_park" || o.str == "__task_park_until" || o.str == "__fern_task_park_until" || set.rows.has(o.str);
   }
-  if (o.kind_tag == 150 || o.kind_tag == 151 || o.kind_tag == 147) {
+  if (o.kind_tag == ir.K_CALL_INDIRECT || o.kind_tag == ir.K_CALL_CLOSURE_DIRECT || o.kind_tag == ir.K_DYN_DISPATCH) {
     return set.indirect;
   }
   return false;
@@ -552,11 +552,11 @@ function from_word(class: string): ir.Op[] {
 }
 
 function group_end(ops: ir.Op[], at: i32): i32 {
-  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
+  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != ir.K_STORE_LOCAL && ops[at + 1].kind_tag != ir.K_DROP) {
     return -1;
   }
   let end = at + 2;
-  while (end + 1 < ops.len() && ops[end].kind_tag == 385 && ops[end + 1].kind_tag == 19) {
+  while (end + 1 < ops.len() && ops[end].kind_tag == ir.K_CALL_WORD && ops[end + 1].kind_tag == ir.K_STORE_LOCAL) {
     end += 2;
   }
   return end;
@@ -608,7 +608,7 @@ function read_count(o: ir.Op): i32 {
   if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return 1;
   }
-  if (o.kind_tag == 147) {
+  if (o.kind_tag == ir.K_DYN_DISPATCH) {
     return o.width;
   }
   return 0;
@@ -726,7 +726,7 @@ function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: 
     return n;
   }
   let opener = open[open.len() - 1 - depth];
-  if (ops[opener].kind_tag == 153) {
+  if (ops[opener].kind_tag == ir.K_LOOP) {
     return opener;
   }
   return end_of[opener];
@@ -795,14 +795,14 @@ function value_class(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): string 
   if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return slot_class(t, r, o.i32_imm);
   }
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == ir.K_CALL_DIRECT) {
     let row = set.rows.find(o.str);
     if (row >= 0) {
       return set.classes[row];
     }
     return "";
   }
-  if (o.kind_tag == ir.K_ARR_MAKE || o.kind_tag == 138 || o.kind_tag == 142 || o.kind_tag == ir.K_STR_CONCAT) {
+  if (o.kind_tag == ir.K_ARR_MAKE || o.kind_tag == ir.K_STRUCT_MAKE || o.kind_tag == ir.K_TUPLE_MAKE || o.kind_tag == ir.K_STR_CONCAT) {
     return "w";
   }
   return "";

@@ -1839,7 +1839,7 @@ function wide_at(s: State, at: i32): Option[Wide] {
 }
 
 function widened_constant(s: State, src: ssa.SInst, cast: ssa.SInst): Option[Wide] {
-  if (src.result != cast.args[0] || src.kind_tag != 1 || src.args.len() != 0) {
+  if (src.result != cast.args[0] || src.kind_tag != ssa.CONST_INT || src.args.len() != 0) {
     return None;
   }
   if (src.str == "" && ssasem.is_i32(s.values[src.result])) {
@@ -5672,10 +5672,10 @@ function mapped_args(args: i32[], map: i32[]): i32[] {
 }
 
 function mapped_term(t: ssa.STerm, map: i32[]): ssa.STerm {
-  if (t.kind_tag == 1 && t.value >= 0) {
+  if (t.kind_tag == ssa.TERM_RET && t.value >= 0) {
     return ssa.STerm { ...t, value: resolve(map, t.value) };
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa.STerm { ...t, cond: resolve(map, t.cond) };
   }
   return t;

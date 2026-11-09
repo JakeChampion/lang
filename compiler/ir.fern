@@ -2778,6 +2778,28 @@ pub const K_UDP_SENDTO_BYTES: i32 = 355;
 
 pub const K_UDP_SENDMMSG: i32 = 516;
 
+pub const K_STRUCT_MAKE: i32 = 138;
+
+pub const K_STRUCT_GET: i32 = 139;
+
+pub const K_STRUCT_SET_SHAPE: i32 = 141;
+
+pub const K_TUPLE_MAKE: i32 = 142;
+
+pub const K_TUPLE_GET: i32 = 143;
+
+pub const K_TUPLE_SET: i32 = 144;
+
+pub const K_VARIANT_IS: i32 = 145;
+
+pub const K_DYN_BOX: i32 = 146;
+
+pub const K_DIR_STAT: i32 = 423;
+
+pub const K_DIR_UNLINK: i32 = 425;
+
+pub const K_DIR_OPEN_FILE: i32 = 428;
+
 pub const K_UDP_RECVMMSG: i32 = 517;
 
 pub const K_RENAME_NOREPLACE: i32 = 356;
@@ -4011,7 +4033,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         }
       }
       if (!folded && i + 1 < cur.len() && r32
-        && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
+        && cur[i + 1].kind_tag == K_INT_EXTEND && cur[i + 1].width == 64) {
         let xv = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
           xv = xv & 4294967295i64;
@@ -4022,7 +4044,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         folded = true;
       }
       if (!folded && i + 1 < cur.len() && r64
-        && cur[i + 1].kind_tag == 8 && cur[i + 1].width == 0
+        && cur[i + 1].kind_tag == K_INT_WRAP && cur[i + 1].width == 0
         && (!cur[i + 1].unsigned || const_i64_value(cur[i]) as i32 >= 0)) {
         out = out.append(op_const_i32(const_i64_value(cur[i]) as i32));
         i += 2;
@@ -5640,13 +5662,13 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_TEE_LOCAL) {
     return "tee_local " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 149) {
+  if (o.kind_tag == K_CALL_DIRECT) {
     return "call_direct " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 157) {
+  if (o.kind_tag == K_BR) {
     return "br " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 158) {
+  if (o.kind_tag == K_BRIF) {
     return "brif " + util.i32_to_string(o.i32_imm);
   }
   if (o.kind_tag == K_LOAD) {
@@ -5688,25 +5710,25 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_OPT_MAKE) {
     return "opt_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 122) {
+  if (o.kind_tag == K_OPT_TAG) {
     return "opt_tag";
   }
-  if (o.kind_tag == 123) {
+  if (o.kind_tag == K_OPT_PAYLOAD) {
     return "opt_payload";
   }
-  if (o.kind_tag == 124) {
+  if (o.kind_tag == K_OPT_SET_PAYLOAD) {
     return "opt_set_payload";
   }
-  if (o.kind_tag == 138) {
+  if (o.kind_tag == K_STRUCT_MAKE) {
     return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 139) {
+  if (o.kind_tag == K_STRUCT_GET) {
     return "struct_get " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 140) {
+  if (o.kind_tag == K_STRUCT_SET) {
     return "struct_set " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 145) {
+  if (o.kind_tag == K_VARIANT_IS) {
     return "variant_is " + o.str;
   }
   if (o.kind_tag == K_CONST_STRUCT) {
@@ -5716,10 +5738,10 @@ pub function render_op(o: Op): string {
     }
     return "const_struct " + const_struct_type(o.str) + "/" + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 142) {
+  if (o.kind_tag == K_TUPLE_MAKE) {
     return "tuple_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 143) {
+  if (o.kind_tag == K_TUPLE_GET) {
     return "tuple_get " + util.i32_to_string(o.i32_imm);
   }
   return kind_name(o.kind_tag);
@@ -5753,7 +5775,7 @@ pub function call_needs_heap(name: string): boolean {
 }
 
 pub function op_needs_heap(o: Op): boolean {
-  return op_allocates(o.kind_tag) || o.kind_tag == 149 && call_needs_heap(o.str);
+  return op_allocates(o.kind_tag) || o.kind_tag == K_CALL_DIRECT && call_needs_heap(o.str);
 }
 
 pub function op_allocates(tag: i32): boolean {

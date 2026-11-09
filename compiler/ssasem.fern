@@ -291,10 +291,10 @@ function uses_of(f: Func): Uses {
 }
 
 function term_operand(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;
@@ -3325,25 +3325,25 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     }
   }
   let d = defs[v];
-  if (d.kind_tag == 6) {
+  if (d.kind_tag == ssa.PARAM) {
     if (util.index_of_i32(out.params, d.imm) < 0) {
       out = ViewSources { ...out, params: out.params.append(d.imm) };
     }
     return out;
   }
-  if (d.kind_tag == 5) {
+  if (d.kind_tag == ssa.CONST_STR) {
     return out;
   }
   if (d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return out;
   }
-  if (d.kind_tag == 8) {
+  if (d.kind_tag == ssa.PHI) {
     for a in d.args {
       out = view_sources(f, defs, anchors, names, a, kind, out);
     }
     return out;
   }
-  if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
+  if (d.kind_tag != ssa.PHI && gathers_views(d.kind_tag)) {
     if (!holds_view(f, f.values[v])) {
       return ViewSources { ...out, escapes: true, escape_kind: kind };
     }
@@ -3691,7 +3691,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (!holds_view(f, f.values[v])) {
     return [v];
   }
-  if (d.kind_tag == 5 || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
+  if (d.kind_tag == ssa.CONST_STR || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return [];
   }
   if (projects(d.kind_tag) && d.args.len() > 0) {
@@ -3722,7 +3722,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   }
   let roots: i32[] = [];
   for a in d.args {
-    if (a < 0 || d.kind_tag != 8 && !holds_view(f, f.values[a])) {
+    if (a < 0 || d.kind_tag != ssa.PHI && !holds_view(f, f.values[a])) {
       continue;
     }
     if (counted_view(f, defs, a, next)) {
@@ -3761,13 +3761,13 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
     return true;
   }
   let d = defs[v];
-  if (d.kind_tag == 5) {
+  if (d.kind_tag == ssa.CONST_STR) {
     return true;
   }
   if (d.kind_tag == str_as() && d.args.len() == 1) {
     return !is_view(f.values[d.args[0]]);
   }
-  if (d.kind_tag != 8) {
+  if (d.kind_tag != ssa.PHI) {
     return false;
   }
   let next = seen.with(v, true);
@@ -5076,7 +5076,7 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
     return plan;
   }
   let home = m.home[consumer];
-  let edge = defs[consumer].kind_tag == 8;
+  let edge = defs[consumer].kind_tag == ssa.PHI;
   let at = home;
   if (edge) {
     let preds = f.graph.blocks[home].preds;
@@ -5358,10 +5358,10 @@ pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
 }
 
 function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return ssa.STerm { ...t, value: mapped(map, t.value) };
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa.STerm { ...t, cond: mapped(map, t.cond) };
   }
   return t;

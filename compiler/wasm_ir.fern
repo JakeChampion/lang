@@ -33,10 +33,10 @@ pub function str_values(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 5) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STR) {
         vals = intern_str(vals, r.ops[i].str);
       }
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = nested_strs(vals, r.ops[i].str);
       }
       i += 1;
@@ -466,7 +466,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = intern_const_agg(vals, r.ops[i].str);
       }
       if (answers_empty_bytes(r.ops[i]) && util.index_of_str(vals, empty_bytes_const()) < 0) {
@@ -480,7 +480,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
 }
 
 function answers_empty_bytes(o: ir.Op): boolean {
-  return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
+  return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == ir.K_CALL_DIRECT && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
 function intern_const_agg(vals: string[], packed: string): string[] {
@@ -1030,14 +1030,14 @@ function is_frame_window(o: ir.Op): boolean {
 
 pub function module_calls_direct(cache: irtables.LowerResult[], name: string): boolean {
   function is_call_to(o: ir.Op): boolean {
-    return o.kind_tag == 149 && o.str == name;
+    return o.kind_tag == ir.K_CALL_DIRECT && o.str == name;
   }
   return any_op(cache, is_call_to);
 }
 
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   function is_task_call(o: ir.Op): boolean {
-    return o.kind_tag == 149 && ircore.is_task_runtime_fn(o.str);
+    return o.kind_tag == ir.K_CALL_DIRECT && ircore.is_task_runtime_fn(o.str);
   }
   return any_op(cache, is_task_call);
 }
@@ -4004,10 +4004,10 @@ pub function fn_value_table(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {
+      if (r.ops[i].kind_tag == ir.K_CONST_FUNC && util.index_of_str(out, r.ops[i].str) < 0) {
         out = out.append(r.ops[i].str);
       }
-      if (r.ops[i].kind_tag == 218) {
+      if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         let cfb = ir.const_struct_fn_body(r.ops[i].str);
         if (cfb.len() > 0 && util.index_of_str(out, cfb) < 0) {
           out = out.append(cfb);
@@ -4044,7 +4044,7 @@ pub function indirect_fn_sigs(cache: irtables.LowerResult[]): string[] {
     let r = cache[fi];
     let i = 0;
     while (i < r.ops.len()) {
-      if (r.ops[i].kind_tag == 150) {
+      if (r.ops[i].kind_tag == ir.K_CALL_INDIRECT) {
         let nm = fn_type_name(r.ops[i]);
         let sg = r.ops[i].str;
         if (sg.len() == 0) {
@@ -4640,7 +4640,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_fd_syncfs\n");
   } else if (o.kind_tag == ir.K_FD_DUP_ONTO) {
     parts = parts.append("    call $__fern_fd_dup_onto\n");
-  } else if (o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == 497) {
+  } else if (o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     parts = parts.append("");
   } else if (o.kind_tag == ir.K_WRITER_NONBLOCKING) {
     parts = parts.append("    call $__fern_writer_nonblocking\n");
@@ -4678,7 +4678,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_signal_disposition_read(parts);
   } else if (o.kind_tag == ir.K_HOSTNAME) {
     parts = emit_wasm_hostname(bctmp, parts);
-  } else if (o.kind_tag == 148) {
+  } else if (o.kind_tag == ir.K_WASM_TIMER_POLLABLE) {
     parts = emit_wasm_wasm_timer_pollable(parts);
   } else if (o.kind_tag == ir.K_WASM_POLLABLE_DROP) {
     parts = parts.append("    call $__fern_pollable_drop\n");
@@ -4816,23 +4816,23 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.tee " + util.i32_to_string(o.i32_imm) + "\n");
   } else if (o.kind_tag == ir.K_NOT) {
     parts = parts.append("    i32.eqz\n");
-  } else if (o.kind_tag == 160) {
+  } else if (o.kind_tag == ir.K_RETURN) {
     parts = parts.append("    return\n");
-  } else if (o.kind_tag == 154) {
+  } else if (o.kind_tag == ir.K_IF) {
     parts = parts.append("    if\n");
-  } else if (o.kind_tag == 155) {
+  } else if (o.kind_tag == ir.K_ELSE) {
     parts = parts.append("    else\n");
-  } else if (o.kind_tag == 152) {
+  } else if (o.kind_tag == ir.K_BLOCK) {
     parts = parts.append("    block\n");
-  } else if (o.kind_tag == 153) {
+  } else if (o.kind_tag == ir.K_LOOP) {
     parts = parts.append("    loop\n");
-  } else if (o.kind_tag == 156) {
+  } else if (o.kind_tag == ir.K_END) {
     parts = parts.append("    end\n");
-  } else if (o.kind_tag == 157) {
+  } else if (o.kind_tag == ir.K_BR) {
     parts = parts.append("    br " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 158) {
+  } else if (o.kind_tag == ir.K_BRIF) {
     parts = parts.append("    br_if " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 159) {
+  } else if (o.kind_tag == ir.K_DROP) {
     parts = parts.append("    drop\n");
   } else if (o.kind_tag == ir.K_RAW_STORE_PTR) {
     parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
@@ -4900,43 +4900,43 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  } else if (o.kind_tag == 122) {
+  } else if (o.kind_tag == ir.K_OPT_TAG) {
     parts = parts.append("    i32.load\n");
-  } else if (o.kind_tag == 123 && o.width == 64) {
+  } else if (o.kind_tag == ir.K_OPT_PAYLOAD && o.width == 64) {
     parts = parts.append("    i32.const 8\n    i32.add\n");
     if (o.unsigned) {
       parts = parts.append("    i64.load\n");
     } else {
       parts = parts.append("    f64.load\n");
     }
-  } else if (o.kind_tag == 123) {
+  } else if (o.kind_tag == ir.K_OPT_PAYLOAD) {
     parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
-  } else if (o.kind_tag == 124) {
+  } else if (o.kind_tag == ir.K_OPT_SET_PAYLOAD) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == ir.K_PUTCHAR) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= 297 || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
+  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= ir.K_BUF_FREE || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
     parts = emit_wasm_buf_op(o, parts);
-  } else if (o.kind_tag == 138) {
+  } else if (o.kind_tag == ir.K_STRUCT_MAKE) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
   } else if (o.kind_tag == ir.K_CONST_STRUCT) {
     parts = emit_wasm_const_struct(cagg_vals, ns, o, parts);
-  } else if (o.kind_tag == 139) {
+  } else if (o.kind_tag == ir.K_STRUCT_GET) {
     parts = emit_wasm_struct_get(o, parts);
-  } else if (o.kind_tag == 140) {
+  } else if (o.kind_tag == ir.K_STRUCT_SET) {
     parts = emit_wasm_struct_set(eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 144) {
+  } else if (o.kind_tag == ir.K_TUPLE_SET) {
     parts = emit_wasm_tuple_set(eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 141) {
+  } else if (o.kind_tag == ir.K_STRUCT_SET_SHAPE) {
     parts = parts.append("    local.tee " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
-  } else if (o.kind_tag == 145) {
+  } else if (o.kind_tag == ir.K_VARIANT_IS) {
     parts = parts.append("    i32.load\n" + tid_get(o.str) + "    i32.eq\n");
-  } else if (o.kind_tag == 142) {
+  } else if (o.kind_tag == ir.K_TUPLE_MAKE) {
     parts = emit_wasm_tuple_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 143) {
+  } else if (o.kind_tag == ir.K_TUPLE_GET) {
     parts = parts.append("    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n");
     if (o.width == 64 && o.unsigned) {
       parts = parts.append("    i64.load\n");
@@ -4945,27 +4945,27 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else {
       parts = parts.append("    i32.load\n");
     }
-  } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_inc") {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && o.str == "__fern_arr_share_inc") {
     parts = emit_wasm_call_direct(parts);
-  } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && o.str == "__fern_arr_share_dec") {
     parts = parts.append("    call $__fern_arr_dec\n");
-  } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT && ircore.is_fern_helper(o.str)) {
     parts = parts.append("    call " + wasm_helper_symbol(o.str) + "\n");
-  } else if (o.kind_tag == 149) {
+  } else if (o.kind_tag == ir.K_CALL_DIRECT) {
     parts = parts.append("    call $" + o.str + "\n");
-  } else if (o.kind_tag == 147) {
+  } else if (o.kind_tag == ir.K_DYN_DISPATCH) {
     parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
-  } else if (o.kind_tag == 146) {
+  } else if (o.kind_tag == ir.K_DYN_BOX) {
     parts = emit_wasm_dyn_box(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_CONST_FUNC) {
     parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n");
-  } else if (o.kind_tag == 150) {
+  } else if (o.kind_tag == ir.K_CALL_INDIRECT) {
     parts = emit_wasm_call_indirect(o, parts);
   } else if (o.kind_tag == ir.K_MULHI_U) {
     parts = parts.append("    call $__fern_mulhi_u64\n");
   } else if (o.kind_tag == ir.K_MULHI_S) {
     parts = parts.append("    call $__fern_mulhi_s64\n");
-  } else if (o.kind_tag >= 421 && o.kind_tag <= 428) {
+  } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     parts = parts.append("    unreachable\n");
   } else {
     parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");
@@ -5258,15 +5258,15 @@ function view_string_wat(o: ir.Op, tmp: i32): string {
 }
 
 function branch_only_if(ops: ir.Op[], i: i32): string {
-  if (i + 3 >= ops.len() || ops[i].kind_tag != 154 || ops[i + 3].kind_tag != 156) {
+  if (i + 3 >= ops.len() || ops[i].kind_tag != ir.K_IF || ops[i + 3].kind_tag != ir.K_END) {
     return "";
   }
   let branch = ops[i + 1];
   let invert = false;
-  if (branch.kind_tag == 155 && ops[i + 2].kind_tag == 157) {
+  if (branch.kind_tag == ir.K_ELSE && ops[i + 2].kind_tag == ir.K_BR) {
     branch = ops[i + 2];
     invert = true;
-  } else if (branch.kind_tag != 157 || ops[i + 2].kind_tag != 155) {
+  } else if (branch.kind_tag != ir.K_BR || ops[i + 2].kind_tag != ir.K_ELSE) {
     return "";
   }
   if (branch.i32_imm == 0) {
@@ -5346,7 +5346,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     }
     let o = f.ops[i];
     let window = util.index_of_i32(placed, i) * 8;
-    if (o.kind_tag == 160) {
+    if (o.kind_tag == ir.K_RETURN) {
       parts = parts.append(shadow_frame_pop(windows));
     }
     parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window }));

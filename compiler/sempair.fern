@@ -1181,10 +1181,10 @@ function br(target: i32): ssa.STerm {
 }
 
 function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];
@@ -1342,10 +1342,10 @@ function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boo
         }
         let t = b.term;
         let used: i32 = -1;
-        if (t.kind_tag == 1) {
+        if (t.kind_tag == ssa.TERM_RET) {
           used = t.value;
         }
-        if (t.kind_tag == 3) {
+        if (t.kind_tag == ssa.TERM_BRIF) {
           used = t.cond;
         }
         if (used >= 0 && used < split[j].len() && split[j][used]) {
@@ -1848,10 +1848,10 @@ function apart_in(lay0: Layout, f: ssasem.Func): Narrowed {
 }
 
 function term_use(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;

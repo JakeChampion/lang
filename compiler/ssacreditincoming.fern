@@ -99,25 +99,25 @@ function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
 }
 
 function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, consumer: string, input: i32): State {
-  if (op.kind_tag == 11) {
+  if (op.kind_tag == ssa.CALL) {
     if (op.str == consumer) {
       return consumer_call(s, op, b.id, input);
     }
     return producer_call(s, op);
   }
   let value = Value { kind: 0, identity: 0, words: 0 };
-  if (op.kind_tag == 8) {
+  if (op.kind_tag == ssa.PHI) {
     let pos = util.index_of_i32(b.preds, previous.id);
     value = predecessor.values[util.index_of_i32(s.ids, op.args[pos])];
-  } else if (op.kind_tag == 6) {
+  } else if (op.kind_tag == ssa.PARAM) {
     if (op.imm == 0) {
       value = Value { ...value, identity: input };
     } else {
       value = Value { kind: 1, identity: op.imm - 1, words: 0 };
     }
-  } else if (op.kind_tag == 1) {
+  } else if (op.kind_tag == ssa.CONST_INT) {
     value = Value { ...value, identity: op.imm };
-  } else if (op.kind_tag == 7) {
+  } else if (op.kind_tag == ssa.COPY) {
     value = s.values[util.index_of_i32(s.ids, op.args[0])];
   }
   return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), value) };

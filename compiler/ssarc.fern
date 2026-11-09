@@ -4396,7 +4396,7 @@ function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssa
   let kept: ssaunits.Supply[] = [];
   for supply in step.supplies {
     let owed: boolean = supply.mode == ssaunits.retain_unit() && supply.slot >= 0 && supply.slot < dest.insts.len()
-      && dest.insts[supply.slot].kind_tag == 8 && links[dest.insts[supply.slot].result] == supply.value;
+      && dest.insts[supply.slot].kind_tag == ssa.PHI && links[dest.insts[supply.slot].result] == supply.value;
     if (!owed) {
       kept = kept.append(supply);
     }
@@ -4864,7 +4864,7 @@ function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
 
 function consumed_param(f: ssasem.Func, modes: i32[], v: i32): boolean {
   let d = defining(f, v);
-  return d.result == v && d.kind_tag == 6 && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
+  return d.result == v && d.kind_tag == ssa.PARAM && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
 }
 
 function supplied(step: ssaunits.Step, v: i32): boolean {
@@ -5163,7 +5163,7 @@ function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.S
 // A fixed-count mismatch shares the wrapper instead of a full generic kernel.
 function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.str == "__mismatch_bytes" && ins.args.len() == 5) {
-    return defining(f, ins.args[4]).kind_tag != 1;
+    return defining(f, ins.args[4]).kind_tag != ssa.CONST_INT;
   }
   return true;
 }
@@ -7052,7 +7052,7 @@ function returned_records(f: ssasem.Func): i32[] {
   let at = 0;
   while (at < out.len()) {
     let def = defining(f, out[at]);
-    if (def.kind_tag == 7 || def.kind_tag == 8) {
+    if (def.kind_tag == ssa.COPY || def.kind_tag == ssa.PHI) {
       for arg in def.args {
         if (util.index_of_i32(out, arg) < 0) {
           out = out.append(arg);

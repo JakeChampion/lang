@@ -121,7 +121,7 @@ function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
 }
 
 function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
-  if (t.kind_tag != 3 || t.t == t.f) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return t;
   }
   let d = outcome(f, s, s.head[bi], no_facts(), t.cond);
@@ -136,7 +136,7 @@ function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm
 
 function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
   let c = through_copies(s.defs, cond);
-  if (c.kind_tag == 2) {
+  if (c.kind_tag == ssa.CONST_BOOL) {
     if (c.imm != 0) {
       return 1;
     }
@@ -154,10 +154,10 @@ function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
 }
 
 function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return jump(reached(f, g, s, s.head[bi], t.target));
   }
-  if (t.kind_tag != 3) {
+  if (t.kind_tag != ssa.TERM_BRIF) {
     return t;
   }
   if (t.t == t.f) {
@@ -233,7 +233,7 @@ function test_of(f: ssasem.Func, defs: ssa.SInst[], cond: i32): Test {
   let yes = true;
   let d = through_copies(defs, cond);
   let hops = 0;
-  while (d.kind_tag == 10 && d.str == "!" && d.args.len() == 1 && hops < 8) {
+  while (d.kind_tag == ssa.UNARY && d.str == "!" && d.args.len() == 1 && hops < 8) {
     yes = !yes;
     d = through_copies(defs, d.args[0]);
     hops += 1;
@@ -550,10 +550,10 @@ function at_most_two_phis(b: ssa.SBlock): boolean {
 function ends_on_phi(g: ssa.SFunc, at: i32[], xi: i32): boolean {
   let xb = g.blocks[xi];
   if (xb.term.kind_tag == ssa.TERM_RET) {
-    return phi_of(xb, xb.term.value).kind_tag == 8;
+    return phi_of(xb, xb.term.value).kind_tag == ssa.PHI;
   }
   if (xb.term.kind_tag == ssa.TERM_BRIF) {
-    return xb.term.t != xb.term.f && phi_of(xb, xb.term.cond).kind_tag == 8;
+    return xb.term.t != xb.term.f && phi_of(xb, xb.term.cond).kind_tag == ssa.PHI;
   }
   return chained_branch(g, at, xi) >= 0;
 }
@@ -563,7 +563,7 @@ function ends_on_phi(g: ssa.SFunc, at: i32[], xi: i32): boolean {
 function phis_read_on_edge(y: ssa.SBlock, xb: ssa.SBlock, uses: i32[]): boolean {
   let slot = util.index_of_i32(xb.preds, y.id);
   for p in y.insts {
-    if (p.kind_tag != 8 || p.args.len() != y.preds.len() || p.result < 0 || p.result >= uses.len() || reads_own_phi(y, p)) {
+    if (p.kind_tag != ssa.PHI || p.args.len() != y.preds.len() || p.result < 0 || p.result >= uses.len() || reads_own_phi(y, p)) {
       return false;
     }
     if (edge_reads(xb, slot, p.result) != uses[p.result]) {
@@ -575,7 +575,7 @@ function phis_read_on_edge(y: ssa.SBlock, xb: ssa.SBlock, uses: i32[]): boolean 
 
 function reads_own_phi(b: ssa.SBlock, ins: ssa.SInst): boolean {
   for a in ins.args {
-    if (phi_of(b, a).kind_tag == 8) {
+    if (phi_of(b, a).kind_tag == ssa.PHI) {
       return true;
     }
   }
@@ -637,7 +637,7 @@ function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
 // What v is on the edge from the qk-th predecessor of y.
 function operand_on_edge(y: ssa.SBlock, v: i32, qk: i32): i32 {
   let p = phi_of(y, v);
-  if (p.kind_tag == 8) {
+  if (p.kind_tag == ssa.PHI) {
     return p.args[qk];
   }
   return v;
@@ -678,7 +678,7 @@ function chained_branch(g: ssa.SFunc, at: i32[], ji: i32): i32 {
     }
     let nb = g.blocks[ni];
     if (nb.term.kind_tag == ssa.TERM_BRIF) {
-      return if (phi_of(jb, nb.term.cond).kind_tag == 8 && nb.term.t != nb.term.f) { ni } else { -1 };
+      return if (phi_of(jb, nb.term.cond).kind_tag == ssa.PHI && nb.term.t != nb.term.f) { ni } else { -1 };
     }
     if (nb.term.kind_tag != ssa.TERM_BR) {
       return -1;
@@ -765,7 +765,7 @@ function returns_arm_values(f: ssasem.Func, defs: ssa.SInst[], r: ssa.SBlock): b
     return false;
   }
   let phi = phi_of(r, v);
-  if (phi.kind_tag == 8) {
+  if (phi.kind_tag == ssa.PHI) {
     return phi_of_constants(defs, phi, r.preds.len());
   }
   return r.preds.len() == 1;
@@ -811,7 +811,7 @@ function return_in_predecessors(g: ssa.SFunc, at: i32[], ri: i32): ssa.SFunc {
   let blocks = g.blocks;
   for k in 0..r.preds.len() {
     let value = r.term.value;
-    if (phi.kind_tag == 8) {
+    if (phi.kind_tag == ssa.PHI) {
       value = phi.args[k];
     }
     let qi = at[r.preds[k]];
@@ -902,7 +902,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
     return no_join(ji);
   }
   let cond = phi_of(jb, bb.term.cond);
-  if (cond.kind_tag != 8 || cond.args.len() != jb.preds.len()) {
+  if (cond.kind_tag != ssa.PHI || cond.args.len() != jb.preds.len()) {
     return no_join(ji);
   }
   // The later SSA pass handles joins that carry only the branch value.
@@ -919,7 +919,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   let picks: i32[] = [];
   for a in cond.args {
     let d = through_copies(defs, a);
-    if (d.kind_tag != 1 && d.kind_tag != 2 || d.args.len() != 0) {
+    if (d.kind_tag != ssa.CONST_INT && d.kind_tag != ssa.CONST_BOOL || d.args.len() != 0) {
       return no_join(ji);
     }
     if (d.imm != 0) {
@@ -1043,10 +1043,10 @@ function reads_under_arms(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): b
 }
 
 function term_read(t: ssa.STerm): i32 {
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     return t.value;
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return t.cond;
   }
   return -1;

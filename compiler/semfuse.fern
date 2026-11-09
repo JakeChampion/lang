@@ -714,10 +714,10 @@ function brif(cond: i32, t: i32, f: i32): ssa.STerm {
 }
 
 function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     return [t.target];
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return [t.t, t.f];
   }
   return [];

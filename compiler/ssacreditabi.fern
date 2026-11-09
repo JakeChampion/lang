@@ -383,7 +383,7 @@ function incoming_producers(sub: ircore.Sub, f: ssa.SFunc, c: ssasem.Contract, c
   let producers: ssa.SFunc[] = [];
   for block in f.blocks {
     for op in block.insts {
-      if (op.kind_tag == 11 && op.str != consumer && !util.has_str(names, op.str)) {
+      if (op.kind_tag == ssa.CALL && op.str != consumer && !util.has_str(names, op.str)) {
         names = names.append(op.str);
         let checked = origin_callee(sub, f.name, c, op.str);
         if (!checked.ok) {
@@ -501,7 +501,7 @@ function final_producers(sub: ircore.Sub, functions: ssa.SFunc[], wrapper: ssa.S
   let producers: ssa.SFunc[] = [];
   for block in wrapper.blocks {
     for op in block.insts {
-      if (op.kind_tag == 11 && op.str != consumer && !util.has_str(names, op.str)) {
+      if (op.kind_tag == ssa.CALL && op.str != consumer && !util.has_str(names, op.str)) {
         names = names.append(op.str);
         let body = final_producer(sub, functions, wrapper.name, c, op.str);
         if (body.error != "") {
@@ -723,7 +723,7 @@ pub function check_origin_caller(sub: ircore.Sub, name: string): origin.Origin {
   let producers: ssa.SFunc[] = [];
   for block in lifted.func.blocks {
     for op in block.insts {
-      if (op.kind_tag == 11 && !util.has_str(names, op.str)) {
+      if (op.kind_tag == ssa.CALL && !util.has_str(names, op.str)) {
         names = names.append(op.str);
         let checked = origin_callee(sub, name, c, op.str);
         if (!checked.ok) {

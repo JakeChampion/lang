@@ -9252,7 +9252,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let t = blk.term;
-  if (t.kind_tag != 3 || t.t == t.f || blk.insts.len() == 0) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f || blk.insts.len() == 0) {
     return ssa_no_fuse();
   }
   let last = blk.insts[blk.insts.len() - 1];
@@ -9262,7 +9262,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let cmp = last;
   let n = 1;
   let inverted = false;
-  if (last.kind_tag == 10 && last.str == "!") {
+  if (last.kind_tag == ssa.UNARY && last.str == "!") {
     let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false };
     if (blk.insts.len() < 2) {
       return value_test;
@@ -9324,7 +9324,7 @@ function ssa_zero_compare(fv: FuseView, fu: SsaFuse): boolean {
 
 // The position at or before `k` past the immediates, which emit nothing.
 function ssa_before_immediates(fv: FuseView, blk: ssa.SBlock, k: i32, stop: i32): i32 {
-  while (k >= 0 && blk.insts[k].result != stop && (blk.insts[k].kind_tag == 1 || blk.insts[k].kind_tag == 3) && fv.imm.is_imm[blk.insts[k].result]) {
+  while (k >= 0 && blk.insts[k].result != stop && (blk.insts[k].kind_tag == ssa.CONST_INT || blk.insts[k].kind_tag == ssa.CONST_I64) && fv.imm.is_imm[blk.insts[k].result]) {
     k -= 1;
   }
   return k;
@@ -9402,7 +9402,7 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
     return none;
   }
   let cmp = blk.insts[run[0] - 1];
-  if (cmp.result != c || cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
+  if (cmp.result != c || cmp.kind_tag != ssa.BINARY || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
     return none;
   }
   return SelectCond { fu: ssa_cmp_flags(fv, cmp), first: ii == run[0] };
@@ -10195,7 +10195,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t = blk.term;
-  if (t.kind_tag == 1) {
+  if (t.kind_tag == ssa.TERM_RET) {
     if (t.value >= 0 && t.value < fr.lanes.len() && fr.lanes[t.value]) {
       s = ssa_move(reg_of[t.value], ssa_lane_ret(), s);
     } else if (t.value >= 0 && fr.imm.is_imm[t.value]) {
@@ -10205,7 +10205,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     return ssa_emit_epilogue(fr, s);
   }
-  if (t.kind_tag == 2) {
+  if (t.kind_tag == ssa.TERM_BR) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
     if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
       let h = f.blocks[ssa_block_at(fr, t.target)];
@@ -10214,7 +10214,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     }
     return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
   }
-  if (t.kind_tag == 3) {
+  if (t.kind_tag == ssa.TERM_BRIF) {
     return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s);
   }
   return ssa_emit_epilogue(fr, ssa_zero(s, "%rax"));
@@ -10376,10 +10376,10 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
       }
     }
     let t = blk.term;
-    if (t.kind_tag == 1 && t.value >= 0 && t.value < shape.len()) {
+    if (t.kind_tag == ssa.TERM_RET && t.value >= 0 && t.value < shape.len()) {
       shape = shape.with(t.value, false);
     }
-    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < shape.len()) {
+    if (t.kind_tag == ssa.TERM_BRIF && t.cond >= 0 && t.cond < shape.len()) {
       shape = shape.with(t.cond, false);
     }
   }
@@ -10874,7 +10874,7 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let name = ir.kind_name(o.kind_tag);
-  if (o.kind_tag == 422 && o.i32_imm != 0) {
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm != 0) {
     name = "dir_entries_bytes";
     s = s.need("dir_entries");
   }
@@ -10885,7 +10885,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq " + regs[k] + "\n");
     k -= 1;
   }
-  if (o.kind_tag == 423 || o.kind_tag == 425 || o.kind_tag == 428) {
+  if (o.kind_tag == ir.K_DIR_STAT || o.kind_tag == ir.K_DIR_UNLINK || o.kind_tag == ir.K_DIR_OPEN_FILE) {
     s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", " + regs[n] + "\n");
     n += 1;
   }
@@ -10900,7 +10900,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == 497) {
+  if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     return s;
   }
 
@@ -11019,7 +11019,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    call __fn___fern_pipe\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("pipe");
-  } else if (o.kind_tag >= 420 && o.kind_tag <= 428) {
+  } else if (o.kind_tag >= ir.K_OPEN_DIR && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == ir.K_WINDOW_SIZE) {
     s = s.write("    call __fn___fern_window_size\n    addq $8, %rsp\n    pushq %rax\n");
@@ -11412,7 +11412,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_SLEEP_NS) {
     s = s.write("    call __fn___fern_sleep_ns\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("sleep_ns");
-  } else if (o.kind_tag == 146) {
+  } else if (o.kind_tag == ir.K_DYN_BOX) {
     s = emit_ir_op_dyn_box(o, s);
   } else {
     ircore.flat_arm_missing(o);

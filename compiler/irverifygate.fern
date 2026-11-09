@@ -242,16 +242,16 @@ function decided(f: ssa.SFunc): ssa.SFunc {
 
 // The block a branch takes when its condition compares two constants, or -1.
 function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
-  if (t.kind_tag != 3 || t.cond < 0 || t.cond >= defs.len()) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.cond < 0 || t.cond >= defs.len()) {
     return -1;
   }
   let c = defs[t.cond];
-  if (c.kind_tag != 9 || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
     return -1;
   }
   let a = defs[c.args[0]];
   let b = defs[c.args[1]];
-  if (a.kind_tag != 1 || b.kind_tag != 1 || a.str != "" || b.str != "") {
+  if (a.kind_tag != ssa.CONST_INT || b.kind_tag != ssa.CONST_INT || a.str != "" || b.str != "") {
     return -1;
   }
   let same = a.imm == b.imm;

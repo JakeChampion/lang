@@ -1628,7 +1628,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           let ii = 0;
           while (ii < b.insts.len()) {
             let inst = b.insts[ii];
-            if (ii < nw && inst.kind_tag == 8 && lp_phi[lfrom + ii] == inst.result) {
+            if (ii < nw && inst.kind_tag == ssa.PHI && lp_phi[lfrom + ii] == inst.result) {
               let pargs: i32[] = [lp_pre[lfrom + ii]];
               let qq = 0;
               while (qq < nback) {

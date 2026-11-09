@@ -305,7 +305,7 @@ function paired_call(w: Walk, b: ssa.SBlock, pos: i32): boolean {
   let at = pos + 1;
   while (at < b.insts.len()) {
     let next = b.insts[at];
-    if (next.kind_tag != 59 || next.str != "call_word") {
+    if (next.kind_tag != ssa.FLAT_OP || next.str != "call_word") {
       return false;
     }
     if (!scalar_lane(w.irops, next)) {
@@ -344,11 +344,11 @@ function arith_alias(f: ssa.SFunc, defs: ssa.DefSites, ins: ssa.SInst): Alias {
     return Alias { of: -1, derived: false };
   }
   let a = def_of(f, defs, ins.args[1]);
-  if (a.kind_tag == 1) {
+  if (a.kind_tag == ssa.CONST_INT) {
     return Alias { of: 0, derived: cursor_step(a.imm) };
   }
   let b = def_of(f, defs, ins.args[0]);
-  if (ins.str == "add" && b.kind_tag == 1) {
+  if (ins.str == "add" && b.kind_tag == ssa.CONST_INT) {
     return Alias { of: 1, derived: cursor_step(b.imm) };
   }
   return Alias { of: -1, derived: false };
@@ -476,7 +476,7 @@ function unique_input(w: Walk, phi: i32, i: i32, a: i32, depth: i32, out: Unique
 function beside(w: Walk, phi: i32, i: i32, box: i32, also: i32[]): i32[] {
   let out = also;
   for q in w.f.blocks[w.defs.block[phi]].insts {
-    if (q.kind_tag == 8 && q.result >= 0 && q.result != phi && i < q.args.len() && q.args[i] >= 0 && w.root[q.args[i]] == box && util.index_of_i32(out, q.result) < 0) {
+    if (q.kind_tag == ssa.PHI && q.result >= 0 && q.result != phi && i < q.args.len() && q.args[i] >= 0 && w.root[q.args[i]] == box && util.index_of_i32(out, q.result) < 0) {
       out = out.append(q.result);
     }
   }
@@ -600,7 +600,7 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
   let bi = 0;
   while (bi < w.f.blocks.len()) {
     let t = w.f.blocks[bi].term;
-    if (reach[bi] && t.kind_tag == 3 && t.t != t.f) {
+    if (reach[bi] && t.kind_tag == ssa.TERM_BRIF && t.t != t.f) {
       let c = cond_of(w, rg.roots, t.cond, with_tokens);
       let arm = w.at[t.f];
       if (c.on_true) {
@@ -730,7 +730,7 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
 }
 
 function phi_valued(w: Walk, v: i32): boolean {
-  return def_at(w, v).kind_tag == 8;
+  return def_at(w, v).kind_tag == ssa.PHI;
 }
 
 function is_shell(w: Walk, ins: ssa.SInst): boolean {
@@ -756,10 +756,10 @@ function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
   while (j < insts.len()) {
     let d = insts[j];
     if (d.args.len() > 0 && w.root[d.args[0]] == w.root[r]) {
-      if (is_load(d) && load_key(w, d) == key && d.kind_tag == 40 == (ld.kind_tag == 40)) {
+      if (is_load(d) && load_key(w, d) == key && d.kind_tag == ssa.LD_AT == (ld.kind_tag == ssa.LD_AT)) {
         return false;
       }
-      if ((d.kind_tag == 41 || d.kind_tag == 43) && d.args.len() >= 2 && store_key(w, d) == key && d.kind_tag == 41 == (ld.kind_tag == 40)) {
+      if ((d.kind_tag == ssa.ST_AT || d.kind_tag == ssa.ARR_ST) && d.args.len() >= 2 && store_key(w, d) == key && d.kind_tag == ssa.ST_AT == (ld.kind_tag == ssa.LD_AT)) {
         return true;
       }
     }
@@ -1005,7 +1005,7 @@ function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
   while (c >= 0 && is_call_word(insts[c])) {
     c -= 1;
   }
-  if (c < 0 || insts[c].kind_tag != 11) {
+  if (c < 0 || insts[c].kind_tag != ssa.CALL) {
     return plain(org_unknown());
   }
   let call = insts[c];
@@ -1162,10 +1162,10 @@ function stores_of(w: Walk): Stores {
     let i = 0;
     while (i < insts.len()) {
       let st = insts[i];
-      if ((st.kind_tag == 41 && st.args.len() == 2 || st.kind_tag == 43 && st.args.len() == 3) && st.args[0] >= 0) {
+      if ((st.kind_tag == ssa.ST_AT && st.args.len() == 2 || st.kind_tag == ssa.ARR_ST && st.args.len() == 3) && st.args[0] >= 0) {
         let base = w.root[st.args[0]];
         let key = st.imm;
-        if (st.kind_tag == 43) {
+        if (st.kind_tag == ssa.ARR_ST) {
           key = index_key(w, st.args[1]);
         }
         let n = out.base.len();
@@ -1183,7 +1183,7 @@ function stores_of(w: Walk): Stores {
 }
 
 function load_key(w: Walk, ld: ssa.SInst): i32 {
-  if (ld.kind_tag == 40) {
+  if (ld.kind_tag == ssa.LD_AT) {
     return ld.imm;
   }
   if (ld.args.len() >= 2) {
@@ -1194,7 +1194,7 @@ function load_key(w: Walk, ld: ssa.SInst): i32 {
 
 function index_key(w: Walk, v: i32): i32 {
   let d = def_of(w.f, w.defs, w.root[v]);
-  if (d.kind_tag == 1 && d.imm >= 0) {
+  if (d.kind_tag == ssa.CONST_INT && d.imm >= 0) {
     return -2 - d.imm;
   }
   return w.root[v];
@@ -1204,10 +1204,10 @@ function same_slot(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
   if (st.key[k] != load_key(w, ld)) {
     return false;
   }
-  if (ld.kind_tag == 40) {
-    return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == 41;
+  if (ld.kind_tag == ssa.LD_AT) {
+    return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == ssa.ST_AT;
   }
-  return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == 43;
+  return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == ssa.ARR_ST;
 }
 
 function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
@@ -1364,7 +1364,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
 // path takes this edge.
 function token_zero_edge(w: Walk, b: i32, e: i32, boxed: boolean[]): boolean {
   let t = w.f.blocks[b].term;
-  if (t.kind_tag != 3 || t.t == t.f) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return false;
   }
   let tt = tested(w, t.cond);
@@ -1503,7 +1503,7 @@ function settles_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32, mode: i
   let i = from;
   while (i < to && i < insts.len()) {
     let d = insts[i];
-    if (mode == 1 && (d.kind_tag == 41 || d.kind_tag == 43) && d.args.len() >= 2 && w.root[d.args[0]] == base && store_key(w, d) == load_key(w, ld) && d.kind_tag == 41 == (ld.kind_tag == 40)) {
+    if (mode == 1 && (d.kind_tag == ssa.ST_AT || d.kind_tag == ssa.ARR_ST) && d.args.len() >= 2 && w.root[d.args[0]] == base && store_key(w, d) == load_key(w, ld) && d.kind_tag == ssa.ST_AT == (ld.kind_tag == ssa.LD_AT)) {
       return true;
     }
     if (mode == 2 && (is_shell(w, d) && w.root[d.args[0]] == base || reuses(w, d, base, boxed) && writes_slot(w, mb, i, d.result, ld) || frees_token(w, d, boxed))) {
@@ -1519,7 +1519,7 @@ function frees_token(w: Walk, d: ssa.SInst, boxed: boolean[]): boolean {
 }
 
 function store_key(w: Walk, st: ssa.SInst): i32 {
-  if (st.kind_tag == 41) {
+  if (st.kind_tag == ssa.ST_AT) {
     return st.imm;
   }
   return index_key(w, st.args[1]);
@@ -1571,7 +1571,7 @@ function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean 
   let i = from;
   while (i < to && i < insts.len()) {
     let d = insts[i];
-    if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == 11 && util.str_has_prefix(d.str, "__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
+    if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == ssa.CALL && util.str_has_prefix(d.str, "__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
       return true;
     }
     i += 1;
@@ -1711,7 +1711,7 @@ function null_takes(w: Walk, takes: Takes): boolean[] {
 }
 
 function is_take(w: Walk, st: ssa.SInst): boolean {
-  return (st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1])
+  return (st.kind_tag == ssa.ST_AT || st.kind_tag == ssa.ARR_ST) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1])
     && !(st.args[0] >= 0 && st.args[0] < w.reused.len() && w.reused[st.args[0]]);
 }
 
@@ -1719,10 +1719,10 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   if (ld.args.len() == 0 || w.root[ld.args[0]] != w.root[st.args[0]]) {
     return false;
   }
-  if (st.kind_tag == 41) {
-    return ld.kind_tag == 40 && ld.imm == st.imm;
+  if (st.kind_tag == ssa.ST_AT) {
+    return ld.kind_tag == ssa.LD_AT && ld.imm == st.imm;
   }
-  return ld.kind_tag == 42 && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
+  return ld.kind_tag == ssa.ARR_AT && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
 }
 
 function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
@@ -2102,7 +2102,7 @@ function doomed_blocks(w: Walk): boolean[] {
 }
 
 function ends_doomed(w: Walk, doomed: boolean[], t: ssa.STerm): boolean {
-  if (t.kind_tag == 4) {
+  if (t.kind_tag == ssa.TERM_UNREACHABLE) {
     return true;
   }
   let any = false;
@@ -2439,7 +2439,7 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
 }
 
 function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
-  if (st.kind_tag != 41 || val < 0 || val >= w.kept.len() || !w.kept[w.root[val]] || st.args.len() < 2 || w.root[st.args[0]] != w.held) {
+  if (st.kind_tag != ssa.ST_AT || val < 0 || val >= w.kept.len() || !w.kept[w.root[val]] || st.args.len() < 2 || w.root[st.args[0]] != w.held) {
     return false;
   }
   return def_of(w.f, w.defs, w.root[val]).imm == st.imm;
@@ -2458,7 +2458,7 @@ function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
       let val = w.root[ins.args[ins.args.len() - 1]];
       let ld = def_of(w.f, w.defs, val);
       let lb = w.defs.block[val];
-      if (ld.kind_tag == 40 && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()) {
+      if (ld.kind_tag == ssa.LD_AT && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()) {
         if ((lb == st.block[k] && w.defs.at[val] < st.at[k] || ssadeps.dom_holds(dom, st.block[k], lb))
           && !between(w, dom, ld, lb, w.defs.at[val], st.block[k], st.at[k])) {
           out = out.with(val, true);
@@ -2675,11 +2675,11 @@ struct Tag { word: i32, c: i32, equal: boolean }
 
 function compared(w: Walk, ins: ssa.SInst): Tag {
   let a = def_at(w, ins.args[1]);
-  if (a.kind_tag == 1) {
+  if (a.kind_tag == ssa.CONST_INT) {
     return Tag { word: ins.args[0], c: a.imm, equal: true };
   }
   let b = def_at(w, ins.args[0]);
-  if (b.kind_tag == 1) {
+  if (b.kind_tag == ssa.CONST_INT) {
     return Tag { word: ins.args[1], c: b.imm, equal: true };
   }
   return Tag { word: -1, c: 0, equal: false };
@@ -2687,7 +2687,7 @@ function compared(w: Walk, ins: ssa.SInst): Tag {
 
 function tag_on_edge(w: Walk, bi: i32, sid: i32): Tag {
   let t = w.f.blocks[bi].term;
-  if (t.kind_tag != 3 || t.t == t.f) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return Tag { word: -1, c: 0, equal: false };
   }
   let ins = def_of(w.f, w.defs, t.cond);
@@ -2747,7 +2747,7 @@ function excluded_tags(w: Walk, bi: i32, word: i32): i32 {
   let d = 0;
   while (d < w.f.blocks.len()) {
     let t = w.f.blocks[d].term;
-    if (d != bi && t.kind_tag == 3 && t.t != t.f && ssadeps.dom_holds(w.dom, bi, d)) {
+    if (d != bi && t.kind_tag == ssa.TERM_BRIF && t.t != t.f && ssadeps.dom_holds(w.dom, bi, d)) {
       out = out | excluded_on(w, bi, d, t.t, word) | excluded_on(w, bi, d, t.f, word);
     }
     d += 1;
@@ -3450,7 +3450,7 @@ function acyclic(w: Walk, order: i32[]): boolean {
 }
 
 function token_word(w: Walk, t: ssa.STerm): i32 {
-  if (t.kind_tag != 3 || t.t == t.f) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return -1;
   }
   let ts = tested(w, t.cond);
@@ -3501,7 +3501,7 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
     let bi = 0;
     while (bi < f.blocks.len()) {
       let t = pr.terms[bi];
-      if (reach[bi] && t.kind_tag == 3 && t.t != t.f) {
+      if (reach[bi] && t.kind_tag == ssa.TERM_BRIF && t.t != t.f) {
         let ts = tested(w, t.cond);
         let fx = -1;
         if (ts.word >= 0) {
@@ -3698,7 +3698,7 @@ function drop_arm(w: Walk, own pr: Pruned, pb: i32, sid: i32, box: i32, zero: bo
       let ob = w.at[w.openers[pb][at]];
       let t = w.f.blocks[ob].term;
       let c = cond_of(w, w.regions, t.cond, true);
-      if (t.kind_tag == 3 && c.root == box) {
+      if (t.kind_tag == ssa.TERM_BRIF && c.root == box) {
         let arm = t.f;
         if (c.on_true) {
           arm = t.t;
@@ -3715,7 +3715,7 @@ function drop_edge(w: Walk, own pr: Pruned, pb: i32, sid: i32): Pruned {
     return pr;
   }
   let t = pr.terms[pb];
-  if (t.kind_tag == 3 && t.t != t.f && (t.t == sid || t.f == sid)) {
+  if (t.kind_tag == ssa.TERM_BRIF && t.t != t.f && (t.t == sid || t.f == sid)) {
     let other = t.f;
     if (t.f == sid) {
       other = t.t;
@@ -3855,7 +3855,7 @@ function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
 }
 
 function into_region(t: ssa.STerm, at: i32[], region: boolean[]): ssa.STerm {
-  if (t.kind_tag != 3 || t.t == t.f) {
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return t;
   }
   if (!region[at[t.f]]) {
@@ -3925,7 +3925,7 @@ function seed_edge(own pa: Progress, wa: Walk, lva: Live, roots: i32[], bi: i32,
 }
 
 function is_phi(w: Walk, v: i32): boolean {
-  return def_of(w.f, w.defs, v).kind_tag == 8;
+  return def_of(w.f, w.defs, v).kind_tag == ssa.PHI;
 }
 
 function base_count(w: Walk, lv: Live, p0: Progress, base0: i32, bi: i32, r: i32): i32 {

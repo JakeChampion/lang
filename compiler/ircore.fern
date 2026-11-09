@@ -504,7 +504,7 @@ pub function gate(mod: parser.Module, sub: Sub): Option[Lowered] {
     let j = 0;
     while (j < r.ops.len()) {
       let o = r.ops[j];
-      if (o.kind_tag == 149) {
+      if (o.kind_tag == ir.K_CALL_DIRECT) {
         if (!is_fern_helper(o.str) && !is_c_call(o.str) && !is_task_runtime_fn(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");

@@ -118,20 +118,20 @@ function load(s: State, op: ssa.SInst, args: Value[]): State {
 }
 
 function operation(s: State, op: ssa.SInst, args: Value[], name: string, words: i32): State {
-  if (op.kind_tag == 7 && args.len() == 1 && op.str == "" && op.imm == 0) {
+  if (op.kind_tag == ssa.COPY && args.len() == 1 && op.str == "" && op.imm == 0) {
     return define(s, args[0]);
   }
-  if (op.kind_tag == 1 && args.len() == 0 && op.str == "") {
+  if (op.kind_tag == ssa.CONST_INT && args.len() == 0 && op.str == "") {
     return define(s, value(0, op.imm));
   }
-  if (op.kind_tag == 40) {
+  if (op.kind_tag == ssa.LD_AT) {
     return load(s, op, args);
   }
   return call(s, op, args, name, words);
 }
 
 function call(s: State, op: ssa.SInst, args: Value[], name: string, words: i32): State {
-  if (op.kind_tag == 11 && ssa.plain_imm(op) == 0) {
+  if (op.kind_tag == ssa.CALL && ssa.plain_imm(op) == 0) {
     if (op.str == name) {
       return allocate(s, args, words);
     }
@@ -151,7 +151,7 @@ function step(s: State, op: ssa.SInst, name: string, words: i32): State {
     }
     args = args.append(v);
   }
-  let next = if (op.kind_tag == 6) { parameter(s, op) } else { operation(s, op, args, name, words) };
+  let next = if (op.kind_tag == ssa.PARAM) { parameter(s, op) } else { operation(s, op, args, name, words) };
   return State { ...next, ids: next.ids.append(op.result) };
 }
 
