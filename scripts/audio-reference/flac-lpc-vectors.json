@@ -974,6 +974,20 @@
       "encoded_bytes": 2119,
       "fixed_bytes": 2119,
       "first_kind": 1
+    },
+    {
+      "name": "wide-periodic",
+      "depth": 32,
+      "channels": 2,
+      "rate": 48000,
+      "block": 1024,
+      "order": 32,
+      "frames": 1024,
+      "pcm_sha256": "d6d57d39d20ddd5026348483a8822962e17730b0d925923362c267de63f80c76",
+      "encoded_sha256": "395a998adcb2c6f5bbb7002e121074680572686f4a95b8fa37a40235fae47e6f",
+      "encoded_bytes": 3688,
+      "fixed_bytes": 4280,
+      "first_kind": 0
     }
   ]
 }

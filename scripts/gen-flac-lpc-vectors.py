@@ -87,9 +87,19 @@ def cases():
                 left, right = value, rng.randint(-2147483648, 2147483647)
             samples.extend([left, right])
         yield shape, 32, 2, 48000, 256, 32, samples
+    rng = random.Random(14807033)
+    period = [-2147483648, 2147483647] + [
+        rng.randint(-2147483648, 2147483647) for _ in range(30)
+    ]
+    samples = [
+        sample
+        for at in range(1024)
+        for sample in [period[at % 32], -period[at % 32] - 1]
+    ]
+    yield "wide-periodic", 32, 2, 48000, 1024, 32, samples
 
 
-def first_kind(encoded):
+def first_offset(encoded):
     # Inspect the first subframe of a stream emitted by the native encoder.
     at = 42
     assert encoded[:8] == b"fLaC\x80\0\0\x22"
@@ -102,7 +112,11 @@ def first_kind(encoded):
         while first & (128 >> count):
             count += 1
     at += count + (1 if code == 6 else 2 if code == 7 else 0) + 1
-    return (encoded[at] >> 1) & 63
+    return at
+
+
+def first_kind(encoded):
+    return (encoded[first_offset(encoded)] >> 1) & 63
 
 
 def main():
@@ -138,6 +152,12 @@ def main():
             if "leakcheck:" in run.stderr:
                 assert "live_bytes=0" in run.stderr, (name, run.stderr)
             encoded = path.read_bytes()
+            if name == "wide-periodic":
+                at = first_offset(encoded)
+                assert encoded[45] >> 4 == 10 and encoded[at] == 0
+                assert encoded[at + 5] >> 1 == 63, (
+                    "33-bit side channel must use LPC order 32"
+                )
             pcm, version = DECODE(path, channels, depth, rate)
             assert pcm == samples, name
             ffmpeg_pcm = subprocess.check_output(

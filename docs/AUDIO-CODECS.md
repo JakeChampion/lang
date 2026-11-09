@@ -133,7 +133,7 @@ The frozen bank contains 81 bitstreams independently decoded by FFmpeg and libFL
 A separate exhaustive oracle checks 147 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
 Regenerate the banks with `scripts/gen-flac-encoder-vectors.py --encoder PATH` and `scripts/gen-flac-encoder-costs.py`.
 The encoder executable comes from `scripts/audio-reference/flac-encode.fern`.
-An additional bank contains 69 LPC streams with the same independent decode and MD5 checks.
+An additional bank contains 70 LPC streams with the same independent decode and MD5 checks.
 It covers every sample depth, all eight channel counts, selected orders through 32, short blocks, and 33-bit stereo transforms.
 Regenerate it with `scripts/gen-flac-lpc-vectors.py --encoder PATH`.
 The reference executable accepts an optional final LPC order.
