@@ -323,8 +323,19 @@ Each is a bound with a test that crosses it.
       an inbox of 16 slots with `UDP_GRO` on. With 64 connections that is
       15 times fewer receives and 51 percent less server CPU per request
       (`docs/benchmarks/net-recvmmsg-2026-11-08.md`). Gates:
-      `TestSelfHostUDPRecvmmsg` and `TestNetInboxX86_64`. ECN remains: the
-      TOS byte reaches the inbox, and nothing reads or sets the marks yet.
+      `TestSelfHostUDPRecvmmsg` and `TestNetInboxX86_64`. ECN landed last
+      (RFC 9000 section 13.4, RFC 9002 appendix B.7). A connection
+      configured `with_ecn` marks its packets ECT(0), and `udp_sendmmsg`
+      puts each message's TOS byte in `IP_TOS` or `IPV6_TCLASS`. The
+      receiver counts the marks of each packet number space and reports
+      them in ACK_ECN frames. The sender validates the counts on each ACK
+      that raises the largest acknowledged packet, and it stops marking
+      when the counts are missing, fall, or rise by less than the marked
+      packets acknowledged. A rising ECN-CE count is a congestion event.
+      `std/serve` turns ECN on where it can send and read the TOS byte.
+      A hello request allocates no more than before. Gates:
+      `tests/stdlib/quic_conn_test.fern`, `tests/stdlib/quic_recovery_test.fern`
+      and `TestServeH3EcnX86_64`.
 
 0-RTT waits on early data in `std/tls/handshake`, which does not derive
 an early traffic secret yet.

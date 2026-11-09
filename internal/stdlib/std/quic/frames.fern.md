@@ -1015,6 +1015,13 @@ pub function put_ack(own out: u8[], delay: i64, ranges: AckRange[]): u8[] {
   return __put_ack_ranges(out, ACK, delay, ranges);
 }
 
+// put_ack_ecn writes an ACK_ECN frame, as put would write
+// AckFrame(Ack { delay: delay, ranges: ranges, ecn: Some(marks) }).
+pub function put_ack_ecn(own out: u8[], delay: i64, ranges: AckRange[], marks: Ecn): u8[] {
+  out = __put_ack_ranges(out, ACK_ECN, delay, ranges);
+  return put_varint(put_varint(put_varint(out, marks.ect0), marks.ect1), marks.ce);
+}
+
 function __put_ack_ranges(own out: u8[], kind: i64, delay: i64, ranges: AckRange[]): u8[] {
   let top = ranges[0];
   out = put_varint(put_varint(put_varint(put_varint(put_varint(out, kind), top.high), delay), (ranges.len() - 1) as i64), top.high - top.low);

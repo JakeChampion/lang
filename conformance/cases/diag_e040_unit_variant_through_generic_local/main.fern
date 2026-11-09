@@ -1,0 +1,13 @@
+// A unit variant of a generic enum names no type arguments. The call of id
+// must choose its T, and no use of the local gives one, so the call is E040.
+
+enum Opt[T] { No, Yes(T) }
+
+function id[T](x: T): T {
+  return x;
+}
+
+function main(): i32 {
+  let e = id(No);
+  return 0;
+}

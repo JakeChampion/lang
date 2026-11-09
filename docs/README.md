@@ -89,7 +89,6 @@ which ones.
 | `ITERATOR-FUSION-CONTRACT.md` | [policy] | The contract lazy iterator chains must meet before adoption; the eager fusion pass and part of the lazy surface are built. |
 | `ARRAY-FUSION-OPERATORS.md` | [reference] | Per-operator proof behind `compiler/semfuse.fern`: what map, filter, fold, reduce, scan, take, take_while and flat_map each contribute to a fused loop. |
 | `BACKEND-PARITY.md` | [reference] | The targets, CPU baselines, syscall floor, macOS support stance and known limitations of each backend. |
-| `FERNOS-LINUX-ABI.md` | [record] | The measured Linux system calls of the compiler for the FernOS host milestone. |
 | `BYTE-COPY-LOOPS.md` | [reference] | The `compiler/sembytecopy.fern` pass that replaces zero-based byte-copy loops over owned `u8[]` values with bulk copies. |
 | `INTERP-ARRAY-INPLACE-WRITE.md` | [reference] | How the interpreter's arrays carry an owner count so `arr.with(i, v)` writes in place (#7287). |
 | `NATIVE-REGISTER-POOLS.md` | [reference] | Register homes, emitter temporaries and fixed clobbers of the SSA register allocator on arm64 and x86-64 (#12210). |
@@ -105,6 +104,7 @@ which ones.
 | `ARRAY-PIPELINE-BASELINE-2026-09.md` | [record] | Pre-fusion measurements of the array pipeline programs (#9728), and what array fusion (#9731) changed in allocations and instructions. |
 | `CODEGEN-QUALITY-AUDIT-2026-09.md` | [record] | A September 2026 audit of emitted machine code: 42.6% wasted instructions; Tier A of its fixes landed. |
 | `COMPILER-ARCHITECTURE-2026.md` | [record] | A 2026 scorecard of the compiler against a modern-design checklist, written while both compilers were maintained. |
+| `FERNOS-LINUX-ABI.md` | [record] | The Linux system calls that the compiler makes, which FernOS must implement to run it (#14265), measured on 2026-11-08. |
 | `IMPROVEMENTS.md` | [record] | The compiler and test-infrastructure improvement list from the fernsmith work; most items landed. |
 | `INTERP-CLOSURE-BINDING-IDENTITY.md` | [record] | The interpreter fix (#8970) giving captured bindings shared cells. |
 | `INTERP-MAP-COW-PLAN.md` | [record] | Copy-on-write Maps in the interpreter (finding M1); implemented. |

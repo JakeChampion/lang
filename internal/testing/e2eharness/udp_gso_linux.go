@@ -61,3 +61,43 @@ func SetTOS(conn *net.UDPConn, v6 bool, tos int) error {
 	}
 	return setErr
 }
+
+// RecvTOS asks the socket for the TOS byte, or the IPv6 traffic class, of
+// each datagram it receives.
+func RecvTOS(conn *net.UDPConn, v6 bool) error {
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var setErr error
+	if err := raw.Control(func(fd uintptr) {
+		if v6 {
+			setErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_RECVTCLASS, 1)
+		} else {
+			setErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_RECVTOS, 1)
+		}
+	}); err != nil {
+		return err
+	}
+	return setErr
+}
+
+// ReadTOS reads one datagram and the TOS byte RecvTOS asked for, 0 when the
+// datagram carried none.
+func ReadTOS(conn *net.UDPConn, buf []byte) (int, int, error) {
+	oob := make([]byte, 64)
+	n, oobn, _, _, err := conn.ReadMsgUDP(buf, oob)
+	if err != nil {
+		return 0, 0, err
+	}
+	msgs, err := syscall.ParseSocketControlMessage(oob[:oobn])
+	if err != nil {
+		return n, 0, err
+	}
+	for _, m := range msgs {
+		if (m.Header.Level == syscall.IPPROTO_IP && m.Header.Type == syscall.IP_TOS || m.Header.Level == syscall.IPPROTO_IPV6 && m.Header.Type == syscall.IPV6_TCLASS) && len(m.Data) > 0 {
+			return n, int(m.Data[0]), nil
+		}
+	}
+	return n, 0, nil
+}

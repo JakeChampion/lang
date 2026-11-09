@@ -1,0 +1,42 @@
+// A unit variant of a generic enum through a generic call takes its type
+// arguments from a use: a later typed local, the declared type of the
+// binding, or the parameter of a call.
+
+enum Opt[T] { No, Yes(T) }
+
+function id[T](x: T): T {
+  return x;
+}
+
+function count(x: Opt[i32]): i32 {
+  match (x) {
+    Yes(n) => {
+      return n;
+    },
+    No => {
+      return 0;
+    }
+  }
+}
+
+function label(x: Opt[string]): string {
+  match (x) {
+    Yes(s) => {
+      return s;
+    },
+    No => {
+      return "none";
+    }
+  }
+}
+
+function main(): i32 {
+  let e = id(No);
+  let f: Opt[string] = e;
+  let g: Opt[i32] = id(No);
+  print(label(f));
+  print(count(g).to_string());
+  print(count(id(No)).to_string());
+  print(count(id(Yes(7))).to_string());
+  return 0;
+}
