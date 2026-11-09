@@ -1,3 +1,4 @@
+# 2026-11-09: generic_result_owned_and_handle_free has zero unpaired allocations under RC trace.
 # 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
 # 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
@@ -414,6 +415,7 @@ generic_promotion_ignores_shadowed_names             0
 generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_array_drop                          0
 generic_receiver_methods                             0
+generic_result_owned_and_handle_free                 0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
