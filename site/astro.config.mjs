@@ -220,6 +220,7 @@ export default defineConfig({
       sidebar: [
         { label: "Overview", link: "/" },
         { label: "Why Fern", link: "/why/" },
+        { label: "Coming from Go, Rust or TypeScript", link: "/compare/" },
         // Starlight 0.39 removed the `{label, autogenerate}`
         // shorthand — groups now wrap autogenerate inside their
         // items list. Same end result; one extra layer.
