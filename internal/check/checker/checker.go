@@ -15374,6 +15374,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if genericFn != nil {
+			var opened map[string]ast.Type
+			if sub != nil && !recvIsArg0 {
+				opened = c.unbindOpenVariantParams(n, ft, genericFn, sub)
+			}
 			if callExpected != nil && sub != nil {
 				c.unifyType(ft.Result, callExpected, sub)
 			}
@@ -15432,7 +15436,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if c.openCallLet == n {
-				if result, open := c.openGenericResult(n, genericFn, ft, sub); open {
+				if result, open := c.openGenericResult(n, genericFn, ft, sub, opened); open {
 					return result
 				}
 			}
