@@ -501,13 +501,23 @@ memory map. The
 
 ### 5. Atomics
 
-Genuinely absent — there is no atomic surface in the language at all (the
-`atomic` hits in the tree are Go test-harness `sync/atomic` and atomic *file*
-writes). Needed
-for SMP kernels and lock-free structures, and gated on the memory-model decision
-above rather than on anyone writing a `Mutex`. Ordering it last is deliberate:
-under the handler-owns-nothing rule, single-core drivers and kernels do not need
-it.
+SMP kernels and lock-free structures need atomics (#14258). Under the
+handler-owns-nothing rule, single-core drivers and kernels do not. The language
+has four, on the 64-bit word at a raw address. They need `unsafe` and the
+`privileged` capability, and a `@norc` function can call them:
+
+| Intrinsic | Order | arm64 | x86-64 |
+|---|---|---|---|
+| `__atomic_load_acquire(addr)` | acquire | `ldar` | `mov` |
+| `__atomic_store_release(addr, v)` | release | `stlr` | `mov` |
+| `__atomic_fetch_add(addr, v)` | sequentially consistent | `ldaddal` | `lock xadd` |
+| `__atomic_cas(addr, old, new)` | sequentially consistent | `casal` | `lock cmpxchg` |
+
+`__atomic_fetch_add` and `__atomic_cas` give the old word. x86-64 orders each
+load as acquire and each store as release, so both are plain moves there. The
+ops lift as device ops, so no pass removes, merges or moves them, or moves a
+plain access across them. Refcounts stay non-atomic (`docs/MULTICORE-RESEARCH.md`
+C1).
 
 ### 6. Board packages: who supplies a capability
 
