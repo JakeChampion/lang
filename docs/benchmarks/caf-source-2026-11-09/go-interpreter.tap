@@ -1,0 +1,7 @@
+TAP version 13
+# Suite: CAF ALAC source interpreter smoke
+ok 1 - independent exact PCM, trim, short reads, and repeated source seeks
+1..1
+# tests 1
+# pass 1
+# fail 0

@@ -1,0 +1,81 @@
+---
+// BenchHistory — every run of the coreutils bench and the startup bench:
+// a trend chart from the runs on the weekly runner, and a table of every
+// run with the machine that made it.
+
+import TrendChart from "./TrendChart.astro";
+import { coreutilsRuns, onRunner, startupRuns } from "../lib/bench-history.mjs";
+
+interface Props {
+  part: "coreutils" | "startup";
+}
+
+const glob = (logs: Record<string, string>) => logs;
+const coreutils = coreutilsRuns(glob(import.meta.glob<string>("../../../docs/coreutils-log/*-bench.md", { query: "?raw", import: "default", eager: true })));
+const startup = startupRuns(glob(import.meta.glob<string>("../../../docs/startup-log/*-bench.md", { query: "?raw", import: "default", eager: true })));
+const repo = "https://github.com/JakeChampion/lang/blob/main";
+const { part } = Astro.props;
+
+const cuSeries = onRunner(coreutils);
+const LANGS = ["Fern", "C (cc -O2)", "Rust (rustc -O)", "Go"];
+const suSeries = onRunner(startup);
+const mean = (run: { rows: { language: string; mean: number }[] }, lang: string) =>
+  run.rows.find((r) => r.language === lang)?.mean ?? null;
+const languages = [...new Set(startup.flatMap((r) => r.rows.map((x) => x.language)))];
+---
+
+{part === "coreutils" && (
+  <>
+    <TrendChart
+      title="Coreutils: median speed against the reference, weekly runner"
+      dates={cuSeries.map((r) => r.date)}
+      series={[
+        { name: "GNU", values: cuSeries.map((r) => r.vsGnu) },
+        { name: "uutils", values: cuSeries.map((r) => r.vsUutils) },
+      ]}
+      unit="×"
+      reference={{ value: 1, label: "1× = as fast" }}
+    />
+    <table class="fern-trend-table">
+      <thead><tr><th>Run</th><th>Machine</th><th>Workloads</th><th>Median against GNU</th><th>Median against uutils</th><th>Faster than GNU</th></tr></thead>
+      <tbody>
+        {coreutils.map((r) => (
+          <tr>
+            <td><a href={`${repo}/docs/coreutils-log/${r.file}`}>{r.date}</a></td>
+            <td>{r.machine}</td>
+            <td>{r.workloads}</td>
+            <td>{r.vsGnu.toFixed(2)}×</td>
+            <td>{r.vsUutils === null ? "—" : `${r.vsUutils.toFixed(2)}×`}</td>
+            <td>{r.fasterThanGnu} of {r.comparedGnu}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </>
+)}
+
+{part === "startup" && (
+  <>
+    <TrendChart
+      title="Hello world, start to exit, weekly runner"
+      dates={suSeries.map((r) => r.date)}
+      series={LANGS.map((lang) => ({ name: lang.split(" ")[0], values: suSeries.map((r) => mean(r, lang)) }))}
+      unit=" ms"
+    />
+    <table class="fern-trend-table">
+      <thead><tr><th>Run</th><th>Machine</th>{languages.map((l) => <th>{l}</th>)}</tr></thead>
+      <tbody>
+        {startup.map((r) => (
+          <tr>
+            <td><a href={`${repo}/docs/startup-log/${r.file}`}>{r.date}</a></td>
+            <td>{r.machine}</td>
+            {languages.map((l) => {
+              const row = r.rows.find((x) => x.language === l);
+              return <td>{row ? `${row.mean.toFixed(2)} ms` : "—"}</td>;
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </>
+)}

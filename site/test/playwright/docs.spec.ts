@@ -430,6 +430,16 @@ test("a stdlib page links each declaration and its edit link to the source", asy
   );
 });
 
+test("the benchmarks page lists every run with its machine", async ({ page }) => {
+  await page.goto("benchmarks/");
+  const tables = page.locator("table.fern-trend-table");
+  await expect(tables).toHaveCount(2);
+  // The run by hand on 2026-10-12 is in the table, but not on a trend line.
+  await expect(tables.first()).toContainText("2026-10-12");
+  await expect(tables.first()).toContainText("another machine");
+  await expect(tables.first()).toContainText("GitHub-hosted runner");
+});
+
 test("a fern code block that is a whole program links to the playground", async ({ page }) => {
   await page.goto("cookbook/");
   // "Read a file" is static code, because it needs a file. Its link holds
@@ -455,6 +465,18 @@ test("a tutorial exercise has its goal", async ({ page }) => {
   await iframe.scrollIntoViewIfNeeded();
   const frame = page.frameLocator("figure.fern-playground iframe[data-src*='&expect=']");
   await expect(frame.locator("#exerciseGoal")).toHaveText("1\n2\n3\n4\n5\n", { timeout: 60_000 });
+});
+
+test("embeds load one at a time, so playground.wasm downloads do not overlap", async ({ page }) => {
+  await page.setViewportSize({ width: 1350, height: 940 });
+  const events: string[] = [];
+  page.on("request", (r) => { if (r.url().endsWith("/playground.wasm")) events.push("start"); });
+  page.on("requestfinished", (r) => { if (r.url().endsWith("/playground.wasm")) events.push("done"); });
+  await page.goto("tutorial/types/");
+  // Two embeds are near the first screen at this size.
+  await expect(page.locator("figure.fern-playground iframe[src]")).toHaveCount(2, { timeout: 60_000 });
+  await expect.poll(() => events.length, { timeout: 60_000 }).toBe(4);
+  expect(events).toEqual(["start", "done", "start", "done"]);
 });
 
 test("a captured diagnostic links to the page for its code", async ({ page }) => {

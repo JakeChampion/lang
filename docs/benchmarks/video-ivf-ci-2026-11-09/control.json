@@ -1,0 +1,38 @@
+{
+  "control_source": "97af82fcbef87363ce78d53cf43bba069b437419",
+  "candidate_source": "cbed65e06b5e23717bdb730912f76e5dbfca7311",
+  "ci_run": 42662988289,
+  "ci_job": 129321185181,
+  "selfhost_sha256": "cdea484792b093f84794a162cf124a4e72cff18203a8567387d47f8fa2540b49",
+  "target": "x86-64-linux",
+  "valgrind": "3.24.0",
+  "measurements": {
+    "base": {
+      "static_lines": 1321,
+      "retired_instructions": 41173368,
+      "exit_code": 40,
+      "stdout": "",
+      "assembly_sha256": "aee54ecd1cad235488954dcd50ea22e0848e8838578560c7b4441aafe718d55f",
+      "binary_sha256": "fb86b9a452ce20a05a89f281cb097e1a486af45ff259d4de65ff4ac885cbd44a"
+    },
+    "candidate": {
+      "static_lines": 1321,
+      "retired_instructions": 41173368,
+      "exit_code": 40,
+      "stdout": "",
+      "assembly_sha256": "aee54ecd1cad235488954dcd50ea22e0848e8838578560c7b4441aafe718d55f",
+      "binary_sha256": "fb86b9a452ce20a05a89f281cb097e1a486af45ff259d4de65ff4ac885cbd44a"
+    }
+  },
+  "selfhost_static_lines": 1321,
+  "parent_selfhost_static_lines": 1321,
+  "selfhost_assembly_sha256": "aee54ecd1cad235488954dcd50ea22e0848e8838578560c7b4441aafe718d55f",
+  "validation": {
+    "native_metrics": 80,
+    "selfhost_emitted_size_metrics": 120,
+    "native_strict_gate_pass": true,
+    "selfhost_strict_gate_pass": true,
+    "comparator_selftests_passed": 22,
+    "tolerance_percent": 1
+  }
+}

@@ -9427,7 +9427,7 @@ var UnsafeBuiltinMethods = []string{
 var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__alloc_u8_uninit": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
-	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__store_i64": true, "__store_ptr": true,
+	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__f64x2_load_f32_ptr": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
@@ -17956,6 +17956,7 @@ func (c *checker) registerLaneBuiltins() {
 		}
 	}
 	wide := ast.LanesType{Width: 64}
+	c.info.FuncSigs["__f64x2_load_f32_ptr"] = &ast.FuncType{Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: wide}
 	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
 }
 

@@ -411,6 +411,25 @@ func (i *Interp) registerLaneBuiltins() {
 			return arrayOf(e...), nil
 		}}
 	}
+	i.Builtins["__f64x2_load_f32_ptr"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("widening load requires an address")
+		}
+		address, ok := args[0].(Number)
+		if !ok {
+			return nil, fmt.Errorf("widening load requires an address")
+		}
+		bytes, err := ip.raw.span("__f64x2_load_f32_ptr", int64(address), 8)
+		if err != nil {
+			return nil, err
+		}
+		out := Lanes{Width: 64, Bits: make([]uint64, 2)}
+		for k := range out.Bits {
+			bits := uint32(bytes[4*k]) | uint32(bytes[4*k+1])<<8 | uint32(bytes[4*k+2])<<16 | uint32(bytes[4*k+3])<<24
+			out.Bits[k] = laneBits(64, float64(math.Float32frombits(bits)))
+		}
+		return out, nil
+	}}
 	i.Builtins["__f32x4_pack"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		ls, err := laneArgs("pack", args, 2)
 		if err != nil {

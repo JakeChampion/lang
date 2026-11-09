@@ -1,0 +1,319 @@
+{
+  "source_snapshot": "6889e8df444a520698f089dca9c9de9bbc770390",
+  "benchmark_snapshot": "099968a1ad95030dd324d1c6ccaeb47413a88ae5",
+  "producer_sha256": "a9a739de6bd908526e0820db913c028812ba5da58e4fb54ac9f65d5724814144",
+  "producer_fixed_point": "stage2 == stage3",
+  "codec_suites": 13,
+  "target_builds": 39,
+  "target_executions": 26,
+  "native_sanitizer_and_zero_live_bytes_executions": 13,
+  "results": [
+    {
+      "suite": "caf",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "001895aa863a2941c6f1937cab5049a8efcc483230e803a9d7d4821938058b00",
+      "run": "pass",
+      "allocs": 5004,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "a259ede8c3e45000f4bdda9af8515e472c8de6738de84be860212b109bf02b74",
+      "run": "pass"
+    },
+    {
+      "suite": "caf",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "a606f1783637abecbcc59cd43eb39080bb12ff9ed5a5697c6b9f561c3a93d9a1"
+    },
+    {
+      "suite": "caf_shard1",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "8773424aacca00a20e515f2b903c730886e70bf888f913cfdc1cd046b71f5492",
+      "run": "pass",
+      "allocs": 5109,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_shard1",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "1f488bb81ccc62f718f0462566a77b72b439b87a0906a56039227a166d20783e",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_shard1",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "75d2f242da2ebe0b59f97564a42491e3682868b21091616673f95e992561b301"
+    },
+    {
+      "suite": "caf_shard2",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "6bcf83a1fcc01355e9eabd1298957bfe78a5270b261adaff4df52cc198a45e9e",
+      "run": "pass",
+      "allocs": 5505,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_shard2",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "20b9619706d6471b47fed83a1d878c1a2c3bb09932c746b09f3482d57f126cd6",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_shard2",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "e59a3cd900dddd7c51ed5eb0f7cef5da7c81fe5415ed60b72fd6f6b23ea04ded"
+    },
+    {
+      "suite": "caf_shard3",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "9f22b2432c412a14a58df6cc8659009bfd9496e31f0823af4e0b87759049ff70",
+      "run": "pass",
+      "allocs": 5473,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_shard3",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "8c9af13ebcd98718adeb166d657345a515cc8a20772f3f7a3f8373ee3d79877e",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_shard3",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "aa88e5d63f1a6aab270b02be2c939decf39e6f62958af1ac9b0fdf37bdd7cbd0"
+    },
+    {
+      "suite": "caf_boundary",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "fd1d18d44ae7a24334df19dca627b7053b3c1de4b1f4e772aba48aa7114683b9",
+      "run": "pass",
+      "allocs": 6281,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_boundary",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "5b553764b477d286ce49ccb8db3a94075776277bb1edc535e9ec9f108ce6e88d",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_boundary",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "517c3317978511d60998889c4454d55f01f6f318330d8c956e29d4dcd7a1ede2"
+    },
+    {
+      "suite": "caf_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "0f1f37084544054f64a7e7529404201244052028e7518e43d4b57b731a524642",
+      "run": "pass",
+      "allocs": 175,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "9d4a6b1dda13b4a7068f59e1c8c1e4283d23660ef87c7afc710799eb9a4d25ad",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "449ff54e19a3bcf9a22b74bec536366848b90f01ea3301495717336ad17cd454"
+    },
+    {
+      "suite": "caf_file",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "8a8aab27971d3eaa1b930611cada69120642df62e70e991078f8e7b76aa606eb",
+      "run": "pass",
+      "allocs": 393502,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "b53a3b3c0122ea58ecedf5688b12e5ff70af34c66e14b37f4ad184a50f6b384b",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "71513a4b0e58252e8701c4f4d49e59b025b81375852d2d9e5a8561acb0473ec3"
+    },
+    {
+      "suite": "caf_file_shard1",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "fabc05a8eaabf29f6991a6568ef529450d30e08cc3e773eea0f7a3b13212c4a1",
+      "run": "pass",
+      "allocs": 416954,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file_shard1",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "34518096a05357eaeaf0a16d37ddf31ed17af0c7a40c3e2de85f1d88b06a8c8e",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file_shard1",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "da579b4c9ad3f7c7e6d4d7cf97db01a419e638427fe312ee0dec715c2b767209"
+    },
+    {
+      "suite": "caf_file_shard2",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "5b6961c450fa703d7388d8f304e015593283f154627f1e81b14d44c66e1954fd",
+      "run": "pass",
+      "allocs": 814196,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file_shard2",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "a5569cb92eeabecd093c9c10eb9fe8c96f6e21efc53dc3234055adae24119711",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file_shard2",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "fd119e85a60e79d144c878b8faa698a8f8e319a4b632760e63ffc2990cf81463"
+    },
+    {
+      "suite": "caf_file_shard3",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "45f879da31ca1d9ace92862090e44b427d9f59dfe9fa1279cd3c7d97f9f7f493",
+      "run": "pass",
+      "allocs": 856259,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file_shard3",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "bcb316ca28c4431e13a4f67fc8a4ba4250a1c8150fc9a410746969a8461d3cfa",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file_shard3",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "3f29627c34c2e3f917fa81bafed0c4b52a18ac082623762a43709ec70700f7b0"
+    },
+    {
+      "suite": "caf_file_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "51209e97e792b5dbe23dfa6bc1c643652200dad9982543dbfea6384fdc49ef92",
+      "run": "pass",
+      "allocs": 636,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "d9f80bb0c819357a75647d13e15b8cb81f4a2543db29919965483fdd09cf9072",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "90951656b9ecc8c66134308dafcbdb8cb9d3d15e2f7bc971929f397992929504"
+    },
+    {
+      "suite": "caf_file_boundary",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "ae54650f4cceda6efa359ee0c7c213098f4a3ae0d3ccc91f86c02081d921159a",
+      "run": "pass",
+      "allocs": 16263,
+      "live_bytes": 0
+    },
+    {
+      "suite": "caf_file_boundary",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "968b9d419e8fa2313a3d1bc99bc7355cb88fbb77ffd69096b876820212ccb834",
+      "run": "pass"
+    },
+    {
+      "suite": "caf_file_boundary",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "2ced091da96faf30d74669a021cf0835c067acefb8f5073d7d95b8eeddd0abe9"
+    },
+    {
+      "suite": "alac",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "6728f063d743a8eb25a74e978d935a7a6d3e25ecd566293fa912f0c43e1ba726",
+      "run": "pass",
+      "allocs": 5529,
+      "live_bytes": 0
+    },
+    {
+      "suite": "alac",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "4f49ecaf1a342deb32e217243d7b514843dcdd8490770fb6cdfbee57403cebb0",
+      "run": "pass"
+    },
+    {
+      "suite": "alac",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "e46c974bbca69d81fb2d6b24bb3b13da6acc8ad677778e2012f0510b31e296b9"
+    }
+  ],
+  "real_reader_controls": "native x86-64 and WASI, complete, actual sparse >4 GiB, truncated, missing",
+  "real_reader_and_complexity_log": "reader-and-complexity.log",
+  "interpreters": "independent smoke passes Go and self-host interpreters",
+  "source_lint": "pass 37.409 seconds",
+  "native_arm64_execution": "pending CI",
+  "full_ci": "pending",
+  "android_device": "not measured",
+  "interpreter_boundaries": [
+    {
+      "interpreter": "go",
+      "seconds": 4.8356790890102275,
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "interpreter": "selfhost",
+      "seconds": 34.29847364901798,
+      "exit_code": 0,
+      "passed": true
+    }
+  ]
+}

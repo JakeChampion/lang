@@ -398,8 +398,8 @@ unsafe function store_pcm24_tiled[const CONFIG: i32](destination: usize, samples
     let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
     let out = destination;
     while (first < end) {
-      let a = __f64x2_of(get(first, 0), get(first, 1));
-      let b = __f64x2_of(get(second, 0), get(second, 1));
+      let a = __f64x2_load_f32_ptr(first);
+      let b = __f64x2_load_f32_ptr(second);
       valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(a), infinity));
       valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(b), infinity));
       let left = if (stereo) { a + b } else { a };
