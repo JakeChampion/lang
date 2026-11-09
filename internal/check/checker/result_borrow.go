@@ -360,6 +360,116 @@ func (c *checker) holdsNoHandle(t ast.Type) bool {
 	return c.noHandleIn(t, nil, map[string]bool{})
 }
 
+// arrayUpdateOwned says call is `with`, `append` or `truncate` on an array,
+// and the result owns its elements: they hold no handle, or the receiver
+// and the new element are owned.
+func (c *checker) arrayUpdateOwned(call *ast.Call, recvOwned, owned func(ast.Expr) bool) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || call.Method == nil || len(call.Args) == 0 {
+		return false
+	}
+	elem := -1
+	switch id.Name {
+	case "__method_Array_set":
+		elem = 2
+	case "__method_Array_push":
+		elem = 1
+	case "__method_Array_truncate":
+	default:
+		return false
+	}
+	array, ok := call.Method.Receiver.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	if c.holdsNoHandle(array.Elem) {
+		return true
+	}
+	return recvOwned(call.Args[0]) && (elem < 0 || elem < len(call.Args) && owned(call.Args[elem]))
+}
+
+// replacedReads maps a read `b.f` to the literal `S { ...b, f: v }` that
+// holds it in v. It does this only when v names the root of b in that read
+// alone. The literal drops b.f, so the read takes what b held there: it is
+// owned when b is. Inside v, the reads that an inner literal with base b.f
+// replaces belong to the inner literal.
+func replacedReads(body ast.Node) map[*ast.FieldAccess]*ast.StructLit {
+	var lits []*ast.StructLit
+	ast.Walk(body, func(n ast.Node) bool {
+		if sl, ok := n.(*ast.StructLit); ok && sl.Base != nil {
+			lits = append(lits, sl)
+		}
+		return true
+	})
+	out := map[*ast.FieldAccess]*ast.StructLit{}
+	for i := len(lits) - 1; i >= 0; i-- {
+		sl := lits[i]
+		root := accessRoot(sl.Base)
+		if root == "" {
+			continue
+		}
+		for _, f := range sl.Fields {
+			var read *ast.FieldAccess
+			mentions := 0
+			ast.Walk(f.Value, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.Lambda:
+					// A lambda can run later, so it takes no field.
+					ast.Walk(x, func(m ast.Node) bool {
+						if id, ok := m.(*ast.Ident); ok && id.Name == root {
+							mentions += 2
+						}
+						return true
+					})
+					return false
+				case *ast.FieldAccess:
+					if inner := out[x]; inner != nil && sameAccess(x.Target, inner.Base) {
+						return false
+					}
+					if x.Field == f.Name && sameAccess(x.Target, sl.Base) {
+						read = x
+						mentions++
+						return false
+					}
+				case *ast.Ident:
+					if x.Name == root {
+						mentions++
+					}
+				}
+				return true
+			})
+			if read != nil && mentions == 1 {
+				out[read] = sl
+			}
+		}
+	}
+	return out
+}
+
+// accessRoot is the local that a name or a field path of it starts from.
+func accessRoot(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.FieldAccess:
+		return accessRoot(x.Target)
+	}
+	return ""
+}
+
+// sameAccess says a and b name the same local or the same field path of it.
+func sameAccess(a, b ast.Expr) bool {
+	switch x := a.(type) {
+	case *ast.Ident:
+		y, ok := b.(*ast.Ident)
+		return ok && x.Name == y.Name
+	case *ast.FieldAccess:
+		y, ok := b.(*ast.FieldAccess)
+		return ok && x.Field == y.Field && sameAccess(x.Target, y.Target)
+	}
+	return false
+}
+
 // noHandleIn decides t inside a declaration whose type parameters in free
 // stand for arguments that hold no handle. seen holds the declarations on
 // the path, so a recursive type is decided by its other parts.

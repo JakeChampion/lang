@@ -18458,7 +18458,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18720,7 +18720,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps() };
+  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
   return nested;
 }
 
@@ -18901,6 +18901,181 @@ function ow_is_fresh_literal(e: ast.Expr): boolean {
   }
 }
 
+// `with`, `append` or `truncate` on an array owns its elements when they hold
+// no handle, or when the receiver and the new element are owned.
+function ow_array_update_owned(c: ast.ExprCall, mfa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
+  if (mfa.field != "with" && mfa.field != "append" && mfa.field != "truncate") {
+    return false;
+  }
+  let typeinfo.TypeArray(array) = check_expr(mfa.obj, ctx.scope) else {
+    return false;
+  };
+  if (array.view) {
+    return false;
+  }
+  if (ow_holds_no_handle(typeinfo.spelling(array.elem), ctx.decls)) {
+    return true;
+  }
+  if (!ow_is_owned_expr(mfa.obj, ctx)) {
+    return false;
+  }
+  if (mfa.field == "with") {
+    return c.args.len() > 1 && ow_is_owned_expr(c.args[1], ctx);
+  }
+  if (mfa.field == "append") {
+    return c.args.len() > 0 && ow_is_owned_expr(c.args[0], ctx);
+  }
+  return true;
+}
+
+// A read `b.f` in the value that a literal `S { ...b, f: v }` gives f, when v
+// names the root of b only in that read. The literal drops b.f, so the read
+// takes what b held there: it is owned when b is.
+struct OwnRead { line: i32, col: i32, field: string, base: ast.Expr }
+
+function ow_replaced_base(reads: OwnRead[], fa: ast.ExprFieldAccess): Option[ast.Expr] {
+  for r in reads {
+    if (r.line == fa.line && r.col == fa.col && r.field == fa.field) {
+      return Some(r.base);
+    }
+  }
+  return None;
+}
+
+function ow_based_lits(e: ast.Expr, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base) {
+      return acc.append(sl);
+    }
+  }
+  return acc;
+}
+
+function ow_lits_stmt(st: ast.Stmt, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+  return acc;
+}
+
+function ow_replaced_reads(body: ast.Stmt[]): OwnRead[] {
+  let lits: ast.ExprStructLit[] = [];
+  for st in body {
+    lits = astwalk.fold_stmt_nodes(st, lits, ow_lits_stmt, ow_based_lits, astwalk.descend_all);
+  }
+  let out: OwnRead[] = [];
+  let i = lits.len() - 1;
+  while (i >= 0) {
+    let sl = lits[i];
+    let root = ow_access_root(sl.base);
+    if (root.len() > 0) {
+      for j in 0..sl.field_names.len() {
+        let scan = ow_replaced_scan(sl.field_values[j], sl.base, sl.field_names[j], root, out);
+        if (scan.found && scan.mentions == 1) {
+          out = out.append(OwnRead { line: scan.line, col: scan.col, field: sl.field_names[j], base: sl.base });
+        }
+      }
+    }
+    i -= 1;
+  }
+  return out;
+}
+
+struct OwnScan { found: boolean, line: i32, col: i32, mentions: i32 }
+
+// The mentions of root in v, with the read of base.field that v makes. A
+// lambda can run later, so a mention in one never takes the field. A read
+// that an inner literal with base base.field replaces belongs to that literal.
+function ow_replaced_scan(v: ast.Expr, base: ast.Expr, field: string, root: string, inner: OwnRead[]): OwnScan {
+  function skip(n: ast.Expr): boolean {
+    match (n) {
+      ast.ExprLambda(lm) => {
+        return lm.origin.len() > 0 && lm.origin != ast.ORIGIN_NESTED_FN;
+      },
+      ast.ExprFieldAccess(fa) => {
+        if let Some(b) = ow_replaced_base(inner, fa) {
+          if (ow_same_access(fa.obj, b)) {
+            return false;
+          }
+        }
+        return fa.field != field || !ow_same_access(fa.obj, base);
+      },
+      _ => {
+        return true;
+      }
+    }
+  }
+  function visit(n: ast.Expr, own acc: OwnScan): OwnScan {
+    match (n) {
+      ast.ExprLambda(lm) => {
+        if (lm.origin.len() == 0 || lm.origin == ast.ORIGIN_NESTED_FN) {
+          return OwnScan { ...acc, mentions: acc.mentions + 2 * ow_root_mentions(n, root) };
+        }
+      },
+      ast.ExprFieldAccess(fa) => {
+        if let Some(b) = ow_replaced_base(inner, fa) {
+          if (ow_same_access(fa.obj, b)) {
+            return acc;
+          }
+        }
+        if (fa.field == field && ow_same_access(fa.obj, base)) {
+          return OwnScan { found: true, line: fa.line, col: fa.col, mentions: acc.mentions + 1 };
+        }
+      },
+      ast.ExprIdent(id) => {
+        if (id.name == root) {
+          return OwnScan { ...acc, mentions: acc.mentions + 1 };
+        }
+      },
+      _ => {}
+    }
+    return acc;
+  }
+  return astwalk.fold_expr_pruned(v, OwnScan { found: false, line: 0, col: 0, mentions: 0 }, visit, skip);
+}
+
+function ow_root_mentions(e: ast.Expr, root: string): i32 {
+  function tally(n: ast.Expr, own acc: i32): i32 {
+    if let ast.ExprIdent(id) = n {
+      if (id.name == root) {
+        return acc + 1;
+      }
+    }
+    return acc;
+  }
+  return astwalk.fold_expr(e, 0, tally);
+}
+
+// The local that a name or a field path of it starts from.
+function ow_access_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return ow_access_root(fa.obj);
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// a and b name the same local or the same field path of it.
+function ow_same_access(a: ast.Expr, b: ast.Expr): boolean {
+  match (a) {
+    ast.ExprIdent(x) => {
+      if let ast.ExprIdent(y) = b {
+        return x.name == y.name;
+      }
+    },
+    ast.ExprFieldAccess(x) => {
+      if let ast.ExprFieldAccess(y) = b {
+        return x.field == y.field && ow_same_access(x.obj, y.obj);
+      }
+    },
+    _ => {}
+  }
+  return false;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
@@ -18939,6 +19114,11 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return true;
         }
       }
+      if let Some(base) = ow_replaced_base(ctx.replaced, fa) {
+        if (ow_is_owned_expr(base, ctx)) {
+          return true;
+        }
+      }
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {
@@ -18947,10 +19127,8 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
-          if let typeinfo.TypeArray(array) = check_expr(mfa.obj, ctx.scope) {
-            if (!array.view && (mfa.field == "with" || mfa.field == "append" || mfa.field == "truncate") && ow_holds_no_handle(typeinfo.spelling(array.elem), ctx.decls)) {
-              return true;
-            }
+          if (ow_array_update_owned(c, mfa, ctx)) {
+            return true;
           }
           if (ow_qualified_ctor(c.callee, ctx)) {
             return true;
@@ -20032,7 +20210,8 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
 }
 
 // An unpack reads the one field of a fresh local or an own parameter that
-// nothing else reads, from a holder that each mention selects a field of.
+// nothing else reads, from a holder that each mention selects a field of, or
+// is the base of a literal that replaces that field.
 function lu_unpack_expr(fx: LuFn, init: ast.Expr): boolean {
   return lu_unpack_expr_in(fx, init, []);
 }
@@ -20051,6 +20230,11 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
         if (sel.field == fa.field) {
           reads += 1;
         }
+      }
+    }
+    for up in fx.facts.updates {
+      if (up.obj == h && up.field == fa.field) {
+        selections += 1;
       }
     }
     return reads == 1 && selections == lu_occ_count(fx, h);
@@ -24176,7 +24360,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps() };
+    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
