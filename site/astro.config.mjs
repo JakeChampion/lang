@@ -128,9 +128,10 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Fern",
+      // The site title "Fern" is next to the logo, so the image is decoration.
       logo: {
         src: "./src/assets/fern-logo.svg",
-        alt: "Fern",
+        alt: "",
       },
       description: tagline,
       // The Open Graph / Twitter card tags Starlight doesn't emit itself.
