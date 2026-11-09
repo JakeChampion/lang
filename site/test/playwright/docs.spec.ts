@@ -429,3 +429,18 @@ test("a stdlib page links each declaration and its edit link to the source", asy
     "https://github.com/JakeChampion/lang/edit/main/internal/stdlib/std/json.fern.md",
   );
 });
+
+test("a captured diagnostic links to the page for its code", async ({ page }) => {
+  await page.goto("./");
+  const link = page.getByRole("link", { name: "What E030 means, and the fix" });
+  await expect(link).toHaveAttribute("href", "/errors/e030/");
+  await link.click();
+  await expect(page.locator("h1")).toContainText("E030: match is not exhaustive");
+  await expect(page.locator(".expressive-code").first()).toContainText("enum Status");
+});
+
+test("the error code index lists each kind of code", async ({ page }) => {
+  await page.goto("errors/");
+  await expect(page.getByRole("heading", { name: "Errors", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "E030", exact: true })).toHaveAttribute("href", "e030/");
+});
