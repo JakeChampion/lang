@@ -166,6 +166,11 @@
     "verification.json": "5336cf4accaa852fa68f39ec3883300a061791ece2e8be296fc702e4cbb1715c",
     "verify.py": "b87a684f833c94f1cab6cf22e2d372dede0c151d31d2ed97a7ba4e405b8d1c30",
     "verify.sh": "8a9f24f137dd6da99549ef4f5be059648d835bb698add2e8db1a3c9508b4e7f2",
-    "vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "wasi-controls/build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "wasi-controls/build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "wasi-controls/progress.log": "4fca2bc56fb003e63066c2a7ec077bc22aecfd6d523d01a47e72198bc2a0471f",
+    "wasi-controls/results.json": "061e02158d32b470c18f75516c82e70f9845c67d2cc179780a38803f105a260a",
+    "wasi-controls/wasm-controls.py": "806ff7105834772f8ae2cfe8e165c58ae4dc31dcca1cfce3329e84a1130f3e8f"
   }
 }

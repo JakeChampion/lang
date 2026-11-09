@@ -79,6 +79,11 @@ The detached retry completes all five Go suites with exit zero in 371.039 second
 It reports 325 passing test and subtest results with zero skips.
 Go vet and the CI self-tests also pass.
 
+The five new call cases also pass through a WASI interpreter driver under Wasmtime 50.0.1.
+Each case returns the expected status, frees every allocation, and reports zero live bytes.
+The [WASI controls](wasi-controls/results.json) retain the source, producer, module hash, commands, and complete census output.
+This driver check makes no WebAssembly performance claim.
+
 Separate allocation-counter builds reduce allocation events from 29,232,928 to 28,676,955 on the same subset.
 The reduction is 555,973 events, or 1.90%.
 Both runs free every allocation, report zero live bytes, and produce identical TAP output.

@@ -1,0 +1,6 @@
+call-explicit-type-arguments-corrected.fern pass
+call-nested-generic-associated-corrected.fern pass
+call-nested-generic-method-corrected.fern pass
+call-static-const-type-argument-corrected.fern pass
+call-zero-arguments-generic-corrected.fern pass
+complete
