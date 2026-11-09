@@ -125,6 +125,23 @@ function test_paths(): test.TestOutcome {
   return test.assert_eq(r, "hello from fern\n|hello from fern\n|#!|#!|none|none|none");
 }
 
+function names(entries: cpio.Entry[]): string {
+  let out = "";
+  for e in entries {
+    out += "[" + cpio.clean(e.name) + "]";
+  }
+  return out;
+}
+
+function test_children(): test.TestOutcome {
+  let Ok(a) = cpio.parse(join([entry("etc", 0x41ed, ""), entry("etc/motd", 0x81a4, "m"), entry("etc/ssl", 0x41ed, ""), entry("etc/ssl/cert", 0x81a4, "c"), entry("./init", 0x81ed, "#!"), trailer()])) else {
+    return test.fail("parse refused the tree archive");
+  };
+  let r = names(a.children("")) + "|" + names(a.children("/")) + "|" + names(a.children("/etc")) + "|" + names(a.children("etc/"));
+  r += "|" + names(a.children("etc/ssl")) + "|" + names(a.children("init")) + "|" + names(a.children("missing"));
+  return test.assert_eq(r, "[etc][init]|[etc][init]|[etc/motd][etc/ssl]|[etc/motd][etc/ssl]|[etc/ssl/cert]||");
+}
+
 function test_clean(): test.TestOutcome {
   let r = cpio.clean("/./a/b") + "|" + cpio.clean(".//x") + "|" + cpio.clean(".") + "|" + cpio.clean("") + "|" + cpio.clean("..");
   return test.assert_eq(r, "a/b|x|.||..");
@@ -219,6 +236,7 @@ function main(): i32 {
   r = r.it("the mode gives the kind of an entry", test_kinds);
   r = r.it("read copies the bytes of an entry", test_read);
   r = r.it("find and file ignore a leading / or ./", test_paths);
+  r = r.it("children lists the entries directly in a directory", test_children);
   r = r.it("clean removes the leading prefixes only", test_clean);
   r = r.it("an empty file takes no bytes", test_empty_file_at_the_end);
   r = r.it("parse stops at the trailer", test_stops_at_the_trailer);

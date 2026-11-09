@@ -111,7 +111,7 @@ function load(b: Boot, path: string, argv: string[]): Option[user_process.Proces
   };
   match (user_process.load(b.f, tables, image, argv, ["HOME=/"])) {
     Ok(p) => {
-      return Some(p);
+      return Some(p.with_root(b.a));
     },
     Err(why) => {
       print(path + ": " + why);
@@ -176,6 +176,7 @@ function main(): i32 {
   spawn(b, "/bin/hello", ["/bin/hello", "world"]);
   spawn(b, "/bin/efault", ["/bin/efault"]);
   spawn(b, "/bin/crash", ["/bin/crash"]);
+  spawn(b, "/bin/files", ["/bin/files"]);
   board.power_off(0);
   return 0;
 }
@@ -199,6 +200,56 @@ function main(): i32 {
   }
   print("parts " + parts.len().to_string() + ", last " + parts[1999] + ", depth " + depth(20000).to_string());
   return 3;
+}
+`
+
+// The /etc of the initrd of every process test.
+var etcFiles = []cpioFile{
+	{"etc", 0o40755, nil},
+	{"etc/motd", 0o100644, []byte("hello from the initrd\n")},
+	{"etc/hostname", 0o100644, []byte("fernos\n")},
+	{"etc/issue", 0o120777, []byte("motd")},
+}
+
+// files reads the root filesystem through the Linux calls: by an absolute
+// path, by a relative path with "..", through a symbolic link, and as a
+// directory listing. A missing file and a write both fail.
+const processFilesSrc = `import "std/array";
+import "std/string";
+
+function show(label: string, r: Result[string, IoError]): void {
+  match (r) {
+    Ok(s) => {
+      print(label + ": " + s.trim());
+    },
+    Err(e) => {
+      print(label + " failed");
+    }
+  }
+}
+
+function main(): i32 {
+  show("motd", read_file("/etc/motd"));
+  show("hostname", read_file("bin/../etc/hostname"));
+  show("issue", read_file("/etc/issue"));
+  show("missing", read_file("/etc/missing"));
+  match (read_dir("/etc")) {
+    Ok(names) => {
+      print("etc: " + names.join(","));
+    },
+    Err(e) => {
+      print("etc failed");
+    }
+  }
+  match (write_file("/etc/new", "x")) {
+    Ok(n) => {
+      print("write succeeded");
+    },
+    Err(e) => {
+      print("write failed");
+    }
+  }
+  return 0;
 }
 `
 
@@ -255,7 +306,7 @@ func codeImage(base uint64, code []uint32) []byte {
 }
 
 // processInitrd builds each Fern program for arm64-linux, and writes a cpio
-// archive with it and each raw image as bin/NAME.
+// archive with it and each raw image as bin/NAME, and the files of etcFiles.
 func processInitrd(t *testing.T, cli *selfHostCLI, dir string, fern map[string]string, raw map[string][]byte) string {
 	t.Helper()
 	programs := map[string][]byte{}
@@ -286,6 +337,7 @@ func processInitrd(t *testing.T, cli *selfHostCLI, dir string, fern map[string]s
 	for _, name := range names {
 		files = append(files, cpioFile{"bin/" + name, 0o100755, programs[name]})
 	}
+	files = append(files, etcFiles...)
 	archive := filepath.Join(dir, "initrd.cpio")
 	if err := os.WriteFile(archive, newcArchive(files), 0o644); err != nil {
 		t.Fatal(err)
@@ -297,7 +349,7 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc}, map[string][]byte{"efault": efaultImage()})
+	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc, "files": processFilesSrc}, map[string][]byte{"efault": efaultImage()})
 	src := writeTickProgram(t, processBoardSrc, processMainSrc)
 	kernel := filepath.Join(dir, "kernel.img")
 	if msg, err := cli.compileCmd("arm64-kernel", kernel, src, "-ram", imageRAM, "-emit", "image").CombinedOutput(); err != nil {
@@ -320,6 +372,14 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/hello gave back its frames true\n",
 		"/bin/efault gave back its frames true\n",
 		"/bin/crash gave back its frames true\n",
+		"/bin/files fd 1: motd: hello from the initrd\n",
+		"/bin/files fd 1: hostname: fernos\n",
+		"/bin/files fd 1: issue: hello from the initrd\n",
+		"/bin/files fd 1: missing failed\n",
+		"/bin/files fd 1: etc: motd,hostname,issue\n",
+		"/bin/files fd 1: write failed\n",
+		"/bin/files exit 0\n",
+		"/bin/files gave back its frames true\n",
 	} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant %q", console, want)

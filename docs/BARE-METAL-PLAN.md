@@ -911,7 +911,19 @@ and three `mmap` reservations at start.
    - A process with a bad syscall argument ends, and the workers continue.
    - A process that loads from the code address of a worker takes a fault,
      because that address is not in its tables, and the kernel ends it.
-21. Beside those: the panic scope is decided (#14257, see the north-star
+21. **A process reads the initrd through the Linux calls** (#14265, the
+   first slice of milestone 6). `with_root` gives a process a `std/cpio`
+   archive as a read-only root. The kernel answers `openat`, `close`,
+   `read`, `lseek`, `getdents64`, `fstat`, `newfstatat` and `getcwd` from
+   the archive. A path resolves `.`, `..` and symbolic links. A call that
+   can change the filesystem gives `EROFS`. `std/cpio` gains
+   `children`, the entries directly in a directory.
+
+   `TestSelfHostKernelProcessOnQemu` runs a Fern program that reads files by
+   an absolute path, a relative path and a symbolic link with the hosted
+   `read_file`, and lists `/etc` with `read_dir`. A missing file and a
+   `write_file` both fail.
+22. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
