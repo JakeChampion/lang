@@ -34381,7 +34381,7 @@ function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_
 
 function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprArray(_) = e {
-    return vaguer_than(from, to) && array_mix_settles(e, from, to, s);
+    return (vaguer_than(from, to) || !type_eq(from, to)) && array_mix_settles(e, from, to, s);
   }
   return false;
 }
