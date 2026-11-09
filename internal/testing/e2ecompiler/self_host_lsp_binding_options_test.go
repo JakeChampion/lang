@@ -72,6 +72,9 @@ func TestSelfHostLSPBindingOptions(t *testing.T) {
 		{name: "match-binding", source: "function main():i32{let o:Option[i32]=Some(1);return match(o){Some(v)=>v,None=>0};}", args: []string{"1", "72"}, want: "1|v|$binding$1$v|1:63|LOCAL\n"},
 		{name: "match-scrutinee", source: "function main():i32{let o:Option[i32]=Some(1);return match(o){Some(v)=>v,None=>0};}", args: []string{"1", "60"}, want: "0|o|$binding$0$o|1:21|LOCAL\n"},
 		{name: "global-constant", source: "const LIMIT:i32=10;\nfunction main():i32{return LIMIT;}", args: []string{"2", "28"}, want: "NONE\n"},
+		{name: "constant-declaration", source: "const LIMIT:i32=10;\nfunction main():i32{return LIMIT;}", args: []string{"1", "7"}, want: "UNLOCATED\n"},
+		{name: "global-constant-shadow", source: "const LIMIT:i32=10;\nfunction main():i32{let LIMIT=20;return LIMIT;}", args: []string{"2", "41"}, want: "0|LIMIT|$binding$0$LIMIT|2:21|LOCAL\n"},
+		{name: "global-constant-block", source: "const LIMIT:i32=10;\nfunction main():i32{if(true){return LIMIT;}return 0;}", args: []string{"2", "37"}, want: "NONE\n"},
 		{name: "parameter-shadow", source: "function f(x:i32):i32{let x=\"hi\";return x.len();}", args: []string{"1", "41"}, want: "1|x|$binding$1$x|1:23|LOCAL\n"},
 	}
 	dir := t.TempDir()

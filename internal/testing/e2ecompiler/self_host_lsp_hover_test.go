@@ -279,6 +279,19 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 
 func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 	s := buildLSPServers(t)
+	t.Run("constant-reference-sites", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTree(t, dir, map[string]string{
+			"util.fern": "pub const LIMIT: i32 = 10;\npub function value(): i32 { return LIMIT; }\n",
+			"main.fern": "import \"./util\";\nfunction main(): i32 { return util.LIMIT; }\n",
+		})
+		askLSP(t, s, dir, []string{"main.fern", "util.fern"}, []lspAsk{
+			hoverAsk("qualified-constant", "main.fern", 1, 37, "(const) LIMIT: i32", rng(1, 30, 40)),
+			defAsk("qualified-constant", "main.fern", 1, 37, "util.fern", rng(0, 10, 15)),
+			hoverAsk("module-own-constant", "util.fern", 1, 36, "(const) LIMIT: i32", rng(1, 35, 40)),
+			defAsk("module-own-constant", "util.fern", 1, 36, "util.fern", rng(0, 10, 15)),
+		})
+	})
 
 	t.Run("cross-module", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "a project")

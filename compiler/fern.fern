@@ -7003,6 +7003,55 @@ function apk_launch(adb: string, path: string, app: apk.App): i32 {
   return exec_and_wait(adb, [adb, "shell", script]);
 }
 
+function run_repl_paths(pos: string[], embedded_root: string, target: string): i32 {
+  let embedded = embedded_root.len() > 0;
+  if (pos.len() > 1 || pos.len() == 1 && embedded) {
+    return usage(embedded);
+  }
+  if (pos.len() == 1) {
+    return run_repl(util.clean_path(pos[0]), target);
+  }
+  return run_repl(embedded_root, target);
+}
+
+function run_document_mode(entry_path: string, have_entry: boolean, embedded: boolean, prog_args: string[], tf: ToolFlags, root: string, target: string, embed_dir: string, out_path: string, chunk: string): i32 {
+  if (!have_entry) {
+    return usage(embedded);
+  }
+  if (prog_args.len() > 0) {
+    eprint("fern: one document expected, got \"" + entry_path + "\" and \"" + prog_args[0] + "\"");
+    return 2;
+  }
+  if (tf.doctest) {
+    return run_doctests(entry_path, root, target, embed_dir);
+  }
+  return run_tangle(entry_path, out_path, chunk, tf.weave, tf.html);
+}
+
+function interpret_bundle(st: DiagStyle, b: Bundle, entry_path: string, target: string, prog_args: string[]): i32 {
+  let merged = b.merged;
+  if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
+    return 1;
+  }
+  if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
+    return 1;
+  }
+  if (eprint_findings(st, interp_findings_with_file(merged, b.pkgs, modloader.base_name(entry_display(entry_path))), entry_path, b.files, b.maps)) {
+    return 1;
+  }
+  let argv: string[] = [entry_path];
+  let pa = 0;
+  while (pa < prog_args.len()) {
+    argv = argv.append(prog_args[pa]);
+    pa += 1;
+  }
+  let (status, why) = interp_status(interp.eval_module_argv(merged, argv));
+  if (why.len() > 0) {
+    eprint(why);
+  }
+  return status;
+}
+
 function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let entry_path = "";
   let out_path = "";
@@ -7251,17 +7300,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   if (mode_tangle || tf.weave || tf.doctest) {
-    if (!have_entry) {
-      return usage(embedded);
-    }
-    if (prog_args.len() > 0) {
-      eprint("fern: one document expected, got \"" + entry_path + "\" and \"" + prog_args[0] + "\"");
-      return 2;
-    }
-    if (tf.doctest) {
-      return run_doctests(entry_path, root, target, embed_dir);
-    }
-    return run_tangle(entry_path, out_path, chunk, tf.weave, tf.html);
+    return run_document_mode(entry_path, have_entry, embedded, prog_args, tf, root, target, embed_dir, out_path, chunk);
   }
 
   if (mode_doc) {
@@ -7292,13 +7331,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return serve_lsp(pos, embedded_root, target, target_given, embed_dir);
   }
   if (mode_repl) {
-    if (pos.len() > 1 || pos.len() == 1 && embedded_root.len() > 0) {
-      return usage(embedded);
-    }
-    if (pos.len() == 1) {
-      return run_repl(util.clean_path(pos[0]), target);
-    }
-    return run_repl(embedded_root, target);
+    return run_repl_paths(pos, embedded_root, target);
   }
 
   if (!have_entry && (mode_check || mode_interp)) {
@@ -7429,26 +7462,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   if (mode_interp) {
-    if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    if (eprint_findings(st, interp_findings_with_file(merged, pkgs, modloader.base_name(entry_display(entry_path))), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    let argv: string[] = [entry_path];
-    let pa = 0;
-    while (pa < prog_args.len()) {
-      argv = argv.append(prog_args[pa]);
-      pa += 1;
-    }
-    let (status, why) = interp_status(interp.eval_module_argv(merged, argv));
-    if (why.len() > 0) {
-      eprint(why);
-    }
-    return status;
+    return interpret_bundle(st, b, entry_path, target, prog_args);
   }
   emit = form;
 
