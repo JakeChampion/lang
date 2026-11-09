@@ -100,17 +100,9 @@ jobs:
       - name: Stage playground into site/public/playground/
         # Astro copies everything under site/public/ verbatim to
         # the bundle root, so playground/ ends up at /playground/.
-        # Stage every runtime asset, not just the entry point:
-        # index.html statically imports ./wasi-shim.js and
-        # ./wasi-http-shim.js, so if either 404s the whole ES module
-        # fails to load and the playground hangs on "loading runtime…".
-        # Glob *.html/*.js/*.wasm so newly-added local assets stage
-        # too. Use cp -L to dereference the wasm binary (in case it's
-        # ever a symlink) — Pages rejects symlinks in artefacts.
         run: |
           rm -rf site/public/playground
-          mkdir -p site/public/playground
-          cp -L web/*.html web/*.js web/*.wasm site/public/playground/
+          web/stage.sh site/public/playground
 
       - name: Generate stdlib reference
         run: |
@@ -119,6 +111,10 @@ jobs:
 
       - name: Install site deps + build
         working-directory: site
+        env:
+          # fern-lang.netlify.app is the main site. Each page of this copy
+          # names its Netlify page as canonical.
+          CANONICAL_SITE: https://fern-lang.netlify.app
         run: |
           npm install
           npm run build

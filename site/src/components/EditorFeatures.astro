@@ -1,0 +1,35 @@
+---
+// EditorFeatures — what `fern -lsp` does for an editor, from the
+// capabilities it reports in a build-time session (scripts/capture.mjs).
+
+import { captures, lspFeatures } from "../lib/captures.mjs";
+
+const features = captures ? lspFeatures(captures.lsp) : [];
+const groups = [
+  { key: "read", label: "Reading code" },
+  { key: "write", label: "Writing code" },
+];
+let n = 0;
+const numbered = groups.map((g) => ({
+  ...g,
+  items: features.filter((f) => f.group === g.key).map((f) => ({ ...f, index: String(++n).padStart(2, "0") })),
+}));
+---
+
+{captures && (
+<div class="fern-panel fern-editor not-content">
+  {numbered.map((g) => (
+    <div class="fern-editor__group">
+      <span class="fern-label">{g.label}</span>
+      <ol>
+        {g.items.map((f) => (
+          <li><span class="fern-editor__index">{f.index}</span>{f.name}</li>
+        ))}
+      </ol>
+    </div>
+  ))}
+  <p class="fern-editor__note fern-label">
+    Reported by fern -lsp in a session at build · fern {captures.revision}
+  </p>
+</div>
+)}

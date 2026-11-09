@@ -47,11 +47,7 @@ bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
   -o "$stage/playground.wasm" "$PWD/compiler/playground_run.fern" "$PWD/internal/stdlib"
 
 echo "==> staging playground assets"
-# index.html statically imports ./wasi-shim.js and ./wasi-http-shim.js, so a
-# missing sibling breaks the whole ES module and the playground hangs on
-# "loading runtime…". Glob rather than list, so a newly-added local asset
-# stages without a change here.
-cp -L web/*.html web/*.js "$stage/"
+web/stage.sh "$stage"
 
 echo "==> generating stdlib reference"
 bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
@@ -63,11 +59,22 @@ cd site
 # astro.config.mjs defaults `site` to the GitHub Pages origin, which would put
 # another host's domain in this deploy's canonical + Open Graph URLs. Netlify
 # exposes the deploy's own origin, so hand it over through the config's
-# existing SITE_URL hook. DEPLOY_PRIME_URL is the branch/preview URL; URL is
-# the production one. Only set it when non-empty: the config falls back on a
-# nullish value, and an empty string is not nullish — it would fail the build.
+# existing SITE_URL hook. URL is the production origin. DEPLOY_PRIME_URL is
+# the branch or preview URL, and a production deploy sets it to the main--
+# branch URL, so it applies only outside CONTEXT=production. Only set it when
+# non-empty: the config falls back on a nullish value, and an empty string is
+# not nullish — it would fail the build.
+# The Netlify site is at the domain root. The /lang base is for GitHub Pages
+# alone, which serves the project from the repository subpath.
+export SITE_BASE="${SITE_BASE:-/}"
+echo "==> SITE_BASE=$SITE_BASE"
+
 if [ -z "${SITE_URL:-}" ]; then
-  deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  if [ "${CONTEXT:-}" = production ]; then
+    deploy_url="${URL:-}"
+  else
+    deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  fi
   if [ -n "$deploy_url" ]; then
     export SITE_URL="$deploy_url"
     echo "==> SITE_URL=$SITE_URL"
