@@ -814,7 +814,9 @@ function suppress_line(own st: St): St {
   if (r.0 < 0) {
     return s;
   }
-  return compact(St { ...s, soff: r.0, sline: s.sline + 1 as i64, wpos: r.0, wline: s.wline + 1 as i64 });
+  let sline = s.sline + 1 as i64;
+  let wline = s.wline + 1 as i64;
+  return compact(St { ...s, soff: r.0, sline: sline, wpos: r.0, wline: wline });
 }
 
 function run_regexp(own st: St, p: Pat, rep: i64): St {

@@ -133,7 +133,8 @@ function tag_header(own state: Input, read: (i32) => Result[u8[], IoError]): Res
     bytes = bytes.append(byte);
   }
   let next = consume(ready, 10)?;
-  return pending(Input { ...next, metadata_bytes: next.metadata_bytes + total, id3: bytes, remaining: value.payload_bytes, stage: SkipTag });
+  let seen = next.metadata_bytes + total;
+  return pending(Input { ...next, metadata_bytes: seen, id3: bytes, remaining: value.payload_bytes, stage: SkipTag });
 }
 
 function skip_tag(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {

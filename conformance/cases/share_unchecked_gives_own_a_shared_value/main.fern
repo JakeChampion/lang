@@ -1,0 +1,22 @@
+// In an unsafe block, `share_unchecked(v)` is v as a value that an own
+// parameter accepts. The callee and the caller share what v holds, and an
+// update in the callee copies, so the caller's value does not change.
+
+struct H { w: Writer, ns: i32[] }
+
+function grown(own h: H): i32 {
+  let ns = h.ns.append(4);
+  return ns.len();
+}
+
+function shared(h: H): i32 {
+  return grown(unsafe { share_unchecked(h) });
+}
+
+function main(): i32 {
+  let h = H { w: stdout(), ns: [1, 2, 3] };
+  print(shared(h));
+  print(h.ns.len());
+  print(grown(unsafe { share_unchecked(H { ...h, ns: [9] }) }));
+  return 0;
+}

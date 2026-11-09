@@ -7800,6 +7800,12 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       }
     }
   }
+  if (name == "share_unchecked") {
+    if (args.len() != 1) {
+      return v_err("share_unchecked: expected 1 arg");
+    }
+    return args[0];
+  }
   if (name == "string_from_bytes_range_unchecked") {
     if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
       return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");

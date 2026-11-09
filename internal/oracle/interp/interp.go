@@ -712,6 +712,12 @@ func New() *Interp {
 	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
 	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
+	i.Builtins["share_unchecked"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("share_unchecked: expected 1 arg, got %d", len(args))
+		}
+		return args[0], nil
+	}}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
 	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
