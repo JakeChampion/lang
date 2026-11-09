@@ -1,0 +1,18 @@
+package e2eharness
+
+import (
+	"os/exec"
+	"runtime"
+)
+
+// WithoutCoreDump disables QEMU guest cores and clears the Linux core filter.
+// A piped host core handler ignores RLIMIT_CORE, so both controls are needed.
+func WithoutCoreDump(cmd *exec.Cmd) *exec.Cmd {
+	if runtime.GOOS != "linux" || cmd.Err != nil {
+		return cmd
+	}
+	args := append([]string{"-c", `ulimit -c 0 && exec "$@"`, "sh", cmd.Path}, cmd.Args[1:]...)
+	out := exec.Command("/bin/sh", args...)
+	out.Env, out.Dir = cmd.Env, cmd.Dir
+	return out
+}

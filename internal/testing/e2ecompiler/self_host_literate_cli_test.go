@@ -107,6 +107,24 @@ func TestSelfHostTangle(t *testing.T) {
 			t.Errorf("-o wrote %q", got)
 		}
 	})
+
+	t.Run("a file name outside the output directory", func(t *testing.T) {
+		for _, name := range []string{"../../escaped.txt", "sub/../../escaped.txt", "/escaped.txt"} {
+			doc := "```fern file=main.fern entry\nfunction main(): i32 { return 0; }\n```\n\n```fern file=" + name + "\ntext\n```\n"
+			dir := t.TempDir()
+			out := filepath.Join(dir, "a", "b", "out")
+			_, _, errOut, code := literateRun(t, doc, "-tangle", "-o", out)
+			if code != 1 || !strings.Contains(errOut, "DOC:5:1") || !strings.Contains(errOut, "below the output directory") {
+				t.Errorf("file=%s: exit %d, stderr %q, want a refusal at line 5", name, code, errOut)
+			}
+			_ = filepath.WalkDir(dir, func(path string, _ os.DirEntry, _ error) error {
+				if filepath.Base(path) == "escaped.txt" || filepath.Base(path) == "main.fern" {
+					t.Errorf("file=%s: wrote %s", name, path)
+				}
+				return nil
+			})
+		}
+	})
 }
 
 func weaveGolden(t *testing.T, name string) string {
@@ -148,6 +166,17 @@ func TestSelfHostWeave(t *testing.T) {
 		}
 		if _, out, _, _ := literateRun(t, "just prose\n", "-weave", "-html"); strings.Contains(out, `<section class="chunk-index">`) || !strings.Contains(out, "<title>Fern literate document</title>") {
 			t.Errorf("a document without chunks:\n%s", out)
+		}
+	})
+
+	t.Run("script links", func(t *testing.T) {
+		doc := "# T\n\nSee [one]( javascript:alert%281%29), [two](java\tscript:alert%282%29), [three](JavaScript:alert%283%29),\n[four](\x01javascript:alert%284%29) and [five]( https://example.com/a).\n"
+		_, out, errOut, code := literateRun(t, doc, "-weave", "-html")
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, errOut)
+		}
+		if strings.Contains(out, "alert") && strings.Contains(out, "href=\" javascript") || strings.Count(out, "<a href=") != 1 || !strings.Contains(out, "https://example.com/a") {
+			t.Errorf("only the https link may become an anchor:\n%s", out)
 		}
 	})
 

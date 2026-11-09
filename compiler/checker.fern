@@ -19461,7 +19461,7 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     return true;
   }
   if let ast.ExprIdent(id) = e {
-    if (fx.ofuncs.ctors.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
+    if ((id.name == "None" || fx.ofuncs.ctors.has(id.name)) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0) {
       return true;
     }
   }
@@ -21441,7 +21441,15 @@ struct LuFieldReads { name: string, field: string, n: i32 }
 // The reads in call of a field of name other than field. A move of
 // name.field leaves those fields to the caller.
 function lu_other_field_reads(call: ast.Expr, name: string, field: string): i32 {
-  return astwalk.fold_expr_pruned(call, LuFieldReads { name: name, field: field, n: 0 }, lu_count_other_field, astwalk.not_lambda).n;
+  return astwalk.fold_expr_pruned(call, LuFieldReads { name: name, field: field, n: 0 }, lu_count_other_field, lu_not_closure).n;
+}
+
+// A value block runs where it stands, so a read in it is a read of the call.
+function lu_not_closure(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.params.len() == 0 && parser.is_value_block_origin(lm.origin);
+  }
+  return true;
 }
 
 function lu_count_other_field(e: ast.Expr, own r: LuFieldReads): LuFieldReads {

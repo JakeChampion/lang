@@ -1,0 +1,15 @@
+{
+  "note": "Fresh executor and checkout after executor-key change. No old ignored artifact was recovered. These controls use new output paths.",
+  "source": "20a9a0dbed2d27a06ae61abae93c416e3b034bcd",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.12.14",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "cpu_max": "400000 100000",
+  "core_dump_overlay": false,
+  "tools": {
+    "go version": "go version go1.27.3 linux/amd64",
+    "wasmtime --version": "wasmtime 50.0.1 (c307ec81d 2026-10-29)",
+    "aarch64-linux-gnu-gcc --version": "aarch64-linux-gnu-gcc (Debian 14.2.0-19) 14.2.0",
+    "qemu-aarch64 --version": "qemu-aarch64 version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)"
+  }
+}

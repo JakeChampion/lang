@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "go_package_seconds": 174.218,
+  "passing_results": 67,
+  "skips": 0,
+  "source": "7dbc615c9c1d2dd53f63529ae9c2925aad4ace5b",
+  "test_regex": "^TestSelfHostSSA(DependencyVerification|Lifetime)",
+  "overlay": "/tmp/lang-semantic-test-overlay.json"
+}

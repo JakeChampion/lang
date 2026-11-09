@@ -1,0 +1,39 @@
+{
+  "source": "20a9a0dbed2d27a06ae61abae93c416e3b034bcd",
+  "go_exit_code": 0,
+  "go_package_seconds": 275.227,
+  "passing_results": 67,
+  "skips": 0,
+  "source_check_exit_code": 0,
+  "vet_exit_code": 0,
+  "selftest_exit_code": 0,
+  "overlay": false,
+  "commands": [
+    [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostSSA(DependencyVerification|Lifetime)",
+      "-count=1"
+    ],
+    [
+      "go",
+      "vet",
+      "./internal/testing/e2ecompiler"
+    ],
+    [
+      "make",
+      "ci-selftest"
+    ],
+    [
+      "build/postmerge-qualification-20261109-1950/candidate-count",
+      "-check",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ]
+  ],
+  "toolchain_env": "/tmp/lang-performance-toolchain-20261109-1950.env",
+  "note": "All command sessions returned explicit exit zero. Fresh executor core-dump controls work without an overlay."
+}

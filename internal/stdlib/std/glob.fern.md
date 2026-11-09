@@ -79,69 +79,92 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
   return (matched, next);
 }
 
-function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
-  let pi = i;
-  let tj = j;
+// Each step maps the text positions that the pattern so far can reach
+// to the positions after one more pattern token.
+function __glob_match(p: string, t: string): boolean {
+  let cur: boolean[] = [true];
+  for k in 0..t.len() {
+    cur = cur.append(false);
+  }
+  let pi = 0;
   while (pi < p.len()) {
     let pc = p[pi] as i32;
-    if (pc == 42) {
-      if (pi + 1 < p.len() && p[pi + 1] == 42) {
-        let ni = pi;
-        while (ni < p.len() && p[ni] == 42) {
-          ni += 1;
-        }
-        if (ni < p.len() && p[ni] == 47) {
-          if (__glob_match(p, ni + 1, t, tj)) {
-            return true;
-          }
-        }
-        let k = tj;
-        while (k <= t.len()) {
-          if (__glob_match(p, ni, t, k)) {
-            return true;
-          }
-          k += 1;
-        }
-        return false;
+    if (pc == 42 && pi + 1 < p.len() && p[pi + 1] == 42) {
+      while (pi < p.len() && p[pi] == 42) {
+        pi += 1;
       }
-      let m = tj;
-      let cont = true;
-      while (cont) {
-        if (__glob_match(p, pi + 1, t, m)) {
-          return true;
-        }
-        if (m >= t.len() || t[m] == 47) {
-          cont = false;
-        } else {
-          m += 1;
-        }
+      let slash = pi < p.len() && p[pi] == 47;
+      cur = __glob_globstar(cur, t, slash);
+      if (slash) {
+        pi += 1;
       }
-      return false;
-    } else if (pc == 63) {
-      if (tj >= t.len() || t[tj] == 47) {
-        return false;
-      }
+    } else if (pc == 42) {
+      cur = __glob_star(cur, t);
       pi += 1;
-      tj += 1;
-    } else if (pc == 91) {
-      if (tj >= t.len() || t[tj] == 47) {
-        return false;
-      }
-      let res = __glob_class(p, pi, t[tj] as i32);
-      if (!res.0) {
-        return false;
-      }
-      pi = res.1;
-      tj += 1;
     } else {
-      if (tj >= t.len() || t[tj] as i32 != pc) {
-        return false;
+      cur = __glob_one(cur, p, pi, t);
+      pi = pi + 1;
+      if (pc == 91) {
+        pi = __glob_class(p, pi - 1, 0).1;
       }
-      pi += 1;
-      tj += 1;
+    }
+    if (!__glob_any(cur)) {
+      return false;
     }
   }
-  return tj == t.len();
+  return cur[t.len()];
+}
+
+function __glob_any(cur: boolean[]): boolean {
+  for v in cur {
+    if (v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __glob_globstar(cur: boolean[], t: string, slash: boolean): boolean[] {
+  let next: boolean[] = [];
+  let seen = false;
+  for k in 0..cur.len() {
+    if (slash) {
+      next = next.append(cur[k] || seen && t[k - 1] == 47);
+    } else {
+      next = next.append(cur[k] || seen);
+    }
+    seen = seen || cur[k];
+  }
+  return next;
+}
+
+function __glob_star(cur: boolean[], t: string): boolean[] {
+  let next: boolean[] = [];
+  let carry = false;
+  for k in 0..cur.len() {
+    let v = cur[k] || carry;
+    carry = v && k < t.len() && t[k] != 47;
+    next = next.append(v);
+  }
+  return next;
+}
+
+function __glob_one(cur: boolean[], p: string, pi: i32, t: string): boolean[] {
+  let pc = p[pi] as i32;
+  let next: boolean[] = [false];
+  for k in 0..t.len() {
+    let ch = t[k] as i32;
+    if (!cur[k]) {
+      next = next.append(false);
+    } else if (pc == 63) {
+      next = next.append(ch != 47);
+    } else if (pc == 91) {
+      next = next.append(ch != 47 && __glob_class(p, pi, ch).0);
+    } else {
+      next = next.append(ch == pc);
+    }
+  }
+  return next;
 }
 ```
 
@@ -150,6 +173,6 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
 ```fern
 <<3 pub function is_match(pattern: string, text: string): boolean>>=
 pub function is_match(pattern: string, text: string): boolean {
-  return __glob_match(pattern, 0, text, 0);
+  return __glob_match(pattern, text);
 }
 ```

@@ -1,0 +1,96 @@
+[
+  {
+    "args": [
+      "/workspace/lang/build/semantic-liveness-20261109/base-native",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang/build/semantic-liveness-ci-20261109/base-count-byte.s",
+      "/workspace/lang-semantic-base-20261109/bench/string_count_byte.fern",
+      "/workspace/lang-semantic-base-20261109/internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-semantic-liveness-20261109",
+    "fern_env": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "exit_code": 0
+  },
+  {
+    "args": [
+      "/workspace/lang/build/semantic-liveness-20261109/base-native",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang/build/semantic-liveness-ci-20261109/base-count-byte",
+      "/workspace/lang-semantic-base-20261109/bench/string_count_byte.fern",
+      "/workspace/lang-semantic-base-20261109/internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-semantic-liveness-20261109",
+    "fern_env": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "exit_code": 0
+  },
+  {
+    "args": [
+      "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang/build/semantic-liveness-ci-20261109/candidate-count-byte.s",
+      "/workspace/lang-semantic-base-20261109/bench/string_count_byte.fern",
+      "/workspace/lang-semantic-base-20261109/internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-semantic-liveness-20261109",
+    "fern_env": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "exit_code": 0
+  },
+  {
+    "args": [
+      "/workspace/lang/build/semantic-liveness-20261109/candidate-native",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang/build/semantic-liveness-ci-20261109/candidate-count-byte",
+      "/workspace/lang-semantic-base-20261109/bench/string_count_byte.fern",
+      "/workspace/lang-semantic-base-20261109/internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-semantic-liveness-20261109",
+    "fern_env": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "exit_code": 0
+  },
+  {
+    "args": [
+      "/workspace/scratch/valgrind/usr/bin/valgrind",
+      "--tool=callgrind",
+      "--callgrind-out-file=/dev/null",
+      "/workspace/lang/build/semantic-liveness-ci-20261109/base-count-byte"
+    ],
+    "env": {
+      "VALGRIND_LIB": "/workspace/scratch/valgrind/usr/libexec/valgrind"
+    },
+    "cwd": "/workspace/lang-semantic-liveness-20261109",
+    "exit_code": 40,
+    "expected_exit": 40
+  }
+]

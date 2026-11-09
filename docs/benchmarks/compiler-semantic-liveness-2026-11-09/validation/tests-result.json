@@ -1,0 +1,14 @@
+{
+  "args": [
+    "go",
+    "test",
+    "-overlay=/tmp/lang-semantic-test-overlay.json",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostSSA(DependencyVerification|Lifetime)",
+    "-count=1"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 212.25953736099837
+}

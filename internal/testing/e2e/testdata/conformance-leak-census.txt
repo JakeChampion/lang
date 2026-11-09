@@ -1,3 +1,4 @@
+# 2026-11-09: own_field_moves_beside_an_if_value is clean under RC trace.
 # 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
 # 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
 # 2026-11-09: own_takes_replaced_field_of_owned_base is clean under RC trace.
@@ -701,6 +702,7 @@ own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_field_move_in_one_branch                         0
+own_field_moves_beside_an_if_value                   0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
@@ -726,6 +728,7 @@ own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
+owned_match_results_rebuild_literal                 0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0

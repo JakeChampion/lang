@@ -506,15 +506,12 @@ function __digits(s: string): i64 {
   if (s.len() == 0) {
     return -1i64;
   }
-  let cap = 4611686018427387904;
   let n = 0 as i64;
   for b in s.bytes() {
     if (b < 48 as u8 || b > 57 as u8) {
       return -1i64;
     }
-    if (n < cap) {
-      n = n * (10 as i64) + (b - 48 as u8) as i64;
-    }
+    n = n *| (10 as i64) +| (b - 48 as u8) as i64;
   }
   return n;
 }

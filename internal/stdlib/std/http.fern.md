@@ -2407,6 +2407,9 @@ pub function serialize_response_conn(resp: HttpResponse, keep_alive: boolean): s
 }
 
 pub function serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
+  if (!fields_ok(resp.headers) || !fields_ok(resp.trailers)) {
+    return serialize_response_to(method, version, internal_error(""), keep_alive);
+  }
   let no_body = bodiless(resp.status);
   let framing = "";
   let body = "";
@@ -2433,6 +2436,9 @@ pub function serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boole
 }
 
 pub function serialize_response_to_bytes(method: string, version: string, resp: HttpResponse, keep_alive: boolean): u8[] {
+  if (!fields_ok(resp.headers) || !fields_ok(resp.trailers)) {
+    return serialize_response_to_bytes(method, version, internal_error(""), keep_alive);
+  }
   let cap = 256;
   match (resp.body) {
     BodyText(t) => {

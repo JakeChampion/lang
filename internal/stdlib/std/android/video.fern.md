@@ -52,6 +52,11 @@ The player module provides extractor, clock, pause, seek, and recovery control.
 Audio synchronization and HDR display configuration remain with the app.
 Resource limits bound Fern buffers, not internal codec memory or process RSS.
 
+Each decoder preserves its pixel limit for output format changes.
+An output format above this limit returns `Limit`, even when its crop fits.
+Invalid dimensions or crop return `Platform`.
+These checks occur after MediaCodec reports its format, without control over earlier platform allocations.
+
 ```fern
 <<*>>=
 // This module decodes and encodes video through Android MediaCodec.
@@ -74,7 +79,7 @@ pub function mime(codec: Codec): string {
 
 pub struct Config { codec: Codec, format: frame.Format, csd0: u8[], csd1: u8[] }
 
-pub struct Decoder { handle: usize, scratch: usize, max_packet_bytes: i32 }
+pub struct Decoder { handle: usize, scratch: usize, max_packet_bytes: i32, max_pixels: i32 }
 
 pub struct Encoder { handle: usize, scratch: usize, max_packet_bytes: i32, input_surface: usize, input_bytes: i32, state: usize }
 
@@ -311,7 +316,7 @@ function open_impl(config: Config, window: usize, name: string, require_window: 
     return Err(frame.Platform);
   }
   unsafe {
-    return Ok(Decoder { handle: handle, scratch: __alloc(32), max_packet_bytes: limits.max_packet_bytes });
+    return Ok(Decoder { handle: handle, scratch: __alloc(32), max_packet_bytes: limits.max_packet_bytes, max_pixels: limits.max_pixels });
   }
 }
 
@@ -349,7 +354,7 @@ pub function open_format_named(format: CodecFormat, window: usize, name: string,
     return Err(frame.Platform);
   }
   unsafe {
-    return Ok(Decoder { handle: handle, scratch: __alloc(32), max_packet_bytes: limits.max_packet_bytes });
+    return Ok(Decoder { handle: handle, scratch: __alloc(32), max_packet_bytes: limits.max_packet_bytes, max_pixels: limits.max_pixels });
   }
 }
 
@@ -459,6 +464,10 @@ pub function (decoder: Decoder) submit_input(slot: InputBuffer, size: i32, prese
   return Ok(());
 }
 
+function valid_crop(format: OutputFormat): boolean {
+  return format.crop_left >= 0 && format.crop_top >= 0 && format.crop_right >= format.crop_left && format.crop_right < format.width && format.crop_bottom >= format.crop_top && format.crop_bottom < format.height;
+}
+
 function output_format(decoder: Decoder): Result[OutputFormat, frame.VideoError] {
   let format = c_output_format(decoder.handle);
   if (format == 0 as usize) {
@@ -467,6 +476,10 @@ function output_format(decoder: Decoder): Result[OutputFormat, frame.VideoError]
   let scratch = decoder.scratch;
   let width = get_i32(format, "width", 0, scratch);
   let height = get_i32(format, "height", 0, scratch);
+  if (width <= 0 || height <= 0) {
+    let _ = c_format_delete(format);
+    return Err(frame.Platform);
+  }
   let result = OutputFormat {
     width: width, height: height,
     crop_left: get_i32(format, "crop-left", 0, scratch),
@@ -481,9 +494,10 @@ function output_format(decoder: Decoder): Result[OutputFormat, frame.VideoError]
     color_format: get_i32(format, "color-format", 0, scratch),
   };
   let _ = c_format_delete(format);
-  if (width <= 0 || height <= 0 || result.crop_left < 0 || result.crop_top < 0 || result.crop_right < result.crop_left || result.crop_right >= width || result.crop_bottom < result.crop_top || result.crop_bottom >= height) {
+  if (!valid_crop(result)) {
     return Err(frame.Platform);
   }
+  let _ = frame.pixel_count(frame.Format { width: width, height: height }, frame.Limits { max_pixels: decoder.max_pixels, max_packet_bytes: decoder.max_packet_bytes })?;
   return Ok(result);
 }
 

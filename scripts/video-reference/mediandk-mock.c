@@ -13,12 +13,18 @@ static int active_encoder, named_hardware, surfaces, parameter_calls, fail_queue
 static int live_muxers, muxer_started, muxer_writes, muxer_token;
 static int live_extractors, extractor_token, sample_position, sample_reads;
 static int format_token, codec_token;
+static int output_width = 16, output_height = 8, output_right, output_bottom, custom_output;
 
 void mock_mode(int m) {
     assert(live_formats == 0 && live_codecs == 0);
     mode = m;
     assert(live_muxers == 0 && surfaces == 0 && live_extractors == 0);
     output_step = queued = released = active_encoder = named_hardware = parameter_calls = fail_queue = muxer_writes = 0;
+    output_width = 16; output_height = 8; custom_output = 0;
+}
+void mock_output_format(int width, int height, int right, int bottom) {
+    output_width = width; output_height = height; output_right = right; output_bottom = bottom;
+    custom_output = 1; output_step = 1;
 }
 int mock_live(void) { return live_formats + live_codecs + live_muxers + surfaces + live_extractors; }
 int mock_queued(void) { return queued; }
@@ -55,10 +61,17 @@ void AMediaFormat_setBuffer(void *f, const char *key, const void *data, size_t s
 }
 bool AMediaFormat_getInt32(void *f, const char *key, int32_t *out) {
     assert(f == &format_token);
-    if (strcmp(key, "width") == 0) *out = 16;
-    else if (strcmp(key, "height") == 0) *out = 8;
-    else if (strcmp(key, "crop-left") == 0) *out = 2;
-    else if (strcmp(key, "crop-right") == 0) *out = 13;
+    if (strcmp(key, "width") == 0) *out = output_width;
+    else if (strcmp(key, "height") == 0) *out = output_height;
+    else if (strcmp(key, "crop-left") == 0) *out = custom_output ? 0 : 2;
+    else if (strcmp(key, "crop-right") == 0) {
+        if (custom_output && output_right == -1) return false;
+        *out = custom_output ? output_right : 13;
+    }
+    else if (strcmp(key, "crop-bottom") == 0 && custom_output) {
+        if (output_bottom == -1) return false;
+        *out = output_bottom;
+    }
     else if (strcmp(key, "color-standard") == 0) *out = 1;
     else return false;
     return true;
@@ -80,7 +93,7 @@ void *AMediaCodec_createCodecByName(const char *name) {
 }
 int AMediaCodec_configure(void *c, void *f, void *w, void *crypto, uint32_t flags) {
     assert(c == &codec_token && f == &format_token && !crypto && live_codecs == 1);
-    assert(active_encoder ? (!w && flags == 1) : (w == (void *)123 && flags == 0));
+    assert(active_encoder ? (!w && flags == 1) : ((!w || w == (void *)123) && flags == 0));
     return mode == 3 || (named_hardware && mode != 10) ? -10000 : 0;
 }
 int AMediaCodec_start(void *c) { assert(c == &codec_token); return mode == 4 ? -10000 : 0; }

@@ -479,14 +479,15 @@ pub function parse_duration(s: string): Result[Duration, DurationParseError] {
       continue;
     }
     let start = i;
-    let num: i64 = 0;
     while (i < n && s[i] >= 48 && s[i] <= 57) {
-      num = num * (10 as i64) + (s[i] - 48) as i64;
       i += 1;
     }
     if (i == start) {
       return Err(DurationParseError { text: s, offset: i });
     }
+    let Some(num) = __duration_count(s, start, i) else {
+      return Err(DurationParseError { text: s, offset: start });
+    };
     let unit_ms: i64 = 0;
     if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {
       unit_ms = 1;
@@ -506,12 +507,25 @@ pub function parse_duration(s: string): Result[Duration, DurationParseError] {
     } else {
       return Err(DurationParseError { text: s, offset: i });
     }
-    total = total + num * unit_ms;
+    let Some(sum) = (num *? unit_ms).and_then((part: i64): Option[i64] => total +? part) else {
+      return Err(DurationParseError { text: s, offset: start });
+    };
+    total = sum;
     saw = true;
   }
   if (!saw) {
     return Err(DurationParseError { text: s, offset: i });
   }
   return Ok(time.duration_millis(total));
+}
+
+// `None` when the digits do not fit an `i64`.
+function __duration_count(s: string, start: i32, end: i32): Option[i64] {
+  let num: i64 = 0;
+  for i in start..end {
+    num = (num *? (10 as i64))?;
+    num = (num +? (s[i] - 48) as i64)?;
+  }
+  return Some(num);
 }
 ```

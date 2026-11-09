@@ -1,0 +1,116 @@
+{
+  "note": "Reproduction after executor change. The old ignored assembly files are unavailable. These new files must match the previously committed hashes.",
+  "producer": "/workspace/lang-performance-20261109-1950/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "runs": [
+    {
+      "name": "build-base",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/base-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-input-20261109-1950",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:54:51.195263+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:56:44.646724+00:00"
+    },
+    {
+      "name": "emit-base",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/base-normal",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/base-count-byte.s",
+        "/workspace/lang-performance-input-20261109-1950/bench/string_count_byte.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:56:44.657352+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:56:45.840159+00:00"
+    },
+    {
+      "name": "build-candidate",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "internal/stdlib",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/candidate-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-original-20261109-1950",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:56:45.941310+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:58:48.659022+00:00"
+    },
+    {
+      "name": "emit-candidate",
+      "args": [
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-performance-20261109-1950/build/reproduce-ci-asm-20261109-1950/candidate-count-byte.s",
+        "/workspace/lang-performance-input-20261109-1950/bench/string_count_byte.fern",
+        "/workspace/lang-performance-input-20261109-1950/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-performance-20261109-1950",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T19:58:48.665821+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T19:58:48.865700+00:00"
+    }
+  ],
+  "base": {
+    "compiler_sha256": "2837918ebeab3d89c67c45627f909394fa549ee5b5e3e651cc7486df4b9b5d8a",
+    "assembly_sha256": "aee54ecd1cad235488954dcd50ea22e0848e8838578560c7b4441aafe718d55f"
+  },
+  "candidate": {
+    "compiler_sha256": "b50f7950f4940d4ddaa87e949530d9a52f979ace33b31ee4c638eed358130dcc",
+    "assembly_sha256": "aee54ecd1cad235488954dcd50ea22e0848e8838578560c7b4441aafe718d55f"
+  },
+  "complete": true,
+  "source_revisions": {
+    "base": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+    "candidate": "3a296b887ccb1c879743cce8a2a67351c548481f"
+  }
+}

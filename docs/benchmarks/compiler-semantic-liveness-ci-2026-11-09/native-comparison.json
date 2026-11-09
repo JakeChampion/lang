@@ -1,0 +1,11 @@
+{
+  "binary_sha256": {
+    "base": "fb86b9a452ce20a05a89f281cb097e1a486af45ff259d4de65ff4ac885cbd44a",
+    "candidate": "fb86b9a452ce20a05a89f281cb097e1a486af45ff259d4de65ff4ac885cbd44a"
+  },
+  "guest_instructions": 41173368,
+  "expected_exit": 40,
+  "observed_exit": 40,
+  "baseline_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "candidate_code_source": "3a296b887ccb1c879743cce8a2a67351c548481f"
+}
