@@ -438,6 +438,7 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: std-http, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdHTTP,         wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: hpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdHPACK,        wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: json,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJSON,         wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: utf8,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdUTF8,         wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: url,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdURL,          wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: h2,      pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdH2,           wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: qpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQPACK,        wasmtime: "false" }
