@@ -1,3 +1,6 @@
+# 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
+# deflate_decode.diagnostic.emit at 12887 after the merge of main d04e79179f.
+# Bank the measured size. Keep all tolerances.
 # 2026-11-09: #14849. Bulk scalar zero fill reduces Deflate instructions.
 # Local Valgrind 3.24.0 measurements bank three x86-64 counts. All tolerances stay fixed.
 # 2026-11-09: PR #14847, perf-x86_64 job 129087018092. profile/x86-64-linux/map_string.hardened.ir rises 1.11%. The PR's compiler emits byte-identical code, so the row moved on main's tree. Pinned at the measured value.
@@ -197,7 +200,7 @@ profile/x86-64-linux/closure_call.safe.emit	959
 profile/x86-64-linux/closure_call.safe.ir	41178167
 profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
-profile/x86-64-linux/deflate_decode.diagnostic.emit	12743
+profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
 profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
 profile/x86-64-linux/deflate_decode.hardened.bytes	55872
 profile/x86-64-linux/deflate_decode.hardened.emit	13293

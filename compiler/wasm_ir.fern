@@ -4301,7 +4301,7 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
       if (nimpl == 0) {
         if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") {
           drt = "i64";
-        } else if (irtables.is_f64_scalar_type_name(funcs[df0].ret_type)) {
+        } else if (parser.is_float_type_name(funcs[df0].ret_type)) {
           drt = "f64";
         }
       }
@@ -5137,7 +5137,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (fd.ret_type == "i64" || fd.ret_type == "u64") {
     return " (result i64)\n";
   }
-  if (irtables.is_f64_scalar_type_name(fd.ret_type)) {
+  if (parser.is_float_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
   if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4") {
@@ -10397,12 +10397,8 @@ pub function is_struct_type(structs: irtables.StructTab, t: string): boolean {
   return false;
 }
 
-pub function is_float_type(t: string): boolean {
-  return t == "f64" || t == "f32";
-}
-
 pub function wat_extern_valtype(t: string): string {
-  if (is_float_type(t)) {
+  if (parser.is_float_type_name(t)) {
     return "f64";
   }
   if (t == "i64" || t == "u64" || t == "s64") {
@@ -10465,7 +10461,7 @@ function extern_param_repacks(t: string): boolean {
 }
 
 pub function extern_field_is_scalar(ft: string): boolean {
-  return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean" || ft == "i64" || ft == "u64" || is_float_type(ft);
+  return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean" || ft == "i64" || ft == "u64" || parser.is_float_type_name(ft);
 }
 
 function extern_param_field_load(ft: string, addr: string): string {
@@ -10475,7 +10471,7 @@ function extern_param_field_load(ft: string, addr: string): string {
   if (ft == "f32") {
     return "(f32.demote_f64 (f64.load " + addr + "))";
   }
-  if (is_float_type(ft)) {
+  if (parser.is_float_type_name(ft)) {
     return "(f64.load " + addr + ")";
   }
   return "(" + extern_field_load_op(ft) + " " + addr + ")";
@@ -11232,7 +11228,7 @@ function extern_canon_load(ft: string, addr: string): string {
   if (ft == "f32") {
     return "(f32.load " + addr + ")";
   }
-  if (is_float_type(ft)) {
+  if (parser.is_float_type_name(ft)) {
     return "(f64.load " + addr + ")";
   }
   return "(" + extern_field_load_op(ft) + " " + addr + ")";
@@ -11245,7 +11241,7 @@ function extern_slot_store(ft: string, addr: string, v: string): string {
   if (ft == "f32") {
     return "(f64.store " + addr + " (f64.promote_f32 " + v + "))";
   }
-  if (is_float_type(ft)) {
+  if (parser.is_float_type_name(ft)) {
     return "(f64.store " + addr + " " + v + ")";
   }
   return "(i32.store " + addr + " " + v + ")";
@@ -12957,7 +12953,7 @@ function extern_elem_from_canon(kind: string, dst: string, src: string): string 
 }
 
 pub function elem_slot_size(kind: string): i32 {
-  if (elem_is_i64slot(kind) || irtables.elem_ty_is_f64slot(kind)) {
+  if (elem_is_i64slot(kind) || parser.is_float_type_name(kind)) {
     return 8;
   }
   return 4;
@@ -12967,7 +12963,7 @@ pub function elem_store_op(kind: string): string {
   if (elem_is_i64slot(kind)) {
     return "i64.store";
   }
-  if (irtables.elem_ty_is_f64slot(kind)) {
+  if (parser.is_float_type_name(kind)) {
     return "f64.store";
   }
   return "i32.store";
@@ -12981,7 +12977,7 @@ pub function elem_load_op(kind: string): string {
   if (elem_is_i64slot(kind)) {
     return "i64.load";
   }
-  if (irtables.elem_ty_is_f64slot(kind)) {
+  if (parser.is_float_type_name(kind)) {
     return "f64.load";
   }
   return "i32.load";
@@ -13567,7 +13563,7 @@ function emit_wasm_tuple_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32,
     if (tk == "i64") {
       parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
-    } else if (irtables.elem_ty_is_f64slot(tk)) {
+    } else if (parser.is_float_type_name(tk)) {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
     } else {

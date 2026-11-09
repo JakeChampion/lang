@@ -39,6 +39,11 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 	for _, name := range lifetimeFixtureNames {
 		t.Run(name, func(t *testing.T) {
 			source, want := lifetimeFixture(t, name)
+			const compute = "let result = ssalive.compute(f, deps);"
+			if !strings.Contains(source, compute) {
+				t.Fatal("fixture has no liveness computation")
+			}
+			source = strings.Replace(source, compute, "let result = ssalive.compute_kept_with_sites(f, deps, [], ssa.block_positions(f), ssa.def_sites_of(f));", 1)
 			entry := filepath.Join(dir, "lifetime_fixture.fern")
 			if err := os.WriteFile(entry, []byte(source), 0o644); err != nil {
 				t.Fatal(err)
@@ -71,7 +76,7 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 	}
 }
 
-var lifetimeFixtureNames = []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"}
+var lifetimeFixtureNames = []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide", "params-sparse"}
 
 func lifetimeFixture(t *testing.T, name string) (source, want string) {
 	t.Helper()
@@ -87,13 +92,16 @@ func lifetimeFixture(t *testing.T, name string) (source, want string) {
 
 const keptAgreesSource = `
 function kept_agrees(f: ssa.SFunc, deps: i32[][], full: ssalive.Flow): boolean {
+    let at = ssa.block_positions(f);
+    let defs = ssa.def_sites_of(f);
     let m: i32 = 2;
     while (m <= 3) {
         let keep: boolean[] = [];
         let v: i32 = 0;
         while (v < f.nvals) { keep = keep.append(v % m == 0); v = v + 1; }
         let kept = ssalive.compute_kept(f, deps, keep);
-        if (!kept.ok) { return false; }
+        let reused = ssalive.compute_kept_with_sites(f, deps, keep, at, defs);
+        if (!kept.ok || !reused.ok) { return false; }
         let bi: i32 = 0;
         while (bi < f.blocks.len()) {
             v = 0;
@@ -101,6 +109,7 @@ function kept_agrees(f: ssa.SFunc, deps: i32[][], full: ssalive.Flow): boolean {
                 let live_in: boolean = keep[v] && ssalive.live_in_has(full, bi, v);
                 let live_out: boolean = keep[v] && ssalive.live_out_has(full, bi, v);
                 if (ssalive.live_in_has(kept, bi, v) != live_in || ssalive.live_out_has(kept, bi, v) != live_out) { return false; }
+                if (ssalive.live_in_has(reused, bi, v) != live_in || ssalive.live_out_has(reused, bi, v) != live_out) { return false; }
                 v = v + 1;
             }
             bi = bi + 1;
@@ -161,6 +170,9 @@ func TestSelfHostSSALifetimeInvalidMetadata(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := strings.Replace(source, "let before =", tc.change+"\nlet before =", 1)
+			src = strings.Replace(src, "let result = ssalive.compute(f, deps);", `let original = ssalive.compute(f, deps);
+let result = ssalive.compute_kept_with_sites(f, deps, [], ssa.block_positions(f), ssa.def_sites_of(f));
+if (result.ok != original.ok || result.why != original.why) { return 8; }`, 1)
 			dir := t.TempDir()
 			copySelfHostDriver(t, dir, "ssalive.fern")
 			if err := os.WriteFile(filepath.Join(dir, "lifetime_fixture.fern"), []byte(src), 0o644); err != nil {

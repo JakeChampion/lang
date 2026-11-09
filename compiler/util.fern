@@ -555,6 +555,39 @@ pub function empty_i32_lists(n: i32): i32[][] {
   return out;
 }
 
+pub function bool_i32(b: boolean): i32 {
+  if (b) {
+    return 1;
+  }
+  return 0;
+}
+
+pub function quoted(s: string): string {
+  return "\"" + s + "\"";
+}
+
+// is_symbol_byte is true for a byte an assembler symbol name may hold.
+pub function is_symbol_byte(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+pub function push_bytes(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
+  }
+}
+
+pub function put_u8(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+pub function append_bytes(out: u8[], b: [u8]): u8[] {
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
 // index_of_byte is the first index at or after from that holds c, or -1.
 pub function index_of_byte(s: string, c: u8, from: i32): i32 {
   let i = from;

@@ -460,7 +460,7 @@ jobs:
     timeout-minutes: 65
     env:
       # The targets of readerTargets in internal/testing/e2ecompiler.
-      READER_COVER: ${{ startsWith(matrix.target, 'FuzzSelfHostStd') || contains(fromJSON('["FuzzSelfHostToml", "FuzzSelfHostLock", "FuzzSelfHostIndex", "FuzzSelfHostArchive", "FuzzSelfHostTangle", "FuzzSelfHostWeave", "FuzzSelfHostIRVerify", "FuzzSelfHostX86Assembler", "FuzzSelfHostArm64Assembler", "FuzzSelfHostX86Image", "FuzzSelfHostArm64Image"]'), matrix.target) }}
+      READER_COVER: ${{ startsWith(matrix.target, 'FuzzSelfHostStd') || contains(fromJSON('["FuzzSelfHostManifest", "FuzzSelfHostToml", "FuzzSelfHostLock", "FuzzSelfHostIndex", "FuzzSelfHostArchive", "FuzzSelfHostTangle", "FuzzSelfHostWeave", "FuzzSelfHostIRVerify", "FuzzSelfHostX86Assembler", "FuzzSelfHostArm64Assembler", "FuzzSelfHostX86Image", "FuzzSelfHostArm64Image"]'), matrix.target) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

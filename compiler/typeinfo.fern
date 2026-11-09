@@ -251,6 +251,14 @@ pub function tuple_elements(t: Type): Type[] {
   return [];
 }
 
+// is_exact_i32 is true for a signed 32-bit integer that is not a char or an untyped literal.
+pub function is_exact_i32(t: Type): boolean {
+  if let TypeI32(n) = t {
+    return n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic;
+  }
+  return false;
+}
+
 pub function is_owned_array(t: Type): boolean {
   if let TypeArray(a) = t {
     return !a.view;

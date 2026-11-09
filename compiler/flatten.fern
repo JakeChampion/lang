@@ -445,7 +445,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     return entry;
   }
   let si = top_fn_index(entry, "shutdown");
-  if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) {
+  if (si >= 0 && entry.funcs[si].params.len() != 1 + util.bool_i32(takes_state)) {
     return entry;
   }
   let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
@@ -491,13 +491,6 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
-}
-
-function bool_i32(b: boolean): i32 {
-  if (b) {
-    return 1;
-  }
-  return 0;
 }
 
 function top_fn_index(mod: parser.Module, name: string): i32 {

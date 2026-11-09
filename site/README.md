@@ -140,6 +140,17 @@ build that names no file. The Docs build lane runs it. With
 `--site URL`, it reads the sitemap of a deployed site and requests each
 internal link. `.github/workflows/site-links.yml` runs that against the
 site every 6 hours, and opens an issue when a link is broken.
+`.github/workflows/preview-links.yml` runs it against the Netlify deploy
+preview of each pull request, when Netlify reports the preview as ready,
+and sets a `site-links/preview` status on the commit.
+
+## Error codes
+
+`scripts/error-docs.mjs` turns each explanation in
+`internal/syntax/diag/explanations/`, the text that `fern -explain`
+prints, into a page under `/errors/`, with an index of the codes.
+`npm run build` runs it first, and the pages are not in git. Edit the
+explanation, not the page.
 
 ## Social cards and llms.txt
 

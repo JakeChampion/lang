@@ -25,7 +25,7 @@ import "std/string";
 function empty(why: string): irtables.LowerState {
   return irtables.LowerState {
     scratch_start: 0,
-    source_positions: irtables.no_source(),
+    source_positions: sourcepos.no_source(),
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], v128_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
@@ -238,7 +238,7 @@ function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
 
 function fields_have_children(fields: semrecords.Field[]): boolean {
   for field in fields {
-    if (walked(field.ty)) {
+    if (ssasem.reference(field.ty)) {
       return true;
     }
   }
@@ -249,10 +249,6 @@ function owned_columns(t: typeinfo.Type): boolean {
   let k = ssasem.map_key(t);
   let v = ssasem.map_value(t);
   return ssasem.is_text(k) || ssasem.is_text(v) || cell_column(k) || cell_column(v);
-}
-
-function walked(t: typeinfo.Type): boolean {
-  return ssasem.reference(t);
 }
 
 function release_name(t: typeinfo.Type, f: ssasem.Func): string {
@@ -906,7 +902,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
     r = emit(r, ir.op_if(0));
     let i = 0;
     while (i < v.fields.len()) {
-      if (walked(v.fields[i].ty)) {
+      if (ssasem.reference(v.fields[i].ty)) {
         r = emit(r, ir.op_load_local(node));
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
         if (i == tail && !semtypes.equal(v.fields[i].ty, t)) {
@@ -1041,7 +1037,7 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
   r = reserve(r, child + 1);
   let i = 0;
   while (i < fields.len()) {
-    if (walked(fields[i].ty)) {
+    if (ssasem.reference(fields[i].ty)) {
       r = emit(r, ir.op_load_local(slot));
       if (env) {
         r = emit(r, ir.op_const_i32(i));
@@ -1237,7 +1233,7 @@ function walked_rest(fields: semrecords.Field[], skip: boolean[]): i32 {
   let n = 0;
   let i = 0;
   while (i < fields.len()) {
-    if (walked(fields[i].ty) && !(i < skip.len() && skip[i])) {
+    if (ssasem.reference(fields[i].ty) && !(i < skip.len() && skip[i])) {
       n += 1;
     }
     i += 1;
@@ -1272,7 +1268,7 @@ function drop_fields_except(own r: irtables.LowerState, slot: i32, fields: semre
   r = reserve(r, child + 1);
   let i = 0;
   while (i < fields.len()) {
-    if (walked(fields[i].ty) && !(i < skip.len() && skip[i])) {
+    if (ssasem.reference(fields[i].ty) && !(i < skip.len() && skip[i])) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       r = emit(r, ir.op_store_local(child));
@@ -1320,7 +1316,7 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
         if (util.index_of_i32(k.late[at], ins.args[ki]) >= 0) {
           r = emit(r, ir.op_load_local(k.donors[at]));
           r = field_get(r, f, ssa.SInst { kind_tag: ssasem.record_get(), result: ins.args[ki], args: [k.donors[at]], imm: ki, str: "" });
-          if (walked(fields[ki].ty)) {
+          if (ssasem.reference(fields[ki].ty)) {
             r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
           }
         } else {

@@ -8,6 +8,7 @@ const SECTIONS = [
   ["http/", "HTTP guide"],
   ["cookbook", "Cookbook"],
   ["reference/", "Reference"],
+  ["errors/", "Error codes"],
   ["stdlib/", "Standard library"],
   ["coreutils", "Coreutils"],
   ["releases", "Project"],
