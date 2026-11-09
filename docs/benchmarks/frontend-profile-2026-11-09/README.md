@@ -92,6 +92,14 @@ The text reports filter low-cost nodes for display.
 Those display filters do not remove data from the raw profiles.
 Inclusive percentages overlap and are not additive.
 
+## Static token projection check
+
+The [assembly audit](native/static-parser-box-audit.json) finds no direct `__fern_arr_box` call in the `Par.peek` functions.
+`Par.peek` loads a token pointer and increments its reference count when necessary.
+This diagnostic assembly was not the executed profile binary.
+Static call sites do not establish dynamic costs.
+The `peek` samples do not establish a cause for the separate array-box samples.
+
 ## Isolated operator matcher probe
 
 A [matcher probe](go/operator-probe-results.json) compares the current linear table scan with first-byte buckets.

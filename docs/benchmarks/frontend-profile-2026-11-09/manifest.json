@@ -10,7 +10,7 @@
   "native_normal_assembly_executed": false,
   "go_operator_count": 35,
   "files_sha256": {
-    "README.md": "156a6e4bc5db0fb94b8b957b5843a2500432ad2dea62d3488192269a6f0a1993",
+    "README.md": "780a2862ae2ed944f1b2bfac3ed3181f57141b45153519f8a19bf09c034f3e2e",
     "counter-enabled-diagnostic/allocation-stack-audit.json": "95cc2f08010c19158951da43ffeebb293754fdccac24ed3853bc883a4195db10",
     "counter-enabled-diagnostic/build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "counter-enabled-diagnostic/build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -58,6 +58,7 @@
     "native/parse.log": "4f0e6c755b97753a5a5286d79ff7d5ddd5e169df55920e12e5dd572764abe58b",
     "native/parse.stdout": "e81462db320991e9223571b6faf43e15caab4cbd41ef589b7ba1fe27213558f9",
     "native/progress.log": "a7d30260013249a73266418e0afd07705aa86b345341f4c2bf6b34b4be04d303",
-    "native/top-functions.json": "17c846763440daae9dae0d7c9d02afc9267d831270d182b76b287a64628b04e3"
+    "native/top-functions.json": "17c846763440daae9dae0d7c9d02afc9267d831270d182b76b287a64628b04e3",
+    "native/static-parser-box-audit.json": "4304e192c528814f824a2473c6470caa26e11a7f70a37d13539b0670c2a27d00"
   }
 }
