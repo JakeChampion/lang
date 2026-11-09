@@ -1,0 +1,36 @@
+import "std/audio/wavpack/predict";
+import "std/test";
+
+pub struct Vector { name: string, channels: i32, frames: i32, term: u8, weights: u8[], history: u8[], samples: i32[], expected: i32[] }
+
+pub function reference(vector: Vector): test.TestOutcome {
+  let passes = match (predict.terms([vector.term], vector.channels)) { Ok(value) => value, Err(e) => { return test.fail("terms: " + e.message()); } };
+  passes = match (predict.weights(vector.weights, vector.channels, passes)) { Ok(value) => value, Err(e) => { return test.fail("weights: " + e.message()); } };
+  passes = match (predict.samples(vector.history, vector.channels, passes)) { Ok(value) => value, Err(e) => { return test.fail("history: " + e.message()); } };
+  let storage: i32[] = [];
+  for sample in vector.samples {
+    storage = storage.append(sample);
+  }
+  for _ in 0..3 {
+    storage = storage.append(123456789);
+  }
+  let held = storage;
+  let output = match (predict.restore(storage, vector.frames, vector.channels, passes)) { Ok(value) => value, Err(e) => { return test.fail("restore: " + e.message()); } };
+  if (output.len() != vector.samples.len() + 3 || vector.expected.len() != vector.samples.len()) {
+    return test.fail("output extent");
+  }
+  for i in 0..vector.expected.len() {
+    if (output[i] != vector.expected[i]) {
+      return test.fail("reference sample " + i.to_string());
+    }
+    if (held[i] != vector.samples[i]) {
+      return test.fail("retained caller samples");
+    }
+  }
+  for i in vector.expected.len()..output.len() {
+    if (output[i] != 123456789 || held[i] != 123456789) {
+      return test.fail("caller suffix");
+    }
+  }
+  return test.pass();
+}

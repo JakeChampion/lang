@@ -1,0 +1,33 @@
+{
+  "reference_commit": "4827b9889665b937b6ed71b9c6c0123152cd7a02",
+  "sources": {
+    "unpack.c": "bba495a5c33f432d8acd82a36a52d79d0d2ff7d05a1a5bc6e110ab7a92a9391c",
+    "decorr_utils.c": "3dc93ee065ed9459dfc534614112dcf420c0aa59d222b743157128f4df166110",
+    "entropy_utils.c": "3d750a714829230d09a09701943c40ac10d8d3a8e4145fe9ca353205a18320d1",
+    "wavpack_local.h": "1acd5f7f5ddeeb098899694124087dced63612d309f6108cf632df11ad609ad5",
+    "wavpack.h": "3c61d65511e258c5dc120a6daaee626d6a1051f3254ca9b67ac654a8f6212a97"
+  },
+  "cases": 69,
+  "adaptive_final_weights": {
+    "adaptive-weight-positive": 34624,
+    "adaptive-weight-negative": -34624
+  },
+  "reference_output_sha256": "33d38c3588bd973ac62015b53a11567e1253a1517336bf93ddc3b2e4f44b03e1",
+  "pcm_sha256": "8fdfedb59543fca8097fb85cb3d5263ee8e85fa9f9f219e6edd6f4464cd9c7e8",
+  "fixture_sha256": "db6e3d2df8cde0fa3d230bd75041e1efd3e472ad805e519d704ff23108c81dc9",
+  "file_control": {
+    "sha256": "b5334762dbf7d747b64a90b86c6fe80fea5e42da68a26b5a3528b793230bb439",
+    "bytes": 156,
+    "reference_info": {
+      "channels": 1,
+      "depth": 24,
+      "rate": 48000,
+      "mode": 2,
+      "norm_exp": 0,
+      "channel_mask": 4,
+      "title": "",
+      "md5": null
+    }
+  },
+  "c_compiler": "cc (Debian 14.2.0-19) 14.2.0"
+}
