@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-09",
+  "baseline_source": "49056c6e392ba85b267e4abb6a44dd94872cc891",
+  "candidate_code_source": "327c4e41111063446fa5ed897aa3dc5a557e4d98",
+  "fixed_input_source": "49056c6e392ba85b267e4abb6a44dd94872cc891",
+  "producer": {
+    "source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+    "sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+    "tag": "stage0-20261107-38f241c"
+  },
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "software": {
+    "Go": "1.27.3",
+    "Valgrind": "3.24.0",
+    "Wasmtime": "50.0.1"
+  },
+  "binary_sha256": {
+    "fern-base": "c8ae49e18e8cc0e3e6507138a093c007c1bee90aef718b3271dd748cd17a2c92",
+    "fern-candidate": "12723259cd3a83c8d46fb55bdcdd7ddc9b0b1dcb2a4c92f522cd122a71652a8f",
+    "fern-base-count": "d5d924f704abd579a0a5ea156b4e3ff9fcc07fa769f7c1cf26d3c39150506b24",
+    "fern-candidate-count": "5d918a527a80af77c7efd79ab0f4f835ac9dbe8171e4f36e4dc94a270e0de0e9",
+    "fern-cpu": "1eb29bcee868899ec39daf7c66428e7fd4c99962e679439c76d3cf0588b7ed72"
+  },
+  "cpu_profile": {
+    "compiler_source": "49056c6e392ba85b267e4abb6a44dd94872cc891",
+    "mode": "cpu",
+    "proof_memo": "disabled",
+    "output": "native executable",
+    "samples": 1093,
+    "dropped": 0,
+    "raw_sha256": "22a616a8374d514251f06eb24a9508026d9fd8914e25dc8c6f3c3b15cf172ae0"
+  },
+  "test_source_sha256": {
+    "internal/testing/e2ecompiler/self_host_ssa_lifetime_test.go": "ba7a1ec95eea170045684e1b53a25a1445a38392e4f12c7641e2a30045e7ab98",
+    "internal/testing/e2ecompiler/testdata/lifetime/params-sparse.fern": "857b771be7a2177d0ff7358433dbdbbf36ddac94ee68cc07e59542f030a50206",
+    "internal/testing/e2ecompiler/testdata/lifetime/params-sparse.want": "7a22e687e3fa31157ccf133a1ea9db98424bc3d9fd056b3eddece2d549f3b596"
+  },
+  "files_sha256": {
+    "allocations.json": "e1dfb7690cc0e567fe64c68fcfde3c2ffbf4246429acc99b67eeb532b052f86f",
+    "base-alloc.log": "afb4ddae87ff01ef17cca69e7d1359b80f94fb2c02c68c2d985ab359c9645415",
+    "candidate-alloc.log": "796f75bbb30ec42d661b00de9dcfbf5916e1c9d026610c51c1c5ab5129b171bb",
+    "cold-base-callgrind.log": "926870dc82a791ce754fdf798d653c2c0b3c4a3a7dd2c9515a7eaf3148aa7ab9",
+    "cold-candidate-callgrind.log": "dc1ba76e052b974bfb03390f161a640636c5576639c68d605a1fc7f81353ba64",
+    "cpu-top.txt": "b24e204d29735655200ff42b0844eaaa33040bb222a3207ae7100b45a522dbfb",
+    "cpu.folded.gz": "31146d8f9e0f0541592edf764b8a7dd8521847f6d6b6258071ef0f7c232c0618",
+    "instructions.json": "8c26c345391b8d173bcc357a2eda7eaeca064b746cbb0ff8a6605161b2ffa7f6",
+    "reuse.patch": "e4b08e3f971aaac3ac6e5738bb88e32dabce53e5be6bdd4cf254523f94bc8133",
+    "warm-base-callgrind.log": "15c6960677ca8b45db6e30bf558d7d8e1a1911c452245e288c8205dacd798d7e",
+    "warm-candidate-callgrind.log": "0528b0ecdb942afe9de5aa7ef9bba595cf4b42af229bb920d51a481ef6a71b82"
+  }
+}
