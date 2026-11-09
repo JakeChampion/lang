@@ -145,21 +145,23 @@ func fuzzCompile(f testing.TB, bin, stdlib, src string, flags ...string) {
 
 const fuzzManifestMagic = "FERNBUILD1 target="
 
-// FuzzSelfHostManifest feeds hostile bytes to `fern -manifest`. The reader
-// documents two outcomes: the fields on stdout with exit 0, or a refusal
-// naming the file with exit 1. The fields are printable ASCII, whatever the
+// FuzzSelfHostManifest feeds hostile bytes to the build manifest reader of
+// `fern -manifest`, through drivers/manifest_fuzz_run.fern. The reader finds
+// the fields or finds none, and the fields are printable ASCII, whatever the
 // file holds.
-func FuzzSelfHostManifest(f *testing.F) {
-	bin, stdlib := fuzzCLI(f)
-	image := filepath.Join(f.TempDir(), "image")
-	fuzzCompile(f, bin, stdlib, "function main(): i32 { return 0; }\n", "-target", "x86-64-linux", "-o", image)
+func FuzzSelfHostManifest(f *testing.F) { fuzzReaderTarget(f) }
+
+func manifestSeeds(tb testing.TB) [][]byte {
+	bin, stdlib := fuzzCLI(tb)
+	image := filepath.Join(tb.TempDir(), "image")
+	fuzzCompile(tb, bin, stdlib, "function main(): i32 { return 0; }\n", "-target", "x86-64-linux", "-o", image)
 	raw, err := os.ReadFile(image)
 	if err != nil {
-		f.Fatal(err)
+		tb.Fatal(err)
 	}
 	at := bytes.Index(raw, []byte(fuzzManifestMagic))
 	if at < 0 {
-		f.Fatalf("the compiled image carries no manifest")
+		tb.Fatalf("the compiled image carries no manifest")
 	}
 	lo, hi := at-64, at+320
 	if lo < 0 {
@@ -169,56 +171,56 @@ func FuzzSelfHostManifest(f *testing.F) {
 		hi = len(raw)
 	}
 	line := "FERNBUILD1 target=x86-64-linux profile=safe harden=0 pie=0 sanitize=0 backtrace=0 size=0 shared=0 heap_limit=0\n"
-	for _, seed := range [][]byte{
+	return [][]byte{
 		raw[lo:hi],
 		[]byte(line),
 		[]byte(strings.TrimSuffix(line, "\n")),
 		[]byte(strings.Repeat(fuzzManifestMagic, 100)),
 		[]byte(fuzzManifestMagic + strings.Repeat("x", 600) + "\n"),
 		[]byte(fuzzManifestMagic + " profile= heap_limit=\n"),
+		[]byte("FERNBUILD1 target=x86-64-linux  profile=safe heap_limit=0  \n"),
 		[]byte("FERNBUILD1 target=\x00 profile=safe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=\x1b]0;owned\x07 profile=safe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=x86-64-linux profile=\xff\xfe heap_limit=0\n"),
 		[]byte("FERNBUILD1 target=\x1b[2J profile=safe heap_limit=0\n" + line),
 		{},
 		{0x7f, 'E', 'L', 'F'},
-	} {
-		f.Add(seed)
 	}
-	work := f.TempDir()
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > fuzzInputLimit {
-			t.Skip("over the input limit")
+}
+
+// manifestCheck reads `manifest N` and the N fields after it. The first field
+// names the target, and no field holds a control byte.
+func manifestCheck(r readerRun) string {
+	lines := strings.Split(r.summary, "\n")
+	n, err := strconv.Atoi(strings.TrimPrefix(lines[0], "manifest "))
+	if err != nil || n != len(lines)-1 {
+		return fmt.Sprintf("the driver printed %q for %d bytes", r.summary, len(r.input))
+	}
+	if n > 0 && !strings.HasPrefix(lines[1], "target: ") {
+		return fmt.Sprintf("the first field is not the target on %d bytes\nfields: %q", len(r.input), r.summary)
+	}
+	for _, c := range []byte(r.summary) {
+		if (c < 0x20 || c > 0x7e) && c != '\n' {
+			return fmt.Sprintf("the fields carry byte %#x on %d bytes\nfields: %q", c, len(r.input), r.summary)
 		}
-		path := filepath.Join(work, "input")
-		if err := os.WriteFile(path, input, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command(bin, "-manifest", path)
-		cmd.Env = e2eharness.SelfHostChildEnv()
-		r := runUnderBudget(cmd)
-		if failOutsideBudget(t, "fern -manifest", r, input) {
-			return
-		}
-		switch r.code {
-		case 0:
-			if !strings.HasPrefix(r.stdout, "target: ") {
-				t.Errorf("exit 0 without the target field on %d bytes\nstdout: %q", len(input), r.stdout)
-			}
-			for _, c := range []byte(r.stdout) {
-				if (c < 0x20 || c > 0x7e) && c != '\n' {
-					t.Errorf("the fields carry byte %#x on %d bytes\nstdout: %q", c, len(input), r.stdout)
-					break
-				}
-			}
-		case 1:
-			if !strings.HasPrefix(r.stderr, "fern: no build manifest in ") {
-				t.Errorf("exit 1 without the documented refusal on %d bytes\nstderr: %q", len(input), r.stderr)
-			}
-		default:
-			t.Errorf("exit %d on %d bytes, want 0 or 1\nstdout: %q\nstderr: %q", r.code, len(input), r.stdout, r.stderr)
-		}
-	})
+	}
+	return ""
+}
+
+// TestSelfHostManifestRefusal pins the refusal of `fern -manifest` for a file
+// with no manifest: exit 1 and a message that names the file.
+func TestSelfHostManifestRefusal(t *testing.T) {
+	bin, _ := fuzzCLI(t)
+	path := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(path, []byte(fuzzManifestMagic+"x86-64-linux\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-manifest", path)
+	cmd.Env = e2eharness.SelfHostChildEnv()
+	r := runUnderBudget(cmd)
+	if r.code != 1 || !strings.HasPrefix(r.stderr, "fern: no build manifest in "+path+": ") || r.stdout != "" {
+		t.Fatalf("exit %d, want 1 with the refusal\nstdout: %q\nstderr: %q", r.code, r.stdout, r.stderr)
+	}
 }
 
 // FuzzSelfHostIRVerify decodes bytes into an op stream and runs the

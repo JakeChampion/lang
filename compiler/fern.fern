@@ -35,6 +35,7 @@ import "./arm64_native";
 import "./x86_native";
 import "./elf";
 import "./elfimage";
+import "./imagemanifest";
 import "./apk";
 import "./dex";
 import "./ircore";
@@ -2604,117 +2605,15 @@ function run_manifest(path: string): i32 {
       return 1;
     }
   }
-  let line = image_manifest_line(image);
-  if (line.len() == 0) {
+  let fields = imagemanifest.manifest_fields(image);
+  if (fields.len() == 0) {
     eprint("fern: no build manifest in " + path + ": not a native Fern executable, or one built before the manifest");
     return 1;
   }
-  let field = "";
-  let i = 0;
-  while (i < line.len()) {
-    if (line[i] == b' ') {
-      print(manifest_field(field));
-      field = "";
-    } else {
-      unsafe {
-        field += string_from_bytes_unchecked([line[i]]);
-      }
-    }
-    i += 1;
-  }
-  if (field.len() > 0) {
-    print(manifest_field(field));
+  for field in fields {
+    print(field);
   }
   return 0;
-}
-
-// The manifest line of an image, or "" without one. The magic is built from
-// bytes so that this compiler's own literal pool never holds it, and a
-// candidate must end in a newline within 512 bytes.
-function image_manifest_line(image: u8[]): string {
-  let magic = "";
-  unsafe {
-    magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
-  }
-  let from = 0;
-  while (true) {
-    let at = find_bytes_from(image, magic, from);
-    if (at < 0) {
-      return "";
-    }
-    let start = at + magic.len() - 7;
-    let end = start;
-    while (end < image.len() && end - start < 512 && image[end] != b'\n') {
-      end += 1;
-    }
-    if (manifest_candidate(image, start, end)) {
-      let bytes: u8[] = [];
-      let k = start;
-      while (k < end) {
-        bytes = bytes.append(image[k]);
-        k += 1;
-      }
-      let line = "";
-      unsafe {
-        line = string_from_bytes_unchecked(bytes);
-      }
-      if (find_bytes(bytes, " profile=") >= 0 && find_bytes(bytes, " heap_limit=") >= 0) {
-        return line;
-      }
-    }
-    from = at + 1;
-  }
-  return "";
-}
-
-// A candidate ends in a newline, names its target, and holds printable ASCII
-// only, so a hostile file cannot send control bytes to the terminal.
-function manifest_candidate(b: u8[], start: i32, end: i32): boolean {
-  if (end >= b.len() || b[end] != b'\n' || b[start + 7] == b' ') {
-    return false;
-  }
-  for k in start..end {
-    if (b[k] < 32 || b[k] > 126) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
-function manifest_field(field: string): string {
-  let eq = __memchr(field, 61, 0);
-  if (eq < 0) {
-    return field;
-  }
-  let key = slice_unchecked(field, 0, eq) + "";
-  let value = slice_unchecked(field, eq + 1, field.len()) + "";
-  if (value == "1") {
-    value = "yes";
-  } else if (value == "0") {
-    value = "no";
-  }
-  return key + ": " + value;
-}
-
-function find_bytes(hay: u8[], needle: string): i32 {
-  return find_bytes_from(hay, needle, 0);
-}
-
-function find_bytes_from(hay: u8[], needle: string, from: i32): i32 {
-  let n = needle.len();
-  let i = from;
-  while (i + n <= hay.len()) {
-    let j = 0;
-    while (j < n && hay[i + j] == needle[j]) {
-      j += 1;
-    }
-    if (j == n) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function list_targets(): i32 {

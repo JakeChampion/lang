@@ -100,6 +100,7 @@ var readerTargets = []readerTarget{
 	{"FuzzSelfHostArchive", "pkg_fuzz_run", "archive", archiveSeeds, nil, false},
 	{"FuzzSelfHostTangle", "literate_fuzz_run", "tangle", literateSeeds, nil, false},
 	{"FuzzSelfHostWeave", "literate_fuzz_run", "weave", literateSeeds, nil, false},
+	{target: "FuzzSelfHostManifest", program: "manifest_fuzz_run", reader: "manifest", seeds: manifestSeeds, check: manifestCheck},
 	{target: "FuzzSelfHostIRVerify", program: "irverify_fuzz_run", reader: "verify", seeds: irSeeds, check: irOpCount},
 	{target: "FuzzSelfHostX86Assembler", program: "asm_fuzz_run", reader: "x86", seeds: assemblerSeeds("x86-64-linux"), aborts: true},
 	{target: "FuzzSelfHostArm64Assembler", program: "asm_fuzz_run", reader: "arm64", seeds: assemblerSeeds("arm64-linux"), aborts: true},
