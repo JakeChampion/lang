@@ -1,0 +1,82 @@
+// Load bounded packet fixtures and verify complete canonical ARGB frames.
+import "std/video/frame";
+import "std/video/qtrle";
+import "std/audio/wire";
+
+pub struct Packet { at: i32, bytes: i32 }
+
+pub struct Corpus { bytes: u8[], format: frame.Format, depth: i32, packets: Packet[] }
+
+pub function load(bytes: u8[]): Result[Corpus, frame.VideoError] {
+  if (bytes.len() < 24 || bytes.len() > 67108864 || !wire.tag(bytes, 0, "FQBM") || wire.le(bytes, 4, 4) != 1u64) {
+    return Err(frame.Header);
+  }
+  let format = frame.Format { width: wire.le(bytes, 8, 4) as i32, height: wire.le(bytes, 12, 4) as i32 };
+  let _ = frame.pixel_count(format, frame.default_limits())?;
+  let depth = wire.le(bytes, 16, 4) as i32;
+  let count = wire.le(bytes, 20, 4);
+  if (depth != 24 && depth != 32 || count == 0u64 || count > 64u64) {
+    return Err(frame.Header);
+  }
+  let packets: Packet[] = [];
+  let at = 24;
+  for _ in 0..count as i32 {
+    if (bytes.len() - at < 4) {
+      return Err(frame.Truncated);
+    }
+    let size = wire.le(bytes, at, 4);
+    at += 4;
+    if (size == 0u64 || size > 16777216u64 || bytes.len() - at < 64 || size > (bytes.len() - at - 64) as u64) {
+      return Err(frame.Header);
+    }
+    for i in 0..64 {
+      if (bytes[at + size as i32 + i] != 0u8) {
+        return Err(frame.Header);
+      }
+    }
+    packets = packets.append(Packet { at: at, bytes: size as i32 });
+    at += size as i32 + 64;
+  }
+  if (at != bytes.len()) {
+    return Err(frame.Header);
+  }
+  return Ok(Corpus { bytes: bytes, format: format, depth: depth, packets: packets });
+}
+
+pub function warmup(c: Corpus, own pixels: u32[]): Result[u32[], frame.VideoError] {
+  let limits = frame.default_limits();
+  for p in c.packets {
+    let value = qtrle.decode_into(c.bytes[p.at:p.at + p.bytes], c.format, c.depth, pixels, limits)?;
+    pixels = value.pixels;
+  }
+  return Ok(pixels);
+}
+
+function write_pixels(pixels: [u32]): Result[void, IoError] {
+  let at = 0;
+  while (at < pixels.len()) {
+    let end = if (pixels.len() - at > 1024) { at + 1024 } else { pixels.len() };
+    let bytes: u8[] = [];
+    for i in at..end {
+      let pixel = pixels[i];
+      bytes = bytes.append((pixel >> 24u32) as u8).append((pixel >> 16u32) as u8).append((pixel >> 8u32) as u8).append(pixel as u8);
+    }
+    stdout().write_bytes(bytes)?;
+    at = end;
+  }
+  return Ok(());
+}
+
+pub function verify(c: Corpus, own pixels: u32[]): i32 {
+  let limits = frame.default_limits();
+  for p in c.packets {
+    let Ok(value) = qtrle.decode_into(c.bytes[p.at:p.at + p.bytes], c.format, c.depth, pixels, limits) else {
+      return 4;
+    };
+    pixels = value.pixels;
+    let Ok(_) = write_pixels(pixels) else {
+      return 5;
+    };
+  }
+  return 0;
+}

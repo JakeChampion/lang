@@ -8,6 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,8 +39,86 @@ func fuzzStdParse(f testing.TB) string {
 	})
 }
 
-func fuzzStdParser(f *testing.F, reader string, seeds [][]byte) {
-	fuzzBinReader(f, fuzzStdParse(f), "stdparse", reader, seeds)
+// stdCheck returns the fault that the summary of one input shows, or "".
+type stdCheck func(reader string, input []byte, summary string) string
+
+// stdReader is one reader of tests/fuzz/stdparse.fern as a fuzz target. Go's
+// fuzzer runs it as target, and TestSelfHostStdCoverageGuidedFuzz runs it with
+// the same seeds and the same check. check can be nil.
+type stdReader struct {
+	target string
+	reader string
+	seeds  func(testing.TB) [][]byte
+	check  stdCheck
+}
+
+var stdReaders = []stdReader{
+	{"FuzzSelfHostStdHTTP", "http", httpSeeds, nil},
+	{"FuzzSelfHostStdHPACK", "hpack", hpackSeeds, nil},
+	{"FuzzSelfHostStdH2", "h2", h2Seeds, nil},
+	{"FuzzSelfHostStdQPACK", "qpack", qpackSeeds, nil},
+	{"FuzzSelfHostStdQUIC", "quic", quicSeeds, nil},
+	{"FuzzSelfHostStdQUICFrames", "frames", quicFrameSeeds, nil},
+	{"FuzzSelfHostStdJSON", "json", jsonSeeds, nil},
+	{"FuzzSelfHostStdURL", "url", urlSeeds, nil},
+	{"FuzzSelfHostStdTLS", "tls", tlsSeeds, nil},
+	{"FuzzSelfHostStdTLSServer", "tls-server", tlsServerSeeds, nil},
+	{"FuzzSelfHostStdTLSClient", "tls-client", tlsClientSeeds, nil},
+	{"FuzzSelfHostStdX509", "x509", x509Seeds, nil},
+	{"FuzzSelfHostStdInflate", "inflate", inflateSeeds, agreesWithGo(goInflate)},
+	{"FuzzSelfHostStdGunzip", "gunzip", gunzipSeeds, agreesWithGo(goGunzip)},
+	{"FuzzSelfHostStdZlib", "zlib", zlibSeeds, agreesWithGo(goZlib)},
+	{"FuzzSelfHostStdZstd", "zstd", zstdSeeds, roundTrips},
+	{"FuzzSelfHostStdBrotli", "brotli", brotliSeeds, roundTrips},
+	{"FuzzSelfHostStdDNS", "dns", dnsSeeds, dnsRoundTrips},
+	{"FuzzSelfHostStdProtobuf", "protobuf", protobufSeeds, nil},
+	{"FuzzSelfHostStdJPEG", "jpeg", jpegSeeds, jpegAgreesWithGo},
+}
+
+// fuzzStdReader runs the reader of stdReaders whose target is f.
+func fuzzStdReader(f *testing.F) {
+	r := stdReaderOf(f, f.Name())
+	bin := fuzzStdParse(f)
+	for _, seed := range r.seeds(f) {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input []byte) {
+		if len(input) > fuzzInputLimit {
+			t.Skip("over the input limit")
+		}
+		path := filepath.Join(t.TempDir(), "input")
+		if err := os.WriteFile(path, input, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if fault := stdFault(r, input, runUnderBudget(exec.Command(bin, r.reader, path))); fault != "" {
+			t.Error(fault)
+		}
+	})
+}
+
+func stdReaderOf(tb testing.TB, target string) stdReader {
+	for _, r := range stdReaders {
+		if r.target == target {
+			return r
+		}
+	}
+	tb.Fatalf("%s is not in stdReaders", target)
+	return stdReader{}
+}
+
+// stdFault returns the fault of one run of a reader, or "". A run must stay
+// in its budgets and exit 0 with a summary that passes the reader's check.
+func stdFault(r stdReader, input []byte, run fuzzRun) string {
+	if fault := budgetFault("stdparse "+r.reader, run, input); fault != "" {
+		return fault
+	}
+	if run.code != 0 || !strings.HasPrefix(run.stdout, r.reader+" ") {
+		return fmt.Sprintf("exit %d on %d bytes, want 0 with a %s summary\nstdout: %q\nstderr: %q", run.code, len(input), r.reader, run.stdout, run.stderr)
+	}
+	if r.check != nil {
+		return r.check(r.reader, input, strings.TrimSpace(run.stdout))
+	}
+	return ""
 }
 
 func hexSeed(f testing.TB, s string) []byte {
@@ -50,7 +132,11 @@ func hexSeed(f testing.TB, s string) []byte {
 // FuzzSelfHostStdHTTP feeds hostile bytes to the HTTP/1 request framer, and
 // the same bytes to the chunked-body decoder in pieces of seven.
 func FuzzSelfHostStdHTTP(f *testing.F) {
-	fuzzStdParser(f, "http", [][]byte{
+	fuzzStdReader(f)
+}
+
+func httpSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		[]byte("GET /a?b=c HTTP/1.1\r\nHost: example.com\r\n\r\n"),
 		[]byte("POST /p HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello"),
 		[]byte("POST /p HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"),
@@ -70,13 +156,17 @@ func FuzzSelfHostStdHTTP(f *testing.F) {
 		[]byte("GET / HTTP/1.1\r\nHost: a\r\n\r\nGET / HTTP/1.1\r\nHost: b\r\n\r\n"),
 		[]byte("GET / HTTP/9.9\r\n\r\n"),
 		[]byte(""),
-	})
+	}
 }
 
 // FuzzSelfHostStdHPACK feeds hostile header blocks to the HPACK decoder, twice on one
 // decoder so the second block reads the dynamic table the first one filled.
 func FuzzSelfHostStdHPACK(f *testing.F) {
-	fuzzStdParser(f, "hpack", [][]byte{
+	fuzzStdReader(f)
+}
+
+func hpackSeeds(f testing.TB) [][]byte {
+	return [][]byte{
 		hexSeed(f, "400a637573746f6d2d6b65790d637573746f6d2d686561646572"),
 		hexSeed(f, "828684418cf1e3c2e5f23a6ba0ab90f4ff"),
 		hexSeed(f, "828684be5886a8eb10649cbf"),
@@ -89,7 +179,7 @@ func FuzzSelfHostStdHPACK(f *testing.F) {
 		hexSeed(f, "408aff"),
 		hexSeed(f, "40"+"7f"+"ffff03"),
 		[]byte(""),
-	})
+	}
 }
 
 // h2Frame lays out one HTTP/2 frame: a 24-bit length, a type, flags and a
@@ -104,6 +194,10 @@ func h2Frame(kind, flags byte, stream uint32, payload []byte) []byte {
 // FuzzSelfHostStdH2 feeds hostile bytes to the HTTP/2 frame reader, and the
 // client preface and the same bytes in pieces of nine to a server connection.
 func FuzzSelfHostStdH2(f *testing.F) {
+	fuzzStdReader(f)
+}
+
+func h2Seeds(f testing.TB) [][]byte {
 	block := hexSeed(f, "828684418cf1e3c2e5f23a6ba0ab90f4ff")
 	settings := h2Frame(4, 0, 0, nil)
 	headers := h2Frame(1, 5, 1, block)
@@ -114,7 +208,7 @@ func FuzzSelfHostStdH2(f *testing.F) {
 		rapidReset.Write(h2Frame(1, 5, id, block))
 		rapidReset.Write(h2Frame(3, 0, id, []byte{0, 0, 0, 8}))
 	}
-	fuzzStdParser(f, "h2", [][]byte{
+	return [][]byte{
 		append(append([]byte{}, settings...), headers...),
 		append(append(append([]byte{}, settings...), h2Frame(4, 1, 0, nil)...), h2Frame(6, 0, 0, make([]byte, 8))...),
 		append(append([]byte{}, settings...), append(h2Frame(1, 4, 1, block[:5]), h2Frame(9, 4, 1, block[5:])...)...),
@@ -129,14 +223,18 @@ func FuzzSelfHostStdH2(f *testing.F) {
 		rapidReset.Bytes(),
 		{0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 1},
 		[]byte(""),
-	})
+	}
 }
 
 // FuzzSelfHostStdQPACK feeds hostile bytes to the QPACK decoder. The first
 // byte gives the length of the encoder-stream bytes that follow it, and the
 // rest is one header section on stream 0.
 func FuzzSelfHostStdQPACK(f *testing.F) {
-	fuzzStdParser(f, "qpack", [][]byte{
+	fuzzStdReader(f)
+}
+
+func qpackSeeds(f testing.TB) [][]byte {
+	return [][]byte{
 		hexSeed(f, "000000d1d7"),
 		hexSeed(f, "073fe11f41610162020080"),
 		hexSeed(f, "00060080"),
@@ -146,12 +244,12 @@ func FuzzSelfHostStdQPACK(f *testing.F) {
 		hexSeed(f, "0000"),
 		hexSeed(f, "00"),
 		[]byte(""),
-	})
+	}
 }
 
 // quicInitial seals payload as a QUIC version 1 client Initial packet for
 // dcid, with a 4-byte packet number 0, as RFC 9001 sections 5.2 to 5.4 lay out.
-func quicInitial(f *testing.F, dcid, payload []byte) []byte {
+func quicInitial(f testing.TB, dcid, payload []byte) []byte {
 	salt := hexSeed(f, "38762cf7f55934b34d179ae6a4c80cadccbb7f0a")
 	expand := func(secret []byte, label string, n int) []byte {
 		full := "tls13 " + label
@@ -198,10 +296,14 @@ func quicInitial(f *testing.F, dcid, payload []byte) []byte {
 // walks the coalesced packets and opens each Initial packet with the client
 // Initial keys of its destination connection ID.
 func FuzzSelfHostStdQUIC(f *testing.F) {
+	fuzzStdReader(f)
+}
+
+func quicSeeds(f testing.TB) [][]byte {
 	dcid := hexSeed(f, "8394c8f03e515708")
 	payload := append([]byte{6, 0, 5, 'h', 'e', 'l', 'l', 'o', 1}, make([]byte, 40)...)
 	initial := quicInitial(f, dcid, payload)
-	fuzzStdParser(f, "quic", [][]byte{
+	return [][]byte{
 		initial,
 		append(append([]byte{}, initial...), initial...),
 		append(append([]byte{}, initial[:len(initial)-1]...), initial[len(initial)-1]^1),
@@ -214,13 +316,17 @@ func FuzzSelfHostStdQUIC(f *testing.F) {
 		append([]byte{0xc3, 0, 0, 0, 1, 8}, append(dcid, 0, 0, 0x5f, 0xff, 0, 0, 0, 0)...),
 		{0xc3, 0xfa, 0xce, 0xb0, 0x0c, 0, 0},
 		[]byte(""),
-	})
+	}
 }
 
 // FuzzSelfHostStdQUICFrames feeds hostile packet payloads to the QUIC frame
 // reader.
 func FuzzSelfHostStdQUICFrames(f *testing.F) {
-	fuzzStdParser(f, "frames", [][]byte{
+	fuzzStdReader(f)
+}
+
+func quicFrameSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		{0, 0, 1},
 		{2, 10, 0, 1, 5, 2, 3, 1, 1},
 		{3, 10, 0, 0, 5, 1, 2, 3},
@@ -238,12 +344,16 @@ func FuzzSelfHostStdQUICFrames(f *testing.F) {
 		{0x40, 0x50, 0},
 		{0x15, 0x40},
 		[]byte(""),
-	})
+	}
 }
 
 // FuzzSelfHostStdJSON feeds hostile documents to the JSON parser.
 func FuzzSelfHostStdJSON(f *testing.F) {
-	fuzzStdParser(f, "json", [][]byte{
+	fuzzStdReader(f)
+}
+
+func jsonSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		[]byte(`{"a": [1, 2.5e10, -0, true, null, "xé😀"], "b": {}}`),
 		[]byte(`"\ud800"`),
 		[]byte(`"\udc00\ud800"`),
@@ -260,12 +370,16 @@ func FuzzSelfHostStdJSON(f *testing.F) {
 		[]byte("\xef\xbb\xbf{}"),
 		[]byte("\xff"),
 		[]byte(""),
-	})
+	}
 }
 
 // FuzzSelfHostStdURL feeds hostile strings to the URL parser and the query parser.
 func FuzzSelfHostStdURL(f *testing.F) {
-	fuzzStdParser(f, "url", [][]byte{
+	fuzzStdReader(f)
+}
+
+func urlSeeds(testing.TB) [][]byte {
+	return [][]byte{
 		[]byte("https://user:pass@example.com:8080/p/a/t/h?q=1&r=two#frag"),
 		[]byte("http://[::1]:80/"),
 		[]byte("http://[::1"),
@@ -280,5 +394,5 @@ func FuzzSelfHostStdURL(f *testing.F) {
 		[]byte("http://example.com/" + strings.Repeat("%41", 5000)),
 		[]byte("http://\xff/"),
 		[]byte(""),
-	})
+	}
 }

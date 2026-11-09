@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,17 +65,24 @@ func runUnderBudget(cmd *exec.Cmd) fuzzRun {
 // the memory budget, whatever its exit status.
 func failOutsideBudget(t *testing.T, what string, r fuzzRun, input []byte) bool {
 	t.Helper()
+	fault := budgetFault(what, r, input)
+	if fault != "" {
+		t.Error(fault)
+	}
+	return fault != ""
+}
+
+// budgetFault returns the budget fault of one run, or "".
+func budgetFault(what string, r fuzzRun, input []byte) string {
 	switch {
 	case r.timedOut:
-		t.Errorf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
+		return fmt.Sprintf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
 	case !r.exited:
-		t.Errorf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
+		return fmt.Sprintf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
 	case r.maxRSS > fuzzMemoryBudget:
-		t.Errorf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
-	default:
-		return false
+		return fmt.Sprintf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
 	}
-	return true
+	return ""
 }
 
 // fuzzBuildCache gives the fuzz workers one disk cache for the driver
@@ -94,7 +102,7 @@ func fuzzBuildCache(f testing.TB) {
 	f.Setenv("FERN_SELFHOST_BUILD_CACHE", dir)
 }
 
-func fuzzCLI(f *testing.F) (bin, stdlib string) {
+func fuzzCLI(f testing.TB) (bin, stdlib string) {
 	fuzzBuildCache(f)
 	gcc, runner := e2eharness.X86_64Tooling(f)
 	if len(runner) != 0 {
@@ -110,7 +118,7 @@ func fuzzCLI(f *testing.F) (bin, stdlib string) {
 	return bin, stdlib
 }
 
-func fuzzDriver(f *testing.F, driver string) string {
+func fuzzDriver(f testing.TB, driver string) string {
 	fuzzBuildCache(f)
 	gcc, runner := e2eharness.X86_64Tooling(f)
 	if len(runner) != 0 {
@@ -121,7 +129,7 @@ func fuzzDriver(f *testing.F, driver string) string {
 	return e2eharness.BuildSelfHostBin(f, gcc, dir, "drivers/"+driver+".fern", driver)
 }
 
-func fuzzCompile(f *testing.F, bin, stdlib, src string, flags ...string) {
+func fuzzCompile(f testing.TB, bin, stdlib, src string, flags ...string) {
 	dir := f.TempDir()
 	main := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(main, []byte(src), 0o644); err != nil {
@@ -266,27 +274,7 @@ func FuzzSelfHostIRVerify(f *testing.F) {
 func fuzzAssembler(f *testing.F, which, target string) {
 	bin, stdlib := fuzzCLI(f)
 	driver := fuzzDriver(f, "asm_fuzz_run")
-	emitted := filepath.Join(f.TempDir(), "out.s")
-	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", "-target", target, "-emit", "asm", "-o", emitted)
-	text, err := os.ReadFile(emitted)
-	if err != nil {
-		f.Fatal(err)
-	}
-	if len(text) > 16<<10 {
-		text = text[:16<<10]
-	}
-	for _, seed := range [][]byte{
-		text,
-		[]byte(".text\n_start:\n ret\n"),
-		[]byte(".text\n_start:\n b _start\n"),
-		[]byte(".text\n134217728:\n b 134217728b\n"),
-		[]byte(".data\nx: .quad y\n.text\ny: .cfi_startproc\n.cfi_endproc\n"),
-		[]byte(strings.Repeat(".section .rodata\n", 50)),
-		[]byte(".text\nret\n.p2align 26\nret\n"),
-		[]byte(".text\nret\n.align 67108864\nret\n"),
-		[]byte("\x00\xff .text \n\n\n"),
-		{},
-	} {
+	for _, seed := range assemblerSeeds(f, bin, stdlib, target) {
 		f.Add(seed)
 	}
 	work := f.TempDir()
@@ -313,3 +301,37 @@ func fuzzAssembler(f *testing.F, which, target string) {
 
 func FuzzSelfHostX86Assembler(f *testing.F)   { fuzzAssembler(f, "x86", "x86-64-linux") }
 func FuzzSelfHostArm64Assembler(f *testing.F) { fuzzAssembler(f, "arm64", "arm64-linux") }
+
+// assemblerSeeds gives the assembly of a compiled program and short texts that
+// probe labels, sections and alignment.
+func assemblerSeeds(f testing.TB, bin, stdlib, target string) [][]byte {
+	text := compiledAssembly(f, bin, stdlib, target)
+	if len(text) > 16<<10 {
+		text = text[:16<<10]
+	}
+	return [][]byte{
+		text,
+		[]byte(".text\n_start:\n ret\n"),
+		[]byte(".text\n_start:\n b _start\n"),
+		[]byte(".text\n134217728:\n b 134217728b\n"),
+		[]byte(".data\nx: .quad y\n.text\ny: .cfi_startproc\n.cfi_endproc\n"),
+		[]byte(strings.Repeat(".section .rodata\n", 50)),
+		[]byte(".text\nret\n.p2align 26\nret\n"),
+		[]byte(".text\nret\n.align 67108864\nret\n"),
+		[]byte("\x00\xff .text \n\n\n"),
+		{},
+	}
+}
+
+// compiledAssembly is the assembly that the compiler emits for a small program
+// with flags.
+func compiledAssembly(f testing.TB, bin, stdlib, target string, flags ...string) []byte {
+	emitted := filepath.Join(f.TempDir(), "out.s")
+	args := append([]string{"-target", target, "-emit", "asm", "-o", emitted}, flags...)
+	fuzzCompile(f, bin, stdlib, "function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[1] + xs.len(); }\n", args...)
+	text, err := os.ReadFile(emitted)
+	if err != nil {
+		f.Fatal(err)
+	}
+	return text
+}

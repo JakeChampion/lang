@@ -187,6 +187,21 @@ pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
 }
 
+pub function is_array(t: Type): boolean {
+  if let TypeArray(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// array_elem is the element type of an array, or unchecked() for any other type.
+pub function array_elem(t: Type): Type {
+  if let TypeArray(a) = t {
+    return a.elem;
+  }
+  return unchecked();
+}
+
 function char_spelling(i: TypeI32): string {
   if (i.width == 32 && !i.unsigned) {
     return "char";

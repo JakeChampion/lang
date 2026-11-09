@@ -664,7 +664,7 @@ function loops(g: ssa.SFunc): boolean {
   let depth = 1;
   while (depth > 0) {
     let top = depth - 1;
-    let succ = term_successors(g.blocks[at[path[top]]].term);
+    let succ = ssa.term_targets(g.blocks[at[path[top]]].term);
     if (next[top] >= succ.len()) {
       state = state.with(at[path[top]], 2);
       depth = top;
@@ -683,16 +683,6 @@ function loops(g: ssa.SFunc): boolean {
     }
   }
   return false;
-}
-
-function term_successors(t: ssa.STerm): i32[] {
-  if (t.kind_tag == ssa.TERM_BR) {
-    return [t.target];
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return [t.t, t.f];
-  }
-  return [];
 }
 
 // Whether every use of v, and of each phi or copy of it, tests its variant or
@@ -1987,36 +1977,12 @@ function reads_parts_of(f: ssasem.Func, v: i32): boolean {
   return false;
 }
 
-function next_block_id(g: ssa.SFunc): i32 {
-  let hi = 0;
-  for b in g.blocks {
-    if (b.id >= hi) {
-      hi = b.id + 1;
-    }
-  }
-  return hi;
-}
-
-function br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
-}
-
-function term_targets(t: ssa.STerm): i32[] {
-  if (t.kind_tag == ssa.TERM_BR) {
-    return [t.target];
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return [t.t, t.f];
-  }
-  return [];
-}
-
 function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
   let g = f.graph;
   let b = g.blocks[bi];
   let call = b.insts[k];
   let base = g.nvals;
-  let first = next_block_id(g);
+  let first = ssa.next_block_id(g);
   let cont = first + callee.graph.blocks.len();
   let vmap: i32[] = [];
   let v = 0;
@@ -2059,9 +2025,9 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
       if (t.value >= 0) {
         ret_vals = ret_vals.append(vmap[t.value]);
       }
-      t = br(cont);
+      t = ssa.t_br(cont);
     } else if (t.kind_tag == ssa.TERM_BR) {
-      t = br(first + position_of(pos, t.target));
+      t = ssa.t_br(first + position_of(pos, t.target));
     } else if (t.kind_tag == ssa.TERM_BRIF) {
       t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + position_of(pos, t.t), f: first + position_of(pos, t.f) };
     }
@@ -2089,10 +2055,10 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
     p += 1;
   }
   let blocks: ssa.SBlock[] = [];
-  let targets = term_targets(b.term);
+  let targets = ssa.term_targets(b.term);
   for ob in g.blocks {
     if (ob.id == b.id) {
-      blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: br(first + position_of(pos, entry_id)) });
+      blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: ssa.t_br(first + position_of(pos, entry_id)) });
     } else if (util.index_of_i32(targets, ob.id) >= 0) {
       let preds: i32[] = [];
       for q in ob.preds {
@@ -2244,7 +2210,7 @@ function mapped(vmap: i32[], v: i32): i32 {
 }
 
 function block_positions(g: ssa.SFunc): i32[] {
-  let at = __alloc_i32(next_block_id(g));
+  let at = __alloc_i32(ssa.next_block_id(g));
   let j = 0;
   while (j < g.blocks.len()) {
     let id = g.blocks[j].id;

@@ -19,6 +19,8 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostIRVerify` | the structural, stack and reference-count verifiers read an op stream | `compiler/drivers/irverify_fuzz_run.fern` | a problem count from each verifier, exit 0 |
 | `FuzzSelfHostX86Assembler` | the x86-64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern x86` | a summary with exit 0, or an abort with a `fern:` cause |
 | `FuzzSelfHostArm64Assembler` | the arm64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern arm64` | the same |
+| `FuzzSelfHostX86Image` | the x86-64 assembler, the linker and the ELF writer take assembly text to a static, a `-pie` and a `-g` image | `compiler/drivers/asm_fuzz_run.fern x86-image` | the sizes with exit 0 and a `fern:` cause for each refused image, or an abort with a cause. Each image must parse with Go's `debug/elf`, keep its segments inside the file, agree in address and offset modulo the page, have no segment both writable and executable, and enter in the code |
+| `FuzzSelfHostArm64Image` | the arm64 assembler, the linker and the ELF writer, the same way | `compiler/drivers/asm_fuzz_run.fern arm64-image` | the same, with the 64 KiB page of arm64 |
 | `FuzzSelfHostToml` | the manifest reader and its diagnostic formatter read a `fern.toml` | `compiler/drivers/pkg_fuzz_run.fern toml` | a summary with exit 0 |
 | `FuzzSelfHostLock` | the lock reader reads a `fern.lock` | `compiler/drivers/pkg_fuzz_run.fern lock` | the same |
 | `FuzzSelfHostIndex` | the index reader reads a registry `index.toml` | `compiler/drivers/pkg_fuzz_run.fern index` | the same |
@@ -114,7 +116,9 @@ Each decoder has an output limit of 1 MiB.
 The DEFLATE, gzip and zlib targets decode every input with Go's `compress` packages too.
 When both accept the input, the length and the CRC-32 of the two outputs must be the same.
 When one accepts the input, the other must accept it too, unless the Go output passes the limit.
+
 The gzip oracle refuses a member header with a reserved flag bit, as RFC 1952 requires and Go's `compress/gzip` does not.
+Go reads the name and the comment of a header into a buffer of 512 bytes, and RFC 1952 sets no limit. So the oracle does not judge a member with a longer name or comment.
 
 Go has no zstd or Brotli decoder, so those targets compress each input with the Fern compressor and decode it back.
 
@@ -149,6 +153,14 @@ Each target ran 45 seconds after its seeds passed.
 | `FuzzSelfHostIRVerify` | 22414 | 0 | none |
 | `FuzzSelfHostX86Assembler` | 18168 | 2 | none |
 | `FuzzSelfHostArm64Assembler` | 39065 | 3 | none |
+
+The image targets ran 45 seconds each on 2026-11-09, after their seeds passed and after the four faults below were fixed.
+Host: Linux 6.18.44-fc-v310, Intel Xeon 2.10GHz, 4 cores, Go go1.27.3.
+
+| Target | Executions | New inputs kept | Findings |
+|---|---|---|---|
+| `FuzzSelfHostX86Image` | 42302 | 10 | none after the fixes |
+| `FuzzSelfHostArm64Image` | 39511 | 2 | none after the fixes |
 
 The package readers ran 45 seconds each on 2026-11-08 on the same kind of host, after their seeds passed.
 
@@ -203,6 +215,48 @@ Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern
 - A segment shorter than its fields. A frame of length 0 read its fields past the end of the file. Each segment now checks its length: the frame, the quantization tables, the restart interval and the scan header. A second frame is `Corrupt`, because the coefficients were sized for the first.
 - A scan that uses a Huffman table that the file does not define. The decoder read the empty table. It now decodes such a scan as corrupt data, as the module contract says for other corrupt data.
 
+The image targets found four faults in the last step of a native compile.
+They found three on their seeds and one in their first 6 seconds of fuzzing.
+Each is fixed in `compiler/elfimage.fern` or `compiler/elf.fern`, and `TestSelfHostImageOfCompiledProgram` or a layout test checks it.
+
+- The relro step stopped the compiler with exit 3 when a relocating image had no relro symbols. Text compiled without `-pie` and linked as a `-pie` image reached it. The step now refuses the image through the linker, with the same cause line, as the linker refuses its other faults.
+- An arm64 image of text with no `_start` took the start of the code as its entry. With no code, the entry was past the code. The arm64 linker now refuses such an image, as the x86-64 linker does.
+- On both ISAs, an image of text with a `_start` label and no instruction after it entered at the end of the code. The minimised input is `.text\n_start:`. Both linkers now refuse an image with no code at `_start`, and `testdata/fuzz/FuzzSelfHostX86Image/` and `testdata/fuzz/FuzzSelfHostArm64Image/` keep the inputs.
+- The `PT_GNU_RELRO` header of a `-pie` executable and of a shared object gave its memory size as its file size. Its file range then ended past the end of the file. The file size is now the part of the range that the file holds. `TestSelfHostImagePermissions` and `TestSharedObjectLayout` check that each segment lies inside the file.
+
+## Coverage feedback for the stdlib readers
+
+Go's fuzzer steers by the coverage of the Go test binary.
+It cannot see into the Fern process that reads each input, so it mutates the twenty stdlib readers blind.
+`TestSelfHostStdCoverageGuidedFuzz` in `internal/testing/e2ecompiler/self_host_fuzz_stdcover_test.go` steers them by the coverage of that process.
+It builds `tests/fuzz/stdparse.fern` with `fern -cover`, and each run writes its counters to stderr at exit.
+The 56,249 counters cover the stdlib modules that the program imports.
+The loop keeps each input that reaches a counter that no earlier input reached.
+
+`stdReaders` holds the seeds and the check of each reader.
+The Go target and the loop use the same seeds, the same budgets and the same oracle.
+The loop writes a failing input to `testdata/fuzz/<Target>/` in the format of Go's fuzzer, so the Go target replays it on each pull request.
+`FERN_STD_COVER_FUZZ_TIME` is the budget of each reader, and `FERN_STD_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
+
+```sh
+FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m go test -run '^TestSelfHostStdCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler
+```
+
+`TestSelfHostStdCoverageBeatsBlind` runs the loop twice from the seeds `""` and `"0"`, with the same random streams.
+One arm keeps each input that reaches a new counter, and the other arm keeps none.
+Summed over two streams of 600 runs, the arm with feedback must reach more counters.
+From the readers' own seeds, 300 runs of each arm reached the same counters to within 4%, so the test uses the almost empty seeds.
+
+| Reader | Feedback, counters | Blind, counters |
+|---|---|---|
+| DEFLATE | 1201 | 823 |
+| URL | 1619 | 1324 |
+| protobuf | 536 | 509 |
+
+A run costs about 45 ms, and most of that time is the report.
+In 5 seconds a reader gets about 110 runs.
+Each of the twenty readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
+
 ## Crash triage
 
 `go test -fuzz` minimises a failing input and writes it under `internal/testing/e2ecompiler/testdata/fuzz/<Target>/`.
@@ -212,13 +266,15 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the thirty targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the thirty-two targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-two targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
+`fuzz-diff.yml` also runs the coverage-guided loop of the twenty stdlib readers for 5 seconds each, after `TestSelfHostStdCoverageBeatsBlind`.
+Each nightly row of a stdlib reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits
 
-- No coverage feedback: Go's instrumentation does not see into a Fern process, so the mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers.
+- The twelve driver targets have no coverage feedback: Go's instrumentation does not see into a Fern process, so their mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers. The twenty stdlib readers have feedback from a `-cover` build, as the section above says.
 - The memory budget is a resident-size ceiling on the child, not a per-allocation count.
-- The ELF writer and the linker take only what the assemblers produce, and no target feeds them foreign input.
+- The compiler reads no object file or archive from outside. So the image targets reach the linker and the ELF writer only through the assemblers. A fault that the assemblers refuse before the link stays out of reach.

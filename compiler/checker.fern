@@ -1432,7 +1432,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeStruct(an) => {
       match (b) {
         typeinfo.TypeStruct(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1495,7 +1495,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeUnion(an) => {
       match (b) {
         typeinfo.TypeUnion(bn) => {
-          return an.name == bn.name;
+          return an.name == bn.name && type_args_agree(an.args, bn.args);
         },
         _ => {
           return false;
@@ -1551,6 +1551,30 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     }
   }
   return false;
+}
+
+// The type arguments of two uses of one generic name agree unless both are
+// written and some pair that is known on both sides differs. A bare name and
+// an argument that holds an unknown, an unbound one included, stay open.
+function type_args_agree(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() == 0 || b.len() == 0) {
+    return true;
+  }
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (!holds_any_unknown(a[i]) && !holds_any_unknown(b[i]) && !type_eq(a[i], b[i])) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function holds_any_unknown(t: typeinfo.Type): boolean {
+  return is_unknown(t) || typeinfo.any_child(t, holds_any_unknown);
 }
 
 function is_unknown(t: typeinfo.Type): boolean {
@@ -4597,8 +4621,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (nominal_args_clash(from, to, unions)) {
     return false;
   }
-  // type_eq ignores nominal arguments, so an aggregate checks its components below.
-  if (type_eq(from, to) && !is_tuple_or_array(to)) {
+  // nominal_args_clash above checks the arguments of one generic name, and
+  // an aggregate checks its components below.
+  if ((same_nominal(from, to) || type_eq(from, to)) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -8171,25 +8196,6 @@ function func_scope_tparams(fd: parser.FuncDecl): string[] {
   return parser.type_str_vars(fd.receiver_type, fd.type_params);
 }
 
-function split_fn_param_spellings(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
-      start = i + 1;
-    } else if (csv[i] == b'(' || csv[i] == b'[') {
-      depth += 1;
-    } else if (csv[i] == b')' || csv[i] == b']') {
-      depth -= 1;
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function param_decl_type(p: ast.ParamDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   let t = fn_param_decl_type(p, tparams, subst, tn);
   if (is_unknown(t)) {
@@ -8217,7 +8223,7 @@ function declared_callable_type(name: string, ret: string, params: string, tpara
   let pts: typeinfo.Type[] = [];
   let powns: boolean[] = [];
   if (params.len() > 0) {
-    for seg in split_fn_param_spellings(params) {
+    for seg in parser.split_type_list(params) {
       powns = powns.append(parser.spelling_is_own(seg));
       pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
     }
@@ -10635,6 +10641,9 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeStruct(sa) => {
       match (b.t) {
         typeinfo.TypeStruct(sb) => {
+          if (sa.name == sb.name) {
+            return type_args_agree(sa.args, sb.args);
+          }
           return mx_same_enum_family(sa.name, sb.name, enums);
         },
         _ => {
@@ -11362,7 +11371,7 @@ function slit_forges_handle(sl: ast.ExprStructLit, structs: StructTable): boolea
   if let Some(_) = find_struct_sig(structs, sl.type_name) {
     return false;
   }
-  return util.has_str(semtypes.fd_handle_names(), sl.type_name);
+  return semtypes.is_fd_handle_name(sl.type_name);
 }
 
 function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
@@ -23390,7 +23399,7 @@ function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
   while (true) {
     let next: string[] = [];
     for name in yes {
-      if (!dx.consuming.has(name) && !util.has_str(semtypes.fd_handle_names(), name) && ow_decl_holds_no_handle(name, dx, [name])) {
+      if (!dx.consuming.has(name) && !semtypes.is_fd_handle_name(name) && ow_decl_holds_no_handle(name, dx, [name])) {
         next = next.append(name);
       } else {
         no = no.append(name);
@@ -23449,7 +23458,7 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
   if (name == "Option" || name == "Result" || name == "Cell" || util.has_str(seen, name)) {
     return true;
   }
-  if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
+  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
     return false;
   }
   if (dx.no_handle.has(name)) {
@@ -24091,17 +24100,10 @@ function ow_result_has_methods(body: ast.Stmt[]): boolean {
   return false;
 }
 
-function ow_result_receiver_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
-}
-
 function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast.Expr {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
-      let tag = ow_result_receiver_tag(fa.obj);
+      let tag = ast.receiver_tag(fa.obj);
       let key = ow_receiver_ns(tag) + "." + fa.field;
       let cell_handle = tag == "Cell" && fa.field == "get" && !ow_holds_no_handle(c.ty, dx);
       if (tag.len() > 0 && !tag.starts_with("dyn ") && !methods.has(key) && !cell_handle) {
@@ -31122,20 +31124,27 @@ function use_ret_typed(lm: ast.ExprLambda, cbt: typeinfo.Type): ast.ExprLambda {
   return lm;
 }
 
+// The bodies a rewrite pass changes: hits.funcs[k] for mod.funcs[k], and
+// hits.top for the top-level statements.
+struct BodyHits { funcs: boolean[], top: boolean, any: boolean }
+
 pub function pretype_module(mod: parser.Module): parser.Module {
-  let coll = colliding_variant_names(mod);
-  if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
-    return pretype_module_in(mod, module_env(mod), whole_focus(mod));
+  let hits = pretype_hits(mod, whole_focus(mod));
+  if (!hits.any) {
+    return mod;
   }
-  for fd in mod.funcs {
-    if (needs_pretype_or_rescope(fd.body, coll)) {
-      return pretype_module_in(mod, module_env(mod), whole_focus(mod));
-    }
-  }
-  return mod;
+  return pretyped(mod, module_env(mod), hits);
 }
 
 function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = pretype_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return pretyped(mod, env, hits);
+}
+
+function pretype_hits(mod: parser.Module, focus: Focus): BodyHits {
   let coll = colliding_variant_names(mod);
   let top_hit = focus.top && needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
@@ -31149,14 +31158,15 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
       any = true;
     }
   }
-  if (!any) {
-    return mod;
-  }
+  return BodyHits { funcs: hits, top: top_hit, any: any };
+}
+
+function pretyped(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
   let nfuncs: parser.FuncDecl[] = [];
   let i = 0;
   while (i < mod.funcs.len()) {
     let func = mod.funcs[i];
-    if (hits[i]) {
+    if (hits.funcs[i]) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: pretype_stmts(func.body, fs) });
     } else {
@@ -31165,7 +31175,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
     i += 1;
   }
   let ntop = mod.top_stmts;
-  if (top_hit) {
+  if (hits.top) {
     ntop = pretype_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
@@ -34118,25 +34128,43 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
 }
 
 pub function settle_literal_locals(mod: parser.Module): parser.Module {
-  let generics = generic_fn_names(mod.funcs);
-  let any = needs_lit_settle(mod.top_stmts, generics);
-  for fd in mod.funcs {
-    if (!any && needs_lit_settle(fd.body, generics)) {
-      any = true;
-    }
-  }
-  if (!any) {
+  let hits = lit_settle_hits(mod, whole_focus(mod));
+  if (!hits.any) {
     return mod;
   }
-  return settle_literal_locals_in(mod, module_env(mod), whole_focus(mod));
+  return lit_settled(mod, module_env(mod), hits);
 }
 
 function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let hits = lit_settle_hits(mod, focus);
+  if (!hits.any) {
+    return mod;
+  }
+  return lit_settled(mod, env, hits);
+}
+
+function lit_settle_hits(mod: parser.Module, focus: Focus): BodyHits {
   let generics = generic_fn_names(mod.funcs);
-  let nfuncs: parser.FuncDecl[] = [];
+  let top = focus.top && needs_lit_settle(mod.top_stmts, generics);
+  let funcs: boolean[] = [];
+  let any = top;
   let k = 0;
   for func in mod.funcs {
     let hit = focus.funcs[k] && needs_lit_settle(func.body, generics);
+    k += 1;
+    funcs = funcs.append(hit);
+    if (hit) {
+      any = true;
+    }
+  }
+  return BodyHits { funcs: funcs, top: top, any: any };
+}
+
+function lit_settled(mod: parser.Module, env: ModuleEnv, hits: BodyHits): parser.Module {
+  let nfuncs: parser.FuncDecl[] = [];
+  let k = 0;
+  for func in mod.funcs {
+    let hit = hits.funcs[k];
     k += 1;
     if (hit) {
       let fs = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -34146,7 +34174,7 @@ function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Foc
     }
   }
   let ntop = mod.top_stmts;
-  if (focus.top && needs_lit_settle(mod.top_stmts, generics)) {
+  if (hits.top) {
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };

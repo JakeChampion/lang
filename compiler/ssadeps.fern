@@ -247,7 +247,7 @@ pub function check_graph(f: ssa.SFunc): Facts {
         }
       }
     }
-    let used = term_value(b.term);
+    let used = ssa.term_operand(b.term);
     if (used >= 0 && defs[used] < 0) {
       return refused("undefined value");
     }
@@ -259,16 +259,6 @@ pub function check_graph(f: ssa.SFunc): Facts {
     return refused(err);
   }
   return g;
-}
-
-function term_value(t: ssa.STerm): i32 {
-  if (t.kind_tag == ssa.TERM_RET) {
-    return t.value;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return t.cond;
-  }
-  return -1;
 }
 
 pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
@@ -340,7 +330,7 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
         }
         pos += 1;
       }
-      err = use_error(term_value(b.term), bi, b.insts.len(), dependencies, g);
+      err = use_error(ssa.term_operand(b.term), bi, b.insts.len(), dependencies, g);
       if (err != "") {
         return err;
       }

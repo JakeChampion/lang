@@ -27,6 +27,9 @@ func TestSharedObjectLayout(t *testing.T) {
 			var loads []*elf.Prog
 			var dynamic, relro, stack *elf.Prog
 			for _, p := range f.Progs {
+				if p.Off+p.Filesz > uint64(len(so)) {
+					t.Errorf("a %v segment ends at %#x in the file, past its %#x bytes", p.Type, p.Off+p.Filesz, len(so))
+				}
 				switch p.Type {
 				case elf.PT_LOAD:
 					loads = append(loads, p)

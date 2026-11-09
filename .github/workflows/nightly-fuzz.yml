@@ -426,6 +426,8 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: irverify, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIRVerify,       wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-x86,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Assembler,   wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Assembler, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: image-x86, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Image,     wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: image-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Image, wasmtime: "false" }
           # The package layer's readers: a manifest, a lock, an index and an archive are inputs an attacker controls.
           - { runner: ubuntu-24.04,     host: x86_64,  slug: toml,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostToml,            wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: lock,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostLock,            wasmtime: "false" }
@@ -455,7 +457,7 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: jpeg,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJPEG,       wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -491,6 +493,28 @@ jobs:
         run: |
           gotestsum --format testname -- -timeout=40m \
             -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}
+
+      # A stdlib reader also runs under the loop that steers by the coverage
+      # of the Fern process, which Go's fuzzer cannot see. Its corpus is its
+      # own, in the same night-to-night cache shape as Go's. A failing input
+      # goes into testdata/fuzz/<Target>/, which the upload below collects.
+      - name: Restore coverage-guided corpus
+        if: ${{ !cancelled() && startsWith(matrix.target, 'FuzzSelfHostStd') }}
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/std-cover-corpus
+          key: stdcover-${{ matrix.slug }}-${{ github.run_id }}
+          restore-keys: |
+            stdcover-${{ matrix.slug }}-
+      - name: Coverage-guided ${{ matrix.target }}
+        if: ${{ !cancelled() && startsWith(matrix.target, 'FuzzSelfHostStd') }}
+        env:
+          FERN_STD_COVER_FUZZ: "1"
+          FERN_STD_COVER_FUZZ_TIME: "15m"
+          FERN_STD_COVER_FUZZ_CORPUS: ${{ runner.temp }}/std-cover-corpus
+        run: |
+          gotestsum --format testname -- -timeout=25m \
+            -run '^TestSelfHostStdCoverageGuidedFuzz$/^${{ matrix.target }}$' ${{ matrix.pkg }}
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
