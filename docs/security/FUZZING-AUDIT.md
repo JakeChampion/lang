@@ -203,38 +203,48 @@ Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern
 - A segment shorter than its fields. A frame of length 0 read its fields past the end of the file. Each segment now checks its length: the frame, the quantization tables, the restart interval and the scan header. A second frame is `Corrupt`, because the coefficients were sized for the first.
 - A scan that uses a Huffman table that the file does not define. The decoder read the empty table. It now decodes such a scan as corrupt data, as the module contract says for other corrupt data.
 
-## Coverage feedback for the stdlib readers
+## Coverage feedback for the readers
 
 Go's fuzzer steers by the coverage of the Go test binary.
-It cannot see into the Fern process that reads each input, so it mutates the twenty stdlib readers blind.
-`TestSelfHostStdCoverageGuidedFuzz` in `internal/testing/e2ecompiler/self_host_fuzz_stdcover_test.go` steers them by the coverage of that process.
-It builds `tests/fuzz/stdparse.fern` with `fern -cover`, and each run writes its counters to stderr at exit.
-The 56,249 counters cover the stdlib modules that the program imports.
+It cannot see into the Fern process that reads each input, so it mutates the readers blind.
+`TestSelfHostReaderCoverageGuidedFuzz` in `internal/testing/e2ecompiler/self_host_fuzz_cover_test.go` steers them by the coverage of that process.
+It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-`stdReaders` holds the seeds and the check of each reader.
+The loop takes twenty-six readers: the twenty of `tests/fuzz/stdparse.fern`, and the package and literate readers of `compiler/drivers/pkg_fuzz_run.fern` and `compiler/drivers/literate_fuzz_run.fern`.
+The counters of a program cover the modules that it imports.
+
+| Program | Readers | Counters |
+|---|---|---|
+| `tests/fuzz/stdparse.fern` | 20 | 56,249 |
+| `compiler/drivers/pkg_fuzz_run.fern` | 4 | 16,899 |
+| `compiler/drivers/literate_fuzz_run.fern` | 2 | 13,491 |
+
+`readerTargets` holds the program, the seeds and the check of each reader.
 The Go target and the loop use the same seeds, the same budgets and the same oracle.
 The loop writes a failing input to `testdata/fuzz/<Target>/` in the format of Go's fuzzer, so the Go target replays it on each pull request.
-`FERN_STD_COVER_FUZZ_TIME` is the budget of each reader, and `FERN_STD_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
+`FERN_READER_COVER_FUZZ_TIME` is the budget of each reader, and `FERN_READER_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
 
 ```sh
-FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m go test -run '^TestSelfHostStdCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler
+FERN_READER_COVER_FUZZ=1 FERN_READER_COVER_FUZZ_TIME=5m go test -run '^TestSelfHostReaderCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler
 ```
 
-`TestSelfHostStdCoverageBeatsBlind` runs the loop twice from the seeds `""` and `"0"`, with the same random streams.
+`TestSelfHostReaderCoverageBeatsBlind` runs the loop twice from the seeds `""` and `"0"`, with the same random streams.
 One arm keeps each input that reaches a new counter, and the other arm keeps none.
 Summed over two streams of 600 runs, the arm with feedback must reach more counters.
 From the readers' own seeds, 300 runs of each arm reached the same counters to within 4%, so the test uses the almost empty seeds.
 
-| Reader | Feedback, counters | Blind, counters |
-|---|---|---|
-| DEFLATE | 1201 | 823 |
-| URL | 1619 | 1324 |
-| protobuf | 536 | 509 |
+| Reader | Program | Feedback, counters | Blind, counters |
+|---|---|---|---|
+| DEFLATE | `stdparse.fern` | 1201 | 823 |
+| URL | `stdparse.fern` | 1537 | 1324 |
+| protobuf | `stdparse.fern` | 536 | 509 |
+| index | `pkg_fuzz_run.fern` | 524 | 427 |
+| tangle | `literate_fuzz_run.fern` | 498 | 399 |
 
-A run costs about 45 ms, and most of that time is the report.
-In 5 seconds a reader gets about 110 runs.
-Each of the twenty readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
+A run of `stdparse.fern` costs about 45 ms, and most of that time is the report.
+A run of a driver costs about 15 ms.
+Each of the twenty-six readers kept new inputs in 5 seconds from its seeds, and no run found a fault.
 
 ## Crash triage
 
@@ -249,11 +259,11 @@ A hang names the budget, and a budget breach names the resident size.
 The drivers run natively, so the arm64 runner does not run them.
 The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the twenty stdlib readers for 5 seconds each, after `TestSelfHostStdCoverageBeatsBlind`.
-Each nightly row of a stdlib reader then runs that loop for 15 minutes from its own cached corpus.
+`fuzz-diff.yml` also runs the coverage-guided loop of the twenty-six readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits
 
-- The ten driver targets have no coverage feedback: Go's instrumentation does not see into a Fern process, so their mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers. The twenty stdlib readers have feedback from a `-cover` build, as the section above says.
+- The manifest, IR and assembler targets have no coverage feedback: Go's instrumentation does not see into a Fern process, so their mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers. The twenty-six readers have feedback from a `-cover` build, as the section above says.
 - The memory budget is a resident-size ceiling on the child, not a per-allocation count.
 - The ELF writer and the linker take only what the assemblers produce, and no target feeds them foreign input.

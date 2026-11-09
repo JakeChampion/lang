@@ -118,7 +118,7 @@ func fuzzCLI(f *testing.F) (bin, stdlib string) {
 	return bin, stdlib
 }
 
-func fuzzDriver(f *testing.F, driver string) string {
+func fuzzDriver(f testing.TB, driver string) string {
 	fuzzBuildCache(f)
 	gcc, runner := e2eharness.X86_64Tooling(f)
 	if len(runner) != 0 {

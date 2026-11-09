@@ -145,7 +145,7 @@ func agreeWithGo(reader string, input []byte, summary string, g goDecoded) strin
 }
 
 // agreesWithGo is the check that compares each summary with what decode gives.
-func agreesWithGo(decode func([]byte) goDecoded) stdCheck {
+func agreesWithGo(decode func([]byte) goDecoded) readerCheck {
 	return func(reader string, input []byte, summary string) string {
 		return agreeWithGo(reader, input, summary, decode(input))
 	}
@@ -227,7 +227,7 @@ func withDamage(seeds [][]byte) [][]byte {
 // FuzzSelfHostStdInflate feeds hostile bytes to the raw DEFLATE decoder of
 // std/deflate and to compress/flate, and requires the two to agree.
 func FuzzSelfHostStdInflate(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func inflateSeeds(testing.TB) [][]byte {
@@ -245,7 +245,7 @@ func inflateSeeds(testing.TB) [][]byte {
 // FuzzSelfHostStdGunzip feeds hostile bytes to the gzip decoder of std/deflate
 // and to compress/gzip, and requires the two to agree.
 func FuzzSelfHostStdGunzip(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func gunzipSeeds(testing.TB) [][]byte {
@@ -263,7 +263,7 @@ func gunzipSeeds(testing.TB) [][]byte {
 // FuzzSelfHostStdZlib feeds hostile bytes to the zlib decoder of std/deflate
 // and to compress/zlib, and requires the two to agree.
 func FuzzSelfHostStdZlib(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func zlibSeeds(f testing.TB) [][]byte {
@@ -310,7 +310,7 @@ func codecSeeds(f testing.TB, frames ...string) [][]byte {
 // FuzzSelfHostStdZstd feeds hostile bytes to the zstd decoder of std/zstd, and
 // compresses each input with std/zstd and decodes it back.
 func FuzzSelfHostStdZstd(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func zstdSeeds(f testing.TB) [][]byte {
@@ -325,7 +325,7 @@ func zstdSeeds(f testing.TB) [][]byte {
 // FuzzSelfHostStdBrotli feeds hostile bytes to the Brotli decoder of
 // std/brotli, and compresses each input with std/brotli and decodes it back.
 func FuzzSelfHostStdBrotli(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func brotliSeeds(f testing.TB) [][]byte {

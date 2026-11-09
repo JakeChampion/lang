@@ -175,26 +175,28 @@ only in whether a discovery joins the corpus. Feedback must reach strictly more
 counters. Without it the lane would keep reporting a plausible number long
 after the steering stopped working.
 
-## Coverage-guided fuzzing of the stdlib readers
+## Coverage-guided fuzzing of the readers
 
-The twenty `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
-`tests/fuzz/stdparse.fern`, and Go's fuzzer steers them blind for the same
-reason. `TestSelfHostStdCoverageGuidedFuzz` runs the same loop on a `-cover`
-build of that program. The rows cover the stdlib modules that the program
-imports, 56,249 of them. One run costs about 45 ms, and most of that is the
-report.
+The `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
+`tests/fuzz/stdparse.fern`, and the package and literate targets to the
+readers of two drivers in `compiler/drivers/`. Go's fuzzer steers them blind
+for the same reason. `TestSelfHostReaderCoverageGuidedFuzz` runs the same loop
+on a `-cover` build of each program. The rows cover the modules that the
+program imports: 56,249 for `stdparse.fern`, and about 17,000 and 13,500 for
+the two drivers. A run of `stdparse.fern` costs about 45 ms, and most of that
+is the report.
 
 ```sh
-FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m \
-  go test -run '^TestSelfHostStdCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler/
+FERN_READER_COVER_FUZZ=1 FERN_READER_COVER_FUZZ_TIME=5m \
+  go test -run '^TestSelfHostReaderCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler/
 ```
 
-Each reader uses the seeds, the budgets and the check of its Go target, from
-`stdReaders`. A failing input goes into `testdata/fuzz/<Target>/` in the format
-of Go's fuzzer, so the Go target replays it on each pull request.
-`FERN_STD_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
-`TestSelfHostStdCoverageBeatsBlind` is the property that keeps this loop
-honest, on the DEFLATE, URL and protobuf readers.
+Each reader uses the program, the seeds, the budgets and the check of its Go
+target, from `readerTargets`. A failing input goes into `testdata/fuzz/<Target>/`
+in the format of Go's fuzzer, so the Go target replays it on each pull request.
+`FERN_READER_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
+`TestSelfHostReaderCoverageBeatsBlind` is the property that keeps this loop
+honest, on the DEFLATE, URL, protobuf, index and tangle readers.
 
 ## Known gaps
 

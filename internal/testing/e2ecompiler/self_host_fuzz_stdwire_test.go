@@ -83,7 +83,7 @@ func dnsQuestion(name string, qtype uint16) []byte {
 // FuzzSelfHostStdDNS feeds hostile bytes to the DNS message reader, and
 // requires a message that it decodes to survive an encode and a second decode.
 func FuzzSelfHostStdDNS(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func dnsSeeds(testing.TB) [][]byte {
@@ -133,7 +133,7 @@ func pbField(number, wire int, payload []byte) []byte {
 // FuzzSelfHostStdProtobuf feeds hostile bytes to the protobuf reader, and the
 // length-delimited fields it finds to the reader again.
 func FuzzSelfHostStdProtobuf(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func protobufSeeds(testing.TB) [][]byte {
@@ -231,7 +231,7 @@ func hugeJPEG(base []byte) []byte {
 // image/jpeg and the decoder both accept an input, they must agree on its
 // width and height.
 func FuzzSelfHostStdJPEG(f *testing.F) {
-	fuzzStdReader(f)
+	fuzzReaderTarget(f)
 }
 
 func jpegSeeds(f testing.TB) [][]byte {
