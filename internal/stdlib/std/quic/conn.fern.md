@@ -1011,7 +1011,7 @@ function (c: Conn) __receive_key(u: packet.Unprotected, current: packet.Keys, no
     return (current, 0);
   }
   if let Some(old) = c.key_previous_recv {
-    if ((c.key_discard_at == 0 || now < c.key_discard_at) && (c.key_awaiting_peer || u.pn < c.key_first_recv)) {
+    if (c.__previous_kept(now) && (c.key_awaiting_peer || u.pn < c.key_first_recv)) {
       return (old, -1);
     }
   }
@@ -1019,11 +1019,16 @@ function (c: Conn) __receive_key(u: packet.Unprotected, current: packet.Keys, no
     return (next, 1);
   }
   if let Some(old) = c.key_previous_recv {
-    if (c.key_discard_at == 0 || now < c.key_discard_at) {
+    if (c.__previous_kept(now)) {
       return (old, 2);
     }
   }
   return (current, 2);
+}
+
+// __previous_kept says the previous receive keys are not discarded yet.
+function (c: Conn) __previous_kept(now: i64): boolean {
+  return c.key_discard_at == 0 || now < c.key_discard_at;
 }
 
 function (c: Conn) __key_authenticated(o: packet.Opened, generation: i32, now: i64): Conn {
@@ -2576,21 +2581,24 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
     payload = frames.put(payload, frames.Padding(extra));
   }
   let n = packet.pn_len(s.next_pn, -1i64);
-  if (p.space == recovery.APPLICATION && c.zero_rtt) {
-    return packet.seal_long(packet.Long { kind: packet.ZeroRtt, dcid: c.dcid, scid: c.scid, token: [], pn: s.next_pn, pn_len: n }, payload, keys);
-  }
-  if (p.space == recovery.APPLICATION) {
+  if (p.space == recovery.APPLICATION && !c.zero_rtt) {
     return packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   }
-  let kind = packet.Initial;
-  if (p.space == recovery.HANDSHAKE) {
+  return c.__sealed_long(p.space, s.next_pn, n, payload, keys);
+}
+
+// __sealed_long seals an Initial, a Handshake or a 0-RTT packet: the
+// application space has a long header only while a client sends 0-RTT.
+function (c: Conn) __sealed_long(space: i32, pn: i64, n: i32, payload: [u8], keys: packet.Keys): u8[] {
+  let kind = packet.ZeroRtt;
+  let token: u8[] = [];
+  if (space == recovery.INITIAL) {
+    kind = packet.Initial;
+    token = c.token;
+  } else if (space == recovery.HANDSHAKE) {
     kind = packet.Handshake;
   }
-  let token: u8[] = [];
-  if (p.space == recovery.INITIAL) {
-    token = c.token;
-  }
-  return packet.seal_long(packet.Long { kind: kind, dcid: c.dcid, scid: c.scid, token: token, pn: s.next_pn, pn_len: n }, payload, keys);
+  return packet.seal_long(packet.Long { kind: kind, dcid: c.dcid, scid: c.scid, token: token, pn: pn, pn_len: n }, payload, keys);
 }
 
 function (c: Conn) __recorded(p: Plan, now: i64, size: i32, padded: boolean): Conn {
@@ -2656,6 +2664,11 @@ function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
   if (!placed) {
     out = __push_range(out, frames.AckRange { low: pn, high: pn });
   }
+  return __first_ranges(out);
+}
+
+// __first_ranges keeps the MAX_ACK_RANGES highest ranges.
+function __first_ranges(out: frames.AckRange[]): frames.AckRange[] {
   if (out.len() <= MAX_ACK_RANGES) {
     return out;
   }
