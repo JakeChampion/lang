@@ -3475,17 +3475,6 @@ function variant_payload_struct(s: Scope, type_name: string): Option[StructSig] 
   return s.lookup_owned_struct(variant_pattern_name(type_name), variant_pattern_owner(type_name));
 }
 
-function field_index(ssig: StructSig, name: string): i32 {
-  let i = 0;
-  while (i < ssig.field_names.len()) {
-    if (ssig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): typeinfo.Type {
   let Some(ss) = variant_payload_struct(s, type_name) else {
     return t_unknown("built-in variant payload `" + type_name + "`");
@@ -5958,7 +5947,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
   while (pass < 2) {
     let i = 0;
     while (i < sl.field_names.len()) {
-      let fi = field_index(ssig, sl.field_names[i]);
+      let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
       let binds = fi >= 0 && fi < ssig.field_type_names.len() && typed_int_field(sl.field_values[i], s) == (pass == 0);
       if let ast.ExprArray(ea) = sl.field_values[i] {
         if (ea.elements.len() == 0) {
@@ -6154,7 +6143,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
       let tp = ssig.type_params[i];
       let spellings: string[] = [];
       for fname in sl.field_names {
-        let fi = field_index(ssig, fname);
+        let fi = util.index_of_str(ssig.field_names, fname);
         if (fi >= 0 && fi < ssig.field_type_names.len()) {
           spellings = spellings.append(ssig.field_type_names[fi]);
         } else {
@@ -6177,7 +6166,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
 function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): i32 {
   let i = 0;
   while (i < sl.field_names.len()) {
-    let fi = field_index(ssig, sl.field_names[i]);
+    let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
     if (fi >= 0) {
       let ft = lit_field_type(ssig, fi, args, s);
       let vt = check_expr(sl.field_values[i], s);
@@ -6707,7 +6696,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
   let swritten = __alloc_bool(ssig.field_names.len());
   let sli = 0;
   while (sli < sl.field_names.len()) {
-    let sfi = field_index(ssig, sl.field_names[sli]);
+    let sfi = util.index_of_str(ssig.field_names, sl.field_names[sli]);
     if (sfi < 0) {
       return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
     }
@@ -6769,7 +6758,7 @@ function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): ty
   let Some(fsig) = s.lookup_struct(sn.name) else {
     return t_unknown("undefined struct: " + sn.name);
   };
-  let fai = field_index(fsig, field);
+  let fai = util.index_of_str(fsig.field_names, field);
   if (fai < 0) {
     return t_unknown("struct " + sn.name + " has no field `" + field + "`");
   }
@@ -9138,7 +9127,7 @@ function struct_view_parts(sl: ast.ExprStructLit, to: typeinfo.Type, s: Scope): 
   if let Some(ssig) = s.lookup_struct(sl.type_name) {
     let args = nominal_args(to);
     for i in 0..sl.field_values.len() {
-      let fidx = field_index(ssig, sl.field_names[i]);
+      let fidx = util.index_of_str(ssig.field_names, sl.field_names[i]);
       if (fidx >= 0) {
         out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
       }
@@ -12093,7 +12082,7 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructTable, unions: Unio
       }
     }
   }
-  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, ow_outside_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_lambda);
 }
 
 function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util.Diag[] {
@@ -14516,7 +14505,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               if (!is_unknown(bms)) {
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
-                let fldi = field_index(fsig, mfa.field);
+                let fldi = util.index_of_str(fsig.field_names, mfa.field);
                 if (fldi < 0) {
                   out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
@@ -15383,8 +15372,8 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   while (vi < sl.field_values.len()) {
     let fdest = t_unknown("no declared field");
     if let Some(fsig) = found {
-      if (vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
-        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
+      if (vi < sl.field_names.len() && util.index_of_str(fsig.field_names, sl.field_names[vi]) >= 0) {
+        fdest = lit_field_type(fsig, util.index_of_str(fsig.field_names, sl.field_names[vi]), args, s);
       }
     }
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
@@ -15408,7 +15397,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   if let Some(ssig) = found {
     let fi = 0;
     while (fi < sl.field_names.len()) {
-      let fidx = field_index(ssig, sl.field_names[fi]);
+      let fidx = util.index_of_str(ssig.field_names, sl.field_names[fi]);
       if (fidx >= 0) {
         let ft = lit_field_type(ssig, fidx, args, s);
         let vt = check_expr(sl.field_values[fi], s);
@@ -15958,7 +15947,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       let Some(fsig) = s.lookup_struct(sn.name) else {
         return false;
       };
-      let fi = field_index(fsig, field);
+      let fi = util.index_of_str(fsig.field_names, field);
       if (fi < 0) {
         return true;
       }
@@ -21829,7 +21818,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, lu_outside_lambda);
+    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, not_lambda);
   }
   let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
@@ -21855,7 +21844,7 @@ function lu_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   return acc;
 }
 
-function lu_outside_lambda(e: ast.Expr): boolean {
+function not_lambda(e: ast.Expr): boolean {
   if let ast.ExprLambda(_) = e {
     return false;
   }
@@ -22609,7 +22598,7 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
     }
     return acc;
   }
-  let fields = astwalk.fold_expr_pruned(value, [], admit, ow_outside_lambda);
+  let fields = astwalk.fold_expr_pruned(value, [], admit, not_lambda);
   if (returned) {
     if let ast.ExprStructLit(sl) = value {
       let base = ow_ident_name(sl.base);
@@ -22621,13 +22610,6 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
     }
   }
   return OwnCtx { ...ctx, admit_fields: fields };
-}
-
-function ow_outside_lambda(e: ast.Expr): boolean {
-  if let ast.ExprLambda(_) = e {
-    return false;
-  }
-  return true;
 }
 
 function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -29225,7 +29207,7 @@ function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s:
     let v = fields[i];
     let fi = -1;
     if (i < sl.field_names.len()) {
-      fi = field_index(sig, sl.field_names[i]);
+      fi = util.index_of_str(sig.field_names, sl.field_names[i]);
     }
     if (fi >= 0 && fi < sig.field_type_names.len()) {
       v = settle_wide_literals(v, type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, largs, s.type_names()));
@@ -29384,7 +29366,7 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
         let v = sl.field_values[i];
         let fi: i32 = -1;
         if (i < sl.field_names.len()) {
-          fi = field_index(sig, sl.field_names[i]);
+          fi = util.index_of_str(sig.field_names, sl.field_names[i]);
         }
         if (fi >= 0 && fi < sig.field_type_names.len()) {
           let ft = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
@@ -31520,8 +31502,8 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
   for k in 0..sl.field_values.len() {
     let fdest = none;
     if let Some(fsig) = found {
-      if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
-        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[k]), args, s);
+      if (k < sl.field_names.len() && util.index_of_str(fsig.field_names, sl.field_names[k]) >= 0) {
+        fdest = lit_field_type(fsig, util.index_of_str(fsig.field_names, sl.field_names[k]), args, s);
       }
     }
     values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
@@ -31712,7 +31694,7 @@ function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
   match (t) {
     typeinfo.TypeUnion(u) => {
       if (bare_union(u)) {
-        return open_union_arity(s, u.name) > 0;
+        return union_arity(s, u.name) > 0;
       }
       return any_open_enum(u.args, s);
     },
@@ -31732,16 +31714,6 @@ function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
       return false;
     }
   }
-}
-
-function open_union_arity(s: Scope, name: string): i32 {
-  if (name == "Option") {
-    return 1;
-  }
-  if (name == "Result") {
-    return 2;
-  }
-  return union_type_params(s, name).len();
 }
 
 // bare_union is a union named without its arguments: none, or each one never.
@@ -31995,7 +31967,7 @@ function lit_struct_field_class(fa: ast.ExprFieldAccess, s: Scope): i32 {
     let Some(sig) = s.lookup_struct(name) else {
       return -1;
     };
-    let fi = field_index(sig, fa.field);
+    let fi = util.index_of_str(sig.field_names, fa.field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return -1;
     }
@@ -32498,7 +32470,7 @@ function field_want_lift(ot: typeinfo.Type, field: string, want: typeinfo.Type, 
     let Some(sig) = s.lookup_struct(sn.name) else {
       return (ot, false);
     };
-    let fi = field_index(sig, field);
+    let fi = util.index_of_str(sig.field_names, field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return (ot, false);
     }

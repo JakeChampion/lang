@@ -3499,10 +3499,10 @@ function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, targe
     return known;
   }
   let name = g.defs[test].str;
-  if (target == term.t && !names_has(known.held, name)) {
+  if (target == term.t && !util.has_str(known.held, name)) {
     return Known { ...known, held: known.held.append(name) };
   }
-  if (target == term.f && !names_has(known.gone, name)) {
+  if (target == term.f && !util.has_str(known.gone, name)) {
     return Known { ...known, gone: known.gone.append(name) };
   }
   return known;
@@ -3525,7 +3525,7 @@ function value_test(g: Guards, term: ssa.STerm, value: i32): i32 {
 function common(a: string[], b: string[]): string[] {
   let out: string[] = [];
   for n in a {
-    if (names_has(b, n)) {
+    if (util.has_str(b, n)) {
       out = out.append(n);
     }
   }
@@ -3619,15 +3619,6 @@ function has_guarded_projection(f: Func): boolean {
   return false;
 }
 
-function names_has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
   if (guarded_by(f, ins, settled(f, ins.args[0], bi, g))) {
     return true;
@@ -3639,13 +3630,13 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
   let value = ins.args[0];
   if (settled_viewless(ins)) {
     for c in dyn_view_concretes(f, f.values[value]) {
-      if (!names_has(known.gone, shape_name(f, c))) {
+      if (!util.has_str(known.gone, shape_name(f, c))) {
         return false;
       }
     }
     return true;
   }
-  if (names_has(known.held, ins.str)) {
+  if (util.has_str(known.held, ins.str)) {
     return true;
   }
   let at = semrecords.find_enum(f.enums, f.values[value]);
@@ -3653,7 +3644,7 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
     return false;
   }
   for v in f.enums[at].variants {
-    if (semrecords.inhabited(v) && v.name != ins.str && !names_has(known.gone, v.name)) {
+    if (semrecords.inhabited(v) && v.name != ins.str && !util.has_str(known.gone, v.name)) {
       return false;
     }
   }
@@ -4325,21 +4316,12 @@ pub function called_names(f: Func): string[] {
   let out: string[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == call() && ins.str != "" && !name_seen(out, ins.str)) {
+      if (ins.kind_tag == call() && ins.str != "" && !util.has_str(out, ins.str)) {
         out = out.append(ins.str);
       }
     }
   }
   return out;
-}
-
-function name_seen(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
-    }
-  }
-  return false;
 }
 
 pub function analyze(f: Func): Analysis {

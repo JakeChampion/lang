@@ -1539,10 +1539,6 @@ function x86_fold_relro(own a: X86Asm): X86Asm {
   return X86Asm { ...a, rodata: data, relro: [], relro_pad: pad, dfix_offs: dfix_offs, dfix_names: dfix_names, dfix_idx: dfix_idx, rfix_offs: [], rfix_names: [], rfix_idx: [], lab_offs: offs };
 }
 
-function x86_unwind_hdr_len(a: X86Asm): i32 {
-  return gas.cfi_eh_frame_hdr_len(a.cfi);
-}
-
 function x86_unwind_eh_len(a: X86Asm): i32 {
   if (gas.cfi_empty(a.cfi)) {
     return 0;
@@ -1555,7 +1551,7 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
     return a.data_offset;
   }
   let end = text_len;
-  let hdr_len = x86_unwind_hdr_len(a);
+  let hdr_len = x86_eh_frame_hdr_len(a);
   let eh_len = x86_unwind_eh_len(a);
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;

@@ -323,23 +323,6 @@ function is_vuint64(v: Value): boolean {
   }
 }
 
-function is_int_value(v: Value): boolean {
-  match (v) {
-    VInt(_) => {
-      return true;
-    },
-    VInt64(_) => {
-      return true;
-    },
-    VUint(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
 function index_in(v: Value, n: i32): i32 {
   let wide = vint_as_i64(v);
   if (wide < 0 || wide >= n as i64) {
@@ -5447,7 +5430,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
   if (is_err(iv)) {
     return iv;
   }
-  if (!is_int_value(iv)) {
+  if (!is_int_like(iv)) {
     return v_err("index must be an integer");
   }
   match (av) {

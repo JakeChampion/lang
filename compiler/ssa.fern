@@ -2111,7 +2111,7 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
             if (dying < 0 && hi[a] < pos) {
               dying = a;
             }
-            if (hi[a] < pos && ai - 1 < blk.preds.len() && pred_index(at, blk.preds[ai - 1]) == bi - 1) {
+            if (hi[a] < pos && ai - 1 < blk.preds.len() && position_of(at, blk.preds[ai - 1]) == bi - 1) {
               through = a;
             }
             if (outliving < 0 && hi[a] >= pos) {
@@ -2140,13 +2140,6 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
     bi += 1;
   }
   return Mates { hint: hint, carried: carried, alt: alt, through: fell };
-}
-
-function pred_index(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id];
 }
 
 // live_masks gives, for each position of `at` in ascending order, the

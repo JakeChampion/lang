@@ -1343,17 +1343,6 @@ function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
   return None;
 }
 
-function record_field_index(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
 function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let container = expr(fa.obj, s, typeinfo.unchecked());
   s = container.s;
@@ -1366,7 +1355,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   let Some(sig) = record_sig(s.values[container.id], s) else {
     return refused(s, "unsupported projection");
   };
-  let at = record_field_index(sig, fa.field);
+  let at = util.index_of_str(sig.field_names, fa.field);
   if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
     return refused(s, "record projection contract");
   }
@@ -1380,7 +1369,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
   let at: i32[] = [];
   let i = 0;
   while (i < sl.field_values.len()) {
-    let slot = field_slot(sig, sl.field_names[i]);
+    let slot = util.index_of_str(sig.field_names, sl.field_names[i]);
     if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
       return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] };
     }
@@ -1448,17 +1437,6 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
     return refused(s, "record base type");
   }
   return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty, base.id + 1);
-}
-
-function field_slot(sig: checker.StructSig, name: string): i32 {
-  let i = 0;
-  while (i < sig.field_names.len()) {
-    if (sig.field_names[i] == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
 }
 
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
@@ -2885,7 +2863,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let owner = method_owner(s.values[recv]);
   if let Some(fsig) = record_sig(s.values[recv], s) {
-    let fat = record_field_index(fsig, fa.field);
+    let fat = util.index_of_str(fsig.field_names, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
       let fv = field_read(s, recv, fat, fa.field, fsig.field_types[fat]);
       if (!fv.s.ok) {
@@ -4313,7 +4291,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   }
   let i = 0;
   while (i < names.len()) {
-    let at = record_field_index(sig, fields[i]);
+    let at = util.index_of_str(sig.field_names, fields[i]);
     if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
       return fail(s, "record projection contract");
     }

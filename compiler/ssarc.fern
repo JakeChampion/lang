@@ -2360,13 +2360,13 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
     } else {
       let pay = fields[0].ty;
       r = emit(r, ir.op_load_local(0));
-      if (wide_payload(pay)) {
+      if (wide_or_float(pay)) {
         r = emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(pay)));
       } else {
         r = emit(r, ir.op_opt_payload());
       }
       r = send_part(r, pay);
-      if (wide_payload(pay)) {
+      if (wide_or_float(pay)) {
         r = emit(r, ir.op_opt_make_w(k, 64, !ssasem.is_float(pay)));
       } else {
         r = emit(r, ir.op_opt_make(k));
@@ -2907,9 +2907,9 @@ function text_eq_by_length(own r: irtables.LowerState, f: ssasem.Func, p: ssauni
 
 function float_scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (ins.kind_tag == ssa.UNARY) {
-    return emit(r, ir.op_funary("fneg"));
+    return emit(r, ir.op_float("fneg"));
   }
-  r = emit(r, ir.op_fbin(irtables.map_fbinop(ins.str)));
+  r = emit(r, ir.op_float(irtables.map_fbinop(ins.str)));
   if (ssasem.is_f32(f.values[ins.result])) {
     return round_f32(r);
   }
@@ -3672,7 +3672,7 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
   return semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, t)], name);
 }
 
-function wide_payload(t: typeinfo.Type): boolean {
+function wide_or_float(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_float(t);
 }
 
@@ -3683,7 +3683,7 @@ function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
       return emit(r, ir.op_const_option(tag));
     }
     let pay = f.values[ins.args[0]];
-    if (wide_payload(pay)) {
+    if (wide_or_float(pay)) {
       return emit(r, ir.op_opt_make_w(tag, 64, !ssasem.is_float(pay)));
     }
     return emit(r, ir.op_opt_make(tag));
@@ -3694,7 +3694,7 @@ function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     return emit(r, ir.op_bin("eq", 0, false));
   }
   let got = f.values[ins.result];
-  if (wide_payload(got)) {
+  if (wide_or_float(got)) {
     return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got)));
   }
   return emit(r, marked_load(ir.op_opt_payload(), got));
@@ -3762,16 +3762,12 @@ function static_box(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
 }
 
-function wide_elem(t: typeinfo.Type): boolean {
-  return ssasem.is_wide(t) || ssasem.is_float(t);
-}
-
 // The constant shape of an array whose elements have this type.
 function array_shape(elem: typeinfo.Type): string {
   if (ssasem.is_u8(elem)) {
     return "&bytes";
   }
-  if (wide_elem(elem)) {
+  if (wide_or_float(elem)) {
     return "&arr64";
   }
   return "&arr";
@@ -6238,7 +6234,7 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
 function intrinsic_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   let kind = irtables.f64_math_builtin_kind(ins.str);
   if (kind != "") {
-    return Lowered { found: true, r: emit(r, ir.op_funary(kind)) };
+    return Lowered { found: true, r: emit(r, ir.op_float(kind)) };
   }
   let bits = bit_count_site(r, ins);
   if (bits.found) {
