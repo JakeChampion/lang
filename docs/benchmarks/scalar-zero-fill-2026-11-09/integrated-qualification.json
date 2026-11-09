@@ -1,0 +1,436 @@
+{
+  "source_snapshot": "c545b44f55d61204388cf281a4452ff224da9bd7",
+  "main_snapshot": "502e0efb38bd4554fa44587f42db154e7cf4eb67",
+  "core_sha256": "2bd2a8a8d68551bcdaed8b08a8409e5795223d634a9dbd9e4b5c3d56062c04ad",
+  "fixed_point": "stage2 == stage3",
+  "codec_builds": 57,
+  "codec_executions": 38,
+  "native_sanitizer_executions": 19,
+  "codec_results": [
+    {
+      "suite": "mp3_freeformat",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "291a33acfa18546c1c8f7fa1b5bf59dbcb3638c05db13b0f1af9cb5b7dd7115f",
+      "run": "pass",
+      "allocs": 1324478,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_freeformat",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "a8bd0e5c061d7c32704924c12efc56434ff318ab8c7682e601a771e8685e1f27",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_freeformat",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "2a1cd6f167791e275cae7ceb40719b99a7767e3407b29aee8409d6e05f0d2789"
+    },
+    {
+      "suite": "mp3_freeformat_boundary",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "6f59f1e8f15ca026919a90066a42d461a16c822b8e6a3c09736c142cc36f0384",
+      "run": "pass",
+      "allocs": 53885,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_freeformat_boundary",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "a90d46c5420f65aeb63a26dd3fcab39be8179352f402e2eb60649588221da6b9",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_freeformat_boundary",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "c2add657786a1bdda3982a3f951f507f6dccafc0f131e5e01bf28bf56b955611"
+    },
+    {
+      "suite": "mp3_freeformat_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "9e05f17067cfb578019404e7f3ccc417045666bca7047db89a8ec122793d9f58",
+      "run": "pass",
+      "allocs": 9698,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_freeformat_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "029656500a7e90ecdc0990fb578b6463ac83a861d66143939f03525f72e1d7c6",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_freeformat_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "f59e80669891721b1095b5b649f28cb839672057b53e3c65ccf8150d144f55b8"
+    },
+    {
+      "suite": "mp3",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "41d76638a28dc30345a8ff9b329726a3c10cad1d00c9ff23ce724050145852fe",
+      "run": "pass",
+      "allocs": 48030,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "e5ace7f1ff278495aa83b98f3a684cc0e81269b1050b3b7dd116c4a3f1350209",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "3aedf732323e6a0b878b0de73ac2fbb38d48762590803717698e8d1fc59a38c6"
+    },
+    {
+      "suite": "mp3_input",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "d5d4c88528792bbbade2ac957bf4c398cc3f1f7e98aff69564f7f0c811eb979a",
+      "run": "pass",
+      "allocs": 174021,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_input",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "2d4f945bc67bc9ac21a323b7ec61810bafb4089fbd0377425e214fd5f36aa82d",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_input",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "f08c3cce2b8ce283175a6ba6e9fcd50f7f8bc5e4322fba470dac4b029f2e09e1"
+    },
+    {
+      "suite": "mp3_input_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "a12de527f8eb1d8616a5960f8537cd8a97e8299e752ba2e5ab8a45a6adfba85f",
+      "run": "pass",
+      "allocs": 978,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_input_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "e753fc7a773bb916d5c6efa9c0c8b4abb896201a8955a65eee192f3e9337ba88",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_input_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "831df923e5bf3d48efe89fbe1a730aa88ddd077a8cd836e2adf5a04b5775fba3"
+    },
+    {
+      "suite": "mp3_file",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "5f470aeed62983b9f2ec078e874bffd9572a781627300a8220e11b5e3546ab05",
+      "run": "pass",
+      "allocs": 393027,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_file",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "0078ba491384af321c19d353f7a0604cd87dc8ad932a7b37f81cf376640ddd5f",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_file",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "ccc06fad62b0b89401e6a257db5f7cb8fe0f3df8b4d8e2e3712fe404bd5cf127"
+    },
+    {
+      "suite": "mp3_file_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "41e9a41b2a4f7bb3452ad49eb9ce705d9ccbac19891e0a8d60a357b9690b8dbc",
+      "run": "pass",
+      "allocs": 527,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_file_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "56d7f1aa5b2afe01e935e40deb299849baa5888fd752c096d37debc7619690ed",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_file_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "769823ea1de332390b1bcf033a4a0f017f48506b305fadb259a4663252e9c08f"
+    },
+    {
+      "suite": "mp3_seek",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "9d6e34e0ca1055e6330aa5730c8a04fa1d72607a61e3ff1f99fc9c6a5e41509c",
+      "run": "pass",
+      "allocs": 80152,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_seek",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "c09e900386c369b38c7c221b702816d3b41bd0a7e7dc1548413ba91f5c973e9a",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_seek",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "75a111f17ee573aed3e9ec2a29fea383cb8141c9c50ca30a72af1744f5bc5473"
+    },
+    {
+      "suite": "mp3_seek_smoke",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "3e608fc1e42a7f51cd1bf04f86ba8985b30d46e26c29f55cf424d9a5c60b8324",
+      "run": "pass",
+      "allocs": 104,
+      "live_bytes": 0
+    },
+    {
+      "suite": "mp3_seek_smoke",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "bea4e2040756a6c22b2ff1f0ec3408c46c042ce61f62a0b0c08f601f646edca2",
+      "run": "pass"
+    },
+    {
+      "suite": "mp3_seek_smoke",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "ee3f812974fc007f832ea702b89bac6d56f3485c33935f6c006f3144069d88c1"
+    },
+    {
+      "suite": "audio",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "840a7d811834271538d05d2965357dfb5f832c0850e465aa9341e6ddc12e409e",
+      "run": "pass",
+      "allocs": 49150,
+      "live_bytes": 0
+    },
+    {
+      "suite": "audio",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "73c07425dbb23f0a0c5d0e1b42e5d9538270364d04bf1617c425247b7541099a",
+      "run": "pass"
+    },
+    {
+      "suite": "audio",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "65f76cfd03bd581b722d0b431d519d66bc4b3feee45fde37bcfebc5ef4f551f9"
+    },
+    {
+      "suite": "wav_linear",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "d75c699ecf6c5c9d35be5ffcecc1d854ff7554a4022005f5eaee2e576ca6cdd1",
+      "run": "pass",
+      "allocs": 3350,
+      "live_bytes": 0
+    },
+    {
+      "suite": "wav_linear",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "5d817a80df9187c6ef7f0367d8f81e4477e38d1fb382c1c1658116256843dfcb",
+      "run": "pass"
+    },
+    {
+      "suite": "wav_linear",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "889e9ca1f68f89772d19d10075c14a2a1c4c546a4b7f17d4f1920e6b82582096"
+    },
+    {
+      "suite": "flac_lpc",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "ff2f50cafcccff78fbb6a2841792333f2bcd541ceaeb2e4a55ff6d0c20ff2f5c",
+      "run": "pass",
+      "allocs": 35416,
+      "live_bytes": 0
+    },
+    {
+      "suite": "flac_lpc",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "7c218c1dcaaa53e4cffddbe93cb5ac03dc931b6e01c43e5547ce43c3504d30cd",
+      "run": "pass"
+    },
+    {
+      "suite": "flac_lpc",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "a9c2dc652506cb68c45f6bda98273118748bfcecf67f6601e13ba14dc58f38a5"
+    },
+    {
+      "suite": "flac_encoder",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "fb4f79e6c84c55c9e4eba4a746b802a6354239257ebbdfd034fe2e42997246ce",
+      "run": "pass",
+      "allocs": 68872,
+      "live_bytes": 0
+    },
+    {
+      "suite": "flac_encoder",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "202a73437ce1f96934baead358008e17a38180bece0f36e2ee3898a906fbb4fe",
+      "run": "pass"
+    },
+    {
+      "suite": "flac_encoder",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "b13bcd1537c0ba1cf8ffeac3e556ff8eaf323a19f1fbcd09f6307dfd2e1a3832"
+    },
+    {
+      "suite": "opus_playback",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "2756b92f7dfcf495d1d39035e68c49a53b4e448f6229ad83d00559ed5e07a7e2",
+      "run": "pass",
+      "allocs": 454770,
+      "live_bytes": 0
+    },
+    {
+      "suite": "opus_playback",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "c62054bade1ad4e319b5ec76631977fda63eb2dd9fa42aafa93d05e5f970d892",
+      "run": "pass"
+    },
+    {
+      "suite": "opus_playback",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "cdb0fef96a343f9ae5acfc528ad7afcbf8b3784d595f5be3a033930784e55801"
+    },
+    {
+      "suite": "aac",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "4d82d0e84c45cbebb852f1ef7f568e7a70efdf396a868eedd5a8d910c51e9fd3",
+      "run": "pass",
+      "allocs": 57318,
+      "live_bytes": 0
+    },
+    {
+      "suite": "aac",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "133198fcc3f82826137a8715be740c35207be5393fab01afaab382e5b0d7479a",
+      "run": "pass"
+    },
+    {
+      "suite": "aac",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "b691877d543fcd351f3a38e051c7afa68f77797bab3c9ec8aa2dd0d477830375"
+    },
+    {
+      "suite": "vorbis",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "08afc2ab2a1d1bb407f80b9af6eedc7d8312165dcc9360ebaf450fa41826fa07",
+      "run": "pass",
+      "allocs": 140187,
+      "live_bytes": 0
+    },
+    {
+      "suite": "vorbis",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "f0ae6b3b5b574663c16dfe4e874f3e8281182f5d2197a56f976a2dcf1d41f219",
+      "run": "pass"
+    },
+    {
+      "suite": "vorbis",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "dea93501846baeae98fc2f3d87970683aa76e22e339fe650e46736e75e00f71c"
+    },
+    {
+      "suite": "alac",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "e7f361d2c0ccbef3f68b1fe2ca78f439546fe6fb1a2cf06eb76a422ab2ba4b2a",
+      "run": "pass",
+      "allocs": 5529,
+      "live_bytes": 0
+    },
+    {
+      "suite": "alac",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "c2a4d1c20b7d88888b731d645d1a4934a99691a9980f2a97260f9078b62c0742",
+      "run": "pass"
+    },
+    {
+      "suite": "alac",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "1cd6aae362cb38e4e8c3c6ef8e632a8a635cec5005c260f460132d662481b2fb"
+    },
+    {
+      "suite": "wavpack",
+      "target": "x86-64-linux",
+      "build": "pass",
+      "binary_sha256": "04dcdb61d6c0cadd8e66ea83f6334603cbcf3a9b35b3dfc579ae331187a5c932",
+      "run": "pass",
+      "allocs": 71793,
+      "live_bytes": 0
+    },
+    {
+      "suite": "wavpack",
+      "target": "wasm32-wasi",
+      "build": "pass",
+      "binary_sha256": "552cc59bc77bc1141778acccece860c6d107baa0cb4302c651027842c4f724a9",
+      "run": "pass"
+    },
+    {
+      "suite": "wavpack",
+      "target": "arm64-android",
+      "build": "pass",
+      "binary_sha256": "eaaf2657613267b3121e6f6e2e4f5975be2661551807f51d1b5be7b812ce0434"
+    }
+  ],
+  "scalar_and_counted_append": "native x86-64 and WASI, fusion enabled and disabled, reports, admission, semantic registry, complexity controls pass",
+  "source_lint": "pass 35.305 seconds",
+  "mp3_benchmark_sha256": "0ad0d736ff14e6fd564b1141a2dade58bcb7f89a895f48f07885387248fe5d3d",
+  "mp3_benchmark_comparison": "byte-identical to measured candidate executable",
+  "native_arm64_execution": "pending CI",
+  "full_ci": "pending",
+  "android_device": "not measured"
+}

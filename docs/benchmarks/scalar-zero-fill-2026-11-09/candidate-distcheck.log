@@ -1,0 +1,7 @@
+./bootstrap/bootstrap.sh distcheck
+stage0: stage0-20261107-38f241c for x86-64-linux (sha256 4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3)
+stage1: reused, built from these sources by this stage0
+stage2: 42 s, 2495 MB peak RSS, 16234128 bytes
+stage3: 43 s, 2408 MB peak RSS, 16234128 bytes
+stage1 != stage2: stage0 generates different code from the current source (its pin predates a code generator change)
+stage2 == stage3: fixed point reached (sha256 d6dee1df3654260c1ce5b875133869f76edebcfcac6b8c316ad39a6a2cc61e10)

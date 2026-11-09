@@ -2519,7 +2519,7 @@ function value_op(k: i32): boolean {
 }
 
 function container_op(k: i32): boolean {
-  return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.tuple_new()
+  return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.array_zero() || k == ssasem.tuple_new()
     || k == ssasem.record_new() || k == ssasem.dyn_box() || k == ssasem.array_get() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
     || k == ssasem.slice() || k == ssasem.str_index() || k == ssasem.str_bytes() || k == ssasem.str_byte_view()
@@ -3138,6 +3138,9 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
   }
   if (ins.kind_tag == ssasem.array_reserve()) {
     return emit(r, ir.op_arr_reserve(elem_width(typeinfo.array_elem(f.values[ins.result]))));
+  }
+  if (ins.kind_tag == ssasem.array_zero()) {
+    return emit(r, ir.op_alloc_slots(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   }
   if (variant_op(ins.kind_tag)) {
     return variant(r, f, ins, structs);
