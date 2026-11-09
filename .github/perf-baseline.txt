@@ -1,3 +1,4 @@
+# 2026-11-09: PR #15027, CI run 42712933574 (x86 job 129487256157; arm64 job 129487256061). Bank measured text shifts in both directions: http_hello x86 15234 -> 15591 (+2.34%); video_qtrle x86 5371 -> 5234 (-2.55%), arm64 5682 -> 5600 (-1.44%).
 # 2026-11-09: PR #14906, perf-x86_64 job 129318795686 on b8cebe345e.
 # The string-count kernel adds 50 text lines and uses 39.5% fewer instructions.
 # Pin both measured values after the merge of main 97af82fcbe.
@@ -261,7 +262,7 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15234
+x86_64/http_hello.text	15591
 x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
