@@ -243,6 +243,7 @@ var Ungated = map[string]bool{
 	"int_to_string":               true,
 
 	"string_from_bytes_range_unchecked": true,
+	"share_unchecked":                   true,
 }
 
 // IsBuiltin reports a builtin function of the language: each one is in

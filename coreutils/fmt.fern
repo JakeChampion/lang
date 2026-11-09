@@ -847,9 +847,9 @@ function feed(own s: State, line: u8[], term: boolean): State {
   let st = s.st;
   let r: (Head, boolean) = scan_head(line, st, s.o.tabs);
   let h = r.0;
-  let o = Out { ...s.o, tabs: r.1 };
+  s = State { ...s, o: Out { ...s.o, tabs: r.1 } };
   if (h.kind == 0) {
-    s = flush_para(State { ...s, o: o });
+    s = flush_para(s);
     let o0 = s.o;
     let h0 = o0.w.handle();
     let col = o0.col;
@@ -868,7 +868,7 @@ function feed(own s: State, line: u8[], term: boolean): State {
     return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, bytes: 0 };
   }
   if (h.kind == 1) {
-    s = flush_para(State { ...s, o: o });
+    s = flush_para(s);
     let o1 = s.o;
     if (!term && (st.prefix.len() > 0 || st.prefix_lead > 0) && !h.pfx) {
       return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, bytes: 0 };
@@ -897,18 +897,17 @@ function feed(own s: State, line: u8[], term: boolean): State {
     }
   }
   if (flush) {
-    s = flush_para(State { ...s, o: o, p: p });
-    o = s.o;
+    s = flush_para(State { ...s, p: p });
     p = s.p;
     s = State { ...s, bytes: 0 };
   }
   if (!p.open) {
     p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: st.crown || st.tagged, open: true };
   }
-  if (!o.tabs && __memchr_bytes(line, 9, h.at) >= 0) {
-    o = Out { ...o, tabs: true };
+  if (!s.o.tabs && __memchr_bytes(line, 9, h.at) >= 0) {
+    s = State { ...s, o: Out { ...s.o, tabs: true } };
   }
-  s = State { ...s, o: o, p: p };
+  s = State { ...s, p: p };
   return scan_body(s, line, h.at, h.col);
 }
 

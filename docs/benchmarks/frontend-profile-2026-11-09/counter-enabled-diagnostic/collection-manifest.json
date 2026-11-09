@@ -1,0 +1,129 @@
+{
+  "library_source": "3a296b887ccb1c879743cce8a2a67351c548481f",
+  "input_source": "12be8f11864c00d71bc3ae9e0c3bc1ddabea75ef",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "corpus": [
+    {
+      "path": "/workspace/lang-semantic-base-20261109/compiler/lexer.fern",
+      "bytes": 65009,
+      "sha256": "2623d2902a2d0aabc7475c1b7e1f529f390aa9bae1a47883bdb3e16205027402"
+    },
+    {
+      "path": "/workspace/lang-semantic-base-20261109/compiler/parser.fern",
+      "bytes": 912456,
+      "sha256": "4c6726a771d4e30fdbc8e594a920c387f4553cf55f177758988c1b9544dd56c5"
+    },
+    {
+      "path": "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+      "bytes": 1118069,
+      "sha256": "8fd0d40bd01d90590f5572cd3534baf1f4b7ed9b4e69df8cdb0bd2172498c3fe"
+    },
+    {
+      "path": "/workspace/lang-semantic-base-20261109/compiler/ssarc.fern",
+      "bytes": 241869,
+      "sha256": "471145a1550b65230e22d0f3f98fcbf04649dc4aff6de9fd515a164ebd3e2cfe"
+    },
+    {
+      "path": "/workspace/lang-semantic-base-20261109/compiler/fern.fern",
+      "bytes": 244268,
+      "sha256": "4a3fa425d96aa811af5566b44857c555fc9c6287482d7d862560defd5483863f"
+    }
+  ],
+  "harness_sha256": "316f96c67688441df133d61a9e74ec97d8e79d50deab1a0dc25dc8961cda4832",
+  "loops": 100,
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "purpose": "Diagnostic frontend CPU profiles. No speed comparison or external rank claim.",
+  "concurrency": "A separate Callgrind compiler comparison was active.",
+  "runs": [
+    {
+      "name": "build",
+      "args": [
+        "/workspace/lang/build/bootstrap/stage0/stage0-20261107-38f241c/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang/build/parser-research-20261109/frontend-cpu",
+        "/workspace/lang-semantic-liveness-20261109/build/parser-research-20261109/frontend.fern",
+        "/workspace/lang-semantic-liveness-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "cpu",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T17:47:09.537475+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T17:47:17.922958+00:00"
+    },
+    {
+      "name": "lex",
+      "args": [
+        "/workspace/lang/build/parser-research-20261109/frontend-cpu",
+        "lex",
+        "/workspace/lang-semantic-base-20261109/compiler/lexer.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/parser.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/ssarc.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/fern.fern"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T17:47:17.927360+00:00",
+      "exit_code": 64,
+      "finished": "2026-11-09T17:47:25.426404+00:00",
+      "checksum": 67181100,
+      "profile_samples": 710,
+      "profile_dropped": 0
+    },
+    {
+      "name": "parse",
+      "args": [
+        "/workspace/lang/build/parser-research-20261109/frontend-cpu",
+        "parse",
+        "/workspace/lang-semantic-base-20261109/compiler/lexer.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/parser.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/checker.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/ssarc.fern",
+        "/workspace/lang-semantic-base-20261109/compiler/fern.fern"
+      ],
+      "cwd": "/workspace/lang-semantic-liveness-20261109",
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T17:47:25.430923+00:00",
+      "exit_code": 15,
+      "finished": "2026-11-09T17:48:05.540674+00:00",
+      "checksum": 67590100,
+      "profile_samples": 3774,
+      "profile_dropped": 0
+    }
+  ],
+  "cpu_binary_sha256": "f43f5eb7e66472efa366867ac09f2081fcbf253fc2bdfac448d1dd45f91a1393",
+  "complete": true,
+  "files_sha256": {
+    "build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "collect.py": "3f669cb58d3f9c7aa1a7e50cc830947c8e65dce5e6e3c03e75073a0fadf39832",
+    "frontend-cpu": "f43f5eb7e66472efa366867ac09f2081fcbf253fc2bdfac448d1dd45f91a1393",
+    "frontend.fern": "316f96c67688441df133d61a9e74ec97d8e79d50deab1a0dc25dc8961cda4832",
+    "lex.log": "238a280f9e4f1e1d683a3444a2588be173bc8ac5a9f8899cac9942ec512c7140",
+    "lex.stdout": "48562130d925dabb0ec071e53f38a78a2d78eca1861d3b5afac4525c508c5f2f",
+    "parse.log": "40c43bf6a94f4a261d9f54e323b8280c29a44a47f6120de82c335c4b47ff0cd9",
+    "parse.stdout": "c750dd5fe14b0b4b7d0e04389c01a9164cd36388cc88e88c6f8689ce4bc67651",
+    "progress.log": "f2c1ecd2f9b75ba83b95bddf40a7fa694c4e1ca79a5f37d769a5389f23eb50bb",
+    "top-functions.json": "3feaada5f18871c4da7907da695c86f58a139fc97e44ddf93c032ef41db63b0c"
+  }
+}

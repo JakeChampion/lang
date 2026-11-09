@@ -287,6 +287,7 @@ var coreBuiltins = map[string]bool{
 	"f64_from_bits": true,
 
 	"string_from_bytes_range_unchecked": true,
+	"share_unchecked":                   true,
 }
 
 func CoreBuiltin(name string) bool { return coreBuiltins[name] }

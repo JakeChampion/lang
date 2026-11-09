@@ -3671,6 +3671,13 @@ function borrows_storage(ins: ssa.SInst, f: Func): boolean {
   return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
 }
 
+// These projections borrow stored values from an immutable container.
+// Their source retains the projected storage across a control-flow join.
+function stored_projection(kind: i32): boolean {
+  return kind == ssa.COPY || kind == record_get() || kind == tuple_get() || kind == array_get()
+    || kind == variant_get() || kind == variant_up() || kind == variant_as();
+}
+
 function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[] {
   if (v < 0 || v >= defs.len() || seen[v]) {
     return [];
@@ -3678,6 +3685,9 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   let d = defs[v];
   let next = seen.with(v, true);
   if (d.kind_tag == str_as() && d.args.len() == 1) {
+    return bytes_roots(f, defs, d.args[0], next);
+  }
+  if (stored_projection(d.kind_tag) && d.args.len() > 0 && semtypes.needs_anchor(f.values[v])) {
     return bytes_roots(f, defs, d.args[0], next);
   }
   if (!holds_view(f, f.values[v])) {

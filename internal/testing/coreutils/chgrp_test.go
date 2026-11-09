@@ -9,6 +9,7 @@ func init() {
 func chgrpCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(inv invocation) { cases = append(cases, inv) }
+	ownerQuietCases(add, true)
 
 	chownOptionCases(add, "daemon")
 	chownRootCases(add, "daemon")

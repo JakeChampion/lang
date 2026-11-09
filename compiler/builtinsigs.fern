@@ -224,6 +224,7 @@ pub function builtin_sigs(): string[] {
     "setuid(i64): Result[void, IoError]",
     "setxattr(string, string, string): Result[void, IoError]",
     "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
+    "share_unchecked(T): T",
     "signal_catch(i32): i32",
     "signal_catch_interrupting(i32): i32",
     "signal_default(i32): i32",

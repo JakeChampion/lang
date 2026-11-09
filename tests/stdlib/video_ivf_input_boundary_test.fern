@@ -1,0 +1,208 @@
+import "std/video/ivf/input";
+import "std/video/frame";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "video_ivf_vectors";
+import "video_ivf_input_check" as check;
+
+function fixture(): u8[] {
+  return match (hex.decode(video_ivf_vectors.vectors()[0].bytes)) { Ok(value) => value, _ => [] };
+}
+
+function word(bytes: [u8], at: i32, value: u64, width: i32): u8[] {
+  let output = check.copy(bytes);
+  for i in 0..width {
+    output = output.with(at + i, (value >> (8 * i) as u64) as u8);
+  }
+  return output;
+}
+
+function truncated(bytes: [u8]): boolean {
+  return match (check.run(check.copy(bytes), 3, input.default_limits())) { Err(input.ReadVideo(frame.Truncated)) => true, _ => false };
+}
+
+function prefixes(): test.TestOutcome {
+  let bytes = fixture();
+  for cut in 0..32 {
+    if (!truncated(bytes[:cut])) {
+      return test.fail("incomplete file header");
+    }
+  }
+  for packet in video_ivf_vectors.vectors()[0].packets {
+    let header = packet.offset as i32 - 12;
+    for cut in [header + 1, header + 11, header + 12, packet.offset as i32 + packet.bytes.len() / 2 - 1] {
+      if (!truncated(bytes[:cut])) {
+        return test.fail("incomplete packet header or payload");
+      }
+    }
+  }
+  let Ok(empty) = check.run(check.copy(bytes[:32]), 1, input.default_limits()) else {
+    return test.fail("EOF between packets");
+  };
+  if (empty.packets.len() != 0) {
+    return test.fail("advisory frame count at EOF");
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let bytes = fixture();
+  for size in [0u64, 4294967295u64] {
+    let source = check.memory(word(bytes, 32, size, 4), 0);
+    let Ok(stream) = input.create(input.default_limits()) else {
+      return test.fail("create");
+    };
+    let Ok(header) = stream.step_with(source.read) else {
+      return test.fail("file header");
+    };
+    let failed = header.stream.step_with(source.read);
+    let expected = if (size == 0u64) { frame.Header } else { frame.Limit };
+    if let Err(input.ReadVideo(error)) = failed {
+      if (error != expected) {
+        return test.fail("packet length category");
+      }
+    } else {
+      return test.fail("invalid length");
+    }
+    if (source.counts().position != 44 || source.counts().calls != 2) {
+      return test.fail("payload read before length validation");
+    }
+  }
+  for bad in [word(bytes, 0, 0u64, 4), word(bytes, 8, 0u64, 4), word(bytes, 4, 1u64, 2), word(bytes, 6, 31u64, 2)] {
+    if let Err(_) = check.run(bad, 1, input.default_limits()) {} else {
+      return test.fail("invalid IVF header");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let bytes = fixture();
+  let limits = input.default_limits();
+  let cases = [
+    input.Limits { ...limits, video: frame.Limits { ...limits.video, max_pixels: 1023 } },
+    input.Limits { ...limits, video: frame.Limits { ...limits.video, max_packet_bytes: 1 } },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 1, max_buffer_bytes: 32 } },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 0, max_buffer_bytes: 32 } },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 1, max_buffer_bytes: 31 } },
+    input.Limits { ...limits, max_packets: 0 },
+    input.Limits { ...limits, max_packets: -1 },
+    input.Limits { ...limits, max_operations: 1 },
+    input.Limits { ...limits, max_operations: 0 },
+  ];
+  for configured in cases {
+    if let Err(input.ReadVideo(frame.Limit)) = check.run(bytes, 3, configured) {} else {
+      return test.fail("configured limit");
+    }
+  }
+  return test.pass();
+}
+
+function exact_budgets(): test.TestOutcome {
+  let vector = video_ivf_vectors.vectors()[0];
+  let bytes = fixture();
+  let maximum = 0;
+  for packet in vector.packets {
+    if (packet.bytes.len() / 2 > maximum) {
+      maximum = packet.bytes.len() / 2;
+    }
+  }
+  let limits = input.Limits { ...input.default_limits(), video: frame.Limits { max_pixels: 1024, max_packet_bytes: maximum }, input: source.Limits { chunk_size: 31, max_buffer_bytes: maximum + 12 }, max_packets: vector.packets.len() };
+  let Ok(first) = check.run(bytes, 3, limits) else {
+    return test.fail("exact byte and count budgets");
+  };
+  let Ok(_) = check.run(bytes, 3, input.Limits { ...limits, max_operations: first.calls }) else {
+    return test.fail("exact operation budget");
+  };
+  if let Err(input.ReadVideo(frame.Limit)) = check.run(bytes, 3, input.Limits { ...limits, max_operations: first.calls - 1 }) {} else {
+    return test.fail("one fewer source operation");
+  }
+  return test.pass();
+}
+
+function callbacks(): test.TestOutcome {
+  let Ok(stream) = input.create(input.default_limits()) else {
+    return test.fail("create");
+  };
+  let io = (_: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  if let Err(input.ReadIo(Interrupted())) = stream.step_with(io) {} else {
+    return test.fail("I/O category");
+  }
+  let Ok(next) = input.create(input.default_limits()) else {
+    return test.fail("create");
+  };
+  let oversized = (count: i32): Result[u8[], IoError] => {
+    let bytes: u8[] = [];
+    for _ in 0..count + 1 {
+      bytes = bytes.append(0);
+    }
+    return Ok(bytes);
+  };
+  if let Err(input.ReadVideo(frame.Limit)) = next.step_with(oversized) {} else {
+    return test.fail("oversized callback result");
+  }
+  return test.pass();
+}
+
+function shifted_step(own stream: input.Stream, offset: i64, read: (i32) => Result[u8[], IoError]): Result[input.Step, input.ReadError] {
+  stream = input.Stream { ...stream, offset: offset };
+  return stream.step_with(read);
+}
+
+function large_offsets(): test.TestOutcome {
+  for offset in [4294967328i64, 9223372036854775800i64] {
+    let source = check.memory(fixture(), 0);
+    let Ok(stream) = input.create(input.default_limits()) else {
+      return test.fail("create");
+    };
+    let Ok(header) = stream.step_with(source.read) else {
+      return test.fail("header");
+    };
+    let result = shifted_step(header.stream, offset, source.read);
+    if (offset > 4294967328i64) {
+      if let Err(input.ReadVideo(frame.Limit)) = result {} else {
+        return test.fail("64-bit overflow");
+      }
+    } else {
+      let Ok(body) = result else {
+        return test.fail("large offset header");
+      };
+      let Ok(packet) = body.stream.step_with(source.read) else {
+        return test.fail("large offset packet");
+      };
+      if let input.PacketReady(value) = packet.event {
+        if (value.offset != offset + 12i64) {
+          return test.fail("narrowed payload offset");
+        }
+      } else {
+        return test.fail("packet event");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function advisory(): test.TestOutcome {
+  let bytes = fixture();
+  let changed = word(word(bytes, 24, 0u64, 4), 36, 18446744073709551615u64, 8);
+  let Ok(result) = check.run(changed, 1, input.default_limits()) else {
+    return test.fail("advisory count or full-width timestamp");
+  };
+  if (result.packets.len() != 6 || result.packets[0].timestamp != 18446744073709551615u64 || result.packets[1].timestamp != 1u64) {
+    return test.fail("timestamp width and order");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded IVF input boundaries");
+  runner = runner.it("EOF boundaries and truncated headers and payloads", prefixes);
+  runner = runner.it("invalid lengths fail before payload reads", malformed);
+  runner = runner.it("input, frame, packet, count, and read budgets", budgets);
+  runner = runner.it("exact limits and one fewer source operation", exact_budgets);
+  runner = runner.it("I/O errors and oversized callback results", callbacks);
+  runner = runner.it("64-bit source offsets and extent overflow", large_offsets);
+  runner = runner.it("advisory counts and unordered full-width timestamps", advisory);
+  return runner.finish();
+}

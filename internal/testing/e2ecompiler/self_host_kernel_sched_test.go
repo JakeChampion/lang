@@ -45,7 +45,7 @@ function main(): i32 {
   };
   let free = b.f.free_count();
   let slots: Slot[] = [];
-  for argv in [["/bin/worker", "a"], ["/bin/worker", "b"], ["/bin/efault"], ["/bin/peek"]] {
+  for argv in [["/bin/worker", "a"], ["/bin/worker", "b"], ["/bin/efault"], ["/bin/peek"], ["/bin/norandom"]] {
     let Some(p) = load(b, argv[0], argv) else {
       return 1;
     };
@@ -119,11 +119,27 @@ func peekImage() []byte {
 	})
 }
 
+// norandomImage calls getrandom into its stack and exits with the negated
+// result. The VM of the scheduler test has no entropy device, so the process
+// has no source, and the status is ENOSYS.
+func norandomImage() []byte {
+	return codeImage(0x400000, []uint32{
+		0xd10103e0, // sub x0, sp, #64
+		0xd2800201, // movz x1, #16
+		0xd2800002, // movz x2, #0
+		0xd28022c8, // movz x8, #278
+		0xd4000001, // svc #0
+		0xcb0003e0, // neg x0, x0
+		0xd2800bc8, // movz x8, #94
+		0xd4000001, // svc #0
+	})
+}
+
 func TestSelfHostKernelSchedulerOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	archive := processInitrd(t, cli, dir, map[string]string{"worker": schedWorkerSrc}, map[string][]byte{"efault": efaultImage(), "peek": peekImage()})
+	archive := processInitrd(t, cli, dir, map[string]string{"worker": schedWorkerSrc}, map[string][]byte{"efault": efaultImage(), "peek": peekImage(), "norandom": norandomImage()})
 	src := writeTickProgram(t, processBoardSrc, schedMainSrc)
 	kernel := filepath.Join(dir, "kernel.img")
 	if msg, err := cli.compileCmd("arm64-kernel", kernel, src, "-ram", imageRAM, "-emit", "image").CombinedOutput(); err != nil {
@@ -144,6 +160,7 @@ func TestSelfHostKernelSchedulerOnQemu(t *testing.T) {
 		"/bin/peek killed: a fault of class 36 at 4194304 from ",
 		"/bin/worker a preempted true\n",
 		"/bin/worker b preempted true\n",
+		"/bin/norandom exit 38\n",
 		"ticks true, frames back true\n",
 	} {
 		if !strings.Contains(console, want) {

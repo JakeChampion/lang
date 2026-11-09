@@ -2521,6 +2521,12 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
     }
     return VLanes { width: width, bits: bits };
   }
+  if (verb == "load_f32_ptr") {
+    let address = vint_as_i64(args[0]) as usize;
+    unsafe {
+      return VLanes { width: 64, bits: [f64_bits(f32_from_bits(__load_i32(address)) as f64), f64_bits(f32_from_bits(__load_i32(address + 4 as usize)) as f64)] };
+    }
+  }
   if (verb == "load_ptr") {
     let address = vint_as_i64(args[0]) as usize;
     let bits: i64[] = [];
@@ -7793,6 +7799,12 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         return v_err("string_from_bytes_unchecked: arg must be an array");
       }
     }
+  }
+  if (name == "share_unchecked") {
+    if (args.len() != 1) {
+      return v_err("share_unchecked: expected 1 arg");
+    }
+    return args[0];
   }
   if (name == "string_from_bytes_range_unchecked") {
     if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {

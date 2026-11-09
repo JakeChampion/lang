@@ -197,7 +197,7 @@ pub function ungated(): string[] {
     "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc",
     "map_new", "cell_new", "__send_copy", "__send_adopt", "__send_root", "__send_release", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
-    "slice_unchecked",
+    "slice_unchecked", "share_unchecked",
     "int_to_string",
   ];
 }

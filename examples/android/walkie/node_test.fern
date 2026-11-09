@@ -76,12 +76,30 @@ function send(s: Sim, from: i32, nw: Network): Sim {
   return Sim { ...s, rng: rng, flights: flights };
 }
 
-function deliver(s: Sim): Sim {
+// The node at index i of nodes, and nodes with a new node in its place.
+function take(own nodes: node.Node[], i: i32): (node.Node, node.Node[]) {
+  return nodes.swap_at(i, node.new(0i64, [], 0i64));
+}
+
+// The Sim after node c.who takes cue c.
+function cued(own s: Sim, c: Cue): Sim {
+  let (cur, rest) = take(s.nodes, c.who);
+  return Sim { ...s, nodes: rest.with(c.who, cue(cur, c.what, s.now)) };
+}
+
+// The Sim after node i ticks with fresh random bytes and the voice samples.
+function ticked(own s: Sim, i: i32, voice: [i32]): Sim {
+  let (cur, rest) = take(s.nodes, i);
+  return Sim { ...s, nodes: rest.with(i, node.voice(node.tick(node.fresh(cur, entropy(i, s.now)), s.now), voice)) };
+}
+
+function deliver(own s: Sim): Sim {
   let nodes = s.nodes;
   let left: Flight[] = [];
   for f in s.flights {
     if (f.at <= s.now) {
-      nodes = nodes.with(f.to, node.receive(nodes[f.to], f.data, f.data.len(), addr(1 - f.to), s.now));
+      let (cur, rest) = take(nodes, f.to);
+      nodes = rest.with(f.to, node.receive(cur, f.data, f.data.len(), addr(1 - f.to), s.now));
     } else {
       left = left.append(f);
     }
@@ -89,7 +107,7 @@ function deliver(s: Sim): Sim {
   return Sim { ...s, nodes: nodes, flights: left };
 }
 
-function cue(n: node.Node, what: i32, now: i64): node.Node {
+function cue(own n: node.Node, what: i32, now: i64): node.Node {
   if (what == CONFIRM) {
     return node.confirm(n, now);
   }
@@ -129,7 +147,7 @@ function run(nw: Network, cues: Cue[], end: i64): Sim {
   return run_nodes([node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], nw, cues, end);
 }
 
-function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim {
+function run_nodes(own start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim {
   let s = Sim { nodes: start, flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
   let voice = tone();
   let done: boolean[] = [];
@@ -138,18 +156,16 @@ function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim 
   }
   while (s.now <= end) {
     s = deliver(s);
-    let nodes = s.nodes;
     for k in 0..cues.len() {
       let c = cues[k];
-      if (!done[k] && c.at <= s.now && (c.what != CONFIRM || shows_code(nodes[c.who]))) {
-        nodes = nodes.with(c.who, cue(nodes[c.who], c.what, s.now));
+      if (!done[k] && c.at <= s.now && (c.what != CONFIRM || shows_code(s.nodes[c.who]))) {
+        s = cued(s, c);
         done = done.with(k, true);
       }
     }
     for i in 0..2 {
-      nodes = nodes.with(i, node.voice(node.tick(node.fresh(nodes[i], entropy(i, s.now)), s.now), voice));
+      s = ticked(s, i, voice);
     }
-    s = Sim { ...s, nodes: nodes };
     for i in 0..2 {
       s = send(s, i, nw);
       let n = s.nodes[i];
@@ -370,9 +386,11 @@ function test_forgotten_phone_shows_the_string(): test.TestOutcome {
 function test_a_talk_from_the_notification_stops_by_itself(): test.TestOutcome {
   let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }, Cue { at: 4000i64, who: 1, what: CONFIRM }];
   let s = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 8000i64);
-  let a = node.press_for(s.nodes[0], 8000i64, 1000i64);
-  let during = session.transmitting(node.tick(a, 8500i64).sess);
-  let after = node.tick(a, 9000i64);
+  let (first, _) = take(s.nodes, 0);
+  let a = node.press_for(first, 8000i64, 1000i64);
+  let mid = node.tick(a, 8500i64);
+  let during = session.transmitting(mid.sess);
+  let after = node.tick(mid, 9000i64);
   return test.assert_eq(during.to_string() + " " + session.transmitting(after.sess).to_string() + " " + after.notice, "true false the talk from the notification stopped after a minute");
 }
 
