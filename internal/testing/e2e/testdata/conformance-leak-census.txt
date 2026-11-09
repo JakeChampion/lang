@@ -1,3 +1,4 @@
+# 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 # 2026-11-09: generic_arms_agree_in_type_argument is clean under RC trace.
 # 2026-11-09: unit_variant_through_generic_call_settles is clean under RC trace.
 # 2026-11-09: owned_state_restored_on_each_loop_jump is clean under RC trace.
@@ -1235,6 +1236,7 @@ tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
+tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
