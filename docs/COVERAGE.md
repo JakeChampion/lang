@@ -175,6 +175,26 @@ only in whether a discovery joins the corpus. Feedback must reach strictly more
 counters. Without it the lane would keep reporting a plausible number long
 after the steering stopped working.
 
+## Coverage-guided fuzzing of the stdlib readers
+
+The twenty `FuzzSelfHostStd*` targets feed hostile bytes to the readers of
+`tests/fuzz/stdparse.fern`, and Go's fuzzer steers them blind for the same
+reason. `TestSelfHostStdCoverageGuidedFuzz` runs the same loop on a `-cover`
+build of that program. The rows cover the stdlib modules that the program
+imports, about 55,000 of them, and one run costs about 30 ms.
+
+```sh
+FERN_STD_COVER_FUZZ=1 FERN_STD_COVER_FUZZ_TIME=5m \
+  go test -run '^TestSelfHostStdCoverageGuidedFuzz$/^FuzzSelfHostStdJSON$' ./internal/testing/e2ecompiler/
+```
+
+Each reader uses the seeds, the budgets and the check of its Go target, from
+`stdReaders`. A failing input goes into `testdata/fuzz/<Target>/` in the format
+of Go's fuzzer, so the Go target replays it on each pull request.
+`FERN_STD_COVER_FUZZ_CORPUS` keeps the corpus of each reader between runs.
+`TestSelfHostStdCoverageBeatsBlind` is the property that keeps this loop
+honest, on the JSON, DNS and DEFLATE readers.
+
 ## Known gaps
 
 - **`match` arm coverage** — not branch coverage, and not built. Arm bodies sit

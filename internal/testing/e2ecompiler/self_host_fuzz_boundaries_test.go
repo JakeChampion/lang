@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,17 +65,24 @@ func runUnderBudget(cmd *exec.Cmd) fuzzRun {
 // the memory budget, whatever its exit status.
 func failOutsideBudget(t *testing.T, what string, r fuzzRun, input []byte) bool {
 	t.Helper()
+	fault := budgetFault(what, r, input)
+	if fault != "" {
+		t.Error(fault)
+	}
+	return fault != ""
+}
+
+// budgetFault returns the budget fault of one run, or "".
+func budgetFault(what string, r fuzzRun, input []byte) string {
 	switch {
 	case r.timedOut:
-		t.Errorf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
+		return fmt.Sprintf("%s hung past %s on %d bytes", what, fuzzTimeBudget, len(input))
 	case !r.exited:
-		t.Errorf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
+		return fmt.Sprintf("%s died by signal (%s) on %d bytes\nstderr: %s", what, r.state, len(input), r.stderr)
 	case r.maxRSS > fuzzMemoryBudget:
-		t.Errorf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
-	default:
-		return false
+		return fmt.Sprintf("%s used %d bytes of resident memory on %d bytes of input, budget %d", what, r.maxRSS, len(input), fuzzMemoryBudget)
 	}
-	return true
+	return ""
 }
 
 // fuzzBuildCache gives the fuzz workers one disk cache for the driver

@@ -94,6 +94,18 @@ jobs:
             grep -q "now fuzzing with" "$log" || { cat "$log"; echo "::error::$target never left baseline gathering within its budget"; exit 1; }
             grep "execs:" "$log" | tail -n 1
           done
+      # The same stdlib readers, steered by the coverage of the Fern process
+      # that a -cover build of tests/fuzz/stdparse.fern reports. The first
+      # test fails when feedback stops reaching more counters than blind
+      # mutation. The second gives each reader 5 seconds from its seeds.
+      - name: coverage-guided stdlib readers (x86 only)
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        env:
+          FERN_STD_COVER_FUZZ: "1"
+          FERN_STD_COVER_FUZZ_TIME: "5s"
+        run: |
+          gotestsum --format testname -- -timeout=20m \
+            -run '^TestSelfHostStdCoverage(BeatsBlind|GuidedFuzz)$' ./internal/testing/e2ecompiler
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

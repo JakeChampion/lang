@@ -216,9 +216,11 @@ A hang names the budget, and a budget breach names the resident size.
 The drivers run natively, so the arm64 runner does not run them.
 The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
+`fuzz-diff.yml` also runs the coverage-guided loop of the twenty stdlib readers for 5 seconds each, after `TestSelfHostStdCoverageBeatsBlind`.
+Each nightly row of a stdlib reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits
 
-- No coverage feedback: Go's instrumentation does not see into a Fern process, so the mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers.
+- The ten driver targets have no coverage feedback: Go's instrumentation does not see into a Fern process, so their mutations are blind. The IR driver's dense encoding keeps every mutation a valid op stream, which is what makes blind mutation reach the verifiers. The twenty stdlib readers have feedback from a `-cover` build, as the section above says.
 - The memory budget is a resident-size ceiling on the child, not a per-allocation count.
 - The ELF writer and the linker take only what the assemblers produce, and no target feeds them foreign input.
