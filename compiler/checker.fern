@@ -9843,14 +9843,33 @@ function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b);
 }
 
-function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
+function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, unions: UnionSig[], self_name: string): util.Diag[] {
   if (lm.ret_type.len() > 0 && is_void(rt)) {
     return void_ret_diags(lm.body, lsc, unions);
   }
   if (lm.ret_type.len() > 0 || lm.origin == parser.ORIGIN_USE && !is_unknown(rt)) {
-    return ret_diags(lm.body, lsc, rt, unions);
+    let out = ret_diags(lm.body, lsc, rt, unions);
+    if (lm.ret_type.len() > 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+      out = out.append(lambda_missing_return(lm, self_name, lm.ret_type));
+    }
+    return out;
   }
-  return lambda_exit_diags(lm, lsc);
+  let out = lambda_exit_diags(lm, lsc);
+  if (out.len() == 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+    let inferred = exit_result(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)));
+    if (!is_unknown(inferred) && !is_void(inferred)) {
+      out = out.append(lambda_missing_return(lm, self_name, type_label(inferred)));
+    }
+  }
+  return out;
+}
+
+function lambda_missing_return(lm: ast.ExprLambda, self_name: string, ret: string): util.Diag {
+  let subject = "this lambda";
+  if (self_name.len() > 0) {
+    subject = "\"" + self_name + "\"";
+  }
+  return dg_at("E052", "missing return: " + subject + " has return type " + ret + " but can fall off the end without returning a value", lm.line, lm.col);
 }
 
 function lret_lambda(lm: ast.ExprLambda, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
@@ -9868,7 +9887,7 @@ function lret_lambda(lm: ast.ExprLambda, cur: Scope, unions: UnionSig[], self_na
     lsc = lsc.bind(lm.params[bi].name, pts[bi]);
     bi += 1;
   }
-  return util.append_diags(lambda_body_diags(lm, lsc, rt, unions), lret_stmts(lm.body, lsc, unions));
+  return util.append_diags(lambda_body_diags(lm, lsc, rt, unions, self_name), lret_stmts(lm.body, lsc, unions));
 }
 
 function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
@@ -12010,7 +12029,11 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unio
     }
     if (nm.len() > 0 && nm != "_") {
       let pt = payload_slot_type_name(ss, slot);
-      if (pt.len() > 0 && union_of_variant(nm, unions) == pt && variant_payload_count(nm, structs) < 0) {
+      let owner = union_of_variant(nm, unions);
+      if (owner.len() == 0) {
+        owner = parser.builtin_enum_of(nm);
+      }
+      if (pt.len() > 0 && owner == pt && variant_payload_count(nm, structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + pt + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
       }
     }
@@ -12042,6 +12065,33 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       }
     }
     slot += 1;
+  }
+  return out;
+}
+
+function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let typeinfo.TypeTuple(tt) = whole else {
+    return out;
+  };
+  let i = 0;
+  while (i < kinds.len() && i < binds.len() && i < tt.elements.len()) {
+    let nm = binds[i];
+    if let typeinfo.TypeUnion(u) = tt.elements[i] {
+      let owner = scope_variant_owner(nm, s);
+      if (owner.len() == 0) {
+        owner = parser.builtin_enum_of(nm);
+      }
+      if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
+        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      }
+    }
+    if (kinds[i] == 4 && i < pats.len()) {
+      if let ast.PatVariant(inner) = pats[i] {
+        out = util.append_diags(out, tuple_binder_diags(inner.tup_kinds, inner.tup_binds, inner.tup_pats, s, tt.elements[i], line, col));
+      }
+    }
+    i += 1;
   }
   return out;
 }
@@ -16238,6 +16288,7 @@ function sugar_shape_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util
   for arm in sg.tup {
     if (!arm.is_wild) {
       out = util.append_diags(out, cover_shape_diags(tuple_cover(arm.elem_kinds, arm.lits, arm.elem_pats), t, s, arm.line, arm.col));
+      out = util.append_diags(out, tuple_binder_diags(arm.elem_kinds, arm.binds, arm.elem_pats, s, t, arm.line, arm.col));
     }
   }
   for arm in sg.strct {

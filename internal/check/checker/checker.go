@@ -14207,6 +14207,9 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	}()
 
 	c.checkBlock(fn.Body, root)
+	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+	}
 
 	fn.Captures = nil
 	for _, name := range captureOrder {
@@ -16029,6 +16032,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.inferReturnType(synth, lamRets)
 			c.settleLitReturns(synth)
 			n.ReturnType = synth.ReturnType
+		}
+		if n.Body != nil && !isVoidReturn(n.ReturnType) && !c.funcBodyExits(n.Body) {
+			c.errfCode(n.P, "E052", "missing return: this lambda has return type %s but can fall off the end without returning a value", n.ReturnType.String())
 		}
 		c.current = prev
 		n.Captures = nil

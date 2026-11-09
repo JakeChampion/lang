@@ -1,0 +1,9 @@
+enum Shade { Dark, Light }
+
+function pick(t: (Shade, i32)): i32 {
+    return match (t) { (Dark, n) => n };
+}
+
+function main(): i32 {
+    return pick((Shade.Light, 42));
+}
