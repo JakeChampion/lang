@@ -10,7 +10,7 @@
   "native_normal_assembly_executed": false,
   "go_operator_count": 35,
   "files_sha256": {
-    "README.md": "0e2504ad2ba3ad5fc627c8d2258280f902bea1a150e786c7d6fd2c62f5d79ae2",
+    "README.md": "780a2862ae2ed944f1b2bfac3ed3181f57141b45153519f8a19bf09c034f3e2e",
     "counter-enabled-diagnostic/allocation-stack-audit.json": "95cc2f08010c19158951da43ffeebb293754fdccac24ed3853bc883a4195db10",
     "counter-enabled-diagnostic/build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "counter-enabled-diagnostic/build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -38,6 +38,10 @@
     "go/go-parser.cpu.pprof": "43723a46a2c18b3bd315bb51062f466c1ede18c9b11bfad057ec531e8ad0b7e1",
     "go/go-version.txt": "5707bf75dd54b4fdd5ac209444d48c9c4179ebf8510f80e2f7293dfbedc1012b",
     "go/manifest.json": "f3e794b70ee255f36d85e8f59618a8c8b91265ead72c5baeac13d929dc2d6a54",
+    "go/operator-probe-manifest.json": "8a12f4d827cfa39bb532f48488711f9a725d8bd5fef00e907510cd897a9450f2",
+    "go/operator-probe-progress.log": "ed9fce82e64f191a14e4ba4a6e7a8c961ce5131029f6717bdbab45b3a962fd60",
+    "go/operator-probe-results.json": "d6eed8ad0940b690cb7aea0d617eabc0d0e26ac0799893603e3ea7d9ebdf9fbf",
+    "go/operator-probe.go.txt": "a359dffadfda0994d5e08a899949a200b42d7f52575b0e907e46705256cf400e",
     "go/token-digest-control.go.txt": "c452a25bb772571a8530e05c8b6e8a998fa3658563184d75fb5e5117ea5ef657",
     "go/token-digests.json": "04f63e8299c280561e61039083b9fe6befaf4130373133c0822e831e8759e9ce",
     "native/asm-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -54,6 +58,7 @@
     "native/parse.log": "4f0e6c755b97753a5a5286d79ff7d5ddd5e169df55920e12e5dd572764abe58b",
     "native/parse.stdout": "e81462db320991e9223571b6faf43e15caab4cbd41ef589b7ba1fe27213558f9",
     "native/progress.log": "a7d30260013249a73266418e0afd07705aa86b345341f4c2bf6b34b4be04d303",
-    "native/top-functions.json": "17c846763440daae9dae0d7c9d02afc9267d831270d182b76b287a64628b04e3"
+    "native/top-functions.json": "17c846763440daae9dae0d7c9d02afc9267d831270d182b76b287a64628b04e3",
+    "native/static-parser-box-audit.json": "4304e192c528814f824a2473c6470caa26e11a7f70a37d13539b0670c2a27d00"
   }
 }
