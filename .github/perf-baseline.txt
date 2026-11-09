@@ -624,10 +624,13 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 # 2026-11-08: #14770. The corrected display roots remove unused numeric formatters.
 # Pin the measured x86-64 reduction. No performance limit increases.
-x86_64/video_qtrle.text 5680
-x86_64/video_qtrle.ir 1812209299
-aarch64/video_qtrle.text 6027
+x86_64/video_qtrle.text 5371
+x86_64/video_qtrle.ir 1717224731
+aarch64/video_qtrle.text 5682
 aarch64/video_qtrle.ir 1662057925
+# 2026-11-09: QTRLE scalar run validation removes per-run result storage.
+# Pinned to local native Callgrind and cross-target assembly measurements.
+# Native aarch64 instruction counts still require the CI runner. Keep all tolerances.
 # 2026-11-09: PR #14917, CI job 129321185181. The merged byte-count kernel
 # from #14910 changes the string-count rows. Parent 97af82fc and IVF head
 # cbed65e0 produce identical assembly, binaries, and Callgrind counts.

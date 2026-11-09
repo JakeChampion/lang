@@ -447,6 +447,11 @@ The [2026-11-09 checkpoint](benchmarks/video-qtrle-2026-11-09/README.md) repeats
 Fern takes 2.3 to 7.4 times the FFmpeg loop time in that run.
 These results identify allocation and memory targets. They do not establish a general decoder ranking.
 
+The [run-state allocation control](benchmarks/video-qtrle-run-state-2026-11-09/README.md) compares both decoder versions with one frozen compiler.
+Scalar run validation reduces heap allocations by 83% to 94% across the four workloads.
+Every decoded pixel remains identical. Median time differences stay within the shared-host noise threshold, and peak RSS remains unchanged.
+The result establishes fewer allocations without a claim of general speed or peak-memory improvement.
+
 ## Player work and qualification order
 
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
