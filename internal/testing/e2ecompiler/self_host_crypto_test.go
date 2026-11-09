@@ -78,7 +78,7 @@ func TestSelfHostECDSASuite(t *testing.T) {
 	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 9\n# fail 0\n") {
+		if err != nil || !strings.Contains(string(out), "# pass 10\n# fail 0\n") {
 			t.Fatalf("ecdsa suite: %v\n%s", err, out)
 		}
 	}
