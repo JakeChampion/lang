@@ -140,7 +140,7 @@ test("the home page shows the captured assembly for both targets", async ({ page
 test("the home page shows the bench ratios, the usage text and the editor features", async ({ page }) => {
   await page.goto("./");
   await expect(page.locator(".fern-bench-head__value").first()).toHaveText(/^\d+\.\d\d×$/);
-  await expect(page.locator(".fern-captured")).toContainText("usage: fern");
+  await expect(page.locator(".fern-captured").filter({ hasText: "fern -help" })).toContainText("usage: fern");
   await expect(page.locator(".fern-editor li")).not.toHaveCount(0);
   await expect(page.locator(".fern-editor")).toContainText("Go to definition");
 });
@@ -381,4 +381,12 @@ test("llms.txt indexes the docs, and llms-full.txt has their text", async ({ pag
   const full = await (await page.request.get("llms-full.txt")).text();
   expect(full).toContain("# Install");
   expect(full).not.toContain("<FernPlayground");
+});
+
+test("the home page shows captured diagnostics with the suggested fix", async ({ page }) => {
+  await page.goto("./");
+  const diag = page.locator(".fern-captured:has(starlight-tabs)").filter({ hasText: "missing-arm.fern" });
+  await expect(diag).toContainText("error[E030]");
+  await diag.getByRole("tab", { name: "A typo" }).click();
+  await expect(diag).toContainText("help: replace `totl` with `total`");
 });

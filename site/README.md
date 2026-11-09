@@ -116,8 +116,16 @@ compiler (`$FERN_SELFHOST`, else `../bin/fern-selfhost`) and records its
 output in `src/generated/captures.json`, which is not in git. The home
 page shows that output: the assembly for `src/captures/area.fern`, the
 size of the executable, the `fern -help` usage text, and the
-capabilities of `fern -lsp`. The script stops the build when `main` no
-longer loads the folded constant that the home page names.
+capabilities of `fern -lsp`, and the diagnostics for the programs in
+`src/captures/diagnostics/`. The script stops the build when `main` no
+longer loads the folded constant that the home page names, or when a
+diagnostic program stops failing.
+
+`scripts/startup-bench` times a hello-world program from process start
+to exit in Fern and in other languages. `.github/workflows/startup-bench.yml`
+runs it each week on a Linux x86-64 runner and opens a pull request with
+the log in `docs/startup-log/`. The home page shows the newest log, and
+shows no startup table before the first one.
 
 `public/install.sh` is the install script that the home page and the
 install tutorial give. `test/install.test.mjs` runs it against a fake
