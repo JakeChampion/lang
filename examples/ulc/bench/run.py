@@ -172,9 +172,18 @@ def main():
                         outputs["Baseline"] = root / "Baseline.wav"
                         commands["Baseline"] = [baseline, "decode", encoded["C"], outputs["Baseline"], args.output_format]
                 elapsed = {name: [] for name in commands}
-                # Alternate process order to reduce cache and frequency bias.
+                # Balance all positions in a three-way comparison, including its middle slot.
+                names = tuple(commands)
                 for repetition in range(args.repetitions):
-                    for name in (tuple(commands) if repetition % 2 == 0 else tuple(reversed(commands))):
+                    order = names
+                    if len(names) == 3:
+                        shift = repetition % 3
+                        order = names[shift:] + names[:shift]
+                        if repetition // 3 % 2:
+                            order = tuple(reversed(order))
+                    elif repetition % 2:
+                        order = tuple(reversed(order))
+                    for name in order:
                         before = time.perf_counter_ns()
                         run(commands[name])
                         elapsed[name].append((time.perf_counter_ns() - before) / 1e9)
