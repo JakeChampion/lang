@@ -1609,15 +1609,21 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   if (c.conn.quic) {
     __quic_terms(exts, alpn)?;
   }
-  let accepted = message.find(exts, message.EXT_EARLY_DATA).is_some();
-  if (accepted && (c.early != EARLY_OFFERED || !c.resumed)) {
-    return Err(Illegal("early_data"));
-  }
-  let early = __early_answered(c.early, accepted);
+  let early = __early_in(c, exts)?;
   if (c.resumed) {
     return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_FINISHED, early: early });
   }
   return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST, early: early });
+}
+
+// __early_in reads whether EncryptedExtensions accepts the early data. Only
+// a resumed client that offered early data may see it accepted.
+function __early_in(c: Client, exts: message.Extension[]): Result[i32, HandshakeError] {
+  let accepted = message.find(exts, message.EXT_EARLY_DATA).is_some();
+  if (accepted && (c.early != EARLY_OFFERED || !c.resumed)) {
+    return Err(Illegal("early_data"));
+  }
+  return Ok(__early_answered(c.early, accepted));
 }
 
 function __early_answered(early: i32, accepted: boolean): i32 {
@@ -3163,8 +3169,7 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
   match (choice) {
     Some(c) => {
       __check_binder(s, raw, h, n.suite, c)?;
-      let early = s.config.early_data && s.conn.quic && s.retry_group == 0 && c.index == 0 && c.early && c.alpn == n.alpn && message.find(h.extensions, message.EXT_EARLY_DATA).is_some();
-      let r = __serve_hello(server, raw, h, n, c.psk, c.index, early, __out())?;
+      let r = __serve_hello(server, raw, h, n, c.psk, c.index, __takes_early(s, c, n.alpn, h), __out())?;
       return __server_run(r.server, [], r.out);
     },
     None => {
@@ -3173,6 +3178,16 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
     }
   }
   return Err(Misuse("resume"));
+}
+
+// __takes_early says the server takes the early data the client offers:
+// under QUIC, without a HelloRetryRequest, on the first PSK, with a ticket
+// that allows it, for the same ALPN.
+function __takes_early(s: Server, c: Resumed, alpn: string, h: message.ClientHello): boolean {
+  if (!s.config.early_data || !s.conn.quic || s.retry_group != 0) {
+    return false;
+  }
+  return c.index == 0 && c.early && c.alpn == alpn && message.find(h.extensions, message.EXT_EARLY_DATA).is_some();
 }
 
 pub function (s: Server) verdict(ok: boolean): Result[ServerStep, HandshakeError] {

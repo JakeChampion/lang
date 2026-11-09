@@ -576,19 +576,7 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
   if (body.len() != name_at + 2 + name_len + size) {
     return None;
   }
-  match (keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32)) {
-    Some(suite) => {
-      if (suite.hash().size() != size) {
-        return None;
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  let issued = __i64_at(body, 3);
-  let lifetime = __i64_at(body, 11);
-  if (now < issued || now >= issued + lifetime * (1000 as i64)) {
+  if (!__ticket_live(body, size, now)) {
     return None;
   }
   if (!__same(body[name_at + 2:name_at + 2 + name_len], offer.server_name.bytes())) {
@@ -598,6 +586,20 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
     return None;
   };
   return Some(handshake.Resumed { index: 0, psk: __copy(body[name_at + 2 + name_len:body.len()]), early: (body[19] as i32 & 1) == 1, alpn: alpn });
+}
+
+// __ticket_live says the ticket's suite hashes to `size` bytes, as the
+// offer's does, and that `now` is inside the ticket's lifetime.
+function __ticket_live(body: [u8], size: i32, now: i64): boolean {
+  let Some(suite) = keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32) else {
+    return false;
+  };
+  if (suite.hash().size() != size) {
+    return false;
+  }
+  let issued = __i64_at(body, 3);
+  let lifetime = __i64_at(body, 11);
+  return now >= issued && now < issued + lifetime * (1000 as i64);
 }
 
 function __u16(own out: u8[], v: i32): u8[] {
