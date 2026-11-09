@@ -923,6 +923,14 @@ and three `mmap` reservations at start.
    an absolute path, a relative path and a symbolic link with the hosted
    `read_file`, and lists `/etc` with `read_dir`. A missing file and a
    `write_file` both fail.
+
+   The kernel also answers `statx`, `readlinkat` and `clock_gettime`.
+   `with_exe` makes `/proc/self/exe` a link to the program, so the compiler
+   can read its own image for the key of its cache. The monotonic clocks
+   read the generic timer, and `with_clock` sets the wall clock, which the
+   test reads from the PL031 real-time clock of qemu-virt. `getrandom` waits
+   for a source of entropy: the arm64 baseline has no `RNDR`, so it needs a
+   virtio-rng driver.
 22. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 

@@ -51,6 +51,13 @@ function initrd(t: fdt.Tree): Option[u8[]] {
   return Some(image);
 }
 
+// The Unix time of the PL031 real-time clock of qemu-virt, in nanoseconds.
+function rtc_ns(): i64 {
+  unsafe {
+    return (__mmio_load32(0x09010000 as usize) as i64 & 0xffffffffi64) * 1000000000i64;
+  }
+}
+
 // Tables that hold the kernel mapping: the RAM and the device window.
 function kernel_tables(f: frames.Frames, ram: fdt.Region): Option[pagetable.Tables] {
   let Some(tables) = pagetable.new(f) else {
@@ -111,7 +118,7 @@ function load(b: Boot, path: string, argv: string[]): Option[user_process.Proces
   };
   match (user_process.load(b.f, tables, image, argv, ["HOME=/"])) {
     Ok(p) => {
-      return Some(p.with_root(b.a));
+      return Some(p.with_root(b.a).with_exe(path).with_clock(rtc_ns()));
     },
     Err(why) => {
       print(path + ": " + why);
@@ -177,6 +184,7 @@ function main(): i32 {
   spawn(b, "/bin/efault", ["/bin/efault"]);
   spawn(b, "/bin/crash", ["/bin/crash"]);
   spawn(b, "/bin/files", ["/bin/files"]);
+  spawn(b, "/bin/info", ["/bin/info"]);
   board.power_off(0);
   return 0;
 }
@@ -249,6 +257,50 @@ function main(): i32 {
       print("write failed");
     }
   }
+  return 0;
+}
+`
+
+// info reads the stats of a file and a directory, the image of the program
+// through /proc/self/exe, and both clocks.
+const processInfoSrc = `function main(): i32 {
+  let start = monotonic_ns();
+  print("wall clock after 2024 " + (now_unix_ms() > 1704067200000i64).to_string());
+  match (stat("/etc/motd")) {
+    Ok(s) => {
+      print("motd size " + s.size.to_string() + ", file " + s.is_file.to_string());
+    },
+    Err(e) => {
+      print("motd stat failed");
+    }
+  }
+  match (stat("/etc")) {
+    Ok(s) => {
+      print("etc is a directory " + s.is_dir.to_string());
+    },
+    Err(e) => {
+      print("etc stat failed");
+    }
+  }
+  match (read_link_bytes("/proc/self/exe")) {
+    Ok(b) => {
+      unsafe {
+        print("exe " + string_from_bytes_unchecked(b));
+      }
+    },
+    Err(e) => {
+      print("exe link failed");
+    }
+  }
+  match (read_file_bytes("/proc/self/exe")) {
+    Ok(b) => {
+      print("image is ELF " + (b.len() > 4 && b[1] == 69 as u8 && b[2] == 76 as u8).to_string());
+    },
+    Err(e) => {
+      print("image read failed");
+    }
+  }
+  print("monotonic advances " + (monotonic_ns() > start).to_string());
   return 0;
 }
 `
@@ -349,7 +401,7 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc, "files": processFilesSrc}, map[string][]byte{"efault": efaultImage()})
+	archive := processInitrd(t, cli, dir, map[string]string{"hello": processHelloSrc, "crash": processCrashSrc, "files": processFilesSrc, "info": processInfoSrc}, map[string][]byte{"efault": efaultImage()})
 	src := writeTickProgram(t, processBoardSrc, processMainSrc)
 	kernel := filepath.Join(dir, "kernel.img")
 	if msg, err := cli.compileCmd("arm64-kernel", kernel, src, "-ram", imageRAM, "-emit", "image").CombinedOutput(); err != nil {
@@ -380,6 +432,13 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/files fd 1: write failed\n",
 		"/bin/files exit 0\n",
 		"/bin/files gave back its frames true\n",
+		"/bin/info fd 1: wall clock after 2024 true\n",
+		"/bin/info fd 1: motd size 22, file true\n",
+		"/bin/info fd 1: etc is a directory true\n",
+		"/bin/info fd 1: exe /bin/info\n",
+		"/bin/info fd 1: image is ELF true\n",
+		"/bin/info fd 1: monotonic advances true\n",
+		"/bin/info exit 0\n",
 	} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant %q", console, want)

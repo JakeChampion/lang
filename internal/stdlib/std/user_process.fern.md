@@ -47,7 +47,15 @@ The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, an
 | `lseek` | 62 | Sets the offset from the start, the offset or the end |
 | `getdents64` | 61 | Lists `.`, `..` and the children of a directory, as many as the buffer holds |
 | `fstat`, `newfstatat` | 80, 79 | Gives the mode, the size, the inode and the link count of an entry |
+| `statx` | 291 | Gives the basic stats: the type, the mode, the link count, the owner, the times, the inode, the size and the blocks |
+| `readlinkat` | 78 | Gives the target of a symbolic link, with no NUL |
 | `getcwd` | 17 | Gives `/` |
+
+`with_exe` names the path of the program in the root. `/proc/self/exe` is then a symbolic link to it. Thus a program can read its own image, as the compiler does for the key of its cache.
+
+## Time
+
+`clock_gettime` (113) reads the generic timer's counter. The monotonic clocks give the counter time since the counter started. `with_clock` sets the wall clock, for example from a real-time clock, and `CLOCK_REALTIME` adds it to the counter time. Without `with_clock` the wall clock starts at 0, in 1970. The kernel gives no vDSO, so the runtime makes the system call.
 
 ## Scheduling
 
@@ -149,7 +157,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[] }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64 }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
 
@@ -313,7 +321,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [] };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64 };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -538,8 +546,11 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   return (p, p.signal_call(n, a0, a1, a2));
 }
 
-// The signal calls, ioctl, and ENOSYS for each other call.
+// The signal calls, ioctl, clock_gettime, and ENOSYS for each other call.
 function (p: Process) signal_call(n: u64, a0: u64, a1: u64, a2: u64): Option[Stop] {
+  if (n == 113 as u64) {
+    return p.clock_gettime(a0, a1 as usize);
+  }
   if (n == 132 as u64) {
     // An old stack_t: no stack, with ss_flags SS_DISABLE.
     return p.answer(a1 == 0 as u64 || p.copy_out(a1 as usize, zeros(8).concat(u64_bytes(2 as u64)).concat(zeros(8))), 0i64);
@@ -724,8 +735,121 @@ pub function (p: Process) with_root(a: cpio.Archive): Process {
   return Process { ...p, root: Some(a) };
 }
 
+// The time of the generic timer's counter, in nanoseconds since it started.
+pub function counter_ns(): i64 {
+  unsafe {
+    let c = __sysreg_read("cntvct_el0");
+    let f = __sysreg_read("cntfrq_el0");
+    return c / f * 1000000000i64 + c % f * 1000000000i64 / f;
+  }
+}
+
+// Sets the wall clock of the process: unix_ns is the Unix time now, in
+// nanoseconds, for example from a real-time clock.
+pub function (p: Process) with_clock(unix_ns: i64): Process {
+  return Process { ...p, epoch_ns: unix_ns - counter_ns() };
+}
+
+// CLOCK_REALTIME and its coarse form, 0 and 5, add the wall clock to the
+// counter. CLOCK_MONOTONIC, its raw and coarse forms and CLOCK_BOOTTIME, 1, 4,
+// 6 and 7, are the counter.
+function (p: Process) clock_gettime(clock: u64, va: usize): Option[Stop] {
+  let now = counter_ns();
+  if (clock == 0 as u64 || clock == 5 as u64) {
+    now += p.epoch_ns;
+  } else if (clock != 1 as u64 && clock != 4 as u64 && clock != 6 as u64 && clock != 7 as u64) {
+    return p.fail(EINVAL);
+  }
+  let ts = u64_bytes((now / 1000000000i64) as u64).concat(u64_bytes((now % 1000000000i64) as u64));
+  return p.answer(p.copy_out(va, ts), 0i64);
+}
+
+// Names the path of the program in the root, which /proc/self/exe links to.
+pub function (p: Process) with_exe(path: string): Process {
+  return Process { ...p, exe: path };
+}
+
+const SELF_EXE: string = "proc/self/exe";
+
+// The symbolic link at /proc/self/exe.
+function (p: Process) exe_link(): cpio.Entry {
+  return cpio.Entry { ...root_entry(), name: SELF_EXE, mode: 0xa1ff as u32, links: 1 as u32, size: p.exe.len() };
+}
+
+// The path that the link at f points to.
+function (p: Process) link_target(f: OpenFile): u8[] {
+  if (f.path == SELF_EXE) {
+    return p.exe.bytes();
+  }
+  let Some(a) = p.root else {
+    return [];
+  };
+  return a.read(f.entry);
+}
+
+function (p: Process) readlinkat(dirfd: u64, va: usize, buf: usize, len: usize): Option[Stop] {
+  match (p.find_at(dirfd, va, false)) {
+    Ok(f) => {
+      if (!f.entry.is_symlink()) {
+        return p.fail(EINVAL);
+      }
+      let target = p.link_target(f);
+      if (target.len() as usize > len) {
+        target = array.slice(target, 0, len as i32);
+      }
+      return p.answer(p.copy_out(buf, target), target.len() as i64);
+    },
+    Err(errno) => {
+      return p.fail(errno);
+    }
+  }
+}
+
+// STATX_BASIC_STATS: the type, the mode, the link count, the owner, the
+// three times, the inode, the size and the blocks.
+const STATX_BASIC_STATS: u32 = 0x7ff;
+
+function (p: Process) statx(dirfd: u64, va: usize, flags: u64, buf: usize): Option[Stop] {
+  let path = match (p.path_in(va)) {
+    Ok(s) => s,
+    Err(errno) => {
+      return p.fail(errno);
+    },
+  };
+  let found: Option[OpenFile] = None;
+  if (path == "" && (flags & AT_EMPTY_PATH) != 0 as u64) {
+    found = p.open_file(dirfd);
+  } else {
+    match (p.find_at(dirfd, va, (flags & AT_SYMLINK_NOFOLLOW) == 0 as u64)) {
+      Ok(f) => {
+        found = Some(f);
+      },
+      Err(errno) => {
+        return p.fail(errno);
+      }
+    }
+  }
+  let Some(f) = found else {
+    return p.fail(EBADF);
+  };
+  return p.answer(p.copy_out(buf, statx_bytes(f.entry)), 0i64);
+}
+
+// A struct statx of 256 bytes.
+function statx_bytes(e: cpio.Entry): u8[] {
+  let out = u32_bytes(STATX_BASIC_STATS).concat(u32_bytes(PAGE as u32)).concat(zeros(8));
+  out = out.concat(u32_bytes(e.links)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid));
+  out = out.concat(array.slice(u32_bytes(e.mode), 0, 2)).concat(zeros(2));
+  out = out.concat(u64_bytes(e.inode as u64)).concat(u64_bytes(e.size as u64)).concat(u64_bytes(((e.size + 511) / 512) as u64));
+  out = out.concat(zeros(8));
+  for i in 0..4 {
+    out = out.concat(u64_bytes(e.mtime as u64)).concat(zeros(8));
+  }
+  return out.concat(zeros(256 - out.len()));
+}
+
 function is_file_call(n: u64): boolean {
-  return n == 17 as u64 || n == 56 as u64 || n == 57 as u64 || n == 61 as u64 || n == 62 as u64 || n == 63 as u64 || n == 79 as u64 || n == 80 as u64;
+  return n == 17 as u64 || n == 56 as u64 || n == 57 as u64 || n == 61 as u64 || n == 62 as u64 || n == 63 as u64 || n == 78 as u64 || n == 79 as u64 || n == 80 as u64 || n == 291 as u64;
 }
 
 function (p: Process) file_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
@@ -749,6 +873,12 @@ function (p: Process) file_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Pr
   }
   if (n == 79 as u64) {
     return (p, p.fstatat(a0, a1 as usize, a2 as usize, a3));
+  }
+  if (n == 291 as u64) {
+    return (p, p.statx(a0, a1 as usize, a2, reg(p.frame, 4) as usize));
+  }
+  if (n == 78 as u64) {
+    return (p, p.readlinkat(a0, a1 as usize, a2 as usize, a3 as usize));
   }
   return p.getcwd(a0 as usize, a1 as usize);
 }
@@ -827,6 +957,13 @@ function (p: Process) lookup(path: string, follow: boolean): Result[OpenFile, i6
   for hops in 0..9 {
     if (at == "") {
       return Ok(OpenFile { path: "", entry: root_entry(), offset: ZERO, open: true });
+    }
+    if (at == SELF_EXE && p.exe != "") {
+      if (!follow) {
+        return Ok(OpenFile { path: at, entry: p.exe_link(), offset: ZERO, open: true });
+      }
+      at = resolve("", p.exe);
+      continue;
     }
     let Some(e) = a.find(at) else {
       return Err(ENOENT);
