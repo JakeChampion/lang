@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**137 of 140** claims are pinned by a conformance case. The remaining
+**138 of 141** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -218,6 +218,7 @@ of them.
 | `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
+| `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
 ## Every gap this index opened with is now closed
 
