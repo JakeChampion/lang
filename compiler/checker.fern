@@ -1642,55 +1642,10 @@ function is_tuple_type(t: typeinfo.Type): boolean {
 }
 
 function type_contains_unknown(t: typeinfo.Type): boolean {
-  match (t) {
-    typeinfo.TypeUnknown(_) => {
-      return !unbound_enum_argument(t);
-    },
-    typeinfo.TypeArray(ae) => {
-      return type_contains_unknown(ae.elem);
-    },
-    typeinfo.TypeTuple(tt) => {
-      for element in tt.elements {
-        if (type_contains_unknown(element)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeMap(m) => {
-      return type_contains_unknown(m.key) || type_contains_unknown(m.value);
-    },
-    typeinfo.TypeStruct(sn) => {
-      for arg in sn.args {
-        if (type_contains_unknown(arg)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeUnion(u) => {
-      for arg in u.args {
-        if (type_contains_unknown(arg)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeFunc(f) => {
-      if (type_contains_unknown(f.ret_type)) {
-        return true;
-      }
-      for param_type in f.param_types {
-        if (type_contains_unknown(param_type)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    _ => {
-      return false;
-    }
+  if let typeinfo.TypeUnknown(_) = t {
+    return !unbound_enum_argument(t);
   }
+  return typeinfo.any_child(t, type_contains_unknown);
 }
 
 function is_composite_type(t: typeinfo.Type): boolean {
@@ -7882,59 +7837,15 @@ function is_type_variable(t: typeinfo.Type): boolean {
   return tvar_name(t).len() > 0;
 }
 
+// type_contains_unknown, where a type variable counts as known.
 function unknown_beyond_tvars(t: typeinfo.Type): boolean {
   if (is_type_variable(t)) {
     return false;
   }
-  match (t) {
-    typeinfo.TypeUnknown(_) => {
-      return !unbound_enum_argument(t);
-    },
-    typeinfo.TypeArray(ae) => {
-      return unknown_beyond_tvars(ae.elem);
-    },
-    typeinfo.TypeTuple(tt) => {
-      for element in tt.elements {
-        if (unknown_beyond_tvars(element)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeMap(m) => {
-      return unknown_beyond_tvars(m.key) || unknown_beyond_tvars(m.value);
-    },
-    typeinfo.TypeStruct(sn) => {
-      for arg in sn.args {
-        if (unknown_beyond_tvars(arg)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeUnion(u) => {
-      for arg in u.args {
-        if (unknown_beyond_tvars(arg)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    typeinfo.TypeFunc(f) => {
-      if (unknown_beyond_tvars(f.ret_type)) {
-        return true;
-      }
-      for param_type in f.param_types {
-        if (unknown_beyond_tvars(param_type)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    _ => {
-      return false;
-    }
+  if let typeinfo.TypeUnknown(_) = t {
+    return !unbound_enum_argument(t);
   }
+  return typeinfo.any_child(t, unknown_beyond_tvars);
 }
 
 function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
@@ -9238,34 +9149,7 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
 }
 
 function mentions_type_variable(t: typeinfo.Type): boolean {
-  if (is_type_variable(t)) {
-    return true;
-  }
-  match (t) {
-    typeinfo.TypeArray(a) => {
-      return mentions_type_variable(a.elem);
-    },
-    typeinfo.TypeTuple(tt) => {
-      return any_mentions_type_variable(tt.elements);
-    },
-    typeinfo.TypeStruct(st) => {
-      return any_mentions_type_variable(st.args);
-    },
-    typeinfo.TypeUnion(u) => {
-      return any_mentions_type_variable(u.args);
-    },
-    _ => {}
-  }
-  return false;
-}
-
-function any_mentions_type_variable(ts: typeinfo.Type[]): boolean {
-  for t in ts {
-    if (mentions_type_variable(t)) {
-      return true;
-    }
-  }
-  return false;
+  return is_type_variable(t) || typeinfo.any_child(t, mentions_type_variable);
 }
 
 // The fields, elements and payloads an aggregate literal of type `to` builds, each with its slot type.
@@ -13908,29 +13792,7 @@ function operand_open(t: typeinfo.Type): boolean {
 }
 
 function lanes_inside(t: typeinfo.Type): boolean {
-  match (t) {
-    typeinfo.TypeArray(a) => {
-      return holds_lanes(a.elem);
-    },
-    typeinfo.TypeTuple(tp) => {
-      return any_holds_lanes(tp.elements);
-    },
-    typeinfo.TypeMap(m) => {
-      return holds_lanes(m.key) || holds_lanes(m.value);
-    },
-    typeinfo.TypeFunc(f) => {
-      return any_holds_lanes(f.param_types) || holds_lanes(f.ret_type);
-    },
-    typeinfo.TypeStruct(st) => {
-      return any_holds_lanes(st.args);
-    },
-    typeinfo.TypeUnion(u) => {
-      return any_holds_lanes(u.args);
-    },
-    _ => {
-      return false;
-    }
-  }
+  return typeinfo.any_child(t, holds_lanes);
 }
 
 function holds_lanes(t: typeinfo.Type): boolean {
@@ -29717,37 +29579,10 @@ function width_open(t: typeinfo.Type): boolean {
     typeinfo.TypeFloat(_) => {
       return is_poly_float(t);
     },
-    typeinfo.TypeArray(a) => {
-      return width_open(a.elem);
-    },
-    typeinfo.TypeMap(m) => {
-      return width_open(m.key) || width_open(m.value);
-    },
-    typeinfo.TypeTuple(tup) => {
-      return any_width_open(tup.elements);
-    },
-    typeinfo.TypeStruct(r) => {
-      return any_width_open(r.args);
-    },
-    typeinfo.TypeUnion(u) => {
-      return any_width_open(u.args);
-    },
-    typeinfo.TypeFunc(f) => {
-      return width_open(f.ret_type) || any_width_open(f.param_types);
-    },
     _ => {
-      return false;
+      return typeinfo.any_child(t, width_open);
     }
   }
-}
-
-function any_width_open(ts: typeinfo.Type[]): boolean {
-  for t in ts {
-    if (width_open(t)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
