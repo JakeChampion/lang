@@ -9314,7 +9314,9 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
       modes = modes.append(all[at].modes);
       at += 1;
     }
-    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.rewritten) };
+    // Capacity reservations introduce no callbacks.
+    // Only pipeline fusion needs another closure-inline pass.
+    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.pipelines) };
   }
   if (report) {
     semarrayreport.write(sink, semarrayreport.render(out.sites));

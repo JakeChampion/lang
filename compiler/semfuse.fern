@@ -7,7 +7,7 @@ import "./semarrayreport";
 import "./semreserve";
 import "./optbisect";
 
-pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[], reserves: semarrayreport.Site[] }
+pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], pipelines: boolean[], sites: semarrayreport.Site[], reserves: semarrayreport.Site[] }
 
 struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], aborts: boolean[], any: boolean }
 
@@ -21,6 +21,7 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
   let cx = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
+  let pipelines: boolean[] = [];
   let sites: semarrayreport.Site[] = [];
   let reserves: semarrayreport.Site[] = [];
   let switches = optbisect.switches();
@@ -45,6 +46,7 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
         sites = util.append_all(sites, remaining_sites(f, cx, names[i], enabled));
       }
     }
+    pipelines = pipelines.append(changed);
     if (usable[i] && semreserve.candidate(f)) {
       let r = semreserve.reserve(f, cx.index, cx.bad, enabled && optbisect.allowed_by(switches, "fuse", names[i]), report, names[i]);
       f = r.f;
@@ -55,7 +57,7 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
     rewritten = rewritten.append(changed);
     i += 1;
   }
-  return Fused { funcs: out, rewritten: rewritten, sites: sites, reserves: reserves };
+  return Fused { funcs: out, rewritten: rewritten, pipelines: pipelines, sites: sites, reserves: reserves };
 }
 
 @noinline
