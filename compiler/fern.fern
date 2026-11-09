@@ -3109,7 +3109,7 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 }
 
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
-  let out = util.append_diags(platforms.provider_diags(merged), norc.interrupt_target_diags(merged, target));
+  let out = util.append_diags(util.append_diags(platforms.provider_diags(merged), norc.interrupt_target_diags(merged, target)), norc.early_target_diags(merged, target));
   if (out.len() > 0 || platforms.enforce(merged, target).len() == 0) {
     return out;
   }
@@ -3131,8 +3131,17 @@ function interrupt_entries(merged: parser.Module): string[] {
   return out;
 }
 
-// The diagnostics of the rules that read the annotated module: E080, E102 and
-// E103.
+// The label of the `@early` hook, which the reset entry calls before the heap
+// starts, or "" without one.
+function early_entry(merged: parser.Module): string {
+  for m in parser.marked(merged, "early") {
+    return "__fn_" + asmcore.sanitize_label(m.func_name);
+  }
+  return "";
+}
+
+// The diagnostics of the rules that read the annotated module: E080, E102,
+// E103 and E104.
 pub function annotated_diags(merged: parser.Module): util.Diag[] {
   return util.append_diags(ambient_diags(merged), norc_diags(merged));
 }
@@ -3142,7 +3151,7 @@ function norc_diags(merged: parser.Module): util.Diag[] {
     let none: util.Diag[] = [];
     return none;
   }
-  return util.append_diags(norc.interrupt_diags(merged), norc.diags(checker.annotate_module(merged)));
+  return util.append_diags(util.append_diags(norc.interrupt_diags(merged), norc.early_diags(merged)), norc.diags(checker.annotate_module(merged)));
 }
 
 function ambient_diags(merged: parser.Module): util.Diag[] {
@@ -7531,7 +7540,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: early_entry(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

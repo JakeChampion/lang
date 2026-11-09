@@ -929,6 +929,9 @@ TestSelfHostDynTraitArgsCheck 4
 TestSelfHostDynTraitIR 6
 TestSelfHostECDSASuite 27
 TestSelfHostELFSymtab 6
+TestSelfHostEarlyFormatKeepsTheAttribute 3
+TestSelfHostEarlyHookOrder 5
+TestSelfHostEarlyHookRules 3
 TestSelfHostEarlyReturnConsumingDropIRArm64 3
 TestSelfHostEarlyReturnConsumingDropWasmIR 3
 TestSelfHostEarlyReturnConsumingDropX86_64 3

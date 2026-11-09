@@ -7023,6 +7023,10 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
   s = s.write(".Lreset_clear:\n    cmp x0, x1\n    b.hs .Lreset_cleared\n    str xzr, [x0], #8\n    b .Lreset_clear\n.Lreset_cleared:\n");
   s = emit_reset_mmu(s);
+  if (s.early.len() > 0) {
+    // The hook runs on the stack and the identity map, before the heap starts.
+    s = s.write("    bl " + s.early + "\n    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
+  }
   s = s.write("    add x0, x1, #15\n    and x0, x0, #-16\n");
   s = s.write(mov_imm64("x1", top - reset_stack_bytes()) + "    sub x1, x1, x0\n    bl __fern_heap_init\n");
   s = s.write("    bl __fn_main\n    mov x19, x0\n");

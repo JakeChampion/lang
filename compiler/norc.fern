@@ -8,14 +8,16 @@ import "./sysreg";
 // memory. Every value in it is a scalar, and it calls only `@norc` functions
 // and the raw memory intrinsics. The checker reports each breach as E102.
 // `@interrupt` implies `@norc`, and E103 reports a handler of the wrong shape.
+// `@early` implies `@norc` too, and E104 reports a hook of the wrong shape.
 
 struct Ctx { attr: string, fname: string, module: string, callable: string[] }
 
-// The marks that the `@norc` rule checks: each `@norc` and `@interrupt`.
+// The marks that the `@norc` rule checks: each `@norc`, `@interrupt` and
+// `@early`.
 pub function marks(mod: parser.Module): parser.FuncMark[] {
   let out: parser.FuncMark[] = [];
   for m in mod.marks {
-    if (m.attr == "norc" || m.attr == "interrupt") {
+    if (m.attr == "norc" || m.attr == "interrupt" || m.attr == "early") {
       out = out.append(m);
     }
   }
@@ -105,6 +107,44 @@ pub function interrupt_target_diags(mod: parser.Module, target: string): util.Di
     }
   }
   return out;
+}
+
+// E104: the hook takes no parameters and returns void, and a program has at
+// most one.
+pub function early_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let first = "";
+  for m in parser.marked(mod, "early") {
+    let module = util.mangled_module(m.func_name);
+    let what = early_text(m);
+    if (first.len() > 0) {
+      out = out.append(util.violation_diag("E104", what + "is a second hook: \"" + first + "\" is the first, and the reset entry calls one", module, m.line, m.col));
+    } else {
+      first = util.mangled_name(m.func_name);
+    }
+    for fd in mod.funcs {
+      if (marks_function(fd, m) && (fd.params.len() > 0 || fd.ret_type != "void")) {
+        out = out.append(util.violation_diag("E104", what + "must take no parameters and return void", module, m.line, m.col));
+      }
+    }
+  }
+  return out;
+}
+
+// E104: only a kernel target has a reset entry to call the hook.
+pub function early_target_diags(mod: parser.Module, target: string): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (target == "arm64-kernel" || target == "x86-64-kernel") {
+    return out;
+  }
+  for m in parser.marked(mod, "early") {
+    out = out.append(util.violation_diag("E104", early_text(m) + "needs a reset entry, and only -target arm64-kernel and -target x86-64-kernel have one", util.mangled_module(m.func_name), m.line, m.col));
+  }
+  return out;
+}
+
+function early_text(m: parser.FuncMark): string {
+  return "`@early` function \"" + util.mangled_name(m.func_name) + "\" ";
 }
 
 // Whether the mark is this function's: a method may share a name with a
