@@ -255,7 +255,8 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 ```
 
 Compressed stereo with 33 predictor bits remains unsupported.
-M4A playback and Reader integration remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+The byte-view M4A decoder uses `std/audio/mp4/alac`.
+Source-backed M4A playback remains open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 `std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
@@ -270,7 +271,23 @@ The complete-file convenience method checks a cumulative PCM budget.
 
 The index checks packet headers and extents. Reads validate the selected audio payloads.
 The playable end respects partial ALAC packets when a CAF packet table describes nominal full-packet capacity.
-CAF readers, other CAF codecs, and custom channel descriptions remain open.
+`std/audio/caf/file` supplies bounded ALAC playback over a borrowed seekable source.
+Its cooperative builder scans 64-bit chunk extents and skips unknown payloads without reads.
+It shares metadata, layout, packet-header, and presentation checks with the byte-view API.
+The builder retains scalar packet locations and sample positions, small metadata, and bounded byte windows.
+It retains no complete encoded file or PCM.
+
+The source index uses 20 logical bytes per packet and an eight-byte terminal position.
+Native scalar arrays use eight-byte slots, so their payload uses 24 bytes per packet before capacity and allocator overhead.
+Each cursor reuses ALAC scratch and caller-owned PCM storage.
+Audio events preserve the byte-view `start` and `frames` trim contract and output-buffer suffixes.
+Each step performs at most one seek, one bounded read, or one packet operation.
+The caller supplies the same immutable source and closes it after success or failure.
+
+The file budget covers the complete source. The audio input budget applies to one packet.
+The default source window holds at most 1 MiB, and the packet-table window normally holds 16 KiB.
+Both windows can coexist during index construction.
+Source-backed linear CAF playback and custom channel descriptions remain open.
 
 ## Vorbis
 

@@ -38,7 +38,7 @@ import "std/audio/alac/layout";
 import "std/audio/caf/chunks";
 import "std/audio/pcm";
 import "std/audio/wire";
-import "std/f64";
+import "std/audio/caf/metadata";
 
 pub struct Limits { audio: pcm.Limits, max_chunks: i32, max_packets: i32 }
 
@@ -56,136 +56,8 @@ pub enum ReadEvent { Pending, Samples(Audio), Finished }
 
 pub enum BufferEvent { BufferPending(i32[]), BufferSamples(Audio), BufferFinished(i32[]) }
 
-struct Description { rate: i32, channels: i32, bytes: i32, frames: i32, depth: i32 }
-
-struct Table { count: i32, valid: i64, priming: i64, remainder: i64, at: i32, end: i32, declared: boolean }
-
 pub function default_limits(): Limits {
   return Limits { audio: pcm.default_limits(), max_chunks: 65536, max_packets: 1048576 };
-}
-
-// Check the complete fixed description before any packet or PCM allocation.
-// fern-lint: allow cyclomatic-complexity
-function description(input: [u8], chunk: chunks.Chunk): Result[Description, pcm.AudioError] {
-  if (chunk.end - chunk.start != 32) {
-    return Err(pcm.Header);
-  }
-  let at = chunk.start;
-  let rate = f64_from_bits(wire.be(input, at, 8) as i64);
-  if (!rate.is_finite() || rate < 1.0 || rate > 16777215.0 || (rate as i32) as f64 != rate) {
-    return Err(pcm.Header);
-  }
-  if (!wire.tag(input, at + 8, "alac") || wire.be(input, at + 12, 4) != 0u64) {
-    return Err(pcm.Unsupported);
-  }
-  let bytes = wire.be(input, at + 16, 4);
-  let frames = wire.be(input, at + 20, 4);
-  let channels = wire.be(input, at + 24, 4);
-  let depth = wire.be(input, at + 28, 4);
-  if (bytes > 2147483647u64 || frames > 2147483647u64 || depth > 32u64 || channels < 1u64 || channels > 8u64) {
-    return Err(pcm.Header);
-  }
-  return Ok(Description { rate: rate as i32, channels: channels as i32, bytes: bytes as i32, frames: frames as i32, depth: depth as i32 });
-}
-
-// Accept raw configuration and the historical frma/alac atom wrappers.
-// fern-lint: allow cyclomatic-complexity
-function cookie(input: [u8], chunk: chunks.Chunk): Result[u8[], pcm.AudioError] {
-  let at = chunk.start;
-  if (chunk.end - at > 72) {
-    return Err(pcm.Header);
-  }
-  if (chunk.end - at >= 12 && wire.tag(input, at + 4, "frma")) {
-    if (wire.be(input, at, 4) != 12u64 || !wire.tag(input, at + 8, "alac")) {
-      return Err(pcm.Header);
-    }
-    at += 12;
-  }
-  if (chunk.end - at >= 12 && wire.tag(input, at + 4, "alac")) {
-    if (wire.be(input, at, 4) != 36u64 || wire.be(input, at + 8, 4) != 0u64) {
-      return Err(pcm.Header);
-    }
-    at += 12;
-  }
-  if (chunk.end - at != 24 && chunk.end - at != 48) {
-    return Err(pcm.Header);
-  }
-  let output: u8[] = [];
-  for byte in input[at:chunk.end] {
-    output = output.append(byte);
-  }
-  return Ok(output);
-}
-
-function channel_mask(input: [u8], value: Option[chunks.Chunk], info: config.Info): Result[u32, pcm.AudioError] {
-  let Some(chunk) = value else {
-    return Ok(info.channel_mask);
-  };
-  return layout.read(input[chunk.start:chunk.end], info);
-}
-
-function variable(input: [u8], at: i32, end: i32): Result[(i32, i32), pcm.AudioError] {
-  let value = 0u64;
-  for _ in 0..5 {
-    if (at >= end) {
-      return Err(pcm.Truncated);
-    }
-    let byte = input[at];
-    at += 1;
-    value = value << 7u64 | (byte & 127u8) as u64;
-    if (value > 2147483647u64) {
-      return Err(pcm.Limit);
-    }
-    if ((byte & 128u8) == 0u8) {
-      return Ok((at, value as i32));
-    }
-  }
-  return Err(pcm.Header);
-}
-
-// Packet counts and signed presentation fields share the same bounded table extent.
-// fern-lint: allow cyclomatic-complexity
-function table(input: [u8], file: chunks.File, desc: Description, maximum: i32): Result[Table, pcm.AudioError] {
-  let Some(chunk) = file.packets else {
-    if (desc.bytes < 1 || (file.data.end - file.data.start) % desc.bytes != 0) {
-      return Err(pcm.Header);
-    }
-    let count = (file.data.end - file.data.start) / desc.bytes;
-    if (count > maximum) {
-      return Err(pcm.Limit);
-    }
-    return Ok(Table { count: count, valid: 0i64, priming: 0i64, remainder: 0i64, at: 0, end: 0, declared: false });
-  };
-  if (chunk.end - chunk.start < 24) {
-    return Err(pcm.Truncated);
-  }
-  let count = wire.be(input, chunk.start, 8);
-  let valid = wire.be(input, chunk.start + 8, 8);
-  let priming = wire.be(input, chunk.start + 16, 4);
-  let remainder = wire.be(input, chunk.start + 20, 4);
-  if (count > maximum as u64) {
-    return Err(pcm.Limit);
-  }
-  if (valid > 9223372036854775807u64 || priming > 2147483647u64 || remainder > 2147483647u64) {
-    return Err(pcm.Header);
-  }
-  return Ok(Table { count: count as i32, valid: valid as i64, priming: priming as i64, remainder: remainder as i64, at: chunk.start + 24, end: chunk.end, declared: true });
-}
-
-function presentation(value: Table, raw: i64, capacity: i64, last_padding: i64): Result[i64, pcm.AudioError] {
-  if (!value.declared) {
-    return Ok(raw);
-  }
-  let Some(end) = value.priming +? value.valid else {
-    return Err(pcm.Limit);
-  };
-  let Some(total) = end +? value.remainder else {
-    return Err(pcm.Limit);
-  };
-  if (total > capacity || value.priming > raw || end > raw && end - raw > last_padding) {
-    return Err(pcm.Header);
-  }
-  return Ok((if (end < raw) { end } else { raw }) - value.priming);
 }
 
 // Check each packet extent and frame count before its scalar index entry.
@@ -196,36 +68,38 @@ pub function inspect(input: [u8], limits: Limits): Result[Index, pcm.AudioError]
     return Err(pcm.Limit);
   }
   let file = chunks.inspect(input, limits.max_chunks)?;
-  let desc = description(input, file.description)?;
+  let desc = metadata.description(input[file.description.start:file.description.end])?;
   let Some(specific) = file.cookie else {
     return Err(pcm.Header);
   };
-  let configuration = cookie(input, specific)?;
+  let configuration = metadata.cookie(input[specific.start:specific.end])?;
   let info = config.read(configuration, limits.audio)?;
-  if (desc.rate != info.format.sample_rate || desc.channels != info.format.channels || desc.depth != 0 && desc.depth != info.format.bits_per_sample || desc.frames != 0 && desc.frames != info.frame_length) {
-    return Err(pcm.Header);
+  metadata.check(desc, info)?;
+  let mask = match (file.channels) { Some(chunk) => layout.read(input[chunk.start:chunk.end], info)?, None => info.channel_mask };
+  let table_bytes = match (file.packets) { Some(chunk) => input[chunk.start:chunk.end], None => input[0:0] };
+  if (table_bytes.len() < 24 && match (file.packets) { Some(_) => true, None => false }) {
+    return Err(pcm.Truncated);
   }
-  let mask = channel_mask(input, file.channels, info)?;
-  let plan = table(input, file, desc, limits.max_packets)?;
+  let plan = metadata.table(if (table_bytes.len() >= 24) { table_bytes[:24] } else { table_bytes }, match (file.packets) { Some(_) => true, None => false }, (file.data.end - file.data.start) as i64, desc, limits.max_packets)?;
   let decoder = alac.create(configuration, limits.audio)?;
   let offsets: i32[] = [];
   let sizes: i32[] = [];
   let positions: i64[] = [0i64];
   let at = file.data.start;
-  let row = plan.at;
+  let row = if (plan.declared) { 24 } else { 0 };
   let total = 0i64;
   let capacity = 0i64;
   let last_padding = 0i64;
   for _ in 0..plan.count {
     let bytes = desc.bytes;
     if (bytes == 0) {
-      let (next, value) = variable(input, row, plan.end)?;
+      let (next, value) = metadata.variable(table_bytes, row, table_bytes.len())?;
       row = next;
       bytes = value;
     }
     let nominal = desc.frames;
     if (nominal == 0) {
-      let (next_frames, value) = variable(input, row, plan.end)?;
+      let (next_frames, value) = metadata.variable(table_bytes, row, table_bytes.len())?;
       row = next_frames;
       nominal = value;
     }
@@ -250,10 +124,10 @@ pub function inspect(input: [u8], limits: Limits): Result[Index, pcm.AudioError]
     last_padding = (nominal - frames) as i64;
     at += bytes;
   }
-  if (at != file.data.end || row != plan.end) {
+  if (at != file.data.end || row != table_bytes.len()) {
     return Err(pcm.Header);
   }
-  let frames = presentation(plan, total, capacity, last_padding)?;
+  let frames = metadata.presentation(plan, total, capacity, last_padding)?;
   return Ok(Index { info: Info { format: info.format, channel_mask: mask, frames: frames, priming: plan.priming }, configuration: configuration, offsets: offsets, sizes: sizes, positions: positions, bytes: input.len(), limits: limits });
 }
 
