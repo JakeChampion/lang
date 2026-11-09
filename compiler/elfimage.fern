@@ -58,6 +58,9 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
   if (eoff < 0) {
     return arm64_refusals("arm64-linux", "linker", ["no _start symbol"]);
   }
+  if (eoff >= pa2.text.len()) {
+    return arm64_refusals("arm64-linux", "linker", ["no code at _start"]);
+  }
   let bin: u8[] = [];
   if (pie) {
     bin = elf.elf_image_pie_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
@@ -108,6 +111,9 @@ pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): st
   let eoff = arm64_native.arm64_asm_label_off(pa2, "_start");
   if (eoff < 0) {
     return arm64_refusals("arm64-android", "linker", ["no _start symbol"]);
+  }
+  if (eoff >= pa2.text.len()) {
+    return arm64_refusals("arm64-android", "linker", ["no code at _start"]);
   }
   unsafe {
     return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden));
@@ -196,6 +202,10 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
   let eoff = x86_native.x86_label_off(a, "_start");
   if (eoff < 0) {
     eprint("fern: -target x86-64-linux: no _start symbol in the emitted program");
+    return "";
+  }
+  if (eoff >= a.text.len()) {
+    eprint("fern: -target x86-64-linux: no code at _start");
     return "";
   }
   util.arr_push_cliff_report("x86:unwind", 0);

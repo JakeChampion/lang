@@ -152,6 +152,14 @@ Each target ran 45 seconds after its seeds passed.
 | `FuzzSelfHostX86Assembler` | 18168 | 2 | none |
 | `FuzzSelfHostArm64Assembler` | 39065 | 3 | none |
 
+The image targets ran 45 seconds each on 2026-11-09, after their seeds passed and after the four faults below were fixed.
+Host: Linux 6.18.44-fc-v310, Intel Xeon 2.10GHz, 4 cores, Go go1.27.3.
+
+| Target | Executions | New inputs kept | Findings |
+|---|---|---|---|
+| `FuzzSelfHostX86Image` | 42302 | 10 | none after the fixes |
+| `FuzzSelfHostArm64Image` | 39511 | 2 | none after the fixes |
+
 The package readers ran 45 seconds each on 2026-11-08 on the same kind of host, after their seeds passed.
 
 | Target | Executions | New inputs kept | Findings |
@@ -205,11 +213,13 @@ Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern
 - A segment shorter than its fields. A frame of length 0 read its fields past the end of the file. Each segment now checks its length: the frame, the quantization tables, the restart interval and the scan header. A second frame is `Corrupt`, because the coefficients were sized for the first.
 - A scan that uses a Huffman table that the file does not define. The decoder read the empty table. It now decodes such a scan as corrupt data, as the module contract says for other corrupt data.
 
-The image targets found three faults in the last step of a native compile, on their seeds.
+The image targets found four faults in the last step of a native compile.
+They found three on their seeds and one in their first 6 seconds of fuzzing.
 Each is fixed in `compiler/elfimage.fern` or `compiler/elf.fern`, and `TestSelfHostImageOfCompiledProgram` or a layout test checks it.
 
 - The relro step stopped the compiler with exit 3 when a relocating image had no relro symbols. Text compiled without `-pie` and linked as a `-pie` image reached it. The step now refuses the image through the linker, with the same cause line, as the linker refuses its other faults.
 - An arm64 image of text with no `_start` took the start of the code as its entry. With no code, the entry was past the code. The arm64 linker now refuses such an image, as the x86-64 linker does.
+- On both ISAs, an image of text with a `_start` label and no instruction after it entered at the end of the code. The minimised input is `.text\n_start:`. Both linkers now refuse an image with no code at `_start`, and `testdata/fuzz/FuzzSelfHostX86Image/` and `testdata/fuzz/FuzzSelfHostArm64Image/` keep the inputs.
 - The `PT_GNU_RELRO` header of a `-pie` executable and of a shared object gave its memory size as its file size. Its file range then ended past the end of the file. The file size is now the part of the range that the file holds. `TestSelfHostImagePermissions` and `TestSharedObjectLayout` check that each segment lies inside the file.
 
 ## Coverage feedback for the stdlib readers

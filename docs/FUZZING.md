@@ -379,12 +379,13 @@ regression test where the bug lived:
   read past the file. A scan with an undefined Huffman table read the empty
   table. `std/jpeg` now refuses a frame over its pixel limit, checks each
   segment length, and decodes such a scan as corrupt data. Tests in `tests/stdlib/jpeg_test.fern`.
-- **Three faults in the image writer** (`FuzzSelfHostX86Image`,
+- **Four faults in the image writer** (`FuzzSelfHostX86Image`,
   `FuzzSelfHostArm64Image`, November 2026). The relro step stopped the
   compiler with exit 3 on text that was not compiled with `-pie`. An arm64
-  image with no `_start` entered past its code. The `PT_GNU_RELRO` header of
-  a `-pie` image and of a shared object gave a file range past the end of the
-  file. Each is now a refusal with a cause, or a header inside the file.
+  image with no `_start` entered past its code, and on both ISAs a `_start`
+  with no code after it did the same. The `PT_GNU_RELRO` header of a `-pie`
+  image and of a shared object gave a file range past the end of the file.
+  Each is now a refusal with a cause, or a header inside the file.
 
 Earlier: the closure-dispatch cluster (#5001, #5007, #5009, #5026), the
 `i64[]` narrowing (#5729), the u32 shift that miscompiled SHA-256, the float
