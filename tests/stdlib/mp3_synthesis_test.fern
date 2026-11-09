@@ -1,0 +1,70 @@
+import "std/audio/mp3/synthesis";
+import "std/audio/mp3/spectral";
+import "std/test";
+import "mp3_synthesis_vectors" as ref;
+
+function hash(samples: [f32]): u32 {
+  let value = 2166136261u32;
+  for sample in samples {
+    let bits = f32_bits(sample) as u32;
+    for byte in 0..4 {
+      value = (value ^ bits >> byte * 8 & 255u32) * 16777619u32;
+    }
+  }
+  return value;
+}
+
+function history(size: i32): f32[] {
+  let values = spectral.zeros(size);
+  for i in 0..960 {
+    values = values.with(i, (i * 73 % 257 - 128) as f32 * 0.125f32);
+  }
+  return values;
+}
+
+function input(round: i32): f32[] {
+  let values = spectral.zeros(1152);
+  for i in 0..1152 {
+    values = values.with(i, ((round * 53 + i * 29) % 1021 - 510) as f32 * 0.25f32);
+  }
+  return values;
+}
+
+function reference(cached: boolean): test.TestOutcome {
+  let state = history(if (cached) { synthesis.QMF_SAMPLES } else { 960 });
+  let output = spectral.zeros(1163);
+  for round in 0..ref.CHANNELS.len() {
+    let channels = ref.CHANNELS[round];
+    for i in 0..output.len() {
+      output = output.with(i, 123.0f32);
+    }
+    let (next, pcm) = if (cached) { synthesis.granule_cached(state, input(round), channels, output, 4) } else { synthesis.granule(state, input(round), channels, output, 4) };
+    state = next;
+    output = pcm;
+    let end = 4 + channels * 576;
+    if (hash(output[4:end]) != ref.PCM[round] || hash(state[:960]) != ref.HISTORY[round]) {
+      return test.fail("round " + round.to_string() + ": PCM " + hash(output[4:end]).to_string() + " / " + ref.PCM[round].to_string() + ", QMF " + hash(state[:960]).to_string() + " / " + ref.HISTORY[round].to_string());
+    }
+    for i in 0..output.len() {
+      if ((i < 4 || i >= end) && output[i] != 123.0f32) {
+        return test.fail("reusable output prefix or tail");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function compact(): test.TestOutcome {
+  return reference(false);
+}
+
+function cached(): test.TestOutcome {
+  return reference(true);
+}
+
+function main(): i32 {
+  let runner = test.new("Independent MP3 synthesis history");
+  runner = runner.it("compact QMF helper and channel transitions", compact);
+  runner = runner.it("cached QMF storage and channel transitions", cached);
+  return runner.finish();
+}

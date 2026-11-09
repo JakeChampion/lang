@@ -5,6 +5,12 @@ Its arithmetic preserves the scalar reference operation order within each lane.
 The DCT and synthesis kernels use portable four-lane float operations.
 The public decoder supplies correctly sized arrays and validated block descriptions.
 
+`granule` retains the compact 960-sample history contract.
+`granule_cached` uses `QMF_SAMPLES` slots with an initially zero workspace.
+The first 960 slots contain the same history.
+The following 1,152 slots retain synthesis workspace, and the final 15 slots preserve inactive mono history.
+The caller reuses this array between granules.
+
 The implementation derives from the scalar [minimp3 reference](https://github.com/lieff/minimp3/tree/ea99364f61c14656440e8d77e9c233ccf3124633).
 The minimp3 authors dedicated that source to the public domain under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 The module executes Fern code and needs no external codec library.
@@ -14,6 +20,9 @@ The module executes Fern code and needs no external codec library.
 // MP3 hybrid transforms and portable vector PCM synthesis.
 import "std/audio/mp3/tables";
 import "std/audio/mp3/spectral";
+
+// The final 15 slots preserve inactive mono history during in-place synthesis.
+pub const QMF_SAMPLES: i32 = 33 * 64 + 15;
 
 function dct9(own y: f32[]): f32[] {
   let s0 = y[0];
@@ -376,13 +385,9 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
   return (lines, output);
 }
 
-pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+function render(own lines: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
   for ch in 0..channels {
     samples = dct32_tail(dct32x4(samples, ch * 576), ch * 576);
-  }
-  let lines = spectral.zeros(33 * 64);
-  for i in 0..15 * 64 {
-    lines = lines.with(i, qmf[i]);
   }
   for block in 0..9 {
     let i = block * 2;
@@ -390,11 +395,42 @@ pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own outp
     lines = next;
     output = pcm;
   }
+  return (lines, output);
+}
+
+pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  let lines = spectral.zeros(33 * 64);
+  for i in 0..15 * 64 {
+    lines = lines.with(i, qmf[i]);
+  }
+  let (next, pcm) = render(lines, samples, channels, output, out_at);
   for i in 0..15 * 64 {
     if (channels == 2 || (i & 1) == 0) {
-      qmf = qmf.with(i, lines[18 * 64 + i]);
+      qmf = qmf.with(i, next[18 * 64 + i]);
     }
   }
-  return (qmf, output);
+  return (qmf, pcm);
+}
+
+pub function granule_cached(own lines: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
+  if (channels == 1) {
+    // The first pair overwrites these inactive odd history slots.
+    for i in 0..15 {
+      lines = lines.with(33 * 64 + i, lines[899 + i * 4]);
+    }
+  }
+  let (next, pcm) = render(lines, samples, channels, output, out_at);
+  lines = next;
+  for i in 0..15 * 64 {
+    if (channels == 2 || (i & 1) == 0) {
+      lines = lines.with(i, lines[18 * 64 + i]);
+    }
+  }
+  if (channels == 1) {
+    for i in 0..15 {
+      lines = lines.with(899 + i * 4, lines[33 * 64 + i]);
+    }
+  }
+  return (lines, pcm);
 }
 ```

@@ -37,6 +37,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler', type=Path, required=True)
     parser.add_argument('--baseline-stdlib', type=Path, required=True)
+    parser.add_argument('--baseline-freeformat', action='store_true')
     parser.add_argument('--candidate-stdlib', type=Path, default=ROOT / 'internal/stdlib')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--rounds', type=int, default=20)
@@ -76,7 +77,7 @@ def main():
     pcm_hashes = {}
     for mode in ['whole', 'frames']:
         variants = [(name, kind) for kind in inputs for name in binaries
-                    if name != 'baseline' or kind == 'indexed']
+                    if name != 'baseline' or kind == 'indexed' or args.baseline_freeformat]
         for trial in range(args.trials):
             order = variants if trial % 2 == 0 else variants[::-1]
             for name, kind in order:

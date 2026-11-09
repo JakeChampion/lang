@@ -14,6 +14,8 @@ Output samples are interleaved, normalized `f32` values. Peaks can exceed -1 or 
 Use `pcm.quantize` for integer PCM conversion at a device or file boundary.
 
 `decoder` creates bounded state. `decode_frame_into` consumes that state and a reusable output buffer.
+The QMF array retains 2,127 float slots, including synthesis workspace and inactive mono history.
+This removes a separate temporary line array during each synthesis granule.
 The buffer needs at most 2304 entries. Only the first `frames * channels` entries contain output.
 A result with `needs_history` consumes input and retains reservoir data but supplies zero valid frames.
 
@@ -68,7 +70,7 @@ pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
+  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(synthesis.QMF_SAMPLES), sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
 }
 
 pub function (own d: Decoder) reset(): Decoder {
@@ -155,7 +157,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   if (output.len() < count) {
     return Err(pcm.Buffer);
   }
-  if (d.overlap.len() != 576 || d.qmf.len() != 960 || d.reservoir.len() > 511 || d.free_bytes < 0) {
+  if (d.overlap.len() != 576 || d.qmf.len() != synthesis.QMF_SAMPLES || d.reservoir.len() > 511 || d.free_bytes < 0) {
     return Err(pcm.Header);
   }
   if (d.sample_rate != 0 && (d.sample_rate != h.sample_rate || d.version != h.version)) {
@@ -232,7 +234,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       samples = values;
       overlap = ov;
     }
-    let (next, values) = synthesis.granule(qmf, samples, h.channels, output, granule * 576 * h.channels);
+    let (next, values) = synthesis.granule_cached(qmf, samples, h.channels, output, granule * 576 * h.channels);
     qmf = next;
     output = values;
   }

@@ -1,0 +1,8 @@
+./bootstrap/bootstrap.sh build
+stage0: stage0-20261107-38f241c for x86-64-linux (sha256 4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3)
+stage1: 35 s, 2486 MB peak RSS, 16229664 bytes
+smoke: /workspace/fern-mp3-synthesis/build/bootstrap/stage1 compiles a program and coreutils/tr, and both run
+installed bin/fern-selfhost (x86-64-linux, sha256 c47b538d4090ae3d4f7847899ffd9f1bc289ec89c0594aa1a20e70b4e99fe2f2)
+./scripts/fern-embed-stage build/embed
+./bin/fern-selfhost -target x86-64-linux -embed build/embed -o bin/fern compiler/fern_main.fern internal/stdlib
+cp bin/fern-selfhost bin/fern build/ci-compiler-cache/

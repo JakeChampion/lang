@@ -90,7 +90,7 @@ function bounded(state: input.Input): boolean {
   let padding = match (state.info) { Some(info) => info.padding_frames * info.channels, None => 0 };
   return state.buffer.bytes.len() <= state.limits.input.max_buffer_bytes && state.tail.len() <= padding
     && state.trailer.first.len() <= 32 && state.trailer.last.len() <= 160
-    && state.codec.reservoir.len() <= 511 && state.codec.overlap.len() == 576 && state.codec.qmf.len() == 960;
+    && state.codec.reservoir.len() <= 511 && state.codec.overlap.len() == 576 && state.codec.qmf.len() == 2127;
 }
 
 function step(own state: input.Input, read: (i32) => Result[u8[], IoError], calls: Cell[i32]): Result[(input.Input, input.ReadEvent), string] {

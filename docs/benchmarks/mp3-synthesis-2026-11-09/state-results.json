@@ -1,0 +1,34 @@
+[
+  {
+    "name": "baseline",
+    "decoders": 1,
+    "allocs": 4,
+    "fresh_bytes": 13456,
+    "native_peak_rss_kb": 80,
+    "qmf_slots": 960
+  },
+  {
+    "name": "baseline",
+    "decoders": 100,
+    "allocs": 306,
+    "fresh_bytes": 1342072,
+    "native_peak_rss_kb": 1384,
+    "qmf_slots": 96000
+  },
+  {
+    "name": "candidate",
+    "decoders": 1,
+    "allocs": 4,
+    "fresh_bytes": 25744,
+    "native_peak_rss_kb": 92,
+    "qmf_slots": 2127
+  },
+  {
+    "name": "candidate",
+    "decoders": 100,
+    "allocs": 306,
+    "fresh_bytes": 2570872,
+    "native_peak_rss_kb": 2580,
+    "qmf_slots": 212700
+  }
+]
