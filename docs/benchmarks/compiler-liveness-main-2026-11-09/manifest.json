@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-09",
+  "baseline_source": "d04e79179fda465d5897d25a00f9a2f34c4694ab",
+  "candidate_code_source": "2d7d444e94032710fad63ccb6d290d02475c72d7",
+  "fixed_input_source": "d04e79179fda465d5897d25a00f9a2f34c4694ab",
+  "producer_source": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "compiler_binaries": {
+    "base-native": {
+      "sha256": "eb5f672880abf9e65aad61edbab650424cb0e697d75b2a530987e9708583a62d"
+    },
+    "base-count": {
+      "sha256": "e04381d8e2019d7c7fc4ee272d39b0d9d8f4ecf18122f8d67a62633ae1ec5cf7"
+    },
+    "candidate-native": {
+      "sha256": "9dc12ddc6c59eb0ff132362cfb33e23a024b15ae9c1fc63880b947e968b726b7"
+    },
+    "candidate-count": {
+      "sha256": "942018bc8809557778a9674328b10e6f163caa90547b03a722111e53120d3603"
+    }
+  },
+  "target": "x86-64-linux",
+  "debug": false,
+  "certification": true,
+  "host_cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "software": {
+    "Go": "1.27.3",
+    "Valgrind": "3.24.0",
+    "Wasmtime": "50.0.1"
+  },
+  "files_sha256": {
+    "README.md": "eb6ab4b2d0a69f18e3f73a7e7893e0c16575c900105cba1fb6bb2a31fb5843a6",
+    "base-alloc.log": "03fc8a8914e86a16cc965df6f8cbd6cae0dbec4080dc7603da433d36546e2674",
+    "base-cache-probe.log": "76ea6650527ba14b5780cd2b11bf04bd54d0fbffb9d996afd51723a80d50ef1b",
+    "candidate-alloc.log": "6570f7bb2db343c035523436de54c6880de25e0c4e290584ca9fddbe8272ad18",
+    "candidate-cache-probe.log": "76ea6650527ba14b5780cd2b11bf04bd54d0fbffb9d996afd51723a80d50ef1b",
+    "ci-baseline-updates.json": "af381f8a0705d8687de5ca0390a86b29895de59b7b10f1445e7c3fb3e59bf279",
+    "ci-perf-aarch64.log": "89fa33c268c2c531a3aac07d7a98c13f5b584d063a2810dbe870c8183a7194a6",
+    "ci-perf-x86_64.log": "275f749b957d224ed50dc705568855af121547bfd55a15e6a4a03f3203cd8493",
+    "ci-selftest.log": "be4441476cfdd69b9149f68fdb081c73c88c6f71728ef968fa938d86a819ac0a",
+    "cold-base-callgrind.log": "bac339ee731bebe4b843969810d90a6496aef811189824789d737c2d85c7d1d9",
+    "cold-candidate-callgrind.log": "cd729c8d17040f6e0c5f714abe18e4302fce108243c6b00443f41056584f68c4",
+    "measure.py": "ca593f19ea71e13ab71ed43b1778e784aafb47e025de645c91365161a6b8ce20",
+    "measurements.json": "8d681e225e774228f30a286b5ffea4465a5fd52b44298a9231059452fc3c151c",
+    "reuse.patch": "e1343fc48207de5f5b95ffc380e599fb12c15c22af5df98d2245a166962c5e6a",
+    "source-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests-confirmation-result.json": "438a7ee183778a3c98837a0260cee1a443db4b92f71b495027ea2e71fb37025e",
+    "tests-confirmation.log": "6871143fc99bf451c293f2f2f279aa837090d821ac6e088de9264eba67d27747",
+    "vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-base-callgrind.log": "ee970d8b20a4f01f307671cc18f6702dc58d8bf78e1c5d56edd7c00e18dcf047",
+    "warm-candidate-callgrind.log": "835a5ff8226d11865464070ff2c4d7029cbe58d193a54717415ace17d0334c6b"
+  }
+}

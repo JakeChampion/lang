@@ -392,6 +392,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	})
 	var fieldSelections map[string]int
 	var fieldReads map[[2]string]int
+	var replacingBases map[[2]string]int
 	// A name that only matches on a fresh call bind: the match takes the
 	// result, so the payload is owned.
 	freshBound, staleBound := matchBinds(info, body)
@@ -400,7 +401,8 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	}
 	// An unpack reads the one field of a fresh local, an own parameter or a
 	// payload that a match took, that nothing else reads, from a holder that
-	// each mention selects a field of.
+	// each mention selects a field of, or is the base of a literal that
+	// replaces that field.
 	unpack := func(e ast.Expr) bool {
 		fa, isField := e.(*ast.FieldAccess)
 		if !isField {
@@ -414,7 +416,15 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if fieldSelections == nil {
 			fieldSelections = map[string]int{}
 			fieldReads = map[[2]string]int{}
+			replacingBases = map[[2]string]int{}
 			ast.Walk(body, func(m ast.Node) bool {
+				if sl, ok := m.(*ast.StructLit); ok {
+					if base, ok := sl.Base.(*ast.Ident); ok {
+						for _, f := range sl.Fields {
+							replacingBases[[2]string{base.Name, f.Name}]++
+						}
+					}
+				}
 				if field, ok := m.(*ast.FieldAccess); ok {
 					if root, ok := field.Target.(*ast.Ident); ok {
 						fieldSelections[root.Name]++
@@ -424,7 +434,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 				return true
 			})
 		}
-		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name] == occurrences[hid.Name]
+		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name]+replacingBases[[2]string{hid.Name, fa.Field}] == occurrences[hid.Name]
 	}
 	// An assignment that stores a value another name can hold ends the
 	// freshness of its target. An unpack can read a holder that an earlier

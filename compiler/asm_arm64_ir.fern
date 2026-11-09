@@ -6913,10 +6913,12 @@ function emit_vector_trampoline(s: asmcore.EmitState, slot: string, handler: str
 // process, the stack pointer of the kernel and its DAIF.
 function emit_user_run(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .bss\n    .p2align 3\n__fern_user_ctx:\n    .skip 24\n    .text\n");
-  // __user_run(frame): save what the kernel's caller expects kept, mask the
+  // __user_run(frame): save what the kernel's caller expects kept, and the
+  // kernel's TPIDR_EL0, FPCR and FPSR, which the frame replaces. Mask the
   // exceptions so that none overwrites ELR_EL1 or SPSR_EL1, and enter EL0.
-  s = s.write("__fern_user_run:\n    sub sp, sp, #160\n");
+  s = s.write("__fern_user_run:\n    sub sp, sp, #192\n");
   s = s.write(user_callee_pairs("stp"));
+  s = s.write("    mrs x10, tpidr_el0\n    mrs x11, fpcr\n    stp x10, x11, [sp, #160]\n    mrs x10, fpsr\n    str x10, [sp, #176]\n");
   s = s.write("    adrp x9, __fern_user_ctx\n    add x9, x9, :lo12:__fern_user_ctx\n    mrs x10, daif\n    str x10, [x9, #16]\n    msr daifset, #15\n");
   s = s.write("    str x0, [x9]\n    mov x10, sp\n    str x10, [x9, #8]\n");
   s = s.write(user_sysregs("ldr"));
@@ -6932,7 +6934,8 @@ function emit_user_run(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Luser_return:\n    adrp x9, __fern_user_ctx\n    add x9, x9, :lo12:__fern_user_ctx\n    ldr x10, [x9, #8]\n    mov sp, x10\n");
   s = s.write(user_callee_pairs("ldp"));
-  return s.write("    add sp, sp, #160\n    ldr x10, [x9, #16]\n    msr daif, x10\n    ret\n");
+  s = s.write("    ldp x10, x11, [sp, #160]\n    msr tpidr_el0, x10\n    msr fpcr, x11\n    ldr x10, [sp, #176]\n    msr fpsr, x10\n");
+  return s.write("    add sp, sp, #192\n    ldr x10, [x9, #16]\n    msr daif, x10\n    ret\n");
 }
 
 // The registers that a call keeps: x19 to x30 and d8 to d15.

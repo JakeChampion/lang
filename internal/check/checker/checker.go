@@ -10680,6 +10680,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	selfMoveArgs := map[ast.Expr]bool{}
 	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle, c.scalarArgs)
+	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10704,13 +10705,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if id, ok := x.Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
 				return true
 			}
+			if lit := replaced[x]; lit != nil && isOwnedExpr(lit.Base) {
+				return true
+			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if x.Method != nil && (id.Name == "__method_Array_set" || id.Name == "__method_Array_push" || id.Name == "__method_Array_truncate") {
-					if array, ok := x.Method.Receiver.(ast.ArrayType); ok && c.holdsNoHandle(array.Elem) {
-						return true
-					}
+				if c.arrayUpdateOwned(x, isOwnedExpr, isOwnedExpr) {
+					return true
 				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true

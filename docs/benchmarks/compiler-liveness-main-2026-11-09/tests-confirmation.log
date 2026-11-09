@@ -1,0 +1,206 @@
+=== RUN   TestSelfHostRcCertifyCases
+=== RUN   TestSelfHostRcCertifyCases/scalar-lanes-call-primary-leaked
+=== RUN   TestSelfHostRcCertifyCases/scalar-lanes-call-primary-released
+=== RUN   TestSelfHostRcCertifyCases/mixed-lanes-primary-tag
+=== RUN   TestSelfHostRcCertifyCases/scalar-lanes-return-owned-primary
+=== RUN   TestSelfHostRcCertifyCases/scalar-lanes-leaked-primary
+=== RUN   TestSelfHostRcCertifyCases/scalar-lanes-call-owned-primary
+=== RUN   TestSelfHostRcCertifyCases/balanced
+=== RUN   TestSelfHostRcCertifyCases/leak
+=== RUN   TestSelfHostRcCertifyCases/sparse-leak
+=== RUN   TestSelfHostRcCertifyCases/sparse-unused-terminator-field
+=== RUN   TestSelfHostRcCertifyCases/sparse-counted-param
+=== RUN   TestSelfHostRcCertifyCases/sparse-token
+=== RUN   TestSelfHostRcCertifyCases/sparse-null-phi
+=== RUN   TestSelfHostRcCertifyCases/sparse-loop-leak
+=== RUN   TestSelfHostRcCertifyCases/double-release
+=== RUN   TestSelfHostRcCertifyCases/fresh-returned
+=== RUN   TestSelfHostRcCertifyCases/borrowed-param-released
+=== RUN   TestSelfHostRcCertifyCases/counted-param-returned
+=== RUN   TestSelfHostRcCertifyCases/counted-param-kept
+=== RUN   TestSelfHostRcCertifyCases/retained-into-box
+=== RUN   TestSelfHostRcCertifyCases/stored-without-retain
+=== RUN   TestSelfHostRcCertifyCases/address-into-a-borrow-stored
+=== RUN   TestSelfHostRcCertifyCases/address-into-a-released-box-stored
+=== RUN   TestSelfHostRcCertifyCases/unique-child-released
+=== RUN   TestSelfHostRcCertifyCases/shared-child-released
+=== RUN   TestSelfHostRcCertifyCases/shell-slot-read-twice
+=== RUN   TestSelfHostRcCertifyCases/shell-payload-kept
+=== RUN   TestSelfHostRcCertifyCases/shell-slot-read-through-a-reused-parent-phi
+=== RUN   TestSelfHostRcCertifyCases/reused-parent-phi-keeps-its-payload
+=== RUN   TestSelfHostRcCertifyCases/shell-slot-read-again-through-a-carrying-phi
+=== RUN   TestSelfHostRcCertifyCases/null-guarded-release
+=== RUN   TestSelfHostRcCertifyCases/take-from-a-dominating-load
+=== RUN   TestSelfHostRcCertifyCases/take-for-the-load-read-after
+=== RUN   TestSelfHostRcCertifyCases/released-on-one-arm
+=== RUN   TestSelfHostRcCertifyCases/retained-on-one-arm-released-on-another
+=== RUN   TestSelfHostRcCertifyCases/resumed-frame-not-certified
+=== RUN   TestSelfHostRcCertifyCases/pair-word-released-on-each-payload-tag
+=== RUN   TestSelfHostRcCertifyCases/pair-word-unreleased-on-a-payload-tag
+=== RUN   TestSelfHostRcCertifyCases/pair-lane-holds-no-unit
+=== RUN   TestSelfHostRcCertifyCases/token-retain-under-test-consumed-after-join
+=== RUN   TestSelfHostRcCertifyCases/token-retain-under-test-released-under-test
+=== RUN   TestSelfHostRcCertifyCases/derived-token-test-skips-the-shell
+=== RUN   TestSelfHostRcCertifyCases/reuse-through-a-carried-token-writes-the-slot
+=== RUN   TestSelfHostRcCertifyCases/token-reuse-writes-the-slot-read
+=== RUN   TestSelfHostRcCertifyCases/token-reuse-puts-back-and-stores-elsewhere
+=== RUN   TestSelfHostRcCertifyCases/token-reuse-puts-back-and-stores-elsewhere-unretained
+=== RUN   TestSelfHostRcCertifyCases/token-reuse-through-a-phi-an-outside-arm-nulls
+=== RUN   TestSelfHostRcCertifyCases/reuse-of-a-loop-box-through-its-token
+=== RUN   TestSelfHostRcCertifyCases/pair-word-settled-past-its-token-test
+=== RUN   TestSelfHostRcCertifyCases/loop-box-copied-under-its-null-token
+=== RUN   TestSelfHostRcCertifyCases/token-box-copied-before-its-test
+=== RUN   TestSelfHostRcCertifyCases/reuse-past-a-join-null-first
+=== RUN   TestSelfHostRcCertifyCases/null-tested-against-an-outside-null
+=== RUN   TestSelfHostRcCertifyCases/leak-in-a-loop-body
+=== RUN   TestSelfHostRcCertifyCases/exit-ends-the-path
+=== RUN   TestSelfHostRcCertifyCases/unit-held-into-an-exit
+=== RUN   TestSelfHostRcCertifyCases/borrow-released-before-an-exit
+=== RUN   TestSelfHostRcCertifyCases/leak-in-an-endless-loop
+--- PASS: TestSelfHostRcCertifyCases (3.02s)
+    --- PASS: TestSelfHostRcCertifyCases/scalar-lanes-call-primary-leaked (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/scalar-lanes-call-primary-released (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/mixed-lanes-primary-tag (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/scalar-lanes-return-owned-primary (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/scalar-lanes-leaked-primary (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/scalar-lanes-call-owned-primary (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/balanced (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/leak (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-leak (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-unused-terminator-field (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-counted-param (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-token (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-null-phi (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/sparse-loop-leak (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/double-release (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/fresh-returned (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/borrowed-param-released (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/counted-param-returned (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/counted-param-kept (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/retained-into-box (0.01s)
+    --- PASS: TestSelfHostRcCertifyCases/stored-without-retain (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/address-into-a-borrow-stored (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/address-into-a-released-box-stored (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/unique-child-released (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/shared-child-released (0.01s)
+    --- PASS: TestSelfHostRcCertifyCases/shell-slot-read-twice (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/shell-payload-kept (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/shell-slot-read-through-a-reused-parent-phi (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/reused-parent-phi-keeps-its-payload (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/shell-slot-read-again-through-a-carrying-phi (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/null-guarded-release (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/take-from-a-dominating-load (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/take-for-the-load-read-after (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/released-on-one-arm (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/retained-on-one-arm-released-on-another (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/resumed-frame-not-certified (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/pair-word-released-on-each-payload-tag (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/pair-word-unreleased-on-a-payload-tag (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/pair-lane-holds-no-unit (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-retain-under-test-consumed-after-join (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-retain-under-test-released-under-test (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/derived-token-test-skips-the-shell (0.01s)
+    --- PASS: TestSelfHostRcCertifyCases/reuse-through-a-carried-token-writes-the-slot (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-reuse-writes-the-slot-read (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-reuse-puts-back-and-stores-elsewhere (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-reuse-puts-back-and-stores-elsewhere-unretained (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-reuse-through-a-phi-an-outside-arm-nulls (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/reuse-of-a-loop-box-through-its-token (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/pair-word-settled-past-its-token-test (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/loop-box-copied-under-its-null-token (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/token-box-copied-before-its-test (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/reuse-past-a-join-null-first (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/null-tested-against-an-outside-null (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/leak-in-a-loop-body (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/exit-ends-the-path (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/unit-held-into-an-exit (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/borrow-released-before-an-exit (0.00s)
+    --- PASS: TestSelfHostRcCertifyCases/leak-in-an-endless-loop (0.00s)
+=== RUN   TestSelfHostSSALifetimeIRArm64
+=== RUN   TestSelfHostSSALifetimeIRArm64/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRArm64/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRArm64/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRArm64/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRArm64/wide
+=== RUN   TestSelfHostSSALifetimeIRArm64/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRArm64 (62.95s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/nested-projection (2.60s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/phi-edges (1.75s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/loop-anchor (2.13s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/rebound-value (1.80s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/wide (1.85s)
+    --- PASS: TestSelfHostSSALifetimeIRArm64/params-sparse (1.96s)
+=== RUN   TestSelfHostSSALifetimeIRX86_64
+=== RUN   TestSelfHostSSALifetimeIRX86_64/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRX86_64/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRX86_64/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRX86_64/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRX86_64/wide
+=== RUN   TestSelfHostSSALifetimeIRX86_64/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRX86_64 (20.16s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/nested-projection (8.74s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/phi-edges (2.27s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/loop-anchor (2.22s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/rebound-value (2.07s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/wide (1.85s)
+    --- PASS: TestSelfHostSSALifetimeIRX86_64/params-sparse (2.10s)
+=== RUN   TestSelfHostSSALifetimeIRWasm
+=== RUN   TestSelfHostSSALifetimeIRWasm/nested-projection
+=== RUN   TestSelfHostSSALifetimeIRWasm/phi-edges
+=== RUN   TestSelfHostSSALifetimeIRWasm/loop-anchor
+=== RUN   TestSelfHostSSALifetimeIRWasm/rebound-value
+=== RUN   TestSelfHostSSALifetimeIRWasm/wide
+=== RUN   TestSelfHostSSALifetimeIRWasm/params-sparse
+--- PASS: TestSelfHostSSALifetimeIRWasm (13.21s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/nested-projection (1.84s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/phi-edges (2.10s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/loop-anchor (2.44s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/rebound-value (2.34s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/wide (1.96s)
+    --- PASS: TestSelfHostSSALifetimeIRWasm/params-sparse (1.74s)
+=== RUN   TestSelfHostSSALifetimeDependencies
+=== RUN   TestSelfHostSSALifetimeDependencies/nested-projection
+=== RUN   TestSelfHostSSALifetimeDependencies/phi-edges
+=== RUN   TestSelfHostSSALifetimeDependencies/loop-anchor
+=== RUN   TestSelfHostSSALifetimeDependencies/rebound-value
+=== RUN   TestSelfHostSSALifetimeDependencies/wide
+=== RUN   TestSelfHostSSALifetimeDependencies/params-sparse
+--- PASS: TestSelfHostSSALifetimeDependencies (12.37s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/nested-projection (2.13s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/phi-edges (2.08s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/loop-anchor (2.07s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/rebound-value (2.09s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/wide (1.91s)
+    --- PASS: TestSelfHostSSALifetimeDependencies/params-sparse (2.10s)
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/dimensions
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/dependency-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/entry
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/predecessor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/terminator
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/negative-successor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/missing-successor
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/phi-arity
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/operand-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/result-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/return-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/condition-id
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/duplicate-block
+=== RUN   TestSelfHostSSALifetimeInvalidMetadata/negative-block
+--- PASS: TestSelfHostSSALifetimeInvalidMetadata (25.66s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/dimensions (1.70s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/dependency-id (1.65s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/entry (1.68s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/predecessor (1.84s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/terminator (1.70s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/negative-successor (2.11s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/missing-successor (1.70s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/phi-arity (2.01s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/operand-id (2.09s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/result-id (2.06s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/return-id (2.03s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/condition-id (1.61s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/duplicate-block (1.65s)
+    --- PASS: TestSelfHostSSALifetimeInvalidMetadata/negative-block (1.84s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	137.401s
