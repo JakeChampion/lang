@@ -43,13 +43,6 @@ function ts_op_overloads(op: string): boolean {
   return ast.operator_method(op) != "";
 }
 
-function ts_recv_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
-}
-
 function ts_qualified_root(tag: string, method: string): string {
   return ts_canonical_tag(tag) + "|" + method;
 }
@@ -145,7 +138,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
         return acc;
       }
       if (ts_op_overloads(b.op)) {
-        let bt = ts_recv_tag(b.left);
+        let bt = ast.receiver_tag(b.left);
         if (bt.len() > 0) {
           return acc.append(ts_qualified_root(bt, ts_op_root(m)));
         }
@@ -159,7 +152,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       if (u.op != "-") {
         return acc;
       }
-      let ut = ts_recv_tag(u.operand);
+      let ut = ast.receiver_tag(u.operand);
       if (ut.len() > 0) {
         return acc.append(ts_qualified_root(ut, ts_op_root("neg")));
       }
@@ -221,7 +214,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 // receiver of unknown type, `ts_call_root` also reaches free functions of
 // that name.
 function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]): string[] {
-  let tag = ts_recv_tag(fa.obj);
+  let tag = ast.receiver_tag(fa.obj);
   let ft = util.base_type_name(tag);
   let m = ts_arity_root(fa.field, arity);
   if (ts_named_tag(ft) && !tag.ends_with("[]")) {
@@ -494,7 +487,7 @@ function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
       return lt.types[k];
     }
   }
-  return ts_recv_tag(e);
+  return ast.receiver_tag(e);
 }
 
 function builtin_len(tag: string, field: string): boolean {

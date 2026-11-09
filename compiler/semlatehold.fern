@@ -209,7 +209,7 @@ function applied(f: ssasem.Func, gr: Graph, cands: Cand[]): ssasem.Func {
   }
   let renamed = renamed_blocks(f.graph, gr, cands, blocks, fresh);
   let graph = ssa.SFunc { ...f.graph, blocks: renamed, nvals: values.len() };
-  return ssasem.Func { ...f, values: values, graph: graph, source_positions: padded(f.source_positions, values.len()) };
+  return ssasem.Func { ...f, values: values, graph: graph, source_positions: sourcepos.pad_values(f.source_positions, values.len()) };
 }
 
 // inserted puts pre before insts[at]. A block holds at most one candidate.
@@ -353,15 +353,4 @@ function no_chains(n: i32): i32[][] {
     out = out.append([]);
   }
   return out;
-}
-
-function padded(source: sourcepos.SourceInfo, n: i32): sourcepos.SourceInfo {
-  if (source.entry.line == 0) {
-    return source;
-  }
-  let values = source.values;
-  while (values.len() < n) {
-    values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
-  }
-  return sourcepos.SourceInfo { ...source, values: values };
 }

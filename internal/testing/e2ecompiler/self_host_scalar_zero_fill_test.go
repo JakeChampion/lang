@@ -45,6 +45,11 @@ const scalarZeroFillProgram = `
   for _ in 0..n { out = out.append(false); }
   return out;
 }
+@noinline function zero_each(xs: i32[]): i32[] {
+  let out: i32[] = [];
+  for _ in xs { out = out.append(0); }
+  return out;
+}
 @noinline function negative_zero(n: i32): f32[] {
   let out: f32[] = [];
   for _ in 0..n { out = out.append(-0.0f32); }
@@ -130,6 +135,9 @@ function main(): i32 {
   if (stopped.len() != 3 || changed.len() != 3 || __heap_bump_bytes() - storage > 65536i64) { return 10; }
   let calls = cell_new(0);
   if (effects(32, calls).len() != 32 || calls.get() != 32) { return 11; }
+  let each = zero_each([1, 2, 3, 4, 5]);
+  if (each.len() != 5 || zero_each([]).len() != 0) { return 12; }
+  for x in each { if (x != 0) { return 13; } }
   print("scalar zero fill controls passed");
   return 0;
 }

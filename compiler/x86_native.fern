@@ -1744,18 +1744,6 @@ struct GasMem {
   no_base: boolean,
 }
 
-function x86_gas_trim(s: string): string {
-  let a = 0;
-  let b = s.len();
-  while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
-    a += 1;
-  }
-  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
-    b -= 1;
-  }
-  return slice_unchecked(s, a, b) + "";
-}
-
 function x86_gas_trimmed(s: str): str {
   let a = 0;
   let b = s.len();
@@ -3181,11 +3169,11 @@ function x86_gas_split_ops(rest: string): string[] {
   let s = rest;
   let c = x86_gas_top_comma(s);
   while (c >= 0) {
-    out = out.append(x86_gas_trim(slice_unchecked(s, 0, c)));
+    out = out.append(slice_unchecked(s, 0, c).trim());
     s = slice_unchecked(s, c + 1, s.len()) + "";
     c = x86_gas_top_comma(s);
   }
-  return out.append(x86_gas_trim(s));
+  return out.append(s.trim());
 }
 
 // BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.
@@ -5350,7 +5338,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     let lr = "";
     if (lsp >= 0) {
       lm = slice_unchecked(rest, 0, lsp) + "";
-      lr = x86_gas_trim(slice_unchecked(rest, lsp + 1, rest.len()));
+      lr = slice_unchecked(rest, lsp + 1, rest.len()).trim();
     }
     let lb = lm;
     if (x86_gas_suffix_size(lm) > 0) {
@@ -5369,7 +5357,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_BRANCH) {
     let ext = l.ext;
     if (rest.len() > 0 && rest[0] == b'*') {
-      let ind = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
+      let ind = slice_unchecked(rest, 1, rest.len()).trim();
       if (x86_gas_has_paren(ind)) {
         let cm = x86_gas_parse_mem(ind);
         if (!x86_gas_mem_ok(cm)) {
@@ -5702,7 +5690,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     return x86_gas_bad(a, line);
   }
   let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
-  let n = x86_gas_atoi(x86_gas_trim(parts[0]));
+  let n = x86_gas_atoi(parts[0].trim());
   let align = n;
   if (line.starts_with(".p2align")) {
     if (n > 30) {
@@ -5736,7 +5724,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   }
   let max: i32 = -1;
   if (parts.len() >= 3) {
-    let ms = x86_gas_trim(parts[2]);
+    let ms = parts[2].trim();
     if (ms.len() > 0) {
       max = x86_gas_atoi(ms);
     }
@@ -6406,7 +6394,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
         ref_idx = x86_gas_label_lookup(labs, l.rest);
       }
     } else if (l.kind == GK_NONE && l.body.starts_with(".quad")) {
-      let qop = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
+      let qop = slice_unchecked(l.body, 6, l.body.len()).trim();
       if (x86_gas_is_symbol(qop)) {
         ref_idx = x86_gas_label_lookup(labs, qop);
       }
@@ -6712,8 +6700,8 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
   }
-  let src = x86_gas_trim(slice_unchecked(rest, 0, ci));
-  let dst = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  let src = slice_unchecked(rest, 0, ci).trim();
+  let dst = slice_unchecked(rest, ci + 1, rest.len()).trim();
   l = GasLine { ...l, src: src, dst: dst };
   if (v.b_kind != GK_NONE) {
     return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
@@ -6827,7 +6815,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         let before = slice_unchecked(line, 0, colon);
         if (util.index_of_sub(before, " ") < 0 && util.index_of_sub(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
           label = before + "";
-          line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
+          line = slice_unchecked(line, colon + 1, line.len()).trim();
         }
       }
     }
@@ -6841,7 +6829,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       let sp = util.index_of_sub(line, " ");
       if (sp >= 0) {
         mnem = slice_unchecked(line, 0, sp) + "";
-        rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
+        rest = slice_unchecked(line, sp + 1, line.len()).trim();
       }
     }
     let gl = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: -1, sfx: 0, src: "", dst: "", def_idx: -1, ref_idx: -1 };
@@ -6887,15 +6875,15 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   let bci = 0;
   while (bci < brest.len()) {
     if (brest[bci] == b',') {
-      rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+      rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
       btok = "";
     } else {
       btok += slice_unchecked(brest, bci, bci + 1);
     }
     bci += 1;
   }
-  if (x86_gas_trim(btok).len() > 0) {
-    rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+  if (btok.trim().len() > 0) {
+    rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
   }
   return X86Asm { ...a, rodata: rodata };
 }
@@ -6937,7 +6925,7 @@ function x86_gas_values(line: string): string[] {
   while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
     start += 1;
   }
-  return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
+  return x86_gas_split_ops(slice_unchecked(line, start, line.len()).trim());
 }
 
 function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u8[]): X86Asm {
@@ -7053,18 +7041,18 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       } else if (line.starts_with(".long")) {
         a = x86_gas_longs(a, section, x86_gas_values(line));
       } else if (line.starts_with(".double")) {
-        a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, util.parse_f64_bits(x86_gas_trim(slice_unchecked(line, 8, line.len())))) };
+        a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, util.parse_f64_bits(slice_unchecked(line, 8, line.len()).trim())) };
       } else if (line.starts_with(".ascii")) {
         a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
       } else if (line.starts_with(".skip") || line.starts_with(".zero") || line.starts_with(".space")) {
-        let zn = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, util.index_of_sub(line, " "), line.len())));
+        let zn = x86_gas_atoi(slice_unchecked(line, util.index_of_sub(line, " "), line.len()).trim());
         if (section == 2) {
           a = x86_bss_skip(a, zn);
         } else if (gas.data_like(section)) {
           a = x86_rodata_zero(a, zn);
         }
       } else if (line.starts_with(".byte")) {
-        a = x86_rodata_bytes(a, x86_gas_trim(slice_unchecked(line, 5, line.len())));
+        a = x86_rodata_bytes(a, slice_unchecked(line, 5, line.len()).trim());
       } else if (line.starts_with(".align") || line.starts_with(".balign") || line.starts_with(".p2align")) {
         let np = a.pads.len();
         a = x86_gas_align(a, section, line);

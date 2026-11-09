@@ -571,11 +571,19 @@ pub function fold_target_name(mod: parser.Module, env: string, arch: string): pa
     return mod;
   }
   let acc = TargetAcc { env: env, arch: arch };
+  let named = util.name_index([TARGET_OS_BUILTIN, TARGET_ARCH_BUILTIN]);
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
+    if (!astwalk.names_any(fd.body, named)) {
+      funcs = funcs.append(fd);
+      continue;
+    }
     let (body, a2) = astwalk.map_stmts_where(fd.body, acc, to_keep_stmt, to_expr, to_applies);
     acc = a2;
     funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+  }
+  if (!astwalk.names_any(mod.top_stmts, named)) {
+    return parser.Module { ...mod, funcs: funcs };
   }
   let (tops, a3) = astwalk.map_stmts_where(mod.top_stmts, acc, to_keep_stmt, to_expr, to_applies);
   return parser.Module { ...mod, funcs: funcs, top_stmts: tops };

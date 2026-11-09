@@ -187,15 +187,8 @@ function method_edge_call(e: ast.Expr, own edge: MethodEdge): MethodEdge {
   if let ast.ExprArray(_) = fa.obj {
     return edge;
   }
-  let tag = canonical_tag(util.base_type_name(receiver_tag(fa.obj)));
+  let tag = canonical_tag(util.base_type_name(ast.receiver_tag(fa.obj)));
   return MethodEdge { ...edge, hit: tag.len() == 0 || tag == edge.receiver };
-}
-
-function receiver_tag(e: ast.Expr): string {
-  if let ast.ExprStructLit(lit) = e {
-    return lit.type_name;
-  }
-  return ast.expr_ty(e);
 }
 
 function canonical_tag(tag: string): string {

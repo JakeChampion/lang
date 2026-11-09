@@ -50,13 +50,6 @@ function elem_width(t: typeinfo.Type): i32 {
   return 32;
 }
 
-function elem_type(t: typeinfo.Type): typeinfo.Type {
-  if let typeinfo.TypeArray(a) = t {
-    return a.elem;
-  }
-  return typeinfo.unchecked();
-}
-
 function byte_view(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return a.view && ssasem.is_u8(a.elem);
@@ -74,7 +67,7 @@ function array_view(t: typeinfo.Type): boolean {
 // A view's elements belong to its source, but an untagged view is a box it
 // may hold the last count of.
 function counted_elems_view(t: typeinfo.Type): boolean {
-  return array_view(t) && ssasem.reference(elem_type(t));
+  return array_view(t) && ssasem.reference(typeinfo.array_elem(t));
 }
 
 function frame_view_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
@@ -1703,7 +1696,7 @@ function view_release(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fu
   r = emit(r, ir.op_call_direct("__fern_str_view_free", 1));
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_else());
-  r = drop_value_inline(r, 0, typeinfo.TypeArray { elem: elem_type(t), view: false }, 1, f);
+  r = drop_value_inline(r, 0, typeinfo.TypeArray { elem: typeinfo.array_elem(t), view: false }, 1, f);
   return emit(r, ir.op_end());
 }
 
@@ -3184,7 +3177,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return emit(r, ir.op_array_literal_copy(8));
   }
   if (ins.kind_tag == ssasem.array_reserve()) {
-    return emit(r, ir.op_arr_reserve(elem_width(elem_type(f.values[ins.result]))));
+    return emit(r, ir.op_arr_reserve(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   }
   if (ins.kind_tag == ssasem.array_zero()) {
     return emit(r, ir.op_alloc_slots(elem_width(elem_type(f.values[ins.result]))));
@@ -3193,7 +3186,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return variant(r, f, ins, structs);
   }
   if (ins.kind_tag == ssasem.array_new()) {
-    return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len()));
+    return emit(r, arr_make_op(typeinfo.array_elem(f.values[ins.result]), ins.args.len()));
   }
   if (ins.kind_tag == ssasem.tuple_new()) {
     return emit(r, ir.op_tuple_make_k(ins.args.len(), tuple_kinds(f.values[ins.result])));
@@ -3217,7 +3210,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return emit(r, ir.op_str_slice());
   }
   if (ins.kind_tag == ssasem.arr_slice()) {
-    return emit(r, ir.op_call_direct(ssabytes.slice_name(elem_width(elem_type(f.values[ins.result]))), 3));
+    return emit(r, ir.op_call_direct(ssabytes.slice_name(elem_width(typeinfo.array_elem(f.values[ins.result]))), 3));
   }
   if (ins.kind_tag == ssasem.str_byte_view()) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
@@ -3808,7 +3801,7 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
     return "&bytes";
   }
   if (ins.kind_tag == ssasem.array_new()) {
-    return array_shape(elem_type(f.values[ins.result]));
+    return array_shape(typeinfo.array_elem(f.values[ins.result]));
   }
   if (ins.kind_tag == ssasem.record_new()) {
     return record_name(f.values[ins.result]);
@@ -3967,7 +3960,7 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) {
     r = emit(r, ir.op_str_slice_frame(0));
   } else if (frame_view_slice(f, p, ins)) {
-    for op in ssabytes.slice_frame(ins.args[0], ins.args[1], ins.args[2], elem_width(elem_type(f.values[ins.result]))) {
+    for op in ssabytes.slice_frame(ins.args[0], ins.args[1], ins.args[2], elem_width(typeinfo.array_elem(f.values[ins.result]))) {
       r = emit(r, op);
     }
   } else if (p.constants[ins.result] != "") {
@@ -4054,7 +4047,7 @@ function join_call(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerSt
 // read where it points.
 function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerState {
   let b = ins.args[1];
-  r = emit(r, ir.op_const_i32(elem_width(elem_type(f.values[ins.result]))));
+  r = emit(r, ir.op_const_i32(elem_width(typeinfo.array_elem(f.values[ins.result]))));
   r = emit(r, ir.op_load_local(b));
   if (array_view(f.values[b])) {
     r = emit(r, ssabytes.read(b, false, false));
@@ -4181,14 +4174,14 @@ function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, 
   r = emit(r, ir.op_store_local(scratch));
   r = emit(r, ir.op_else());
   r = release(r, base, f.values[base], f);
-  r = copied_base(r, elem_type(f.values[base]), base, scratch, keep);
+  r = copied_base(r, typeinfo.array_elem(f.values[base]), base, scratch, keep);
   return emit(r, ir.op_end());
 }
 
 // A unique base releases its tail and keeps its storage. A base its caller still shares is copied up to the kept length, or is the empty constant when that length is zero.
 function truncate_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerState {
   let scratch_start = r.scratch_start;
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   let out = scratch_start;
   let keep = out + 2;
   r = reserve(r, keep + 1);
@@ -4273,7 +4266,7 @@ function append_push(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   if (defer0) {
     return append_borrowed(r, f, ins, link.out);
   }
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   if (p.unique_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_load_local(ins.args[1]));
@@ -4315,7 +4308,7 @@ function array_unique(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   if (ssasem.is_u8(elem)) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_call_direct("__fern_bytes_owned", 1));
@@ -4337,7 +4330,7 @@ function append_borrowed(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
 }
 
 function borrowed_push(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerState {
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, arr_push_borrowed_op(elem));
@@ -4368,7 +4361,7 @@ struct Link { root: i32, out: boolean }
 
 function append_linked(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerState {
   let scratch_start = r.scratch_start;
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   let scratch = scratch_start;
   r = reserve(r, scratch + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -4457,7 +4450,7 @@ function take_owed(own r: irtables.LowerState, v: i32, root: i32): irtables.Lowe
 
 function append_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerState {
   let scratch_start = r.scratch_start;
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   let root = p.grows[ins.result];
   let unique = scratch_start;
   let res = unique + 1;
@@ -4557,7 +4550,7 @@ function borrowed_with_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa
     r = helper(r, scratch, "__fern_rc_inc");
   }
   r = emit(r, ir.op_else());
-  r = copied_base(r, elem_type(f.values[ins.args[0]]), ins.args[0], scratch, keep);
+  r = copied_base(r, typeinfo.array_elem(f.values[ins.args[0]]), ins.args[0], scratch, keep);
   return emit(r, ir.op_end());
 }
 
@@ -4592,7 +4585,7 @@ function copied_base(own r: irtables.LowerState, elem: typeinfo.Type, base: i32,
 }
 
 function with_write(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, scratch: i32): irtables.LowerState {
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   if (ssasem.reference(elem)) {
     r = drop_replaced(r, f, ins, scratch, elem);
   }
@@ -4627,7 +4620,7 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
   r = emit(r, ir.op_else());
-  r = copied_base(r, elem_type(f.values[ins.args[0]]), ins.args[0], res, keep);
+  r = copied_base(r, typeinfo.array_elem(f.values[ins.args[0]]), ins.args[0], res, keep);
   return emit(r, ir.op_end());
 }
 
@@ -4895,7 +4888,7 @@ function map_in_place(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   if (ins.str == "__scale_f64") {
     return scale_in_place(r, f, ins);
   }
-  let elem = elem_type(f.values[ins.args[0]]);
+  let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   let fn = ins.args[1];
   let buf = scratch_start;
   let index = buf + 1;

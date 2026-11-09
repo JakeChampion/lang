@@ -17,6 +17,11 @@ const countedAppendProgram = `
   for i in 0..n { out = out.append(scaled(i)); }
   return out;
 }
+@noinline function copied(xs: i32[]): i32[] {
+  let out: i32[] = [];
+  for x in xs { out = out.append(x + 1); }
+  return out;
+}
 @noinline function wide(n: i32): i64[] {
   let out: i64[] = [];
   for i in 0..n { out = out.append((i as i64) * 10000000000i64); }
@@ -98,6 +103,10 @@ function main(): i32 {
   print(allocations);
   if (out.len() != 96000) { return 1; }
   for i in 0..out.len() { if (out[i] != i * 3 - 11) { return 2; } }
+  let copy_before = __heap_alloc_count();
+  let copy = copied(out);
+  print(__heap_alloc_count() - copy_before);
+  if (copy.len() != 96000 || copy[0] != -10 || copy[95999] != out[95999] + 1) { return 15; }
   let empty_before = __heap_alloc_count();
   if (build_i32(0).len() != 0 || build_i32(-7).len() != 0) { return 3; }
   if (__heap_alloc_count() != empty_before) { return 4; }
@@ -137,9 +146,11 @@ func TestSelfHostCountedAppendReserve(t *testing.T) {
 						t.Fatalf("counted append: %v\n%s", err, out)
 					}
 					lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-					count, err := strconv.Atoi(lines[0])
-					if err != nil || disabled == "0" && count != 1 || disabled == "1" && count < 10 {
-						t.Errorf("construction allocations %q with disabled=%s", lines[0], disabled)
+					for _, line := range lines[:2] {
+						count, err := strconv.Atoi(line)
+						if err != nil || disabled == "0" && count != 1 || disabled == "1" && count < 10 {
+							t.Errorf("construction allocations %q with disabled=%s", line, disabled)
+						}
 					}
 					if !strings.Contains(string(out), "counted append controls passed") {
 						t.Errorf("missing completed controls: %s", out)
@@ -163,7 +174,7 @@ func TestSelfHostCountedAppendReserveReport(t *testing.T) {
 		t.Fatalf("report: %v\n%s", err, out)
 	}
 	text := string(out)
-	for _, want := range []string{"counted append capacity decisions:", "build_i32: counted append capacity", "reason=reserved storage=reserved", "reason=array-observed", "reason=effect-boundary", "reason=shape-unsupported", "reason=non-scalar"} {
+	for _, want := range []string{"counted append capacity decisions:", "build_i32: counted append capacity", "copied: counted append capacity", "reason=reserved storage=reserved", "reason=array-observed", "reason=effect-boundary", "reason=shape-unsupported", "reason=non-scalar"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lacks %q:\n%s", want, text)
 		}

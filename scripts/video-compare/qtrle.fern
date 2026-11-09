@@ -1,0 +1,56 @@
+// Time the public QTRLE decoder without allocation instrumentation.
+import "./corpus";
+import "std/video/frame";
+import "std/video/qtrle";
+import "std/i32";
+
+function measure(c: corpus.Corpus, own pixels: u32[], frames: i32): i32 {
+  let Ok(ready) = corpus.warmup(c, pixels) else {
+    return 6;
+  };
+  pixels = ready;
+  let limits = frame.default_limits();
+  let checksum = 0u64;
+  let start = monotonic_ns();
+  for i in 0..frames {
+    let p = c.packets[i % c.packets.len()];
+    let Ok(value) = qtrle.decode_into(c.bytes[p.at:p.at + p.bytes], c.format, c.depth, pixels, limits) else {
+      return 7;
+    };
+    pixels = value.pixels;
+    checksum += pixels[i % pixels.len()] as u64;
+  }
+  let elapsed = monotonic_ns() - start;
+  print("{\"frames\":" + frames.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"elapsed_ns\":" + elapsed.to_string() + ",\"allocations\":null}");
+  return 0;
+}
+
+function main(): i32 {
+  let a = args();
+  if (a.len() < 3) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(a[2]) else {
+    eprint("cannot read corpus");
+    return 2;
+  };
+  let c = match (corpus.load(bytes)) { Ok(value) => value, Err(error) => { eprint("invalid corpus: " + error.message()); return 3; } };
+  let Ok(initial) = frame.create(c.format, frame.default_limits()) else {
+    eprint("cannot allocate frame");
+    return 3;
+  };
+  let pixels = initial.pixels;
+  if (a[1] == "verify" && a.len() == 3) {
+    return corpus.verify(c, pixels);
+  }
+  if (a[1] == "measure" && a.len() == 4) {
+    let Ok(frames) = i32.parse_i32(a[3]) else {
+      return 1;
+    };
+    if (frames <= 0 || frames > 1000000) {
+      return 1;
+    }
+    return measure(c, pixels, frames);
+  }
+  return 1;
+}
