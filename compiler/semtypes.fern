@@ -196,7 +196,56 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
 }
 
 pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
-  return concrete_numeric(t) || concrete_leaf(t, allow_void) || concrete_container(t) || concrete_named(t);
+  match (t) {
+    typeinfo.TypeI32(i) => {
+      return concrete_integer(i);
+    },
+    typeinfo.TypeFloat(f) => {
+      return !f.polymorphic && (f.width == 32 || f.width == 64);
+    },
+    typeinfo.TypeLanes(l) => {
+      return l.width == 32 || l.width == 64;
+    },
+    typeinfo.TypeBool(_) => {
+      return true;
+    },
+    typeinfo.TypeString(st) => {
+      return st.tag == 0 || st.tag == 1;
+    },
+    typeinfo.TypeDyn(d) => {
+      return d.traits.len() > 0;
+    },
+    typeinfo.TypeHandle(h) => {
+      return h.resource.len() > 0;
+    },
+    typeinfo.TypeVoid(_) => {
+      return allow_void;
+    },
+    typeinfo.TypeConst(c) => {
+      return c.value.len() > 0;
+    },
+    typeinfo.TypeArray(a) => {
+      return is_never(a.elem) || concrete(a.elem, false);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return tup.elements.len() >= 2 && concrete_payloads(tup.elements);
+    },
+    typeinfo.TypeMap(m) => {
+      return (is_never(m.key) || concrete(m.key, false)) && (is_never(m.value) || concrete(m.value, false));
+    },
+    typeinfo.TypeStruct(st) => {
+      return concrete_struct(st);
+    },
+    typeinfo.TypeUnion(u) => {
+      return concrete_union(u);
+    },
+    typeinfo.TypeFunc(f) => {
+      return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true);
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 // concrete_scalar is true for a concrete i32, float or bool type.
@@ -224,54 +273,6 @@ function concrete_integer(i: typeinfo.TypeI32): boolean {
     return i.width == 32 && !i.unsigned;
   }
   return i.width == 32 || i.width == 64 || i.width == 8 && i.unsigned || i.width == typeinfo.width_ptr() && i.unsigned;
-}
-
-function concrete_numeric(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(i) = t {
-    return concrete_integer(i);
-  }
-  if let typeinfo.TypeFloat(f) = t {
-    return !f.polymorphic && (f.width == 32 || f.width == 64);
-  }
-  if let typeinfo.TypeLanes(l) = t {
-    return l.width == 32 || l.width == 64;
-  }
-  return false;
-}
-
-function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
-  if let typeinfo.TypeBool(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeString(s) = t {
-    return s.tag == 0 || s.tag == 1;
-  }
-  if let typeinfo.TypeDyn(d) = t {
-    return d.traits.len() > 0;
-  }
-  if let typeinfo.TypeHandle(h) = t {
-    return h.resource.len() > 0;
-  }
-  if let typeinfo.TypeVoid(_) = t {
-    return allow_void;
-  }
-  if let typeinfo.TypeConst(c) = t {
-    return c.value.len() > 0;
-  }
-  return false;
-}
-
-function concrete_container(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return is_never(a.elem) || concrete(a.elem, false);
-  }
-  if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len() >= 2 && concrete_payloads(tup.elements);
-  }
-  if let typeinfo.TypeMap(m) = t {
-    return (is_never(m.key) || concrete(m.key, false)) && (is_never(m.value) || concrete(m.value, false));
-  }
-  return false;
 }
 
 pub function env_prefix(): string {
@@ -359,19 +360,6 @@ function concrete_struct(s: typeinfo.TypeStruct): boolean {
     return s.args.len() == 1 && concrete(s.args[0], false);
   }
   return s.name.len() > 0 && concrete_list(s.args);
-}
-
-function concrete_named(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(s) = t {
-    return concrete_struct(s);
-  }
-  if let typeinfo.TypeUnion(u) = t {
-    return concrete_union(u);
-  }
-  if let typeinfo.TypeFunc(f) = t {
-    return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true);
-  }
-  return false;
 }
 
 function concrete_union(u: typeinfo.TypeUnion): boolean {

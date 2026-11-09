@@ -680,34 +680,35 @@ pub function is_integer(t: typeinfo.Type): boolean {
 }
 
 pub function reference(t: typeinfo.Type): boolean {
-  if (semtypes.is_handle(t)) {
-    return false;
+  match (t) {
+    typeinfo.TypeStruct(st) => {
+      return !semtypes.is_fd_handle_name(st.name);
+    },
+    typeinfo.TypeString(_) => {
+      return true;
+    },
+    typeinfo.TypeArray(_) => {
+      return true;
+    },
+    typeinfo.TypeTuple(_) => {
+      return true;
+    },
+    typeinfo.TypeUnion(_) => {
+      return true;
+    },
+    typeinfo.TypeFunc(_) => {
+      return true;
+    },
+    typeinfo.TypeMap(_) => {
+      return true;
+    },
+    typeinfo.TypeDyn(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
   }
-  if let typeinfo.TypeString(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeArray(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeTuple(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeFunc(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeMap(_) = t {
-    return true;
-  }
-  if let typeinfo.TypeDyn(_) = t {
-    return true;
-  }
-  return false;
 }
 
 pub function text_constant(t: typeinfo.Type): boolean {
