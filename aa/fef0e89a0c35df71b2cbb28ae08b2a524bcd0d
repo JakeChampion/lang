@@ -32,3 +32,8 @@ httplint/fresh.warn	0
 h2spec/passed	146
 h2spec/failed	0
 h2spec/skipped	0
+
+# lane: net-h3spec
+h3spec/passed	86
+h3spec/failed	0
+h3spec/pending	0
