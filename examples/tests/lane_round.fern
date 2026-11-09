@@ -1,0 +1,115 @@
+import "std/f64";
+import "std/i32";
+import "std/i64";
+
+// The reference uses truncation and an exact residual, without a rounding bias.
+function reference(x: f64): f64 {
+  let t = x.trunc();
+  if ((x - t).abs() >= 0.5) {
+    return t + (if (x < 0.0) { -1.0 } else { 1.0 });
+  }
+  return t;
+}
+
+function check64_lane(x: f64, bits: i64): void {
+  let actual = f64_from_bits(bits);
+  if (x.is_nan()) {
+    if (!actual.is_nan()) {
+      eprint("SIMD round must retain NaN");
+      exit(1);
+    }
+    return;
+  }
+  let want = reference(x);
+  // Zero signs and NaN payloads remain non-portable under FLOAT-SEMANTICS.md.
+  if (want == 0.0 && actual == 0.0) {
+    return;
+  }
+  if (bits != f64_bits(want)) {
+    eprint("SIMD f64 round differs at input bits " + f64_bits(x).to_string());
+    exit(1);
+  }
+}
+
+@noinline
+function check64(a: f64, b: f64): void {
+  let result = __f64x2_round(__f64x2_of(a, b));
+  check64_lane(a, __f64x2_lane_bits(result, 0) as i64);
+  check64_lane(b, __f64x2_lane_bits(result, 1) as i64);
+}
+
+function check32_lane(x: f32, bits: i32): void {
+  let actual = f32_from_bits(bits) as f64;
+  if ((x as f64).is_nan()) {
+    if (!actual.is_nan()) {
+      eprint("SIMD round must retain NaN");
+      exit(1);
+    }
+    return;
+  }
+  let want = reference(x as f64) as f32;
+  if (want == 0.0 as f32 && actual == 0.0) {
+    return;
+  }
+  if (bits != f32_bits(want)) {
+    eprint("SIMD f32 round differs at input bits " + f32_bits(x).to_string());
+    exit(1);
+  }
+}
+
+@noinline
+function check32(a: f32, b: f32, c: f32, d: f32): void {
+  let result = __f32x4_round(__f32x4_of(a, b, c, d));
+  check32_lane(a, __f32x4_lane_bits(result, 0) as i32);
+  check32_lane(b, __f32x4_lane_bits(result, 1) as i32);
+  check32_lane(c, __f32x4_lane_bits(result, 2) as i32);
+  check32_lane(d, __f32x4_lane_bits(result, 3) as i32);
+}
+
+function main(): i32 {
+  check64(0.0, f64_from_bits(-9223372036854775808i64));
+  check64(-0.25, -0.125);
+  check64(f64_from_bits(1i64), f64_from_bits(-9223372036854775807i64));
+  check64(f64_from_bits(4841369599423283201i64), -f64_from_bits(4841369599423283201i64));
+  check64(f64_from_bits(9218868437227405311i64), -f64_from_bits(9218868437227405311i64));
+  check64(f64_from_bits(9218868437227405312i64), -f64_from_bits(9218868437227405312i64));
+  check64(f64_from_bits(9218868437227405313i64), f64_from_bits(-4503599627370495i64));
+  check32(0.0 as f32, f32_from_bits(-2147483648), f32_from_bits(1), f32_from_bits(-2147483647));
+  check32(f32_from_bits(1258291201), -f32_from_bits(1258291201), f32_from_bits(2139095039), -f32_from_bits(2139095039));
+  check32(f32_from_bits(2139095040), f32_from_bits(-8388608), f32_from_bits(2139095041), f32_from_bits(-8388607));
+  for n in 0..1024 {
+    let h = n as f64 + 0.5;
+    let bits = f64_bits(h);
+    check64(f64_from_bits(bits - 1i64), h);
+    check64(f64_from_bits(bits + 1i64), -h);
+    check64(-f64_from_bits(bits - 1i64), -f64_from_bits(bits + 1i64));
+    let hf = h as f32;
+    let bf = f32_bits(hf);
+    check32(f32_from_bits(bf - 1), hf, f32_from_bits(bf + 1), -hf);
+    check32(-f32_from_bits(bf - 1), -f32_from_bits(bf + 1), hf, -hf);
+  }
+  for exponent in 1..2047 {
+    let bits = exponent as i64 << 52i64;
+    check64(f64_from_bits(bits - 1i64), f64_from_bits(bits));
+    check64(f64_from_bits(bits + 1i64), -f64_from_bits(bits));
+    check64(-f64_from_bits(bits - 1i64), -f64_from_bits(bits + 1i64));
+  }
+  for exponent in 1..255 {
+    let bits = exponent << 23;
+    check32(f32_from_bits(bits - 1), f32_from_bits(bits), f32_from_bits(bits + 1), -f32_from_bits(bits));
+  }
+  let seed = 1234567u64;
+  for i in 0..8192 {
+    seed ^= seed << 13u64;
+    seed ^= seed >> 7u64;
+    seed ^= seed << 17u64;
+    let a = seed;
+    seed ^= seed << 13u64;
+    seed ^= seed >> 7u64;
+    seed ^= seed << 17u64;
+    let b = seed;
+    check64(f64_from_bits(a as i64), f64_from_bits(b as i64));
+    check32(f32_from_bits(a as i32), f32_from_bits((a >> 32u64) as i32), f32_from_bits(b as i32), f32_from_bits((b >> 32u64) as i32));
+  }
+  return 0;
+}

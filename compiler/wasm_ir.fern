@@ -4421,7 +4421,6 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   }
   let sh = wasm_lane_shape(o.width);
   let vtmp = util.i32_to_string(cx.base + 5);
-  let vtmp2 = util.i32_to_string(cx.base + 6);
   if (k == "vload_f32") {
     return "    i64.load\n    i64x2.splat\n    f64x2.promote_low_f32x4\n";
   }
@@ -4452,7 +4451,7 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     return "    local.set " + vtmp + "\n    " + sh + ".mul\n    local.get " + vtmp + "\n    " + sh + ".add\n";
   }
   if (k == "vround") {
-    return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
+    return emit_wasm_lane_round(o.width, sh, vtmp);
   }
   if (util.has_str(["vget", "vset"], k)) {
     return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned);
@@ -4502,13 +4501,15 @@ function wasm_lane_verb(k: string, sh: string): string {
   return sh + "." + v;
 }
 
-function emit_wasm_lane_round(width: i32, sh: string, vtmp: string, vtmp2: string): string {
+function emit_wasm_lane_round(width: i32, sh: string, vtmp: string): string {
   let x = "    local.get " + vtmp + "\n";
-  let r = "    local.get " + vtmp2 + "\n";
-  let out = "    local.set " + vtmp + "\n" + x + "    " + sh + ".trunc\n    local.set " + vtmp2 + "\n" + r;
-  out = out + x + wasm_lane_const(width, "-0.0") + "    v128.and\n" + wasm_lane_const(width, "1.0") + "    v128.or\n";
-  out = out + x + r + "    " + sh + ".sub\n    " + sh + ".abs\n" + wasm_lane_const(width, "0.5") + "    " + sh + ".ge\n";
-  return out + "    v128.and\n    " + sh + ".add\n";
+  let half = "    i64.const 4602678819172646911\n    i64x2.splat\n";
+  if (width == 32) {
+    half = "    i64.const 4539628421151457279\n    i64x2.splat\n";
+  }
+  let out = "    local.set " + vtmp + "\n" + x + "    " + sh + ".abs\n" + half;
+  out = out + "    " + sh + ".add\n    " + sh + ".floor\n";
+  return out + x + wasm_lane_const(width, "-0.0") + "    v128.and\n    v128.or\n";
 }
 
 function wat_integer_text(text: string): string {
