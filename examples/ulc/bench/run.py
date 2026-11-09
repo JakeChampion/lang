@@ -67,6 +67,8 @@ def samples(path, output_format="FLOAT32"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fern", type=Path, required=True)
+    parser.add_argument("--baseline-fern", type=Path, help="compare exact decode output with an earlier Fern binary")
+    parser.add_argument("--baseline-source-commit", help="source revision of the earlier Fern binary")
     parser.add_argument("--reference", type=Path, required=True, help="C release directory")
     parser.add_argument("--compiler", type=Path, help="Fern compiler used for the executable")
     parser.add_argument("--oracle", type=Path, help="reference64 decoder for independent float64 accuracy checks")
@@ -87,6 +89,8 @@ def main():
     parser.add_argument("--output-format", choices=("PCM8", "PCM16", "PCM24", "FLOAT32"), default="FLOAT32")
     parser.add_argument("--direction", choices=("encode", "decode", "both"), default="both")
     args = parser.parse_args()
+    if args.baseline_fern and args.direction != "decode":
+        parser.error("--baseline-fern requires --direction decode")
     if args.seconds <= 0 or args.repetitions < 3:
         parser.error("use positive seconds and at least three repetitions")
     if not 1 <= args.channels <= 255 or not 1 <= args.sample_rate <= 384000 or not 0 < args.quality <= 100:
@@ -124,6 +128,10 @@ def main():
         compiler = args.compiler.resolve()
         report["compiler_version"] = run([compiler, "-version"]).stdout.decode().strip()
         report["compiler_sha256"] = hashlib.sha256(compiler.read_bytes()).hexdigest()
+    baseline = args.baseline_fern.resolve() if args.baseline_fern else None
+    if baseline:
+        report["baseline_binary_sha256"] = hashlib.sha256(baseline.read_bytes()).hexdigest()
+        report["baseline_source_commit"] = args.baseline_source_commit
     oracle = args.oracle.resolve() if args.oracle else None
     if oracle:
         report["oracle_sha256"] = hashlib.sha256(oracle.read_bytes()).hexdigest()
@@ -160,10 +168,13 @@ def main():
                 if direction == "decode":
                     commands = {"C": [reference / "ulcdecodetool", encoded["C"], outputs["C"], f"-format:{args.output_format}"],
                                 "Fern": [fern, "decode", encoded["C"], outputs["Fern"], args.output_format]}
+                    if baseline:
+                        outputs["Baseline"] = root / "Baseline.wav"
+                        commands["Baseline"] = [baseline, "decode", encoded["C"], outputs["Baseline"], args.output_format]
                 elapsed = {name: [] for name in commands}
                 # Alternate process order to reduce cache and frequency bias.
                 for repetition in range(args.repetitions):
-                    for name in (("C", "Fern") if repetition % 2 == 0 else ("Fern", "C")):
+                    for name in (tuple(commands) if repetition % 2 == 0 else tuple(reversed(commands))):
                         before = time.perf_counter_ns()
                         run(commands[name])
                         elapsed[name].append((time.perf_counter_ns() - before) / 1e9)
@@ -172,6 +183,10 @@ def main():
                           "seconds": elapsed, "median_seconds": medians,
                           "fern_speed_ratio": medians["C"] / medians["Fern"],
                           "encoded_bytes": sizes}
+                if baseline:
+                    assert outputs["Baseline"].read_bytes() == outputs["Fern"].read_bytes(), "Fern output differs from baseline"
+                    result["final_wav_bytes_identical"] = True
+                    result["baseline_speed_ratio"] = medians["Baseline"] / medians["Fern"]
                 if average is not None:
                     result["average_complexity"] = average
                     result["complexity_source"] = "C VBR 75 analysis outside timing"
