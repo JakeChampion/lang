@@ -1098,7 +1098,7 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.ArrayLit, *ast.StringLit:
 		return true
 	case *ast.StructLit:
-		return init.Base == nil
+		return init.Base == nil || freshInit(info, init.Base)
 	case *ast.MatchExpr:
 		return freshMatchValue(info, init)
 	case *ast.IfExpr:

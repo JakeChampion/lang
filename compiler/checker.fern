@@ -19300,6 +19300,11 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base) {
+      return lu_fresh_value(fx, sl.base);
+    }
+  }
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
     return lu_scoped_fresh(fx, empty, e);
