@@ -210,6 +210,27 @@ function self_checks(): i32 {
     return 86;
   }
 
+  // A doc comment above an attribute belongs to the declaration below it,
+  // and a function on a private type is not public.
+  let src6: string = "// A pair.\n"
+    + "@derive(cmp.Eq)\n"
+    + "pub struct Pair { a: i32 }\n"
+    + "struct Hidden { b: i32 }\n"
+    + "pub function (h: Hidden) get(): i32 { return h.b; }\n";
+  let dm6 = ferndoc.docs_of(src6);
+  let pair_doc = "";
+  for d in dm6.decls {
+    if (d.name == "get") {
+      return 90;
+    }
+    if (d.name == "Pair") {
+      pair_doc = d.doc;
+    }
+  }
+  if (pair_doc != "A pair.") {
+    return 91;
+  }
+
   let page = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
   if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) {
     return 87;
