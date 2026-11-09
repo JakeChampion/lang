@@ -516,6 +516,20 @@ pub function index_of_i32(xs: i32[], n: i32): i32 {
   return -1;
 }
 
+pub function same_i32s(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
 pub function contains(haystack: string, needle: string): boolean {
   return index_of_sub(haystack, needle) >= 0;
 }

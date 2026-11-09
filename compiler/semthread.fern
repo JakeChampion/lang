@@ -126,10 +126,10 @@ function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm
   }
   let d = outcome(f, s, s.head[bi], no_facts(), t.cond);
   if (d == 1) {
-    return jump(t.t);
+    return ssa.t_br(t.t);
   }
   if (d == 0) {
-    return jump(t.f);
+    return ssa.t_br(t.f);
   }
   return t;
 }
@@ -155,13 +155,13 @@ function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
 
 function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
   if (t.kind_tag == ssa.TERM_BR) {
-    return jump(reached(f, g, s, s.head[bi], t.target));
+    return ssa.t_br(reached(f, g, s, s.head[bi], t.target));
   }
   if (t.kind_tag != ssa.TERM_BRIF) {
     return t;
   }
   if (t.t == t.f) {
-    return jump(reached(f, g, s, s.head[bi], t.t));
+    return ssa.t_br(reached(f, g, s, s.head[bi], t.t));
   }
   let ht = s.on_t[bi];
   let hf = s.on_f[bi];
@@ -172,7 +172,7 @@ function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm
   let nt = reached(f, g, s, ht, t.t);
   let nf = reached(f, g, s, hf, t.f);
   if (nt == nf) {
-    return jump(nt);
+    return ssa.t_br(nt);
   }
   return ssa.STerm { ...t, t: nt, f: nf };
 }
@@ -351,10 +351,6 @@ function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
     }
   }
   return Seen { ...s, facts: facts, head: head, on_t: on_t, on_f: on_f };
-}
-
-function jump(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function same_term(a: ssa.STerm, b: ssa.STerm): boolean {
@@ -628,7 +624,7 @@ function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
   let blocks = g.blocks.with(xi, ssa.SBlock { ...xb, insts: insts, preds: preds });
   for q in y.preds {
     let qi = at[q];
-    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: jump(xb.id) });
+    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: ssa.t_br(xb.id) });
   }
   blocks = blocks.with(yi, ssa.SBlock { ...y, insts: [], preds: [] });
   return ssa.SFunc { ...g, blocks: blocks };
@@ -1033,23 +1029,13 @@ function reads_under_arms(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): b
           }
         }
       }
-      let tv = term_read(b.term);
+      let tv = ssa.term_operand(b.term);
       if (tv >= 0 && tv < is_phi.len() && is_phi[tv] && here < 0) {
         return false;
       }
     }
   }
   return true;
-}
-
-function term_read(t: ssa.STerm): i32 {
-  if (t.kind_tag == ssa.TERM_RET) {
-    return t.value;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    return t.cond;
-  }
-  return -1;
 }
 
 function same_pick(defs: ssa.SInst[], a: i32, b: i32): boolean {
@@ -1146,7 +1132,7 @@ function arm_needs(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join, ti: i32):
           }
         }
       }
-      let tv = term_read(b.term);
+      let tv = ssa.term_operand(b.term);
       if (tv >= 0 && tv < is_phi.len() && is_phi[tv] && here) {
         out = out.with(tv, true);
       }
@@ -1175,7 +1161,7 @@ function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssase
     if (c.picks[i] == 1) {
       target = g.blocks[c.t].id;
     }
-    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: jump(target) });
+    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: ssa.t_br(target) });
   }
   let ei = at[g.entry];
   let moved = blocks[ei].insts;
@@ -1211,7 +1197,7 @@ function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssase
         insts = insts.append(ssa.SInst { ...ins, args: args });
       }
       let term = b.term;
-      let tv = term_read(term);
+      let tv = ssa.term_operand(term);
       if (tv >= 0 && tv < is_phi.len() && is_phi[tv]) {
         let nv = arm_value(val_t, val_f, c, here, tv);
         if (term.kind_tag == ssa.TERM_RET) {

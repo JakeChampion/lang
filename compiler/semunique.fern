@@ -131,7 +131,7 @@ function lent_arrays(f: ssasem.Func, call: ssa.SInst, own acc: i32[]): i32[] {
   }
   for i in 0..call.args.len() {
     let a = call.args[i];
-    if (i < f.calls[c].modes.len() && f.calls[c].modes[i] == ssasem.borrow_mode() && is_array(f.values[a])) {
+    if (i < f.calls[c].modes.len() && f.calls[c].modes[i] == ssasem.borrow_mode() && typeinfo.is_array(f.values[a])) {
       acc = acc.append(a);
     }
   }
@@ -140,13 +140,6 @@ function lent_arrays(f: ssasem.Func, call: ssa.SInst, own acc: i32[]): i32[] {
 
 function keeps_receiver(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate();
-}
-
-function is_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = t {
-    return true;
-  }
-  return false;
 }
 
 function def_of(f: ssasem.Func, v: i32): ssa.SInst {
