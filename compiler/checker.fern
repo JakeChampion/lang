@@ -320,13 +320,6 @@ function is_arr_view(t: typeinfo.Type): boolean {
   return false;
 }
 
-function is_owned_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
-}
-
 function one_arg_intrinsic_result(name: string): typeinfo.Type {
   if (name == "__socket_from_fd") {
     return t_socket();
@@ -2367,17 +2360,8 @@ function (s: Scope) defines(name: string): boolean {
   return false;
 }
 
-function name_has_comma(name: string): boolean {
-  for ch in name {
-    if (ch == b',') {
-      return true;
-    }
-  }
-  return false;
-}
-
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
-  if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+  if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
     return s;
   }
   let at = parser.destr_marker_split(v.type_name).at;
@@ -4433,7 +4417,7 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   if let typeinfo.TypeErased(_) = from {
     return true;
   }
-  if (is_owned_array(from) || is_arr_view(from)) {
+  if (typeinfo.is_owned_array(from) || is_arr_view(from)) {
     return false;
   }
   let tn = util.base_type_name(type_label(from));
@@ -6831,7 +6815,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     ast.StmtVar(v) => {
       let init_scope = rec_local_scope(v, s);
       let t = check_expr(v.init, init_scope);
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return CheckResult { scope: bind_destructure_names(s, v), ty: t };
       }
       if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
@@ -7014,7 +6998,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       return bind_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return bind_destructure_names(s, v);
       }
       return bind_var(v, s, var_bind_type(v, s));
@@ -8906,7 +8890,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (is_arr_view(var_declared_type(v, cur)) && is_owned_array(check_expr(v.init, cur))) {
+        if (is_arr_view(var_declared_type(v, cur)) && typeinfo.is_owned_array(check_expr(v.init, cur))) {
           if (slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
             tainted = tainted.append(v.name);
           }
@@ -10479,7 +10463,7 @@ function unsettled_arm_sum(a: i32, b: i32): i32 {
 function lit_locals_after(st: ast.Stmt, lits: string[]): string[] {
   if let ast.StmtVar(v) = st {
     let out = drop_lit_locals(lits, astwalk.binders_of(st, []));
-    if (v.type_name.len() == 0 && !name_has_comma(v.name) && unsettled_tree(v.init, lits)) {
+    if (v.type_name.len() == 0 && !util.contains(v.name, ",") && unsettled_tree(v.init, lits)) {
       return out.append(v.name);
     }
     return out;
@@ -15070,7 +15054,7 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
 
 function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {
   let set = parser.dyn_trait_set("dyn " + traits);
-  if (is_owned_array(src) || is_arr_view(src) || is_dyn_slot(src)) {
+  if (typeinfo.is_owned_array(src) || is_arr_view(src) || is_dyn_slot(src)) {
     return set[0];
   }
   let tn = util.base_type_name(type_label(src));
@@ -15147,7 +15131,7 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
       out = scalar_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
-    } else if (is_owned_array(anchor) || is_arr_view(anchor) || struct_name_of(anchor).len() > 0) {
+    } else if (typeinfo.is_owned_array(anchor) || is_arr_view(anchor) || struct_name_of(anchor).len() > 0) {
       out = element_mix(a, anchor, s, out);
     }
   }
@@ -16106,7 +16090,7 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
 }
 
 function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
-  if (!name_has_comma(fr.var_name)) {
+  if (!util.contains(fr.var_name, ",")) {
     return [];
   }
   let n = split_pattern_names(fr.var_name).len();
@@ -19019,7 +19003,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }), assigns: f.assigns.append(LuVar { name: a.target, init: a.value }) };
     },
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
@@ -20455,7 +20439,7 @@ function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): bool
 // The names a let declares, as LuFacts.vars records them.
 function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
   if let ast.StmtVar(v) = st {
-    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
       for d in lu_destr_vars(v, []) {
         acc = acc.append(d.name);
       }
@@ -20818,7 +20802,7 @@ function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChai
 function lu_chain_after(st: ast.Stmt, chain: LuChain): LuChain {
   if let ast.StmtVar(v) = st {
     if let ast.ExprBool(b) = v.init {
-      if (!b.value && !name_has_comma(v.name)) {
+      if (!b.value && !util.contains(v.name, ",")) {
         return LuChain { flag: v.name, settles: true, result: LU_NOT_ARM };
       }
     }
@@ -21325,7 +21309,7 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
 
 function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
   if let ast.StmtVar(v) = st {
-    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
       return util.has_str(lu_var_names(st, []), name);
     }
     return v.name == name;
@@ -22697,13 +22681,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },
     ast.StmtFor(fr) => {
-      let takes = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
+      let takes = !util.contains(fr.var_name, ",") && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
       let ri = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
-      if (!takes && !name_has_comma(fr.var_name)) {
+      if (!takes && !util.contains(fr.var_name, ",")) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
       let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
@@ -25439,7 +25423,7 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
           types = next_types;
         }
         out = util.append_diags(out, e044_expr(v.init, v.line, v.col, wk, names, types));
-        if (suspects.len() > 0 && (util.has_str(suspects, v.name) || name_has_comma(v.name))) {
+        if (suspects.len() > 0 && (util.has_str(suspects, v.name) || util.contains(v.name, ","))) {
           let (next_names, next_types) = e044_without(suspects, labels, astwalk.append_bound_name([], v.name));
           suspects = next_names;
           labels = next_types;
@@ -29803,7 +29787,7 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 // is annotated before the bind, so that the bind is the last use of s.
 function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
   if let ast.StmtVar(v) = stmt {
-    if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+    if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
       let t = var_bind_type(v, s);
       let annotated = annotate_var(v, s, t);
       return (annotated, bind_var(v, s, t));
@@ -29832,12 +29816,12 @@ function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   let body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !name_has_comma(fr.var_name) };
+    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !util.contains(fr.var_name, ",") };
   }
   let it = check_expr(fr.iter, s);
   match (it) {
     typeinfo.TypeString(_) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !name_has_comma(fr.var_name) };
+      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !util.contains(fr.var_name, ",") };
     },
     typeinfo.TypeArray(ta) => {
       return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
@@ -29854,7 +29838,7 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
 }
 
 function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
-  if (name_has_comma(name)) {
+  if (util.contains(name, ",")) {
     return bind_tuple_destr_names(s, split_pattern_names(name), ty);
   }
   if (name == "_") {
@@ -30158,7 +30142,7 @@ function vb_local_name(body: ast.Stmt[]): string {
   let name = "";
   match (body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || name_has_comma(v.name)) {
+      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || util.contains(v.name, ",")) {
         return "";
       }
       name = v.name;
@@ -33383,7 +33367,7 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
-      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       if (v.type_name.len() > 0) {
@@ -33942,7 +33926,7 @@ function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
   let ast.ExprIdent(id) = c.callee else {
     return false;
   };
-  return v.type_name.len() == 0 && !name_has_comma(v.name) && c.type_args.len() == 0 && util.has_str(generics, id.name);
+  return v.type_name.len() == 0 && !util.contains(v.name, ",") && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
@@ -34029,7 +34013,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       return lit_holds_int_literal(m.scrutinee);
     },
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 || name_has_comma(v.name)) {
+      if (v.type_name.len() > 0 || util.contains(v.name, ",")) {
         return false;
       }
       return lit_holds_int_literal(v.init) || names_unit_variant(v.init);

@@ -390,17 +390,6 @@ function vint_bits(v: Value): i32 {
   }
 }
 
-function is_destructure_name(name: string): boolean {
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b',') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
-}
-
 function split_binding_names(csv: string): string[] {
   let out: string[] = [];
   let start = 0;
@@ -8905,7 +8894,7 @@ function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       if (is_err(val)) {
         return step_stop(env, val);
       }
-      if (is_destructure_name(v.name) || parser.is_destr_marker(v.type_name)) {
+      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return destructure_step(env, v, val);
       }
       let declared = v.type_name;
@@ -9116,7 +9105,7 @@ function for_elements(iv: Value): Option[Value[]] {
 }
 
 function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
-  if (is_destructure_name(header)) {
+  if (util.contains(header, ",")) {
     let (out, err) = bind_destructure(env, header, "", elem);
     if (!is_err(err)) {
       return out;

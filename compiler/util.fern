@@ -543,6 +543,17 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
   return true;
 }
 
+// drop_last_i32 is a without its last element.
+pub function drop_last_i32(a: i32[]): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  while (i < a.len() - 1) {
+    out = out.append(a[i]);
+    i += 1;
+  }
+  return out;
+}
+
 pub function contains(haystack: string, needle: string): boolean {
   return index_of_sub(haystack, needle) >= 0;
 }

@@ -1292,17 +1292,6 @@ pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix
   return out;
 }
 
-function parameter_value(f: ssasem.Func, index: i32): i32 {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == ssasem.param() && ins.imm == index) {
-        return ins.result;
-      }
-    }
-  }
-  return -1;
-}
-
 function reads(g: ssa.SFunc, value: i32): boolean {
   for b in g.blocks {
     for ins in b.insts {
@@ -1324,7 +1313,7 @@ function unused_environment(f: ssasem.Func): i32 {
   if (!ssasem.closure_env(contract) || ssasem.closure_captures(contract).len() != 0) {
     return -1;
   }
-  let env = parameter_value(f, 0);
+  let env = ssasem.param_value(f, 0);
   if (env < 0 || reads(f.graph, env)) {
     return -1;
   }
@@ -1555,13 +1544,6 @@ function record(t: typeinfo.Type): boolean {
   return false;
 }
 
-function void_type(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeVoid(_) = t {
-    return true;
-  }
-  return false;
-}
-
 function leaf(f: ssasem.Func): boolean {
   return leaf_body(f, -1);
 }
@@ -1754,7 +1736,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
         let t = f.values[ins.result];
         if (record(t)) {
           records += 1;
-        } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins) && !lent_to_kernels(f, ins)) {
+        } else if (!leaf_word(f, t) && !typeinfo.is_void(t) && !read_view_param(f, ins) && !lent_to_kernels(f, ins)) {
           return -1;
         }
       }

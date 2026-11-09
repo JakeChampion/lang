@@ -14,16 +14,6 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
   return insts;
 }
 
-function drop_last(a: i32[]): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 1) {
-    out = out.append(a[i]);
-    i += 1;
-  }
-  return out;
-}
-
 function drop_last2(a: i32[]): i32[] {
   let out: i32[] = [];
   let i = 0;
@@ -623,7 +613,7 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
   let stack = lv.stack;
   let e = 0;
   while (e <= argc) {
-    stack = drop_last(stack);
+    stack = util.drop_last_i32(stack);
     e += 1;
   }
   let v = lv.nvals;
@@ -729,7 +719,7 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
   let stack = lv.stack;
   let e = 0;
   while (e < npop) {
-    stack = drop_last(stack);
+    stack = util.drop_last_i32(stack);
     e += 1;
   }
   let v = lv.nvals;
@@ -742,7 +732,7 @@ function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
   if (!pushed.ok) {
     return pushed;
   }
-  return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
+  return LiftVals { ...pushed, stack: util.drop_last_i32(pushed.stack) };
 }
 
 function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
@@ -754,7 +744,7 @@ function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
   if (!pushed.ok) {
     return pushed;
   }
-  return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
+  return LiftVals { ...pushed, stack: util.drop_last_i32(pushed.stack) };
 }
 
 function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
@@ -795,7 +785,7 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
   let stack = lv.stack;
   let e = 0;
   while (e < n) {
-    stack = drop_last(stack);
+    stack = util.drop_last_i32(stack);
     e += 1;
   }
   let nvals = lv.nvals;
@@ -831,7 +821,7 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
   let stack = lv.stack;
   let e = 0;
   while (e < n) {
-    stack = drop_last(stack);
+    stack = util.drop_last_i32(stack);
     e += 1;
   }
   let box = lv.nvals;
@@ -864,7 +854,7 @@ function lift_opt_make_prod(tag: i32, lv: LiftVals): LiftVals {
     return LiftVals { ...lv, ok: false };
   }
   let payload = stack[stack.len() - 1];
-  stack = drop_last(stack);
+  stack = util.drop_last_i32(stack);
   let nvals = lv.nvals;
   let box = nvals;
   nvals += 1;
@@ -887,7 +877,7 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
   }
   let a = stack[stack.len() - 1];
-  stack = drop_last(stack);
+  stack = util.drop_last_i32(stack);
   let what = k;
   if (k == "int_cast") {
     what = "int_cast:" + op.str;
@@ -1119,7 +1109,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       } else {
         let sv = stack[stack.len() - 1];
         if (tag == t_store_local) {
-          stack = drop_last(stack);
+          stack = util.drop_last_i32(stack);
         }
         let ss = op.i32_imm;
         if (sc_n > 0 && slot_mark[ss] < sc_n - 1) {
@@ -1150,7 +1140,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         ok = false;
       } else {
         let x = stack[stack.len() - 1];
-        stack = drop_last(stack);
+        stack = util.drop_last_i32(stack);
         let nv = nvals;
         nvals += 1;
         cur_insts = cur_insts.append(ssa.SInst { kind_tag: ssa.UNARY, result: nv, args: [x], imm: 0, str: "!" });
@@ -1181,14 +1171,14 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       if (stack.len() < 1) {
         ok = false;
       } else {
-        stack = drop_last(stack);
+        stack = util.drop_last_i32(stack);
       }
     } else if (tag == t_return) {
       if (stack.len() < 1) {
         ok = false;
       } else {
         let rv = stack[stack.len() - 1];
-        stack = drop_last(stack);
+        stack = util.drop_last_i32(stack);
         cur_term = STerm_ret(rv);
         if (op.source > 0) {
           source_returns = source_returns.append(ReturnPos { block: cur_id, line: (op.source >> 32) as i32, col: util.i64_to_string(op.source & 4294967295i64) });
@@ -1201,7 +1191,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         ok = false;
       } else {
         let cond = stack[stack.len() - 1];
-        stack = drop_last(stack);
+        stack = util.drop_last_i32(stack);
         let then_id = next_blk;
         next_blk += 1;
         let else_id = next_blk;
@@ -1350,7 +1340,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             ok_b = false;
           } else {
             cond_b = stack[stack.len() - 1];
-            stack = drop_last(stack);
+            stack = util.drop_last_i32(stack);
           }
         }
         if (!ok_b) {
@@ -2020,7 +2010,7 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
     }
     let e = 0;
     while (e < argc) {
-      stack = drop_last(stack);
+      stack = util.drop_last_i32(stack);
       e += 1;
     }
     let pv = nvals;

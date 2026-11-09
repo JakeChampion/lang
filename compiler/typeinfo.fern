@@ -202,6 +202,28 @@ pub function array_elem(t: Type): Type {
   return unchecked();
 }
 
+pub function is_owned_array(t: Type): boolean {
+  if let TypeArray(a) = t {
+    return !a.view;
+  }
+  return false;
+}
+
+pub function is_void(t: Type): boolean {
+  if let TypeVoid(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// union_name is the name of a union type, or "" for any other type.
+pub function union_name(t: Type): string {
+  if let TypeUnion(u) = t {
+    return u.name;
+  }
+  return "";
+}
+
 function char_spelling(i: TypeI32): string {
   if (i.width == 32 && !i.unsigned) {
     return "char";

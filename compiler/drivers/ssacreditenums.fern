@@ -22,7 +22,7 @@ function i32_type(): typeinfo.Type {
 function count(rows: semrecords.Enum[], name: string): i32 {
   let found = 0;
   for e in rows {
-    if (semrecords.union_name_of(e.ty) == name) {
+    if (typeinfo.union_name(e.ty) == name) {
       found += 1;
     }
   }

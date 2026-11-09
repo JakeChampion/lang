@@ -1066,7 +1066,7 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
     cut = wk.cut[pos];
   }
   if (cut >= 0 && (cut < b.insts.len() || b.term.kind_tag != ssa.TERM_UNREACHABLE)) {
-    return (ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: unreachable() }, true);
+    return (ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: ssa.t_unreachable() }, true);
   }
   if (wk.exec[pos] && b.term.kind_tag == ssa.TERM_BRIF) {
     let t = decided(b.term, wk.vals[b.term.cond], dead);
@@ -1092,7 +1092,7 @@ function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
   if (!changed) {
     return Rewritten { f: f, changed: false };
   }
-  blocks = blocks.append(ssa.SBlock { id: dead, insts: [], term: unreachable(), preds: [] });
+  blocks = blocks.append(ssa.SBlock { id: dead, insts: [], term: ssa.t_unreachable(), preds: [] });
   let moved = ssa.SFunc { ...g, blocks: blocks };
   let kept = ssa.SFunc { ...moved, blocks: semthread.reachable_only(moved) };
   return Rewritten { f: ssasem.Func { ...f, graph: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) } }, changed: changed };
@@ -1100,7 +1100,7 @@ function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
 
 function decided(t: ssa.STerm, c: i64, dead: i32): ssa.STerm {
   if (c == top()) {
-    return unreachable();
+    return ssa.t_unreachable();
   }
   if (c == bottom() || t.t == t.f) {
     return t;
@@ -1109,8 +1109,4 @@ function decided(t: ssa.STerm, c: i64, dead: i32): ssa.STerm {
     return ssa.STerm { ...t, t: dead };
   }
   return ssa.STerm { ...t, f: dead };
-}
-
-function unreachable(): ssa.STerm {
-  return ssa.STerm { kind_tag: ssa.TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }

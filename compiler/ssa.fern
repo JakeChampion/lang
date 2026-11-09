@@ -1842,7 +1842,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         free = remove_reg(free, reg);
       } else {
         reg = free_s[free_s.len() - 1];
-        free_s = drop_last_i(free_s);
+        free_s = util.drop_last_i32(free_s);
       }
       reg_of = reg_of.with(v, reg);
       act_val = act_val.append(v);
@@ -2006,16 +2006,6 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
   let w = wanted_by[holder];
   return w >= 0 && w != v && reg_of[w] == -1;
-}
-
-function drop_last_i(a: i32[]): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 1) {
-    out = out.append(a[i]);
-    i += 1;
-  }
-  return out;
 }
 
 pub function spill_code(slot: i32): i32 {
@@ -5342,6 +5332,27 @@ pub function next_block_id(g: SFunc): i32 {
     }
   }
   return hi;
+}
+
+pub function t_unreachable(): STerm {
+  return STerm { kind_tag: TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}
+
+// branches_to is true when t can branch to block id.
+pub function branches_to(t: STerm, id: i32): boolean {
+  return t.kind_tag == TERM_BR && t.target == id || t.kind_tag == TERM_BRIF && (t.t == id || t.f == id);
+}
+
+// block_with_id is the index of the block whose id is id, or -1.
+pub function block_with_id(f: SFunc, id: i32): i32 {
+  let i = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
 }
 
 // A load or a store through base + constant takes the constant as its offset.

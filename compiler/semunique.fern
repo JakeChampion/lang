@@ -80,7 +80,7 @@ function jumps_only_to(b: ssa.SBlock, target: i32): boolean {
 }
 
 function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
-  return owned_array(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
+  return typeinfo.is_owned_array(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
 }
 
 // The check consumes its array. An array the function only borrows would
@@ -151,13 +151,6 @@ function def_of(f: ssasem.Func, v: i32): ssa.SInst {
     }
   }
   return ssa.SInst { kind_tag: 0 - 1000, result: -1, args: [], imm: 0, str: "" };
-}
-
-function owned_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
 }
 
 function fresh(f: ssasem.Func, v: i32): boolean {

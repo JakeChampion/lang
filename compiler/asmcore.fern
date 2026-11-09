@@ -4510,17 +4510,6 @@ pub function (s: EmitState) cfi(kind: i32, reg: i32, off: i32): EmitState {
   return s.mark("\x06", "");
 }
 
-pub function name_has_comma(name: string): boolean {
-  let i = 0;
-  while (i < name.len()) {
-    if (name[i] == b',') {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
-}
-
 pub struct ConstAggOut { state: EmitState, idx: i32 }
 
 pub function add_const_agg(s: EmitState, packed: string): ConstAggOut {

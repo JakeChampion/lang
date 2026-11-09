@@ -515,21 +515,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
   return Context { ...out, values: out.values.with(op.result, phi.Value { kind: kind, identity: identity, available: out.state.path }) };
 }
 
-function at(f: ssa.SFunc, id: i32): i32 {
-  let i = 0;
-  for b in f.blocks {
-    if (b.id == id) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function edge(t: ssa.STerm, id: i32): boolean {
-  return t.kind_tag == ssa.TERM_BR && t.target == id || t.kind_tag == ssa.TERM_BRIF && (t.t == id || t.f == id);
-}
-
 struct Outgoing { context: Context, targets: i32[], paths: i32[] }
 
 function outgoing(c: Context, term: ssa.STerm): Outgoing {
@@ -567,7 +552,7 @@ function last_value(f: ssa.SFunc): i32 {
 }
 
 function input_error(f: ssa.SFunc): string {
-  if (f.nparams != 2 || f.takes_env || f.nvals < 2 || last_value(f) < f.nvals - 1 || at(f, f.entry) < 0) {
+  if (f.nparams != 2 || f.takes_env || f.nvals < 2 || last_value(f) < f.nvals - 1 || ssa.block_with_id(f, f.entry) < 0) {
     return "invalid reuse boundary";
   }
   let blocks: i32[] = [];
@@ -600,8 +585,8 @@ function input_error(f: ssa.SFunc): string {
     }
     let seen: i32[] = [];
     for p in b.preds {
-      let pi = at(f, p);
-      if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+      let pi = ssa.block_with_id(f, p);
+      if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !ssa.branches_to(f.blocks[pi].term, b.id)) {
         return "invalid reuse predecessor";
       }
       seen = seen.append(p);
@@ -616,7 +601,7 @@ function input_error(f: ssa.SFunc): string {
       targets = [b.term.t, b.term.f];
     }
     for t in targets {
-      let ti = at(f, t);
+      let ti = ssa.block_with_id(f, t);
       if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
         return "invalid reuse successor";
       }
@@ -784,7 +769,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
     for b in f.blocks {
       let ready = !done[i] && (b.id == f.entry || b.preds.len() > 0);
       for p in b.preds {
-        if (!done[at(f, p)]) {
+        if (!done[ssa.block_with_id(f, p)]) {
           ready = false;
         }
       }
@@ -829,7 +814,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
         i = 0;
         for t in next.targets {
           if (c.error == "") {
-            let ti = at(f, t);
+            let ti = ssa.block_with_id(f, t);
             c = merged(c, incoming[ti].state, next.paths[i]);
             let edges = incoming[ti].edges.append(phi.Edge { predecessor: b.id, path: next.paths[i], values: c.values });
             incoming = incoming.with(ti, Incoming { state: c.state, edges: edges });

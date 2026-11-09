@@ -949,14 +949,6 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
   return out;
 }
 
-pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  let at = ssasem.find_contract_in(f.calls, ins.str);
-  if (at < 0) {
-    return [];
-  }
-  return f.calls[at].modes;
-}
-
 function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
   if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) {
     return [Supply { value: b.term.value, slot: 0, mode: 0 }];
@@ -1742,7 +1734,7 @@ function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, arra
       return at == 1;
     }
     if (k == ssasem.call()) {
-      let modes = callee_modes(f, ins);
+      let modes = ssasem.callee_modes(f, ins);
       return at < modes.len() && modes[at] == borrow_mode();
     }
     return false;
@@ -2455,7 +2447,7 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
     return field_takeable(got) && is_tuple(box);
   }
   if (slot) {
-    return field_takeable(got) && is_owned_array(box);
+    return field_takeable(got) && typeinfo.is_owned_array(box);
   }
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
@@ -2900,13 +2892,6 @@ function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   return projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
 }
 
-function is_owned_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
-}
-
 pub function occurrences(xs: i32[], v: i32): i32 {
   let n = 0;
   for x in xs {
@@ -3070,7 +3055,7 @@ function grown_params(f: ssasem.Func, p: Plan, grows: GrowTable, ins: ssa.SInst)
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  let modes = callee_modes(f, ins);
+  let modes = ssasem.callee_modes(f, ins);
   for i in 0..ins.args.len() {
     let v = ins.args[i];
     if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i)) {
@@ -5450,7 +5435,7 @@ function pair_call_root(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, po
 }
 
 function call_root(f: ssasem.Func, step: Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
-  let modes = callee_modes(f, ins);
+  let modes = ssasem.callee_modes(f, ins);
   let root: i32 = -1;
   let i = 0;
   while (i < ins.args.len()) {

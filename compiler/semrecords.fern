@@ -67,13 +67,6 @@ pub function find_named_enum(list: Enum[], names: util.NameIndex, name: string, 
   return -1;
 }
 
-pub function union_name_of(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
-}
-
 pub function name_of(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
     return s.name;

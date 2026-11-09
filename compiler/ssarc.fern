@@ -435,7 +435,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  let modes = ssaunits.callee_modes(f, ins);
+  let modes = ssasem.callee_modes(f, ins);
   let i = 0;
   while (i < ins.args.len() && i < modes.len()) {
     let v = ins.args[i];
@@ -482,7 +482,7 @@ function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst,
 
 function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
   if (first == 0) {
-    return ssaunits.callee_modes(f, ins);
+    return ssasem.callee_modes(f, ins);
   }
   let out: i32[] = [ssaunits.borrow_mode()];
   let i = 1;
@@ -669,7 +669,7 @@ function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] 
     if (!semtypes.is_env(rec.ty) || !fields_have_children(rec.fields)) {
       continue;
     }
-    if (!serves(f.envs, fn_ty, rec.ty)) {
+    if (!ssasem.has_env_row(f.envs, fn_ty, rec.ty)) {
       continue;
     }
     let at = 0;
@@ -679,15 +679,6 @@ function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] 
     out = inserted_record(out, at, rec);
   }
   return out;
-}
-
-function serves(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
-  for row in rows {
-    if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Record): semrecords.Record[] {
@@ -1491,13 +1482,6 @@ function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i
   return irtables.variant_decl_index(structs, ssasem.variant_key(whole, ins.str), ssasem.type_key(whole));
 }
 
-function enum_name(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name;
-  }
-  return "";
-}
-
 function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if let typeinfo.TypeArray(a) = t {
     return walk_shape(a.elem, f, lookup);
@@ -1626,7 +1610,7 @@ function view_of(f: ssasem.Func, own seen: SchemaSeen): ViewStep {
     view = ssaunits.SchemaView { ...view, rec_unit: view.rec_unit.append(seen.rec_unit[k]), rec_walk: view.rec_walk.append(seen.rec_walk[k]) };
   }
   for e in f.enums {
-    let name = enum_name(e.ty);
+    let name = typeinfo.union_name(e.ty);
     let k = enum_seen(seen, name, e.ty);
     if (k < 0) {
       k = seen.enums.len();
