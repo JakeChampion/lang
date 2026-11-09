@@ -18814,9 +18814,6 @@ function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
 
 function ow_is_fresh_literal(e: ast.Expr): boolean {
   match (e) {
-    ast.ExprStructLit(_) => {
-      return true;
-    },
     ast.ExprLambda(_) => {
       return true;
     },
@@ -18833,6 +18830,38 @@ function ow_is_fresh_literal(e: ast.Expr): boolean {
       return false;
     }
   }
+}
+
+// A struct literal owns what it holds: each field value is owned or
+// holds no handle, and each field that the literal keeps from a base that is
+// not owned holds no handle.
+function ow_struct_lit_owned(sl: ast.ExprStructLit, lt: typeinfo.Type, ctx: OwnCtx): boolean {
+  let sn = typeinfo.TypeStruct { name: sl.type_name, args: [] };
+  if let typeinfo.TypeStruct(t) = lt {
+    sn = t;
+  }
+  let Some(sig) = ctx.scope.lookup_struct(sn.name) else {
+    return false;
+  };
+  for i in 0..sl.field_names.len() {
+    if (!ow_is_owned_expr(sl.field_values[i], ctx) && !ow_field_no_handle(sn, sl.field_names[i], ctx)) {
+      return false;
+    }
+  }
+  if (!sl.has_base || ow_is_owned_expr(sl.base, ctx)) {
+    return true;
+  }
+  for name in sig.field_names {
+    if (!util.has_str(sl.field_names, name) && !ow_field_no_handle(sn, name, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_field_no_handle(sn: typeinfo.TypeStruct, field: string, ctx: OwnCtx): boolean {
+  let t = struct_field_type(sn, field, ctx.scope);
+  return !is_unknown(t) && ow_holds_no_handle(typeinfo.spelling(t), ctx.decls);
 }
 
 // The value of `unsafe { e }`, a value block of one value in an unsafe block.
@@ -19026,6 +19055,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     return true;
   }
   match (e) {
+    ast.ExprStructLit(sl) => {
+      return ow_struct_lit_owned(sl, check_expr(e, ctx.scope), ctx);
+    },
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
@@ -21311,7 +21343,7 @@ function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
     return false;
   };
   let before = 0;
-  for a in c.args {
+  for a in lu_call_parts(c.args) {
     if let ast.ExprIdent(x) = a {
       if (x.line == aid.line && x.col == aid.col) {
         return before + 1 == astwalk.count_ident_expr(call, aid.name);
@@ -21725,22 +21757,20 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
-    if (!fx.ofuncs.methods.has(fa.field)) {
-      for a in c.args {
-        acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    if (fx.ofuncs.methods.has(fa.field)) {
+      for p in lu_arg_parts(fa.obj, []) {
+        acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
       }
-      return acc;
     }
-    acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
-    for a in c.args {
-      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    for p in lu_call_parts(c.args) {
+      acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
     }
     return acc;
   }
   let cname = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
-    for a in c.args {
-      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    for p in lu_call_parts(c.args) {
+      acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
     }
     return acc;
   }
@@ -21748,25 +21778,56 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   let i = 0;
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
-      match (c.args[i]) {
-        ast.ExprIdent(aid) => {
-          if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-            acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
-          }
-        },
-        ast.ExprFieldAccess(fa) => {
-          if let ast.ExprIdent(q) = fa.obj {
-            if (lu_field_dies(fx, e, fa, q, site)) {
-              acc = acc.append(lu_field_key(fa, q));
-            }
-          }
-        },
-        _ => {}
+      for p in lu_arg_parts(c.args[i], []) {
+        acc = lu_own_arg(p, e, outer, has_outer, site, fx, acc);
       }
     }
     i += 1;
   }
   return acc;
+}
+
+function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  match (a) {
+    ast.ExprIdent(aid) => {
+      if (lu_dies(fx, e, aid, outer, has_outer, site)) {
+        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(q) = fa.obj {
+        if (lu_field_dies(fx, e, fa, q, site)) {
+          acc = acc.append(lu_field_key(fa, q));
+        }
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+// The arguments of a call, with each struct literal argument replaced by its
+// base and its field values, at any depth. The literal takes each part, so a
+// part is an argument position for the last uses.
+function lu_call_parts(args: ast.Expr[]): ast.Expr[] {
+  let out: ast.Expr[] = [];
+  for a in args {
+    out = lu_arg_parts(a, out);
+  }
+  return out;
+}
+
+function lu_arg_parts(a: ast.Expr, own out: ast.Expr[]): ast.Expr[] {
+  if let ast.ExprStructLit(sl) = a {
+    if (sl.has_base) {
+      out = lu_arg_parts(sl.base, out);
+    }
+    for fv in sl.field_values {
+      out = lu_arg_parts(fv, out);
+    }
+    return out;
+  }
+  return out.append(a);
 }
 
 function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {

@@ -1,0 +1,38 @@
+// A struct literal passes to an `own` parameter when each part that can hold
+// a handle is owned: an own parameter, a local at its last use, a field of an
+// owned base that the literal replaces, or an array update of such a field.
+
+struct Conn { w: Writer, n: i32 }
+struct Conns { all: Conn[], count: i32 }
+
+function size(own cs: Conns): i32 {
+  return cs.all.len() * 10 + cs.count;
+}
+
+function replaced(own cs: Conns, c: Conn): i32 {
+  return size(Conns { ...cs, all: cs.all.with(0, Conn { w: stdout(), n: c.n }), count: 1 });
+}
+
+function appended(own cs: Conns): i32 {
+  let c = Conn { w: stdout(), n: 3 };
+  return size(Conns { ...cs, all: cs.all.append(c) });
+}
+
+function unpacked(own cs: Conns): i32 {
+  let all = cs.all;
+  return size(Conns { ...cs, all: all, count: 2 });
+}
+
+function fresh(): i32 {
+  let c = Conn { w: stdout(), n: 4 };
+  return size(Conns { all: [c], count: 4 });
+}
+
+function main(): i32 {
+  let one = Conn { w: stdout(), n: 1 };
+  print(replaced(Conns { all: [Conn { w: stdout(), n: 0 }], count: 0 }, one));
+  print(appended(Conns { all: [], count: 0 }));
+  print(unpacked(Conns { all: [], count: 0 }));
+  print(fresh());
+  return 0;
+}

@@ -151,7 +151,10 @@ once (E050). Consuming
 (checker.go:7315/7350). The call-site guard `guardCallArgs`
 (checker.go:7512) enforces E051: an argument in an `own`
 position must be provably owned — a fresh construction, another
-`own` param, an all-pointer-params-own callee result, a read
+`own` param, an all-pointer-params-own callee result, a struct
+literal whose field values are owned or hold no handle and whose
+base is owned or keeps only fields that hold no handle
+(`structLitOwned`, `ow_struct_lit_owned`), a read
 `b.f` in the value that a literal `S { ...b, f: v }` gives `f` when
 `b` is owned and `v` names the root of `b` only there
 (`replacedReads`, `ow_replaced_reads`), `with` or `append` on an
