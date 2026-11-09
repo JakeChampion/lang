@@ -13,56 +13,27 @@ the system trace while the list slides, and no crash in logcat. OUT_DIR
 gets the frames, logcat and the trace.
 """
 
+from pathlib import Path
 import re
-import struct
 import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
+from emulator import adb, count, crashes, fail, finish, logcat, screen, wait_for  # noqa: E402
+
 PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
-CRASH = re.compile(r"Fatal signal|SIGSYS|UnsatisfiedLinkError|FATAL EXCEPTION|ClassNotFoundException|VerifyError|fern: |Unable to load native library")
 PAPER = (255, 244, 230)
 
-failures = []
-
-
-def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
-
-
-def fail(message):
-    failures.append(message)
-    print("FAIL " + message, flush=True)
-
-
-def logcat():
-    return adb("logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:*", "libc:*", "*:F")
-
-
-def wait_for(pattern, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        m = re.search(pattern, logcat())
-        if m:
-            return m
-        time.sleep(0.5)
-    return None
 
 
 def paper_part(out, name):
-    """The share of the screen in the paper colour, in one raw RGBA_8888
-    frame after its header."""
+    """The share of the screen in the paper colour, from one pixel of each
+    four."""
     time.sleep(1.0)
-    raw = subprocess.run(["adb", "exec-out", "screencap"], check=True, capture_output=True).stdout
-    subprocess.run(f"adb exec-out screencap -p > {out}/{name}.png", shell=True, check=False)
-    width, height, _ = struct.unpack_from("<III", raw)
-    head = len(raw) - width * height * 4
-    count = 0
-    for at in range(head, len(raw), 16):
-        if (raw[at], raw[at + 1], raw[at + 2]) == PAPER:
-            count += 1
-    part = count * 4 / (width * height)
+    width, height, pixels = screen(out, name)
+    part = count(pixels, PAPER, 4) * 4 / (width * height)
     print(f"{name}: {width}x{height}, paper {part:.3f}", flush=True)
     return width, height, part
 
@@ -114,13 +85,10 @@ def main(apk, out):
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
-    for line in log.splitlines():
-        if CRASH.search(line):
-            fail("logcat: " + line)
+    for line in crashes(log):
+        fail("logcat: " + line)
     adb("shell", "cmd", "package", "set-home-activity", "com.android.launcher3/.uioverrides.QuickstepLauncher", check=False)
-    if failures:
-        sys.exit(1)
-    print("ok", flush=True)
+    finish()
 
 
 if __name__ == "__main__":

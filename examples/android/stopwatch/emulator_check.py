@@ -16,14 +16,16 @@ and requires its std/log record at priority W and its abort at priority F
 in logcat, with the tag "fern".
 """
 
+from pathlib import Path
 import re
-import struct
 import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
+from emulator import adb, count, crashes, fail, failures, logcat, screen, wait_for  # noqa: E402
+
 PACKAGE = "dev.fern.stopwatch"
-CRASH = re.compile(r"Fatal signal|SIGSYS|UnsatisfiedLinkError|FATAL EXCEPTION|fern: |Unable to load native library")
 # The dark disc of the dial, and the red dot of a running stopwatch at the
 # default opacity, 13 of 20, over black.
 SURFACE = (26, 26, 26)
@@ -35,50 +37,14 @@ REPORT_LINES = (
     re.compile(r" F fern\s*: fern: array index out of range$"),
 )
 
-failures = []
-
-
-def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
-
-
-def fail(message):
-    failures.append(message)
-    print("FAIL " + message, flush=True)
-
-
-def logcat():
-    return adb("logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:*", "libc:*", "*:F")
-
-
-def wait_for(pattern, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        m = re.search(pattern, logcat())
-        if m:
-            return m
-        time.sleep(0.5)
-    return None
 
 
 def frame(out, name):
     """The share of the screen in the surface colour, and the count of the
-    pixels of the red dot, in one raw RGBA_8888 frame after its header."""
-    raw = subprocess.run(["adb", "exec-out", "screencap"], check=True, capture_output=True).stdout
-    with open(f"{out}/{name}.raw", "wb") as f:
-        f.write(raw)
-    subprocess.run(f"adb exec-out screencap -p > {out}/{name}.png", shell=True, check=False)
-    width, height, _ = struct.unpack_from("<III", raw)
-    head = len(raw) - width * height * 4
-    surface = 0
-    red = 0
-    for at in range(head, len(raw), 4):
-        px = (raw[at], raw[at + 1], raw[at + 2])
-        if px == SURFACE:
-            surface += 1
-        elif px == RED_DOT:
-            red += 1
-    part = surface / (width * height)
+    pixels of the red dot, in one screen frame."""
+    width, height, pixels = screen(out, name)
+    part = count(pixels, SURFACE) / (width * height)
+    red = count(pixels, RED_DOT)
     print(f"{name}: {width}x{height}, surface {part:.3f}, red dot {red} pixels", flush=True)
     return part, red
 
@@ -181,9 +147,8 @@ def main(apk, out, report=None):
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
-    for line in log.splitlines():
-        if CRASH.search(line):
-            fail("logcat: " + line)
+    for line in crashes(log):
+        fail("logcat: " + line)
     if report is not None:
         check_report(report, out)
 
