@@ -1,3 +1,4 @@
+# 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops is removed with the stop in rand.bytes.
 # 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
 # 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
@@ -577,6 +578,7 @@ let_else_variant_binding_outlives_stmt               0
 literal_local_read_at_two_widths                    0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
+literal_local_typed_by_its_uses                      0
 literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
