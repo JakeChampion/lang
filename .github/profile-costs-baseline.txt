@@ -1,5 +1,11 @@
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.
+# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
+# http.serialize_response_to and http.serialize_response_to_bytes refuse a
+# field with CR or LF since #15002, so 19 http_hello rows rise 1% to 5%.
+# Pinned at the measured values.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
 # deflate_decode.diagnostic.emit at 12887 after the merge of main d04e79179f.
 # Bank the measured size. Keep all tolerances.
@@ -231,7 +237,7 @@ profile/x86-64-linux/http_hello.diagnostic.emit	15289
 profile/x86-64-linux/http_hello.diagnostic.ir	40308693
 profile/x86-64-linux/http_hello.hardened.bytes	71648
 profile/x86-64-linux/http_hello.hardened.emit	16123
-profile/x86-64-linux/http_hello.hardened.ir	30090330
+profile/x86-64-linux/http_hello.hardened.ir	30101992
 profile/x86-64-linux/http_hello.minimal.bytes	56640
 profile/x86-64-linux/http_hello.minimal.emit	13189
 profile/x86-64-linux/http_hello.minimal.ir	23512415

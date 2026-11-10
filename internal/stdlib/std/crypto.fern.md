@@ -3454,6 +3454,9 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
 }
 
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
+  if (expected.len() == 0) {
+    return false;
+  }
   return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
 }
 ```
@@ -3509,7 +3512,10 @@ pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): u8[] {
 }
 
 pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
-  return __hkdf_expand(32, __hkdf_extract(32, salt, ikm), info, length);
+  let prk = __hkdf_extract(32, salt, ikm);
+  let okm = __hkdf_expand(32, prk, info, length);
+  erase(prk);
+  return okm;
 }
 
 pub function hkdf_sha384_extract(salt: [u8], ikm: [u8]): u8[] {
@@ -3521,7 +3527,10 @@ pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): u8[] {
 }
 
 pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
-  return __hkdf_expand(48, __hkdf_extract(48, salt, ikm), info, length);
+  let prk = __hkdf_extract(48, salt, ikm);
+  let okm = __hkdf_expand(48, prk, info, length);
+  erase(prk);
+  return okm;
 }
 
 pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
@@ -3538,13 +3547,13 @@ pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
     | hs[offset + 1] as i32 << 16
     | hs[offset + 2] as i32 << 8
     | hs[offset + 3] as i32;
-  let m = 1;
+  let m: i64 = 1;
   let d = 0;
-  while (d < digits) {
-    m *= 10;
+  while (d < digits && d < 10) {
+    m *= 10 as i64;
     d += 1;
   }
-  return bin % m;
+  return (bin as i64 % m) as i32;
 }
 
 pub function totp_sha256(key: [u8], unix_time: i64, period: i32, digits: i32): i32 {

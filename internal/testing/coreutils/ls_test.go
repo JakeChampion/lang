@@ -612,6 +612,30 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("err-zero-and-dired", "--zero", "--dired", "-l")
 	add("err-no-option-after-dashdash", "--", "--all")
 
+	versions := t.TempDir()
+	for _, name := range []string{
+		"a", "a0", "a00", "a01", "a1", "a9", "a10", "a999999999999999999999999999999",
+		"a.tar", "a.tar.gz", "a1.tar.gz", "a01.tar.gz", "a1.0.tar.gz", "a1.0~rc1.tar.gz",
+		"a.", "a..", "a.a.1", "a.a.1.tar", "a.~", "a.~x", "a.~x.0", "a.a-b", "a.a_b",
+		".a", ".a0", ".a.tar.gz", "..a", "...", ".0", "0", "00", "~", "~~",
+	} {
+		if err := os.WriteFile(filepath.Join(versions, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"a2", "a2.tar.gz", ".dir1"} {
+		if err := os.Mkdir(filepath.Join(versions, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, args := range [][]string{
+		{"-v"}, {"-vr"}, {"-av"}, {"-avr"}, {"-lv"}, {"-lv", "--group-directories-first"},
+		{"-avr", "--group-directories-first"}, {"-vC", "-w", "80"}, {"-vx", "-w", "39"},
+		{"-vm", "-w", "80"}, {"-v", "--zero"}, {"-v", "a.tar.gz", "a1.tar.gz", "a01.tar.gz", "a"},
+	} {
+		cases = append(cases, invocation{name: "version-prefix-" + strconv.Itoa(i), args: args, dir: versions})
+	}
+
 	if os.Geteuid() != 0 {
 		namesOnly := t.TempDir()
 		if err := os.WriteFile(filepath.Join(namesOnly, "file"), nil, 0o644); err != nil {

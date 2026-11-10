@@ -519,6 +519,35 @@ ops lift as device ops, so no pass removes, merges or moves them, or moves a
 plain access across them. Refcounts stay non-atomic (`docs/MULTICORE-RESEARCH.md`
 C1).
 
+**A second core** (arm64 only). `@secondary` marks the function that a second
+core runs. It implies `@norc`, so core 0 stays the only core that touches a
+refcount. The rules:
+
+- E105 refuses an entry that does not take one `usize` and return `void`, a
+  second entry, and an entry on a target that is not `arm64-kernel`.
+- `__secondary_entry()` gives the address of `__fern_secondary_start`. It also
+  stores the `TTBR0_EL1` of core 0, so the second core uses the same
+  translation.
+- The board starts the core with PSCI `CPU_ON` (`__hvc(0xc4000003, mpidr,
+  entry, context)`). The entry masks the interrupts, takes a stack of 64 KiB
+  for each core from `.bss`, sets `CPACR_EL1` and `VBAR_EL1`, and turns on the
+  MMU. Then it calls the `@secondary` function with the context, and parks the
+  core when the function returns.
+
+`TestSelfHostKernelSecondaryCountsOnQemu` is the first "done when" item of
+#14258. Two cores each add 1 to one word 200000 times with
+`__atomic_fetch_add`, and the total is exactly 400000.
+
+**User processes on the second core.** `__fern_user_ctx` has one slot for each
+core, so each core can run `__user_run`. `serve_core` of `std/user_process` is
+a `@norc` loop for the second core. It takes a process from a mailbox, runs
+its EL0 code, and gives back the event. Core 0 answers the events, because a
+system call and a page-in touch RC values. Core 1 starts its own timer, and
+its top half leaves the IRQ region to the reactor of core 0. In
+`TestSelfHostKernelTwoCoreSchedulerOnQemu`, four Fern workers share the two
+cores. A preempted worker can continue on the other core. Each worker gets
+the correct total, and each ran on both cores.
+
 ### 6. Board packages: who supplies a capability
 
 A TamaGo board package supplies about ten functions and variables to the runtime:
@@ -981,7 +1010,12 @@ and three `mmap` reservations at start.
      of another node, and that each page-in flushed the whole TLB.
    - `TestSelfHostKernelSelfCompilesOnQemu` runs in `fernos-nightly.yml`,
      because it takes about 30 minutes.
-25. Beside those: the panic scope is decided (#14257, see the north-star
+25. **Two cores run on arm64** (#14258). The four atomics are intrinsics, and
+   a second core starts at the `@secondary` entry through PSCI `CPU_ON`
+   ("5. Atomics" above). The two cores add to one word, and the total is
+   exact. The second core runs only `@norc` code. It runs the EL0 code of a
+   user process from a mailbox, and core 0 answers the events.
+26. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

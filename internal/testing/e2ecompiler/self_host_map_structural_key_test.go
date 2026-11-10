@@ -20,7 +20,33 @@ function yn(b: boolean): string {
     return "f";
 }
 
+function wide_pairs(): i32 {
+    let a: Map[(i64, i64), i32] = map_new(1);
+    let i = 0;
+    while (i < 600) {
+        a = a.insert((7i64, i as i64), i + 1);
+        a = a.insert((7i64, (i as i64) + 4294967296i64), i + 601);
+        i += 1;
+    }
+    i = 0;
+    while (i < 600) {
+        if (a.get_or((7i64, i as i64), 0) != i + 1) { return 1; }
+        if (a.get_or((7i64, (i as i64) + 4294967296i64), 0) != i + 601) { return 2; }
+        i += 1;
+    }
+    let low = 0i64 - 9223372036854775807i64 - 1i64;
+    a = a.insert((low, -1i64), 1201);
+    a = a.insert((-1i64, low), 1202);
+    let b = a.remove((7i64, 1i64));
+    if (b.contains((7i64, 1i64)) || b.len() != 1201) { return 3; }
+    if (b.get_or((low, -1i64), 0) != 1201 || b.get_or((-1i64, low), 0) != 1202) { return 4; }
+    let u: Map[(u64, u64), i32] = Map { (18446744073709551615u64, 0u64): 9, (0u64, 18446744073709551615u64): 8 };
+    if (u.get_or((18446744073709551615u64, 0u64), 0) != 9 || u.get_or((0u64, 18446744073709551615u64), 0) != 8) { return 5; }
+    return 0;
+}
+
 function main(): i32 {
+    if (wide_pairs() != 0) { return 12; }
     let a: Map[(string, i32), i32] = map_new(8);
     let i: i32 = 0;
     while (i < 300) {

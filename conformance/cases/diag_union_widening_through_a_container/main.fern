@@ -1,0 +1,50 @@
+// A variant widens to its union only where a value takes the type of its
+// slot. A value of a container type keeps the types of its components, so
+// Option[A] is not Option[U], and A[] is not U[].
+
+struct A { x: i32 }
+struct B { s: string }
+type U = A | B;
+struct H { us: U[] }
+
+function take(us: U[]): i32 {
+  return us.len();
+}
+
+function by_let(n: Option[A]): i32 {
+  let k: Option[U] = n;
+  return 0;
+}
+
+function by_assignment(a: A[]): i32 {
+  let us: U[] = [];
+  us = a;
+  return us.len();
+}
+
+function by_argument(a: A[]): i32 {
+  return take(a);
+}
+
+function by_result(a: A[]): U[] {
+  return a;
+}
+
+function by_field(a: A[]): i32 {
+  let h = H { us: a };
+  return h.us.len();
+}
+
+function by_nesting(a: Option[A][]): i32 {
+  let k: Option[U][] = a;
+  return k.len();
+}
+
+function by_branches(c: boolean, us: U[], a: A[]): i32 {
+  let r = if (c) { us } else { a };
+  return r.len();
+}
+
+function main(): i32 {
+  return 0;
+}

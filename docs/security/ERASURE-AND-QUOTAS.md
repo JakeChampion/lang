@@ -59,8 +59,9 @@ On x86-64 the instructions that Valgrind counts grow by these amounts. Valgrind 
 `std/crypto` gains `erase[T: ops.Zero](own xs: T[]): void`.
 It takes an owned array of any element type that has a zero, such as `u8[]`, `u32[]`, `i64[]` or `f64[]`.
 It writes `T.zero()` into every element with `with`, which stores in place when no other reference shares the array.
-The block therefore holds zeros when it returns to the allocator.
-The checker accepts an owned argument only at its last use, so a program cannot read the array after the call.
+Uniquely held storage contains zeroes at release.
+Shared storage uses copy-on-write, so other holders retain their bytes.
+The call consumes one holder.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.
 `TestSelfHostEraseZeroesStorage` pins that on both targets.
@@ -71,6 +72,20 @@ Its erase path must read none.
 It does not erase a copy that the program made before the call.
 It does not erase a register or a spill slot that held a word of the secret, or a kernel buffer that carried it.
 A process that must not leave a secret in a core dump calls `disable_core_dumps`.
+
+### Private keys
+
+The ECDSA and Ed25519 `erase` methods consume one private-key holder.
+They erase the secret arrays that this holder owns.
+Other holders retain their arrays through copy-on-write and can still sign.
+The caller must erase the last holder to clear the last shared secret storage.
+The caller must also erase separate input arrays and secret copies.
+
+The ECDSA and Ed25519 library suites check the shared-holder case.
+They erase an explicit shared holder, then sign and verify with the other holder.
+`TestSelfHostPrimitivesEraseKeyMaterial` checks released secret storage for both private-key types on x86-64 and ARM64 under QEMU.
+Each drop control must leave a stale secret in the scan.
+Each erase control must leave none.
 
 ## Heap quotas
 

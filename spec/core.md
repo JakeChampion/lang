@@ -550,6 +550,7 @@ is the number of slots it leaves.
 | `atomic_store_release` | 522 | 2 | 1 |
 | `atomic_fetch_add` | 523 | 2 | 1 |
 | `atomic_cas` | 524 | 3 | 1 |
+| `secondary_entry` | 525 | 0 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

@@ -1027,9 +1027,6 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     }
     return byte_cmp(a.name, b.name);
   }
-  if (c.sort_key == sort_version()) {
-    return vercmp.compare(a.name, b.name);
-  }
   if (c.sort_key == sort_width()) {
     let w = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
     if (w != 0) {
@@ -1068,10 +1065,39 @@ function is_dir_entry(c: Cfg, e: Ent): boolean {
   return e.link_ok && filetype.is_dir(e.link_mode);
 }
 
+function version_before(c: Cfg, es: Ent[], prefixes: i32[], a: i32, b: i32): boolean {
+  if (c.dirs_first) {
+    let ad = is_dir_entry(c, es[a]);
+    let bd = is_dir_entry(c, es[b]);
+    if (ad != bd) {
+      return ad;
+    }
+  }
+  let x = a;
+  let y = b;
+  if (c.reverse) {
+    x = b;
+    y = a;
+  }
+  let r = vercmp.compare_text_prefixes(es[x].name, prefixes[x], es[y].name, prefixes[y]);
+  if (r == 0) {
+    return es[x].name < es[y].name;
+  }
+  return r < 0;
+}
+
 function sort_entries(c: Cfg, es: Ent[]): Ent[] {
   let n = es.len();
   if (n < 2 || c.sort_key == sort_none()) {
     return es;
+  }
+  let prefixes: i32[] = [];
+  if (c.sort_key == sort_version()) {
+    let i = 0;
+    while (i < n) {
+      prefixes = prefixes.append(vercmp.text_prefix(es[i].name));
+      i += 1;
+    }
   }
   let src: i32[] = [];
   let dst: i32[] = [];
@@ -1097,7 +1123,13 @@ function sort_entries(c: Cfg, es: Ent[]): Ent[] {
       let p = start;
       let q = mid;
       while (p < mid && q < end) {
-        if (before(c, es, src[q], src[p])) {
+        let first = false;
+        if (c.sort_key == sort_version()) {
+          first = version_before(c, es, prefixes, src[q], src[p]);
+        } else {
+          first = before(c, es, src[q], src[p]);
+        }
+        if (first) {
           dst = dst.with(at, src[q]);
           q += 1;
         } else {

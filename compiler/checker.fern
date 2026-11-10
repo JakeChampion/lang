@@ -1032,7 +1032,7 @@ function privileged_sig(name: string): DeviceSig {
   if (name == "__wfi" || name == "__tlb_flush_all" || name == "__breakpoint" || name == "__irq_mask" || name == "__irq_unmask" || name == "__irq_wait") {
     return DeviceSig { params: [], result: typeinfo.t_void() };
   }
-  if (name == "__boot_info" || name == "__irq_pending") {
+  if (name == "__boot_info" || name == "__irq_pending" || name == "__secondary_entry") {
     return DeviceSig { params: [], result: typeinfo.t_usize() };
   }
   if (name == "__user_run" || name == "__atomic_load_acquire") {
@@ -4354,7 +4354,20 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
   return false;
 }
 
+// A component of a container type keeps its type: a variant does not widen
+// to its union there, and a value does not box to a dyn.
 function nested_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if let typeinfo.TypeUnion(_) = to {
+    if let typeinfo.TypeStruct(_) = from {
+      return false;
+    }
+  }
+  return element_assignable(from, to, unions);
+}
+
+// An element of a literal or a constructor takes the type of its slot, so a
+// variant widens to its union there. A value does not box to a dyn.
+function element_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
   if let typeinfo.TypeDyn(_) = to {
     return type_eq(from, to);
   }
@@ -10538,7 +10551,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
   while (i < a.args.len()) {
     let x = a.args[i];
     let y = b.args[i];
-    if (!is_unknown(x) && !is_unknown(y) && !mx_arm_compatible(VbStore { t: x, e: none }, VbStore { t: y, e: none }, elem, assigns, unions, enums)) {
+    if (!is_unknown(x) && !is_unknown(y) && !mx_component_compatible(VbStore { t: x, e: none }, VbStore { t: y, e: none }, elem, assigns, unions, enums)) {
       return false;
     }
     i += 1;
@@ -10575,7 +10588,7 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeArray(aa) => {
       match (b.t) {
         typeinfo.TypeArray(ba) => {
-          return mx_arm_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), false, assigns, unions, enums);
+          return mx_component_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), false, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -10610,6 +10623,24 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
       return false;
     }
   }
+}
+
+// A component of an arm keeps its type: a variant does not widen to its
+// union to join a sibling arm.
+function mx_component_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  if (mx_variant_beside_union(a.t, b.t) || mx_variant_beside_union(b.t, a.t)) {
+    return false;
+  }
+  return mx_arm_compatible(a, b, elem, assigns, unions, enums);
+}
+
+function mx_variant_beside_union(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(_) = a {
+    if let typeinfo.TypeUnion(_) = b {
+      return true;
+    }
+  }
+  return false;
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
@@ -12025,6 +12056,22 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
   return "";
 }
 
+// True when the union named en lists the variant nm, bare or with its module
+// prefix. Two enums can have a variant of one name, and a lookup by the name
+// can give the other enum.
+function union_lists_variant(unions: UnionTable, en: string, nm: string): boolean {
+  let at = unions.index.find(en);
+  if (at < 0 || nm.len() == 0) {
+    return false;
+  }
+  for v in unions.unions[at].variants {
+    if (v == nm || v.ends_with("__" + nm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unions: UnionTable, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let Some(ss) = find_variant_sig(structs, pv.type_name) else {
@@ -12041,6 +12088,9 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unio
       let owner = union_of_variant(nm, unions);
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
+      }
+      if (union_lists_variant(unions, pt, nm)) {
+        owner = pt;
       }
       if (pt.len() > 0 && owner == pt && variant_payload_count(nm, structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + pt + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
@@ -12069,6 +12119,9 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
       }
+      if (union_lists_variant(s.unions, u.name, nm)) {
+        owner = u.name;
+      }
       if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
       }
@@ -12090,6 +12143,9 @@ function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], 
       let owner = scope_variant_owner(nm, s);
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
+      }
+      if (union_lists_variant(s.unions, u.name, nm)) {
+        owner = u.name;
       }
       if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
@@ -12978,7 +13034,7 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
   if let typeinfo.TypeTuple(_) = want {
     if let ast.ExprCall(c) = e {
       if (parser.is_value_block(c)) {
-        return nested_assignable(check_expr(e, s), want, s.unions.unions);
+        return element_assignable(check_expr(e, s), want, s.unions.unions);
       }
     }
   }
@@ -13015,7 +13071,7 @@ function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     while (i < ga.len()) {
       if (typeinfo.is_dyn(wa[i]) && !is_unknown(ga[i]) && !typeinfo.is_dyn(ga[i])) {
         boxed = true;
-      } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !nested_assignable(ga[i], wa[i], s.unions.unions)) {
+      } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !element_assignable(ga[i], wa[i], s.unions.unions)) {
         return false;
       }
       i += 1;
@@ -13082,7 +13138,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    return view_free_settle(c.args[0], wa[at], s) && settles_to(c.args[0], wa[at], s);
+    return view_free_settle(c.args[0], wa[at], s) && settles_or_nested(c.args[0], wa[at], s);
   }
   return false;
 }
@@ -13182,7 +13238,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
     return true;
   }
   let t = check_expr(e, s);
-  return is_unknown(t) || nested_assignable(t, want, s.unions.unions);
+  return is_unknown(t) || element_assignable(t, want, s.unions.unions);
 }
 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
@@ -18010,7 +18066,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
   "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-  "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas",
+  "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
   "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
   "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
@@ -19153,6 +19209,10 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
+          // An associated call with no arguments has no source for a loan.
+          if (c.args.len() == 0 && assoc_call_req(mfa.obj, mfa.field, ctx.scope, mfa.const_read).found) {
+            return true;
+          }
           if (ow_array_update_owned(c, mfa, ctx)) {
             return true;
           }
@@ -24288,7 +24348,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",

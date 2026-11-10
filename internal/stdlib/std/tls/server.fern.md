@@ -389,7 +389,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
       }
     },
     handshake.ResumeOffered(offer) => {
-      return __failed(srv, srv.resume(lookup_ticket(s.config.ticket_key, offer, now)));
+      return __failed(srv, srv.resume(__resumable(s.config, lookup_ticket(s.config.ticket_key, offer, now), now)));
     },
     handshake.VerifyClient(v) => {
       match (__client_trusted(s.config, v, now)) {
@@ -410,6 +410,25 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
     _ => {}
   }
   return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
+}
+
+// A server that requires a client certificate resumes only a session whose
+// client proved one, and only while that chain still verifies. Any other
+// ticket gives a full handshake.
+function __resumable(config: Config, found: Option[handshake.Resumed], now: i64): Option[handshake.Resumed] {
+  let Some(roots) = config.client_roots else {
+    return found;
+  };
+  let Some(r) = found else {
+    return None;
+  };
+  if (r.client_chain.len() == 0) {
+    return None;
+  }
+  if let Err(_) = verify.client(r.client_chain, roots, time.timestamp_from_unix(now / 1000)) {
+    return None;
+  }
+  return Some(r);
 }
 
 function __client_trusted(config: Config, v: handshake.Verification, now: i64): Result[void, tls.TlsError] {
@@ -472,7 +491,10 @@ function __client_alert(e: tls.TlsError): handshake.HandshakeError {
 <<13 const TICKET_AAD: string>>=
 const TICKET_AAD: string = "fern tls ticket";
 
-const TICKET_VERSION: i32 = 2;
+const TICKET_VERSION: i32 = 3;
+
+// The most bytes of client certificates that a ticket holds.
+const TICKET_CHAIN_MAX: i32 = 16384;
 
 // A ticket's obfuscated-age addend (4 bytes) and its sealing nonce (12).
 pub const TICKET_ENTROPY: i32 = 16;
@@ -503,6 +525,7 @@ pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, 
     },
     Err(_) => {}
   }
+  body = __with_chain(body, srv.client_chain());
   let ticket_nonce = __copy(entropy[4:16]);
   let sealed: u8[] = [];
   match (chacha20poly1305.key(key)) {
@@ -562,8 +585,53 @@ function __open_ticket(key: [u8], offer: handshake.Offer, id: [u8], now: i64): O
   return None;
 }
 
+// Appends the client's chain: a count, then each certificate behind its
+// 24-bit length. A chain past TICKET_CHAIN_MAX is left out, so a server
+// that requires a client certificate does not resume that session.
+function __with_chain(own body: u8[], chain: u8[][]): u8[] {
+  let total = 0;
+  for cert in chain {
+    total += cert.len() + 3;
+  }
+  if (total > TICKET_CHAIN_MAX || chain.len() > 255) {
+    return body.append(0 as u8);
+  }
+  body = body.append(chain.len() as u8);
+  for cert in chain {
+    body = body.append((cert.len() >> 16 & 255) as u8).append((cert.len() >> 8 & 255) as u8).append((cert.len() & 255) as u8);
+    body = __cat(body, cert);
+  }
+  return body;
+}
+
+// The chain that __with_chain wrote at body[at:], or None when the bytes
+// are not exactly one chain.
+function __chain_at(body: [u8], at: i32): Option[u8[][]] {
+  if (at >= body.len()) {
+    return None;
+  }
+  let count = body[at] as i32;
+  let chain: u8[][] = [];
+  let p = at + 1;
+  for i in 0..count {
+    if (p + 3 > body.len()) {
+      return None;
+    }
+    let n = body[p] as i32 << 16 | body[p + 1] as i32 << 8 | body[p + 2] as i32;
+    if (n > body.len() - p - 3) {
+      return None;
+    }
+    chain = chain.append(__copy(body[p + 3:p + 3 + n]));
+    p += 3 + n;
+  }
+  if (p != body.len()) {
+    return None;
+  }
+  return Some(chain);
+}
+
 // A ticket's body: version, suite, issue time and lifetime, the early data
-// flag, the ALPN, the server name, and the PSK.
+// flag, the ALPN, the server name, the PSK, and the client's chain.
 function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
   let size = offer.suite.hash().size();
   if (body.len() < 23 || body[0] as i32 != TICKET_VERSION) {
@@ -575,9 +643,10 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
   }
   let name_at = 21 + alpn_len;
   let name_len = body[name_at] as i32 << 8 | body[name_at + 1] as i32;
-  if (body.len() != name_at + 2 + name_len + size) {
+  let chain_at = name_at + 2 + name_len + size;
+  let Some(client_chain) = __chain_at(body, chain_at) else {
     return None;
-  }
+  };
   if (!__ticket_live(body, size, now)) {
     return None;
   }
@@ -587,7 +656,7 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[h
   let Ok(alpn) = utf8.from_bytes(__copy(body[21:21 + alpn_len])) else {
     return None;
   };
-  return Some(handshake.Resumed { index: 0, psk: __copy(body[name_at + 2 + name_len:body.len()]), early: (body[19] as i32 & 1) == 1, alpn: alpn });
+  return Some(handshake.Resumed { index: 0, psk: __copy(body[name_at + 2 + name_len:chain_at]), early: (body[19] as i32 & 1) == 1, alpn: alpn, client_chain: client_chain });
 }
 
 // __ticket_live says the ticket's suite hashes to `size` bytes, as the
