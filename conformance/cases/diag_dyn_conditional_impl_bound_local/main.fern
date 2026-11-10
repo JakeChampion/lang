@@ -1,0 +1,13 @@
+trait Show { function show(self: Self): string; }
+
+impl Show for i32 { function show(self: Self): string { return "int:" + self.to_string(); } }
+
+struct Box[T] { v: T }
+
+impl[T: Show] Show for Box[T] { function show(self: Self): string { return "Box(" + self.v.show() + ")"; } }
+
+function main(): i32 {
+    let d: dyn Show = Box { v: "str" };
+    print(d.show());
+    return 0;
+}
