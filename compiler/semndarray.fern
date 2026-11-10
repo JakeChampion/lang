@@ -276,9 +276,6 @@ function outer_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
   if (ins.args.len() != 3 || ins.str != "__smm_ndarray__NdArray_outer__f64__f64__f64") {
     return semarrayreport.kernel_unsupported_element_type();
   }
-  if (util.has_str(f.shadows, "__outer_mul_f64")) {
-    return semarrayreport.kernel_builtin_shadowed();
-  }
   for value in [ins.args[0], ins.args[1]] {
     if (layouts[value] != semndlayout.packed()) {
       return layout_refusal(layouts[value]);
@@ -329,9 +326,6 @@ function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
 function inner_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
   if (ins.args.len() != 5 || ins.str != "__smm_ndarray__NdArray_inner__f64__f64") {
     return semarrayreport.kernel_unsupported_element_type();
-  }
-  if (util.has_str(f.shadows, "__inner_mul_add_f64")) {
-    return semarrayreport.kernel_builtin_shadowed();
   }
   for value in [ins.args[0], ins.args[1]] {
     if (layouts[value] != semndlayout.packed()) {
