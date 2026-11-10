@@ -542,9 +542,11 @@ refcount. The rules:
 core, so each core can run `__user_run`. `serve_core` of `std/user_process` is
 a `@norc` loop for the second core. It takes a process from a mailbox, runs
 its EL0 code, and gives back the event. Core 0 answers the events, because a
-system call and a page-in touch RC values. In
-`TestSelfHostKernelTwoCoreProcessesOnQemu`, two Fern workers run at the same
-time, one on each core, and both get the correct total.
+system call and a page-in touch RC values. Core 1 starts its own timer, and
+its top half leaves the IRQ region to the reactor of core 0. In
+`TestSelfHostKernelTwoCoreSchedulerOnQemu`, four Fern workers share the two
+cores. A preempted worker can continue on the other core. Each worker gets
+the correct total, and each ran on both cores.
 
 ### 6. Board packages: who supplies a capability
 
