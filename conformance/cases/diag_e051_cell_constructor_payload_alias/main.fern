@@ -1,0 +1,24 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function take(own slot: Cell[Handle]): Handle {
+  return slot.get();
+}
+
+function lift(h: Handle): Cell[Handle] {
+  let value = h;
+  let slot = cell_new(value);
+  return slot;
+}
+
+function main(): i32 {
+  let h = Handle { fd: 7 };
+  let slot = lift(h);
+  let alias = slot;
+  let other = take(alias);
+  return other.close() + h.close();
+}

@@ -19153,6 +19153,10 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
+          // An associated call with no arguments has no source for a loan.
+          if (c.args.len() == 0 && assoc_call_req(mfa.obj, mfa.field, ctx.scope, mfa.const_read).found) {
+            return true;
+          }
           if (ow_array_update_owned(c, mfa, ctx)) {
             return true;
           }
@@ -24177,7 +24181,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",

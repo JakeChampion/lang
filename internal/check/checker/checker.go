@@ -10727,6 +10727,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
+			// An associated call has no captured environment or receiver.
+			// With no arguments, its result has no source for a loan.
+			if freshAssociatedResult(x) {
+				return true
+			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if c.arrayUpdateOwned(x, isOwnedExpr, isOwnedExpr) {
 					return true

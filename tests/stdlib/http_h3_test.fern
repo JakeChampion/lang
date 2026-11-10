@@ -250,6 +250,44 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \nserver headers 0 [:method=GET :scheme=https :path=/h host=example.com ]; server end 0; ");
 }
 
+function req_with(method: string, authority: string, path: string, more: qpack.Field[]): qpack.Field[] {
+  let out: qpack.Field[] = [qpack.field(":method", method), qpack.field(":scheme", "https"), qpack.field(":authority", authority), qpack.field(":path", path)];
+  for f in more {
+    out = out.append(f);
+  }
+  return out;
+}
+
+function test_field_and_target_values(): test.TestOutcome {
+  let none: qpack.Field[] = [];
+  let cases: qpack.Field[][] = [
+    req_with("GET", "a.test", "/static/../../etc/passwd", none),
+    req_with("GET", "a.test", "/a%2Fb%00c", none),
+    req_with("GET", "a.test", "admin", none),
+    req_with("GET", "a.test", "/a HTTP/1.1\r\nx-inj: 1\r\n\r\nGET /b", none),
+    req_with("GET /x HTTP/1.1\r\nHost: evil\r\n\r\nGET", "a.test", "/", none),
+    req_with("GET", "a.test\r\nx-forwarded-for: 127.0.0.1", "/", none),
+    req_with("GET", "user@a.test", "/", none),
+    req_with("GET", "a.test", "/", [qpack.field("x-a", "1\r\nx-admin: true")]),
+    req_with("GET", "a.test", "/", [qpack.field("x-n", "a\x00b")]),
+    req_with("GET", "a.test", "/", [qpack.field("bad name", "v")]),
+    req_with("GET", "a.test", "/", [qpack.field("host", "a.test"), qpack.field("host", "evil.test")]),
+  ];
+  let i = 0;
+  let id: i64 = 0;
+  for fs in cases {
+    let p = linked();
+    p = flow(Link { ...p, log: "", c: p.c.send_headers(id, fs, true) });
+    if (p.log != "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; ") {
+      return test.fail("case " + i.to_string() + ": " + p.log);
+    }
+    i += 1;
+  }
+  let trailed = linked();
+  trailed = flow(Link { ...trailed, log: "", c: trailed.c.send_headers(id, post("3"), false).send_data(id, "abc".bytes(), false).send_headers(id, [qpack.field("Bad Name", "a\r\nb")], true) });
+  return test.assert_true(trailed.log.ends_with("server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; "));
+}
+
 function test_connection_errors(): test.TestOutcome {
   let p = linked();
   let out = closes(p.s.on_stream(0 as i64, __codec_bytes(hex.decode("000161")), false));
@@ -356,6 +394,7 @@ function main(): i32 {
   r = r.it("a body and trailers a byte at a time, and an interim response", test_body_trailers_interim);
   r = r.it("HEAD and 304 responses carry no body", test_bodiless);
   r = r.it("malformed messages are stream errors", test_malformed);
+  r = r.it("field values, names and request targets are checked", test_field_and_target_values);
   r = r.it("frames out of place are connection errors", test_connection_errors);
   r = r.it("GOAWAY", test_goaway);
   r = r.it("a field section blocked on QPACK", test_qpack_blocked);

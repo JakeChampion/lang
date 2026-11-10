@@ -307,6 +307,10 @@ function __xor_into(k: Stream, counter: u32, own out: u8[], from: i32, len: i32)
 <<7 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
   let st = __stream(k, nonce)?;
+  let blocks = (data.len() as i64 + 63) / 64;
+  if (counter as i64 + blocks > 4294967296) {
+    return Err(aead.CounterRange);
+  }
   return Ok(__xor_into(st, counter, __bytes_into(__alloc_u8(data.len()), 0, data, 0, data.len()), 0, data.len()));
 }
 ```
@@ -557,25 +561,27 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
 // tag at buf[at + n:at + n + 16]: the in-place form std/crypto/aes_gcm's Key.seal_in_place has.
 pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let st = __stream_seq(k, iv, seq)?;
-  buf = __xor_into(st, 1, buf, at, n);
-  let tag = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, n);
-  return Ok(__bytes_into(buf, at + n, tag, 0, 16));
+  let text = buf[at:at + n].len();
+  buf = __xor_into(st, 1, buf, at, text);
+  let tag = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, text);
+  return Ok(__bytes_into(buf, at + text, tag, 0, 16));
 }
 
 // Opens buf[at:at + n] in place, the tag at buf[at + n:at + n + 16]; a tag that does not verify returns Forged
 // before anything is decrypted.
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let st = __stream_seq(k, iv, seq)?;
-  let want = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, n);
+  let text = buf[at:at + n].len();
+  let want = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, text);
   let diff = 0;
   for i in 0..16 {
-    diff |= want[i] ^ buf[at + n + i];
+    diff |= want[i] ^ buf[at + text + i];
   }
   want = want.with(0, diff);
   __ct_public(want[0:1]);
   if (want[0] != 0) {
     return Err(aead.Forged);
   }
-  return Ok(__xor_into(st, 1, buf, at, n));
+  return Ok(__xor_into(st, 1, buf, at, text));
 }
 ```
