@@ -52,6 +52,17 @@ function update_map(m: Map[string, i32]): own Map[string, i32] {
 }
 
 function main(): i32 {
+  function local_make(): own Box {
+    return Box { values: [5u8] };
+  }
+  function local_next(own box: Box): own Box {
+    return next(box);
+  }
+  let factory: () => own Box = local_make;
+  let transform: (own Box) => own Box = local_next;
+  let local = transform(factory());
+  assert(local.values[0] == 5u8);
+  assert(local.values[1] == 9u8);
   let calls = Callbacks { step: next };
   let box = fold(Box { values: [7u8] }, (own x: Box): own Box => calls.step(x));
   print(box.values.len());
