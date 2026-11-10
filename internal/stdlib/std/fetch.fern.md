@@ -1477,7 +1477,7 @@ function __live_kept[T: Transport](tr: T): Kept[] {
 }
 
 function __kept_conn(k: Kept): __Conn {
-  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2, h3: __h3_unparked(k.h3), heard: k.heard };
+  return __Conn { fd: k.fd, tls: k.tls, closed: false, early: [], h2: k.h2, h3: __h3_unparked(k.h3), heard: k.heard };
 }
 
 // __tickets_kept keeps the last ticket the connection received for the
@@ -2711,7 +2711,7 @@ function __h3_dialled[T: Transport](tr: T, addr: net.IpAddr, port: i32, cfg: qui
   }
   match (__h3_handshake(tr, fd, cfg, early, deadline)) {
     Ok(h) => {
-      return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, h3: Some(h), heard: headers.new() });
+      return Ok(__Conn { fd: fd, tls: None, closed: false, early: [], h2: None, h3: Some(h), heard: headers.new() });
     },
     Err(e) => {
       tr.close(fd);
@@ -2977,7 +2977,8 @@ function __h3_closed(h: h3q.Conn, during: string): FetchError {
 ```fern
 <<48 struct __Conn>>=
 // heard is the header block of the last response read on the connection.
-struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn], h3: Option[h3q.Conn], heard: HeaderMap }
+// early is the data that came with the last flight of the TLS handshake.
+struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, early: u8[], h2: Option[h2.Conn], h3: Option[h3q.Conn], heard: HeaderMap }
 ```
 
 ### `49 function __has_tls(conn: __Conn): boolean`
@@ -2997,7 +2998,7 @@ function __has_tls(conn: __Conn): boolean {
 }
 
 function __no_conn(): __Conn {
-  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None, h3: None, heard: headers.new() };
+  return __Conn { fd: 0 - 1, tls: None, closed: false, early: [], h2: None, h3: None, heard: headers.new() };
 }
 
 function __close[T: Transport](tr: T, conn: __Conn): void {
@@ -3029,14 +3030,15 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
   match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
     Ok(fd) => {
       if (!t.tls) {
-        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, h3: None, heard: headers.new() });
+        return Ok(__Conn { fd: fd, tls: None, closed: false, early: [], h2: None, h3: None, heard: headers.new() });
       }
       match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots, req)) {
-        Ok(s) => {
-          if (s.alpn() != "h2") {
-            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None, h3: None, heard: headers.new() });
+        Ok(shook) => {
+          let conn = __Conn { fd: fd, tls: Some(shook.session), closed: shook.closed, early: shook.early, h2: None, h3: None, heard: headers.new() };
+          if (shook.session.alpn() != "h2") {
+            return Ok(conn);
           }
-          return __h2_opened(tr, fd, s);
+          return __h2_opened(tr, conn);
         },
         Err(e) => {
           tr.close(fd);
@@ -3057,26 +3059,28 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
   return Err(Timeout(Connecting));
 }
 
-function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__Conn, FetchError] {
+function __h2_opened[T: Transport](tr: T, conn: __Conn): Result[__Conn, FetchError] {
   let start = h2.client(h2.config());
-  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn), h3: None, heard: headers.new() }, start.output)) {
+  match (__send_all(tr, __Conn { ...conn, h2: Some(start.conn) }, start.output)) {
     Ok(c) => {
       return Ok(c);
     },
     Err(e) => {
-      tr.close(fd);
+      tr.close(conn.fd);
       return Err(e);
     }
   }
   return Err(Protocol("unreachable"));
 }
 
-function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roots: Option[verify.Roots], req: Request): Result[client.Session, FetchError] {
+struct __Shook { session: client.Session, early: u8[], closed: boolean }
+
+function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roots: Option[verify.Roots], req: Request): Result[__Shook, FetchError] {
   if (!t.direct) {
     __tunnel(tr, fd, t, deadline)?;
   }
-  let s = __tls_handshake(tr, fd, t.origin, deadline, roots)?;
-  return __kernel_session(tr.socket(fd), s, req);
+  let shook = __tls_handshake(tr, fd, t.origin, deadline, roots)?;
+  return Ok(__Shook { ...shook, session: __kernel_session(tr.socket(fd), shook.session, req)? });
 }
 
 function __kernel_session(found: Option[Socket], s: client.Session, req: Request): Result[client.Session, FetchError] {
@@ -3241,13 +3245,15 @@ function __tunnel_status(head: string): Result[void, FetchError] {
   return Ok(());
 }
 
-function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
+function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[__Shook, FetchError] {
   let roots = __roots(given)?;
   let cfg = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
   let step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall()))?;
   __write_all(tr, fd, step.output)?;
   let s = step.session;
-  while (!s.connected()) {
+  let early: u8[] = [];
+  let closed = false;
+  while (!s.connected() && !closed) {
     let wait_ms: i64 = (deadline - time.instant_nanos(tr.now())) / 1000000;
     if (wait_ms <= 0) {
       return Err(Timeout(Connecting));
@@ -3256,8 +3262,10 @@ function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i
     let next = __tls_read(tr, fd, s, input)?;
     __write_all(tr, fd, next.output)?;
     s = next.session;
+    early = next.data;
+    closed = next.closed;
   }
-  return Ok(s);
+  return Ok(__Shook { session: s, early: early, closed: closed });
 }
 ```
 
@@ -3585,7 +3593,7 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
   let from = 0;
   let eof = false;
   while (true) {
-    match (http.parse_response_framed_from(buf, from, req.method, eof, req.limits, conn.heard)) {
+    match (http.parse_response_framed_from(buf, from, req.method, __clean_end(conn, eof), req.limits, conn.heard)) {
       Complete(framed) => {
         let next = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
@@ -3597,7 +3605,7 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
       },
       Incomplete => {
         if (eof) {
-          return Err(__closed_early(buf.len() - from));
+          return Err(__ended_short(conn, buf.len() - from));
         }
       },
       Malformed(code) => {
@@ -3632,6 +3640,23 @@ function __read_size(held: i32): i32 {
     return 65536;
   }
   return held;
+}
+
+// A TLS stream that ends with no close_notify can be cut by an attacker
+// (RFC 8446 section 6.1), so its end does not complete a response.
+function __cut(conn: __Conn): boolean {
+  return __has_tls(conn) && !conn.closed;
+}
+
+function __clean_end(conn: __Conn, eof: boolean): boolean {
+  return eof && !__cut(conn);
+}
+
+function __ended_short(conn: __Conn, got: i32): FetchError {
+  if (got > 0 && __cut(conn)) {
+    return Tls(tls.Truncated);
+  }
+  return __closed_early(got);
 }
 
 function __closed_early(got: i32): FetchError {
@@ -3792,6 +3817,9 @@ struct __Got { conn: __Conn, bytes: u8[] }
 ```fern
 <<58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Re...>>=
 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
+  if (conn.early.len() > 0) {
+    return Ok(__Got { conn: __Conn { ...conn, early: [] }, bytes: conn.early });
+  }
   if (conn.closed) {
     return Ok(__Got { conn: conn, bytes: [] });
   }
@@ -3800,22 +3828,7 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
       if (s.offloaded()) {
         return __recv_kernel(tr, conn, s, timeouts, started, size);
       }
-      let session = s;
-      while (true) {
-        let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
-        if (raw.len() == 0) {
-          if (session.held.len() > 0) {
-            return Err(Tls(tls.RecordCut));
-          }
-          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
-        }
-        let step = __tls_read(tr, conn.fd, session, raw)?;
-        __write_all(tr, conn.fd, step.output)?;
-        session = step.session;
-        if (step.data.len() > 0 || step.closed) {
-          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: step.closed }, bytes: step.data });
-        }
-      }
+      return __recv_records(tr, conn, s, timeouts, started, size);
     },
     None => {
       return Ok(__Got { conn: conn, bytes: __recv_raw(tr, conn.fd, timeouts, started, size)? });
@@ -3824,10 +3837,41 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
   return Ok(__Got { conn: conn, bytes: [] });
 }
 
-function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
+function __recv_records[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
   let session = s;
   while (true) {
     let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
+    if (raw.len() == 0) {
+      if (session.held.len() > 0) {
+        return Err(Tls(tls.RecordCut));
+      }
+      return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
+    }
+    let step = __tls_read(tr, conn.fd, session, raw)?;
+    __write_all(tr, conn.fd, step.output)?;
+    session = step.session;
+    if (step.data.len() > 0 || step.closed) {
+      return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: step.closed }, bytes: step.data });
+    }
+  }
+  return Ok(__Got { conn: conn, bytes: [] });
+}
+
+// A read of a kernel TLS socket fails with EIO when the next record is not
+// application data. An empty answer sends the caller to the record path.
+function __kernel_data(got: Result[u8[], FetchError]): Result[u8[], FetchError] {
+  if let Err(Io(e)) = got {
+    if (e.eq(net.error_from_host(5))) {
+      return Ok([]);
+    }
+  }
+  return got;
+}
+
+function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
+  let session = s;
+  while (true) {
+    let raw = __kernel_data(__recv_raw(tr, conn.fd, timeouts, started, size))?;
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }

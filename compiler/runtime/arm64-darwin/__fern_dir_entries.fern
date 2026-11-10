@@ -18,7 +18,7 @@ function __fern_dir_entries(fd: i32): Result[string[], IoError] {
       while (pos < n) {
         let reclen = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
         let nlen = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256;
-        if (__fern_utf8_valid(buf + pos + 21, nlen) == 0) {
+        if (__fern_utf8_valid(buf + pos as usize + 21, nlen) == 0) {
           bad = -92;
           done = 1;
           pos = n;
@@ -38,7 +38,7 @@ function __fern_dir_entries(fd: i32): Result[string[], IoError] {
           }
           if (skip == 0) {
             let nbuf = __raw_alloc(nlen);
-            __memcpy(nbuf, buf + pos + 21, nlen);
+            __memcpy(nbuf, buf + pos as usize + 21, nlen);
             names = names.append(__raw_string(nbuf, nlen));
           }
           pos += reclen;

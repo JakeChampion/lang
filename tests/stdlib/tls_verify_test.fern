@@ -288,6 +288,20 @@ function test_a_wildcard_reaches_an_excluded_name(): test.TestOutcome {
   return test.assert_eq(outcome(verify.server([wild_leaf()], verify.roots([wild_root()]), "bar.example.com", now())), refused);
 }
 
+// A root with an RSA key of 1024 bits.
+function short_rsa_root(): u8[] {
+  return __codec_bytes(hex.decode("308201e830820151a003020102020101300d06092a864886f70d01010b05003017311530130603550403130c7273613130323420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a3017311530130603550403130c7273613130323420726f6f7430819f300d06092a864886f70d010101050003818d0030818902818100be2de9a11642669c76dd08509e8a206fb23ff11813678eb07235e4b2b427634d14282ac93cc4b374c37b1fa5c3d5c3c888b80a9cbb719e4e0ed535216e7f761acda4538775f4f40ebd86fa4c3876bb9356c30ff8a243c63dcd384d2c661a5ffe34e26d4b1c775f01d636bfdb8b59dbe82b854df536e3363dcbf99c18e478f6c10203010001a3423040300e0603551d0f0101ff040403020204300f0603551d130101ff040530030101ff301d0603551d0e04160414ff4ad2a62e9d4f7a0594f079d5dfb6eb06725e6e300d06092a864886f70d01010b0500038181003d6ad7d574ba21df10f9bf1588d3adf0dfbda81770d8eac909cd8ac60e6a8be43a9b94e2c422ad5a6b600068ea5c56d9ccf71bdee28a284d02a4fe1951707981542a7e0f0f2b4c6124ceeea90a305ba88db04c495ce085e4bf229af48c06d999a843fd85e5d6d66143f575a8df819b0775a05718f17ccc35091a09bc9e365fcd"));
+}
+
+// A leaf below short_rsa_root.
+function short_rsa_leaf(): u8[] {
+  return __codec_bytes(hex.decode("308201723081dca003020102020102300d06092a864886f70d01010b05003017311530130603550403130c7273613130323420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a300f310d300b060355040313046c656166302a300506032b6570032100e764e8b0d50e925d09890865d009a6d8620c0522f1adebdc1368bb45003a3e12a34b3049300e0603551d0f0101ff040403020780301f0603551d23041830168014ff4ad2a62e9d4f7a0594f079d5dfb6eb06725e6e30160603551d11040f300d820b746c732e6578616d706c65300d06092a864886f70d01010b05000381810029054c9307eb43aa8e5140c9e085f45994e7a70e1eb6081f022767a5d0ee011b25a641f7183f9cbe1e0c6e0f134c22eb7045491559025c86fe3ac8db5a0f581e1545c0ae2233fde6b58826358b35b42c363d41168703cf0b3fbdb02db539a5f9dfd1cbae3ade05e8fffdd329cb051468b4f265f3e3f662e3ae0741257f1ee44e"));
+}
+
+function test_a_short_rsa_key_is_refused(): test.TestOutcome {
+  return test.assert_eq(outcome(verify.server([short_rsa_leaf()], verify.roots([short_rsa_root()]), "tls.example", now())), "tls verify: certificate 1's RSA key is shorter than 2048 bits");
+}
+
 function test_bad_signature(): test.TestOutcome {
   let b = ec_leaf();
   let serial = 0;
@@ -295,6 +309,17 @@ function test_bad_signature(): test.TestOutcome {
     serial += 1;
   }
   return test.assert_eq(outcome(verify.server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
+}
+
+// The outer signatureAlgorithm follows the TBSCertificate. Its tag is not
+// in the signed part.
+function test_an_algorithm_with_another_tag(): test.TestOutcome {
+  let b = ec_leaf();
+  let at = 8 + (b[6] as i32 << 8 | b[7] as i32);
+  if (b[at] != 0x30 as u8) {
+    return test.fail("the fixture moved");
+  }
+  return test.assert_eq(outcome(verify.server([b.with(at, 0x31 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0: x509: malformed AlgorithmIdentifier");
 }
 
 function test_roots_from_pem(): test.TestOutcome {
@@ -406,6 +431,8 @@ function main(): i32 {
   r = r.it("refusals", test_refusals);
   r = r.it("denied keys", test_denied_keys);
   r = r.it("a bad signature", test_bad_signature);
+  r = r.it("an RSA key shorter than 2048 bits is refused", test_a_short_rsa_key_is_refused);
+  r = r.it("an algorithm with a tag that is not SEQUENCE", test_an_algorithm_with_another_tag);
   r = r.it("roots from PEM", test_roots_from_pem);
   r = r.it("name constraints", test_name_constraints);
   r = r.it("a wildcard reaches an excluded name", test_a_wildcard_reaches_an_excluded_name);

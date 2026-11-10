@@ -173,25 +173,21 @@ function c_string(t: u8[], at: i32, n: i32): string {
 
 function bytes(t: u8[], from: i32, to: i32): u8[] {
   let out: u8[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(t[i]);
-    i += 1;
   }
   return out;
 }
 
 function octal(t: u8[], at: i32, n: i32): i32 {
   let v = 0;
-  let i = at;
-  while (i < at + n) {
+  for i in at..at + n {
     let c = t[i];
     if (c >= b'0' && c <= b'7') {
       v = v * 8 + (c - b'0') as i32;
     } else if (c != b' ' && c != 0) {
       return -1;
     }
-    i += 1;
   }
   return v;
 }
@@ -221,13 +217,11 @@ function pax_path(t: u8[], at: i32, size: i32): string {
 
 function decimal(t: u8[], from: i32, to: i32): i32 {
   let v = 0;
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     if (t[i] < b'0' || t[i] > b'9') {
       return -1;
     }
     v = v * 10 + (t[i] - b'0') as i32;
-    i += 1;
   }
   return v;
 }
@@ -254,13 +248,11 @@ function clean(p: string): string {
 
 function joined(segs: string[]): string {
   let out = "";
-  let i = 0;
-  while (i < segs.len()) {
+  for i in 0..segs.len() {
     if (i > 0) {
       out += "/";
     }
     out += segs[i];
-    i += 1;
   }
   return out;
 }
@@ -268,13 +260,11 @@ function joined(segs: string[]): string {
 function split(p: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i <= p.len()) {
+  for i in 0..=p.len() {
     if (i == p.len() || p[i] == b'/') {
       out = out.append(slice_unchecked(p, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   return out;
 }

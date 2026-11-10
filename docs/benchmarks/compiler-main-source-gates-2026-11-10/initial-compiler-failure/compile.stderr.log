@@ -1,0 +1,1 @@
+fern: import "std/io" needs the stdlib root: pass its directory after the entry file

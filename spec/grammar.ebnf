@@ -18,6 +18,8 @@ Import      = 'import' STRING [ 'as' IDENT ] ';' ;
 PubUse      = 'pub' 'use' STRING '.' '{' UseNames '}' ';' ;
 UseNames    = IDENT { ',' IDENT } [ ',' ] ;
 
+# @value has no arguments and applies only to a struct declaration.
+# The checked field and copyability rules are in docs/VALUE-TYPES.md.
 Attribute   = '@' ( 'import' | IDENT ) [ '(' [ AttrArgs ] ')' ] ;
 AttrArgs    = AttrArg { ',' AttrArg } [ ',' ] ;
 AttrArg     = STRING | NUMBER | QualName ;

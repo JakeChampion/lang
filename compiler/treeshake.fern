@@ -65,12 +65,10 @@ function ts_named_tag(tag: string): boolean {
   if (tag.len() == 0) {
     return false;
   }
-  let i = 0;
-  while (i < tag.len()) {
+  for i in 0..tag.len() {
     if (!lexer.is_alphanumeric(tag[i] as i32) && tag[i] != b'_') {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -298,22 +296,18 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   if (fd.name == "inner" && util.base_type_name(fd.receiver_type) == "ndarray__NdArray") {
     acc = acc.append("ndarray__inner_kernel");
   }
-  let i = 0;
-  while (i < fd.body.len()) {
+  for i in 0..fd.body.len() {
     acc = astwalk.fold_stmt(fd.body[i], acc, name_of);
-    i += 1;
   }
   return acc;
 }
 
 function ts_interposed_method_name(name: string): string {
   let last_dot: i32 = -1;
-  let i = 0;
-  while (i < name.len()) {
+  for i in 0..name.len() {
     if (name[i] == b'.') {
       last_dot = i;
     }
-    i += 1;
   }
   if (last_dot < 0) {
     return "";
@@ -385,29 +379,23 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
   }
   let methods: string[] = [];
   let bare: string[] = [];
-  let i = 0;
-  while (i < fd.body.len()) {
+  for i in 0..fd.body.len() {
     methods = astwalk.fold_stmt(fd.body[i], methods, method_of);
     bare = astwalk.fold_stmt(fd.body[i], bare, ts_method_name_of);
-    i += 1;
   }
   let bound: string[] = [];
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     bound = bound.append(fd.params[pi].name);
-    pi += 1;
   }
   let any: string[] = [];
   any = util.append_all(any, methods);
   any = util.append_all(any, bare);
   let free = astwalk.collect_free_idents(bound, fd.body, []);
-  let fi = 0;
-  while (fi < free.len()) {
+  for fi in 0..free.len() {
     any = any.append(ts_free_root(free[fi]));
-    fi += 1;
   }
   return BodyRefs { any: util.name_index(any), methods: util.name_index(methods) };
 }
@@ -455,8 +443,7 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
   if (fd.receiver_name.len() > 0) {
     lt = lt_bind(lt, fd.receiver_name, fd.receiver_type);
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     let ty = fd.params[pi].type_name;
     if (util.base_type_name(ty) == "Self") {
       ty = fd.receiver_type;
@@ -469,12 +456,9 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
       }
     }
     lt = lt_bind(lt, fd.params[pi].name, ty);
-    pi += 1;
   }
-  let i = 0;
-  while (i < fd.body.len()) {
+  for i in 0..fd.body.len() {
     lt = astwalk.fold_stmt_spine(fd.body[i], lt, lt_stmt);
-    i += 1;
   }
   return lt;
 }
@@ -844,14 +828,11 @@ pub function treeshake(mod: parser.Module): parser.Module {
 
 pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Module {
   let refs = top_level_names(mod, roots);
-  let ei = 0;
-  while (ei < mod.exports.len()) {
+  for ei in 0..mod.exports.len() {
     refs = refs.append(mod.exports[ei].func_name);
-    ei += 1;
   }
 
-  let di = 0;
-  while (di < mod.impls.len()) {
+  for di in 0..mod.impls.len() {
     if (mod.impls[di].trait_name == "Drop") {
       let dm = 0;
       while (dm < mod.impls[di].method_names.len()) {
@@ -859,22 +840,17 @@ pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Mo
         dm += 1;
       }
     }
-    di += 1;
   }
 
-  let ai = 0;
-  while (ai < mod.funcs.len()) {
+  for ai in 0..mod.funcs.len() {
     if (mod.funcs[ai].async && mod.funcs[ai].import_iface.len() == 0) {
       refs = refs.append(mod.funcs[ai].name);
     }
-    ai += 1;
   }
 
   let pending: i32[] = [];
-  let pi0 = 0;
-  while (pi0 < mod.funcs.len()) {
+  for pi0 in 0..mod.funcs.len() {
     pending = pending.append(pi0);
-    pi0 += 1;
   }
 
   let grown = ts_grow(mod, util.name_index(refs), pending);
@@ -888,12 +864,10 @@ pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Mo
   let rs = grown.rs;
 
   let kept: parser.FuncDecl[] = [];
-  let ki = 0;
-  while (ki < mod.funcs.len()) {
+  for ki in 0..mod.funcs.len() {
     if (ts_kept_name(mod.funcs[ki], rs)) {
       kept = kept.append(mod.funcs[ki]);
     }
-    ki += 1;
   }
   return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, marks: mod.marks, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, substituted_consts: mod.substituted_consts, todo_sites: mod.todo_sites, sights: mod.sights };
 }

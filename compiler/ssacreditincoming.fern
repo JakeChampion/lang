@@ -54,11 +54,9 @@ function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[]
 function initial(ids: i32[]): State {
   let values: Value[] = [];
   let credits: i32[] = [1, 1, 1];
-  let i = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     values = values.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
-    i += 1;
   }
   return State { ids: ids, values: values, credits: credits, sites: [], error: "" };
 }

@@ -1,0 +1,18 @@
+{
+  "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "created": "2026-11-10T03:57:15.758586+00:00",
+  "lookup_inputs": [
+    "Captured name, method/closure flags and receiver Value",
+    "Immutable Funcs declarations and Map index in the captured Env"
+  ],
+  "receiver_audit": "value_type_name reads Value tags, stored type_name strings, integer flags, lane width or view flags. handle_kind reads stored Reader/Writer options. None of these queries reads a mutable interpreter heap cell. VType association lookup uses its stored name.",
+  "timing_contract": "The target decision depends only on these unchanged inputs. Earlier argument evaluation cannot replace this Funcs table or the captured receiver type. Free implicit-type-argument calls retain eager lookup. Other calls resolve once before the first direct call argument needs pinning, including a remembered miss.",
+  "preserved": [
+    "Argument evaluation order and error checks",
+    "Earlier argument values supplied to bind_tyargs",
+    "Main dispatch and declaration-order/name/receiver predicates",
+    "The two with/append addressability queries",
+    "Session replacement and snapshot semantics",
+    "Ownership certification and proof rules"
+  ]
+}

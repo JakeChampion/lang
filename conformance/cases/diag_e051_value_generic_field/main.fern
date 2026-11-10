@@ -1,0 +1,7 @@
+// spec: VT-04
+@value
+struct Bad[T] { data: T }
+
+function main(): i32 {
+  return 0;
+}

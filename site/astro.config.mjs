@@ -63,12 +63,12 @@ const STDLIB_GROUPS = [
   ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "pagetable", "raw", "tcp", "tcp_conn", "user_process", "virtio", "virtio_blk", "virtio_net", "virtio_rng",
     "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz", "worker"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve", "tcp_serve",
-    "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_tls12", "tls_verify", "tls_x509", "wasi_http"]],
+    "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_tls12", "tls_verify", "tls_x509", "user_net", "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "sim_platform", "test"]],
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_gl", "android_image", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_testkit", "android_trace", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "ffi", "jni"]],
+  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_gl", "android_image", "android_keyboard", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_testkit", "android_trace", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "ffi", "jni"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

@@ -1,0 +1,23 @@
+{
+  "source": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+  "purpose": "Verify both TLS selectors that failed the superseded head. Main supplies the expectation repair.",
+  "started": "2026-11-10T07:26:37.252192+00:00",
+  "phase": "complete",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2e",
+    "-run",
+    "^TestTLSServerAgainstGo(Interp)?$",
+    "-count=1",
+    "-v",
+    "-timeout=20m"
+  ],
+  "cwd": "/workspace/lang-interpreter-qualified-20261110-0710",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "tests_started": "2026-11-10T07:35:03.785356+00:00",
+  "exit_code": 0,
+  "passes": 14,
+  "skips": 0,
+  "finished": "2026-11-10T07:38:59.407238+00:00"
+}

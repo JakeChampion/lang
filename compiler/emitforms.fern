@@ -80,12 +80,10 @@ pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_comp
 }
 
 function declares_extern(full: parser.Module): boolean {
-  let i = 0;
-  while (i < full.funcs.len()) {
+  for i in 0..full.funcs.len() {
     if (full.funcs[i].import_iface.len() > 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -140,10 +138,8 @@ function async_type(t: string, mem: boolean): i32[] {
   if (wasm_ir.extern_tuple_param_supported(t)) {
     let n = wasm_ir.tuple_type_elem_count(t);
     let out: i32[] = [111, n];
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       out = out.append(wasm_ir.async_lift_valtype(wasm_ir.nth_tuple_type_elem(t, i)));
-      i += 1;
     }
     return out;
   }
@@ -273,55 +269,25 @@ function kebab_char(c: u8, word_start: boolean): boolean {
 }
 
 function framed_component(core: i32[], shape: i32): i32[] {
-  if (shape == 1) {
-    return watbin.component_full_io(core);
-  }
-  if (shape == 2) {
-    return watbin.component_full_io_fs(core);
-  }
-  if (shape == 3) {
-    return watbin.component_full_io_fs_write(core);
-  }
-  if (shape == 4) {
-    return watbin.component_full_io_fs_rw(core);
-  }
-  if (shape == 5) {
-    return watbin.component_full_io_random(core);
-  }
-  if (shape == 6) {
-    return watbin.component_full_io_env(core);
-  }
-  if (shape == 7) {
-    return watbin.component_full_io_args(core);
-  }
-  if (shape == 8) {
-    return watbin.component_full_io_clock(core);
-  }
-  if (shape == 9) {
-    return watbin.component_full_io_clock_mono(core);
-  }
-  if (shape == 10) {
-    return watbin.component_full_io_fs_read_env(core);
-  }
-  if (shape == 11) {
-    return watbin.component_full_io_fs_rw_env(core);
-  }
-  if (shape == 12) {
-    return watbin.component_full_io_random_write(core);
-  }
-  if (shape == 13) {
-    return watbin.component_full_io_eprint(core);
-  }
-  if (shape == 14) {
-    return watbin.component_full_io_exit(core);
-  }
-  if (shape == 15) {
-    return watbin.component_full_io_fs_args_read(core);
-  }
-  if (shape == 17) {
-    return watbin.component_full_io_eprint_exit(core);
-  }
-  return watbin.component_full_io_fs_rw_args(core);
+  return match (shape) {
+    1 => watbin.component_full_io(core),
+    2 => watbin.component_full_io_fs(core),
+    3 => watbin.component_full_io_fs_write(core),
+    4 => watbin.component_full_io_fs_rw(core),
+    5 => watbin.component_full_io_random(core),
+    6 => watbin.component_full_io_env(core),
+    7 => watbin.component_full_io_args(core),
+    8 => watbin.component_full_io_clock(core),
+    9 => watbin.component_full_io_clock_mono(core),
+    10 => watbin.component_full_io_fs_read_env(core),
+    11 => watbin.component_full_io_fs_rw_env(core),
+    12 => watbin.component_full_io_random_write(core),
+    13 => watbin.component_full_io_eprint(core),
+    14 => watbin.component_full_io_exit(core),
+    15 => watbin.component_full_io_fs_args_read(core),
+    17 => watbin.component_full_io_eprint_exit(core),
+    _ => watbin.component_full_io_fs_rw_args(core),
+  };
 }
 
 // A core module with the custom section `fern.build` appended: the build

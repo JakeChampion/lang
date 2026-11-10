@@ -1,0 +1,84 @@
+{
+  "baseline_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "candidate_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "workloads": {
+    "first": {
+      "compilers": {
+        "baseline": {
+          "wall_median_s": 6.445066962,
+          "wall_range_s": [
+            5.854317127,
+            6.529337829
+          ],
+          "cpu_median_s": 6.4359649999999995,
+          "rss_median_kib": 148172
+        },
+        "candidate": {
+          "wall_median_s": 4.632106172,
+          "wall_range_s": [
+            4.400517367,
+            4.864404939
+          ],
+          "cpu_median_s": 4.6059209999999995,
+          "rss_median_kib": 148300
+        }
+      },
+      "paired_cpu_percent": [
+        -19.62711784030653,
+        -32.66073124690799,
+        -28.783451748724055,
+        -23.041667587799363,
+        -25.735052940778893
+      ]
+    },
+    "second": {
+      "compilers": {
+        "baseline": {
+          "wall_median_s": 77.661689026,
+          "wall_range_s": [
+            73.086989921,
+            173.794730482
+          ],
+          "cpu_median_s": 77.64375,
+          "rss_median_kib": 150860
+        },
+        "candidate": {
+          "wall_median_s": 25.857951017,
+          "wall_range_s": [
+            13.56276917,
+            29.852224589
+          ],
+          "cpu_median_s": 25.836215,
+          "rss_median_kib": 150988
+        }
+      },
+      "paired_cpu_percent": [
+        -59.165340977014445,
+        -66.72466875955888,
+        -92.20149289395879
+      ]
+    }
+  },
+  "allocations": {
+    "first": {
+      "baseline": 29235985,
+      "candidate": 28587295,
+      "saved": 648690,
+      "balanced": true,
+      "live_bytes": [
+        0,
+        0
+      ]
+    },
+    "second": {
+      "baseline": 86268690,
+      "candidate": 66240816,
+      "saved": 20027874,
+      "balanced": true,
+      "live_bytes": [
+        0,
+        0
+      ]
+    }
+  }
+}

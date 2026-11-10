@@ -1,0 +1,13 @@
+{
+  "created": "2026-11-10T02:40:53.118900+00:00",
+  "candidate": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+  "baseline": "f9904974a77249949607f3b6196e489bf53c3602",
+  "fixed": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "note": "The collector runs builds, subset timings and counts, complete compilation, then full interpretation in sequence. Earlier source and targeted tests finished before this collector started. Baseline-normal build preceded the collector and overlapped those earlier tests. No new local test suite starts during timing.",
+  "clean_source_checks": {
+    "candidate": "",
+    "baseline": "",
+    "fixed": ""
+  },
+  "previous_524_hash_archives_unchanged_since_verified_commit": "aa6d305861281e9293e72f73b2a827d24222814e"
+}

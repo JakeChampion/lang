@@ -14,15 +14,13 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
   if (want.loop_depth != got.loop_depth) {
     return "check_stmt left loop_depth " + util.i32_to_string(want.loop_depth) + ", bind_stmt " + util.i32_to_string(got.loop_depth);
   }
-  let i = 0;
-  while (i < want.names.len()) {
+  for i in 0..want.names.len() {
     if (want.names[i] != got.names[i]) {
       return "binding " + util.i32_to_string(i) + " is `" + want.names[i] + "` under check_stmt and `" + got.names[i] + "` under bind_stmt";
     }
     if (checker.type_debug(want.types[i]) != checker.type_debug(got.types[i])) {
       return "binding `" + want.names[i] + "` is " + checker.type_debug(want.types[i]) + " under check_stmt and " + checker.type_debug(got.types[i]) + " under bind_stmt";
     }
-    i += 1;
   }
   return "";
 }
@@ -118,26 +116,20 @@ function main(): i32 {
   let mod = rundriver.parse_stdin("bind_stmt_parity_run");
   let scopes = checker.module_scopes(mod);
   let acc = Walked { diffs: [], compared: 0, forms: [] };
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     acc = walk(mod.funcs[i].body, scopes[i], "function " + mod.funcs[i].name, acc);
-    i += 1;
   }
   acc = walk(mod.top_stmts, scopes[mod.funcs.len()], "top level", acc);
-  let j = 0;
-  while (j < acc.diffs.len()) {
+  for j in 0..acc.diffs.len() {
     print(acc.diffs[j]);
-    j += 1;
   }
   print("# compared " + util.i32_to_string(acc.compared));
   let forms = "";
-  let k = 0;
-  while (k < acc.forms.len()) {
+  for k in 0..acc.forms.len() {
     if (k > 0) {
       forms += ",";
     }
     forms += acc.forms[k];
-    k += 1;
   }
   print("# forms " + forms);
   if (acc.diffs.len() > 0) {

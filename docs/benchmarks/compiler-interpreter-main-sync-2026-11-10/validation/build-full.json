@@ -1,0 +1,80 @@
+{
+  "source": "1fb070786cd3bf799b78873d9dbaa6f2c9500ed3",
+  "main_source": "e23f590d1e523a2a90c7b202c7631b80aa4635da",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "runs": [
+    {
+      "label": "main-build",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-retained-main-validation-20261110-0845/main-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261110-0845",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:48:22.043305+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:50:00.874852+00:00",
+      "binary_sha256": "f5f15374a3e622ba97ac3809619570d62891b80ae031ff505369de77204a29ec"
+    },
+    {
+      "label": "retained-build",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-retained-main-validation-20261110-0845/retained-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:50:00.929196+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:51:10.812014+00:00",
+      "binary_sha256": "f5f15374a3e622ba97ac3809619570d62891b80ae031ff505369de77204a29ec"
+    },
+    {
+      "label": "full",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-retained-main-validation-20261110-0845/retained-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:51:10.850650+00:00",
+      "diagnostic_limit_seconds": 1980,
+      "exit_code": 0,
+      "wall_ns": 201518537026,
+      "finished": "2026-11-10T08:54:32.369637+00:00",
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161"
+    }
+  ],
+  "note": "Fresh exact-binary and correctness controls after upstream compiler, HTTP, TLS, and runtime changes. Full interpretation overlaps targeted validation. No performance comparison or normal-run allocation-balance claim.",
+  "main_binary_byte_identical": true,
+  "exit_code": 0,
+  "finished": "2026-11-10T08:54:32.371932+00:00"
+}

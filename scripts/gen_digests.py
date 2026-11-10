@@ -223,13 +223,26 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("    return out;")
     p("}")
     p("")
+    emit_last(p, tag, struct)
     for name in ivs:
         base = name[: -len("_new")]
         p(f"// {base} calculates the digest of `s`.")
         p(f"pub function {base}(s: [u8]): u8[] {{")
-        p(f"    return {name}().update(s).finish();")
+        p(f"    let last = {name}().update(s);")
+        p(f"    return __{tag}_last(last);")
         p("}")
         p("")
+
+
+def emit_last(p, tag, struct):
+    p("// The buffer of the state holds the tail of the message, so it is zeroed")
+    p("// after the digest is made.")
+    p(f"function __{tag}_last(own h: {struct}): u8[] {{")
+    p("    let out = h.finish();")
+    p("    erase(h.buf);")
+    p("    return out;")
+    p("}")
+    p("")
 
 
 def emit_hw_blocks(p, tag, struct, nwords, block):
@@ -539,9 +552,11 @@ def emit_blake2b(p):
     p("    return out;")
     p("}")
     p("")
+    emit_last(p, "blake2b", "Blake2b")
     p("// blake2b calculates an `out_len`-byte digest of `s`.")
     p("pub function blake2b(s: [u8], out_len: i32): u8[] {")
-    p("    return blake2b_new(out_len).update(s).finish();")
+    p("    let last = blake2b_new(out_len).update(s);")
+    p("    return __blake2b_last(last);")
     p("}")
     p("")
 

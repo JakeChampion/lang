@@ -1,3 +1,8 @@
+# 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
+# 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
+# 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
+# 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
+# 2026-11-10: a_match_value_of_owned_arms_is_owned is clean under RC trace.
 # 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
 # 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
 # 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
@@ -61,6 +66,7 @@ a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read 0
 a_map_key_eq_may_take_its_keys_owned                 0
+a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
@@ -73,6 +79,7 @@ a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
+aead_in_place_refuses_overlapping_additional_data    0
 aliased_and_used_twice                               0
 alloc_count_sees_recycling                           0
 alloc_flat_array_push_bound_elem                     0
@@ -576,6 +583,7 @@ let_else_variant_binding_outlives_stmt               0
 literal_local_read_at_two_widths                    0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
+literal_local_typed_by_its_uses                      0
 literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
@@ -1333,6 +1341,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_mixes_through_an_explicit_cast                 0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
@@ -1370,3 +1379,6 @@ worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0
+
+# VT-01: checked value cleanup retains COW aliases.
+value_cleanup_keeps_cow_aliases                    0

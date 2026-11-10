@@ -89,10 +89,8 @@ function spill_frame(out: ssaprepare.Output, arm: boolean): void {
 
 function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   let ops = [ir.op_load_local(0)];
-  let i = 1;
-  while (i < params) {
+  for i in 1..params {
     ops = ops.append(ir.op_load_local(i)).append(ir.op_bin("add", 64, false));
-    i += 1;
   }
   let r = irtables.LowerResult { ...g.cache[0], n_params: params, n_locals: params, ops: ops.append(ir.op_return()) };
   let out = checked(g, r, arm);
@@ -267,10 +265,8 @@ function unique_pressure(g: ircore.Gated, arm: boolean): void {
     i += 1;
   }
   ops = ops.append(ir.op_const_i32(0));
-  i = 0;
-  while (i < 50) {
+  for i in 0..50 {
     ops = util.append_all(ops, [ir.op_load_local(i), ir.op_bin("add", 64, false)]);
-    i += 1;
   }
   let r = irtables.LowerResult { ...g.cache[0], n_params: 25, n_locals: 50, ops: ops.append(ir.op_return()) };
   let row = checked(g, r, arm).bodies[0];

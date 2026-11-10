@@ -1,0 +1,5 @@
+{
+  "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "base": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "note": "Same PR continuation. The extra argument prepass in70171 is a rejected candidate on the first diagnostic group. This trial defers method target lookup until the first direct call argument, without a separate scan. All current public results remain source-specific. No benefit established for this trial yet."
+}

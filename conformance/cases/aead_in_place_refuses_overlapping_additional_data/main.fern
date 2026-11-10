@@ -1,0 +1,55 @@
+// An in-place AEAD call refuses additional data that overlaps the text or
+// its tag. Before, the tag covered different bytes on different engines.
+import "std/crypto/aead";
+import "std/crypto/aes_gcm";
+import "std/crypto/chacha20poly1305";
+
+function counted(n: i32): u8[] {
+    let b = __alloc_u8(n);
+    for i in 0..n {
+        b = b.with(i, i as u8);
+    }
+    return b;
+}
+
+function filled(n: i32): u8[] {
+    let b = __alloc_u8(n);
+    for i in 0..n {
+        b = b.with(i, 0x41 as u8);
+    }
+    return b;
+}
+
+function shown(r: Result[u8[], aead.AeadError]): string {
+    match (r) {
+        Ok(b) => {
+            return "sealed " + b.len().to_string() + " bytes";
+        },
+        Err(e) => {
+            return e.message();
+        }
+    }
+    return "";
+}
+
+function main(): i32 {
+    match (aes_gcm.key(counted(32))) {
+        Ok(k) => {
+            print("aes-gcm overlap: " + shown(k.seal_in_place(counted(12), 0 as u64, filled(48), 0, 32, 0, 16)));
+            print("aes-gcm apart: " + shown(k.seal_in_place(counted(12), 0 as u64, filled(48), 32, 16, 0, 16)));
+        },
+        Err(e) => {
+            print(e.message());
+        }
+    }
+    match (chacha20poly1305.key(counted(32))) {
+        Ok(k) => {
+            print("chacha20-poly1305 overlap: " + shown(k.seal_in_place(counted(12), 0 as u64, filled(48), 0, 32, 0, 16)));
+            print("chacha20-poly1305 apart: " + shown(k.seal_in_place(counted(12), 0 as u64, filled(48), 32, 16, 0, 16)));
+        },
+        Err(e) => {
+            print(e.message());
+        }
+    }
+    return 0;
+}

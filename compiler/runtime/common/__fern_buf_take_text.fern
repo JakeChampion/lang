@@ -15,7 +15,7 @@ function __fern_buf_take_text(h: usize): string {
   let mask = 9259542123273814144 as u64;
   while (i < n) {
     if (n - i >= 8) {
-      if ((__load_i64(data + i) as u64 & mask) == 0 as u64) {
+      if ((__load_i64(data + i as usize) as u64 & mask) == 0 as u64) {
         i += 8;
         continue;
       }
@@ -43,14 +43,14 @@ function __fern_buf_take_text(h: usize): string {
     let written: i32 = 0;
     while (i < n) {
       if (n - i >= 8) {
-        if ((__load_i64(data + i) as u64 & mask) == 0 as u64) {
+        if ((__load_i64(data + i as usize) as u64 & mask) == 0 as u64) {
           i += 8;
           continue;
         }
       }
       let part = __fern_buf_text_part(data, i, n);
       if (part < 0) {
-        __memcpy(out + written, data + start, i - start);
+        __memcpy(out + written as usize, data + start as usize, i - start);
         written += i - start;
         __raw_store8(out, written, 239);
         __raw_store8(out, written + 1, 191);
@@ -62,7 +62,7 @@ function __fern_buf_take_text(h: usize): string {
         i += part;
       }
     }
-    __memcpy(out + written, data + start, n - start);
+    __memcpy(out + written as usize, data + start as usize, n - start);
   }
   __store_i64(h + 8, 0 as i64);
   return __raw_string(out, length);

@@ -1,0 +1,17 @@
+struct St { xs: i32[] }
+enum Box { Full(St), Empty }
+function take(own s: St, n: i32): St {
+  return St { xs: s.xs.append(n) };
+}
+function pick(b: Box, s: St): St {
+  return match (b) {
+    Full(inner) => inner,
+    Empty => s,
+  };
+}
+function outer(b: Box, own s: St): St {
+  return take(pick(b, s), 1);
+}
+function main(): i32 {
+  return outer(Full(St { xs: [] }), St { xs: [] }).xs.len();
+}

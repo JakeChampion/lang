@@ -9,15 +9,13 @@ function main(): i32 {
     "Box[i32][]", "i32[]", "Foo[]", "Map[K, V][]", "",
   ];
   let out = "";
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let t = corpus[i];
     let label = t;
     if (label.len() == 0) {
       label = "<empty>";
     }
     out = out + label + " -> " + util.i32_to_string(checker.count_type_args(t)) + "\n";
-    i += 1;
   }
   write(out);
   return 0;

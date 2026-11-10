@@ -1,0 +1,1111 @@
+{
+  "started": "2026-11-10T08:13:37.730148+00:00",
+  "baseline_source": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+  "candidate_source": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "purpose": "Resolve the existing complete-compilation timing concern: every original cold CPU pair is slower despite a later guest instruction difference of only 164.",
+  "design": "Eight fixed pairs per proof-cache mode. Four pairs use each execution order. Binary paths have equal lengths. Both binaries receive separate cache primes and zero-miss probes before timing. No timing value changes the sample count or stopping rule.",
+  "limits": "Shared host, no exclusive CPU or frequency control. This is a separate follow-up, not a replacement for earlier samples. No cache simulator or allocation counters. Small read-only CI observations can overlap.",
+  "runs": [
+    {
+      "label": "candidate-prime",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:13:38.017593+00:00",
+      "exit_code": 0,
+      "wall_ns": 6446873342,
+      "cpu_user": 5.9730550000000004,
+      "cpu_system": 0.46945299999999995,
+      "peak_rss_kib": 192528,
+      "finished": "2026-11-10T08:13:44.465034+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "candidate-probe",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T08:13:44.503344+00:00",
+      "exit_code": 0,
+      "wall_ns": 5341052255,
+      "cpu_user": 5.18408,
+      "cpu_system": 0.153441,
+      "peak_rss_kib": 159888,
+      "finished": "2026-11-10T08:13:49.846608+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+      "cache_hits": 112,
+      "cache_misses": 0
+    },
+    {
+      "label": "baseline-prime",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:13:49.870080+00:00",
+      "exit_code": 0,
+      "wall_ns": 5585052321,
+      "cpu_user": 5.329142,
+      "cpu_system": 0.25207199999999996,
+      "peak_rss_kib": 192656,
+      "finished": "2026-11-10T08:13:55.455550+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "baseline-probe",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T08:13:55.478141+00:00",
+      "exit_code": 0,
+      "wall_ns": 5349377488,
+      "cpu_user": 5.27174,
+      "cpu_system": 0.075681,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:14:00.828024+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+      "cache_hits": 112,
+      "cache_misses": 0
+    },
+    {
+      "label": "cold-0-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:00.849204+00:00",
+      "exit_code": 0,
+      "wall_ns": 4575578656,
+      "cpu_user": 4.485906,
+      "cpu_system": 0.08925999999999999,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:14:05.425187+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-0-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:05.446996+00:00",
+      "exit_code": 0,
+      "wall_ns": 4646941831,
+      "cpu_user": 4.57737,
+      "cpu_system": 0.068977,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:10.094374+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-1-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:10.114035+00:00",
+      "exit_code": 0,
+      "wall_ns": 5534075148,
+      "cpu_user": 5.437511,
+      "cpu_system": 0.09493299999999999,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:15.648657+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-1-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:15.667901+00:00",
+      "exit_code": 0,
+      "wall_ns": 5691292882,
+      "cpu_user": 5.588865,
+      "cpu_system": 0.100426,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:14:21.359859+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-2-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:21.382993+00:00",
+      "exit_code": 0,
+      "wall_ns": 5901903464,
+      "cpu_user": 5.768765,
+      "cpu_system": 0.13055,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:14:27.285586+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-2-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:27.304232+00:00",
+      "exit_code": 0,
+      "wall_ns": 5502426990,
+      "cpu_user": 5.345422,
+      "cpu_system": 0.156277,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:32.807274+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-3-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:32.826327+00:00",
+      "exit_code": 0,
+      "wall_ns": 5288424095,
+      "cpu_user": 5.193861,
+      "cpu_system": 0.09357399999999999,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:38.115359+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-3-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:38.136501+00:00",
+      "exit_code": 0,
+      "wall_ns": 5476725409,
+      "cpu_user": 5.376667,
+      "cpu_system": 0.09838899999999999,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:14:43.613854+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-4-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:43.633199+00:00",
+      "exit_code": 0,
+      "wall_ns": 5149483721,
+      "cpu_user": 5.05107,
+      "cpu_system": 0.097953,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:14:48.783252+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-4-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:48.802393+00:00",
+      "exit_code": 0,
+      "wall_ns": 5318564729,
+      "cpu_user": 5.194432,
+      "cpu_system": 0.123348,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:54.121497+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-5-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:54.143048+00:00",
+      "exit_code": 0,
+      "wall_ns": 5398210830,
+      "cpu_user": 5.305805,
+      "cpu_system": 0.09199099999999999,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:14:59.541880+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-5-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:14:59.562685+00:00",
+      "exit_code": 0,
+      "wall_ns": 5768616052,
+      "cpu_user": 5.649808,
+      "cpu_system": 0.11798199999999999,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:15:05.332055+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-6-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:15:05.358262+00:00",
+      "exit_code": 0,
+      "wall_ns": 7135696955,
+      "cpu_user": 6.999219,
+      "cpu_system": 0.133859,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:15:12.496010+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-6-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:15:12.531145+00:00",
+      "exit_code": 0,
+      "wall_ns": 6106486351,
+      "cpu_user": 6.016413,
+      "cpu_system": 0.088042,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:15:18.639839+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-7-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:15:18.683824+00:00",
+      "exit_code": 0,
+      "wall_ns": 6603098000,
+      "cpu_user": 6.450651,
+      "cpu_system": 0.15056799999999998,
+      "peak_rss_kib": 160528,
+      "finished": "2026-11-10T08:15:25.289545+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "cold-7-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T08:15:25.310852+00:00",
+      "exit_code": 0,
+      "wall_ns": 5592697065,
+      "cpu_user": 5.490943,
+      "cpu_system": 0.096575,
+      "peak_rss_kib": 160400,
+      "finished": "2026-11-10T08:15:30.904804+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-0-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:15:30.940158+00:00",
+      "exit_code": 0,
+      "wall_ns": 6388420644,
+      "cpu_user": 6.244119,
+      "cpu_system": 0.140952,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:15:37.329762+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-0-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:15:37.352228+00:00",
+      "exit_code": 0,
+      "wall_ns": 5884215407,
+      "cpu_user": 5.784752,
+      "cpu_system": 0.09396499999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:15:43.237430+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-1-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:15:43.263539+00:00",
+      "exit_code": 0,
+      "wall_ns": 5911233291,
+      "cpu_user": 5.831102,
+      "cpu_system": 0.079692,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:15:49.176022+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-1-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:15:49.195503+00:00",
+      "exit_code": 0,
+      "wall_ns": 5230861159,
+      "cpu_user": 5.141461,
+      "cpu_system": 0.08745599999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:15:54.427138+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-2-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:15:54.449934+00:00",
+      "exit_code": 0,
+      "wall_ns": 5602930215,
+      "cpu_user": 5.498759,
+      "cpu_system": 0.10324499999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:00.053818+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-2-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:00.077342+00:00",
+      "exit_code": 0,
+      "wall_ns": 5346758862,
+      "cpu_user": 5.236862,
+      "cpu_system": 0.109524,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:05.425151+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-3-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:05.448185+00:00",
+      "exit_code": 0,
+      "wall_ns": 4980594075,
+      "cpu_user": 4.882692,
+      "cpu_system": 0.096242,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:10.429663+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-3-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:16:10.449894+00:00",
+      "exit_code": 0,
+      "wall_ns": 5149164681,
+      "cpu_user": 5.034315,
+      "cpu_system": 0.11372099999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:15.599966+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-4-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:16:15.619458+00:00",
+      "exit_code": 0,
+      "wall_ns": 4760095331,
+      "cpu_user": 4.67011,
+      "cpu_system": 0.089116,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:20.380381+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-4-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:20.402906+00:00",
+      "exit_code": 0,
+      "wall_ns": 5010692553,
+      "cpu_user": 4.91081,
+      "cpu_system": 0.097477,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:25.414408+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-5-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:25.438880+00:00",
+      "exit_code": 0,
+      "wall_ns": 5187101227,
+      "cpu_user": 5.079672,
+      "cpu_system": 0.10538499999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:30.627456+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-5-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:16:30.657175+00:00",
+      "exit_code": 0,
+      "wall_ns": 5155266453,
+      "cpu_user": 5.05788,
+      "cpu_system": 0.09682199999999999,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:35.813244+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-6-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:16:35.833929+00:00",
+      "exit_code": 0,
+      "wall_ns": 5246409140,
+      "cpu_user": 5.156965,
+      "cpu_system": 0.088407,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:41.081471+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-6-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:41.104388+00:00",
+      "exit_code": 0,
+      "wall_ns": 5513488298,
+      "cpu_user": 5.428863,
+      "cpu_system": 0.082702,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:46.618916+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-7-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-cand"
+      },
+      "started": "2026-11-10T08:16:46.639625+00:00",
+      "exit_code": 0,
+      "wall_ns": 5226687031,
+      "cpu_user": 5.114583,
+      "cpu_system": 0.111623,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:51.867396+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    },
+    {
+      "label": "warm-7-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/memo-base"
+      },
+      "started": "2026-11-10T08:16:51.889874+00:00",
+      "exit_code": 0,
+      "wall_ns": 6368869123,
+      "cpu_user": 6.227999,
+      "cpu_system": 0.139877,
+      "peak_rss_kib": 160016,
+      "finished": "2026-11-10T08:16:58.260393+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f"
+    }
+  ],
+  "binary_identities": {
+    "baseline": {
+      "path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/base/fern",
+      "sha256": "bead6a81a9a0d0f31d5b84afc85e907e6cc28cfc9f07e488e0d94d9baf0d62c0",
+      "source_binary": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/baseline-normal"
+    },
+    "candidate": {
+      "path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-compiler-path-control-20261110-0812/cand/fern",
+      "sha256": "de3713f756e725f27235ce29cf207a66b79830f3fa532c353dc8e7c2103c432d",
+      "source_binary": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/candidate-normal"
+    }
+  },
+  "host": {
+    "uname": "Linux 244f525928bb 6.18.57 #1 SMP Tue Oct 20 21:56:04 UTC 2026 x86_64 GNU/Linux",
+    "cpu": ": INTEL(R) XEON(R) PLATINUM 8573C",
+    "processes_before": "    PID    PPID %CPU COMMAND\n      1       0  0.0 tail\n      2       1  0.0 cloud-agent-log\n      3       2  0.0 caas-prefix-tra\n    206       1  0.0 runuser\n    237     206  0.0 rootlesskit\n    247     237  0.0 exe\n    271     237  0.0 slirp4netns\n    280     247  0.0 dockerd\n    301     280  0.1 containerd\n    579       0  0.0 codex\n    906       1  0.0 git\n    946       1  0.0 go\n   7279       1  0.0 git\n   7961       1  0.0 git\n   8423       1  0.0 git\n   8947       1  0.0 git\n   9206       1  0.0 python3\n   9207       1  5.0 fern-normal\n   9709       1  0.0 go\n  10177       1  0.0 e2ecompiler.tes\n  10434       1  0.1 fern-selfhost-x\n  10473       1  0.0 go\n  10521       1  0.0 python3\n  10522       1  5.3 fern-candidate\n  10611       1  0.0 e2ecompiler.tes\n  10868       1  0.0 git\n  10929       1  0.2 fern-selfhost-x\n  11018       1  0.0 git\n  11491       1  0.0 fern-selfhost-x\n  11609       1  0.0 python3\n  11616       1  0.0 bash\n  11617       1  0.0 python3\n  11888       1  0.0 python3\n  12006       1  0.0 git\n  12645       1  0.0 bash\n  13317       1  0.0 python3\n  13440       1  0.0 python3\n  13540       1  0.0 git\n  13717       1  0.0 git\n  13813       1  0.0 python3\n  13922       1  0.0 git\n  13976       1  0.0 python3\n  14160       1  0.0 git\n  14192       1  0.0 python3\n  14320       1  0.0 git\n  14719       1  0.0 python3\n  14819       1  0.0 git\n  15074       1  0.0 git\n  15079       1  0.0 python3\n  15242       1  0.0 git\n  15247       1  0.0 python3\n  15249       1  0.0 bash\n  16661       1  0.0 python3\n  16662       1  0.0 python3\n  16757       1  0.0 python3\n  17055       1  0.0 git\n  17095       1  0.0 python3\n  17102       1  0.0 python3\n  17120       1  0.0 python3\n  17123       1  0.0 bash\n  17850       1  0.0 bash\n  18367       1  0.0 git\n  18407       1  0.0 git\n  18593       1  0.0 git\n  18697       1  0.0 git\n  18751       1  0.0 python3\n  18790       1  0.0 bash\n  18792       1  0.0 bash\n  19970       1  0.0 python3\n  19971       1  0.0 python3\n  20437       1  0.0 python3\n  20733       1  0.0 git\n  21378       1  0.0 bash\n  22135       1  0.0 bash\n  24499       1  0.0 python3\n  24874       1  0.0 python3\n  25128       1  0.0 bash\n  25674       1  0.0 bash\n  27945       1  0.0 git\n  28733       1  0.0 git\n  28825       1  0.0 python3\n  28928       1  0.0 git\n  29209       1  0.0 bash\n  29213       1  0.0 bash\n  31342       1  0.0 git\n  32005       1  0.0 git\n  32015       1  0.0 git\n  32095       1  0.0 git\n  32357       1  0.0 bash\n  32358       1  0.0 bash\n  32751       1  0.0 python3\n  33636       1  0.0 git\n  33764       1  0.0 git\n  33949       1  0.0 git\n  34140       1  0.0 bash\n  34143       1  0.0 bash\n  34826       1  0.0 git\n  35379       1  0.0 git\n  36114       1  0.0 python3\n  36290       1  0.0 bash\n  37330       1  0.0 python3\n  38738       1  0.0 git\n  38846       1  0.0 git\n  39125       1  0.0 git\n  39152       1  0.0 python3\n  39153       1  0.0 python3\n  39687       1  0.0 bash\n  41259       1  0.0 git\n  41321       1  0.0 bash\n  41471       1  0.0 bash\n  43012       1  0.0 git\n  43100       1  0.0 git\n  44289       1  0.0 git\n  45577       1  0.0 python3\n  45740       1  0.0 python3\n  45858       1  0.0 python3\n  45924       1  0.0 python3\n  45939       1  0.0 python3\n  46335       1  0.0 setsid\n  46336       1  0.0 python3\n  46977       1  0.0 setsid\n  46978       1  0.0 python3\n  47054       1  0.0 setsid\n  47055       1  0.0 python3\n  47493       1  0.0 git\n  50311       1  0.0 git\n  52318       1  0.0 git\n  52414       1  0.0 git\n  53582       1  0.0 git\n  53810       1  0.0 git\n  53855       1  0.0 setsid\n  53856       1  0.0 setsid\n  53857       1  0.0 setsid\n  53858       1  0.0 bash\n  53859       1  0.0 bash\n  53861       1  0.0 python3\n  57413       1  0.0 python3\n  57474       1  0.0 python3\n  57484       1  0.0 python3\n  58096       1  0.0 python3\n  58219       1  0.0 python3\n  58642       1  0.0 git\n  60269       1  0.0 python3\n  60949       1 94.4 python3\n  60951   60949  0.0 ps\n"
+  },
+  "summary": {
+    "cold": {
+      "baseline": {
+        "samples": 8,
+        "wall_median_s": 5.45031891,
+        "wall_range_s": [
+          4.646941831,
+          6.603098
+        ],
+        "cpu_median_s": 5.449747500000001,
+        "peak_rss_median_kib": 160528.0
+      },
+      "candidate": {
+        "samples": 8,
+        "wall_median_s": 5.6419949735,
+        "wall_range_s": [
+          4.575578656,
+          7.135696955
+        ],
+        "cpu_median_s": 5.6384045,
+        "peak_rss_median_kib": 160400.0
+      },
+      "paired_cpu_change_percent": [
+        -1.5319777020528225,
+        2.835039993174804,
+        7.227149286066004,
+        3.5484313282338142,
+        -3.1734483186592777,
+        6.854538407898314,
+        16.850365839374692,
+        -15.356269804107392
+      ]
+    },
+    "warm": {
+      "baseline": {
+        "samples": 8,
+        "wall_median_s": 5.2386351495,
+        "wall_range_s": [
+          4.760095331,
+          6.388420644
+        ],
+        "cpu_median_s": 5.237144499999999,
+        "peak_rss_median_kib": 160016.0
+      },
+      "candidate": {
+        "samples": 8,
+        "wall_median_s": 5.286722946499999,
+        "wall_range_s": [
+          4.980594075,
+          5.911233291
+        ],
+        "cpu_median_s": 5.286296,
+        "peak_rss_median_kib": 160016.0
+      },
+      "paired_cpu_change_percent": [
+        -7.9302798668957735,
+        13.040501503466185,
+        -4.56297424992912,
+        -3.2847866642735313,
+        5.233224898334288,
+        0.5888798227327241,
+        5.074816428653683,
+        -17.928584036498208
+      ]
+    }
+  },
+  "exit_code": 0,
+  "finished": "2026-11-10T08:16:58.265077+00:00"
+}

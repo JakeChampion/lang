@@ -1,0 +1,1 @@
+{"target": "wasm32-wasi", "cases": 1566, "workers": 196, "qualified": true}

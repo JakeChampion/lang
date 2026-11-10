@@ -24,11 +24,9 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
   }
   let values: i32[] = [];
   let defined: boolean[] = [];
-  let i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     values = values.append(-1);
     defined = defined.append(false);
-    i += 1;
   }
   let parent_param = false;
   let child_param = false;

@@ -8,10 +8,8 @@ pub function no_source(): SourceInfo {
 
 pub function blanks(n: i32): SourcePos[] {
   let out: SourcePos[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(SourcePos { line: 0, col: "0" });
-    i += 1;
   }
   return out;
 }

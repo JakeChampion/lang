@@ -78,15 +78,13 @@ pub function summary(intro: string): string {
 
 function hex_value(s: string, p: i32): i32 {
   let out = 0;
-  let i = p;
-  while (i < p + 6) {
+  for i in p..p + 6 {
     let b = s[i] as i32;
     let digit = b - 48;
     if (b >= 97) {
       digit = b - 87;
     }
     out = out * 16 + digit;
-    i += 1;
   }
   return out;
 }
@@ -115,12 +113,10 @@ function hex_escape(cp: i32, digits: i32, prefix: string): string {
   let hex = "0123456789abcdef";
   let out = "";
   let value = cp;
-  let i = 0;
-  while (i < digits) {
+  for i in 0..digits {
     let d = value & 15;
     out = slice_unchecked(hex, d, d + 1) + out;
     value = value >> 4;
-    i += 1;
   }
   return prefix + out;
 }

@@ -106,10 +106,8 @@ pub struct SourceLines { values: sourcepos.SourcePos[], terms: sourcepos.SourceP
 
 function blank_positions(n: i32): sourcepos.SourcePos[] {
   let out: sourcepos.SourcePos[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(sourcepos.SourcePos { line: 0, col: "0" });
-    i += 1;
   }
   return out;
 }
@@ -177,13 +175,11 @@ function first_source(own out: SourceLines, f: ssa.SFunc, pos: sourcepos.SourceP
 }
 
 function source_values(own out: SourceLines, positions: i64[], repl: i32[]): SourceLines {
-  let i = 0;
-  while (i < positions.len()) {
+  for i in 0..positions.len() {
     let packed = positions[i];
     if (packed > 0) {
       out = source_value(out, i, repl, sourcepos.SourcePos { line: (packed >> 32) as i32, col: util.i64_to_string(packed & 4294967295i64) });
     }
-    i += 1;
   }
   return out;
 }

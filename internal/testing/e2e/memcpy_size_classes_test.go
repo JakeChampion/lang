@@ -9,17 +9,17 @@ function check(n: i32, soff: i32, doff: i32): i32 {
       let dst: usize = __alloc(160);
       let i: i32 = 0;
       while (i < 160) {
-          __store_u8(src + i, (i + 1) % 256);
-          __store_u8(dst + i, 0xEE);
+          __store_u8(src + i as usize, (i + 1) % 256);
+          __store_u8(dst + i as usize, 0xEE);
           i = i + 1;
       }
-      __memcpy(dst + doff, src + soff, n);
+      __memcpy(dst + doff as usize, src + soff as usize, n);
       let bad: i32 = 0;
       i = 0;
       while (i < 160) {
           let want: i32 = 0xEE;
-          if (i >= doff && i < doff + n) { want = __load_u8(src + soff + i - doff); }
-          if (__load_u8(dst + i) != want) { bad = bad + 1; }
+          if (i >= doff && i < doff + n) { want = __load_u8(src + (soff + i - doff) as usize); }
+          if (__load_u8(dst + i as usize) != want) { bad = bad + 1; }
           i = i + 1;
       }
       __free(src, 160);
@@ -47,7 +47,7 @@ const bulkMemoryProgram = `function main(): i32 {
   unsafe {
       let base: usize = __alloc(16);
       let i: i32 = 0;
-      while (i < 16) { __store_u8(base + i, 65 + i); i = i + 1; }
+      while (i < 16) { __store_u8(base + i as usize, 65 + i); i = i + 1; }
       __memset(base + 8, 0, 8);
       if (__load_u8(base) != 65) { return 1; }
       if (__load_u8(base + 7) != 72) { return 2; }

@@ -40,6 +40,7 @@ The compiler reads sources and writes an image, so a sandbox for build scripts h
 | `TestTraitDefaultChargesTheDeclaringPackage`, `TestTraitDefaultChargesTheDeclarerThroughAnIntermediate` | a trait default method is charged to the package that declares it |
 | `TestSelfHostCapsRules`, `TestSelfHostPackageCapabilityDifferentialX86_64`, `TestSelfHostCapsTraitDefaultDifferentialX86_64`, `TestSelfHostCapabilitiesReportAgreesWithNative` | the self-host checker refuses the same programs with `E070` and reports the same reaches as the Go analysis |
 | `TestInventoryCoversCheckerRegistry`, `TestSelfHostRegistryFullyClassified`, `TestUngatedBuiltinsAreNotCapabilities` | every builtin is classified, in both compilers, so a new builtin cannot slip past the gate |
+| `TestEachUnsafeIntrinsicHasOneClass`, `TestSelfHostDirectPrivilegedMatch`, `TestAnalyzeRawBuiltinIsPrivilegedOutsideTheStandardLibrary` | each raw builtin has one class in both compilers, and a raw builtin outside the standard library reaches `privileged` |
 | `TestSeccompFilterDenies`, `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompDeniesArguments` | the sandbox kills a denied `execve`, blocks a setuid escalation, and kills an allowed call with an argument no runtime path passes |
 
 ## Remaining limits
@@ -47,5 +48,5 @@ The compiler reads sources and writes an image, so a sandbox for build scripts h
 - The vocabulary is coarse. `net` is every host and every port, and `fs` is every path.
 - A grant is static. A program cannot attenuate a capability at run time or hand a dependency a single file.
 - The sandbox filters by system call number and nine arguments of eight calls, on x86-64-linux and arm64-linux. A path is not checked.
-- A foreign function reached through `__c_call` is outside the vocabulary. The raw builtins are the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md).
+- A raw builtin of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md) in a function of a package needs the `privileged` grant: a raw load or store, an allocation, a reference count, a raw system call, a foreign call through `__c_call`. A call site in the standard library does not count for the caller, because the standard library uses these builtins for its strings, arrays and maps. So the grant covers the code of the package, and the standard library stays the trusted floor.
 - A resource quota exists for the arena and the descriptor count. There is no CPU time or child process quota.

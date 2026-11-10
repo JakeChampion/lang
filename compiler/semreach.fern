@@ -38,15 +38,13 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   }
   let out: ssasem.Func[] = [];
   let changed: boolean[] = [];
-  i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let r = Rewritten { f: funcs[i], changed: false };
     if (w.reach[i] && usable[i]) {
       r = rewritten(funcs[i], walks[i]);
     }
     out = out.append(r.f);
     changed = changed.append(r.changed);
-    i += 1;
   }
   return Reached { funcs: out, live: w.reach, rewritten: changed, ok: true };
 }
@@ -103,8 +101,7 @@ function variant_key(t: typeinfo.Type, name: string): string {
 
 function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
   let u = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], variant_first: [], variant_last: [], rec_ix: util.name_index([]), recs: [], rec_fields: [], enum_ix: util.name_index([]), enums: [] };
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       for r in funcs[i].records.list {
         u = with_record(u, r);
@@ -113,7 +110,6 @@ function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
         u = with_enum(u, e);
       }
     }
-    i += 1;
   }
   return u;
 }
@@ -125,15 +121,13 @@ function with_record(u: Universe, r: semrecords.Record): Universe {
   }
   u = Universe { ...u, rec_ix: u.rec_ix.added(owner), recs: u.recs.append(r) };
   let at: i32[] = [];
-  let k = 0;
-  while (k < r.fields.len()) {
+  for k in 0..r.fields.len() {
     if (tracked(r.fields[k].ty)) {
       at = at.append(u.field_owner.len());
       u = Universe { ...u, fields: u.fields.added(field_key(r.ty, k)), field_owner: u.field_owner.append(owner) };
     } else {
       at = at.append(-1);
     }
-    k += 1;
   }
   return Universe { ...u, rec_fields: u.rec_fields.append(at) };
 }
@@ -157,8 +151,7 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
 
 function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], roots: boolean[], u: Universe): util.NameIndex {
   let op = util.name_index([]);
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       let f = funcs[i];
       for b in f.graph.blocks {
@@ -174,7 +167,6 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
         }
       }
     }
-    i += 1;
   }
   return op;
 }
@@ -290,8 +282,7 @@ function held_types(u: Universe, key: string): typeinfo.Type[] {
 
 function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       let f = funcs[i];
       for b in f.graph.blocks {
@@ -302,7 +293,6 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
         }
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -319,8 +309,7 @@ function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
 
 function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): i32[][] {
   let out = util.empty_i32_lists(funcs.len());
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       for b in funcs[i].graph.blocks {
         for ins in b.insts {
@@ -333,15 +322,13 @@ function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[])
         }
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out = util.empty_i32_lists(u.field_owner.len());
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       let f = funcs[i];
       for b in f.graph.blocks {
@@ -355,15 +342,13 @@ function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
         }
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out = util.empty_i32_lists(u.variant_owner.len());
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       let f = funcs[i];
       for b in f.graph.blocks {
@@ -377,15 +362,13 @@ function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
         }
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out = util.empty_i32_lists(u.recs.len());
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (usable[i]) {
       let f = funcs[i];
       for b in f.graph.blocks {
@@ -399,7 +382,6 @@ function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[
         }
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -422,8 +404,7 @@ function element_record(u: Universe, t: typeinfo.Type): i32 {
 
 function keys_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe): i32[][] {
   let out: i32[][] = [];
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let f = funcs[i];
     let keys: i32[] = [];
     if (usable[i]) {
@@ -437,7 +418,6 @@ function keys_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u:
       }
     }
     out = out.append(keys);
-    i += 1;
   }
   return out;
 }
@@ -445,8 +425,7 @@ function keys_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u:
 // The record type of each argument of a call, or -1.
 function records_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out: i32[][] = [];
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let f = funcs[i];
     let records: i32[] = [];
     if (usable[i]) {
@@ -462,7 +441,6 @@ function records_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
       }
     }
     out = out.append(records);
-    i += 1;
   }
   return out;
 }
@@ -474,14 +452,12 @@ struct Names { first: i32[], count: i32[], targets: i32[], map_fns: i32[] }
 
 function names_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): Names[] {
   let out: Names[] = [];
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     let nm = Names { first: [], count: [], targets: [], map_fns: [] };
     if (usable[i]) {
       nm = function_names(funcs[i], ix);
     }
     out = out.append(nm);
-    i += 1;
   }
   return out;
 }
@@ -577,12 +553,10 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
     rets = rets.append(none());
   }
   let w = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: util.empty_i32_lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
-  let i = 0;
-  while (i < roots.len()) {
+  for i in 0..roots.len() {
     if (roots[i]) {
       w = reached(w, i);
     }
-    i += 1;
   }
   return w;
 }
@@ -665,12 +639,10 @@ function walk(ctx: Ctx, w: World, i: i32): Walk {
   let wk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], records: ctx.records[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
   while (wk.changed) {
     wk = Walk { ...wk, changed: false };
-    let pos = 0;
-    while (pos < g.blocks.len()) {
+    for pos in 0..g.blocks.len() {
       if (wk.exec[pos]) {
         wk = walked_block(ctx, w, f, at, wk, pos);
       }
-      pos += 1;
     }
   }
   return wk;
@@ -974,19 +946,13 @@ function compared(op: string, x: i32, y: i32, ordered: boolean): i64 {
   if (!ordered) {
     return any();
   }
-  if (op == "<") {
-    return truth(x < y);
-  }
-  if (op == "<=") {
-    return truth(x <= y);
-  }
-  if (op == ">") {
-    return truth(x > y);
-  }
-  if (op == ">=") {
-    return truth(x >= y);
-  }
-  return any();
+  return match (op) {
+    "<" => truth(x < y),
+    "<=" => truth(x <= y),
+    ">" => truth(x > y),
+    ">=" => truth(x >= y),
+    _ => any(),
+  };
 }
 
 function comparable(a: typeinfo.Type, b: typeinfo.Type): boolean {

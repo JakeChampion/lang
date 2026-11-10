@@ -25,10 +25,9 @@ pub function unroll(f: ssasem.Func): Unrolled {
   let cur = f;
   let loops = 0;
   while (loops < 8) {
-    let at = first_counted(cur);
-    if (at < 0) {
+    let Some(at) = first_counted(cur) else {
       break;
-    }
+    };
     cur = unrolled_at(cur, at);
     loops += 1;
   }
@@ -103,14 +102,14 @@ function has_loop_head(g: ssa.SFunc): boolean {
   return false;
 }
 
-function first_counted(f: ssasem.Func): i32 {
+function first_counted(f: ssasem.Func): Option[i32] {
   let d = ssa.def_sites_of(f.graph);
   for bi in 0..f.graph.blocks.len() {
     if (counted_at(f, d, bi).trips >= 0) {
-      return bi;
+      return Some(bi);
     }
   }
-  return -1;
+  return None;
 }
 
 function no_loop(): Counted {
@@ -329,22 +328,14 @@ function signed_step(op: string, k: i32): Option[i32] {
 }
 
 function compared(op: string, a: i64, b: i64): boolean {
-  if (op == "<") {
-    return a < b;
-  }
-  if (op == "<=") {
-    return a <= b;
-  }
-  if (op == ">") {
-    return a > b;
-  }
-  if (op == ">=") {
-    return a >= b;
-  }
-  if (op == "==") {
-    return a == b;
-  }
-  return a != b;
+  return match (op) {
+    "<" => a < b,
+    "<=" => a <= b,
+    ">" => a > b,
+    ">=" => a >= b,
+    "==" => a == b,
+    _ => a != b,
+  };
 }
 
 function fits_i32(v: i64): boolean {
@@ -620,7 +611,8 @@ function unfolded(ins: ssa.SInst): Folded {
 }
 
 // Folds an i32 comparison, or a negation, sum, difference or product that
-// does not overflow, when its operands are constants.
+// does not overflow, when its operands are constants. A copy or a phi of
+// constants is known, and the instructions that read it can fold.
 pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
   if (small_constant(f, ins)) {
     return Folded { ins: ins, known: true, value: ins.imm };
@@ -628,10 +620,26 @@ pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]
   if (ins.kind_tag == ssa.COPY && ins.args.len() == 1 && is_marked(known, ins.args[0])) {
     return Folded { ins: ins, known: true, value: konst[ins.args[0]] };
   }
+  if (ins.kind_tag == ssa.PHI) {
+    return folded_phi(ins, known, konst);
+  }
   if (ins.kind_tag == ssa.UNARY) {
     return folded_negation(f, ins, known, konst);
   }
   return folded_pair(f, ins, known, konst);
+}
+
+// A phi is known when each operand is the same known constant.
+function folded_phi(ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
+  if (ins.args.len() == 0) {
+    return unfolded(ins);
+  }
+  for a in ins.args {
+    if (!is_marked(known, a) || konst[a] != konst[ins.args[0]]) {
+      return unfolded(ins);
+    }
+  }
+  return Folded { ins: ins, known: true, value: konst[ins.args[0]] };
 }
 
 function folded_negation(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
@@ -689,16 +697,12 @@ pub function folded_i32(op: string, a: i32, b: i32): Option[i32] {
 }
 
 function arithmetic(op: string, a: i64, b: i64): Option[i64] {
-  if (op == "+") {
-    return Some(a + b);
-  }
-  if (op == "-") {
-    return Some(a - b);
-  }
-  if (op == "*") {
-    return Some(a * b);
-  }
-  return None;
+  return match (op) {
+    "+" => Some(a + b),
+    "-" => Some(a - b),
+    "*" => Some(a * b),
+    _ => None,
+  };
 }
 
 pub struct Constants { f: ssasem.Func, folded: i32 }

@@ -1,0 +1,4 @@
+struct P { n: i32 }
+function id[T](x: T): T { return x; }
+function (p: P) choose[T](first: T, next: T): T { return next; }
+function main(): i32 { let p = P { n: 7 }; return p.choose(7, id(42)); }

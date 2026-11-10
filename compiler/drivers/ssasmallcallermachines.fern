@@ -36,10 +36,8 @@ function first(text: string, old: string, replacement: string): string {
   let parts = text.split(old);
   require(parts.len() > 1, "first mutation present");
   let result = parts[0] + replacement + parts[1];
-  let i = 2;
-  while (i < parts.len()) {
+  for i in 2..parts.len() {
     result = result + old + parts[i];
-    i += 1;
   }
   return result;
 }

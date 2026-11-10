@@ -1,0 +1,7 @@
+// spec: VT-02
+@value
+struct Bad { socket: Socket }
+
+function main(): i32 {
+  return 0;
+}

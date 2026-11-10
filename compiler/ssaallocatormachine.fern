@@ -86,12 +86,10 @@ function initial(request: i32, bump: boolean): State {
     regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(request as i64) } else { token(1, i as i64) } });
     i += 1;
   }
-  i = 0;
-  while (i < 28 + request / 4) {
+  for i in 0..28 + request / 4 {
     let w = initial_word(i, bump);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
-    i += 1;
   }
   return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, ok: true };
 }
@@ -148,15 +146,13 @@ function writable(at: i32, bump: boolean): boolean {
 function store(s: State, at: i32, width: i32, w: Word, bump: boolean): State {
   let memory = s.memory;
   let writes = s.writes;
-  let i = 0;
-  while (i < width / 32) {
+  for i in 0..width / 32 {
     let pos = at + i;
     if (!writable(pos, bump) || pos >= 20 && writes[pos] != 0) {
       return State { ...s, ok: false };
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
-    i += 1;
   }
   return State { ...s, memory: memory, writes: writes };
 }
@@ -437,22 +433,19 @@ function signed_order(s: State, condition: string, less: i32): i32 {
 function finished_memory(s: State, original: State, request: i32, bump: boolean): boolean {
   let start = if (bump) { 22 } else { 20 };
   let changed = if (bump) { token(3, request as i64) } else { token(8, 0) };
-  let i = 16;
-  while (i < s.memory.len()) {
+  for i in 16..s.memory.len() {
     let selected = i == start || i == start + 1;
     let expected = if (selected) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.memory[i] };
     if (!same(s.memory[i], expected) || s.writes[i] != (if (selected) { 1 } else { 0 })) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 function finished(s: State, request: i32, bump: boolean): boolean {
   let original = initial(request, bump);
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = original.regs[i];
     if (i == 0) {
       expected = token(3, 0);
@@ -463,7 +456,6 @@ function finished(s: State, request: i32, bump: boolean): boolean {
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   return s.ok && finished_memory(s, original, request, bump);
 }

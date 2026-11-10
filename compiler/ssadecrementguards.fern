@@ -38,10 +38,8 @@ function unknown(): flags.Flags {
 
 function initial(family: i32, register_entry: boolean): State {
   let regs: Word[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(if (i == 4) { token(3, 0) } else { token(1, i) });
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, pointer(family));
@@ -102,22 +100,14 @@ function compare(s: State, family: i32, op: isa.Op): State {
 }
 
 function step(s: State, family: i32, register_entry: boolean, op: isa.Op): State {
-  if (op.kind == 1) {
-    return s;
-  }
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return load(s, family, register_entry, op);
-  }
-  if (op.kind == 26) {
-    return test(s, op);
-  }
-  if (op.kind == 16) {
-    return compare(s, family, op);
-  }
-  return State { ...s, ok: false };
+  return match (op.kind) {
+    1 => s,
+    2 => write(s, op.destination, narrowed(s.regs[op.source], op.width)),
+    3 => load(s, family, register_entry, op),
+    26 => test(s, op),
+    16 => compare(s, family, op),
+    _ => State { ...s, ok: false },
+  };
 }
 
 function invert(v: i32): i32 {
@@ -194,13 +184,11 @@ function overflow(f: flags.Flags, name: string): i32 {
 }
 
 function finished(s: State, family: i32): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = if (i == 0) { pointer(family) } else { if (i == 4) { token(3, 0) } else { token(1, i) } };
     if (!same_word(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

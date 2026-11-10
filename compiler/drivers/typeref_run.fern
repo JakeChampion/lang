@@ -38,12 +38,10 @@ function main(): i32 {
   let out = "";
   let bad = 0;
 
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let cr = check(corpus[i]);
     bad += cr.bad;
     out += cr.line;
-    i += 1;
   }
 
   let mp = parser.parse_type_ref("Map[string, Option[i32]]");

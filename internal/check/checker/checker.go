@@ -3074,6 +3074,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.ownFuncs["tcp_close"] = []bool{true}
 	c.info.OwnFuncs = c.ownFuncs
+	c.checkValueTypes(prog)
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
@@ -5933,6 +5934,7 @@ type checker struct {
 	consumingTypes map[string]bool
 	callOwnFlags   map[*ast.Call][]bool
 	scalarArgs     map[ast.Expr]bool
+	valueArgs      map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -10698,7 +10700,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
-		if c.scalarArgs[e] {
+		if c.scalarArgs[e] || c.valueArgs[e] {
 			return true
 		}
 		switch x := e.(type) {
@@ -14366,9 +14368,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		n.Trait = dt.Trait0()
 		n.Traits = dt.Traits
 		tn, hasName := methodTypeName(n.Target)
-		_, isStruct := n.Target.(ast.StructType)
-		_, isEnum := n.Target.(ast.EnumType)
-		if !hasName || !(isStruct || isEnum) {
+		st, isStruct := n.Target.(ast.StructType)
+		et, isEnum := n.Target.(ast.EnumType)
+		// The type tag of a trait object names the declaration, not its type arguments.
+		if !hasName || !(isStruct || isEnum) || len(st.Args) > 0 || len(et.Args) > 0 {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
@@ -15388,6 +15391,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.expectedType = nil
 			}
 			c.elemHint = nil
+			if st, ok := at.(ast.StructType); ok && c.valueType(st.Name) && c.valueData(at, map[string]bool{}) {
+				if c.valueArgs == nil {
+					c.valueArgs = map[ast.Expr]bool{}
+				}
+				c.valueArgs[n.Args[i]] = true
+			}
 			if definitelyScalar(at) {
 				if c.scalarArgs == nil {
 					c.scalarArgs = map[ast.Expr]bool{}
@@ -17899,7 +17908,8 @@ func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) 
 
 // commonIntegerWidth selects the smallest integer type that holds both
 // operand ranges. Literals take the concrete operand's type first.
-// Pointer arithmetic retains its separate conversion rules.
+// usize joins only with a type that it holds on each target: usize, or an
+// unsigned type of 32 bits or less.
 func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	ln, lOk := lt.(ast.NumberType)
 	rn, rOk := rt.(ast.NumberType)
@@ -17913,10 +17923,15 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 		return ln, true
 	}
 	if ln.IsPointerWidth() || rn.IsPointerWidth() {
-		if ln.IsPointerWidth() {
-			return ln, true
+		other := rn
+		pointer := ln
+		if !ln.IsPointerWidth() {
+			other, pointer = ln, rn
 		}
-		return rn, true
+		if other.IsPointerWidth() || !other.IsSigned() && other.NormalWidth() <= 32 {
+			return pointer, true
+		}
+		return ast.NumberType{}, false
 	}
 	if ln.IsSigned() != rn.IsSigned() {
 		for _, candidate := range []ast.NumberType{{Width: 32, Signed: true}, {Width: 64, Signed: true}} {

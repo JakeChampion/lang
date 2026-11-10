@@ -1,0 +1,9 @@
+{
+  "ci-lint.log.gz": "2d553da3f8918ba6b3799a1a13289719b60869f9ad77efe750477e42491b1234",
+  "ci-platforms.log.gz": "6343e6f3a7c7fab9a75af490c92421487cc2e3e6a56140dbd89fa8dc8a76c7c6",
+  "platforms-before.log.gz": "0f9af065146df6cbd353067449a037a64c6ac9c056dae4f7cacd9a80cb910ee3",
+  "platforms-after.log.gz": "f7b533ffa1d033db26eb8ff0d741f91e1c1077ee29314b8ea1c34afbdb9ad192",
+  "source-loop-change.patch.gz": "cc4b510b6f10d697bbe689725aa1dc9dc8581de322fff7ddb86a9d17100dc289",
+  "reference-before.json.gz": "24a60dabd0e686061aad1e35b5dfd31b59a92d3ea092cf6b8b8298f196c1488c",
+  "reference-current.json.gz": "48c9963471f8f5400a52f237fe95873b71cbcdb3402b3ea64c745fad84e5e722"
+}

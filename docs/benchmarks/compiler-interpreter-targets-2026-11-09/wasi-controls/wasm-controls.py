@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess,json,os,datetime,hashlib,re
+root=Path('/workspace/lang-interpreter-dispatch-20261109');out=root/'build/interpreter-wasm-controls-20261109';out.mkdir();producer=Path('/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux');wasmtime='/workspace/scratch/lang-tools-20261109/wasmtime-v50.0.1-x86_64-linux/wasmtime';env={k:v for k,v in os.environ.items() if not k.startswith('FERN_')};env.update(FERN_PROFILE='0',FERN_LEAKCHECK='1',FERN_RC_CERTIFY='1',FERN_RC_CERTIFY_MEMO='0');binary=out/'interp-run.wasm';args=[str(producer),'-target','wasm32-wasi','-emit','core-module','-o',str(binary),'compiler/drivers/interp_run.fern','internal/stdlib'];path=out/'results.json';data={'source':'424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2','producer_sha256':hashlib.sha256(producer.read_bytes()).hexdigest(),'build':{'args':args,'cwd':str(root),'environment':{k:v for k,v in env.items() if k.startswith('FERN_')},'started':datetime.datetime.now(datetime.timezone.utc).isoformat()},'runs':[]}
+def save():
+ temp=path.with_suffix('.tmp');temp.write_text(json.dumps(data,indent=2)+'\n');temp.replace(path)
+save()
+with (out/'build.stdout').open('wb') as stdout,(out/'build.stderr').open('wb') as stderr:r=subprocess.run(args,cwd=root,env=env,stdout=stdout,stderr=stderr)
+data['build'].update(exit_code=r.returncode,finished=datetime.datetime.now(datetime.timezone.utc).isoformat());save();assert r.returncode==0;data['build']['binary_sha256']=hashlib.sha256(binary.read_bytes()).hexdigest();save()
+for f in sorted((root/'build/interpreter-dispatch-20261109').glob('call-*-corrected.fern')):
+ args=[wasmtime,'run','--env','FERN_LEAKCHECK=1',str(binary)];r=subprocess.run(args,cwd=root,env=env,input=f.read_bytes(),capture_output=True);d={'input':str(f),'input_sha256':hashlib.sha256(f.read_bytes()).hexdigest(),'args':args,'exit_code':r.returncode,'stdout':r.stdout.decode(),'stderr':r.stderr.decode()};data['runs'].append(d);save();assert r.returncode==42,d;matches=re.findall(r'leakcheck: allocs=(\d+) frees=(\d+) live_bytes=(\d+)',d['stderr']);assert len(matches)==1 and matches[0][0]==matches[0][1] and matches[0][2]=='0',d;print(f.name+' pass',flush=True)
+data['finished']=datetime.datetime.now(datetime.timezone.utc).isoformat();save();print('complete',flush=True)

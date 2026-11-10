@@ -1,0 +1,85 @@
+{
+  "source": "1fb070786cd3bf799b78873d9dbaa6f2c9500ed3",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "purpose": "Validate retained upstream eager lookup and the two regression files after rejection of the lazy shortcut.",
+  "runs": [
+    {
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "started": "2026-11-10T08:48:22.058388+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:48:37.107575+00:00"
+    },
+    {
+      "label": "format",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-fmt",
+        "-d",
+        "compiler/interp.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "started": "2026-11-10T08:48:37.108271+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:48:37.144338+00:00"
+    },
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^(TestSelfHostInterp(X86_64|Arm64|Driver(X86_64|Arm64)|CallableValues|StructOps|AssocConsts|ScopeFrames|DynProvider|MapKeysCompareThroughEq|CallCostIgnoresFunctionCount)|TestSelfHostNestedOwnedFields)$",
+        "-count=1",
+        "-v",
+        "-timeout=25m"
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "started": "2026-11-10T08:48:37.144955+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:54:09.590293+00:00",
+      "passes": 413,
+      "skips": 0
+    },
+    {
+      "label": "go-vet",
+      "args": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "started": "2026-11-10T08:54:09.600512+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:54:30.392904+00:00"
+    },
+    {
+      "label": "tls-tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "-run",
+        "^TestTLSServerAgainstGo(Interp)?$",
+        "-count=1",
+        "-v",
+        "-timeout=20m"
+      ],
+      "cwd": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "started": "2026-11-10T08:54:30.393769+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T08:58:20.107487+00:00",
+      "passes": 14,
+      "skips": 0
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T08:58:20.111404+00:00"
+}

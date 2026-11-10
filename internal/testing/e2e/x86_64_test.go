@@ -1183,9 +1183,9 @@ func TestX86_64IfLet(t *testing.T) {
 	}
 }
 
-func TestX86_64UsizeAutowiden(t *testing.T) {
+func TestX86_64UsizeOffsetKeepsHighBits(t *testing.T) {
 	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
-    return base + idx * stride;
+    return base + (idx * stride) as usize;
 }
 function main(): i32 {
     // 0x100000000 — exceeds 32 bits so a wrong truncation would

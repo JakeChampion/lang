@@ -197,23 +197,19 @@ function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
   }
   let refs = treeshake.body_refs(fd);
   let s = w.s;
-  let k = 0;
-  while (k < funcs.len()) {
+  for k in 0..funcs.len() {
     if (funcs[k].receiver_type.len() > 0 && treeshake.refs_name(refs, funcs[k])) {
       s = add_edge(s, k);
     }
-    k += 1;
   }
   return s;
 }
 
 function func_at(funcs: parser.FuncDecl[], name: string): i32 {
-  let k = 0;
-  while (k < funcs.len()) {
+  for k in 0..funcs.len() {
     if (funcs[k].name == name) {
       return k;
     }
-    k += 1;
   }
   return -1;
 }
@@ -263,15 +259,13 @@ function build(mod: parser.Module, tagged: string[]): Graph {
   let g = Graph { funcs: mod.funcs, edge_at: [], edges: [], builtin_at: [], builtins: [], indirect: [], escaping: [], esc_builtins: [] };
   let esc: boolean[] = [];
   let escaping: i32[] = [];
-  let k = 0;
-  while (k < mod.funcs.len()) {
+  for k in 0..mod.funcs.len() {
     let s = scan(ctx, mod.funcs, mod.funcs[k]);
     g = add_scan(g, k, s);
     for e in s.escaping {
       escaping = escaping.append(e);
     }
     esc = esc.append(false);
-    k += 1;
   }
   for e in escaping {
     esc = esc.with(e, true);
@@ -312,12 +306,10 @@ function bit_of(v: Vocab, builtin: string): i64 {
 
 function label_names(v: Vocab, row: i64): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < v.labels.len()) {
+  for i in 0..v.labels.len() {
     if ((row & 1i64 << i as i64) != 0i64) {
       out = out.append(v.labels[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -325,8 +317,7 @@ function label_names(v: Vocab, row: i64): string[] {
 function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
   let n = g.funcs.len();
   let direct: i64[] = [];
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     let row: i64 = 0i64;
     let b = g.builtin_at[k];
     while (b < g.builtin_at[k + 1]) {
@@ -334,7 +325,6 @@ function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
       b += 1;
     }
     direct = direct.append(row);
-    k += 1;
   }
   let seed: i64 = 0i64;
   for b in g.esc_builtins {
@@ -346,19 +336,16 @@ function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
   while (changed) {
     changed = false;
     let ind = seed;
-    let e = 0;
-    while (e < n) {
+    for e in 0..n {
       if (g.escaping[e]) {
         ind = ind | rows[e];
       }
-      e += 1;
     }
     if (ind != indirect) {
       indirect = ind;
       changed = true;
     }
-    let f = 0;
-    while (f < n) {
+    for f in 0..n {
       let row = direct[f];
       if (use_indirect && g.indirect[f]) {
         row = row | indirect;
@@ -372,7 +359,6 @@ function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
         rows = rows.with(f, row);
         changed = true;
       }
-      f += 1;
     }
   }
   return (rows, indirect);
@@ -427,12 +413,10 @@ function builtins_of(g: Graph, at: i32): string[] {
 function edges_of(g: Graph, at: i32): i32[] {
   let out: i32[] = [];
   if (at == g.funcs.len()) {
-    let k = 0;
-    while (k < g.funcs.len()) {
+    for k in 0..g.funcs.len() {
       if (g.escaping[k]) {
         out = out.append(k);
       }
-      k += 1;
     }
     return out;
   }
@@ -519,8 +503,7 @@ function section(g: Graph, title: string, v: Vocab): string {
   let pubs = 0;
   let pub_effectful = 0;
   let through_value = 0;
-  let k = 0;
-  while (k < g.funcs.len()) {
+  for k in 0..g.funcs.len() {
     let reached = label_names(v, rows[k]);
     let via = label_names(v, (rows[k] | direct[k]) ^ direct[k]);
     let at = util.index_of_i32(sizes, reached.len());
@@ -554,7 +537,6 @@ function section(g: Graph, title: string, v: Vocab): string {
       }
       out += "\n";
     }
-    k += 1;
   }
   out = out + "\n" + util.i32_to_string(g.funcs.len()) + " functions; " + util.i32_to_string(effectful) + " reach an effect, of which "
     + util.i32_to_string(origins) + " call a tagged builtin themselves and " + util.i32_to_string(effectful - origins) + " only inherit\n";

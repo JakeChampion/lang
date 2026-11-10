@@ -19,6 +19,7 @@ import "./util";
 import "./physicalbody";
 import "./ssaprepare";
 import "./ssacreditbound" as retained_binding;
+import "std/option";
 
 struct PhysicalBindings {
   functions: ssa.SFunc[],
@@ -268,7 +269,7 @@ function ordinary(t: typeinfo.Type, finalized: ssasem.Finalizer[]): boolean {
     return false;
   }
   if let typeinfo.TypeStruct(s) = t {
-    return ssasem.finalizer_index(finalized, s.name) < 0;
+    return ssasem.finalizer_index(finalized, s.name).is_none();
   }
   return false;
 }

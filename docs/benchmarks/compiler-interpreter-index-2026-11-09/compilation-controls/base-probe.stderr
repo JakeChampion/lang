@@ -1,0 +1,2 @@
+FERN_IR_VERIFY: 2396 functions verified, 2396 modelled by the stack verifier, 0 skipped
+FERN_RC_CERTIFY: memo hits=2410 misses=0

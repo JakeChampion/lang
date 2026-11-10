@@ -1,0 +1,7 @@
+{
+  "written": "2026-11-10T07:39:23.306084+00:00",
+  "timing_prerequisite": "Both the four-build preparation and targeted validation reached explicit success before subset timings. CI self-tests finished 2026-11-10T07:22:45.281277+00:00. The first sample started 2026-11-10T07:22:45.986291+00:00.",
+  "collector_sequence": "Subset normal samples precede counter samples. Complete compilation follows both. Full interpretation follows compilation. Interpreter instruction counts follow the full run. TLS tests follow those counts. The added complete-compilation counts follow TLS success.",
+  "interactive_work": "Git and GitHub reads, the guarded integration push, prose checks, and archive helper preparation occurred during the collection period. The exact push interval was not separately recorded. No local hooks path is configured.",
+  "limits": "The host is shared. The collector order does not establish host isolation. No timing sample is discarded because of its value."
+}

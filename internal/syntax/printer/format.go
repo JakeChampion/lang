@@ -567,6 +567,9 @@ func typeWordAt(spelling, name string) int {
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
+	if sd.ValueType {
+		f.b.WriteString("@value\n")
+	}
 	f.writeDeriveAttr(sd.Derives)
 	f.writeMustConsumeAttr(sd.MustConsume)
 	if sd.PackageScoped {

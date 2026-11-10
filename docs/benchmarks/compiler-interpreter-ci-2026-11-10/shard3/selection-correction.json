@@ -1,0 +1,11 @@
+{
+  "observation": "Historical interp3 shard no longer contains opus_delimited after corpus additions. Current shard3 run remains a full unchanged shard, but is not the Opus package-budget control.",
+  "literal_case_count": 393,
+  "opus_literal_case_index": 208,
+  "opus_index_mod_4": 0,
+  "note": "Verify append/return behavior and confirm run events in the actual next test. No corpus or shard change.",
+  "plain_case_count": 380,
+  "opus_plain_case_index": 208,
+  "actual_current_opus_shard": "0/4",
+  "tls_filter_audited": true
+}

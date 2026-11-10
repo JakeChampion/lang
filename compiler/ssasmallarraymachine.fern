@@ -91,10 +91,8 @@ function initial(r: value.Interval, register_entry: boolean): State {
   }
   cells = cells.append(numeric_half(value.add(r, value.original(r), -(3 as i64))));
   cells = cells.append(token(5, 1, 0)).append(numeric_half(value.number(r, 1 as i64))).append(token(5, 3, 0));
-  i = 4;
-  while (i < 14) {
+  for i in 4..14 {
     cells = cells.append(token(5, i, 0));
-    i += 1;
   }
   cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1));
   let argument = if (register_entry) { identity(5, 16) } else { identity(6, 0) };
@@ -201,19 +199,13 @@ function stack_step(s: State, r: value.Interval, op: isa.Op): State {
 }
 
 function movement(s: State, r: value.Interval, op: isa.Op): State {
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return write(s, op.destination, read(s, r, address(s, r, op), op.width));
-  }
-  if (op.kind == 4) {
-    return store(s, r, address(s, r, op), op.width, s.regs[op.source]);
-  }
-  if (op.kind == 5) {
-    return write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width));
-  }
-  return stack_step(s, r, op);
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    _ => stack_step(s, r, op),
+  };
 }
 
 function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
@@ -381,25 +373,15 @@ function signed_branch(f: Flags, name: string): i32 {
 }
 
 function expected_register(r: value.Interval, reg: i32): Word {
-  if (reg == 0) {
-    return identity(6, 0);
-  }
-  if (reg == 1) {
-    return numeric(r, value.expected(r));
-  }
-  if (reg == 2) {
-    return identity(6, -16);
-  }
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 7) {
-    return identity(8, 0);
-  }
-  if (reg == 8) {
-    return identity(7, 0);
-  }
-  return identity(2, reg);
+  return match (reg) {
+    0 => identity(6, 0),
+    1 => numeric(r, value.expected(r)),
+    2 => identity(6, -16),
+    4 => identity(3, 0),
+    7 => identity(8, 0),
+    8 => identity(7, 0),
+    _ => identity(2, reg),
+  };
 }
 
 function expected_scratch(s: State, r: value.Interval): Half[] {
@@ -417,12 +399,10 @@ function expected_scratch(s: State, r: value.Interval): Half[] {
 }
 
 function final_registers(s: State, r: value.Interval): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     if (!same_word(s.regs[i], expected_register(r, i))) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -436,13 +416,11 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
   expected = put(expected, 2, 32, numeric(r, value.number(r, 0 as i64)));
   expected = put(expected, 18, 64, identity(6, -16));
   let scratch = expected_scratch(s, r);
-  let i = 0;
-  while (i < 20) {
+  for i in 0..20 {
     let wanted = if (i >= 4 && i < 14) { scratch[i] } else { expected.cells[i] };
     if (!same_half(s.cells[i], wanted)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -463,12 +441,10 @@ function unguarded(s: State, original: State, r: value.Interval): State {
     }
     i += 1;
   }
-  i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }

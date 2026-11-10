@@ -1,0 +1,7 @@
+{
+  "command": "make check-sources",
+  "exit_code": 0,
+  "started": "2026-11-10T00:02:59Z",
+  "finished": "2026-11-10T00:13:30.668673+00:00",
+  "note": "Full repository source gate, including runtime, fixture and driver checks. Exact published code matches measured6f6source. No gate changes."
+}

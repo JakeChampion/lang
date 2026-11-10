@@ -1,0 +1,16 @@
+struct St { xs: i32[] }
+function take(own s: St, n: i32): St {
+  return St { xs: s.xs.append(n) };
+}
+function pick(k: string, s: St): St {
+  return match (k) {
+    "a" => St { xs: [] },
+    _ => s,
+  };
+}
+function outer(own s: St): St {
+  return take(pick("a", s), 1);
+}
+function main(): i32 {
+  return outer(St { xs: [] }).xs.len();
+}

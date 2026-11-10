@@ -1,0 +1,30 @@
+=== RUN   TestTLSServerAgainstGo
+=== RUN   TestTLSServerAgainstGo/p256
+=== RUN   TestTLSServerAgainstGo/p256/x86-64-linux
+=== RUN   TestTLSServerAgainstGo/p256/arm64-linux
+=== RUN   TestTLSServerAgainstGo/p384
+=== RUN   TestTLSServerAgainstGo/p384/x86-64-linux
+=== RUN   TestTLSServerAgainstGo/p384/arm64-linux
+=== RUN   TestTLSServerAgainstGo/ed25519
+=== RUN   TestTLSServerAgainstGo/ed25519/x86-64-linux
+=== RUN   TestTLSServerAgainstGo/ed25519/arm64-linux
+--- PASS: TestTLSServerAgainstGo (30.60s)
+    --- PASS: TestTLSServerAgainstGo/p256 (10.97s)
+        --- PASS: TestTLSServerAgainstGo/p256/x86-64-linux (5.38s)
+        --- PASS: TestTLSServerAgainstGo/p256/arm64-linux (5.59s)
+    --- PASS: TestTLSServerAgainstGo/p384 (8.20s)
+        --- PASS: TestTLSServerAgainstGo/p384/x86-64-linux (3.63s)
+        --- PASS: TestTLSServerAgainstGo/p384/arm64-linux (4.57s)
+    --- PASS: TestTLSServerAgainstGo/ed25519 (8.26s)
+        --- PASS: TestTLSServerAgainstGo/ed25519/x86-64-linux (4.27s)
+        --- PASS: TestTLSServerAgainstGo/ed25519/arm64-linux (3.98s)
+=== RUN   TestTLSServerAgainstGoInterp
+=== RUN   TestTLSServerAgainstGoInterp/p256
+=== RUN   TestTLSServerAgainstGoInterp/p384
+=== RUN   TestTLSServerAgainstGoInterp/ed25519
+--- PASS: TestTLSServerAgainstGoInterp (190.90s)
+    --- PASS: TestTLSServerAgainstGoInterp/p256 (43.69s)
+    --- PASS: TestTLSServerAgainstGoInterp/p384 (104.01s)
+    --- PASS: TestTLSServerAgainstGoInterp/ed25519 (42.28s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	221.510s

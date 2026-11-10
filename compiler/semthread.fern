@@ -101,15 +101,13 @@ function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
   s = block_facts(f, g, s);
   let blocks = g.blocks;
   let changed = 0;
-  let bi = 0;
-  while (bi < n) {
+  for bi in 0..n {
     let b = g.blocks[bi];
     let t = moved_term(f, g, s, bi, decided_term(f, s, bi, b.term));
     if (!same_term(t, b.term)) {
       changed += 1;
       blocks = blocks.with(bi, ssa.SBlock { ...b, term: t });
     }
-    bi += 1;
   }
   if (changed == 0) {
     return Round { g: g, changed: 0 };
@@ -181,8 +179,7 @@ function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
   let cur = id;
   let landed = id;
   let path = no_facts();
-  let hops = 0;
-  while (hops < 16) {
+  for hops in 0..16 {
     let b = g.blocks[s.at[cur]];
     let next: i32 = -1;
     if (b.insts.len() == 0 && b.term.kind_tag == ssa.TERM_BR) {
@@ -204,7 +201,6 @@ function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
       landed = next;
     }
     cur = next;
-    hops += 1;
   }
   return landed;
 }
@@ -379,12 +375,10 @@ function has_phi(b: ssa.SBlock): boolean {
 pub function reachable_only(g: ssa.SFunc): ssa.SBlock[] {
   let live = ssadeps.reachable_blocks(g);
   let out: ssa.SBlock[] = [];
-  let i = 0;
-  while (i < g.blocks.len()) {
+  for i in 0..g.blocks.len() {
     if (live[i]) {
       out = out.append(g.blocks[i]);
     }
-    i += 1;
   }
   return out;
 }

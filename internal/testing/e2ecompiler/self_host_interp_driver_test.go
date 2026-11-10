@@ -65,6 +65,20 @@ var interpProgs = []struct {
 	{"locals", "function main(): i32 { let x: i32 = 10; let y: i32 = 32; return x + y; }", 42},
 	{"if", "function main(): i32 { if (5 > 3) { return 1; } return 0; }", 1},
 	{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(19, 23); }", 42},
+	{"call-explicit-type-arguments", `function id[T](x: T): T { return x; } function main(): i32 { return id[i32](42); }`, 42},
+	{"call-zero-arguments-generic", `function answer[T](): i32 { return 42; } function main(): i32 { return answer[i32](); }`, 42},
+	{"call-static-const-type-argument", `struct Ring[const N: i32, T] { item: T }
+function capacity[const N: i32, T](r: Ring[N, T]): i32 { return N; }
+function main(): i32 { let r: Ring[42, i32] = Ring { item: 7 }; return capacity(r); }`, 42},
+	{"call-nested-generic-method", `struct P { n: i32 }
+function id[T](x: T): T { return x; }
+function (p: P) choose[T](first: T, next: T): T { return next; }
+function main(): i32 { let p = P { n: 7 }; return p.choose(7, id(42)); }`, 42},
+	{"call-nested-generic-associated", `struct P { n: i32 }
+function id[T](x: T): T { return x; }
+trait Choose { function choose[T](first: T, next: T): T { return next; } }
+impl Choose for P {}
+function main(): i32 { return P.choose(7, id(42)); }`, 42},
 	{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }", 42},
 	{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1) - 81; }", 42},
 	{"float", "function main(): i32 { let f: f64 = 3.5; let g: f64 = 2.5; if (f + g > 5.0) { return 7; } return 0; }", 7},

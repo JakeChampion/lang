@@ -1,0 +1,95 @@
+{
+  "candidate_source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+  "baseline_source": "f9904974a77249949607f3b6196e489bf53c3602",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "started": "2026-11-10T02:36:53.672806+00:00",
+  "runs": [
+    {
+      "label": "candidate-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-qualified-20261110-0230",
+      "source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:36:54.088653+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T02:38:03.316929+00:00"
+    },
+    {
+      "label": "candidate-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-qualified-20261110-0230",
+      "source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:38:03.408560+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T02:39:06.742750+00:00"
+    },
+    {
+      "label": "baseline-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261110-0220",
+      "source": "f9904974a77249949607f3b6196e489bf53c3602",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:39:06.827334+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T02:40:24.527529+00:00"
+    }
+  ],
+  "binaries": {
+    "baseline-normal": {
+      "sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "reused_build_record": "baseline-build-record.json",
+      "note": "Exact f990 normal production build. No timing sample uses the build interval."
+    },
+    "candidate-normal": {
+      "sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764"
+    },
+    "candidate-count": {
+      "sha256": "07ecf0a49169066664e76044bd8e243a84bf9727f2097fc57a9b180026be67db"
+    },
+    "baseline-count": {
+      "sha256": "63a9cd51615691e5b2fdbc1ae8c66a6d0e2ae9c00f813452d761b9518a9690bf"
+    }
+  },
+  "finished": "2026-11-10T02:40:24.564053+00:00"
+}

@@ -12,7 +12,7 @@ function __fern_mounts(): Result[MountEntry[], IoError] {
   while (k < m) {
     let base = k * 2168;
     let dev = (-1) as i64;
-    let sr = __syscall4(470, -2, (buf + base + 88) as i64, st as i64, 0) as i32;
+    let sr = __syscall4(470, -2, (buf + base as usize + 88) as i64, st as i64, 0) as i32;
     if (sr >= 0) {
       dev = __load_i32(st + 0) as i64;
     }

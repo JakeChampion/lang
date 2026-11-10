@@ -722,7 +722,8 @@ function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out
     return __absorb12(c, r, app, out);
   }
   if (r.content_type.code() == 20) {
-    if (ccs && r.fragment.len() == 1 && r.fragment[0] == 1) {
+    // RFC 8446 section 5.1: no record comes between the parts of one handshake message.
+    if (ccs && c.pending.len() == 0 && r.fragment.len() == 1 && r.fragment[0] == 1) {
       return Ok(Absorbed { conn: c, out: out });
     }
     return Err(UnexpectedRecord(20));
@@ -794,6 +795,15 @@ function __content(c: Conn, code: i32, content: u8[], app: boolean, out: Out): R
     return Ok(Absorbed { conn: c, out: Out { ...out, data: __join(out.data, content) } });
   }
   return Err(UnexpectedRecord(code));
+}
+
+// A close_notify closes a connection that is open. Before the handshake
+// ends, it is an error.
+function __closed_from(state: i32, open: i32, shut: i32): Result[i32, HandshakeError] {
+  if (state != open && state != shut) {
+    return Err(PeerAlert(0));
+  }
+  return Ok(shut);
 }
 
 function __peer_alert(c: Conn, content: u8[], out: Out): Result[Absorbed, HandshakeError] {
@@ -1147,6 +1157,19 @@ function __shares(config: ClientConfig): i32 {
   return config.shares;
 }
 
+// RFC 6066 section 3: the name goes on the wire with no trailing dot.
+function __sni(name: string): string {
+  match (name.strip_suffix(".")) {
+    Some(bare) => {
+      return bare;
+    },
+    None => {
+      return name;
+    }
+  }
+  return name;
+}
+
 function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]): message.Extension[] {
   let entries: message.KeyShareEntry[] = [];
   for sh in shares {
@@ -1154,7 +1177,7 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
   }
   let exts: message.Extension[] = [];
   if (config.server_name.len() > 0) {
-    exts = exts.append(message.ext_server_name(config.server_name));
+    exts = exts.append(message.ext_server_name(__sni(config.server_name)));
   }
   let versions = [message.TLS13];
   if (config.tls12) {
@@ -1574,7 +1597,12 @@ function __agree(c: Client, h: message.ServerHello): Result[u8[], HandshakeError
   return Err(MissingExtension("key_share"));
 }
 
-function __hello_only(k: i32): boolean {
+// RFC 8446 section 4.2: the extensions of this client that a server must
+// not put in EncryptedExtensions.
+function __not_encrypted(k: i32): boolean {
+  if (k == message.EXT_PSK_KEY_EXCHANGE_MODES || k == message.EXT_COOKIE) {
+    return true;
+  }
   return k == message.EXT_KEY_SHARE || k == message.EXT_SUPPORTED_VERSIONS || k == message.EXT_PRE_SHARED_KEY || k == message.EXT_SIGNATURE_ALGORITHMS;
 }
 
@@ -1597,7 +1625,7 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   let i = 0;
   while (i < exts.len()) {
     let k = exts[i].kind;
-    if (__hello_only(k)) {
+    if (__not_encrypted(k) || k == message.EXT_SERVER_NAME && exts[i].data.len() > 0) {
       return Err(Illegal("extension in EncryptedExtensions"));
     }
     if (!__has(offered, k)) {
@@ -2106,7 +2134,7 @@ function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, Hands
     let a = __absorb(r.client.conn, rec, r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
     let state = r.client.state;
     if (a.out.closed) {
-      state = C_CLOSED;
+      state = __closed_from(state, C_CONNECTED, C_CLOSED)?;
     }
     r = __client_drain(Client { ...r.client, conn: a.conn, state: state }, a.out)?;
   }
@@ -3085,7 +3113,7 @@ function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, Hands
     let a = __absorb(r.server.conn, rec, ccs, r.server.state == S_CONNECTED, r.out)?;
     let state = r.server.state;
     if (a.out.closed) {
-      state = S_CLOSED;
+      state = __closed_from(state, S_CONNECTED, S_CLOSED)?;
     }
     r = __server_drain(Server { ...r.server, conn: a.conn, state: state }, a.out)?;
   }

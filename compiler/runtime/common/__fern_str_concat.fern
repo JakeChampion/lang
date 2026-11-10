@@ -3,6 +3,6 @@ function __fern_str_concat(a: string, b: string): string {
   let lb = b.len();
   let p = __raw_alloc(la + lb);
   __memcpy(p, __raw_data(a), la);
-  __memcpy(p + la, __raw_data(b), lb);
+  __memcpy(p + la as usize, __raw_data(b), lb);
   return __raw_string(p, la + lb);
 }

@@ -1,0 +1,14 @@
+{
+  "note": "Same baseline compiler bytes and fixed input at two retained paths. These separate comparisons produce different RSS medians. This is a source of uncertainty, not proof of a specific residency or heap cause. Original samples remain unchanged.",
+  "baseline_sha256": "1be868407c58e40bd6f0a56babf5021c708ea421b0fb6cb4f1ff2980f50a3a11",
+  "studies": [
+    {
+      "path": "build/interpreter-map-qualification-20261110-0330/baseline-normal",
+      "first_peak_rss_median_kib": 148416
+    },
+    {
+      "path": "build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+      "first_peak_rss_median_kib": 140944
+    }
+  ]
+}

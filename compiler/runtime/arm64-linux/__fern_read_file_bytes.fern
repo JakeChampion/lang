@@ -55,7 +55,7 @@ function __fern_read_file_bytes(path: string): Result[i32[], IoError] {
         }
       }
     } else {
-      let n: i32 = __syscall3(63, fd as i64, (buf + got) as i64, (cap - got) as i64) as i32;
+      let n: i32 = __syscall3(63, fd as i64, (buf + got as usize) as i64, (cap - got) as i64) as i32;
       if (n < 0 && (n != 0 - 4 || got == 0)) {
         bad = n;
         done = 1;

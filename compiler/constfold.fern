@@ -17,19 +17,13 @@ function num_lit(text: string, suffix: string): ast.Expr {
 }
 
 function fits(v: i64, suffix: string, peak: i64): boolean {
-  if (suffix == "") {
-    return v >= 0 && (v <= 255i64 || peak > 255i64 && v <= 2147483647i64);
-  }
-  if (suffix == "i32") {
-    return v >= 0 - 2147483648i64 && v <= 2147483647i64;
-  }
-  if (suffix == "u32") {
-    return v >= 0 && v <= 4294967295i64;
-  }
-  if (suffix == "u8") {
-    return v >= 0 && v <= 255i64;
-  }
-  return false;
+  return match (suffix) {
+    "" => v >= 0 && (v <= 255i64 || peak > 255i64 && v <= 2147483647i64),
+    "i32" => v >= 0 - 2147483648i64 && v <= 2147483647i64,
+    "u32" => v >= 0 && v <= 4294967295i64,
+    "u8" => v >= 0 && v <= 255i64,
+    _ => false,
+  };
 }
 
 function lit_bool(b: boolean): ast.Expr {
@@ -181,16 +175,12 @@ function float_negative_zero(v: i64, suffix: string): boolean {
 }
 
 function int_arith(op: string, l: i64, r: i64): Option[i64] {
-  if (op == "+") {
-    return Some(l + r);
-  }
-  if (op == "-") {
-    return Some(l - r);
-  }
-  if (op == "*") {
-    return Some(l * r);
-  }
-  return None;
+  return match (op) {
+    "+" => Some(l + r),
+    "-" => Some(l - r),
+    "*" => Some(l * r),
+    _ => None,
+  };
 }
 
 function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.Expr {
@@ -314,38 +304,24 @@ function int_binary(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
   if let Some(ar) = int_arith(op, l, r) {
     return int_num(wrap(ar, w));
   }
-  if (op == "&") {
-    return int_num(wrap(l & r, w));
-  }
-  if (op == "|") {
-    return int_num(wrap(l | r, w));
-  }
-  if (op == "^") {
-    return int_num(wrap(l ^ r, w));
-  }
-  if (op == "<<") {
-    return int_num(wrap(l << shift_count(r, w), w));
-  }
-  if (op == ">>") {
-    return int_num(wrap(shift_right(l, shift_count(r, w), w), w));
-  }
-  return no_num();
+  return match (op) {
+    "&" => int_num(wrap(l & r, w)),
+    "|" => int_num(wrap(l | r, w)),
+    "^" => int_num(wrap(l ^ r, w)),
+    "<<" => int_num(wrap(l << shift_count(r, w), w)),
+    ">>" => int_num(wrap(shift_right(l, shift_count(r, w), w), w)),
+    _ => no_num(),
+  };
 }
 
 function float_binary(op: string, l: f64, r: f64): ConstNum {
-  if (op == "/") {
-    return float_num(l / r);
-  }
-  if (op == "+") {
-    return float_num(l + r);
-  }
-  if (op == "-") {
-    return float_num(l - r);
-  }
-  if (op == "*") {
-    return float_num(l * r);
-  }
-  return no_num();
+  return match (op) {
+    "/" => float_num(l / r),
+    "+" => float_num(l + r),
+    "-" => float_num(l - r),
+    "*" => float_num(l * r),
+    _ => no_num(),
+  };
 }
 
 function num_binary(op: string, l: ConstNum, r: ConstNum, w: IntWidth): ConstNum {
@@ -469,10 +445,8 @@ function fold_block(body: ast.Stmt[]): ast.Stmt[] {
 
 pub function fold_module(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
-    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
@@ -517,10 +491,8 @@ function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
     return body;
   }
   let leading: ast.Stmt[] = [];
-  let i = 0;
-  while (i < body.len() - 1) {
+  for i in 0..body.len() - 1 {
     leading = leading.append(body[i]);
-    i += 1;
   }
   let out = prune_block(leading);
   let last = body[body.len() - 1];
@@ -628,10 +600,8 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 
 pub function elide_asserts(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
-    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
 }

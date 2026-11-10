@@ -112,6 +112,7 @@ maintained as living documents and a copy would drift:
 | `docs/INITIALIZATION.md` | Required initializers, lexical scope, and optional payload access. |
 | `docs/CLOSURE-CAPTURE.md` | Capture-by-reference, with the shared cell guarded on both sides by `E049`. |
 | `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
+| `docs/VALUE-TYPES.md` | Checked immutable records, COW cleanup, and resource-field refusals. |
 | `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |
 | `docs/ARRAY-ALGEBRA.md` | The array algebra's semantics: what fusion may reorder or elide, that positional pairing truncates, and that a float reduction keeps index order. |
 | `docs/ALLOCATION-OBSERVABLE.md` | What `__heap_bump_bytes()` measures, what is portable about it, and the two allocation-shape claims that can be pinned. |

@@ -1,0 +1,31 @@
+{
+  "name": "first-group-cpu",
+  "source_revision": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "args": [
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-cpu",
+    "-stdlib",
+    "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+    "-interp",
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "compiler_sha256": "33ef9cb99cd702019cfa18221211a7c2089ea0f7e0fc217153447fa366c9ae3e",
+  "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+  "fern_env": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "started": "2026-11-09T21:46:00.101853+00:00",
+  "diagnostic_subset": true,
+  "budget_seconds": 1980,
+  "note": "Baseline diagnosis, not an optimization comparison. Full input remains the validation control. A concurrent diagnostic interpreter may be active.",
+  "exit_code": 0,
+  "wall_seconds": 9.934896261999711,
+  "cpu_user": 9.730627,
+  "cpu_system": 0.173711,
+  "peak_rss_kib": 149180,
+  "timed_out": false,
+  "finished": "2026-11-09T21:46:10.037216+00:00"
+}

@@ -106,7 +106,7 @@ function main(): i32 {
       let expected = "__fn_probe";
       let i = 0;
       while (i < expected.len()) {
-        if (__load_u8(found + i) != __load_u8(__raw_data(expected) + i)) { return 3; }
+        if (__load_u8(found + i as usize) != __load_u8(__raw_data(expected) + i as usize)) { return 3; }
         i = i + 1;
       }
     }

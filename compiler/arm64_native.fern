@@ -3,6 +3,7 @@ import "./util";
 import "./gas";
 import "std/crypto";
 import "std/string";
+import "std/option";
 
 function arm64_x0(): i32 {
   return 0;
@@ -45,14 +46,12 @@ function arm64_rec_gpr(tok: string): i32 {
     return -1;
   }
   let v = 0;
-  let k = 1;
-  while (k < n) {
+  for k in 1..n {
     let c = tok[k] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
     v = v * 10 + (c - 48);
-    k += 1;
   }
   if (v > 30) {
     return -1;
@@ -1273,31 +1272,17 @@ function arm64_nop(buf: i32[]): i32[] {
 }
 
 pub function arm64_fixed_word(mnem: string): i64 {
-  if (mnem == "ret") {
-    return arm64_ret_word(30);
-  }
-  if (mnem == "yield") {
-    return 0xd503203f;
-  }
-  if (mnem == "wfe") {
-    return 0xd503205f;
-  }
-  if (mnem == "wfi") {
-    return 0xd503207f;
-  }
-  if (mnem == "paciasp") {
-    return 0xd503233f;
-  }
-  if (mnem == "autiasp") {
-    return 0xd50323bf;
-  }
-  if (mnem == "xpaclri") {
-    return 0xd50320ff;
-  }
-  if (mnem == "eret") {
-    return 0xd69f03e0;
-  }
-  return arm64_nop_word();
+  return match (mnem) {
+    "ret" => arm64_ret_word(30),
+    "yield" => 0xd503203f,
+    "wfe" => 0xd503205f,
+    "wfi" => 0xd503207f,
+    "paciasp" => 0xd503233f,
+    "autiasp" => 0xd50323bf,
+    "xpaclri" => 0xd50320ff,
+    "eret" => 0xd69f03e0,
+    _ => arm64_nop_word(),
+  };
 }
 
 pub function arm64_bti_word(ops: string[]): i64 {
@@ -1450,25 +1435,15 @@ function arm64_acqrel(buf: i32[], size: i32, load: boolean, rt: i32, rn: i32): i
 }
 
 function arm64_barrier_opt(name: string): i32 {
-  if (name == "sy") {
-    return 15;
-  }
-  if (name == "st") {
-    return 14;
-  }
-  if (name == "ld") {
-    return 13;
-  }
-  if (name == "ish") {
-    return 11;
-  }
-  if (name == "ishst") {
-    return 10;
-  }
-  if (name == "ishld") {
-    return 9;
-  }
-  return -1;
+  return match (name) {
+    "sy" => 15,
+    "st" => 14,
+    "ld" => 13,
+    "ish" => 11,
+    "ishst" => 10,
+    "ishld" => 9,
+    _ => -1,
+  };
 }
 
 function arm64_barrier(buf: i32[], is_dsb: boolean, opt: i32): i32[] {
@@ -2232,19 +2207,13 @@ function arm64_gas_lane_size(tok: string): i32 {
     return -1;
   }
   let c = t[dot + 1] as i32;
-  if (c == 98) {
-    return 0;
-  }
-  if (c == 104) {
-    return 1;
-  }
-  if (c == 115) {
-    return 2;
-  }
-  if (c == 100) {
-    return 3;
-  }
-  return -1;
+  return match (c) {
+    98 => 0,
+    104 => 1,
+    115 => 2,
+    100 => 3,
+    _ => -1,
+  };
 }
 
 function arm64_gas_lane_reg(tok: string): i32 {
@@ -2347,14 +2316,14 @@ function arm64_vecaes(buf: i32[], rd: i32, rn: i32, opcode: i32): i32[] {
   return arm64_le32(buf, word);
 }
 
-function arm64_aes_opcode(mnem: string): i32 {
+function arm64_aes_opcode(mnem: string): Option[i32] {
   if (mnem == "aese") {
-    return 4;
+    return Some(4);
   }
   if (mnem == "aesmc") {
-    return 6;
+    return Some(6);
   }
-  return -1;
+  return None;
 }
 
 function arm64_vecsha(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32): i32[] {
@@ -2373,41 +2342,25 @@ function arm64_sha_opcode(mnem: string): i32 {
   if (mnem[3] == b'1') {
     return arm64_sha1_opcode(mnem);
   }
-  if (mnem == "sha256h") {
-    return 4;
-  }
-  if (mnem == "sha256h2") {
-    return 5;
-  }
-  if (mnem == "sha256su1") {
-    return 6;
-  }
-  if (mnem == "sha256su0") {
-    return 10;
-  }
-  return -1;
+  return match (mnem) {
+    "sha256h" => 4,
+    "sha256h2" => 5,
+    "sha256su1" => 6,
+    "sha256su0" => 10,
+    _ => -1,
+  };
 }
 
 function arm64_sha1_opcode(mnem: string): i32 {
-  if (mnem == "sha1c") {
-    return 0;
-  }
-  if (mnem == "sha1p") {
-    return 1;
-  }
-  if (mnem == "sha1m") {
-    return 2;
-  }
-  if (mnem == "sha1su0") {
-    return 3;
-  }
-  if (mnem == "sha1h") {
-    return 8;
-  }
-  if (mnem == "sha1su1") {
-    return 9;
-  }
-  return -1;
+  return match (mnem) {
+    "sha1c" => 0,
+    "sha1p" => 1,
+    "sha1m" => 2,
+    "sha1su0" => 3,
+    "sha1h" => 8,
+    "sha1su1" => 9,
+    _ => -1,
+  };
 }
 
 function arm64_gas_sha_reg(opcode: i32, i: i32, tok: string): i32 {
@@ -2864,8 +2817,7 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     ));
     return a;
   }
-  let aes = arm64_aes_opcode(mnem);
-  if (aes >= 0) {
+  if let Some(aes) = arm64_aes_opcode(mnem) {
     if (ops.len() != 2) {
       return a;
     }
@@ -3223,8 +3175,7 @@ function arm64_gas_imm64(tok: string): i64 {
 function arm64_gas_reg(tok: string): i32 {
   let i = arm64_gas_trim_lo(tok, 0, tok.len());
   let j = arm64_gas_trim_hi(tok, i, tok.len());
-  let alias = arm64_gas_reg_alias(tok, i, j);
-  if (alias >= 0) {
+  if let Some(alias) = arm64_gas_reg_alias(tok, i, j) {
     return alias;
   }
   if (j - i < 2 || !(tok[i] == b'x' || tok[i] == b'w' || tok[i] == b'd' || tok[i] == b's')) {
@@ -3250,23 +3201,23 @@ function arm64_gas_reg(tok: string): i32 {
   return n;
 }
 
-function arm64_gas_reg_alias(tok: string, i: i32, j: i32): i32 {
+function arm64_gas_reg_alias(tok: string, i: i32, j: i32): Option[i32] {
   let len = j - i;
   if (len == 2) {
     if (tok[i] == b's' && tok[i + 1] == b'p') {
-      return 31;
+      return Some(31);
     }
     if (tok[i] == b'l' && tok[i + 1] == b'r') {
-      return 30;
+      return Some(30);
     }
     if (tok[i] == b'f' && tok[i + 1] == b'p') {
-      return 29;
+      return Some(29);
     }
   }
   if (len == 3 && (tok[i] == b'x' || tok[i] == b'w') && tok[i + 1] == b'z' && tok[i + 2] == b'r') {
-    return 31;
+    return Some(31);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_bad_reg_token(ops: string[]): string {
@@ -3483,34 +3434,18 @@ function arm64_gas_is_sreg(tok: string): boolean {
 }
 
 function arm64_gas_arr_code(arr: string): i32 {
-  if (arr == "8b") {
-    return 0;
-  }
-  if (arr == "16b") {
-    return 1;
-  }
-  if (arr == "4h") {
-    return 2;
-  }
-  if (arr == "8h") {
-    return 3;
-  }
-  if (arr == "2s") {
-    return 4;
-  }
-  if (arr == "4s") {
-    return 5;
-  }
-  if (arr == "1d") {
-    return 6;
-  }
-  if (arr == "2d") {
-    return 7;
-  }
-  if (arr == "1q") {
-    return 9;
-  }
-  return -1;
+  return match (arr) {
+    "8b" => 0,
+    "16b" => 1,
+    "4h" => 2,
+    "8h" => 3,
+    "2s" => 4,
+    "4s" => 5,
+    "1d" => 6,
+    "2d" => 7,
+    "1q" => 9,
+    _ => -1,
+  };
 }
 
 function arm64_gas_arr_size(code: i32): i32 {
@@ -3584,19 +3519,19 @@ function arm64_gas_pow2(n: i32): i32 {
   return v;
 }
 
-function arm64_gas_cond_operand(mnem: string): i32 {
+function arm64_gas_cond_operand(mnem: string): Option[i32] {
   if (mnem == "cset" || mnem == "csetm") {
-    return 1;
+    return Some(1);
   }
   if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") {
-    return 2;
+    return Some(2);
   }
   if (mnem == "csel" || mnem == "csinc" || mnem == "csinv" || mnem == "csneg"
     || mnem == "ccmp" || mnem == "ccmn"
     || mnem == "fcsel" || mnem == "fccmp") {
-    return 3;
+    return Some(3);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_cond_inverts(mnem: string): boolean {
@@ -3605,10 +3540,9 @@ function arm64_gas_cond_inverts(mnem: string): boolean {
 }
 
 function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
-  let idx = arm64_gas_cond_operand(mnem);
-  if (idx < 0) {
+  let Some(idx) = arm64_gas_cond_operand(mnem) else {
     return "";
-  }
+  };
   if (ops.len() <= idx) {
     return mnem + ":arity";
   }
@@ -3937,7 +3871,7 @@ function arm64_gas_bad_pmull(mnem: string, ops: string[]): string {
 }
 
 function arm64_gas_bad_aes(mnem: string, ops: string[]): string {
-  if (arm64_aes_opcode(mnem) < 0) {
+  if (arm64_aes_opcode(mnem).is_none()) {
     return "-";
   }
   if (ops.len() != 2) {
@@ -4365,33 +4299,33 @@ function arm64_gas_shift_type(tok: string): i32 {
   return -1;
 }
 
-function arm64_gas_extend_option(tok: string): i32 {
+function arm64_gas_extend_option(tok: string): Option[i32] {
   let s = arm64_gas_trim(tok);
   if (util.index_of_sub(s, "uxtb") == 0) {
-    return 0;
+    return Some(0);
   }
   if (util.index_of_sub(s, "uxth") == 0) {
-    return 1;
+    return Some(1);
   }
   if (util.index_of_sub(s, "uxtw") == 0) {
-    return 2;
+    return Some(2);
   }
   if (util.index_of_sub(s, "uxtx") == 0) {
-    return 3;
+    return Some(3);
   }
   if (util.index_of_sub(s, "sxtb") == 0) {
-    return 4;
+    return Some(4);
   }
   if (util.index_of_sub(s, "sxth") == 0) {
-    return 5;
+    return Some(5);
   }
   if (util.index_of_sub(s, "sxtw") == 0) {
-    return 6;
+    return Some(6);
   }
   if (util.index_of_sub(s, "sxtx") == 0) {
-    return 7;
+    return Some(7);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_addsub_imm_unsupported(mnem: string, ops: string[]): boolean {
@@ -4431,7 +4365,7 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): bool
   if (arm64_gas_shift_type(ops[3]) >= 0) {
     return false;
   }
-  if (arm64_gas_extend_option(ops[3]) >= 0) {
+  if (arm64_gas_extend_option(ops[3]).is_some()) {
     return false;
   }
   return true;
@@ -4645,34 +4579,18 @@ function arm64_fam_crc(): i32 {
 // arm64_gas_family returns the mnemonic family index, or -1 for an unknown mnemonic.
 function arm64_gas_family(mnem: string): i32 {
   let n: i32 = mnem.len();
-  if (n == 1) {
-    return arm64_gas_family_len1(mnem);
-  }
-  if (n == 2) {
-    return arm64_gas_family_len2(mnem);
-  }
-  if (n == 3) {
-    return arm64_gas_family_len3(mnem);
-  }
-  if (n == 4) {
-    return arm64_gas_family_len4(mnem);
-  }
-  if (n == 5) {
-    return arm64_gas_family_len5(mnem);
-  }
-  if (n == 6) {
-    return arm64_gas_family_len6(mnem);
-  }
-  if (n == 7) {
-    return arm64_gas_family_len7(mnem);
-  }
-  if (n == 8) {
-    return arm64_gas_family_len8(mnem);
-  }
-  if (n == 9) {
-    return arm64_gas_family_len9(mnem);
-  }
-  return -1;
+  return match (n) {
+    1 => arm64_gas_family_len1(mnem),
+    2 => arm64_gas_family_len2(mnem),
+    3 => arm64_gas_family_len3(mnem),
+    4 => arm64_gas_family_len4(mnem),
+    5 => arm64_gas_family_len5(mnem),
+    6 => arm64_gas_family_len6(mnem),
+    7 => arm64_gas_family_len7(mnem),
+    8 => arm64_gas_family_len8(mnem),
+    9 => arm64_gas_family_len9(mnem),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len1(mnem: string): i32 {
@@ -4762,16 +4680,12 @@ function arm64_gas_family_len3_a(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_a_ad(mnem: string): i32 {
-  if (mnem == "adr") {
-    return arm64_fam_symaddr();
-  }
-  if (mnem == "add") {
-    return arm64_fam_addsub();
-  }
-  if (mnem == "adc") {
-    return arm64_fam_carry();
-  }
-  return -1;
+  return match (mnem) {
+    "adr" => arm64_fam_symaddr(),
+    "add" => arm64_fam_addsub(),
+    "adc" => arm64_fam_carry(),
+    _ => -1,
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -4831,29 +4745,21 @@ function arm64_gas_family_len3_c_cm(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_d(mnem: string): i32 {
-  if (mnem == "dmb") {
-    return arm64_fam_barrier();
-  }
-  if (mnem == "dsb") {
-    return arm64_fam_barrier();
-  }
-  if (mnem == "dup") {
-    return arm64_fam_vecmov();
-  }
-  return -1;
+  return match (mnem) {
+    "dmb" => arm64_fam_barrier(),
+    "dsb" => arm64_fam_barrier(),
+    "dup" => arm64_fam_vecmov(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len3_e(mnem: string): i32 {
-  if (mnem == "eor") {
-    return arm64_fam_logical3();
-  }
-  if (mnem == "eon") {
-    return arm64_fam_logical2();
-  }
-  if (mnem == "ext") {
-    return arm64_fam_vecext();
-  }
-  return -1;
+  return match (mnem) {
+    "eor" => arm64_fam_logical3(),
+    "eon" => arm64_fam_logical2(),
+    "ext" => arm64_fam_vecext(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len3_i(mnem: string): i32 {
@@ -4935,16 +4841,12 @@ function arm64_gas_family_len3_m(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_n(mnem: string): i32 {
-  if (mnem == "nop") {
-    return arm64_fam_fixed();
-  }
-  if (mnem == "neg") {
-    return arm64_fam_neg();
-  }
-  if (mnem == "ngc") {
-    return arm64_fam_carry();
-  }
-  return -1;
+  return match (mnem) {
+    "nop" => arm64_fam_fixed(),
+    "neg" => arm64_fam_neg(),
+    "ngc" => arm64_fam_carry(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len3_o(mnem: string): i32 {
@@ -4958,16 +4860,12 @@ function arm64_gas_family_len3_o(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_r(mnem: string): i32 {
-  if (mnem == "ret") {
-    return arm64_fam_fixed();
-  }
-  if (mnem == "ror") {
-    return arm64_fam_extr_ror();
-  }
-  if (mnem == "rev") {
-    return arm64_fam_bitops();
-  }
-  return -1;
+  return match (mnem) {
+    "ret" => arm64_fam_fixed(),
+    "ror" => arm64_fam_extr_ror(),
+    "rev" => arm64_fam_bitops(),
+    _ => -1,
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -5021,19 +4919,13 @@ function arm64_gas_family_len3_s_st(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_t(mnem: string): i32 {
-  if (mnem == "tbz") {
-    return arm64_fam_tbranch();
-  }
-  if (mnem == "tst") {
-    return arm64_fam_logical2();
-  }
-  if (mnem == "tbl") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "tbx") {
-    return arm64_fam_vecext();
-  }
-  return -1;
+  return match (mnem) {
+    "tbz" => arm64_fam_tbranch(),
+    "tst" => arm64_fam_logical2(),
+    "tbl" => arm64_fam_vecext(),
+    "tbx" => arm64_fam_vecext(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len3_w(mnem: string): i32 {
@@ -5107,16 +4999,12 @@ function arm64_gas_family_len4_a(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_a_ad(mnem: string): i32 {
-  if (mnem == "adrp") {
-    return arm64_fam_symaddr();
-  }
-  if (mnem == "adds") {
-    return arm64_fam_addsub();
-  }
-  if (mnem == "adcs") {
-    return arm64_fam_carry();
-  }
-  return -1;
+  return match (mnem) {
+    "adrp" => arm64_fam_symaddr(),
+    "adds" => arm64_fam_addsub(),
+    "adcs" => arm64_fam_carry(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len4_c(mnem: string): i32 {
@@ -5223,19 +5111,13 @@ function arm64_gas_family_len4_f_fc(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_f_fm(mnem: string): i32 {
-  if (mnem == "fmul") {
-    return arm64_fam_fp3();
-  }
-  if (mnem == "fmin") {
-    return arm64_fam_fp3();
-  }
-  if (mnem == "fmax") {
-    return arm64_fam_fp3();
-  }
-  if (mnem == "fmov") {
-    return arm64_fam_fmov();
-  }
-  return -1;
+  return match (mnem) {
+    "fmul" => arm64_fam_fp3(),
+    "fmin" => arm64_fam_fp3(),
+    "fmax" => arm64_fam_fp3(),
+    "fmov" => arm64_fam_fmov(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len4_l(mnem: string): i32 {
@@ -5291,19 +5173,13 @@ function arm64_gas_family_len4_m(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_m_mo(mnem: string): i32 {
-  if (mnem == "movz") {
-    return arm64_fam_movwide();
-  }
-  if (mnem == "movk") {
-    return arm64_fam_movwide();
-  }
-  if (mnem == "movn") {
-    return arm64_fam_movwide();
-  }
-  if (mnem == "movi") {
-    return arm64_fam_movi();
-  }
-  return -1;
+  return match (mnem) {
+    "movz" => arm64_fam_movwide(),
+    "movk" => arm64_fam_movwide(),
+    "movn" => arm64_fam_movwide(),
+    "movi" => arm64_fam_movi(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len4_n(mnem: string): i32 {
@@ -5385,32 +5261,22 @@ function arm64_gas_family_len4_s_st_str(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_s_sw(mnem: string): i32 {
-  if (mnem == "swpa") {
-    return arm64_fam_swap();
-  }
-  if (mnem == "swpl") {
-    return arm64_fam_swap();
-  }
-  if (mnem == "swpb") {
-    return arm64_fam_swap();
-  }
-  return -1;
+  return match (mnem) {
+    "swpa" => arm64_fam_swap(),
+    "swpl" => arm64_fam_swap(),
+    "swpb" => arm64_fam_swap(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len4_s_sx(mnem: string): i32 {
-  if (mnem == "sxtb") {
-    return arm64_fam_extend();
-  }
-  if (mnem == "sxth") {
-    return arm64_fam_extend();
-  }
-  if (mnem == "sxtw") {
-    return arm64_fam_extend();
-  }
-  if (mnem == "sxtl") {
-    return arm64_fam_shll();
-  }
-  return -1;
+  return match (mnem) {
+    "sxtb" => arm64_fam_extend(),
+    "sxth" => arm64_fam_extend(),
+    "sxtw" => arm64_fam_extend(),
+    "sxtl" => arm64_fam_shll(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len4_u(mnem: string): i32 {
@@ -5431,16 +5297,12 @@ function arm64_gas_family_len4_u(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_u_ux(mnem: string): i32 {
-  if (mnem == "uxtb") {
-    return arm64_fam_extend();
-  }
-  if (mnem == "uxth") {
-    return arm64_fam_extend();
-  }
-  if (mnem == "uxtl") {
-    return arm64_fam_shll();
-  }
-  return -1;
+  return match (mnem) {
+    "uxtb" => arm64_fam_extend(),
+    "uxth" => arm64_fam_extend(),
+    "uxtl" => arm64_fam_shll(),
+    _ => -1,
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -5489,19 +5351,13 @@ function arm64_gas_family_len5_c(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_c_cs(mnem: string): i32 {
-  if (mnem == "csinc") {
-    return arm64_fam_condsel();
-  }
-  if (mnem == "csinv") {
-    return arm64_fam_condsel();
-  }
-  if (mnem == "csneg") {
-    return arm64_fam_condsel();
-  }
-  if (mnem == "csetm") {
-    return arm64_fam_condsel();
-  }
-  return -1;
+  return match (mnem) {
+    "csinc" => arm64_fam_condsel(),
+    "csinv" => arm64_fam_condsel(),
+    "csneg" => arm64_fam_condsel(),
+    "csetm" => arm64_fam_condsel(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_f(mnem: string): i32 {
@@ -5584,29 +5440,21 @@ function arm64_gas_family_len5_l_ld(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_l_ld_lda(mnem: string): i32 {
-  if (mnem == "ldaxr") {
-    return arm64_fam_excl_ld();
-  }
-  if (mnem == "ldarb") {
-    return arm64_fam_acqrel();
-  }
-  if (mnem == "ldarh") {
-    return arm64_fam_acqrel();
-  }
-  return -1;
+  return match (mnem) {
+    "ldaxr" => arm64_fam_excl_ld(),
+    "ldarb" => arm64_fam_acqrel(),
+    "ldarh" => arm64_fam_acqrel(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_l_ld_ldr(mnem: string): i32 {
-  if (mnem == "ldrsb") {
-    return arm64_fam_ldst_narrow();
-  }
-  if (mnem == "ldrsh") {
-    return arm64_fam_ldst_narrow();
-  }
-  if (mnem == "ldrsw") {
-    return arm64_fam_ldst_narrow();
-  }
-  return -1;
+  return match (mnem) {
+    "ldrsb" => arm64_fam_ldst_narrow(),
+    "ldrsh" => arm64_fam_ldst_narrow(),
+    "ldrsw" => arm64_fam_ldst_narrow(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_l_ld_ldu(mnem: string): i32 {
@@ -5682,19 +5530,13 @@ function arm64_gas_family_len5_s_sh(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_s_sh_sha(mnem: string): i32 {
-  if (mnem == "sha1c") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "sha1p") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "sha1m") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "sha1h") {
-    return arm64_fam_vecext();
-  }
-  return -1;
+  return match (mnem) {
+    "sha1c" => arm64_fam_vecext(),
+    "sha1p" => arm64_fam_vecext(),
+    "sha1m" => arm64_fam_vecext(),
+    "sha1h" => arm64_fam_vecext(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_s_sm(mnem: string): i32 {
@@ -5722,16 +5564,12 @@ function arm64_gas_family_len5_s_st(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_s_st_stl(mnem: string): i32 {
-  if (mnem == "stlxr") {
-    return arm64_fam_excl_st();
-  }
-  if (mnem == "stlrb") {
-    return arm64_fam_acqrel();
-  }
-  if (mnem == "stlrh") {
-    return arm64_fam_acqrel();
-  }
-  return -1;
+  return match (mnem) {
+    "stlxr" => arm64_fam_excl_st(),
+    "stlrb" => arm64_fam_acqrel(),
+    "stlrh" => arm64_fam_acqrel(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_s_st_stu(mnem: string): i32 {
@@ -5755,16 +5593,12 @@ function arm64_gas_family_len5_s_st_stx(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_s_sw(mnem: string): i32 {
-  if (mnem == "swpal") {
-    return arm64_fam_swap();
-  }
-  if (mnem == "swpab") {
-    return arm64_fam_swap();
-  }
-  if (mnem == "swplb") {
-    return arm64_fam_swap();
-  }
-  return -1;
+  return match (mnem) {
+    "swpal" => arm64_fam_swap(),
+    "swpab" => arm64_fam_swap(),
+    "swplb" => arm64_fam_swap(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len5_u(mnem: string): i32 {
@@ -5818,19 +5652,13 @@ function arm64_gas_family_len6(mnem: string): i32 {
 }
 
 function arm64_gas_family_len6_c(mnem: string): i32 {
-  if (mnem == "crc32b") {
-    return arm64_fam_crc();
-  }
-  if (mnem == "crc32h") {
-    return arm64_fam_crc();
-  }
-  if (mnem == "crc32w") {
-    return arm64_fam_crc();
-  }
-  if (mnem == "crc32x") {
-    return arm64_fam_crc();
-  }
-  return -1;
+  return match (mnem) {
+    "crc32b" => arm64_fam_crc(),
+    "crc32h" => arm64_fam_crc(),
+    "crc32w" => arm64_fam_crc(),
+    "crc32x" => arm64_fam_crc(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len6_f(mnem: string): i32 {
@@ -5851,19 +5679,13 @@ function arm64_gas_family_len6_f(mnem: string): i32 {
 }
 
 function arm64_gas_family_len6_f_fc(mnem: string): i32 {
-  if (mnem == "fcvtzs") {
-    return arm64_fam_fcvtz();
-  }
-  if (mnem == "fcvtzu") {
-    return arm64_fam_fcvtz();
-  }
-  if (mnem == "fcvtn2") {
-    return arm64_fam_narrow();
-  }
-  if (mnem == "fcvtl2") {
-    return arm64_fam_narrow();
-  }
-  return -1;
+  return match (mnem) {
+    "fcvtzs" => arm64_fam_fcvtz(),
+    "fcvtzu" => arm64_fam_fcvtz(),
+    "fcvtn2" => arm64_fam_narrow(),
+    "fcvtl2" => arm64_fam_narrow(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len6_f_fm(mnem: string): i32 {
@@ -5962,16 +5784,12 @@ function arm64_gas_family_len6_l_ld_lda(mnem: string): i32 {
 }
 
 function arm64_gas_family_len6_l_ld_ldu(mnem: string): i32 {
-  if (mnem == "ldursb") {
-    return arm64_fam_unscaled2();
-  }
-  if (mnem == "ldursh") {
-    return arm64_fam_unscaled2();
-  }
-  if (mnem == "ldursw") {
-    return arm64_fam_unscaled2();
-  }
-  return -1;
+  return match (mnem) {
+    "ldursb" => arm64_fam_unscaled2(),
+    "ldursh" => arm64_fam_unscaled2(),
+    "ldursw" => arm64_fam_unscaled2(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len6_s(mnem: string): i32 {
@@ -6012,16 +5830,12 @@ function arm64_gas_family_len6_s_st(mnem: string): i32 {
 }
 
 function arm64_gas_family_len6_u(mnem: string): i32 {
-  if (mnem == "umaddl") {
-    return arm64_fam_mulwide();
-  }
-  if (mnem == "umsubl") {
-    return arm64_fam_mulwide();
-  }
-  if (mnem == "ushll2") {
-    return arm64_fam_shll();
-  }
-  return -1;
+  return match (mnem) {
+    "umaddl" => arm64_fam_mulwide(),
+    "umsubl" => arm64_fam_mulwide(),
+    "ushll2" => arm64_fam_shll(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len7(mnem: string): i32 {
@@ -6045,16 +5859,12 @@ function arm64_gas_family_len7(mnem: string): i32 {
 }
 
 function arm64_gas_family_len7_s(mnem: string): i32 {
-  if (mnem == "sha256h") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "sha1su0") {
-    return arm64_fam_vecext();
-  }
-  if (mnem == "sha1su1") {
-    return arm64_fam_vecext();
-  }
-  return -1;
+  return match (mnem) {
+    "sha256h" => arm64_fam_vecext(),
+    "sha1su0" => arm64_fam_vecext(),
+    "sha1su1" => arm64_fam_vecext(),
+    _ => -1,
+  };
 }
 
 function arm64_gas_family_len8(mnem: string): i32 {
@@ -7659,8 +7469,7 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   }
   let am = arm64_gas_reg(src[2]);
   if (src.len() >= 4) {
-    let ext = arm64_gas_extend_option(src[3]);
-    if (ext >= 0) {
+    if let Some(ext) = arm64_gas_extend_option(src[3]) {
       util.push_bytes(a.code, arm64_addsub_ext([], is_sub, ad, an, am, ext, arm64_gas_lsl_amount(src[3])));
       return a;
     }
@@ -8207,21 +8016,21 @@ function arm64_gas_is_digits(s: string): boolean {
   return true;
 }
 
-function arm64_gas_numref_dir(s: string): i32 {
+function arm64_gas_numref_dir(s: string): Option[i32] {
   if (s.len() < 2) {
-    return -1;
+    return None;
   }
   let last = s[s.len() - 1] as i32;
   if (last != 102 && last != 98) {
-    return -1;
+    return None;
   }
   if (!arm64_gas_is_digits(slice_unchecked(s, 0, s.len() - 1).to_owned())) {
-    return -1;
+    return None;
   }
   if (last == 102) {
-    return 1;
+    return Some(1);
   }
-  return 0;
+  return Some(0);
 }
 
 function arm64_gas_dec(n: i32): string {
@@ -8273,10 +8082,9 @@ function arm64_gas_nl_define(own c: Arm64NumericLabels, name: string): (Arm64Num
 
 function arm64_gas_nl_ref(cnt: Arm64NumericLabels, tok: string): string {
   let s = arm64_gas_trim(tok);
-  let dir = arm64_gas_numref_dir(s);
-  if (dir < 0) {
+  let Some(dir) = arm64_gas_numref_dir(s) else {
     return s;
-  }
+  };
   let n = arm64_gas_nl_number(slice_unchecked(s, 0, s.len() - 1).to_owned());
   let i = arm64_gas_nl_index(cnt, n);
   let k = 0;
@@ -8653,10 +8461,8 @@ function arm64_gas_alignment(line: string): i32 {
     return 0;
   }
   let a = 1;
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     a *= 2;
-    k += 1;
   }
   return a;
 }
@@ -8699,12 +8505,10 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
 }
 
 function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
-  let i = 0;
-  while (i < p.bss_names.len()) {
+  for i in 0..p.bss_names.len() {
     if (p.bss_names[i] == name) {
       return p.bss_offs[i];
     }
-    i += 1;
   }
   return -1;
 }
@@ -8714,14 +8518,12 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string, sec: i32): 
     let width = arm64_gas_data_width(line);
     if (width > 0) {
       let vals = arm64_gas_values(line);
-      let vi = 0;
-      while (vi < vals.len()) {
+      for vi in 0..vals.len() {
         if (width == 8 && !arm64_gas_numeric_tok(vals[vi])) {
           p = arm64_gas_sym_word(p, vals[vi], sec);
         } else {
           p = arm64_gas_data_le(p, arm64_gas_atoi64(vals[vi]), width);
         }
-        vi += 1;
       }
       return p;
     }
@@ -8863,13 +8665,11 @@ function arm64_lit_reach(): i32 {
 
 function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
   let worst = 0;
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let d = code_len - p.lit_sites[i];
     if (d > worst) {
       worst = d;
     }
-    i += 1;
   }
   return worst;
 }
@@ -8881,14 +8681,12 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
   while ((buf_len(aw.code) & 7) != 0) {
     buf_push_byte(aw.code, 0);
   }
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let site = p.lit_sites[i];
     let rel = buf_len(aw.code) - site;
     aw = arm64_queue_patch(aw, site, 1, rel);
     arm64_push_word(aw.code, p.lit_vals[i]);
     arm64_push_word(aw.code, p.lit_vals[i] >> 32);
-    i += 1;
   }
   return aw;
 }
@@ -9038,25 +8836,15 @@ function arm64_gas_msr_line(own p: Arm64GasProg, a: Arm64Asm, ops: string[], res
 
 // A branch of any family, its target a numeric or named label.
 function arm64_gas_branch_line(own a: Arm64Asm, nl_cnt: Arm64NumericLabels, mnem: string, ops: string[]): Arm64Asm {
-  if (mnem == "b") {
-    return arm64_asm_b(a, arm64_gas_nl_ref(nl_cnt, ops[0]));
-  }
-  if (mnem == "bl") {
-    return arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, ops[0]));
-  }
-  if (mnem == "cbz") {
-    return arm64_asm_cbz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0]));
-  }
-  if (mnem == "cbnz") {
-    return arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0]));
-  }
-  if (mnem == "tbz") {
-    return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2]));
-  }
-  if (mnem == "tbnz") {
-    return arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2]));
-  }
-  return arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, ops[0]));
+  return match (mnem) {
+    "b" => arm64_asm_b(a, arm64_gas_nl_ref(nl_cnt, ops[0])),
+    "bl" => arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, ops[0])),
+    "cbz" => arm64_asm_cbz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0])),
+    "cbnz" => arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0])),
+    "tbz" => arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
+    "tbnz" => arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
+    _ => arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, ops[0])),
+  };
 }
 
 pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm64GasProg {
@@ -9323,18 +9111,14 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
     a = Arm64Asm { ...a, text: text };
     p = Arm64GasProg { ...p, ro: [], ro_base: ro_base, code_end: code_end };
   }
-  let ui = 0;
-  while (ui < a.unres.len()) {
+  for ui in 0..a.unres.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
-    ui += 1;
   }
   for name in a.twice {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + name + " defined twice") };
   }
-  let oi = 0;
-  while (oi < a.oor.len()) {
+  for oi in 0..a.oor.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
-    oi += 1;
   }
   return Arm64GasProg { ...p, asm: a, cfi: cfi, pf_sites: pf_sites, pf_syms: pf_syms, pf_kinds: pf_kinds };
 }
@@ -9445,10 +9229,8 @@ function arm64_gas_link_image(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: 
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
     } else {
       let v = dres.addr + addend;
-      let b: i32 = 0;
-      while (b < 8) {
+      for b in 0..8 {
         dat = dat.with(off + b, (v >> b * 8 & 255) as i32);
-        b += 1;
       }
     }
     di += 1;
@@ -9464,10 +9246,8 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 }
 
 function macho_le64(buf: i32[], v: i64): i32[] {
-  let b: i32 = 0;
-  while (b < 8) {
+  for b in 0..8 {
     buf = buf.append((v >> b * 8 & 255) as i32);
-    b += 1;
   }
   return buf;
 }
@@ -9511,10 +9291,8 @@ function macho_name16(buf: i32[], s: string): i32[] {
 }
 
 function macho_zeros(buf: i32[], n: i32): i32[] {
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     buf = buf.append(0);
-    i += 1;
   }
   return buf;
 }
@@ -9679,10 +9457,8 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
     buf = util.le32(buf, 0);
     buf = util.le32(buf, 0);
   }
-  let i = 0;
-  while (i < path.len()) {
+  for i in 0..path.len() {
     buf = buf.append(path[i] as i32);
-    i += 1;
   }
   return macho_zeros(buf, size - fixed - path.len());
 }
@@ -9705,8 +9481,7 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1, 0x50 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x40);
     let k = 0;
     while (k < syms[i].len()) {
@@ -9717,7 +9492,6 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     buf = buf.append(0x70 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x90);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9740,12 +9514,10 @@ function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x20 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x50 | 1);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9844,10 +9616,8 @@ function macho_strtab(buf: i32[], names: string[], idx: i32[]): i32[] {
   buf = buf.append(0);
   for i in idx {
     let n = names[i];
-    let k = 0;
-    while (k < n.len()) {
+    for k in 0..n.len() {
       buf = buf.append(n[k] as i32);
-      k += 1;
     }
     buf = buf.append(0);
   }
@@ -9910,16 +9680,13 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
   sb = macho_be64(sb, exec_seg_limit as i64);
   sb = macho_be64(sb, 1);
 
-  let i = 0;
-  while (i < ident.len()) {
+  for i in 0..ident.len() {
     sb = sb.append(ident[i] as i32);
-    i += 1;
   }
   sb = sb.append(0);
 
   let bytes = util.to_u8(content);
-  let slot = 0;
-  while (slot < n_slots) {
+  for slot in 0..n_slots {
     let pstart = slot * 4096;
     let pend = pstart + 4096;
     if (pend > code_limit) {
@@ -9928,7 +9695,6 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
     for b in crypto.sha256(bytes[pstart:pend]) {
       sb = sb.append(b as i32);
     }
-    slot += 1;
   }
   return sb;
 }
@@ -10053,10 +9819,8 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   if (has_dwarf) {
     let names = macho_dwarf_sects();
     buf = macho_seg(buf, "__DWARF", dwarf_vaddr, 0 as i64, dwarf_off as i64, dwarf_file_len as i64, 0, 0, names.len());
-    let ds = 0;
-    while (ds < names.len()) {
+    for ds in 0..names.len() {
       buf = macho_sect(buf, names[ds], "__DWARF", dwarf_vaddr + dwarf_at[ds] as i64, dwarf[ds].len(), dwarf_off + dwarf_at[ds], 0, 0x02000000);
-      ds += 1;
     }
   }
 
@@ -10092,11 +9856,9 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
     buf = util.append_all(buf, data);
     buf = macho_pad_to(buf, dwarf_off);
   }
-  let k = 0;
-  while (k < dwarf.len()) {
+  for k in 0..dwarf.len() {
     buf = macho_pad_to(buf, dwarf_off + dwarf_at[k]);
     buf = util.append_all(buf, dwarf[k]);
-    k += 1;
   }
   buf = macho_pad_to(buf, linkedit_off);
   buf = util.append_all(buf, rebase);
