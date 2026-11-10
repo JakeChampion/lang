@@ -181,10 +181,15 @@ A name a match arm binds is declared afresh each round of the loop that holds th
 A call that moves a field can read other fields of the same owner in its other arguments.
 The move takes only the one field.
 
+A consuming call can select a descendant of a field of an `own` parameter.
+The enclosing field must be at its last use.
+The proof uses an unchanged parameter, no whole-owner read, and one read of that field.
+
 | Pattern | Code | Case |
 |---|---|---|
 | A deferred consuming close, then a read of the handle | accepted | `handle_defer_closes_at_exit` |
 | Both fields of a fresh local closed, and both fields of an `own` parameter closed | accepted | `handle_field_closes_from_local` |
+| Nested fields of an `own` parameter close at the enclosing field's last use | accepted | `handle_nested_fields_close_from_owned_root` |
 | A close after a deferred close of the same handle | `E051` | `diag_e051_handle_closed_after_defer` |
 | A field closed twice | `E051` | `diag_e051_handle_field_closed_twice` |
 | A transfer of the whole after one of its fields moved out | `E051` | `diag_e051_handle_whole_used_after_field_close` |
