@@ -1,0 +1,8 @@
+import "std/crypto";
+
+@value
+pub struct Key { bytes: u8[] }
+
+pub function (own key: Key) erase(): void {
+  crypto.erase(key.bytes);
+}

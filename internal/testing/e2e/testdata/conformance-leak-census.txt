@@ -1,7 +1,7 @@
+# 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
 # 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
 # 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
-# 2026-11-10: rand_bytes_negative_count_stops is removed with the stop in rand.bytes.
 # 2026-11-10: a_match_value_of_owned_arms_is_owned is clean under RC trace.
 # 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
 # 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
@@ -79,6 +79,7 @@ a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
+aead_in_place_refuses_overlapping_additional_data    0
 aliased_and_used_twice                               0
 alloc_count_sees_recycling                           0
 alloc_flat_array_push_bound_elem                     0
@@ -1378,3 +1379,6 @@ worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0
+
+# VT-01: checked value cleanup retains COW aliases.
+value_cleanup_keeps_cow_aliases                    0

@@ -14,8 +14,10 @@ spec.loader.exec_module(check)
 
 class Device:
     def __init__(self, *, stuck_keyboard=False, missing_keyboard=False,
-                 ignored_back=False, early_close=False, wrong_home=False):
+                 ignored_back=False, early_close=False, wrong_home=False,
+                 editor="inputType=0x1 imeOptions=0x10000002"):
         self.keyboard = False
+        self.editor = editor
         self.layer = 0
         self.drawers = 0
         self.log = []
@@ -55,6 +57,8 @@ class Device:
                 self.log.append("paper: layer 0")
         elif args[:3] == ("shell", "atrace", "--async_stop"):
             return "B|12|frame"
+        elif args == ("shell", "dumpsys", "input_method") and self.keyboard:
+            return self.editor
         return ""
 
     def wait_for(self, pattern, timeout=30):
@@ -114,6 +118,10 @@ class BackNavigationTests(unittest.TestCase):
     def test_keyboard_back_must_leave_the_drawer_open(self):
         failures = self.run_device(Device(early_close=True))
         self.assertTrue(any("app list" in failure for failure in failures), failures)
+
+    def test_keyboard_must_type_into_the_text_field(self):
+        failures = self.run_device(Device(editor="inputType=0x0 imeOptions=0x0"))
+        self.assertIn("the keyboard does not type into the text field: inputType=0x0 imeOptions=0x0", failures)
 
     def test_home_transition_also_requires_the_home_frame(self):
         failures = self.run_device(Device(wrong_home=True))

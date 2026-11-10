@@ -722,7 +722,8 @@ function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out
     return __absorb12(c, r, app, out);
   }
   if (r.content_type.code() == 20) {
-    if (ccs && r.fragment.len() == 1 && r.fragment[0] == 1) {
+    // RFC 8446 section 5.1: no record comes between the parts of one handshake message.
+    if (ccs && c.pending.len() == 0 && r.fragment.len() == 1 && r.fragment[0] == 1) {
       return Ok(Absorbed { conn: c, out: out });
     }
     return Err(UnexpectedRecord(20));

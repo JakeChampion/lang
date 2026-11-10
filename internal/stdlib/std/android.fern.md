@@ -30,6 +30,8 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 
 <<the loop thread>>
 
+<<text fields>>
+
 <<windows>>
 ```
 
@@ -56,6 +58,12 @@ function c_looper_prepare(opts: i32): usize;
 
 @import("libandroid.so", "ALooper_addFd")
 function c_looper_add_fd(looper: usize, fd: i32, ident: i32, events: i32, callback: usize, data: usize): i32;
+
+@import("libandroid.so", "ALooper_forThread")
+function c_looper_for_thread(): usize;
+
+@import("libandroid.so", "ALooper_removeFd")
+function c_looper_remove_fd(looper: usize, fd: i32): i32;
 
 @import("libandroid.so", "ALooper_pollOnce")
 function c_looper_poll_once(timeout_ms: i32, out_fd: usize, out_events: usize, out_data: usize): i32;
@@ -179,13 +187,15 @@ function c_pthread_detach(thread: usize): i32;
 
 `Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
 
-`Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. The keyboard of the system types through these events, because the activity has no text field.
+`Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
+
+`Text` has the whole text of the field of `std/android/keyboard` after the keyboard of the system changed it. `TextAction` has the code of the action key of that keyboard, such as `ACTION_GO`.
 
 `Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and 24 belong to this module, and the kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 26 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -207,6 +217,8 @@ pub enum Event {
   Touch(i32, f32, f32),
   Key(i32, i32),
   Char(i32),
+  Text(string),
+  TextAction(i32),
   Tick,
   Posted(i32, usize),
 }
@@ -236,6 +248,10 @@ const INPUT_CREATED: i32 = 11;
 const INPUT_DESTROYED: i32 = 12;
 
 const CONTENT_RECT: i32 = 24;
+
+const TEXT: i32 = 25;
+
+const TEXT_ACTION: i32 = 26;
 
 function lifecycle_event(kind: i32): Event {
   if (kind == START) {
@@ -281,6 +297,12 @@ function message_event(kind: i32, arg: usize): Event {
   if (kind >= WINDOW_CREATED && kind <= WINDOW_DESTROYED) {
     return window_event(kind, Window { ptr: arg });
   }
+  if (kind == TEXT) {
+    return Text(taken_text(arg));
+  }
+  if (kind == TEXT_ACTION) {
+    return TextAction(arg as i32);
+  }
   if (kind > INPUT_DESTROYED || kind < START) {
     return Posted(kind, arg);
   }
@@ -300,7 +322,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -424,12 +446,13 @@ function ui_env(activity: usize): usize {
 pub function start(activity: usize, thread_main: usize): void {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize }.c_store(ctx);
-    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0 }.c_store(ctx);
+    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       c_activity_finish(activity);
       return;
     }
+    let watched: i32 = c_looper_add_fd(c_looper_for_thread(), Context.c_load_ui_read(ctx), LOOPER_CALLBACK, 1, on_ui_request_entry(), ctx);
     NativeActivity.c_store_instance(activity, ctx);
     let cb: usize = NativeActivity.c_load_callbacks(activity);
     Callbacks { ...Callbacks.c_load(cb), on_start: on_start_entry(), on_resume: on_resume_entry(), on_pause: on_pause_entry(), on_stop: on_stop_entry(), on_destroy: on_destroy_entry(), on_window_focus_changed: on_focus_entry(), on_native_window_created: on_window_created_entry(), on_native_window_resized: on_window_resized_entry(), on_native_window_redraw_needed: on_window_redraw_entry(), on_native_window_destroyed: on_window_destroyed_entry(), on_input_queue_created: on_input_created_entry(), on_input_queue_destroyed: on_input_destroyed_entry(), on_content_rect_changed: on_content_rect_entry() }.c_store(cb);
@@ -455,6 +478,7 @@ pub function send(activity: usize, kind: i32, arg: usize): void {
     }
     __free(msg, size as i32);
     if (kind == DESTROY) {
+      close_text_field(activity, ctx);
       let a: i32 = c_close(Context.c_load_message_write(ctx));
       let b: i32 = c_close(Context.c_load_reply_read(ctx));
       NativeActivity.c_store_instance(activity, 0 as usize);
@@ -1042,41 +1066,320 @@ pub function to_background(ctx: usize): void {
   let moved: i32 = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "moveTaskToBack", "(Z)Z"), args);
   jni.free_buffer(args);
 }
+```
 
-// Shows the keyboard of the system, or hides it. Its keys come to the loop
-// thread as Key events. The activity has no text field, so a keyboard that
-// sends only text, not keys, types nothing. The request names the decor view
-// of the window: the system serves the keyboard to it, because the content
-// view of a NativeActivity cannot take the focus.
-pub function show_keyboard(ctx: usize, show: boolean): void {
-  let e: usize = env(ctx);
-  let obj: usize = activity_object(ctx);
-  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
-  let name: usize = jni.new_string(e, "input_method");
-  let imm: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [name]);
-  if (imm != 0 as usize && decor != 0 as usize) {
-    let target: usize = decor;
-    let method = "showSoftInput";
-    let sig = "(Landroid/view/View;I)Z";
-    if (!show) {
-      target = jni.call_object(e, decor, "getWindowToken", "()Landroid/os/IBinder;", []);
-      method = "hideSoftInputFromWindow";
-      sig = "(Landroid/os/IBinder;I)Z";
+### `text fields`
+
+`std/android/keyboard` shows the keyboard of the system for a text field. This section holds the parts of that field that use the context of the activity. The keyboard types into a hidden `EditText` that this section adds to the window. Only the UI thread can change a view. So the loop thread writes each request to a pipe that the looper of the UI thread watches. The callback of that looper does the work on the UI thread.
+
+The class `dev.fern.android.TextField` of `std/android/keyboard` watches the field. It calls `text_changed` after each change and `text_action` for the action key. Each one sends a message to the loop thread. A change that a request makes does not come back as a `Text` event.
+
+```fern
+<<text fields>>=
+// O_CLOEXEC and O_NONBLOCK: the UI thread reads requests until none is left.
+const UI_PIPE_FLAGS: i32 = 526336;
+
+// ALOOPER_POLL_CALLBACK: the looper calls the callback of the fd.
+const LOOPER_CALLBACK: i32 = -2;
+
+const FIELD_SHOW: i32 = 1;
+
+const FIELD_SET: i32 = 2;
+
+const FIELD_HIDE: i32 = 3;
+
+// InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
+pub const INPUT_TEXT: i32 = 1;
+
+// InputType.TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS: text with no
+// suggestions, such as a host name.
+pub const INPUT_PLAIN: i32 = 524289;
+
+// EditorInfo.IME_ACTION_GO: the action key goes to the result.
+pub const ACTION_GO: i32 = 2;
+
+// EditorInfo.IME_ACTION_SEARCH: the action key starts a search.
+pub const ACTION_SEARCH: i32 = 3;
+
+// EditorInfo.IME_ACTION_DONE: the action key ends the typing.
+pub const ACTION_DONE: i32 = 6;
+
+// EditorInfo.IME_FLAG_NO_EXTRACT_UI: the keyboard does not cover the app
+// with a full-screen editor in landscape.
+const NO_EXTRACT_UI: i32 = 268435456;
+
+// A request from the loop thread to the UI thread. `text` is a buffer from
+// text_buffer, or 0.
+@derive(ffi.CLayout)
+struct FieldRequest { op: i32, input: i32, action: i32, text: usize }
+
+// Asks the UI thread to show the field with `text`, the input type `input`
+// and the action key `action`.
+pub(package) function show_field(ctx: usize, text: string, input: i32, action: i32): void {
+  field_request(ctx, FieldRequest { op: FIELD_SHOW, input: input, action: action, text: text_buffer(text) });
+}
+
+// Asks the UI thread to give the field the text `text`.
+pub(package) function set_field(ctx: usize, text: string): void {
+  field_request(ctx, FieldRequest { op: FIELD_SET, input: 0, action: 0, text: text_buffer(text) });
+}
+
+// Asks the UI thread to hide the keyboard and take the focus from the field.
+pub(package) function hide_field(ctx: usize): void {
+  field_request(ctx, FieldRequest { op: FIELD_HIDE, input: 0, action: 0, text: 0 as usize });
+}
+
+function field_request(ctx: usize, r: FieldRequest): void {
+  unsafe {
+    let req: usize = __alloc(FieldRequest.c_size() as i32);
+    r.c_store(req);
+    let slot: usize = __alloc(8);
+    __store_ptr(slot, req);
+    let sent: i64 = c_write(Context.c_load_ui_write(ctx), slot, 8 as usize);
+    __free(slot, 8);
+    if (sent != 8i64) {
+      free_request(req);
     }
-    let class: usize = jni.get_object_class(e, imm);
-    let args: usize = jni.jvalues([target, 0 as usize]);
-    let done: i32 = jni.call_boolean_method_a(e, imm, jni.get_method_id(e, class, method, sig), args);
-    jni.free_buffer(args);
-    let a: usize = jni.delete_local_ref(e, class);
-    if (!show) {
-      let b: usize = jni.delete_local_ref(e, target);
+  }
+}
+
+function free_request(req: usize): void {
+  unsafe {
+    let text: usize = FieldRequest.c_load_text(req);
+    if (text != 0 as usize) {
+      let dropped = taken_text(text);
     }
+    __free(req, FieldRequest.c_size() as i32);
+  }
+}
+
+@callback("on_ui_request")
+function on_ui_request_entry(): usize;
+
+// The callback of the looper of the UI thread: it does each request in the
+// pipe. `data` is the context.
+function on_ui_request(fd: i32, events: i32, data: usize): i32 {
+  unsafe {
+    let slot: usize = __alloc(8);
+    while (c_read(fd, slot, 8 as usize) == 8i64) {
+      let req: usize = __load_ptr(slot);
+      do_request(data, FieldRequest.c_load(req));
+      free_request(req);
+    }
+    __free(slot, 8);
+  }
+  return 1;
+}
+
+function do_request(ctx: usize, r: FieldRequest): void {
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    if (Context.c_load_field(ctx) == 0 as usize) {
+      Context.c_store_field(ctx, new_field(ctx, e, obj));
+    }
+    let field: usize = Context.c_load_field(ctx);
+    if (field == 0 as usize) {
+      return;
+    }
+    if (r.op == FIELD_SHOW) {
+      let typed = jni.call_void(e, field, "setInputType", "(I)V", [r.input as usize]);
+      let options = jni.call_void(e, field, "setImeOptions", "(I)V", [(r.action | NO_EXTRACT_UI) as usize]);
+    }
+    if (r.text != 0 as usize) {
+      field_text(ctx, e, field, text_of_buffer(r.text));
+    }
+    if (r.op == FIELD_SHOW) {
+      let focused = call_bool(e, field, "requestFocus", "()Z", []);
+      input_method(e, obj, "showSoftInput", "(Landroid/view/View;I)Z", field);
+    } else if (r.op == FIELD_HIDE) {
+      let token: usize = jni.call_object(e, field, "getWindowToken", "()Landroid/os/IBinder;", []);
+      input_method(e, obj, "hideSoftInputFromWindow", "(Landroid/os/IBinder;I)Z", token);
+      let cleared = jni.call_void(e, field, "clearFocus", "()V", []);
+      let a: usize = jni.delete_local_ref(e, token);
+    }
+    let cleared: usize = jni.exception_clear(e);
+  }
+}
+
+// Calls the method `name` of the InputMethodManager with `target` and the
+// flags 0.
+function input_method(e: usize, obj: usize, name: string, sig: string, target: usize): void {
+  let service: usize = jni.new_string(e, "input_method");
+  let imm: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
+  if (imm != 0 as usize) {
+    let done = call_bool(e, imm, name, sig, [target, 0 as usize]);
+  }
+  let a: usize = jni.delete_local_ref(e, imm);
+  let b: usize = jni.delete_local_ref(e, service);
+}
+
+// The hidden EditText of the activity, as a global reference, or 0. It is one
+// pixel, and NativeActivity draws no view, so it shows nothing.
+function new_field(ctx: usize, e: usize, obj: usize): usize {
+  let class: usize = jni.find_class(e, "android/widget/EditText");
+  let args: usize = jni.jvalues([obj]);
+  let edit: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;)V"), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, class);
+  if (edit == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return 0 as usize;
+  }
+  let lp_class: usize = jni.find_class(e, "android/view/ViewGroup$LayoutParams");
+  let lp_args: usize = jni.jvalues([1 as usize, 1 as usize]);
+  let lp: usize = jni.new_object_a(e, lp_class, jni.get_method_id(e, lp_class, "<init>", "(II)V"), lp_args);
+  jni.free_buffer(lp_args);
+  let single = jni.call_void(e, edit, "setSingleLine", "(Z)V", [1 as usize]);
+  let added = jni.call_void(e, obj, "addContentView", "(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V", [edit, lp]);
+  let watcher_class: usize = jni.load_class(e, obj, "dev.fern.android.TextField");
+  let out = 0 as usize;
+  if (added && watcher_class != 0 as usize) {
+    let none: usize = jni.jvalue_alloc(0);
+    let watcher: usize = jni.new_object_a(e, watcher_class, jni.get_method_id(e, watcher_class, "<init>", "()V"), none);
+    jni.free_buffer(none);
+    let set: usize = jni.set_static_long_field(e, watcher_class, jni.get_static_field_id(e, watcher_class, "fern", "J"), ctx);
+    let watching = jni.call_void(e, edit, "addTextChangedListener", "(Landroid/text/TextWatcher;)V", [watcher]);
+    let listening = jni.call_void(e, edit, "setOnEditorActionListener", "(Landroid/widget/TextView$OnEditorActionListener;)V", [watcher]);
+    out = jni.new_global_ref(e, edit);
+    unsafe {
+      Context.c_store_watcher(ctx, jni.new_global_ref(e, watcher_class));
+    }
+    let w: usize = jni.delete_local_ref(e, watcher);
   }
   let cleared: usize = jni.exception_clear(e);
-  for r in [imm, name, decor, window] {
+  for r in [watcher_class, lp, lp_class, edit] {
     let d: usize = jni.delete_local_ref(e, r);
   }
+  return out;
+}
+
+// Gives the field the text `text` with the cursor at its end. The field does
+// not report a change that it makes.
+function field_text(ctx: usize, e: usize, field: usize, text: string): void {
+  unsafe {
+    Context.c_store_quiet(ctx, 1);
+    let s: usize = jni.new_string(e, text);
+    let set = jni.call_void(e, field, "setText", "(Ljava/lang/CharSequence;)V", [s]);
+    let class: usize = jni.get_object_class(e, field);
+    let none: usize = jni.jvalue_alloc(0);
+    let n: i32 = jni.call_int_method_a(e, field, jni.get_method_id(e, class, "length", "()I"), none);
+    jni.free_buffer(none);
+    let moved = jni.call_void(e, field, "setSelection", "(I)V", [n as usize]);
+    let a: usize = jni.delete_local_ref(e, class);
+    let b: usize = jni.delete_local_ref(e, s);
+    Context.c_store_quiet(ctx, 0);
+  }
+}
+
+function call_bool(e: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {
+  let class: usize = jni.get_object_class(e, obj);
+  let args: usize = jni.jvalues(values);
+  let got: i32 = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, class, name, sig), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, class);
+  return got != 0;
+}
+
+// Takes the field away on Destroy, on the UI thread: it stops the looper
+// watching the pipe, frees the requests that wait in it, and closes it.
+function close_text_field(activity: usize, ctx: usize): void {
+  unsafe {
+    let read: i32 = Context.c_load_ui_read(ctx);
+    let removed: i32 = c_looper_remove_fd(c_looper_for_thread(), read);
+    let slot: usize = __alloc(8);
+    while (c_read(read, slot, 8 as usize) == 8i64) {
+      free_request(__load_ptr(slot));
+    }
+    __free(slot, 8);
+    let a: i32 = c_close(read);
+    let b: i32 = c_close(Context.c_load_ui_write(ctx));
+    let e: usize = NativeActivity.c_load_env(activity);
+    let field: usize = Context.c_load_field(ctx);
+    if (field != 0 as usize) {
+      let d: usize = jni.delete_global_ref(e, field);
+    }
+    let watcher: usize = Context.c_load_watcher(ctx);
+    if (watcher != 0 as usize) {
+      // A new activity can start before this one ends, and own the field.
+      let id: usize = jni.get_static_field_id(e, watcher, "fern", "J");
+      if (jni.get_static_long_field(e, watcher, id) == ctx) {
+        let f: usize = jni.set_static_long_field(e, watcher, id, 0 as usize);
+      }
+      let g: usize = jni.delete_global_ref(e, watcher);
+    }
+  }
+}
+
+// The context of the activity, which TextField keeps in its static field.
+function field_context(env: usize, thiz: usize): usize {
+  let class: usize = jni.get_object_class(env, thiz);
+  let ctx: usize = jni.get_static_long_field(env, class, jni.get_static_field_id(env, class, "fern", "J")) as usize;
+  let a: usize = jni.delete_local_ref(env, class);
+  return ctx;
+}
+
+// After a change of the text of the field, on the UI thread: the loop thread
+// gets the whole text.
+pub(package) function text_changed(env: usize, thiz: usize, editable: usize): void {
+  let ctx = field_context(env, thiz);
+  if (ctx == 0 as usize) {
+    return;
+  }
+  unsafe {
+    if (Context.c_load_quiet(ctx) != 0) {
+      return;
+    }
+    let s: usize = jni.call_object(env, editable, "toString", "()Ljava/lang/String;", []);
+    let text = jni.string_of(env, s);
+    let a: usize = jni.delete_local_ref(env, s);
+    send(Context.c_load_activity(ctx), TEXT, text_buffer(text));
+  }
+}
+
+// The action key of the keyboard, on the UI thread. It is true when the loop
+// thread gets the action.
+pub(package) function text_action(env: usize, thiz: usize, action: i32): boolean {
+  let ctx = field_context(env, thiz);
+  if (ctx == 0 as usize) {
+    return false;
+  }
+  unsafe {
+    send(Context.c_load_activity(ctx), TEXT_ACTION, action as usize);
+  }
+  return true;
+}
+
+// A heap copy of `text` for another thread: its length, then its bytes.
+pub(package) function text_buffer(text: string): usize {
+  let b = text.as_bytes();
+  unsafe {
+    let buf: usize = __alloc(4 + b.len());
+    __store_i32(buf, b.len());
+    __memcpy(buf + 4 as usize, __bytes_data(b), b.len());
+    return buf;
+  }
+}
+
+// The text of a buffer from text_buffer, which it frees.
+pub(package) function taken_text(buf: usize): string {
+  let text = text_of_buffer(buf);
+  unsafe {
+    __free(buf, 4 + __load_i32(buf));
+  }
+  return text;
+}
+
+function text_of_buffer(buf: usize): string {
+  let b: u8[] = [];
+  unsafe {
+    let n: i32 = __load_i32(buf);
+    for k in 0..n {
+      b = b.append(__load_u8(buf + (4 + k) as usize) as u8);
+    }
+  }
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 ```
 

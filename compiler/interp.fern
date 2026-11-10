@@ -839,7 +839,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     }
     fields = fields.append(parser.bare_field(fname, ""));
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
@@ -1422,7 +1422,7 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
     let (ok, next) = cell_any_text(h, v, edges, heap, captures);
-    edges = next;
+    edges = unsafe { share_unchecked(next) };
     if (!ok) {
       return (false, edges);
     }
@@ -1473,7 +1473,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       cell_hex_text(h, view);
       cell_name_text(h, a.elem);
       let store = a.store;
-      edges = edges.append(store);
+      edges = unsafe { share_unchecked(edges.append(store)) };
       return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
@@ -1486,7 +1486,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next, heap, captures);
+      return cell_parts_text(h, m.values, unsafe { share_unchecked(next) }, heap, captures);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -5528,12 +5528,13 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
+  // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
     let before_tail: ast.Stmt[] = [];
     for i in 0..fv.body.len() - 1 {
       before_tail = before_tail.append(fv.body[i]);
     }
-    let leading = eval_block(before_tail, env);
+    let leading = eval_block(before_tail, unsafe { share_unchecked(env) });
     if (leading.sig != 0) {
       if (leading.sig == 1 && is_err(leading.ret)) {
         return leading.ret;
@@ -5543,7 +5544,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     let tail = eval_stmt(fv.body[fv.body.len() - 1], leading.env);
     return coerce_int_width(tail.ret, fv.ret_type);
   }
-  let step = eval_block(fv.body, env);
+  let step = eval_block(fv.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -5619,7 +5620,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
   }
-  let step = eval_block(fd.body, Env { ...env });
+  let step = eval_block(fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -8450,7 +8451,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       if (arm.has_guard) {
         let gv = eval_expr(arm.guard, bodyEnv);
         if (is_err(gv)) {
-          return step_stop(trim_env(bodyEnv, base), gv);
+          return step_stop(trim_env(unsafe { share_unchecked(bodyEnv) }, base), gv);
         }
         match (gv) {
           VBool(gb) => {
@@ -8462,7 +8463,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         }
       }
       if (pass) {
-        let step: StepResult = if (value_form) { eval_value_body(arm.body, Env { ...bodyEnv }, expect) } else { eval_block(arm.body, bodyEnv) };
+        let step: StepResult = if (value_form) { eval_value_body(arm.body, unsafe { share_unchecked(bodyEnv) }, expect) } else { eval_block(arm.body, unsafe { share_unchecked(bodyEnv) }) };
         return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
@@ -8503,7 +8504,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let i = 0;
   while (i < elems.len()) {
     let iter_env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
-    let step = eval_block(f.body, Env { ...iter_env });
+    let step = eval_block(f.body, unsafe { share_unchecked(iter_env) });
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
@@ -8705,7 +8706,7 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
-    let Some(out) = array_method(heap, VArr { ...av }, names[i], args[i]) else {
+    let Some(out) = array_method(heap, unsafe { share_unchecked(VArr { ...av }) }, names[i], args[i]) else {
       return step_stop(released, v_err("in-place write: not an array method"));
     };
     if (is_err(out)) {
@@ -8760,7 +8761,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
     subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base = env.depth;
-  let step = eval_stmt(parser.iterator_loop(f, subject, 0), Env { ...scope_env(env, true).bind("$for_subject", iv) });
+  let step = eval_stmt(parser.iterator_loop(f, subject, 0), unsafe { share_unchecked(scope_env(env, true).bind("$for_subject", iv)) });
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
@@ -8792,7 +8793,7 @@ function scope_env(own e: Env, needed: boolean): Env {
   if (!needed) {
     return e;
   }
-  return Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] };
+  return unsafe { share_unchecked(Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] }) };
 }
 
 function trim_env(own e: Env, base: i32): Env {
@@ -8897,7 +8898,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let mreassigned = body_assign_names(mod.top_stmts, []);
   for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    let r = eval_stmt(mod.top_stmts[j], env);
+    let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {
       return r.ret;

@@ -706,6 +706,9 @@ function struct_table_text(structs: parser.StructDecl[]): string {
     if (sd.must_consume) {
       parts = parts.append("mc");
     }
+    if (sd.value_type) {
+      parts = parts.append("value");
+    }
     parts = parts.append("{");
     for f in sd.fields {
       parts = parts.append(f.name + ":" + f.type_name + "/" + f.fn_ret + "/" + f.fn_param_types + ",");

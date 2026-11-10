@@ -1,0 +1,4 @@
+{
+  "exit_code": 0,
+  "evidence": "The complete make ci-selftest command returned exit0. Its full log is retained."
+}

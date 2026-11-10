@@ -14,6 +14,8 @@ func TestAttributePlacement(t *testing.T) {
 		inlineMsg    = "@inline / @noinline only applies to a function declaration"
 	)
 	for _, tc := range []struct{ src, pos, msg string }{
+		{"@value\nfunction f(): void {}", "2:1", "@value only applies to a `struct` declaration"},
+		{"@value\nenum E { Empty }", "2:1", "@value only applies to a `struct` declaration"},
 		{"@derive(Eq)\nconst X: i32 = 1;", "2:1", "@derive " + structOrEnum},
 		{"@must_consume\nconst X: i32 = 1;", "2:1", "@must_consume " + structOrEnum},
 		{"@try\nconst X: i32 = 1;", "2:1", enumOnly},
@@ -32,7 +34,7 @@ func TestAttributePlacement(t *testing.T) {
 		{"@derive(Eq)", "2:1", "@derive " + structOrEnum},
 		{"pub @derive(Eq) struct S { a: i32 }", "1:1", "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"},
 		{"pub(foo) function f(): void {}", "1:1", "`pub(...)` only supports `pub(package)`"},
-		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @try, @inline, and @noinline are supported)"},
+		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @try, @inline, and @noinline are supported)"},
 	} {
 		_, err := Parse(tc.src + "\n")
 		var batch diag.Errors
@@ -85,5 +87,15 @@ function tick(n: i32): i32 { return n; }
 	}
 	if len(prog.Funcs) != 4 || prog.Funcs[0].ImportWITName != "f" || prog.Funcs[1].ExportWITName != "g" || prog.Funcs[2].Provides != "log" || prog.Funcs[1].Provides != "" || !prog.Funcs[3].NoRC || prog.Funcs[2].NoRC {
 		t.Errorf("functions not bound: %+v", prog.Funcs)
+	}
+}
+
+func TestValueAttributeDeclaration(t *testing.T) {
+	prog, err := Parse("@value\npub opaque struct Key { bytes: u8[] }\nstruct Plain { n: i32 }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Structs) != 2 || !prog.Structs[0].ValueType || !prog.Structs[0].Public || !prog.Structs[0].Opaque || prog.Structs[1].ValueType {
+		t.Fatalf("value declaration lost its metadata: %+v", prog.Structs)
 	}
 }

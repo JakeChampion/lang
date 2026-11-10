@@ -9,6 +9,9 @@ The historical study after it records research issue #5365.
 - Parameters borrow by default. An `own` parameter accepts an ownership transfer under E051.
   E050 rejects use of that parameter after consumption.
 
+- A checked `@value` record remains copyable when a method takes an `own` receiver.
+  [VALUE-TYPES.md](VALUE-TYPES.md) defines its field proof and COW cleanup contract.
+
 - A local `T[]` can initialize a local `[T]` when the element types match exactly.
   This includes literals and temporary arrays. The view keeps the source storage alive.
   Copy-on-write preserves the view contents when the owner changes.

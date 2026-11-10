@@ -1374,6 +1374,15 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, SpillCosts { fold_alu_rhs: false });
+}
+
+// A spill definition or normal read needs an extra transfer instruction.
+// An x86 ALU instruction can read a right operand from its spill slot.
+// The model discounts those reads and keeps the squared-use protection.
+pub struct SpillCosts { fold_alu_rhs: boolean }
+
+pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], costs: SpillCosts): Alloc {
   no_home = unhomed_call_results(f, no_home);
   let cold_calls = cold.len() > 0;
   let wish = return_prefs(f, pref, abi_reg);
@@ -1535,7 +1544,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     cum_all = calls_before(all_calls, total_pos);
   }
   let mates = phi_mates(f, at, def_pos, hi, no_home);
-  let weight = spill_weights(f, at);
+  let weight = spill_weights(f, at, costs);
   let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
@@ -1908,7 +1917,7 @@ function sole_readers(f: SFunc): i32[] {
   return out;
 }
 
-function spill_weights(f: SFunc, at: i32[]): i32[] {
+function spill_weights(f: SFunc, at: i32[], costs: SpillCosts): i32[] {
   let bw = block_loop_weights(f);
   let w = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
@@ -1927,7 +1936,11 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
           }
         }
         if (a >= 0 && a < f.nvals && rb >= 0) {
-          w = w.with(a, w[a] + bw[rb]);
+          let cost = 1;
+          if (costs.fold_alu_rhs && ins.kind_tag == BINARY && sl == 1 && folds_spill_rhs(ins.str)) {
+            cost = 0;
+          }
+          w = w.with(a, w[a] + bw[rb] * cost);
         }
       }
     }
@@ -1943,6 +1956,10 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
     }
   }
   return w;
+}
+
+function folds_spill_rhs(op: string): boolean {
+  return op == "add" || op == "sub" || op == "and" || op == "or" || op == "xor";
 }
 
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
@@ -1961,7 +1978,11 @@ pub function spill_slot(code: i32): i32 {
 // One line per value with a home: its interval, its spill weight and the
 // register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it.
 pub function print_alloc(f: SFunc, a: Alloc): string {
-  let w = spill_weights(f, block_positions(f));
+  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false });
+}
+
+pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
+  let w = spill_weights(f, block_positions(f), costs);
   let cold = cold_blocks(f);
   let out = "";
   let start = 0;

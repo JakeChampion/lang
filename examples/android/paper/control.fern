@@ -61,7 +61,9 @@ pub struct Device {
   launch: (string, i32, i32, i32, i32) => boolean,
   open: (string, string) => boolean,
   notifications: () => void,
-  keyboard: (boolean) => void,
+  show_field: (string, i32) => void,
+  set_field: (string) => void,
+  hide_field: () => void,
   bars: (boolean, boolean) => void,
   has_location: () => boolean,
   ask_location: () => void,
@@ -260,11 +262,11 @@ function open_app(own s: App, key: string, n: Option[ui.Node]): App {
   };
   let until = paper.blocked_until(s.settings, key, s.dev.wall_ms());
   if (until > 0i64) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
     return App { ...s, layer: ui.BLOCKED, pause_key: key, pause_at: until, typing: false, sheet: None, dirty: true };
   }
   if (paper.has(s.settings.mindful, key)) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
     return App { ...s, layer: ui.PAUSE, pause_key: key, pause_at: now_ms(s), typing: false, sheet: None, dirty: true };
   }
   return launch(s, a, n);
@@ -283,7 +285,7 @@ function launch(own s: App, a: paper.Entry, n: Option[ui.Node]): App {
   }
   // The app list stays while the app opens, and takes no more typing.
   if (s.typing) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
   }
   return App { ...s, typing: false, dirty: true };
 }
@@ -293,13 +295,13 @@ function launch(own s: App, a: paper.Entry, n: Option[ui.Node]): App {
 // The home screen at once, with the app list and any sheet closed.
 function home(own s: App): App {
   if (s.typing) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
   }
   return App { ...s, layer: ui.HOME, sheet: None, typing: false, query: "", list_scroll: 0, slide: no_slide(), press: no_press(), fling: no_fling(), dirty: true };
 }
 
 function open_drawer(own s: App): App {
-  s.dev.keyboard(true);
+  s.dev.show_field("", android.ACTION_GO);
   return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, slide: Slide { active: true, opening: true, t0: 0i64 }, fling: no_fling(), dirty: true };
 }
 
@@ -307,14 +309,14 @@ function open_drawer(own s: App): App {
 // look while it slides, and `home` ends the typing.
 function close_drawer(own s: App): App {
   if (s.typing) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
   }
   return App { ...s, slide: Slide { active: true, opening: false, t0: 0i64 }, fling: no_fling(), dirty: true };
 }
 
 function close_sheet(own s: App): App {
   if (s.typing && s.layer != ui.DRAWER) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
     return App { ...s, sheet: None, typing: false, dirty: true };
   }
   return App { ...s, sheet: None, dirty: true };
@@ -459,7 +461,7 @@ function rename_sheet(own s: App, key: string): App {
     buttons = [row("Use " + a.original, "reset"), row("Cancel", "cancel"), row("Save", "save")];
   }
   let sh = ui.Sheet { title: "Rename " + a.original, rows: [], buttons: buttons, field: true, text: a.label, hint: a.original, scroll: 0 };
-  s.dev.keyboard(true);
+  s.dev.show_field(a.label, android.ACTION_DONE);
   return App { ...show_sheet(s, "rename", key, sh), typing: true };
 }
 
@@ -724,7 +726,7 @@ function act(own s: App, a: string, n: ui.Node): App {
       return close_sheet(s);
     }
     if (a == "type") {
-      s.dev.keyboard(true);
+      s.dev.show_field(text_of(s), android.ACTION_DONE);
       return App { ...s, typing: true };
     }
     return sheet_act(s, a);
@@ -737,7 +739,7 @@ function act(own s: App, a: string, n: ui.Node): App {
     return app_menu(s, suffix(a, "menu:"), on_home);
   }
   if (a == "type") {
-    s.dev.keyboard(true);
+    s.dev.show_field(s.query, android.ACTION_GO);
     return App { ...s, typing: true, dirty: true };
   }
   if (a == "calendar" || a == "clock") {
@@ -1047,7 +1049,7 @@ function key(own s: App, code: i32, action: i32): App {
   }
   if (code == 67) {
     let text = drop_last(text_of(s));
-    return edit(s, text);
+    return keyed(s, text);
   }
   if (code == 66 || code == 160) {
     return enter(s);
@@ -1083,6 +1085,13 @@ function typed(own s: App, c: i32): App {
     return s;
   }
   let text = text_of(s) + (c as char).to_string();
+  return keyed(s, text);
+}
+
+// A key of a hardware keyboard changes the text, so the field of the
+// keyboard of the system gets the same text.
+function keyed(own s: App, text: string): App {
+  s.dev.set_field(text);
   return edit(s, text);
 }
 
@@ -1265,6 +1274,18 @@ function event(own s: App, e: android.Event): App {
     },
     android.Char(c) => {
       return typed(s, c);
+    },
+    android.Text(text) => {
+      if (!takes_text(s)) {
+        return s;
+      }
+      return edit(s, text);
+    },
+    android.TextAction(_) => {
+      if (!takes_text(s)) {
+        return s;
+      }
+      return enter(s);
     },
     android.Posted(kind, _) => {
       if (kind == KIND_HOME) {

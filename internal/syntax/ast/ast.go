@@ -2033,6 +2033,7 @@ type StructDecl struct {
 	Opaque        bool
 	Derives       []string
 	MustConsume   bool
+	ValueType     bool
 	SourceModule  string
 }
 

@@ -18916,6 +18916,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
   }
+  let ty = check_expr(e, ctx.scope);
+  if let typeinfo.TypeStruct(st) = ty {
+    if (ow_value_decl(st.name, ctx.structs, ctx.snames) && ow_value_data(typeinfo.spelling(ty), ctx.decls, [])) {
+      return true;
+    }
+  }
   if (ow_is_fresh_literal(e)) {
     return true;
   }
@@ -23502,12 +23508,23 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // The struct declarations a type name resolves against, and the types with
 // a method that consumes its receiver.
 // no_handle and handle hold the current declaration classification.
-struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex }
+struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex }
 
 function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
   let names: string[] = [];
+  let obligations: string[] = [];
+  for sd in mod.structs {
+    if (sd.must_consume) {
+      obligations = obligations.append(sd.name);
+    }
+  }
+  for ed in mod.enums {
+    if (ed.must_consume) {
+      obligations = obligations.append(ed.name);
+    }
+  }
   for fn in mod.funcs {
-    if (fn.receiver_own) {
+    if (fn.receiver_own && !ow_value_decl(util.base_type_name(fn.receiver_type), mod.structs, snames)) {
       let open = util.index_of_sub(fn.receiver_type, "[");
       if (open > 0) {
         names = names.append(slice_unchecked(fn.receiver_type, 0, open).to_owned());
@@ -23529,8 +23546,98 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
     decl_names = decl_names.append(al.name);
   }
   let no: string[] = [];
-  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no) };
+  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations) };
   return ow_classify_decls(dx, decl_names);
+}
+
+function ow_value_decl(name: string, structs: parser.StructDecl[], snames: util.NameIndex): boolean {
+  let i = snames.chain(name);
+  while (i >= 0) {
+    if (structs[i].name == name && structs[i].value_type) {
+      return true;
+    }
+    i = snames.next[i];
+  }
+  return false;
+}
+
+function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
+  if (!ow_holds_no_handle(tn, dx) || tn == "str" || tn == "fn" || parser.top_arrow_at(tn) >= 0 || tn.starts_with("[")) {
+    return false;
+  }
+  if (tn.ends_with("[]")) {
+    return ow_value_data(slice_unchecked(tn, 0, tn.len() - 2).to_owned(), dx, seen);
+  }
+  if (tn.starts_with("(") && tn.ends_with(")")) {
+    return ow_value_parts(parser.split_top_commas(slice_unchecked(tn, 1, tn.len() - 1).to_owned()), dx, seen);
+  }
+  let name = util.base_type_name(tn);
+  if (name == "Cell" || dx.obligations.has(name)) {
+    return false;
+  }
+  let args: string[] = [];
+  let open = util.index_of_sub(tn, "[");
+  if (open > 0 && tn.ends_with("]")) {
+    args = parser.split_top_commas(slice_unchecked(tn, open + 1, tn.len() - 1).to_owned());
+    if (!ow_value_parts(args, dx, seen)) {
+      return false;
+    }
+  }
+  if (util.has_str(seen, name)) {
+    return true;
+  }
+  for alias in dx.aliases {
+    if (alias.name != name) {
+      continue;
+    }
+    for i in 0..alias.variants.len() {
+      let member = alias.variants[i];
+      if (i < alias.variant_args.len() && alias.variant_args[i].len() > 0) {
+        member = member + "[" + alias.variant_args[i] + "]";
+      }
+      if (!ow_value_data(parser.subst_ty(member, alias.type_params, args), dx, seen.append(name))) {
+        return false;
+      }
+    }
+  }
+  for sd in dx.structs {
+    if (sd.name != name && sd.enum_owner != name) {
+      continue;
+    }
+    if (sd.must_consume) {
+      return false;
+    }
+    for field in sd.fields {
+      if (!ow_value_data(parser.subst_ty(field.type_name, sd.type_params, args), dx, seen.append(name))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function ow_value_parts(parts: string[], dx: OwnDecls, seen: string[]): boolean {
+  for part in parts {
+    if (!ow_value_data(part.trim(), dx, seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_value_diags(dx: OwnDecls): util.Diag[] {
+  let out: util.Diag[] = [];
+  for sd in dx.structs {
+    if (!sd.value_type) {
+      continue;
+    }
+    for field in sd.fields {
+      if (!ow_value_data(field.type_name, dx, [])) {
+        out = out.append(dg_at("E051", "@value field \"" + field.name + "\" must contain only immutable copyable data", field.line, field.col));
+      }
+    }
+  }
+  return out;
 }
 
 function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
@@ -24487,7 +24594,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh_scrut = ow_signature_fresh_owners(result_mod, collect_own_funcs(result_mod), builtins, decls);
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = ow_lenders(mod, ofuncs, decls);
-  let out: util.Diag[] = [];
+  let out: util.Diag[] = ow_value_diags(decls);
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
       continue;
@@ -27989,7 +28096,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   }
   let env = admission_env(mod, entry_file, raw_floor);
   mod = qualify_variants_in(mod, env, whole_focus(mod));
-  let typed = annotate_module(mod);
+  let typed = annotate_prepared(mod, module_env(mod), whole_focus(mod));
   let mt = ModuleTypes { ...check_module_pass(mod, env, fda_diags, [], typed.funcs), typed: typed };
   if (mt.diags.len() > 0) {
     return mt;
@@ -30279,7 +30386,11 @@ function whole_focus(mod: parser.Module): Focus {
 }
 
 function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
-  let rmod = pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus);
+  return annotate_prepared(pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus), env, focus);
+}
+
+// rmod is qualified, its literal locals are settled, and it is pretyped.
+function annotate_prepared(rmod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
   let nfuncs: parser.FuncDecl[] = [];
   for i in 0..rmod.funcs.len() {
     if (focus.funcs[i]) {

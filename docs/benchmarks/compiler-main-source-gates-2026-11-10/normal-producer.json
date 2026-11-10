@@ -1,0 +1,137 @@
+{
+  "source": "4fc43d6a119435babcbd46acbd21600a592c8349",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "runs": [
+    {
+      "label": "normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:43:54.669370+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:45:30.477356+00:00",
+      "binary_sha256": "11407d36edde3ce430806655b5f7506e84f32962d671d22777fd14abe9013f61"
+    },
+    {
+      "label": "normal-source-check",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:45:30.507723+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:45:47.978438+00:00"
+    },
+    {
+      "label": "opus-build",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/opus-native",
+        "tests/stdlib/opus_delimited_test.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:45:47.980445+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:45:52.584364+00:00"
+    },
+    {
+      "label": "opus-run",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/opus-native"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:45:52.587450+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:45:52.622112+00:00",
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161"
+    },
+    {
+      "label": "stage2",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/stage2",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:45:52.623603+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:46:56.628374+00:00",
+      "binary_sha256": "d25cdcf5fcc8353cfb45aba61b4c92108eb0b5cdc4c6e52182a02826d436b90e"
+    },
+    {
+      "label": "stage3",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/stage2",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/stage3",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-0950",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T09:46:56.659940+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T09:48:03.357781+00:00",
+      "binary_sha256": "d25cdcf5fcc8353cfb45aba61b4c92108eb0b5cdc4c6e52182a02826d436b90e"
+    }
+  ],
+  "note": "Post-merge correctness controls. The normal compiler and fixed-point images are not a performance comparison. Complete native Opus compilation exercises the new gate-to-lowering path.",
+  "stage2_stage3_byte_identical": true,
+  "exit_code": 0,
+  "finished": "2026-11-10T09:48:03.412437+00:00"
+}

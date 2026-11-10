@@ -503,6 +503,68 @@ function test_extensions_that_encrypted_extensions_cannot_hold(): test.TestOutco
   return test.assert_eq(refused_in_encrypted_extensions(empty_name), "connected");
 }
 
+// The first record of `flight` in two records, with a change_cipher_spec
+// record between them when `between` is true.
+function split_first_record(flight: u8[], between: boolean): u8[] {
+  let n = flight[3] as i32 << 8 | flight[4] as i32;
+  let half = n / 2;
+  let out: u8[] = [flight[0], flight[1], flight[2], (half >> 8) as u8, (half & 255) as u8];
+  for i in 0..half {
+    out = out.append(flight[5 + i]);
+  }
+  if (between) {
+    out = out.concat([20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]);
+  }
+  out = out.concat([flight[0], flight[1], flight[2], (n - half >> 8) as u8, (n - half & 255) as u8]);
+  for i in half..flight.len() - 5 {
+    out = out.append(flight[5 + i]);
+  }
+  return out;
+}
+
+function reads_split_hello(between: boolean): string {
+  let cc = handshake.client_config("example.com");
+  let sc = handshake.server_config([ed_public()], [0x0807]);
+  match (handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))) {
+    Ok(start) => {
+      match (handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))) {
+        Ok(server) => {
+          match (server.read(start.output)) {
+            Ok(s1) => {
+              match (start.client.read(split_first_record(s1.output, between))) {
+                Ok(_) => {
+                  return "read";
+                },
+                Err(e) => {
+                  return e.message();
+                }
+              }
+            },
+            Err(e) => {
+              return "server: " + e.message();
+            }
+          }
+        },
+        Err(e) => {
+          return "server: " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return "client: " + e.message();
+    }
+  }
+  return "";
+}
+
+// RFC 8446 section 5.1.
+function test_no_record_between_the_parts_of_a_message(): test.TestOutcome {
+  if (reads_split_hello(false) != "read") {
+    return test.fail("a ServerHello in two records: " + reads_split_hello(false));
+  }
+  return test.assert_eq(reads_split_hello(true), "tls handshake: unexpected record of type 20");
+}
+
 function test_defaults_and_alpn(): test.TestOutcome {
   let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["h2", "http/1.1"] };
   let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1", "h2"] };
@@ -1406,6 +1468,7 @@ function main(): i32 {
   r = r.it("the server's ServerHello of RFC 8448", test_server_trace);
   r = r.it("client and server across suites and groups", test_round_trips);
   r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
+  r = r.it("no record comes between the parts of a handshake message", test_no_record_between_the_parts_of_a_message);
   r = r.it("extensions that EncryptedExtensions cannot hold", test_extensions_that_encrypted_extensions_cannot_hold);
   r = r.it("the server name goes out with no trailing dot", test_the_name_goes_out_with_no_trailing_dot);
   r = r.it("HelloRetryRequest", test_hello_retry);

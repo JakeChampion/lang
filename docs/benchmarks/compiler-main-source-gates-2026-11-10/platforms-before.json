@@ -1,0 +1,5 @@
+{
+  "source": "4fc43d6a119435babcbd46acbd21600a592c8349",
+  "exit_code": 1,
+  "purpose": "Reproduce the CI capability inventory failure on current main."
+}
