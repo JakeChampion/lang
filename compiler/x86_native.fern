@@ -5070,8 +5070,23 @@ function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: strin
 
 function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: string): X86Asm {
   let xd = x86_gas_xmm(dst);
+  if (xd < 0) {
+    return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+  }
+  if (x86_gas_has_paren(src)) {
+    let m = x86_gas_parse_mem(src);
+    if (!x86_gas_mem_ok(m)) {
+      return x86_gas_bad(a, mnem + " " + src);
+    }
+    buf_push_byte(a.code, 102);
+    util.push_bytes(a.code, x86_gas_mem_rex([], 32, xd, m, false));
+    buf_push_byte(a.code, 15);
+    buf_push_byte(a.code, 56);
+    buf_push_byte(a.code, op);
+    return x86_gas_membytes(a, xd, m, 0);
+  }
   let xs = x86_gas_xmm(src);
-  if (xd < 0 || xs < 0) {
+  if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   buf_push_byte(a.code, 102);

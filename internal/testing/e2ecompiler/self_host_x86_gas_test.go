@@ -580,3 +580,16 @@ function main(): i32 {
 func TestSelfHostX86BssValueList(t *testing.T) {
 	runX86GasWasmSelfTest(t, "x86_bss_value_list", x86BssValueListMain)
 }
+
+func TestSelfHostX86GasSSE38MemoryGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "sse38_memory", `
+function main(): i32 {
+ let a = x86_gas_assemble(".text\n_start:\n pshufb .Lmask(%rip), %xmm0\n pshufb (%r8,%r9,4), %xmm12\n ptest -32(%rbp), %xmm8\n pmulld 16(%rsp), %xmm15\n.section .rodata\n.Lmask:\n .byte 0,1,2,8,9,10,4,5,6,12,13,14,255,255,255,255\n");
+ if (a.unknown.len() != 0) { return 1; }
+ let expected: i32[] = [102,15,56,0,5,23,0,0,0,102,71,15,56,0,36,136,102,68,15,56,23,69,224,102,68,15,56,64,124,36,16,0,0,1,2,8,9,10,4,5,6,12,13,14,255,255,255,255];
+ if (a.text.len() != expected.len()) { return 2; }
+ for i in 0..expected.len() { if (a.text[i] as i32 != expected[i]) { return 3; } }
+ return 0;
+}
+`)
+}
