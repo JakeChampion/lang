@@ -142,7 +142,7 @@ func armEntropySyscallStub(mode, label string) string {
 }
 
 // Stop at the allocator entry to check the requested capacity without a
-// multi-gigabyte allocation or entropy read. Small counts are positive controls.
+// multi-gigabyte allocation or entropy read. Negative counts must refuse first.
 func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	targets := []string{e2eharness.HostSelfHostTarget()}
@@ -162,7 +162,7 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 			} else {
 				gcc, _ = e2eharness.X86_64Tooling(t)
 			}
-			for _, n := range []int64{-1, 0, 1, 7, 8, 9, 2147483640, 2147483641, 2147483647} {
+			for _, n := range []int64{-2147483648, -1, 0, 1, 7, 8, 9, 2147483640, 2147483641, 2147483647} {
 				t.Run(fmt.Sprint(n), func(t *testing.T) {
 					dir := t.TempDir()
 					src, asm, bin := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.s"), filepath.Join(dir, "main")
@@ -181,11 +181,7 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 					if strings.Count(string(text), label) != 1 {
 						t.Fatal("expected exactly one array allocator entry")
 					}
-					positive := n
-					if positive < 0 {
-						positive = 0
-					}
-					words := (positive + 7) / 8
+					words := (n + 7) / 8
 					var hook string
 					if target == "x86-64-linux" {
 						hook = fmt.Sprintf("    cmpq $%d, %%rdi\n    jne .Lentropy_capacity_bad\n    movl $42, %%edi\n    jmp .Lentropy_capacity_exit\n.Lentropy_capacity_bad:\n    movl $13, %%edi\n.Lentropy_capacity_exit:\n    movl $60, %%eax\n    syscall\n", words)
@@ -206,6 +202,12 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 					out, err := cmd.CombinedOutput()
 					if ctx.Err() != nil || cmd.ProcessState == nil {
 						t.Fatalf("run: %v\n%s", err, out)
+					}
+					if n < 0 {
+						if cmd.ProcessState.ExitCode() != 134 || string(out) != "fern: allocation size out of range\n" {
+							t.Errorf("length %d must refuse before allocation: exit=%d output=%q", n, cmd.ProcessState.ExitCode(), out)
+						}
+						return
 					}
 					if cmd.ProcessState.ExitCode() != 42 || len(out) != 0 {
 						t.Errorf("length %d must request %d words: exit=%d output=%q", n, words, cmd.ProcessState.ExitCode(), out)
