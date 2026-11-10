@@ -19030,6 +19030,18 @@ function ow_call_checked_result(c: ast.ExprCall, s: Scope): boolean {
   return false;
 }
 
+function ow_value_cell_new(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  if (c.args.len() != 1) {
+    return false;
+  }
+  if let ast.ExprIdent(id) = c.callee {
+    if (id.name == "cell_new" && ctx.scope.ident_binding(id) < 0 && !ctx.scope.has_sig(id.name)) {
+      return ow_copyable_result(check_expr(c.args[0], ctx.scope), ctx);
+    }
+  }
+  return false;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
@@ -19089,7 +19101,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ret_own && parser.is_value_block(c)) {
         return !ow_result_loan(e, ctx);
       }
-      if (ow_copyable_result(ty, ctx) || ow_call_checked_result(c, ctx.scope)) {
+      if (ow_value_cell_new(c, ctx) || ow_copyable_result(ty, ctx) || ow_call_checked_result(c, ctx.scope)) {
         return true;
       }
       if let Some(tail) = ow_unsafe_value(c) {

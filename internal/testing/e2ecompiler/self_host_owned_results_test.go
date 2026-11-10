@@ -180,6 +180,16 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 		{"borrowed lambda input", `function run(): void { let f = (x: Box): own Box => x; }`, "E051"},
 		{"borrowed capture", `function run(x: Box): void { let f = (): own Box => x; }`, "E051"},
 		{"owned capture", `function run(own x: Box): void { let f = (): own Box => x; }`, "E051"},
+		{"value cell scalar argument", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(): i32 { return take_cell(cell_new(7)); }`, ""},
+		{"value cell scalar result", `function f(): own Cell[i32] { return cell_new(7); }`, ""},
+		{"value cell array payload", `function f(xs: i32[]): own Cell[i32[]] { return cell_new(xs); }`, ""},
+		{"value cell record payload", `struct Data { bytes: u8[] } function f(data: Data): own Cell[Data] { return cell_new(data); }`, ""},
+		{"value cell resource payload", `function f(box: Box): own Cell[Box] { return cell_new(box); }`, "E051"},
+		{"value cell generic payload", `function f[T](x: T): own Cell[T] { return cell_new(x); }`, "E051"},
+		{"value cell mutable payload", `function f(x: Cell[i32]): own Cell[Cell[i32]] { return cell_new(x); }`, "E051"},
+		{"value cell callback payload", `function f(x: () => i32): own Cell[() => i32] { return cell_new(x); }`, "E051"},
+		{"value cell local shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(borrowed: Cell[i32]): i32 { let cell_new = (n: i32): Cell[i32] => borrowed; return take_cell(cell_new(7)); }`, "E051"},
+		{"value cell parameter shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(cell_new: (i32) => Cell[i32]): i32 { return take_cell(cell_new(7)); }`, "E051"},
 		{"strengthen callback", `function pass(own x: Box): Box { return x; } function run(): void { let f: (own Box) => own Box = pass; }`, "E003"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
