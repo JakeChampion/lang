@@ -1,3 +1,4 @@
+# 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
 # 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
 # 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
@@ -1336,6 +1337,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_mixes_through_an_explicit_cast                 0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
