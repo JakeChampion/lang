@@ -1,5 +1,10 @@
 function __fern_random_bytes(n: i32): i32[] {
-  if (n <= 0) {
+  if (n < 0) {
+    let size: string = "fern: allocation size out of range\n";
+    __syscall3(64, 2, __raw_data(size) as i64, size.len() as i64);
+    exit(134);
+  }
+  if (n == 0) {
     let none: usize = __raw_arr_box(0);
     return __raw_array(none);
   }

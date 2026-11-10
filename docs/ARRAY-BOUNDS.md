@@ -71,6 +71,11 @@ allocated against the zero-extended value and then walked off it.
 backends. Both interpreters reject it with the same cause line and exit
 134. Wasm prints that line and traps.
 
+`random_bytes` follows the same rule for a negative count. The check is
+in the `__fern_random_bytes` kernels and in both interpreters, not in
+`rand.bytes`. A call to `exit` there adds the exit import to each wasm
+component that uses random bytes.
+
 A size that wraps to a small NON-negative value is a different outcome
 and stays one: the allocation succeeds at the wrapped size and the copy
 is stopped by the element bounds check above, so it aborts with `array
