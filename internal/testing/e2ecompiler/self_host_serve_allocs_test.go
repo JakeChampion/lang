@@ -112,10 +112,9 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
 }
 
-// 51 since 2026-11-08: a wake's datagrams go in one recvmmsg and one
-// sendmmsg, each with a table box and a boxed result, in place of one
-// system call per datagram.
-const ServeAllocsH3Ceiling = 51
+// 50 since 2026-11-10, at 49.69: h3q's event list keeps its buffer
+// between requests.
+const ServeAllocsH3Ceiling = 50
 
 const ServeAllocsH3MuxCeiling = 29
 

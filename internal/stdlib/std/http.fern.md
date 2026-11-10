@@ -118,9 +118,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<45 const ASTERISK_FORM: i32>>
 
-<<46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32>>
+<<46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32>>
 
-<<47 function __plain_path(buf: u8[], from: i32, end: i32): boolean>>
+<<47 function __plain_path(buf: [u8], from: i32, end: i32): boolean>>
 
 <<48 function __version_status(buf: u8[], from: i32, end: i32): i32>>
 
@@ -1991,7 +1991,7 @@ function __declared(f: __BodyFraming): i32 {
 ```fern
 <<43 pub function request_target(method: string, target: string): Result[string, i32]>>=
 pub function request_target(method: string, target: string): Result[string, i32] {
-  let buf = target.bytes();
+  let buf = target.as_bytes();
   let end = target.len();
   let path_from = __target_start(buf, 0, end, method == "OPTIONS");
   if (path_from == BAD_TARGET) {
@@ -2046,11 +2046,11 @@ const ASTERISK_FORM: i32 = 0 - 1;
 const BAD_TARGET: i32 = 0 - 2;
 ```
 
-### `46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32`
+### `46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32`
 
 ```fern
-<<46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32>>=
-function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
+<<46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32>>=
+function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32 {
   if (end == from + 1 && buf[from] == 42 as u8) {
     if (options) {
       return ASTERISK_FORM;
@@ -2067,7 +2067,7 @@ function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
   return path_from;
 }
 
-function __path_end(buf: u8[], from: i32, end: i32): i32 {
+function __path_end(buf: [u8], from: i32, end: i32): i32 {
   let q = __find_char(buf, from, end, 63 as u8);
   if (q < 0) {
     return end;
@@ -2181,11 +2181,11 @@ function __pct_byte(s: [u8], at: i32, end: i32): i32 {
 }
 ```
 
-### `47 function __plain_path(buf: u8[], from: i32, end: i32): boolean`
+### `47 function __plain_path(buf: [u8], from: i32, end: i32): boolean`
 
 ```fern
-<<47 function __plain_path(buf: u8[], from: i32, end: i32): boolean>>=
-function __plain_path(buf: u8[], from: i32, end: i32): boolean {
+<<47 function __plain_path(buf: [u8], from: i32, end: i32): boolean>>=
+function __plain_path(buf: [u8], from: i32, end: i32): boolean {
   let seg = from + 1;
   let i = from;
   while (i < end) {
@@ -2203,7 +2203,7 @@ function __plain_path(buf: u8[], from: i32, end: i32): boolean {
   return __dot_segment(buf, seg, end) == 0;
 }
 
-function __dot_segment(s: u8[], from: i32, end: i32): i32 {
+function __dot_segment(s: [u8], from: i32, end: i32): i32 {
   let n = end - from;
   if (n < 1 || n > 2 || s[from] != 46 as u8 || s[end - 1] != 46 as u8) {
     return 0;
@@ -2211,7 +2211,7 @@ function __dot_segment(s: u8[], from: i32, end: i32): i32 {
   return n;
 }
 
-function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[string, i32] {
+function __decoded_path(buf: [u8], from: i32, path_end: i32, end: i32): Result[string, i32] {
   let out: u8[] = [];
   let w = 0;
   let trailing = false;
@@ -2246,7 +2246,7 @@ function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[s
   return __finished_path(out, w, trailing, escaped_high, buf, path_end, end);
 }
 
-function __path_byte(buf: u8[], at: i32, end: i32): i32 {
+function __path_byte(buf: [u8], at: i32, end: i32): i32 {
   let b = buf[at] as i32;
   if (b == 37) {
     b = __pct_byte(buf, at, end);
@@ -2285,7 +2285,7 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
   return prev;
 }
 
-function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: u8[], from: i32, end: i32): Result[string, i32] {
+function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: [u8], from: i32, end: i32): Result[string, i32] {
   if (w == 0 || trailing) {
     out = __put_byte(out, w, 47 as u8);
     w += 1;

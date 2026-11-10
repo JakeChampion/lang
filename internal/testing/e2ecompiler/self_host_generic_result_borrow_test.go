@@ -63,7 +63,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 			check("self-host", driverDiags(runCheckerDriver(t, command, filepath.Base(name))))
 		})
 	}
-	for name, source := range map[string]string{"owned_callback_result": callbackOwnedResultSource, "diag_nested_callback_capture": callbackNestedCaptureSource, "diag_aggregate_callback_capture": callbackAggregateCaptureSource, "diag_array_callback_capture": callbackArrayCaptureSource} {
+	for name, source := range map[string]string{"diag_builtin_shadow": callbackBuiltinShadowSource, "scalar_builtin_shadow": callbackBuiltinScalarShadowSource, "owned_callback_result": callbackOwnedResultSource, "diag_nested_callback_capture": callbackNestedCaptureSource, "diag_aggregate_callback_capture": callbackAggregateCaptureSource, "diag_array_callback_capture": callbackArrayCaptureSource} {
 		t.Run(name, func(t *testing.T) {
 			command := exec.Command(bin)
 			if len(runner) > 0 {

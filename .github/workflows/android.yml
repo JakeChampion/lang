@@ -93,6 +93,7 @@ jobs:
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-ivf-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-annex-b-interop
+          FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-interop
           FERN="$PWD/bin/fern-selfhost" scripts/compare-video-qtrle --smoke --wasi --output build/android-stopwatch/qtrle-comparison-smoke.json
       - uses: actions/upload-artifact@v7
         with:

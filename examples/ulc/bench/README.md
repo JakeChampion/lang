@@ -7,6 +7,44 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Paired-double plan recurrence and integer code generation
+
+Source `6c828d2a318bed60e5a8f9ea109e52145a37f8a6` combines paired-double transform-plan recurrences with narrow right shifts and backward bit-demand analysis in the compiler.
+The baseline is the unsigned-guard release, `d82c0d664fa6f7add7b6bccb27333093ba3c1d2a`.
+Plan grids match an independent scalar IEEE-operation reference bit for bit across every supported transform size, on native and WASI.
+
+The 2026-11-10 sweep uses CPU 0 of the Xeon Platinum 8573C, one worker, and 120 repetitions per case in six balanced execution orders.
+It covers silence, tone, noise, and transients at all three PCM depths: ten-second inputs with blocks of 32768 and hundred-second inputs with blocks of 2048.
+Timing includes process startup and file I/O, with no concurrent local builds or tests.
+Every final Fern WAV equals the baseline byte for byte, and all independent float64 checks pass.
+
+Fern has lower medians than tuned C in 22 of 24 cases.
+The geometric-mean C/Fern ratio is 1.647× overall and 1.224× without silence.
+The corresponding fixed-suite intervals are 1.637× to 1.675× and 1.215× to 1.247×.
+Large-block PCM8 and PCM24 noise favor C, with C/Fern ratios of 0.989× and 0.916×.
+These results do not establish a universal performance ranking.
+
+Fern has lower medians than the previous Fern build in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.018× overall and 1.021× without silence.
+The corresponding intervals are 1.009× to 1.035× and 1.013× to 1.040×.
+All five baseline regressions remain in the report.
+The intervals use 2000 paired bootstrap repetitions and seed 417; they estimate repetition uncertainty within this fixed suite.
+Compare the two Fern builds within this sweep: the earlier report ran at a different time and has a different baseline.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10.0 | 32768 | PCM16 | 0.999 | 1.471 |
+| 10.0 | 32768 | PCM24 | 1.041 | 1.406 |
+| 10.0 | 32768 | PCM8 | 1.015 | 1.569 |
+| 100.0 | 2048 | PCM16 | 1.010 | 1.857 |
+| 100.0 | 2048 | PCM24 | 1.019 | 1.533 |
+| 100.0 | 2048 | PCM8 | 1.028 | 2.165 |
+
+[The complete report](x86-64-vector-recurrence.json) preserves every repetition, regression, executable hash, compiler hash, oracle check, and build revision.
+A fresh release build at merged main `f9904974a77249949607f3b6196e489bf53c3602` produces a byte-identical codec; its compiler hashes are also recorded.
+Reproduce with the [unsigned-guard commands](#unsigned-bounds-guards), substituting candidate source `6c828d2a318bed60e5a8f9ea109e52145a37f8a6`, baseline source `d82c0d664fa6f7add7b6bccb27333093ba3c1d2a`, and `--repetitions 120`.
+Use each source's own release compiler and standard library, and retain the same pinned C and float64 oracle builds.
+
 ## Unsigned bounds guards
 
 Source `d82c0d664fa6f7add7b6bccb27333093ba3c1d2a` reuses unsigned array guards and rejected-sentinel bounds, places full-range integer tables in constant storage, and folds redundant float32 conversions.

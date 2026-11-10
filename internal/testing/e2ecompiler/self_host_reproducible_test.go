@@ -122,7 +122,7 @@ func TestSelfHostReproducibleAcrossPaths(t *testing.T) {
 	}
 	// The diagnostic profile turns the debug paths on too.
 	debug := []reproVariant{{"debug-info", []string{"-g"}}, {"diagnostic", []string{"-profile", "diagnostic"}}}
-	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
 		for _, v := range debug {
 			if v.name == "diagnostic" && !strings.HasSuffix(target, "-linux") {
 				continue

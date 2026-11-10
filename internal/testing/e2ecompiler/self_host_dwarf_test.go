@@ -38,7 +38,7 @@ func TestSelfHostDWARFDebugInfo(t *testing.T) {
 		f.Close()
 	}
 
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			build(t, out, "-g", "-target", target)
@@ -185,7 +185,7 @@ func TestSelfHostDWARFLineTable(t *testing.T) {
 		}
 	}
 
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			build(t, out, "-g", "-target", target)

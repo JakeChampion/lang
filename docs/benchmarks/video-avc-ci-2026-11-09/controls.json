@@ -1,0 +1,103 @@
+{
+  "parent": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "feature": "345f706f2295c5ce0401984d36edbb9113c1adac",
+  "compiler_sha256": "48978406291c39f67a96b1a6e428e511c5cd1614c7ed0c2788f343811b8677ff",
+  "rows": [
+    {
+      "benchmark": "http_hello",
+      "target": "x86-64-linux",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "0986867105b8074b3c28d754c087f9c2f5e996f6612f10ba391e43ea403ac7cd",
+          "count": 15591
+        },
+        {
+          "side": "feature",
+          "sha256": "0986867105b8074b3c28d754c087f9c2f5e996f6612f10ba391e43ea403ac7cd",
+          "count": 15591
+        }
+      ]
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "arm64-linux",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "c7f86458e0263e3123ce576e07132f857e63245cc01ededa78857419387b4e44",
+          "count": 16542
+        },
+        {
+          "side": "feature",
+          "sha256": "c7f86458e0263e3123ce576e07132f857e63245cc01ededa78857419387b4e44",
+          "count": 16542
+        }
+      ]
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "wasm32-wasi",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "6aa516e1fd581fa176073f96c7e026e8189e53d634026882650fa35639fe9be5",
+          "count": 18926
+        },
+        {
+          "side": "feature",
+          "sha256": "6aa516e1fd581fa176073f96c7e026e8189e53d634026882650fa35639fe9be5",
+          "count": 18926
+        }
+      ]
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "x86-64-linux",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "24bc56924951782eeb4be2016bb86fb821a56f971071f424e6b35007af48da01",
+          "count": 5234
+        },
+        {
+          "side": "feature",
+          "sha256": "24bc56924951782eeb4be2016bb86fb821a56f971071f424e6b35007af48da01",
+          "count": 5234
+        }
+      ]
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "arm64-linux",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "6b8a995a9f2369ecc87656f882fc0ac81d9d39dd3181ebf54c56eab90f95a80c",
+          "count": 5600
+        },
+        {
+          "side": "feature",
+          "sha256": "6b8a995a9f2369ecc87656f882fc0ac81d9d39dd3181ebf54c56eab90f95a80c",
+          "count": 5600
+        }
+      ]
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "wasm32-wasi",
+      "controls": [
+        {
+          "side": "parent",
+          "sha256": "66fba2d4db59c08c2310c5e088593608a106e58789d79fbbd116f9200f1c85a4",
+          "count": 6036
+        },
+        {
+          "side": "feature",
+          "sha256": "66fba2d4db59c08c2310c5e088593608a106e58789d79fbbd116f9200f1c85a4",
+          "count": 6036
+        }
+      ]
+    }
+  ]
+}

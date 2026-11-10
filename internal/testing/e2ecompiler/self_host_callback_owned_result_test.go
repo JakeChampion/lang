@@ -91,3 +91,20 @@ function call[T](f: () => T): T { return f(); }
 function take(own xs: Handle[]): i32 { return xs.len(); }
 function bad(h: Handle): i32 { return take(call((): Handle[] => [h])); }
 `
+
+const callbackBuiltinShadowSource = `
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+function keep(own h: Handle): i32 { return h.close(); }
+function bad(h: Handle): i32 {
+ let cell_new = (): Handle => h;
+ return keep(cell_new());
+}
+`
+
+const callbackBuiltinScalarShadowSource = `
+function fresh(): i32 {
+ let cell_new = (): i32 => 7;
+ return cell_new();
+}
+`

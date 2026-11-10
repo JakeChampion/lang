@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**138 of 141** claims are pinned by a conformance case. The remaining
+**139 of 142** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -138,6 +138,7 @@ of them.
 | `DI-11` | `docs/INITIALIZATION.md` | An enum constructor requires every payload argument (`E036`) | `init_variant_payload_missing` |
 | `DI-12` | `docs/INITIALIZATION.md` | Both empty and payload enum variants produce initialized typed values | `init_variant_control` |
 | `DI-13` | `docs/INITIALIZATION.md` | A struct update retains initialized fields from its base | `init_struct_update_control` |
+| `DI-14` | `docs/INITIALIZATION.md` | A local callable or callback parameter shadows a builtin function name, including in a nested closure; calls use the resolved signature | `cell_constructor_shadowed_callbacks` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
