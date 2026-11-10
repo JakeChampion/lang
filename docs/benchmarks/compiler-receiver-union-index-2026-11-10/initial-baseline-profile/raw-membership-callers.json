@@ -1,0 +1,34 @@
+{
+  "source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "normal_sha256": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+  "guest_instructions": 16923277666,
+  "self_Ir": 827812963,
+  "self_percent": 4.891564029958166,
+  "callers": [
+    {
+      "caller": "__fn_checker__Scope__inherent_receives",
+      "callee": "__fn_checker__is_variant_of",
+      "recorded_calls": 583189,
+      "recorded_inclusive_Ir": 624604669
+    },
+    {
+      "caller": "__fn_checker__Scope__receives",
+      "callee": "__fn_checker__is_variant_of",
+      "recorded_calls": 243510,
+      "recorded_inclusive_Ir": 266783455
+    },
+    {
+      "caller": "__fn_checker__check_stmt",
+      "callee": "__fn_checker__is_variant_of",
+      "recorded_calls": 1168,
+      "recorded_inclusive_Ir": 889431
+    },
+    {
+      "caller": "__fn_checker__annotate_arm_scope",
+      "callee": "__fn_checker__is_variant_of",
+      "recorded_calls": 606,
+      "recorded_inclusive_Ir": 511944
+    }
+  ],
+  "limits": "Single normal instruction diagnosis. Inclusive costs overlap and call attribution reflects inlining and tail calls. No avoided-work or speedup claim."
+}

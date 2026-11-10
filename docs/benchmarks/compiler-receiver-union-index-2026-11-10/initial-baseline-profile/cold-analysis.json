@@ -1,0 +1,362 @@
+{
+  "guest_instructions": 16923277666,
+  "defined_functions": 5433,
+  "address_functions": 5433,
+  "unique_address_values": 4794,
+  "address_context_labels": 639,
+  "resolved_address_functions": 5433,
+  "unresolved_addresses": {},
+  "self_cost_sum_matches_summary": true,
+  "self_top": [
+    {
+      "name": "__fn_checker__is_variant_of",
+      "instructions": 827812963,
+      "percent_of_total": 4.891564029958166
+    },
+    {
+      "name": "__fn___fern_str_eq",
+      "instructions": 480348102,
+      "percent_of_total": 2.838386933549235
+    },
+    {
+      "name": "__fn_util__has_str",
+      "instructions": 476796166,
+      "percent_of_total": 2.817398469788837
+    },
+    {
+      "name": "__fn_util__NameIndex__chain",
+      "instructions": 451761806,
+      "percent_of_total": 2.6694699154385426
+    },
+    {
+      "name": "__fn_flatten__resolve_bare",
+      "instructions": 430531022,
+      "percent_of_total": 2.5440167708467354
+    },
+    {
+      "name": "__fn_checker__check_expr",
+      "instructions": 381945859,
+      "percent_of_total": 2.256926031340577
+    },
+    {
+      "name": "__fn___fern_str_concat",
+      "instructions": 278374300,
+      "percent_of_total": 1.6449195332844573
+    },
+    {
+      "name": "__fern_arr_box",
+      "instructions": 272633801,
+      "percent_of_total": 1.6109988052003636
+    },
+    {
+      "name": "__fn___fern_arr_dec",
+      "instructions": 251458206,
+      "percent_of_total": 1.4858717735583598
+    },
+    {
+      "name": "__fn_lexer__tokenize_impl",
+      "instructions": 229447501,
+      "percent_of_total": 1.355810059542871
+    },
+    {
+      "name": "__fn_astwalk__fold_expr_nodes__arr__util__Diag",
+      "instructions": 195783205,
+      "percent_of_total": 1.1568870337295334
+    },
+    {
+      "name": "__fn_parser__parse_type_ref",
+      "instructions": 195391986,
+      "percent_of_total": 1.1545753125149958
+    },
+    {
+      "name": "__fn___fern_str_grow",
+      "instructions": 190194471,
+      "percent_of_total": 1.12386308818955
+    },
+    {
+      "name": "__fn___fern_str_free",
+      "instructions": 174221936,
+      "percent_of_total": 1.0294810463934156
+    },
+    {
+      "name": "__fn___fern_str_grow_fresh",
+      "instructions": 168156299,
+      "percent_of_total": 0.9936390710993136
+    },
+    {
+      "name": "__fern_arr_push_owned",
+      "instructions": 164952193,
+      "percent_of_total": 0.9747059420492759
+    },
+    {
+      "name": "__fn_treeshake__ts_interposed_method_name",
+      "instructions": 161894454,
+      "percent_of_total": 0.9566376986489846
+    },
+    {
+      "name": "__fn_treeshake__ts_kept_keys",
+      "instructions": 160146905,
+      "percent_of_total": 0.9463113952313498
+    },
+    {
+      "name": "__fn_util__parse_f64_bits",
+      "instructions": 153891978,
+      "percent_of_total": 0.9093509013870245
+    },
+    {
+      "name": "__fn_checker__annotate_typed",
+      "instructions": 150147377,
+      "percent_of_total": 0.8872239761311496
+    },
+    {
+      "name": "__fn_checker__Scope__binding_index",
+      "instructions": 136220573,
+      "percent_of_total": 0.8049302013975477
+    },
+    {
+      "name": "__fern_alloc",
+      "instructions": 134166780,
+      "percent_of_total": 0.7927942958091981
+    },
+    {
+      "name": "__fn_parser__int_literal_tree",
+      "instructions": 133664914,
+      "percent_of_total": 0.7898287591684545
+    },
+    {
+      "name": "__fern_memcpy",
+      "instructions": 133131830,
+      "percent_of_total": 0.7866787547158833
+    },
+    {
+      "name": "__fn_util__NameIndex__find",
+      "instructions": 130030475,
+      "percent_of_total": 0.7683527834636901
+    },
+    {
+      "name": "__fn___sem_release_ast__Expr",
+      "instructions": 126476812,
+      "percent_of_total": 0.7473541148243428
+    },
+    {
+      "name": "__fn_util__base_type_name",
+      "instructions": 124121140,
+      "percent_of_total": 0.7334343999411397
+    },
+    {
+      "name": "__fn_util__append_diags",
+      "instructions": 117443040,
+      "percent_of_total": 0.6939733680311287
+    },
+    {
+      "name": "__fn___sem_drop_ast__Expr",
+      "instructions": 114521877,
+      "percent_of_total": 0.6767121550577766
+    },
+    {
+      "name": "__fn_checker__Scope__ident_binding",
+      "instructions": 110949938,
+      "percent_of_total": 0.6556054931539997
+    }
+  ],
+  "recorded_inclusive_top": [
+    {
+      "name": "_start",
+      "instructions": 16923277666,
+      "percent_of_total": 100.0
+    },
+    {
+      "name": "__fn_main",
+      "instructions": 16923277138,
+      "percent_of_total": 99.999996880037
+    },
+    {
+      "name": "__fn_run_with_gate",
+      "instructions": 16923273207,
+      "percent_of_total": 99.99997365167619
+    },
+    {
+      "name": "__fn_checker__build_gate_with_file$wrap",
+      "instructions": 8087216017,
+      "percent_of_total": 47.7875277863446
+    },
+    {
+      "name": "__fn_checker__gated",
+      "instructions": 8087215971,
+      "percent_of_total": 47.78752751452964
+    },
+    {
+      "name": "__fn_checker__check_module_raw_floor",
+      "instructions": 7908447660,
+      "percent_of_total": 46.73118184362478
+    },
+    {
+      "name": "__fn_checker__checked_module",
+      "instructions": 7908447230,
+      "percent_of_total": 46.73117930274583
+    },
+    {
+      "name": "__fn_checker__check_module_pass",
+      "instructions": 6566207325,
+      "percent_of_total": 38.79985576430003
+    },
+    {
+      "name": "__fn_checker__annotate_typed",
+      "instructions": 4355708974,
+      "percent_of_total": 25.737974994943865
+    },
+    {
+      "name": "__fn_checker__check_expr",
+      "instructions": 3840926831,
+      "percent_of_total": 22.696116596353434
+    },
+    {
+      "name": "__fn_load_checked",
+      "instructions": 3524193929,
+      "percent_of_total": 20.824535285385892
+    },
+    {
+      "name": "__fn_load_bundle",
+      "instructions": 3392164743,
+      "percent_of_total": 20.04437207701843
+    },
+    {
+      "name": "__fn_checker__annotate_block",
+      "instructions": 2967323050,
+      "percent_of_total": 17.533973669660643
+    },
+    {
+      "name": "__fn_annotated_diags",
+      "instructions": 2608075237,
+      "percent_of_total": 15.411170864612108
+    },
+    {
+      "name": "__fn_ambient_diags",
+      "instructions": 2608075040,
+      "percent_of_total": 15.411169700535007
+    },
+    {
+      "name": "__fn_checker__annotate_stmt",
+      "instructions": 2588075837,
+      "percent_of_total": 15.292993993708548
+    },
+    {
+      "name": "__fn_checker__annotate_expr",
+      "instructions": 2287356176,
+      "percent_of_total": 13.516035257138467
+    },
+    {
+      "name": "__fn_checker__stmts_call_diags",
+      "instructions": 2260405489,
+      "percent_of_total": 13.35678308665529
+    },
+    {
+      "name": "__fn_checker__annotate_func",
+      "instructions": 1933517962,
+      "percent_of_total": 11.425197885186078
+    },
+    {
+      "name": "__fn_ambient__enforce",
+      "instructions": 1776193068,
+      "percent_of_total": 10.495561811696152
+    },
+    {
+      "name": "__fn_ambient__handler_violations",
+      "instructions": 1744750323,
+      "percent_of_total": 10.309765976985181
+    },
+    {
+      "name": "__fn_ambient__with_edges",
+      "instructions": 1743922067,
+      "percent_of_total": 10.304871795040368
+    },
+    {
+      "name": "__fn_checker__annotate_module",
+      "instructions": 1671842794,
+      "percent_of_total": 9.878953870495456
+    },
+    {
+      "name": "__fn_treeshake__refs_name",
+      "instructions": 1666086218,
+      "percent_of_total": 9.844938143083706
+    },
+    {
+      "name": "__fn_checker__annotate_module_in",
+      "instructions": 1606405694,
+      "percent_of_total": 9.492284684469704
+    },
+    {
+      "name": "__fn_checker__binary_diags_typed",
+      "instructions": 1563933258,
+      "percent_of_total": 9.241314176047863
+    },
+    {
+      "name": "__fn_checker__operand_diags_typed",
+      "instructions": 1459170532,
+      "percent_of_total": 8.622269047393647
+    },
+    {
+      "name": "__fn_checker__dest_call_diags",
+      "instructions": 1414350046,
+      "percent_of_total": 8.35742386264526
+    },
+    {
+      "name": "__fn_parser__parse_binary",
+      "instructions": 1393560200,
+      "percent_of_total": 8.234576229873932
+    },
+    {
+      "name": "__fn_parser__parse_binary_nested",
+      "instructions": 1307766310,
+      "percent_of_total": 7.72761834799526
+    }
+  ],
+  "selected": {
+    "__fn_util__NameIndex__chain": {
+      "self_instructions": 451761806,
+      "recorded_inclusive_instructions": 451761806,
+      "recorded_calls": 7292068
+    },
+    "__fn_ssalive__compute_prepared": {
+      "self_instructions": 14254884,
+      "recorded_inclusive_instructions": 21048179,
+      "recorded_calls": 1193
+    },
+    "__fn_ssa__block_positions": {
+      "self_instructions": 5568128,
+      "recorded_inclusive_instructions": 6035328,
+      "recorded_calls": 7252
+    },
+    "__fn_ssa__inst_defs": {
+      "self_instructions": 9584255,
+      "recorded_inclusive_instructions": 11903312,
+      "recorded_calls": 1683
+    },
+    "__fn_semreach__walk": {
+      "self_instructions": 8969895,
+      "recorded_inclusive_instructions": 11193637,
+      "recorded_calls": 405
+    },
+    "__fn_ssadeps__analyze_checked": {
+      "self_instructions": 82761,
+      "recorded_inclusive_instructions": 8566815,
+      "recorded_calls": 585
+    },
+    "__fn_semlower__substitution": {
+      "self_instructions": 471019,
+      "recorded_inclusive_instructions": 611566765,
+      "recorded_calls": 1
+    },
+    "__fn_semsource__produce_module": {
+      "self_instructions": 1506220,
+      "recorded_inclusive_instructions": 416514302,
+      "recorded_calls": 10
+    },
+    "__fern_arr_box": {
+      "self_instructions": 272633801,
+      "recorded_inclusive_instructions": 297776161,
+      "recorded_calls": 14217759
+    }
+  },
+  "limits": "Recursion-context labels remain in the named copy and merge only in source-function cost aggregates. Single cold instruction diagnosis, not a timing or speedup comparison. Recorded inclusive costs overlap and can reflect recursion. Tail calls and inlining limit source attribution. Recorded calls omit inlined calls. None of these costs is established as avoidable."
+}

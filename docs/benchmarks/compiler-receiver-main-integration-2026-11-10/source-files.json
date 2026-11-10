@@ -1,0 +1,536 @@
+{
+  "archive-integration.py.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/archive-integration.py",
+    "original_bytes": 3384,
+    "original_sha256": "22f3bbba7c0cf3856a7a6f3462e5ff7f8000dfe74ac5aa9d2b5fb2125e6a6b82",
+    "compressed": true
+  },
+  "archive-integration.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/archive-integration.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "archive-integration.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/archive-integration.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "build.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/build.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "build.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/build.json",
+    "original_bytes": 2228,
+    "original_sha256": "9f2d224696fef15cd7363fc76654b7435593d5fd4548fa1d9c1b0e3eb4068139",
+    "compressed": false
+  },
+  "build.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/build.py",
+    "original_bytes": 2239,
+    "original_sha256": "8eb487e1c02e5ae1ec8b0cf501dc0724c4c10c675269a2192c56bc1edfcfa796",
+    "compressed": false
+  },
+  "ci-selftest.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/ci-selftest.controller.log",
+    "original_bytes": 2181,
+    "original_sha256": "d66e1fa38d45a17cf916665e6e2dade4d54ec6258b2bac7802e83843270b54de",
+    "compressed": true
+  },
+  "controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "controller.py.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/controller.py",
+    "original_bytes": 2685,
+    "original_sha256": "b706c7e46298ee5d93e5b556cef7a9a8025927e6f328fb6a6aa8016121fa97b0",
+    "compressed": true
+  },
+  "entropy-fixed/controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/controller.log",
+    "original_bytes": 575,
+    "original_sha256": "6eaed6620cdb181e7bffdfffb9f3e9e414f6e1395bb7ce10d3d9a21cb85a7ebe",
+    "compressed": true
+  },
+  "entropy-fixed/gofmt.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/gofmt.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "entropy-fixed/repro.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/repro.json",
+    "original_bytes": 629,
+    "original_sha256": "bf3bde555922bb79084da799e7863c09e90d42e5ea3903ae038bfb3666d788b4",
+    "compressed": false
+  },
+  "entropy-fixed/repro.jsonl.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/repro.jsonl",
+    "original_bytes": 55602,
+    "original_sha256": "d84aec3030065d89abf54e731e8933967a3540ef859311b1b9deca28bd8c3501",
+    "compressed": true
+  },
+  "entropy-fixed/repro.py.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/repro.py",
+    "original_bytes": 1238,
+    "original_sha256": "b9f313763638d0f4c6fd51fc6cc9d18b1f4fa733ac384f3d7b6b9709e4de9214",
+    "compressed": true
+  },
+  "entropy-fixed/repro.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/repro.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "entropy-fixed/retained.patch.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/retained.patch",
+    "original_bytes": 2522,
+    "original_sha256": "d9bf7b55f0dca3198ae90a080a2876bacae7b8ed35689c102c92ff44055016ef",
+    "compressed": true
+  },
+  "entropy-fixed/run.sh": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/run.sh",
+    "original_bytes": 712,
+    "original_sha256": "3d0c61a7ed803309a6de6c4e22d05824fe9252d72bb1a3a69096f2487e4ddc4c",
+    "compressed": false
+  },
+  "entropy-fixed/vet.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/vet.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "entropy-fixed/vet.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-fixed/vet.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "entropy-repro/claim-receipt.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/claim-receipt.json",
+    "original_bytes": 18,
+    "original_sha256": "f941626fbe0b7dafcb797263f9a67ba3d324e33ebc813119a4f4ef81b6f0eb54",
+    "compressed": false
+  },
+  "entropy-repro/claim-ste.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/claim-ste.log",
+    "original_bytes": 315,
+    "original_sha256": "2d082a71a414edb6a922025e981cea607379a84a225e066e140661f30855c378",
+    "compressed": true
+  },
+  "entropy-repro/claim.md": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/claim.md",
+    "original_bytes": 538,
+    "original_sha256": "f13044b7624704338ad9d1b34626f6a48aa4ee01027498760381e28c5578c316",
+    "compressed": false
+  },
+  "entropy-repro/controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/controller.log",
+    "original_bytes": 746,
+    "original_sha256": "fad4816074335b9b2d49ea7b2152fb8c9b19c07c14214a6acfe70175873444ba",
+    "compressed": true
+  },
+  "entropy-repro/repro.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/repro.json",
+    "original_bytes": 828,
+    "original_sha256": "a3863a91c85f5fa11e46bcc8dc79d6540eb73d336f5b0fcecdae7608c0f9ad50",
+    "compressed": false
+  },
+  "entropy-repro/repro.jsonl.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/repro.jsonl",
+    "original_bytes": 21387,
+    "original_sha256": "02d41d7a1340e26705d6b131a68a5f114664ea2c2435b320672faa70ae4b3e8e",
+    "compressed": true
+  },
+  "entropy-repro/repro.py.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/repro.py",
+    "original_bytes": 1135,
+    "original_sha256": "55c43af94daeec5472e82be0cd719a0cfc7920b245a1879dd2e182133ad79cfa",
+    "compressed": true
+  },
+  "entropy-repro/repro.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/repro.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "entropy-repro/run.sh": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/entropy-repro/run.sh",
+    "original_bytes": 712,
+    "original_sha256": "e687c0f66b00d91c0a2f6cf6ea2c0a76600d41334afe449e702d05341ee693c7",
+    "compressed": false
+  },
+  "env.sh": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/env.sh",
+    "original_bytes": 703,
+    "original_sha256": "5f44a5a7a25c3ac5e802c98ce76d08c2d739dc56735ced729683e011767ca9b1",
+    "compressed": false
+  },
+  "format-check.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/format-check.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "format-check.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/format-check.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "freeze.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/freeze.json",
+    "original_bytes": 656,
+    "original_sha256": "bea68b316836dfd2232a93a00972b8251ac99953fd9520c9ac58b0bd53b7baba",
+    "compressed": false
+  },
+  "freeze.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/freeze.log",
+    "original_bytes": 602,
+    "original_sha256": "da34625ec88551e436560546e9b8f933a6d83d4bda3f67ba9fd5f197f11b9588",
+    "compressed": true
+  },
+  "freeze.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/freeze.py",
+    "original_bytes": 1925,
+    "original_sha256": "ca4d8874165455c093a0b3d0b35a843cca23bb2e02e1ace3ce91330743a67d00",
+    "compressed": false
+  },
+  "full.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/full.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "full.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/full.stdout",
+    "original_bytes": 167,
+    "original_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+    "compressed": true
+  },
+  "go-syntax-units.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/go-syntax-units.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "go-syntax-units.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/go-syntax-units.stdout",
+    "original_bytes": 2228,
+    "original_sha256": "8a345fc35239ba9b53452b1ab40ecb3b93f6e617d0f9bb10811c4d3971af2a85",
+    "compressed": true
+  },
+  "go-units.jsonl.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/go-units.jsonl",
+    "original_bytes": 2651871,
+    "original_sha256": "a7af133605631389711d386481346d466c61b84087ae90555debc6947517525e",
+    "compressed": true
+  },
+  "go-units.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/go-units.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "gofmt.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/gofmt.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "gofmt.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/gofmt.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "historical-main-red/job-129981261761.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/historical-main-red/job-129981261761.log.gz",
+    "original_bytes": 241964,
+    "original_sha256": "27901d7526abd1804b563f34b83a4538c83c29c79f35ff92234543a30302163f",
+    "compressed": false
+  },
+  "historical-main-red/job-129981261876.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/historical-main-red/job-129981261876.log.gz",
+    "original_bytes": 144220,
+    "original_sha256": "c0e90e355ce12e94b6c4c3a1dcea4d459ecad18f3de8fce2f53fe12d5863eb6e",
+    "compressed": false
+  },
+  "historical-main-red/job-129981261898.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/historical-main-red/job-129981261898.log.gz",
+    "original_bytes": 269332,
+    "original_sha256": "c77185f2b2b41e4eb5282188b79ba63629cc4f779e6611028c449561ced13eb7",
+    "compressed": false
+  },
+  "historical-main-red/log-origin.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/historical-main-red/log-origin.json",
+    "original_bytes": 774,
+    "original_sha256": "56c99d9aa8d50cbe636f4b416e0ee12f1771c6187535fd5b84e5f768a3883711",
+    "compressed": false
+  },
+  "historical-main-red/remote-snapshots.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/historical-main-red/remote-snapshots.json",
+    "original_bytes": 494250,
+    "original_sha256": "ac6c5210fdb773b91b50342296731291884f5f09d146228bac19507a17391ca6",
+    "compressed": false
+  },
+  "integration-verify.py.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/integration-verify.py",
+    "original_bytes": 2926,
+    "original_sha256": "ba9100ae007e9c8bced8c5044bbd014648b619f4b9a890e65c642772deff2ce5",
+    "compressed": true
+  },
+  "linux_entropy_reads_test.go.txt.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/linux_entropy_reads_test.go.txt",
+    "original_bytes": 8960,
+    "original_sha256": "24a5683f2b825164421a9898a7f165dddd8b8cff6f9f43ff003e8f494e28ada3",
+    "compressed": true
+  },
+  "main.patch.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/main.patch",
+    "original_bytes": 208235,
+    "original_sha256": "dd91d526df32d12fd32058cebbee4e433fe0e05af9e6a456dd3a40ec491cd8c1",
+    "compressed": true
+  },
+  "main.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/main.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "main.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/main.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "merge.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/merge.log",
+    "original_bytes": 4249,
+    "original_sha256": "cf4bd7d014efb24382c533de9e089fad8d3922599fd7c6303062e50cc5e63339",
+    "compressed": true
+  },
+  "native-opus-compile.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus-compile.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "native-opus-compile.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus-compile.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "native-opus-program.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus-program.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "native-opus-program.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus-program.stdout",
+    "original_bytes": 167,
+    "original_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+    "compressed": true
+  },
+  "native-opus.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "native-opus.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus.json",
+    "original_bytes": 1581,
+    "original_sha256": "928d0e6acfeab71a523e359a3106363587549866a336f89a7036a1fe6ad34e79",
+    "compressed": false
+  },
+  "native-opus.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus.py",
+    "original_bytes": 2080,
+    "original_sha256": "4a3734c4eaeab3edf3cfa207e36d760b4a9ec70c48ceb13fd707c9df138bff29",
+    "compressed": false
+  },
+  "normal-own-source.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "normal-own-source.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.json",
+    "original_bytes": 452,
+    "original_sha256": "f0f21081fbbd42f14c970ca8903c51dbeb5a21a7a98c649117402bc175f26dc6",
+    "compressed": false
+  },
+  "normal-own-source.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.py",
+    "original_bytes": 1149,
+    "original_sha256": "5a0aa63312f5ecc219002396bee10e1da49859d97964078e06089ae0f369d5ed",
+    "compressed": false
+  },
+  "normal-own-source.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "normal-own-source.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "push.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/push.stderr",
+    "original_bytes": 112,
+    "original_sha256": "7d3415eaff65fcdaf44cde9033918af91675f59051e0568929a8c14a2bd7bfa4",
+    "compressed": true
+  },
+  "push.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/push.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "quick.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/quick.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "quick.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/quick.json",
+    "original_bytes": 1264,
+    "original_sha256": "6914e75d03185483fd98666536177cd7b402a5a276789ebf84d21b414891fa50",
+    "compressed": false
+  },
+  "quick.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/quick.py",
+    "original_bytes": 1324,
+    "original_sha256": "65df990566951b2fa0177d630d4b3a760bc0f970bf50a710589798b4bfbebfcf",
+    "compressed": false
+  },
+  "result.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/result.json",
+    "original_bytes": 3754,
+    "original_sha256": "b5e5cf59ee67a58f2afea454fff24587e158733323d4fa0d2ce85286a7934f24",
+    "compressed": false
+  },
+  "retained.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "retained.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "self_host_kernel_sched_test.go.txt.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/self_host_kernel_sched_test.go.txt",
+    "original_bytes": 12701,
+    "original_sha256": "a2c444559a4dcdd6635aabc3f05a6447aa270e905b991d8f69edc6f1779adfa7",
+    "compressed": true
+  },
+  "self_host_receiver_union_membership_test.go.txt.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/self_host_receiver_union_membership_test.go.txt",
+    "original_bytes": 5279,
+    "original_sha256": "ee9029d926a91242f233f69cbf5720c249d9847d704a7a3064452127a4aff480",
+    "compressed": true
+  },
+  "source-audit.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/source-audit.json",
+    "original_bytes": 800,
+    "original_sha256": "ec63f42c1170079e7cff4dcbe42e6d55a1fef67b8518b9b5c01bb9da0e2c543a",
+    "compressed": false
+  },
+  "source-check.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/source-check.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "source-check.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/source-check.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "status-before.txt.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/status-before.txt",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "tests.jsonl.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/tests.jsonl",
+    "original_bytes": 249272,
+    "original_sha256": "d6f9f9f5d9e24f99aaf4979119cae2b18cb32433878ebd1d8bf5e671a2393fe0",
+    "compressed": true
+  },
+  "tests.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/tests.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "unit-controls.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/unit-controls.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "unit-controls.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/unit-controls.json",
+    "original_bytes": 1099,
+    "original_sha256": "4f2e3c7d561bb4af351215ab4b5c09afee49d76938c663677dafa96dd4d3b8c9",
+    "compressed": false
+  },
+  "unit-controls.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/unit-controls.py",
+    "original_bytes": 1766,
+    "original_sha256": "818b3bee057a3ed66d7fee4d65ae9bd590057b7859267eb433582959a0564e63",
+    "compressed": false
+  },
+  "validate.controller.log.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/validate.controller.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "validate.py": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/validate.py",
+    "original_bytes": 2574,
+    "original_sha256": "74a4c5f8d2982b74b7c5c4d82d0d785e9bb904b3d7ca3a22c7b0b908c298e298",
+    "compressed": false
+  },
+  "validation.json": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/validation.json",
+    "original_bytes": 3437,
+    "original_sha256": "7650e884dd6284f8f05f2b6149fbeb77cbc476eb7741f0e182cfbc8f6a402483",
+    "compressed": false
+  },
+  "vet.stderr.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/vet.stderr",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  },
+  "vet.stdout.gz": {
+    "original_path": "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/vet.stdout",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compressed": true
+  }
+}

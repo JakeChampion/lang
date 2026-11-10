@@ -1,0 +1,53 @@
+{
+  "baseline": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "runs": [
+    {
+      "label": "quick.py",
+      "started": "2026-11-10T17:14:21.840963+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:14:41.905890+00:00"
+    },
+    {
+      "label": "prepare.py",
+      "started": "2026-11-10T17:14:41.906224+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:20:02.328432+00:00"
+    },
+    {
+      "label": "normal-checks.py",
+      "started": "2026-11-10T17:20:02.331022+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:20:39.320357+00:00"
+    },
+    {
+      "label": "validate.py",
+      "started": "2026-11-10T17:20:39.321176+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:27:55.639195+00:00"
+    },
+    {
+      "label": "ci-selftest",
+      "started": "2026-11-10T17:27:55.640558+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:28:50.806454+00:00"
+    },
+    {
+      "label": "normal-full-correctness",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib",
+        "-interp",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "started": "2026-11-10T17:28:50.808055+00:00",
+      "note": "No paired timing or normal-run leak claim. Original1980s diagnostic budget.",
+      "exit_code": 0,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+      "finished": "2026-11-10T17:32:07.855611+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T17:32:07.857374+00:00"
+}

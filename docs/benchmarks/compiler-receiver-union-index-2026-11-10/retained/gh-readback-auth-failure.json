@@ -1,0 +1,7 @@
+{
+  "time": "2026-11-10T17:55:22.960562+00:00",
+  "command": "gh api repos/JakeChampion/lang/pulls/15150",
+  "exit_code": 1,
+  "error": "Bad credentials (HTTP401)",
+  "policy": "No credential rotation/configuration change. Use authenticated GitHub plugin fallback for reads and guarded writes. Plugin update result requires exact readback before a success claim."
+}

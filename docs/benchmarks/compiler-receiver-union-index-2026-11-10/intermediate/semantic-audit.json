@@ -1,0 +1,108 @@
+{
+  "bodies": {
+    "initial-baseline": {
+      "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {": {
+        "found": true,
+        "sha256": "7d0a48de2de34153a85fe52b00d0ffe667a8da23a1eb4eaa013fa0d879b13e84",
+        "body": "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {\n  for union in unions {\n    if (union.name == union_name) {\n      for variant in union.variants {\n        if (variant == struct_name) {\n          return true;\n        }\n      }\n      return false;\n    }\n  }\n  return false;\n}"
+      },
+      "function union_table(": {
+        "found": true,
+        "sha256": "e2c046b33444d284c13df5605be37b52cbb5a6dd2164f24ccaf7c0be87d6dfd9",
+        "body": "function union_table(unions: UnionSig[]): UnionTable {\n  let head = util.minus_ones(sig_buckets());\n  let vnames: string[] = [];\n  let vowner: i32[] = [];\n  for u in 0..unions.len() {\n    let vs = unions[u].variants;\n    for v in 0..vs.len() {\n      vnames = vnames.append(vs[v]);\n      vowner = vowner.append(u);\n    }\n  }\n  let next = util.minus_ones(vnames.len());\n  let lib_head = head;\n  let lib_next = next;\n  let bnames: string[] = [];\n  for b in 0..vnames.len() {\n    bnames = bnames.append(unprefixed_variant(vnames[b], unions[vowner[b]].module));\n  }\n  let bhead = head;\n  let bnext = next;\n  let k = vnames.len() - 1;\n  while (k >= 0) {\n    let bk = util.hash_bucket(vnames[k], 4093);\n    next = next.with(k, head[bk]);\n    head = head.with(bk, k);\n    if (!declared_by_entry(unions[vowner[k]])) {\n      lib_next = lib_next.with(k, lib_head[bk]);\n      lib_head = lib_head.with(bk, k);\n    }\n    let bb = util.hash_bucket(bnames[k], 4093);\n    bnext = bnext.with(k, bhead[bb]);\n    bhead = bhead.with(bb, k);\n    k -= 1;\n  }\n  let names: string[] = [];\n  for m in 0..unions.len() {\n    names = names.append(unions[m].name);\n  }\n  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext, view_memo: new_view_memo() };\n}"
+      },
+      "function (ut: UnionTable) seen_from(": {
+        "found": true,
+        "sha256": "baa98afad45526e1da31ad3d0cef9434c1d269524b68d91aba9d3ee632a5605b",
+        "body": "function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {\n  return UnionTable { ...ut, from_import: fd.module.len() > 0 };\n}"
+      },
+      "function (s: Scope) lookup_union(": {
+        "found": true,
+        "sha256": "2c6a2b8694006d39d865d037ae41330e78d0b5d11eadbb9ce50f00ed70ce81b2",
+        "body": "function (s: Scope) lookup_union(name: string): Option[UnionSig] {\n  let at = s.unions.index.find(name);\n  if (at >= 0) {\n    return Some(s.unions.unions[at]);\n  }\n  return None;\n}"
+      },
+      "function (s: Scope) receives(": {
+        "found": true,
+        "sha256": "be8ccb717989be31a58facb46fabb723458eb634661a1fd76fa483aae0e1685a",
+        "body": "function (s: Scope) receives(i: i32, recv_type: string): boolean {\n  let ms = s.methods.methods[i];\n  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);\n}"
+      },
+      "function (s: Scope) has_method(": {
+        "found": true,
+        "sha256": "093d4fb599cc05bd3cedb0f9537a1b8555d3c14c32ee7e5096146af7eb3f826d",
+        "body": "function (s: Scope) has_method(name: string, recv_type: string): boolean {\n  let i = s.methods.names.chain(name);\n  while (i >= 0) {\n    if (s.methods.methods[i].name != name) {\n      i = s.methods.names.next[i];\n      continue;\n    }\n    if (s.methods.methods[i].receiver_type == recv_type) {\n      return true;\n    }\n    if (s.methods.bases[i] == recv_type) {\n      return true;\n    }\n    if (is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {\n      return true;\n    }\n    i = s.methods.names.next[i];\n  }\n  return s.trait_spelled_method(name, recv_type) >= 0;\n}"
+      }
+    },
+    "baseline": {
+      "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {": {
+        "found": true,
+        "sha256": "7d0a48de2de34153a85fe52b00d0ffe667a8da23a1eb4eaa013fa0d879b13e84",
+        "body": "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {\n  for union in unions {\n    if (union.name == union_name) {\n      for variant in union.variants {\n        if (variant == struct_name) {\n          return true;\n        }\n      }\n      return false;\n    }\n  }\n  return false;\n}"
+      },
+      "function union_table(": {
+        "found": true,
+        "sha256": "e2c046b33444d284c13df5605be37b52cbb5a6dd2164f24ccaf7c0be87d6dfd9",
+        "body": "function union_table(unions: UnionSig[]): UnionTable {\n  let head = util.minus_ones(sig_buckets());\n  let vnames: string[] = [];\n  let vowner: i32[] = [];\n  for u in 0..unions.len() {\n    let vs = unions[u].variants;\n    for v in 0..vs.len() {\n      vnames = vnames.append(vs[v]);\n      vowner = vowner.append(u);\n    }\n  }\n  let next = util.minus_ones(vnames.len());\n  let lib_head = head;\n  let lib_next = next;\n  let bnames: string[] = [];\n  for b in 0..vnames.len() {\n    bnames = bnames.append(unprefixed_variant(vnames[b], unions[vowner[b]].module));\n  }\n  let bhead = head;\n  let bnext = next;\n  let k = vnames.len() - 1;\n  while (k >= 0) {\n    let bk = util.hash_bucket(vnames[k], 4093);\n    next = next.with(k, head[bk]);\n    head = head.with(bk, k);\n    if (!declared_by_entry(unions[vowner[k]])) {\n      lib_next = lib_next.with(k, lib_head[bk]);\n      lib_head = lib_head.with(bk, k);\n    }\n    let bb = util.hash_bucket(bnames[k], 4093);\n    bnext = bnext.with(k, bhead[bb]);\n    bhead = bhead.with(bb, k);\n    k -= 1;\n  }\n  let names: string[] = [];\n  for m in 0..unions.len() {\n    names = names.append(unions[m].name);\n  }\n  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext, view_memo: new_view_memo() };\n}"
+      },
+      "function (ut: UnionTable) seen_from(": {
+        "found": true,
+        "sha256": "baa98afad45526e1da31ad3d0cef9434c1d269524b68d91aba9d3ee632a5605b",
+        "body": "function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {\n  return UnionTable { ...ut, from_import: fd.module.len() > 0 };\n}"
+      },
+      "function (s: Scope) lookup_union(": {
+        "found": true,
+        "sha256": "2c6a2b8694006d39d865d037ae41330e78d0b5d11eadbb9ce50f00ed70ce81b2",
+        "body": "function (s: Scope) lookup_union(name: string): Option[UnionSig] {\n  let at = s.unions.index.find(name);\n  if (at >= 0) {\n    return Some(s.unions.unions[at]);\n  }\n  return None;\n}"
+      },
+      "function (s: Scope) receives(": {
+        "found": true,
+        "sha256": "be8ccb717989be31a58facb46fabb723458eb634661a1fd76fa483aae0e1685a",
+        "body": "function (s: Scope) receives(i: i32, recv_type: string): boolean {\n  let ms = s.methods.methods[i];\n  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);\n}"
+      },
+      "function (s: Scope) has_method(": {
+        "found": true,
+        "sha256": "093d4fb599cc05bd3cedb0f9537a1b8555d3c14c32ee7e5096146af7eb3f826d",
+        "body": "function (s: Scope) has_method(name: string, recv_type: string): boolean {\n  let i = s.methods.names.chain(name);\n  while (i >= 0) {\n    if (s.methods.methods[i].name != name) {\n      i = s.methods.names.next[i];\n      continue;\n    }\n    if (s.methods.methods[i].receiver_type == recv_type) {\n      return true;\n    }\n    if (s.methods.bases[i] == recv_type) {\n      return true;\n    }\n    if (is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {\n      return true;\n    }\n    i = s.methods.names.next[i];\n  }\n  return s.trait_spelled_method(name, recv_type) >= 0;\n}"
+      }
+    },
+    "candidate": {
+      "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {": {
+        "found": true,
+        "sha256": "7d0a48de2de34153a85fe52b00d0ffe667a8da23a1eb4eaa013fa0d879b13e84",
+        "body": "function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {\n  for union in unions {\n    if (union.name == union_name) {\n      for variant in union.variants {\n        if (variant == struct_name) {\n          return true;\n        }\n      }\n      return false;\n    }\n  }\n  return false;\n}"
+      },
+      "function union_table(": {
+        "found": true,
+        "sha256": "e2c046b33444d284c13df5605be37b52cbb5a6dd2164f24ccaf7c0be87d6dfd9",
+        "body": "function union_table(unions: UnionSig[]): UnionTable {\n  let head = util.minus_ones(sig_buckets());\n  let vnames: string[] = [];\n  let vowner: i32[] = [];\n  for u in 0..unions.len() {\n    let vs = unions[u].variants;\n    for v in 0..vs.len() {\n      vnames = vnames.append(vs[v]);\n      vowner = vowner.append(u);\n    }\n  }\n  let next = util.minus_ones(vnames.len());\n  let lib_head = head;\n  let lib_next = next;\n  let bnames: string[] = [];\n  for b in 0..vnames.len() {\n    bnames = bnames.append(unprefixed_variant(vnames[b], unions[vowner[b]].module));\n  }\n  let bhead = head;\n  let bnext = next;\n  let k = vnames.len() - 1;\n  while (k >= 0) {\n    let bk = util.hash_bucket(vnames[k], 4093);\n    next = next.with(k, head[bk]);\n    head = head.with(bk, k);\n    if (!declared_by_entry(unions[vowner[k]])) {\n      lib_next = lib_next.with(k, lib_head[bk]);\n      lib_head = lib_head.with(bk, k);\n    }\n    let bb = util.hash_bucket(bnames[k], 4093);\n    bnext = bnext.with(k, bhead[bb]);\n    bhead = bhead.with(bb, k);\n    k -= 1;\n  }\n  let names: string[] = [];\n  for m in 0..unions.len() {\n    names = names.append(unions[m].name);\n  }\n  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext, view_memo: new_view_memo() };\n}"
+      },
+      "function (ut: UnionTable) seen_from(": {
+        "found": true,
+        "sha256": "baa98afad45526e1da31ad3d0cef9434c1d269524b68d91aba9d3ee632a5605b",
+        "body": "function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {\n  return UnionTable { ...ut, from_import: fd.module.len() > 0 };\n}"
+      },
+      "function (s: Scope) lookup_union(": {
+        "found": true,
+        "sha256": "2c6a2b8694006d39d865d037ae41330e78d0b5d11eadbb9ce50f00ed70ce81b2",
+        "body": "function (s: Scope) lookup_union(name: string): Option[UnionSig] {\n  let at = s.unions.index.find(name);\n  if (at >= 0) {\n    return Some(s.unions.unions[at]);\n  }\n  return None;\n}"
+      },
+      "function (s: Scope) receives(": {
+        "found": true,
+        "sha256": "f8b6d75e6060ad4b45b484efca6597b80da822a8bf67a43bb0e4b9a47f33959c",
+        "body": "function (s: Scope) receives(i: i32, recv_type: string): boolean {\n  let ms = s.methods.methods[i];\n  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || s.unions.is_variant_of(recv_type, ms.receiver_type);\n}"
+      },
+      "function (s: Scope) has_method(": {
+        "found": true,
+        "sha256": "028071a4266fb082709cccbc291c644eae9b51baddb45dbada58adbf188bfa5d",
+        "body": "function (s: Scope) has_method(name: string, recv_type: string): boolean {\n  let i = s.methods.names.chain(name);\n  while (i >= 0) {\n    if (s.methods.methods[i].name != name) {\n      i = s.methods.names.next[i];\n      continue;\n    }\n    if (s.methods.methods[i].receiver_type == recv_type) {\n      return true;\n    }\n    if (s.methods.bases[i] == recv_type) {\n      return true;\n    }\n    if (s.unions.is_variant_of(recv_type, s.methods.methods[i].receiver_type)) {\n      return true;\n    }\n    i = s.methods.names.next[i];\n  }\n  return s.trait_spelled_method(name, recv_type) >= 0;\n}"
+      }
+    }
+  },
+  "contracts": [
+    "Existing coherent UnionTable contains index and declaration array from the same constructor.",
+    "First duplicate-name declaration determines exact raw membership, including empty/missing strings.",
+    "Scope.lookup_union has no visibility filter. union_lists_variant has suffix and empty-name semantics and is not used.",
+    "Raw recursive type_assignable array API and global helper remain byte-unchanged.",
+    "Direct and generic-base receiver checks retain order. No new cache/index construction/unsafe/proof shortcut."
+  ],
+  "scope_note": "Profile attribution stays tied to old0e normal image. Byte-equal raw helper bodies do not transfer its percentage or PC map to515d normal image."
+}

@@ -1,0 +1,5 @@
+{
+  "date": "2026-11-10T18:14:39.575928+00:00",
+  "scope": "Rejected b442/67 normal timing sweep. No other local build, test or profile job overlaps the timed interval. Small read-only CI requests, task metadata updates and publication archive/verification script preparation overlapped. Compiler binaries, frozen source trees and fixed inputs remained unchanged.",
+  "limits": "Shared host without exclusive CPU/frequency control. All fixed samples, slower pairs and ranges retained. No attribution of the cold checker loss to a particular physical cause. No timing retry or sample extension."
+}

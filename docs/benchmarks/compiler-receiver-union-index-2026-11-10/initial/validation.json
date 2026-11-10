@@ -1,0 +1,65 @@
+{
+  "source": "99fda7a649924cdc341f014f52e1d4ab9a6ad0f4",
+  "selected_suites": [
+    "TestSelfHostReceiverUnionMembership",
+    "TestSelfHostCheckerDriverX86_64",
+    "TestSelfHostCheckerDriverArm64",
+    "TestSelfHostImportedMethodCollisionX86_64",
+    "TestSelfHostImportedMethodCollisionArm64",
+    "TestSelfHostImportedMethodCollisionWasm",
+    "TestSelfHostAmbiguousMethodRankedByImports",
+    "TestSelfHostCheckedValueTypes",
+    "TestSelfHostMethodEnumScrutineeIRX86_64",
+    "TestSelfHostUnionIRPathX86_64",
+    "TestSelfHostRepoComplexityRatchet",
+    "TestSelfHostFeatureCensus"
+  ],
+  "runs": [
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(ReceiverUnionMembership|CheckerDriverX86_64|CheckerDriverArm64|ImportedMethodCollisionX86_64|ImportedMethodCollisionArm64|ImportedMethodCollisionWasm|AmbiguousMethodRankedByImports|CheckedValueTypes|MethodEnumScrutineeIRX86_64|UnionIRPathX86_64|RepoComplexityRatchet|FeatureCensus)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-10T16:05:25.544843+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:13:13.240344+00:00",
+      "passes": 95,
+      "skips": 0,
+      "failures": [],
+      "completed_suites": [
+        "TestSelfHostAmbiguousMethodRankedByImports",
+        "TestSelfHostCheckedValueTypes",
+        "TestSelfHostCheckerDriverX86_64",
+        "TestSelfHostCheckerDriverArm64",
+        "TestSelfHostFeatureCensus",
+        "TestSelfHostImportedMethodCollisionX86_64",
+        "TestSelfHostImportedMethodCollisionArm64",
+        "TestSelfHostImportedMethodCollisionWasm",
+        "TestSelfHostRepoComplexityRatchet",
+        "TestSelfHostMethodEnumScrutineeIRX86_64",
+        "TestSelfHostReceiverUnionMembership",
+        "TestSelfHostUnionIRPathX86_64"
+      ]
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-10T16:13:13.247995+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:13:20.842480+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T16:13:20.842938+00:00"
+}

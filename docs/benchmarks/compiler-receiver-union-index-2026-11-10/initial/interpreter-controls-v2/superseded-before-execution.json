@@ -1,0 +1,6 @@
+{
+  "pid": 99706,
+  "time": "2026-11-10T16:32:45.357507+00:00",
+  "reason": "Actual main changed checker semantics. The new integrated candidate receives all three interpreter suites and full correctness control. This waiter stopped before any test or workload executed.",
+  "prior_result_sha256": "bb9181bcef7ea98bc1a9975f534fcd6567f96f4c0f26f192048e12593181d0a4"
+}

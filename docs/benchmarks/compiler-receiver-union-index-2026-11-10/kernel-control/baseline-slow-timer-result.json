@@ -1,0 +1,22 @@
+{
+  "source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+  "design": "One negative timing control: change only private board timer period from1ms to1s. Worker computation, concurrency/migration/output/frame assertions and all test budgets remain unchanged. This controlled board differs from the ordinary current-main run, whose six repetitions passed. No claim of natural local reproduction.",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostKernelTwoCoreSchedulerOnQemu$",
+    "-count=1",
+    "-overlay",
+    "/workspace/lang-checker-union-index-20261110-1540/build/ci-kernel-failure-20261110-1647/slow-timer-baseline-overlay.json",
+    "-timeout=25m",
+    "-json"
+  ],
+  "started": "2026-11-10T16:56:42.256824+00:00",
+  "exit_code": 1,
+  "finished": "2026-11-10T16:57:14.809354+00:00",
+  "test_passes": 0,
+  "test_failures": 1,
+  "skips": 0
+}

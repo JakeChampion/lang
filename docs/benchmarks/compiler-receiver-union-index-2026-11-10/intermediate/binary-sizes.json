@@ -1,0 +1,22 @@
+{
+  "baseline-normal": {
+    "sha256": "9be4dc5693315a2b990246b9df01a2156763f272274eafb8ef8f3d865c465c11",
+    "file_bytes": 16528464,
+    "mode": "0o755"
+  },
+  "candidate-normal": {
+    "sha256": "16e6dd7c42c8843829c6c5145daaf2c652d4e652cff1d37ec5b225308d29f41f",
+    "file_bytes": 16528608,
+    "mode": "0o755"
+  },
+  "baseline-count": {
+    "sha256": "2f16bf180e1884a8990c7477eab142a24d0753b715e063086d99049b4f1d48be",
+    "file_bytes": 16543984,
+    "mode": "0o755"
+  },
+  "candidate-count": {
+    "sha256": "a2fecf031c3a0e8d9ea96875ac77d145dcb89bea71bcb24c8cdec21271e9a8b1",
+    "file_bytes": 16544128,
+    "mode": "0o755"
+  }
+}

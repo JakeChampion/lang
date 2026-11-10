@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "/workspace/lang-compiler-main-20261110-1635/internal/testing/e2ecompiler/self_host_kernel_sched_test.go": "/workspace/lang-checker-union-index-20261110-1540/build/ci-kernel-failure-20261110-1647/slow-timer-baseline.go"
+  }
+}

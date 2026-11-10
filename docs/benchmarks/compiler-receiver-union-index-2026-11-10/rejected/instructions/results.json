@@ -1,0 +1,60 @@
+{
+  "baseline_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate_source": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "fixed_input_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "started": "2026-11-10T17:15:25.149186+00:00",
+  "runs": [
+    {
+      "label": "opus-cold-candidate",
+      "workload": "opus",
+      "mode": "cold",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/instructions/opus-cold-candidate.callgrind",
+        "--log-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/instructions/opus-cold-candidate.valgrind.log",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/instructions/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:43:29.317904+00:00",
+      "exit_code": -15,
+      "finished": "2026-11-10T17:46:03.990407+00:00"
+    }
+  ],
+  "note": "One normal guest-instruction pair per workload/cache mode after normal timings, allocation controls and all local correctness jobs finish. No instrumented time claim. Same retained equal-length compiler paths as timings. Child/cache/branch simulation off.",
+  "tool_version": "valgrind-3.24.0",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "binary_identities": {
+    "baseline": {
+      "path": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+      "sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb"
+    },
+    "candidate": {
+      "path": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+      "sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11"
+    }
+  },
+  "expected_outputs": {
+    "opus": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+    "checker": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+  },
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T17:46:03.991051+00:00"
+}

@@ -1,0 +1,75 @@
+from pathlib import Path
+import datetime,hashlib,json,os,re,shutil,statistics,subprocess,time
+q=Path(__file__).resolve().parent;out=q/'measurements-v3';out.mkdir(exist_ok=False)
+fixed=Path('/workspace/lang-compiler-main-20261110-1635');sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();now=lambda:datetime.datetime.now(datetime.timezone.utc).isoformat()
+state={'started':now(),'baseline_source':'515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909','candidate_source':'3d51e1880abc5025731f23772f1a343fe9c7fcbf','fixed_input_source':'515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909','design':'Eight fixed pairs per workload and proof-cache mode. Four each order. No sample extension. Equal-length compiler paths. Separate caches per compiler/workload. Actual normal verifier defaults. All samples retained.','limits':'Shared host. No CPU/frequency isolation. Small read-only Git/CI requests can overlap. Instrumented allocation/instruction runs follow normal timings.','runs':[],'binary_identities':{},'outputs':{}}
+def save():
+ (out/'results.tmp').write_text(json.dumps(state,indent=2)+'\n');(out/'results.tmp').replace(out/'results.json')
+save()
+try:
+ deadline=time.monotonic()+5400
+ while True:
+  r=json.loads((q/'collector-result-v2.json').read_text());assert r.get('exit_code')in[None,0]
+  if r.get('finished'):assert r['exit_code']==0;break
+  assert time.monotonic()<deadline;time.sleep(3)
+ old=q.parent/'qualification-20261110-1600/opus-cold-instructions-resume/results.json';assert json.loads(old.read_text())['exit_code']==0
+ prep=json.loads((q/'prepare.json').read_text());assert prep['exit_code']==0;state['producer_sha256']=prep['producer_sha256']
+ for name,folder in [('baseline','base'),('candidate','cand')]:
+  d=out/folder;d.mkdir();target=d/'fern';source=q/(name+'-normal');shutil.copy2(source,target);assert os.access(target,os.X_OK)
+  digest=next(x['binary_sha256']for x in prep['runs']if x['label']==name+'-normal');assert sha(target)==digest;state['binary_identities'][name]={'path':str(target),'sha256':digest}
+ assert len(state['binary_identities']['baseline']['path'])==len(state['binary_identities']['candidate']['path'])
+ state['host']={'uname':subprocess.check_output(['uname','-a'],text=True).strip(),'cpuinfo':Path('/proc/cpuinfo').read_text(),'processes_before':subprocess.check_output(['ps','-eo','pid,ppid,pcpu,comm'],text=True)};state['input_sha256']={w:sha(fixed/p)for w,p in [('opus','tests/stdlib/opus_delimited_test.fern'),('checker','compiler/checker.fern')]};state['stdlib_tree']=subprocess.check_output(['git','rev-parse',state['fixed_input_source']+':internal/stdlib'],cwd=fixed,text=True).strip();save()
+ workloads={'opus':'tests/stdlib/opus_delimited_test.fern','checker':'compiler/checker.fern'}
+ def run(label,name,workload,memo,report=False,count=False):
+  binary=Path(state['binary_identities'][name]['path'])if not count else q/(name+'-count')
+  expected=state['binary_identities'][name]['sha256']if not count else next(x['binary_sha256']for x in prep['runs']if x['label']==name+'-count')
+  assert sha(binary)==expected and os.access(binary,os.X_OK)
+  env={k:v for k,v in os.environ.items()if not k.startswith('FERN_')};env.update(FERN_PROFILE='0',FERN_LEAKCHECK='0',FERN_RC_CERTIFY='1',FERN_RC_CERTIFY_MEMO=str(memo))
+  if report:env['FERN_IR_VERIFY']='1'
+  product=out/(workload+'-reference');args=[str(binary),'-target','x86-64-linux','-o',str(product),str(fixed/workloads[workload]),str(fixed/'internal/stdlib')]
+  row={'label':label,'compiler':name,'workload':workload,'counter_build':count,'args':args,'cwd':str(fixed),'environment':{k:v for k,v in env.items()if k.startswith('FERN_')},'started':now(),'compiler_sha256':expected};state['runs'].append(row);save()
+  start=time.perf_counter_ns()
+  with(out/(label+'.stdout')).open('wb')as so,(out/(label+'.stderr')).open('wb')as se:
+   child=subprocess.Popen(args,cwd=fixed,env=env,stdout=so,stderr=se);pid,status,usage=os.wait4(child.pid,0);child.returncode=os.waitstatus_to_exitcode(status)
+  row.update(exit_code=child.returncode,wall_ns=time.perf_counter_ns()-start,cpu_user=usage.ru_utime,cpu_system=usage.ru_stime,peak_rss_kib=usage.ru_maxrss,finished=now());save();assert child.returncode==0
+  row['output_sha256']=sha(product);state['outputs'].setdefault(workload,row['output_sha256']);assert row['output_sha256']==state['outputs'][workload]
+  if report:
+   hits=re.findall(r'FERN_RC_CERTIFY: memo hits=(\d+) misses=(\d+)',(out/(label+'.stderr')).read_text());assert hits and all(int(m)==0 for h,m in hits);row.update(cache_hits=sum(int(h)for h,m in hits),cache_misses=0);assert row['cache_hits']>0
+  if count:
+   rows=re.findall(r'leakcheck: allocs=(\d+) frees=(\d+) live_bytes=(\d+)',(out/(label+'.stderr')).read_text());assert len(rows)==1;allocs,frees,live=map(int,rows[0]);row.update(allocs=allocs,frees=frees,live_bytes=live);save();assert allocs>0 and allocs==frees and live==0
+  save()
+ for w in workloads:
+  for name in ['candidate','baseline']:
+   memo=out/(w+'-memo-'+name);run(w+'-'+name+'-prime',name,w,memo);run(w+'-'+name+'-probe',name,w,memo,True)
+  for mode in ['cold','warm']:
+   for pair in range(8):
+    order=['candidate','baseline']if(pair+(mode=='warm'))%2==0 else['baseline','candidate']
+    for name in order:run(f'{w}-{mode}-{pair}-{name}',name,w,'0'if mode=='cold'else out/(w+'-memo-'+name))
+ assert len(state['runs'])==72
+ state['timings_finished']=now();state['summary']={}
+ for w in workloads:
+  state['summary'][w]={}
+  for mode in ['cold','warm']:
+   data={}
+   for name in ['baseline','candidate']:
+    rows=[r for r in state['runs']if r['label'].startswith(w+'-'+mode+'-')and r['compiler']==name];assert len(rows)==8
+    data[name]={field:{'median':statistics.median(fn(r)for r in rows),'range':[min(fn(r)for r in rows),max(fn(r)for r in rows)]}for field,fn in [('wall_s',lambda r:r['wall_ns']/1e9),('cpu_s',lambda r:r['cpu_user']+r['cpu_system']),('peak_rss_kib',lambda r:r['peak_rss_kib'])]}
+   data['paired_cpu_change_percent']=[]
+   for pair in range(8):
+    rows={r['compiler']:r for r in state['runs']if r['label'].startswith(f'{w}-{mode}-{pair}-')};data['paired_cpu_change_percent'].append(((rows['candidate']['cpu_user']+rows['candidate']['cpu_system'])/(rows['baseline']['cpu_user']+rows['baseline']['cpu_system'])-1)*100)
+   state['summary'][w][mode]=data
+ save()
+ # Separate counter builds and separate caches. These runs do not supply production timing samples.
+ for w in workloads:
+  for name in ['baseline','candidate']:
+   run(w+'-count-cold-'+name,name,w,'0',count=True)
+   memo=out/(w+'-count-memo-'+name);run(w+'-count-prime-'+name,name,w,memo,count=True);run(w+'-count-warm-'+name,name,w,memo,count=True)
+ state['allocation_controls_finished']=now();save()
+ for w in workloads:
+  with(out/(w+'-program.stdout')).open('wb')as so,(out/(w+'-program.stderr')).open('wb')as se:r=subprocess.run([str(out/(w+'-reference'))],stdout=so,stderr=se,timeout=1980)
+  state.setdefault('program_controls',{})[w]={'exit_code':r.returncode,'stdout_sha256':sha(out/(w+'-program.stdout'))};save();assert r.returncode==0
+  if w=='opus':assert state['program_controls'][w]['stdout_sha256']=='07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161'
+ for source in [fixed,Path('/workspace/lang-checker-union-candidate-20261110-1635')]:assert not subprocess.check_output(['git','status','--porcelain'],cwd=source,text=True)
+ state.update(exit_code=0,finished=now())
+except Exception as e:state.update(exit_code=1,error=repr(e),finished=now());raise
+finally:save()

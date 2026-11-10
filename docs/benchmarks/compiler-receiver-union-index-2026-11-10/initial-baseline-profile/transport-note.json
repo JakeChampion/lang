@@ -1,0 +1,4 @@
+{
+  "note": "A read-only exec request reported exec-server transport disconnected. Environment status remained running/connected; the next pwd/read worked. All files and explicit collector results remain present. No recovery or data-loss claim.",
+  "recorded": "2026-11-10T15:54:22.500605+00:00"
+}

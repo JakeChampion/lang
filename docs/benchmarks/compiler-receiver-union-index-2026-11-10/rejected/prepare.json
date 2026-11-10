@@ -1,0 +1,102 @@
+{
+  "baseline_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate_source": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "fixed_input_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "runs": [
+    {
+      "label": "baseline-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:14:44.531206+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:16:02.739582+00:00",
+      "binary_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb"
+    },
+    {
+      "label": "candidate-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-checker-union-candidate-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:16:02.770165+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:17:30.806028+00:00",
+      "binary_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11"
+    },
+    {
+      "label": "baseline-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:17:30.850036+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:18:46.200851+00:00",
+      "binary_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba"
+    },
+    {
+      "label": "candidate-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-checker-union-candidate-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:18:46.241064+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:20:01.962783+00:00",
+      "binary_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T17:20:02.310641+00:00"
+}
