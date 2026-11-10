@@ -6025,11 +6025,11 @@ function abs_dir(p: string): string {
 }
 
 pub function run_runtime(av: string[]): i32 {
-  return run_with_gate(av, "", no_fetcher(), checker.build_runtime_gate_diags_with_file);
+  return run_with_gate(av, "", no_fetcher(), checker.build_runtime_gate_with_file);
 }
 
 pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i32 {
-  return run_with_gate(av, embedded_root, fetcher, checker.build_gate_diags_with_file);
+  return run_with_gate(av, embedded_root, fetcher, checker.build_gate_with_file);
 }
 
 function run_format_files(st: DiagStyle, pos: string[], fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
@@ -6252,7 +6252,7 @@ function apk_abis(): (string, string)[] {
   return [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")];
 }
 
-function apk_libs(fern: string, rest: string[], dir: string, lib: string, abis: (string, string)[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], u8[], i32) {
+function apk_libs(fern: string, rest: string[], dir: string, lib: string, abis: (string, string)[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => checker.GateResult): (apk.Lib[], u8[], i32) {
   let libs: apk.Lib[] = [];
   let status = 0;
   let dex_path = dir + "/classes.dex";
@@ -6478,7 +6478,7 @@ function android_path(dir: string, path: string): string {
 
 // fern -apk: builds the library of the app for each Android ABI, then
 // writes the signed APK.
-function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => checker.GateResult): i32 {
   let (rest, bad) = apk_build_args(av);
   if (bad.len() > 0) {
     eprint(bad);
@@ -6635,7 +6635,7 @@ function interpret_bundle(st: DiagStyle, b: Bundle, entry_path: string, target: 
   return status;
 }
 
-function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => checker.GateResult): i32 {
   let entry_path = "";
   let out_path = "";
   let root = embedded_root;
@@ -7081,9 +7081,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 2;
   }
   merged = bound;
-  if (eprint_findings(st, errors_of(gate(merged, util.path_base(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
+  let gate_result = gate(merged, util.path_base(entry_display(entry_path)));
+  if (eprint_findings(st, errors_of(gate_result.diags), entry_path, b.files, b.maps)) {
     return 1;
   }
+  merged = gate_result.typed;
   if (eprint_findings(st, errors_of(executable_entry_diags(merged, target, shared, emit)), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -7115,8 +7117,6 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (cover_on) {
     merged = cover.instrument(merged, b.files, entry_path);
   }
-
-  merged = checker.annotate_module(merged);
 
   if (optimize) {
     merged = constfold.elide_asserts(merged);

@@ -17495,7 +17495,8 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
   return out;
 }
 
-pub struct ModuleTypes { sigs: FuncSig[], top_tys: typeinfo.Type[], all_well_typed: boolean, diags: util.Diag[] }
+// typed is the prepared module with each function annotated, when the check found no error.
+pub struct ModuleTypes { sigs: FuncSig[], top_tys: typeinfo.Type[], all_well_typed: boolean, diags: util.Diag[], typed: parser.Module }
 
 pub function is_build_gate_code(code: string): boolean {
   return util.is_diagnostic_code(code);
@@ -17506,11 +17507,14 @@ pub function build_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
-  let cgd = const_init_diags(mod);
-  if (cgd.len() > 0) {
-    return cgd;
-  }
-  return filter_build_gate(check_module_with_file(mod, entry_file).diags);
+  return build_gate_with_file(mod, entry_file).diags;
+}
+
+// The build gate's diagnostics, and the module the build lowers when there are none.
+pub struct GateResult { diags: util.Diag[], typed: parser.Module }
+
+pub function build_gate_with_file(mod: parser.Module, entry_file: string): GateResult {
+  return gated(mod, entry_file, false);
 }
 
 pub function build_runtime_gate_diags(mod: parser.Module): util.Diag[] {
@@ -17518,11 +17522,20 @@ pub function build_runtime_gate_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_runtime_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
+  return build_runtime_gate_with_file(mod, entry_file).diags;
+}
+
+pub function build_runtime_gate_with_file(mod: parser.Module, entry_file: string): GateResult {
+  return gated(mod, entry_file, true);
+}
+
+function gated(mod: parser.Module, entry_file: string, raw_floor: boolean): GateResult {
   let cgd = const_init_diags(mod);
   if (cgd.len() > 0) {
-    return cgd;
+    return GateResult { diags: cgd, typed: mod };
   }
-  return filter_build_gate(check_module_raw_floor(mod, entry_file, true).diags);
+  let mt = check_module_raw_floor(mod, entry_file, raw_floor);
+  return GateResult { diags: filter_build_gate(mt.diags), typed: mt.typed };
 }
 
 pub function filter_build_gate(diags: util.Diag[]): util.Diag[] {
@@ -24540,7 +24553,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
 
 // Use the typed receiver when analysing method results. This temporary
 // module is only for the result summaries; the checked program stays intact.
-function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): parser.Module {
+function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls, typed: parser.FuncDecl[]): parser.Module {
   let names: string[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0) {
@@ -24551,7 +24564,8 @@ function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): par
   let mapping = OwnResultMap { methods: methods, decls: dx };
   let funcs: parser.FuncDecl[] = [];
   let ofuncs = collect_own_funcs(mod);
-  for raw in mod.funcs {
+  for i in 0..mod.funcs.len() {
+    let raw = mod.funcs[i];
     let all = raw.all_type_params;
     for tv in func_scope_tparams(raw) {
       if (!util.has_str(all, tv)) {
@@ -24560,7 +24574,11 @@ function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): par
     }
     let fn = parser.FuncDecl { ...raw, all_type_params: all };
     if (ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs) && ow_result_has_methods(fn.body)) {
-      fn = annotate_func(fn, env);
+      if (i < typed.len()) {
+        fn = parser.FuncDecl { ...fn, body: typed[i].body };
+      } else {
+        fn = annotate_func(fn, env);
+      }
       let (body, _) = astwalk.map_stmts_where(fn.body, mapping, ow_result_map_stmt, ow_result_map_expr, ow_result_is_method);
       fn = parser.FuncDecl { ...fn, body: body };
     }
@@ -24640,12 +24658,13 @@ function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast
   return e;
 }
 
-pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
+// typed holds the annotated form of the first functions of mod.
+pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex, typed: parser.FuncDecl[]): util.Diag[] {
   let ofuncs = collect_own_funcs(mod);
   let builtins = util.name_index(ow_fresh_builtins());
   let snames = util.name_index(ow_struct_names(mod.structs));
   let decls = ow_decls(mod, snames);
-  let result_mod = ow_result_module(mod, env, decls);
+  let result_mod = ow_result_module(mod, env, decls, typed);
   let result_funcs = collect_own_funcs(result_mod);
   let result_lenders = ow_lenders(result_mod, result_funcs, decls);
   let borrows = ow_result_borrows(result_mod, result_funcs, builtins, result_lenders);
@@ -28203,11 +28222,12 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   if (reserved.len() > 0) {
     let no_sigs: FuncSig[] = [];
     let no_tys: typeinfo.Type[] = [];
-    return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved };
+    return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved, typed: mod };
   }
   let env = admission_env(mod, entry_file, raw_floor);
   mod = qualify_variants_in(mod, env, whole_focus(mod));
-  let mt = check_module_pass(mod, env, fda_diags, []);
+  let typed = annotate_module(mod);
+  let mt = ModuleTypes { ...check_module_pass(mod, env, fda_diags, [], typed.funcs), typed: typed };
   if (mt.diags.len() > 0) {
     return mt;
   }
@@ -28222,7 +28242,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
     names = names.append(cl.name);
   }
   let cmod = parser.Module { ...mod, funcs: funcs };
-  let rt = check_module_pass(cmod, admission_env(cmod, entry_file, raw_floor), [], names);
+  let rt = check_module_pass(cmod, admission_env(cmod, entry_file, raw_floor), [], names, typed.funcs);
   if (rt.diags.len() == 0) {
     return mt;
   }
@@ -28238,7 +28258,7 @@ function prepared_module(filled: parser.Module): parser.Module {
   return parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
 }
 
-function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus_names: string[]): ModuleTypes {
+function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus_names: string[], typed: parser.FuncDecl[]): ModuleTypes {
   let focus = util.name_index(focus_names);
   let imports = env.imports;
   let rnames = env.structs.resources.names;
@@ -28579,7 +28599,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn, annots));
   let cgd = const_inits.diags;
   if (cgd.len() > 0) {
-    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd, typed: mod };
   }
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
@@ -28589,11 +28609,11 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   leading = util.append_diags(leading, signature_diags);
   leading = util.append_diags(leading, e021_object_safety_diags(mod, focus));
   leading = util.append_diags(leading, e021_unknown_dyn_trait_diags(mod, focus));
-  let dd = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(leading, body_diags), own_diags(mod, env, focus)), util.append_diags(e049_diags(mod, env, focus), e060_e062_diags(mod, focus))));
+  let dd = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(leading, body_diags), own_diags(mod, env, focus, typed)), util.append_diags(e049_diags(mod, env, focus), e060_e062_diags(mod, focus))));
   if (dd.len() > 0) {
     well_typed = false;
   }
-  return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
+  return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd, typed: mod };
 }
 
 function body_source_order(diags: util.Diag[]): util.Diag[] {
