@@ -21,6 +21,7 @@ import "./semscalarreturn";
 import "./rtbytecopy";
 import "./sysreg";
 import "std/string";
+import "std/option";
 
 function empty(why: string): irtables.LowerState {
   return irtables.LowerState {
@@ -5177,14 +5178,14 @@ function call_ops(name: string): ir.Op[] {
 }
 
 function paired_op(name: string): boolean {
-  return scalar_op(name) || sempair.pair_word_slot(name) >= 0 || sempair.pair_lane_slot(name) >= 0 || name.starts_with(sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
+  return scalar_op(name) || sempair.pair_word_slot(name).is_some() || sempair.pair_lane_slot(name).is_some() || name.starts_with(sempair.word_as_prefix()) || sempair.pair_set_slot(name) >= 0;
 }
 
 function pair_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (scalar_op(ins.str)) {
     return scalar_site(r, f, ins);
   }
-  if (sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0) {
+  if (sempair.pair_word_slot(ins.str).is_some() || sempair.pair_lane_slot(ins.str).is_some()) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
   }

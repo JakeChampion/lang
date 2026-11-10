@@ -240,31 +240,17 @@ pub function is_int_cmp_kind(id: i32): boolean {
 }
 
 pub function flip_int_cmp_kind(id: i32): i32 {
-  if (id == 37) {
-    return 39;
-  }
-  if (id == 39) {
-    return 37;
-  }
-  if (id == 38) {
-    return 40;
-  }
-  if (id == 40) {
-    return 38;
-  }
-  if (id == 41) {
-    return 43;
-  }
-  if (id == 43) {
-    return 41;
-  }
-  if (id == 42) {
-    return 44;
-  }
-  if (id == 44) {
-    return 42;
-  }
-  return id;
+  return match (id) {
+    37 => 39,
+    39 => 37,
+    38 => 40,
+    40 => 38,
+    41 => 43,
+    43 => 41,
+    42 => 44,
+    44 => 42,
+    _ => id,
+  };
 }
 
 pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
@@ -719,6 +705,9 @@ function struct_table_text(structs: parser.StructDecl[]): string {
       + "|" + list_text(sd.derives) + "|" + list_text(sd.variant_field_names) + "|");
     if (sd.must_consume) {
       parts = parts.append("mc");
+    }
+    if (sd.value_type) {
+      parts = parts.append("value");
     }
     parts = parts.append("{");
     for f in sd.fields {

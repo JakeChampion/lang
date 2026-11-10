@@ -157,114 +157,68 @@ function integer_compare(op: string, a: i64, b: i64, ty: string): Value {
   if (unsigned(ty)) {
     return unsigned_compare(op, a as u64, b as u64);
   }
-  if (op == "<") {
-    return logical(a < b);
-  }
-  if (op == "<=") {
-    return logical(a <= b);
-  }
-  if (op == ">") {
-    return logical(a > b);
-  }
-  if (op == ">=") {
-    return logical(a >= b);
-  }
-  return fail("operator `" + op + "` not allowed in integer constant expressions");
+  return match (op) {
+    "<" => logical(a < b),
+    "<=" => logical(a <= b),
+    ">" => logical(a > b),
+    ">=" => logical(a >= b),
+    _ => fail("operator `" + op + "` not allowed in integer constant expressions"),
+  };
 }
 
 function unsigned_compare(op: string, a: u64, b: u64): Value {
-  if (op == "<") {
-    return logical(a < b);
-  }
-  if (op == "<=") {
-    return logical(a <= b);
-  }
-  if (op == ">") {
-    return logical(a > b);
-  }
-  if (op == ">=") {
-    return logical(a >= b);
-  }
-  return fail("operator `" + op + "` not allowed in integer constant expressions");
+  return match (op) {
+    "<" => logical(a < b),
+    "<=" => logical(a <= b),
+    ">" => logical(a > b),
+    ">=" => logical(a >= b),
+    _ => fail("operator `" + op + "` not allowed in integer constant expressions"),
+  };
 }
 
 function float_binary(op: string, a: f64, b: f64): Value {
-  if (op == "+") {
-    return floating(a + b);
-  }
-  if (op == "-") {
-    return floating(a - b);
-  }
-  if (op == "*") {
-    return floating(a * b);
-  }
-  if (op == "/") {
-    return floating(a / b);
-  }
-  return float_compare(op, a, b);
+  return match (op) {
+    "+" => floating(a + b),
+    "-" => floating(a - b),
+    "*" => floating(a * b),
+    "/" => floating(a / b),
+    _ => float_compare(op, a, b),
+  };
 }
 
 function float_compare(op: string, a: f64, b: f64): Value {
-  if (op == "==") {
-    return logical(a == b);
-  }
-  if (op == "!=") {
-    return logical(a != b);
-  }
-  if (op == "<") {
-    return logical(a < b);
-  }
-  if (op == "<=") {
-    return logical(a <= b);
-  }
-  if (op == ">") {
-    return logical(a > b);
-  }
-  if (op == ">=") {
-    return logical(a >= b);
-  }
-  return fail("operator `" + op + "` not allowed in float constant expressions");
+  return match (op) {
+    "==" => logical(a == b),
+    "!=" => logical(a != b),
+    "<" => logical(a < b),
+    "<=" => logical(a <= b),
+    ">" => logical(a > b),
+    ">=" => logical(a >= b),
+    _ => fail("operator `" + op + "` not allowed in float constant expressions"),
+  };
 }
 
 function bool_binary(op: string, a: boolean, b: boolean): Value {
-  if (op == "&&") {
-    return logical(a && b);
-  }
-  if (op == "||") {
-    return logical(a || b);
-  }
-  if (op == "==") {
-    return logical(a == b);
-  }
-  if (op == "!=") {
-    return logical(a != b);
-  }
-  return fail("operator `" + op + "` not allowed on bools in constant expressions");
+  return match (op) {
+    "&&" => logical(a && b),
+    "||" => logical(a || b),
+    "==" => logical(a == b),
+    "!=" => logical(a != b),
+    _ => fail("operator `" + op + "` not allowed on bools in constant expressions"),
+  };
 }
 
 function string_binary(op: string, a: string, b: string): Value {
-  if (op == "+") {
-    return Value { data: StringValue { value: a + b }, error: "", definite: false };
-  }
-  if (op == "==") {
-    return logical(a == b);
-  }
-  if (op == "!=") {
-    return logical(a != b);
-  }
-  if (op == "<") {
-    return logical(a < b);
-  }
-  if (op == "<=") {
-    return logical(a <= b);
-  }
-  if (op == ">") {
-    return logical(a > b);
-  }
-  if (op == ">=") {
-    return logical(a >= b);
-  }
-  return fail("operator `" + op + "` not allowed on strings in constant expressions");
+  return match (op) {
+    "+" => Value { data: StringValue { value: a + b }, error: "", definite: false },
+    "==" => logical(a == b),
+    "!=" => logical(a != b),
+    "<" => logical(a < b),
+    "<=" => logical(a <= b),
+    ">" => logical(a > b),
+    ">=" => logical(a >= b),
+    _ => fail("operator `" + op + "` not allowed on strings in constant expressions"),
+  };
 }
 
 function binary(op: string, a: Value, b: Value, ty: string): Value {

@@ -839,7 +839,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     }
     fields = fields.append(parser.bare_field(fname, ""));
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
@@ -1422,7 +1422,7 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
     let (ok, next) = cell_any_text(h, v, edges, heap, captures);
-    edges = next;
+    edges = unsafe { share_unchecked(next) };
     if (!ok) {
       return (false, edges);
     }
@@ -1473,7 +1473,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       cell_hex_text(h, view);
       cell_name_text(h, a.elem);
       let store = a.store;
-      edges = edges.append(store);
+      edges = unsafe { share_unchecked(edges.append(store)) };
       return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
@@ -1486,7 +1486,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next, heap, captures);
+      return cell_parts_text(h, m.values, unsafe { share_unchecked(next) }, heap, captures);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -2252,16 +2252,12 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (util.has_str(["__task_park", "__task_park_until", "__task_timeout"], name)) {
     return v_int(-1);
   }
-  if (name == "__task_until") {
-    return v_int64(-1i64);
-  }
-  if (name == "__task_new") {
-    return v_int(1);
-  }
-  if (name == "__task_wait") {
-    return v_arr(heap, []);
-  }
-  return v_err("not a runtime intrinsic");
+  return match (name) {
+    "__task_until" => v_int64(-1i64),
+    "__task_new" => v_int(1),
+    "__task_wait" => v_arr(heap, []),
+    _ => v_err("not a runtime intrinsic"),
+  };
 }
 
 function lane_bits(width: i32, x: f64): i64 {
@@ -2309,16 +2305,12 @@ function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
 }
 
 function lane_arith(op: string, x: f64, y: f64): f64 {
-  if (op == "+") {
-    return x + y;
-  }
-  if (op == "-") {
-    return x - y;
-  }
-  if (op == "*") {
-    return x * y;
-  }
-  return x / y;
+  return match (op) {
+    "+" => x + y,
+    "-" => x - y,
+    "*" => x * y,
+    _ => x / y,
+  };
 }
 
 function lanes_binary(op: string, a: VLanes, rv: Value): Value {
@@ -2616,22 +2608,14 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
 }
 
 function f64_primitive(name: string, x: f64): f64 {
-  if (name == "__sqrt_f64") {
-    return __sqrt_f64(x);
-  }
-  if (name == "__floor_f64") {
-    return __floor_f64(x);
-  }
-  if (name == "__ceil_f64") {
-    return __ceil_f64(x);
-  }
-  if (name == "__round_f64") {
-    return __round_f64(x);
-  }
-  if (name == "__trunc_f64") {
-    return __trunc_f64(x);
-  }
-  return __abs_f64(x);
+  return match (name) {
+    "__sqrt_f64" => __sqrt_f64(x),
+    "__floor_f64" => __floor_f64(x),
+    "__ceil_f64" => __ceil_f64(x),
+    "__round_f64" => __round_f64(x),
+    "__trunc_f64" => __trunc_f64(x),
+    _ => __abs_f64(x),
+  };
 }
 
 // The worker builtins in an engine that runs every worker inline: the copy
@@ -2728,16 +2712,12 @@ function call_host_portable(heap: interpheap.Heap, name: string, cap: string, ar
 }
 
 function call_host_stdio(name: string, args: Value[]): Value {
-  if (name == "stdin") {
-    return reader_value(stdin());
-  }
-  if (name == "stdout") {
-    return writer_value(stdout());
-  }
-  if (name == "stderr") {
-    return writer_value(stderr());
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "stdin" => reader_value(stdin()),
+    "stdout" => writer_value(stdout()),
+    "stderr" => writer_value(stderr()),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_process(heap: interpheap.Heap, name: string, vals: Value[]): Value {
@@ -2796,51 +2776,29 @@ function call_host_wait(name: string, args: Value[]): Value {
 }
 
 function call_host_clock(name: string, args: Value[]): Value {
-  if (name == "now_unix_ms") {
-    return v_int64(now_unix_ms());
-  }
-  if (name == "now_ns") {
-    return v_int64(now_ns());
-  }
-  if (name == "monotonic_ns") {
-    return v_int64(monotonic_ns());
-  }
-  if (name == "clock_resolution") {
-    return v_int64(clock_resolution());
-  }
-  if (name == "clock_set") {
-    return void_result_value(clock_set(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "now_unix_ms" => v_int64(now_unix_ms()),
+    "now_ns" => v_int64(now_ns()),
+    "monotonic_ns" => v_int64(monotonic_ns()),
+    "clock_resolution" => v_int64(clock_resolution()),
+    "clock_set" => void_result_value(clock_set(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_signal(name: string, args: Value[]): Value {
   let sig = arg_i32(args, 0);
-  if (name == "signal_ignore") {
-    return v_int(signal_ignore(sig));
-  }
-  if (name == "signal_default") {
-    return v_int(signal_default(sig));
-  }
-  if (name == "signal_catch") {
-    return v_int(signal_catch(sig));
-  }
-  if (name == "signal_catch_interrupting") {
-    return v_int(signal_catch_interrupting(sig));
-  }
-  if (name == "signal_disposition") {
-    return v_int(signal_disposition(sig));
-  }
-  if (name == "signal_raise") {
-    return v_int(signal_raise(sig));
-  }
-  if (name == "signal_taken") {
-    return v_bool(signal_taken(sig));
-  }
-  if (name == "signal_mask") {
-    return v_int64(signal_mask(sig, arg_i64(args, 1)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "signal_ignore" => v_int(signal_ignore(sig)),
+    "signal_default" => v_int(signal_default(sig)),
+    "signal_catch" => v_int(signal_catch(sig)),
+    "signal_catch_interrupting" => v_int(signal_catch_interrupting(sig)),
+    "signal_disposition" => v_int(signal_disposition(sig)),
+    "signal_raise" => v_int(signal_raise(sig)),
+    "signal_taken" => v_bool(signal_taken(sig)),
+    "signal_mask" => v_int64(signal_mask(sig, arg_i64(args, 1))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_reactor(name: string, args: Value[]): Value {
@@ -2876,110 +2834,68 @@ function call_host_fs(heap: interpheap.Heap, name: string, args: Value[]): Value
 }
 
 function call_host_fs_path(name: string, path: string): Value {
-  if (name == "remove_file") {
-    return void_result_value(remove_file(path));
-  }
-  if (name == "remove_dir") {
-    return void_result_value(remove_dir(path));
-  }
-  if (name == "remove_dir_all") {
-    return void_result_value(remove_dir_all(path));
-  }
-  return void_result_value(create_dir_all(path));
+  return match (name) {
+    "remove_file" => void_result_value(remove_file(path)),
+    "remove_dir" => void_result_value(remove_dir(path)),
+    "remove_dir_all" => void_result_value(remove_dir_all(path)),
+    _ => void_result_value(create_dir_all(path)),
+  };
 }
 
 function call_host_fs_paths(name: string, from: string, to: string): Value {
-  if (name == "create_link") {
-    return void_result_value(create_link(from, to));
-  }
-  if (name == "clone_file") {
-    return void_result_value(clone_file(from, to));
-  }
-  if (name == "create_symlink") {
-    return void_result_value(create_symlink(from, to));
-  }
-  return void_result_value(rename(from, to));
+  return match (name) {
+    "create_link" => void_result_value(create_link(from, to)),
+    "clone_file" => void_result_value(clone_file(from, to)),
+    "create_symlink" => void_result_value(create_symlink(from, to)),
+    _ => void_result_value(rename(from, to)),
+  };
 }
 
 function call_host_open(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "open_reader") {
-    return reader_result_value(open_reader(path));
-  }
-  if (name == "open_reader_with") {
-    return reader_result_value(open_reader_with(path, arg_i32(args, 1)));
-  }
-  if (name == "open_writer") {
-    return writer_result_value(open_writer(path));
-  }
-  if (name == "open_writer_with") {
-    return writer_result_value(open_writer_with(path, arg_i32(args, 1)));
-  }
-  if (name == "open_appender") {
-    return writer_result_value(open_appender(path));
-  }
-  return writer_result_value(open_exclusive(path));
+  return match (name) {
+    "open_reader" => reader_result_value(open_reader(path)),
+    "open_reader_with" => reader_result_value(open_reader_with(path, arg_i32(args, 1))),
+    "open_writer" => writer_result_value(open_writer(path)),
+    "open_writer_with" => writer_result_value(open_writer_with(path, arg_i32(args, 1))),
+    "open_appender" => writer_result_value(open_appender(path)),
+    _ => writer_result_value(open_exclusive(path)),
+  };
 }
 
 function call_host_fs_write(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "write_file") {
-    return void_result_value(write_file(path, arg_str(args, 1)));
-  }
-  if (name == "write_file_bytes") {
-    return void_result_value(write_file_bytes(path, arg_bytes(args, 1)));
-  }
-  if (name == "create_dir") {
-    return void_result_value(create_dir(path, arg_i32(args, 1)));
-  }
-  if (name == "truncate") {
-    return void_result_value(truncate(path, arg_i64(args, 1)));
-  }
-  return void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5)));
+  return match (name) {
+    "write_file" => void_result_value(write_file(path, arg_str(args, 1))),
+    "write_file_bytes" => void_result_value(write_file_bytes(path, arg_bytes(args, 1))),
+    "create_dir" => void_result_value(create_dir(path, arg_i32(args, 1))),
+    "truncate" => void_result_value(truncate(path, arg_i64(args, 1))),
+    _ => void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5))),
+  };
 }
 
 function call_host_fs_read(heap: interpheap.Heap, name: string, path: string): Value {
-  if (name == "read_file") {
-    return string_result_value(read_file(path));
-  }
-  if (name == "read_file_bytes") {
-    return bytes_result_value(heap, read_file_bytes(path));
-  }
-  if (name == "read_link") {
-    return string_result_value(read_link(path));
-  }
-  if (name == "read_link_bytes") {
-    return bytes_result_value(heap, read_link_bytes(path));
-  }
-  if (name == "temp_dir") {
-    return string_result_value(temp_dir(path));
-  }
-  if (name == "stat") {
-    return stat_result_value(stat(path));
-  }
-  if (name == "lstat") {
-    return stat_result_value(lstat(path));
-  }
-  return call_host_fs_list(heap, name, path);
+  return match (name) {
+    "read_file" => string_result_value(read_file(path)),
+    "read_file_bytes" => bytes_result_value(heap, read_file_bytes(path)),
+    "read_link" => string_result_value(read_link(path)),
+    "read_link_bytes" => bytes_result_value(heap, read_link_bytes(path)),
+    "temp_dir" => string_result_value(temp_dir(path)),
+    "stat" => stat_result_value(stat(path)),
+    "lstat" => stat_result_value(lstat(path)),
+    _ => call_host_fs_list(heap, name, path),
+  };
 }
 
 function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): Value {
-  if (name == "read_dir_bytes") {
-    return byte_arrays_result_value(heap, read_dir_bytes(path));
-  }
-  if (name == "read_dir") {
-    return strings_result_value(heap, read_dir(path));
-  }
-  if (name == "read_dir_all") {
-    return strings_result_value(heap, read_dir_all(path));
-  }
-  if (name == "read_dir_ino") {
-    return dir_entries_result_value(heap, read_dir_ino(path));
-  }
-  if (name == "read_dir_ino_all") {
-    return dir_entries_result_value(heap, read_dir_ino_all(path));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "read_dir_bytes" => byte_arrays_result_value(heap, read_dir_bytes(path)),
+    "read_dir" => strings_result_value(heap, read_dir(path)),
+    "read_dir_all" => strings_result_value(heap, read_dir_all(path)),
+    "read_dir_ino" => dir_entries_result_value(heap, read_dir_ino(path)),
+    "read_dir_ino_all" => dir_entries_result_value(heap, read_dir_ino_all(path)),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 // A guest Socket runs as its descriptor number, which the host takes as a Socket.
@@ -3181,16 +3097,12 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
       return v_int(__tcp_close_unchecked(sock));
     }
   }
-  if (name == "tcp_local_port") {
-    return v_int(tcp_local_port(sock));
-  }
-  if (name == "tcp_pollable") {
-    return v_int(tcp_pollable(sock.fd));
-  }
-  if (name == "tcp_socket_ctl") {
-    return v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "tcp_local_port" => v_int(tcp_local_port(sock)),
+    "tcp_pollable" => v_int(tcp_pollable(sock.fd)),
+    "tcp_socket_ctl" => v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_native(heap: interpheap.Heap, name: string, cap: string, args: Value[]): Value {
@@ -3223,58 +3135,36 @@ function call_host_native(heap: interpheap.Heap, name: string, cap: string, args
 
 function call_host_fsmode(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "write_file_exec") {
-    return void_result_value(write_file_exec(path, arg_str(args, 1)));
-  }
-  if (name == "access") {
-    return void_result_value(access(path, arg_i32(args, 1)));
-  }
-  if (name == "umask") {
-    return v_int(umask(arg_i32(args, 0)));
-  }
-  if (name == "chmod") {
-    return void_result_value(chmod(path, arg_i32(args, 1)));
-  }
-  if (name == "chmod_at") {
-    return void_result_value(chmod_at(path, arg_i32(args, 1), arg_bool(args, 2)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "write_file_exec" => void_result_value(write_file_exec(path, arg_str(args, 1))),
+    "access" => void_result_value(access(path, arg_i32(args, 1))),
+    "umask" => v_int(umask(arg_i32(args, 0))),
+    "chmod" => void_result_value(chmod(path, arg_i32(args, 1))),
+    "chmod_at" => void_result_value(chmod_at(path, arg_i32(args, 1), arg_bool(args, 2))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_userid(heap: interpheap.Heap, name: string, args: Value[]): Value {
-  if (name == "geteuid") {
-    return v_uint(geteuid() as i32);
-  }
-  if (name == "getegid") {
-    return v_uint(getegid() as i32);
-  }
-  if (name == "getuid") {
-    return v_uint(getuid() as i32);
-  }
-  if (name == "getgid") {
-    return v_uint(getgid() as i32);
-  }
-  if (name == "getgroups") {
-    return i64_array_value(heap, getgroups());
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "geteuid" => v_uint(geteuid() as i32),
+    "getegid" => v_uint(getegid() as i32),
+    "getuid" => v_uint(getuid() as i32),
+    "getgid" => v_uint(getgid() as i32),
+    "getgroups" => i64_array_value(heap, getgroups()),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_tty(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let fd = arg_i32(args, 0);
-  if (name == "window_size") {
-    return win_size_result_value(window_size(fd));
-  }
-  if (name == "set_window_size") {
-    return void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2)));
-  }
-  if (name == "termios_get") {
-    return i64s_result_value(heap, termios_get(fd));
-  }
-  if (name == "termios_set") {
-    return void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2)));
-  }
-  return void_result_value(set_extproc(fd, arg_bool(args, 1)));
+  return match (name) {
+    "window_size" => win_size_result_value(window_size(fd)),
+    "set_window_size" => void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2))),
+    "termios_get" => i64s_result_value(heap, termios_get(fd)),
+    "termios_set" => void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2))),
+    _ => void_result_value(set_extproc(fd, arg_bool(args, 1))),
+  };
 }
 
 function call_host_proc(name: string, args: Value[]): Value {
@@ -3298,50 +3188,28 @@ function call_host_proc(name: string, args: Value[]): Value {
 }
 
 function call_host_limits(name: string, args: Value[]): Value {
-  if (name == "rlimit_nofile") {
-    return v_int64(rlimit_nofile());
-  }
-  if (name == "disable_core_dumps") {
-    return v_bool(disable_core_dumps());
-  }
-  if (name == "priority") {
-    return v_int(priority());
-  }
-  if (name == "set_priority") {
-    return void_result_value(set_priority(arg_i32(args, 0)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "rlimit_nofile" => v_int64(rlimit_nofile()),
+    "disable_core_dumps" => v_bool(disable_core_dumps()),
+    "priority" => v_int(priority()),
+    "set_priority" => void_result_value(set_priority(arg_i32(args, 0))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_system(heap: interpheap.Heap, name: string, args: Value[]): Value {
-  if (name == "uname_field") {
-    return v_string(uname_field(arg_i32(args, 0)));
-  }
-  if (name == "cpu_count") {
-    return v_int(cpu_count());
-  }
-  if (name == "prctl_query") {
-    return v_int64(prctl_query(arg_i32(args, 0)));
-  }
-  if (name == "getcwd") {
-    return string_result_value(getcwd());
-  }
-  if (name == "chdir") {
-    return void_result_value(chdir(arg_str(args, 0)));
-  }
-  if (name == "unix_listen") {
-    return socket_number(unix_listen(arg_str(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "unix_connect") {
-    return socket_number(unix_connect(arg_str(args, 0)));
-  }
-  if (name == "timer_fd") {
-    return v_int(timer_fd(arg_i32(args, 0)));
-  }
-  if (name == "sysctl") {
-    return call_host_sysctl(heap, arg_i32s(args, 0));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "uname_field" => v_string(uname_field(arg_i32(args, 0))),
+    "cpu_count" => v_int(cpu_count()),
+    "prctl_query" => v_int64(prctl_query(arg_i32(args, 0))),
+    "getcwd" => string_result_value(getcwd()),
+    "chdir" => void_result_value(chdir(arg_str(args, 0))),
+    "unix_listen" => socket_number(unix_listen(arg_str(args, 0), arg_i32(args, 1))),
+    "unix_connect" => socket_number(unix_connect(arg_str(args, 0))),
+    "timer_fd" => v_int(timer_fd(arg_i32(args, 0))),
+    "sysctl" => call_host_sysctl(heap, arg_i32s(args, 0)),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_sysctl(heap: interpheap.Heap, mib: i32[]): Value {
@@ -3470,31 +3338,17 @@ function read_chunk_value(r: Reader, n: i32): Value {
 }
 
 function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
-  if (name == "stat") {
-    return stat_result_value(r.stat());
-  }
-  if (name == "seek") {
-    return i64_result_value(r.seek(arg_i64(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "flags") {
-    return i64_result_value(r.flags());
-  }
-  if (name == "isatty") {
-    return v_bool(r.isatty());
-  }
-  if (name == "fsync") {
-    return void_result_value(r.fsync());
-  }
-  if (name == "fdatasync") {
-    return void_result_value(r.fdatasync());
-  }
-  if (name == "syncfs") {
-    return void_result_value(r.syncfs());
-  }
-  if (name == "drop_cache") {
-    return void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return void_result_value(r.dup_onto(arg_i32(args, 0)));
+  return match (name) {
+    "stat" => stat_result_value(r.stat()),
+    "seek" => i64_result_value(r.seek(arg_i64(args, 0), arg_i32(args, 1))),
+    "flags" => i64_result_value(r.flags()),
+    "isatty" => v_bool(r.isatty()),
+    "fsync" => void_result_value(r.fsync()),
+    "fdatasync" => void_result_value(r.fdatasync()),
+    "syncfs" => void_result_value(r.syncfs()),
+    "drop_cache" => void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => void_result_value(r.dup_onto(arg_i32(args, 0))),
+  };
 }
 
 function writer_method(w: Writer, name: string, args: Value[]): Value {
@@ -3528,34 +3382,18 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
 }
 
 function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
-  if (name == "set_times") {
-    return void_result_value(w.set_times(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i32(args, 4)));
-  }
-  if (name == "stat") {
-    return stat_result_value(w.stat());
-  }
-  if (name == "seek") {
-    return i64_result_value(w.seek(arg_i64(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "flags") {
-    return i64_result_value(w.flags());
-  }
-  if (name == "isatty") {
-    return v_bool(w.isatty());
-  }
-  if (name == "fsync") {
-    return void_result_value(w.fsync());
-  }
-  if (name == "fdatasync") {
-    return void_result_value(w.fdatasync());
-  }
-  if (name == "syncfs") {
-    return void_result_value(w.syncfs());
-  }
-  if (name == "drop_cache") {
-    return void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return void_result_value(w.dup_onto(arg_i32(args, 0)));
+  return match (name) {
+    "set_times" => void_result_value(w.set_times(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i32(args, 4))),
+    "stat" => stat_result_value(w.stat()),
+    "seek" => i64_result_value(w.seek(arg_i64(args, 0), arg_i32(args, 1))),
+    "flags" => i64_result_value(w.flags()),
+    "isatty" => v_bool(w.isatty()),
+    "fsync" => void_result_value(w.fsync()),
+    "fdatasync" => void_result_value(w.fdatasync()),
+    "syncfs" => void_result_value(w.syncfs()),
+    "drop_cache" => void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => void_result_value(w.dup_onto(arg_i32(args, 0))),
+  };
 }
 
 function call_dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]): Value {
@@ -3683,19 +3521,13 @@ function io_error_named(e: IoError, entry: string): IoError {
 }
 
 function dir_change_method(d: Dir, name: string, entry: string, args: Value[]): Value {
-  if (name == "access") {
-    return void_result_value(d.access(entry, arg_i32(args, 1)));
-  }
-  if (name == "remove_file") {
-    return void_result_value(d.remove_file(entry));
-  }
-  if (name == "remove_dir") {
-    return void_result_value(d.remove_dir(entry));
-  }
-  if (name == "chmod") {
-    return void_result_value(d.chmod(entry, arg_i32(args, 1), arg_bool(args, 2)));
-  }
-  return void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
+  return match (name) {
+    "access" => void_result_value(d.access(entry, arg_i32(args, 1))),
+    "remove_file" => void_result_value(d.remove_file(entry)),
+    "remove_dir" => void_result_value(d.remove_dir(entry)),
+    "chmod" => void_result_value(d.chmod(entry, arg_i32(args, 1), arg_bool(args, 2))),
+    _ => void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3))),
+  };
 }
 
 function (own e: Env) update(name: string, v: Value): Env {
@@ -3865,16 +3697,12 @@ function eval_usize_binary(op: string, a: u64, b: u64): Value {
 }
 
 function usize_bitwise(op: string, a: u64, b: u64): Value {
-  if (op == "&") {
-    return v_usize((a & b) as i64);
-  }
-  if (op == "|") {
-    return v_usize((a | b) as i64);
-  }
-  if (op == "^") {
-    return v_usize((a ^ b) as i64);
-  }
-  return usize_compare(op, a, b);
+  return match (op) {
+    "&" => v_usize((a & b) as i64),
+    "|" => v_usize((a | b) as i64),
+    "^" => v_usize((a ^ b) as i64),
+    _ => usize_compare(op, a, b),
+  };
 }
 
 function usize_divide(quotient: boolean, a: u64, b: u64): Value {
@@ -3891,38 +3719,24 @@ function usize_divide(quotient: boolean, a: u64, b: u64): Value {
 }
 
 function usize_compare(op: string, a: u64, b: u64): Value {
-  if (op == "==") {
-    return v_bool(a == b);
-  }
-  if (op == "!=") {
-    return v_bool(a != b);
-  }
-  if (op == "<") {
-    return v_bool(a < b);
-  }
-  if (op == "<=") {
-    return v_bool(a <= b);
-  }
-  if (op == ">") {
-    return v_bool(a > b);
-  }
-  if (op == ">=") {
-    return v_bool(a >= b);
-  }
-  return v_err("operator `" + op + "` is not defined on usize");
+  return match (op) {
+    "==" => v_bool(a == b),
+    "!=" => v_bool(a != b),
+    "<" => v_bool(a < b),
+    "<=" => v_bool(a <= b),
+    ">" => v_bool(a > b),
+    ">=" => v_bool(a >= b),
+    _ => v_err("operator `" + op + "` is not defined on usize"),
+  };
 }
 
 function strings_ordered(op: string, a: string, b: string): boolean {
-  if (op == "<") {
-    return a < b;
-  }
-  if (op == "<=") {
-    return a <= b;
-  }
-  if (op == ">") {
-    return a > b;
-  }
-  return a >= b;
+  return match (op) {
+    "<" => a < b,
+    "<=" => a <= b,
+    ">" => a > b,
+    _ => a >= b,
+  };
 }
 
 function is_checked_op(op: string): boolean {
@@ -4387,16 +4201,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VFloat(lf) => {
         match (rv) {
           VFloat(rf) => {
-            if (op == "-") {
-              return v_float(lf.v - rf.v);
-            }
-            if (op == "*") {
-              return v_float(lf.v * rf.v);
-            }
-            if (op == "/") {
-              return v_float(lf.v / rf.v);
-            }
-            return v_err("`%` on f64 is unsupported");
+            return match (op) {
+              "-" => v_float(lf.v - rf.v),
+              "*" => v_float(lf.v * rf.v),
+              "/" => v_float(lf.v / rf.v),
+              _ => v_err("`%` on f64 is unsupported"),
+            };
           },
           _ => {
             return v_err("arithmetic rhs not f64");
@@ -4413,16 +4223,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VInt(li) => {
         match (rv) {
           VInt(ri) => {
-            if (op == "<") {
-              return v_bool(li.v < ri.v);
-            }
-            if (op == "<=") {
-              return v_bool(li.v <= ri.v);
-            }
-            if (op == ">") {
-              return v_bool(li.v > ri.v);
-            }
-            return v_bool(li.v >= ri.v);
+            return match (op) {
+              "<" => v_bool(li.v < ri.v),
+              "<=" => v_bool(li.v <= ri.v),
+              ">" => v_bool(li.v > ri.v),
+              _ => v_bool(li.v >= ri.v),
+            };
           },
           _ => {
             return v_err("comparison rhs not i32");
@@ -4432,16 +4238,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VFloat(lf) => {
         match (rv) {
           VFloat(rf) => {
-            if (op == "<") {
-              return v_bool(lf.v < rf.v);
-            }
-            if (op == "<=") {
-              return v_bool(lf.v <= rf.v);
-            }
-            if (op == ">") {
-              return v_bool(lf.v > rf.v);
-            }
-            return v_bool(lf.v >= rf.v);
+            return match (op) {
+              "<" => v_bool(lf.v < rf.v),
+              "<=" => v_bool(lf.v <= rf.v),
+              ">" => v_bool(lf.v > rf.v),
+              _ => v_bool(lf.v >= rf.v),
+            };
           },
           _ => {
             return v_err("comparison rhs not f64");
@@ -4491,19 +4293,13 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VInt(li) => {
         match (rv) {
           VInt(ri) => {
-            if (op == "&") {
-              return v_int(li.v & ri.v);
-            }
-            if (op == "|") {
-              return v_int(li.v | ri.v);
-            }
-            if (op == "^") {
-              return v_int(li.v ^ ri.v);
-            }
-            if (op == "<<") {
-              return v_int(li.v << ri.v);
-            }
-            return v_int(li.v >> ri.v);
+            return match (op) {
+              "&" => v_int(li.v & ri.v),
+              "|" => v_int(li.v | ri.v),
+              "^" => v_int(li.v ^ ri.v),
+              "<<" => v_int(li.v << ri.v),
+              _ => v_int(li.v >> ri.v),
+            };
           },
           _ => {
             return v_err("bitwise rhs not i32");
@@ -4967,22 +4763,14 @@ function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
 function struct_op_method(op: string, lv: Value): string {
   match (lv) {
     VStruct(_) => {
-      if (op == "+") {
-        return "add";
-      }
-      if (op == "-") {
-        return "sub";
-      }
-      if (op == "*") {
-        return "mul";
-      }
-      if (op == "/") {
-        return "div";
-      }
-      if (op == "%") {
-        return "rem";
-      }
-      return bit_op_method(op);
+      return match (op) {
+        "+" => "add",
+        "-" => "sub",
+        "*" => "mul",
+        "/" => "div",
+        "%" => "rem",
+        _ => bit_op_method(op),
+      };
     },
     _ => {
       return "";
@@ -4991,22 +4779,14 @@ function struct_op_method(op: string, lv: Value): string {
 }
 
 function bit_op_method(op: string): string {
-  if (op == "&") {
-    return "bitand";
-  }
-  if (op == "|") {
-    return "bitor";
-  }
-  if (op == "^") {
-    return "bitxor";
-  }
-  if (op == "<<") {
-    return "shl";
-  }
-  if (op == ">>") {
-    return "shr";
-  }
-  return "";
+  return match (op) {
+    "&" => "bitand",
+    "|" => "bitor",
+    "^" => "bitxor",
+    "<<" => "shl",
+    ">>" => "shr",
+    _ => "",
+  };
 }
 
 function eval_expr(e: ast.Expr, env: Env): Value {
@@ -5748,12 +5528,13 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
+  // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
     let before_tail: ast.Stmt[] = [];
     for i in 0..fv.body.len() - 1 {
       before_tail = before_tail.append(fv.body[i]);
     }
-    let leading = eval_block(before_tail, env);
+    let leading = eval_block(before_tail, unsafe { share_unchecked(env) });
     if (leading.sig != 0) {
       if (leading.sig == 1 && is_err(leading.ret)) {
         return leading.ret;
@@ -5763,7 +5544,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     let tail = eval_stmt(fv.body[fv.body.len() - 1], leading.env);
     return coerce_int_width(tail.ret, fv.ret_type);
   }
-  let step = eval_block(fv.body, env);
+  let step = eval_block(fv.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -5839,7 +5620,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
   }
-  let step = eval_block(fd.body, Env { ...env });
+  let step = eval_block(fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -7474,16 +7255,12 @@ function raw_mmio(name: string, w: i64[]): Value {
   let p = w[0] as usize;
   unsafe {
     if (!builtinsigs.access_store(name)) {
-      if (bits == 8) {
-        return v_int(__load_u8(p));
-      }
-      if (bits == 16) {
-        return v_int(__load_u8(p) | __load_u8(p + 1) << 8);
-      }
-      if (bits == 32) {
-        return v_int(__load_i32(p));
-      }
-      return v_int64(__load_i64(p));
+      return match (bits) {
+        8 => v_int(__load_u8(p)),
+        16 => v_int(__load_u8(p) | __load_u8(p + 1) << 8),
+        32 => v_int(__load_i32(p)),
+        _ => v_int64(__load_i64(p)),
+      };
     }
     if (bits == 8) {
       __store_u8(p, w[1] as i32 & 255);
@@ -7501,16 +7278,12 @@ function raw_mmio(name: string, w: i64[]): Value {
 
 function raw_mem_load(name: string, p: usize): Value {
   unsafe {
-    if (name == "__load_u8") {
-      return v_int(__load_u8(p));
-    }
-    if (name == "__load_i32") {
-      return v_int(__load_i32(p));
-    }
-    if (name == "__load_i64") {
-      return v_int64(__load_i64(p));
-    }
-    return v_usize(__load_ptr(p) as i64);
+    return match (name) {
+      "__load_u8" => v_int(__load_u8(p)),
+      "__load_i32" => v_int(__load_i32(p)),
+      "__load_i64" => v_int64(__load_i64(p)),
+      _ => v_usize(__load_ptr(p) as i64),
+    };
   }
 }
 
@@ -7792,22 +7565,14 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       return v_err(name + ": arg must be an integer");
     }
     let bits = vint_as_i64(args[0]) as u64;
-    if (name == "__clz32") {
-      return v_int(__clz32(bits as u32));
-    }
-    if (name == "__ctz32") {
-      return v_int(__ctz32(bits as u32));
-    }
-    if (name == "__popcount32") {
-      return v_int(__popcount32(bits as u32));
-    }
-    if (name == "__clz64") {
-      return v_int(__clz64(bits));
-    }
-    if (name == "__ctz64") {
-      return v_int(__ctz64(bits));
-    }
-    return v_int(__popcount64(bits));
+    return match (name) {
+      "__clz32" => v_int(__clz32(bits as u32)),
+      "__ctz32" => v_int(__ctz32(bits as u32)),
+      "__popcount32" => v_int(__popcount32(bits as u32)),
+      "__clz64" => v_int(__clz64(bits)),
+      "__ctz64" => v_int(__ctz64(bits)),
+      _ => v_int(__popcount64(bits)),
+    };
   }
   if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
     || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
@@ -8686,7 +8451,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       if (arm.has_guard) {
         let gv = eval_expr(arm.guard, bodyEnv);
         if (is_err(gv)) {
-          return step_stop(trim_env(bodyEnv, base), gv);
+          return step_stop(trim_env(unsafe { share_unchecked(bodyEnv) }, base), gv);
         }
         match (gv) {
           VBool(gb) => {
@@ -8698,7 +8463,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         }
       }
       if (pass) {
-        let step: StepResult = if (value_form) { eval_value_body(arm.body, Env { ...bodyEnv }, expect) } else { eval_block(arm.body, bodyEnv) };
+        let step: StepResult = if (value_form) { eval_value_body(arm.body, unsafe { share_unchecked(bodyEnv) }, expect) } else { eval_block(arm.body, unsafe { share_unchecked(bodyEnv) }) };
         return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
@@ -8739,7 +8504,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let i = 0;
   while (i < elems.len()) {
     let iter_env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
-    let step = eval_block(f.body, Env { ...iter_env });
+    let step = eval_block(f.body, unsafe { share_unchecked(iter_env) });
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
@@ -8941,7 +8706,7 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
-    let Some(out) = array_method(heap, VArr { ...av }, names[i], args[i]) else {
+    let Some(out) = array_method(heap, unsafe { share_unchecked(VArr { ...av }) }, names[i], args[i]) else {
       return step_stop(released, v_err("in-place write: not an array method"));
     };
     if (is_err(out)) {
@@ -8996,7 +8761,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
     subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base = env.depth;
-  let step = eval_stmt(parser.iterator_loop(f, subject, 0), Env { ...scope_env(env, true).bind("$for_subject", iv) });
+  let step = eval_stmt(parser.iterator_loop(f, subject, 0), unsafe { share_unchecked(scope_env(env, true).bind("$for_subject", iv)) });
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
@@ -9028,7 +8793,7 @@ function scope_env(own e: Env, needed: boolean): Env {
   if (!needed) {
     return e;
   }
-  return Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] };
+  return unsafe { share_unchecked(Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] }) };
 }
 
 function trim_env(own e: Env, base: i32): Env {
@@ -9133,7 +8898,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let mreassigned = body_assign_names(mod.top_stmts, []);
   for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    let r = eval_stmt(mod.top_stmts[j], env);
+    let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {
       return r.ret;

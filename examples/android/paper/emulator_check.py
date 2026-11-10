@@ -8,11 +8,11 @@ presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a tap on the time that
 opens the clock app, a swipe up that opens the app list in the paper
-colour with the keyboard, a tap on the search field that shows the keyboard
-again after the back key hid it, a search for "pap" that finds Paper and
-opens it, Back that hides the keyboard, then Back that goes home, a frame section
-in the system trace while the list slides, and no crash in logcat. OUT_DIR
-gets the frames, logcat and the trace.
+colour with the keyboard for its text field, a tap on the search field that
+shows the keyboard again after the back key hid it, a search for "pap" that
+finds Paper and opens it, Back that hides the keyboard, then Back that goes
+home, a frame section in the system trace while the list slides, and no
+crash in logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
 from pathlib import Path
@@ -56,10 +56,28 @@ def keyboard_shown(timeout=5.0):
     return wait_for_keyboard(True, timeout)
 
 
+def editor_is_field():
+    """The keyboard types into the text field of the app: an editor of text
+    with the action Go, not the decor view."""
+    dump = adb("shell", "dumpsys", "input_method", check=False)
+    # Android prints editor history before the current client's editor.
+    current = re.search(r"(?m)^  mCurrentEditorInfo:([^\n]*)", dump)
+    body = re.match(r"\r?\n((?:    [^\n]*(?:\n|$))+)", dump[current.end():]) if current and not current.group(1).strip() else None
+    info = body.group(1) if body else ""
+    editor = re.search(r"inputType=0x(\w+) imeOptions=0x(\w+)", info)
+    package = re.search(r"\bpackageName=" + re.escape(PACKAGE) + r"(?=\s|$)", info)
+    if not editor or not package or editor.group(1) != "1" or editor.group(2) != "10000002":
+        fail("the keyboard does not type into the text field: " + (editor.group(0) if editor else "no editor"))
+        return False
+    return True
+
+
 def hide_keyboard():
     """Back hides the keyboard before the app receives a Back event."""
     if not keyboard_shown():
         fail("the app list opened without the keyboard")
+        return False
+    if not editor_is_field():
         return False
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     if not wait_for_keyboard(False, 1.5):
@@ -131,6 +149,7 @@ def main(apk, out):
     if not re.search(r"B\|\d+\|frame", trace):
         fail("the system trace has no frame section of the app")
     _, _, part = paper_part(out, "drawer", top_half=True)
+    Path(out, "input-method-drawer.txt").write_text(adb("shell", "dumpsys", "input_method", check=False))
     if part < 0.6:
         fail(f"the app list has {part:.3f} of the paper colour")
     check_keyboard(width)

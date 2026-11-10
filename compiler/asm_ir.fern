@@ -4491,46 +4491,22 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
       return "    shrq %cl, " + d + "\n";
     }
   }
-  if (tag == 31) {
-    return "    andl $31, %ecx\n    shlq %cl, " + d + "\n";
-  }
-  if (tag == 32) {
-    return "    andl $31, %ecx\n    sarq %cl, " + d + "\n";
-  }
-  if (tag == 33) {
-    return "    andl $31, %ecx\n    shrq %cl, " + d + "\n";
-  }
-  if (tag == 35) {
-    return "    cmpq " + r + ", " + d + "\n    sete " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 36) {
-    return "    cmpq " + r + ", " + d + "\n    setne " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 37) {
-    return "    cmpq " + r + ", " + d + "\n    setl " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 38) {
-    return "    cmpq " + r + ", " + d + "\n    setle " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 39) {
-    return "    cmpq " + r + ", " + d + "\n    setg " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 40) {
-    return "    cmpq " + r + ", " + d + "\n    setge " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 41) {
-    return "    cmpq " + r + ", " + d + "\n    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 42) {
-    return "    cmpq " + r + ", " + d + "\n    setbe " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 43) {
-    return "    cmpq " + r + ", " + d + "\n    seta " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  if (tag == 44) {
-    return "    cmpq " + r + ", " + d + "\n    setae " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
-  }
-  return ircore.unsupported_op_refuse(tag, "x86-64");
+  return match (tag) {
+    31 => "    andl $31, %ecx\n    shlq %cl, " + d + "\n",
+    32 => "    andl $31, %ecx\n    sarq %cl, " + d + "\n",
+    33 => "    andl $31, %ecx\n    shrq %cl, " + d + "\n",
+    35 => "    cmpq " + r + ", " + d + "\n    sete " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    36 => "    cmpq " + r + ", " + d + "\n    setne " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    37 => "    cmpq " + r + ", " + d + "\n    setl " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    38 => "    cmpq " + r + ", " + d + "\n    setle " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    39 => "    cmpq " + r + ", " + d + "\n    setg " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    40 => "    cmpq " + r + ", " + d + "\n    setge " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    41 => "    cmpq " + r + ", " + d + "\n    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    42 => "    cmpq " + r + ", " + d + "\n    setbe " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    43 => "    cmpq " + r + ", " + d + "\n    seta " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    44 => "    cmpq " + r + ", " + d + "\n    setae " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n",
+    _ => ircore.unsupported_op_refuse(tag, "x86-64"),
+  };
 }
 
 function ir_cmp_jcc(tag: i32, when_true: boolean): i32 {
@@ -5796,47 +5772,27 @@ function ssa_reg(k: i32): string {
 }
 
 function ssa_caller_reg(k: i32): string {
-  if (k == 0) {
-    return "%rax";
-  }
-  if (k == 1) {
-    return "%rsi";
-  }
-  if (k == 2) {
-    return "%rdi";
-  }
-  if (k == 3) {
-    return "%r8";
-  }
-  if (k == 4) {
-    return "%r9";
-  }
-  if (k == 5) {
-    return "%r10";
-  }
-  if (k == 6) {
-    return "%rcx";
-  }
-  if (k == 7) {
-    return "%rdx";
-  }
-  return "%r11";
+  return match (k) {
+    0 => "%rax",
+    1 => "%rsi",
+    2 => "%rdi",
+    3 => "%r8",
+    4 => "%r9",
+    5 => "%r10",
+    6 => "%rcx",
+    7 => "%rdx",
+    _ => "%r11",
+  };
 }
 
 function ssa_saved_reg(k: i32): string {
-  if (k == 0) {
-    return "%rbx";
-  }
-  if (k == 1) {
-    return "%r12";
-  }
-  if (k == 2) {
-    return "%r13";
-  }
-  if (k == 3) {
-    return "%r14";
-  }
-  return "%r15";
+  return match (k) {
+    0 => "%rbx",
+    1 => "%r12",
+    2 => "%r13",
+    3 => "%r14",
+    _ => "%r15",
+  };
 }
 
 function ssa_nregs(): i32 {
@@ -6085,15 +6041,15 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Al
   let floats = ssa.float_values(f, [], false);
   let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let crossing = ssalive.call_crossers(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, crossing);
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, crossing, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold, crossing);
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold, crossing, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold, crossing);
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold, crossing, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -6376,19 +6332,13 @@ function ssa_xreg(name: string): i32 {
   let c = name[2] as i32;
   let d = name[3] as i32;
   if (d == 120) {
-    if (c == 97) {
-      return 0;
-    }
-    if (c == 99) {
-      return 1;
-    }
-    if (c == 100) {
-      return 2;
-    }
-    if (c == 98) {
-      return 3;
-    }
-    return -1;
+    return match (c) {
+      97 => 0,
+      99 => 1,
+      100 => 2,
+      98 => 3,
+      _ => -1,
+    };
   }
   if (d == 112) {
     if (c == 115) {
@@ -6625,28 +6575,16 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
   if (s.records()) {
     return s.cfi(kind, ssa_dwarf(reg), n);
   }
-  if (kind == 1) {
-    return s.write("    .cfi_startproc\n");
-  }
-  if (kind == 2) {
-    return s.write("    .cfi_endproc\n");
-  }
-  if (kind == 3) {
-    return s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 4) {
-    return s.write("    .cfi_def_cfa_register " + reg + "\n");
-  }
-  if (kind == 5) {
-    return s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 6) {
-    return s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 7) {
-    return s.write("    .cfi_remember_state\n");
-  }
-  return s.write("    .cfi_restore_state\n");
+  return match (kind) {
+    1 => s.write("    .cfi_startproc\n"),
+    2 => s.write("    .cfi_endproc\n"),
+    3 => s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n"),
+    4 => s.write("    .cfi_def_cfa_register " + reg + "\n"),
+    5 => s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n"),
+    6 => s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n"),
+    7 => s.write("    .cfi_remember_state\n"),
+    _ => s.write("    .cfi_restore_state\n"),
+  };
 }
 
 function ssa_dwarf(reg: string): i32 {
@@ -7028,22 +6966,14 @@ function ssa_rhs32(r: string): string {
 }
 
 function ssa_alu_ext(tag: i32): i32 {
-  if (tag == 21) {
-    return 0;
-  }
-  if (tag == 22) {
-    return 5;
-  }
-  if (tag == 28) {
-    return 4;
-  }
-  if (tag == 29) {
-    return 1;
-  }
-  if (tag == 30) {
-    return 6;
-  }
-  return -1;
+  return match (tag) {
+    21 => 0,
+    22 => 5,
+    28 => 4,
+    29 => 1,
+    30 => 6,
+    _ => -1,
+  };
 }
 
 function ssa_lea_operand(tag: i32, a: i32, b: i32, dh: string, reg_of: i32[], fr: SsaFrame): string {
@@ -7071,47 +7001,27 @@ function ssa_lea_operand(tag: i32, a: i32, b: i32, dh: string, reg_of: i32[], fr
 }
 
 function ssa_r32(r: string): string {
-  if (r == "%rbx") {
-    return "%ebx";
-  }
-  if (r == "%rax") {
-    return "%eax";
-  }
-  if (r == "%rcx") {
-    return "%ecx";
-  }
-  if (r == "%rdx") {
-    return "%edx";
-  }
-  if (r == "%rsi") {
-    return "%esi";
-  }
-  if (r == "%rdi") {
-    return "%edi";
-  }
-  return r + "d";
+  return match (r) {
+    "%rbx" => "%ebx",
+    "%rax" => "%eax",
+    "%rcx" => "%ecx",
+    "%rdx" => "%edx",
+    "%rsi" => "%esi",
+    "%rdi" => "%edi",
+    _ => r + "d",
+  };
 }
 
 function ssa_r8(r: string): string {
-  if (r == "%rbx") {
-    return "%bl";
-  }
-  if (r == "%rax") {
-    return "%al";
-  }
-  if (r == "%rcx") {
-    return "%cl";
-  }
-  if (r == "%rdx") {
-    return "%dl";
-  }
-  if (r == "%rsi") {
-    return "%sil";
-  }
-  if (r == "%rdi") {
-    return "%dil";
-  }
-  return r + "b";
+  return match (r) {
+    "%rbx" => "%bl",
+    "%rax" => "%al",
+    "%rcx" => "%cl",
+    "%rdx" => "%dl",
+    "%rsi" => "%sil",
+    "%rdi" => "%dil",
+    _ => r + "b",
+  };
 }
 
 function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -7257,31 +7167,17 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
 }
 
 function ssa_bits_asm(what: string, d: string): string {
-  if (what == "clz:64") {
-    return "    lzcntq " + d + ", " + d + "\n";
-  }
-  if (what == "clz:32") {
-    return "    lzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
-  }
-  if (what == "ctz:64") {
-    return "    tzcntq " + d + ", " + d + "\n";
-  }
-  if (what == "ctz:32") {
-    return "    tzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
-  }
-  if (what == "popcount:64") {
-    return "    popcntq " + d + ", " + d + "\n";
-  }
-  if (what == "popcount:32") {
-    return "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
-  }
-  if (what == "bswap:64") {
-    return "    bswapq " + d + "\n";
-  }
-  if (what == "bswap:32") {
-    return "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n";
-  }
-  return "";
+  return match (what) {
+    "clz:64" => "    lzcntq " + d + ", " + d + "\n",
+    "clz:32" => "    lzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
+    "ctz:64" => "    tzcntq " + d + ", " + d + "\n",
+    "ctz:32" => "    tzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
+    "popcount:64" => "    popcntq " + d + ", " + d + "\n",
+    "popcount:32" => "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
+    "bswap:64" => "    bswapq " + d + "\n",
+    "bswap:32" => "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n",
+    _ => "",
+  };
 }
 
 function ssa_fmath_asm(what: string, d: string): string {
@@ -7788,32 +7684,22 @@ function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function ssa_sse_arith(what: string): string {
-  if (what == "fadd") {
-    return "addsd";
-  }
-  if (what == "fsub") {
-    return "subsd";
-  }
-  if (what == "fmul") {
-    return "mulsd";
-  }
-  return "divsd";
+  return match (what) {
+    "fadd" => "addsd",
+    "fsub" => "subsd",
+    "fmul" => "mulsd",
+    _ => "divsd",
+  };
 }
 
 function ssa_fmath_op(what: string): string {
-  if (what == "fsqrt") {
-    return "sqrtsd";
-  }
-  if (what == "ffloor") {
-    return "roundsd $1,";
-  }
-  if (what == "fceil") {
-    return "roundsd $2,";
-  }
-  if (what == "ftrunc") {
-    return "roundsd $3,";
-  }
-  return "";
+  return match (what) {
+    "fsqrt" => "sqrtsd",
+    "ffloor" => "roundsd $1,",
+    "fceil" => "roundsd $2,",
+    "ftrunc" => "roundsd $3,",
+    _ => "",
+  };
 }
 
 function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -8500,22 +8386,14 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
 // interrupt until after the next instruction, so no wakeup is lost between
 // them. cli masks again before the op returns.
 function x86_no_operand_op(op: string): string {
-  if (op == "dev_wfi") {
-    return "hlt";
-  }
-  if (op == "dev_breakpoint") {
-    return "int3";
-  }
-  if (op == "dev_irq_mask") {
-    return "cli";
-  }
-  if (op == "dev_irq_unmask") {
-    return "sti";
-  }
-  if (op == "dev_irq_wait") {
-    return "sti\n    hlt\n    cli";
-  }
-  return "";
+  return match (op) {
+    "dev_wfi" => "hlt",
+    "dev_breakpoint" => "int3",
+    "dev_irq_mask" => "cli",
+    "dev_irq_unmask" => "sti",
+    "dev_irq_wait" => "sti\n    hlt\n    cli",
+    _ => "",
+  };
 }
 
 // A device op: a fence, a privileged op, or one device register or port access
@@ -8826,25 +8704,15 @@ function ssa_home_name(reg_of: i32[], v: i32): string {
 }
 
 function sym_addr_need(sym: string): string {
-  if (sym == "__fern_scratch") {
-    return "raw_scratch";
-  }
-  if (sym == "__fern_envp") {
-    return "raw_environ";
-  }
-  if (sym == "__fern_splice_pipe") {
-    return "raw_splice_pipe";
-  }
-  if (sym == "__fern_cov_counters") {
-    return "raw_cover";
-  }
-  if (sym == "__fern_task_state") {
-    return "task";
-  }
-  if (sym == "__fern_vdso") {
-    return "vdso";
-  }
-  return "";
+  return match (sym) {
+    "__fern_scratch" => "raw_scratch",
+    "__fern_envp" => "raw_environ",
+    "__fern_splice_pipe" => "raw_splice_pipe",
+    "__fern_cov_counters" => "raw_cover",
+    "__fern_task_state" => "task",
+    "__fern_vdso" => "vdso",
+    _ => "",
+  };
 }
 
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -10215,7 +10083,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name) {
-        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc(f, alloc));
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true }));
       }
     },
     None => {}

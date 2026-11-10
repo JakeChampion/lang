@@ -6,6 +6,7 @@ import "./semtypes";
 import "./semrecords";
 import "./semscalarreturn";
 import "std/string";
+import "std/option";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
@@ -465,7 +466,7 @@ pub function split_parts(records: semrecords.Records, finalizers: ssasem.Finaliz
   let parts: typeinfo.Type[] = [];
   if let typeinfo.TypeStruct(s) = t {
     let at = semrecords.find(records, t);
-    if (at >= 0 && !records.list[at].views && ssasem.finalizer_index(finalizers, s.name) < 0) {
+    if (at >= 0 && !records.list[at].views && ssasem.finalizer_index(finalizers, s.name).is_none()) {
       for field in records.list[at].fields {
         parts = parts.append(field.ty);
       }
@@ -1131,14 +1132,14 @@ function pair_lane_name(slot: i32): string {
 }
 
 // The pair slot whose 64-bit lane a caller's read names, or -1.
-pub function pair_lane_slot(name: string): i32 {
+pub function pair_lane_slot(name: string): Option[i32] {
   if (name == "__pair_lane") {
-    return 0;
+    return Some(0);
   }
   if (name == "__pair_lane1") {
-    return 1;
+    return Some(1);
   }
-  return -1;
+  return None;
 }
 
 function lane_contract(slot: i32): ssasem.Contract {
@@ -1153,14 +1154,14 @@ function pair_word_name(slot: i32): string {
 }
 
 // The pair word a caller's read names, or -1.
-pub function pair_word_slot(name: string): i32 {
+pub function pair_word_slot(name: string): Option[i32] {
   if (name == "__pair_word") {
-    return 0;
+    return Some(0);
   }
   if (name == "__pair_word1") {
-    return 1;
+    return Some(1);
   }
-  return -1;
+  return None;
 }
 
 pub function word_as_prefix(): string {
@@ -1445,13 +1446,12 @@ function split_calls(f0: ssasem.Func, sites: Sites, own: boolean[]): ssasem.Func
       if (k == done[bi]) {
         given = pending[bi];
       }
-      let u = branch_position(f, defs, site, ins, own, given);
-      if (u < 0) {
+      let Some(u) = branch_position(f, defs, site, ins, own, given) else {
         let sc = split_site(f, ins, site, defs, given);
         f = sc.f;
         insts = util.append_all(insts, sc.insts).append(sc.call);
         continue;
-      }
+      };
       let br = semscalarreturn.branch_parts(f, ins.args[u], site.decl.params[u]);
       f = branched_block(br.f, bi, b, util.append_all(insts, br.head), br, br.joins.append(ins), k + 1);
       done = done.append(0).append(0).append(br.joins.len());
@@ -1468,14 +1468,14 @@ function split_calls(f0: ssasem.Func, sites: Sites, own: boolean[]): ssasem.Func
   return f;
 }
 
-function branch_position(f: ssasem.Func, defs: ssa.SInst[], site: Site, ins: ssa.SInst, own: boolean[], given: semscalarreturn.Given): i32 {
+function branch_position(f: ssasem.Func, defs: ssa.SInst[], site: Site, ins: ssa.SInst, own: boolean[], given: semscalarreturn.Given): Option[i32] {
   for pos in 0..ins.args.len() {
     let open = pos < site.split.len() && site.split[pos] && !util.has_i32(given.at, pos);
     if (open && semscalarreturn.needs_branch(f, defs, site.decl.params[pos], ins.args[pos], own)) {
-      return pos;
+      return Some(pos);
     }
   }
-  return -1;
+  return None;
 }
 
 // Ends block `bi` with a branch on the Option's flag to a block reading its

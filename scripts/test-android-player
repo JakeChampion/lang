@@ -22,7 +22,8 @@ build/android-player/events
 wasmtime run build/android-player/events.wasm
 "$player_compiler" -target arm64-android -shared -export main -o build/android-player/abi-arm64.so tests/stdlib/android_player_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/android-player/libandroid.so scripts/player-reference/jni-mock.c
+  scripts/libandroid-stubs scripts/player-reference/jni-mock.c > build/android-player/stubs.c
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/android-player/libandroid.so scripts/player-reference/jni-mock.c build/android-player/stubs.c
   # Bionic names its C library libc.so. The host linker script is not an ELF file.
   ln -sf "$(cc -print-file-name=libc.so.6)" build/android-player/libc.so
   "$player_compiler" -target "$android_target" -shared -export main -o build/android-player/mock.so tests/stdlib/android_player_mock_test.fern internal/stdlib

@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -99,10 +98,7 @@ func androidJNIMockCheck(t *testing.T, src, exports, check string) {
 		t.Fatalf("C harness: %v\n%s", err, out)
 	}
 	// The JNI probe must not call an Android C function on this Linux host.
-	stub := "#include <stdlib.h>\n"
-	for _, match := range regexp.MustCompile(`@import\("libandroid\.so", "([A-Za-z0-9_]+)"\)`).FindAllStringSubmatch(src, -1) {
-		stub += "void " + match[1] + "(void) { abort(); }\n"
-	}
+	stub := e2eharness.LibandroidStub(t, "", src)
 	stubPath := filepath.Join(dir, "android.c")
 	if err := os.WriteFile(stubPath, []byte(stub), 0o644); err != nil {
 		t.Fatal(err)

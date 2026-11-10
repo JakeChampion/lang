@@ -1,0 +1,4 @@
+aes-gcm overlap: aead: the additional data overlaps the text or its tag
+aes-gcm apart: sealed 48 bytes
+chacha20-poly1305 overlap: aead: the additional data overlaps the text or its tag
+chacha20-poly1305 apart: sealed 48 bytes

@@ -15,33 +15,23 @@ import "../util";
 
 function width_of(b: i32): i32 {
   let r = b % 5;
-  if (r == 0) {
-    return 0;
-  }
-  if (r == 1) {
-    return 1;
-  }
-  if (r == 2) {
-    return 2;
-  }
-  if (r == 3) {
-    return 4;
-  }
-  return 8;
+  return match (r) {
+    0 => 0,
+    1 => 1,
+    2 => 2,
+    3 => 4,
+    _ => 8,
+  };
 }
 
 function name_of(b: i32): string {
   let r = b % 4;
-  if (r == 0) {
-    return "";
-  }
-  if (r == 1) {
-    return "f";
-  }
-  if (r == 2) {
-    return "g";
-  }
-  return "h";
+  return match (r) {
+    0 => "",
+    1 => "f",
+    2 => "g",
+    _ => "h",
+  };
 }
 
 function decode(bytes: u8[]): ir.Op[] {

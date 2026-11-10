@@ -92,14 +92,14 @@ pub function query(p: Program, line: i32, col: i32): Option[Query] {
   return Some(Query { v: view.types, site: site, quals: quals, f: found });
 }
 
-function source_function(v: checker.QueryView, original: parser.FuncDecl): i32 {
+function source_function(v: checker.QueryView, original: parser.FuncDecl): Option[i32] {
   for i in 0..v.mod.funcs.len() {
     let fd = v.mod.funcs[i];
     if (fd.line == original.line && fd.col == original.col && names(fd.name, original.name)) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function constant_declaration(v: checker.QueryView, target: string): boolean {
@@ -133,8 +133,7 @@ function constant_source_node(p: Program, v: checker.QueryView, site: Site, targ
   let raw_site = Site { ...site, qual: "", target: "", col: site.name_col };
   for fd in source.pmod.funcs {
     if let Some(_) = probe_all(fd.body, raw_site).node {
-      let index = source_function(v, fd);
-      if (index >= 0) {
+      if let Some(index) = source_function(v, fd) {
         let expr: ast.Expr = ast.ExprIdent { name: target, line: site.line, col: site.col, ty: "", builtin: false };
         return Some(Found { kind: if (site.qual.len() > 0) { K_QUALIFIED } else { K_IDENT }, expr: expr, fd: index });
       }

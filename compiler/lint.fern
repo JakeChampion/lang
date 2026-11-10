@@ -54,16 +54,12 @@ pub function known_rules(): string {
 }
 
 function parse_severity(v: string): i32 {
-  if (v == "allow") {
-    return ALLOW;
-  }
-  if (v == "warn") {
-    return WARN;
-  }
-  if (v == "deny") {
-    return DENY;
-  }
-  return -1;
+  return match (v) {
+    "allow" => ALLOW,
+    "warn" => WARN,
+    "deny" => DENY,
+    _ => -1,
+  };
 }
 
 function severity_name(sev: i32): string {

@@ -1,0 +1,9 @@
+// spec: VT-02
+struct Part { socket: Socket }
+
+@value
+struct Bad { parts: Part[] }
+
+function main(): i32 {
+  return 0;
+}

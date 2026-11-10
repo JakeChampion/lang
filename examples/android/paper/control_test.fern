@@ -68,6 +68,11 @@ function gpu_line(dir: string, line: string): void {
   let ok = write_file(dir + "/gpu", testkit.read_text(dir + "/gpu") + line + "\n");
 }
 
+// The calls to the text field of the keyboard go to a log of their own.
+function field_line(dir: string, line: string): void {
+  let ok = write_file(dir + "/field", testkit.read_text(dir + "/field") + line + "\n");
+}
+
 function log_line(dir: string, line: string): void {
   let ok = write_file(dir + "/log", testkit.read_text(dir + "/log") + line + "\n");
 }
@@ -113,7 +118,9 @@ function fake(dir: string, now: i64): control.Device {
       return true;
     },
     notifications: (): void => log_line(dir, "notifications"),
-    keyboard: (show: boolean): void => {},
+    show_field: (text: string, action: i32): void => field_line(dir, "show " + action.to_string() + " " + text),
+    set_field: (text: string): void => field_line(dir, "set " + text),
+    hide_field: (): void => field_line(dir, "hide"),
     bars: (top: boolean, bottom: boolean): void => {},
     has_location: (): boolean => false,
     ask_location: (): void => {},
@@ -224,6 +231,10 @@ function type_text(own r: Run, text: string): Run {
     t = at(t, 20, android.Char(c as i32));
   }
   return t;
+}
+
+function fielded(r: Run): string {
+  return testkit.read_text(r.dir + "/field").trim().replace("\n", "; ");
 }
 
 function logged(r: Run): string {
@@ -339,6 +350,28 @@ function test_unlimited_home_apps(): test.TestOutcome {
 function test_home_app_opens(): test.TestOutcome {
   let r = tap(add_home(shown("open"), "com.whatsapp/Main"), "open:com.whatsapp/Main");
   return test.assert_eq(logged(r), "launch com.whatsapp/Main");
+}
+
+// The keyboard of the system types through the text field: each change
+// comes as the whole text, and its action key opens the first match.
+function test_text_field(): test.TestOutcome {
+  let r = swipe(shown("field"), 2000, 900);
+  r = control_off_auto(r);
+  r = at(r, 20, android.Text("ma"));
+  let query = r.s.query;
+  r = at(r, 20, android.Text("m"));
+  r = at(r, 20, android.TextAction(android.ACTION_GO));
+  return test.assert_eq(query + " " + logged(r) + " | " + fielded(r), "ma launch com.google.android.apps.maps/Main | show 2 ; hide; hide; show 2 ; hide");
+}
+
+// A hardware key edits the text, so the field gets the new text.
+function test_hardware_keys_set_field(): test.TestOutcome {
+  let r = swipe(shown("keys"), 2000, 900);
+  r = control_off_auto(r);
+  r = type_text(r, "zq");
+  r = at(r, 20, android.Key(67, 0));
+  r = at(r, 20, android.Key(4, 1));
+  return test.assert_eq(fielded(r), "show 2 ; hide; hide; show 2 ; set z; set zq; set z; hide");
 }
 
 function test_rename(): test.TestOutcome {
@@ -475,6 +508,8 @@ function main(): i32 {
   r = r.it("a swipe down opens the notifications", test_swipe_down_opens_notifications);
   r = r.it("home holds any number of apps", test_unlimited_home_apps);
   r = r.it("a home app opens", test_home_app_opens);
+  r = r.it("the keyboard of the system types through the text field", test_text_field);
+  r = r.it("a hardware key gives the field the new text", test_hardware_keys_set_field);
   r = r.it("rename an app", test_rename);
   r = r.it("a blocked app does not open", test_block);
   r = r.it("a mindful app opens after the pause", test_mindful_pause);

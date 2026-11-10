@@ -34,13 +34,13 @@ function literal(operand: string): Option[i64] {
   return None;
 }
 
-function separator(line: string): i32 {
+function separator(line: string): Option[i32] {
   for at in 0..line.len() {
     if (line[at] == b' ' || line[at] == b'\t') {
-      return at;
+      return Some(at);
     }
   }
-  return -1;
+  return None;
 }
 
 function operands(name: string, source: string, destination: string): WideOp {
@@ -63,10 +63,9 @@ function operands(name: string, source: string, destination: string): WideOp {
 }
 
 function extra(line: string): WideOp {
-  let at = separator(line);
-  if (at < 0) {
+  let Some(at) = separator(line) else {
     return unknown();
-  }
+  };
   let name = slice_unchecked(line, 0, at).to_owned();
   let parts = slice_unchecked(line, at + 1, line.len()).to_owned().trim().split(",");
   return if (parts.len() == 2) { operands(name, parts[0].trim(), parts[1].trim()) } else { unknown() };

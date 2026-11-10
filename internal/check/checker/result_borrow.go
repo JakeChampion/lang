@@ -137,6 +137,26 @@ type borrowScope struct {
 	handlesOnly              bool
 }
 
+// binding is the scope inside a pattern that binds names. They shadow the
+// outer names, and they borrow only when lends is true.
+func (b borrowScope) binding(names []string, lends bool) borrowScope {
+	if len(names) == 0 {
+		return b
+	}
+	out := borrowScope{borrowed: map[string]bool{}, locals: map[string]bool{}, values: b.values, handlesOnly: b.handlesOnly}
+	for k, v := range b.borrowed {
+		out.borrowed[k] = v
+	}
+	for k, v := range b.locals {
+		out.locals[k] = v
+	}
+	for _, n := range names {
+		out.borrowed[n] = lends
+		delete(out.locals, n)
+	}
+	return out
+}
+
 // A type parameter can hold a handle after substitution.
 func mayRetainBorrow(t ast.Type) bool {
 	_, parameter := t.(ast.ParamType)
@@ -185,6 +205,15 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		return c.exprBorrows(x.Source, b)
 	case *ast.IfExpr:
 		return c.exprBorrows(x.Then, b) || c.exprBorrows(x.Else, b)
+	case *ast.MatchExpr:
+		// An arm's binders come from the scrutinee, so they borrow only when it does.
+		lends := c.exprBorrows(x.Tag, b)
+		for _, arm := range x.Arms {
+			if c.exprBorrows(arm.Body, b.binding(arm.Binders(), lends)) {
+				return true
+			}
+		}
+		return false
 	case *ast.Call:
 		if !c.calleeResultBorrows(x) {
 			return false

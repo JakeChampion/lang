@@ -1501,21 +1501,21 @@ function print_span_block(i: i32, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 // The span of an empty `else` block after the block f.own, or -1.
-function else_span(f: Fmt): i32 {
+function else_span(f: Fmt): Option[i32] {
   if (f.own < 0) {
-    return -1;
+    return None;
   }
   let end = f.spans.closes[f.own];
   let from = f.own + 1;
   for i in from..f.spans.opens.len() {
     if (f.spans.else_of[i] == f.own) {
-      return i;
+      return Some(i);
     }
     if (f.spans.opens[i] > end) {
-      return -1;
+      return None;
     }
   }
-  return -1;
+  return None;
 }
 
 function anchored(f: Fmt, line: i32): Fmt {
@@ -2460,10 +2460,9 @@ function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
 
 function print_else(els: ast.Stmt[], chained: boolean, depth: i32, f: Fmt): (string, Fmt) {
   if (els.len() == 0) {
-    let at = else_span(f);
-    if (at < 0) {
+    let Some(at) = else_span(f) else {
       return ("", f);
-    }
+    };
     let (empty_text, ge) = print_span_block(at, depth, Fmt { ...f, si: at + 1 });
     return (" else " + empty_text, ge);
   }
@@ -3041,6 +3040,9 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
 
 function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
   let out = "";
+  if (sd.value_type) {
+    out += "@value\n";
+  }
   if (sd.derives.len() > 0) {
     out += "@derive(";
     for di in 0..sd.derives.len() {

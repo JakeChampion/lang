@@ -1259,6 +1259,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       col: mod.structs[j].col,
       enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
       must_consume: mod.structs[j].must_consume,
+      value_type: mod.structs[j].value_type,
       variant_field_names: mod.structs[j].variant_field_names,
       is_pub: true,
       is_package: false,

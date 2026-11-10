@@ -5,6 +5,7 @@
 import "std/android";
 import "std/android/draw";
 import "std/android/image";
+import "std/android/keyboard";
 import "std/android/player";
 import "std/fetch";
 import "std/log";
@@ -117,7 +118,9 @@ function device(ctx: usize, p: player.Player): control.Device {
     finish: (): void => android.finish(ctx),
     keep_screen_on: (on: boolean): void => android.keep_screen_on(ctx, on),
     immersive: (on: boolean): void => android.immersive(ctx, on),
-    keyboard: (on: boolean): void => android.show_keyboard(ctx, on),
+    show_field: (q: string): void => keyboard.show(ctx, q, android.INPUT_TEXT, android.ACTION_SEARCH),
+    set_field: (q: string): void => keyboard.set_text(ctx, q),
+    hide_field: (): void => keyboard.hide(ctx),
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_all(rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     play: (uri: string): boolean => has && player.open(ctx, p, uri),
