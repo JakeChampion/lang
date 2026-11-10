@@ -1,0 +1,26 @@
+{
+  "source": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "purpose": "Reproduce a historical main-red entropy-capacity assertion on actual immutable main before any test repair. No performance comparison.",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2e",
+    "-run",
+    "^TestSelfHostEntropyAllocationCapacity$",
+    "-count=1",
+    "-timeout=12m",
+    "-json"
+  ],
+  "started": "2026-11-10T18:46:03.804805+00:00",
+  "exit_code": 1,
+  "finished": "2026-11-10T18:48:02.476676+00:00",
+  "failures": [
+    "TestSelfHostEntropyAllocationCapacity/x86-64-linux/-1",
+    "TestSelfHostEntropyAllocationCapacity/x86-64-linux",
+    "TestSelfHostEntropyAllocationCapacity/arm64-linux/-1",
+    "TestSelfHostEntropyAllocationCapacity/arm64-linux",
+    "TestSelfHostEntropyAllocationCapacity",
+    null
+  ],
+  "skips": 0
+}

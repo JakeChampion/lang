@@ -27,6 +27,13 @@ All 20 targeted suites report 150 test and subtest passes, with zero skips.
 Current native and interpreter Opus controls match the full reference output.
 These retained correctness controls establish no compiler speedup or external rank.
 
+The [receiver test integration](benchmarks/compiler-receiver-main-integration-2026-11-10/README.md) retains main `bcd223ba` owned-result contracts and compiler code.
+Fresh main and retained normal compiler images match byte for byte.
+All 23 targeted suites report 248 test and subtest passes without skips.
+The separate entropy fixture control reproduces two stale negative-length expectations and then reports 58 passes after repair.
+It preserves runtime refusal and every original valid-capacity check.
+These source-specific correctness controls add no compiler performance claim.
+
 The [interpreter target-search experiment](benchmarks/compiler-interpreter-targets-2026-11-09/README.md) avoids declaration searches whose result argument evaluation does not use.
 Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
 Both binaries produce identical TAP output.

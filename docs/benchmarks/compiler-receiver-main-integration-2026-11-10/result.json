@@ -1,0 +1,102 @@
+{
+  "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "main": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "purpose": "Fresh correctness controls after main owned-result integration. No timing comparison. Normal full is not an allocation-balance control.",
+  "runs": [
+    {
+      "label": "quick",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/quick.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:41:22.366251+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:41:46.217197+00:00"
+    },
+    {
+      "label": "validate",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/validate.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:41:46.224940+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:53:28.396959+00:00"
+    },
+    {
+      "label": "unit-controls",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/unit-controls.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:41:46.225821+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:44:03.302513+00:00"
+    },
+    {
+      "label": "build",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/build.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:41:46.226602+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:21.437022+00:00"
+    },
+    {
+      "label": "normal-own-source",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:45:21.437594+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:41.285056+00:00"
+    },
+    {
+      "label": "native-opus",
+      "args": [
+        "python3",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus.py"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:45:41.286174+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:47.438336+00:00"
+    },
+    {
+      "label": "full-interpreter",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+        "-stdlib",
+        "/workspace/lang-compiler-main-20261110-1845/internal/stdlib",
+        "-interp",
+        "/workspace/lang-compiler-main-20261110-1845/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "started": "2026-11-10T18:45:47.439547+00:00",
+      "budget_seconds": 1980,
+      "note": "Correctness only, overlaps targeted tests. No paired timing or normal-run leak claim.",
+      "exit_code": 0,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+      "finished": "2026-11-10T18:49:13.876308+00:00"
+    },
+    {
+      "label": "ci-selftest",
+      "args": [
+        "make",
+        "ci-selftest"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "started": "2026-11-10T18:53:28.402574+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:54:27.051131+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T18:54:27.054805+00:00"
+}

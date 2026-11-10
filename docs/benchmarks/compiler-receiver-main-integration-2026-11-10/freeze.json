@@ -1,0 +1,16 @@
+[
+  {
+    "path": "/workspace/lang-compiler-main-20261110-1845",
+    "head": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+    "unchanged_files_hardlinked": 24220,
+    "separate_files": 126,
+    "note": "Immutable source snapshot. Shared source files must never be edited. Existing frozen source files remain untouched."
+  },
+  {
+    "path": "/workspace/lang-checker-union-retained-20261110-1845",
+    "head": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "unchanged_files_hardlinked": 24218,
+    "separate_files": 904,
+    "note": "Immutable source snapshot. Shared source files must never be edited. Existing frozen source files remain untouched."
+  }
+]

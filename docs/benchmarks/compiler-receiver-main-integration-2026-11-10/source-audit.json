@@ -1,0 +1,13 @@
+{
+  "main": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "integration": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "retained_tests": "74c84520a2925bf40089b640a728813f46fca3c7",
+  "compiler_and_stdlib_equal_main": true,
+  "receiver_and_kernel_test_equal_integration": true,
+  "main_producer_pin_sha256": "bf10dcab7a95f12aeea13ad2a4a3a0691f8370bc7a2396f00c48b1df865ed73f",
+  "files": {
+    "internal/testing/e2ecompiler/self_host_receiver_union_membership_test.go": "ee9029d926a91242f233f69cbf5720c249d9847d704a7a3064452127a4aff480",
+    "internal/testing/e2ecompiler/self_host_kernel_sched_test.go": "a2c444559a4dcdd6635aabc3f05a6447aa270e905b991d8f69edc6f1779adfa7",
+    "internal/testing/e2e/linux_entropy_reads_test.go": "24a5683f2b825164421a9898a7f165dddd8b8cff6f9f43ff003e8f494e28ada3"
+  }
+}

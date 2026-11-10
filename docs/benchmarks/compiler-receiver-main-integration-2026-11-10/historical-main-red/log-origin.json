@@ -1,0 +1,17 @@
+{
+  "job-129981261761.log.gz": {
+    "tool_decoded_utf8_bytes": 1713710,
+    "tool_decoded_sha256": "f8e7a8516abbe131d0d1b57fef96e4e6cfd2e51cf8b384aae7dd98aceaa73a5e",
+    "gzip_sha256": "27901d7526abd1804b563f34b83a4538c83c29c79f35ff92234543a30302163f"
+  },
+  "job-129981261876.log.gz": {
+    "tool_decoded_utf8_bytes": 1074439,
+    "tool_decoded_sha256": "02b9ed82d93fab56ee434d81fb7123cd6230d19013ba9fc9f32d0e695fa53efa",
+    "gzip_sha256": "c0e90e355ce12e94b6c4c3a1dcea4d459ecad18f3de8fce2f53fe12d5863eb6e"
+  },
+  "job-129981261898.log.gz": {
+    "tool_decoded_utf8_bytes": 2221721,
+    "tool_decoded_sha256": "783b1cbcca8751b06e005507c72b6c9cd05aeb1198de0eae7aefb381abb2c837",
+    "gzip_sha256": "c77185f2b2b41e4eb5282188b79ba63629cc4f779e6611028c449561ced13eb7"
+  }
+}

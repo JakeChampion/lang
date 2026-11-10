@@ -1,0 +1,279 @@
+{
+  "main": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "integration": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "retained": "74c84520a2925bf40089b640a728813f46fca3c7",
+  "scope": "Compiler and standard library exactly match main. Receiver and kernel tests match the integration snapshot. The additional entropy fixture alone changes after that snapshot. No timing comparison, normal-run leak claim, or retained compiler optimization.",
+  "native": {
+    "test_subtest_passes": 248,
+    "skips": 0,
+    "failures": []
+  },
+  "units": {
+    "test_subtest_passes": 2867,
+    "skips": 0,
+    "failures": []
+  },
+  "formatter": {
+    "test_subtest_passes": 1,
+    "skips": 0,
+    "failures": []
+  },
+  "entropy_before": {
+    "test_subtest_passes": 16,
+    "skips": 0,
+    "failures": [
+      "TestSelfHostEntropyAllocationCapacity/x86-64-linux/-1",
+      "TestSelfHostEntropyAllocationCapacity/x86-64-linux",
+      "TestSelfHostEntropyAllocationCapacity/arm64-linux/-1",
+      "TestSelfHostEntropyAllocationCapacity/arm64-linux",
+      "TestSelfHostEntropyAllocationCapacity",
+      null
+    ]
+  },
+  "entropy_after": {
+    "test_subtest_passes": 58,
+    "skips": 0,
+    "failures": []
+  },
+  "build": {
+    "baseline": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+    "retained": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "purpose": "Fresh main and retained-source normal images must match byte for byte after rejection. No performance comparison.",
+    "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+    "runs": [
+      {
+        "label": "main",
+        "args": [
+          "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/main-normal",
+          "compiler/fern.fern",
+          "internal/stdlib"
+        ],
+        "cwd": "/workspace/lang-compiler-main-20261110-1845",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0"
+        },
+        "started": "2026-11-10T18:41:50.187797+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:44:04.709531+00:00",
+        "sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c"
+      },
+      {
+        "label": "retained",
+        "args": [
+          "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+          "compiler/fern.fern",
+          "internal/stdlib"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0"
+        },
+        "started": "2026-11-10T18:44:04.899661+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:21.370735+00:00",
+        "sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c"
+      }
+    ],
+    "exit_code": 0,
+    "identical_normal_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+    "finished": "2026-11-10T18:45:21.402333+00:00"
+  },
+  "control": {
+    "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "main": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+    "purpose": "Fresh correctness controls after main owned-result integration. No timing comparison. Normal full is not an allocation-balance control.",
+    "runs": [
+      {
+        "label": "quick",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/quick.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:41:22.366251+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:41:46.217197+00:00"
+      },
+      {
+        "label": "validate",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/validate.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:41:46.224940+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:53:28.396959+00:00"
+      },
+      {
+        "label": "unit-controls",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/unit-controls.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:41:46.225821+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:44:03.302513+00:00"
+      },
+      {
+        "label": "build",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/build.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:41:46.226602+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:21.437022+00:00"
+      },
+      {
+        "label": "normal-own-source",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/normal-own-source.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:45:21.437594+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:41.285056+00:00"
+      },
+      {
+        "label": "native-opus",
+        "args": [
+          "python3",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/native-opus.py"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:45:41.286174+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:47.438336+00:00"
+      },
+      {
+        "label": "full-interpreter",
+        "args": [
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+          "-stdlib",
+          "/workspace/lang-compiler-main-20261110-1845/internal/stdlib",
+          "-interp",
+          "/workspace/lang-compiler-main-20261110-1845/tests/stdlib/opus_delimited_test.fern"
+        ],
+        "started": "2026-11-10T18:45:47.439547+00:00",
+        "budget_seconds": 1980,
+        "note": "Correctness only, overlaps targeted tests. No paired timing or normal-run leak claim.",
+        "exit_code": 0,
+        "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+        "finished": "2026-11-10T18:49:13.876308+00:00"
+      },
+      {
+        "label": "ci-selftest",
+        "args": [
+          "make",
+          "ci-selftest"
+        ],
+        "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+        "started": "2026-11-10T18:53:28.402574+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:54:27.051131+00:00"
+      }
+    ],
+    "exit_code": 0,
+    "finished": "2026-11-10T18:54:27.054805+00:00"
+  },
+  "own_source": {
+    "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "args": [
+      "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+      "-check",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "binary_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+    "started": "2026-11-10T18:45:21.504176+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-10T18:45:41.258202+00:00"
+  },
+  "native_opus": {
+    "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "fixed_input_source": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+    "compiler_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+    "purpose": "One current-main-equivalent native Opus correctness control after upstream parser and mismatch-kernel changes. Not a paired timing or normal-run leak check.",
+    "runs": [
+      {
+        "label": "compile",
+        "args": [
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/opus-native",
+          "/workspace/lang-compiler-main-20261110-1845/tests/stdlib/opus_delimited_test.fern",
+          "/workspace/lang-compiler-main-20261110-1845/internal/stdlib"
+        ],
+        "started": "2026-11-10T18:45:41.380127+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:47.386977+00:00"
+      },
+      {
+        "label": "program",
+        "args": [
+          "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/opus-native"
+        ],
+        "started": "2026-11-10T18:45:47.387768+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T18:45:47.422294+00:00"
+      }
+    ],
+    "exit_code": 0,
+    "native_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+    "tap_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+    "finished": "2026-11-10T18:45:47.423078+00:00"
+  },
+  "source_audit": {
+    "main": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+    "integration": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+    "retained_tests": "74c84520a2925bf40089b640a728813f46fca3c7",
+    "compiler_and_stdlib_equal_main": true,
+    "receiver_and_kernel_test_equal_integration": true,
+    "main_producer_pin_sha256": "bf10dcab7a95f12aeea13ad2a4a3a0691f8370bc7a2396f00c48b1df865ed73f",
+    "files": {
+      "internal/testing/e2ecompiler/self_host_receiver_union_membership_test.go": "ee9029d926a91242f233f69cbf5720c249d9847d704a7a3064452127a4aff480",
+      "internal/testing/e2ecompiler/self_host_kernel_sched_test.go": "a2c444559a4dcdd6635aabc3f05a6447aa270e905b991d8f69edc6f1779adfa7",
+      "internal/testing/e2e/linux_entropy_reads_test.go": "24a5683f2b825164421a9898a7f165dddd8b8cff6f9f43ff003e8f494e28ada3"
+    }
+  },
+  "historical_ci_logs": {
+    "job-129981261761.log.gz": {
+      "tool_decoded_utf8_bytes": 1713710,
+      "tool_decoded_sha256": "f8e7a8516abbe131d0d1b57fef96e4e6cfd2e51cf8b384aae7dd98aceaa73a5e",
+      "gzip_sha256": "27901d7526abd1804b563f34b83a4538c83c29c79f35ff92234543a30302163f"
+    },
+    "job-129981261876.log.gz": {
+      "tool_decoded_utf8_bytes": 1074439,
+      "tool_decoded_sha256": "02b9ed82d93fab56ee434d81fb7123cd6230d19013ba9fc9f32d0e695fa53efa",
+      "gzip_sha256": "c0e90e355ce12e94b6c4c3a1dcea4d459ecad18f3de8fce2f53fe12d5863eb6e"
+    },
+    "job-129981261898.log.gz": {
+      "tool_decoded_utf8_bytes": 2221721,
+      "tool_decoded_sha256": "783b1cbcca8751b06e005507c72b6c9cd05aeb1198de0eae7aefb381abb2c837",
+      "gzip_sha256": "c77185f2b2b41e4eb5282188b79ba63629cc4f779e6611028c449561ced13eb7"
+    }
+  },
+  "claim": {
+    "id": 6776197395
+  }
+}
