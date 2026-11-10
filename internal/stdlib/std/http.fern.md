@@ -3322,6 +3322,17 @@ pub function fields_ok(fields: HeaderMap): boolean {
 pub function field_value_ok(value: string): boolean {
   return __scan_set(value, 0, FIELD_CTL) == value.len();
 }
+
+// An authority is a host and an optional port: no control byte, no space,
+// no userinfo and no path, query or fragment delimiter.
+pub function authority_ok(value: string): boolean {
+  for b in value.as_bytes() {
+    if (b <= 32 as u8 || b == 127 as u8 || b == b'@' || b == b'/' || b == b'?' || b == b'#' || b == b'\\') {
+      return false;
+    }
+  }
+  return true;
+}
 ```
 
 ### Module introduction

@@ -319,6 +319,22 @@ function test_erase_accepts_owned_words(): test.TestOutcome {
   return test.pass();
 }
 
+function test_hotp_ten_digits(): test.TestOutcome {
+  let key = "12345678901234567890123456789012".bytes();
+  for c in 0..40 {
+    let full = crypto.hotp_sha256(key, c as i64, 10);
+    if (full < 0 || full % 100000000 != crypto.hotp_sha256(key, c as i64, 8) || crypto.hotp_sha256(key, c as i64, 12) != full) {
+      return test.fail("counter " + c.to_string() + ": 10 digits gave " + full.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function test_pbkdf2_verify_refuses_an_empty_hash(): test.TestOutcome {
+  let none: u8[] = [];
+  return test.assert_false(crypto.pbkdf2_sha256_verify("password".as_bytes(), "salt".bytes(), 1, none));
+}
+
 function main(): i32 {
   let r = test.new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
@@ -342,6 +358,8 @@ function main(): i32 {
   r = r.it("hkdf-sha384", test_hkdf_sha384);
   r = r.it("totp RFC 6238", test_totp_rfc6238);
   r = r.it("hotp + digits", test_hotp_and_digits);
+  r = r.it("hotp with ten digits", test_hotp_ten_digits);
+  r = r.it("pbkdf2 verify refuses an empty hash", test_pbkdf2_verify_refuses_an_empty_hash);
   r = r.it("sha3 one-shots", test_sha3_one_shots);
   r = r.it("shake128 empty", test_shake128_empty);
   r = r.it("shake128 0xa3 x 200", test_shake128_a3);

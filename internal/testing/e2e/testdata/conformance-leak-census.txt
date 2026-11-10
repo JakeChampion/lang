@@ -1,5 +1,7 @@
 # 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
+# 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
 # 2026-11-09: lambda_every_path_returns is clean under RC trace.
+# 2026-11-10: associated_factory_result_is_owned has zero unpaired allocations under native RC trace.
 # 2026-11-09: own_field_moves_beside_a_sibling_branch_read is clean under RC trace.
 # 2026-11-09: own_field_moves_beside_an_if_value is clean under RC trace.
 # 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
@@ -146,6 +148,7 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 assert_fails_with_shadowing_exit                     0
 assert_todo_ignore_shadowing_names                   0
+associated_factory_result_is_owned                   0
 associated_functions                                 0
 audit_core_builtins                                  0
 audit_env_time_random                                0
@@ -201,6 +204,7 @@ cast_int_arith_to_float                              0
 cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
+cell_constructor_result_ownership                    0
 cell_in_container                                    0
 cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
