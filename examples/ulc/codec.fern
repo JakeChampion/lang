@@ -9,6 +9,9 @@ import "./noise_jump";
 
 const SIGNED_SQUARES: f64[] = [0.0, 0.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0, 0.0, -49.0, -36.0, -25.0, -16.0, -9.0, -4.0, 0.0];
 
+// IEEE 754 bits of the signed squares. Zero marks a control command.
+const SIGNED_SQUARE_BITS: u32[] = [0u32, 0u32, 1082130432u32, 1091567616u32, 1098907648u32, 1103626240u32, 1108344832u32, 1111752704u32, 0u32, 3259236352u32, 3255828480u32, 3251109888u32, 3246391296u32, 3239051264u32, 3229614080u32, 0u32];
+
 pub function valid_config(block_size: i32, channels: i32): boolean {
   return channels >= 1 && channels <= 255 && block_size >= 256 && block_size <= 32768 && (block_size & block_size - 1) == 0;
 }
@@ -230,9 +233,21 @@ unsafe function coefficient_impl[const PACKED: i32](own r: BitReader, size: i32,
   }
   let seed = r.seed;
   let quant = scale(quantizer_value(initial));
-  let direct_quant = if (packed) { quant * 79228162514264337593543950336.0 } else { quant };
+  // Packed values multiply each square by 2^(91-q). All valid quantizers keep the result normal.
+  let direct_exponent = (91 - quantizer_value(initial)) as u32 << 23u32;
   let n = 0;
   while (n < size) {
+    if (packed) {
+      let copied = direct_run(data, pos, size - n, output_address + (4 * n) as usize, direct_exponent);
+      if (copied > 0) {
+        n += copied;
+        pos += copied;
+        silent = false;
+        if (n == size) {
+          break;
+        }
+      }
+    }
     let code = nybble(data, pos);
     pos += 1;
     if (code < 0) {
@@ -241,7 +256,11 @@ unsafe function coefficient_impl[const PACKED: i32](own r: BitReader, size: i32,
     if (code != 0 && code != 1 && code != 8 && code != 15) {
       silent = false;
       unsafe {
-        store_coefficient(output_address, n, SIGNED_SQUARES[code] * direct_quant, packed);
+        if (packed) {
+          __store_i32(output_address + (4 * n) as usize, (SIGNED_SQUARE_BITS[code] + direct_exponent) as i32);
+        } else {
+          store_coefficient(output_address, n, SIGNED_SQUARES[code] * quant, false);
+        }
       }
       n += 1;
     } else if (code == 0 || code == 1 || code == 8) {
@@ -295,7 +314,7 @@ unsafe function coefficient_impl[const PACKED: i32](own r: BitReader, size: i32,
       }
       if (quantizer_value(next_quant) >= 0) {
         quant = scale(quantizer_value(next_quant));
-        direct_quant = if (packed) { quant * 79228162514264337593543950336.0 } else { quant };
+        direct_exponent = (91 - quantizer_value(next_quant)) as u32 << 23u32;
       } else if (quantizer_value(next_quant) == -1) {
         n = size;
       } else {
@@ -707,4 +726,24 @@ function decode_block_impl[const PRECISE: i32](own state: Decoder, data: u8[], o
   }
   let next = (r.pos + 1) / 2;
   return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, lap: all_lap, seed: r.seed, plans: plans, work: work, lap_zero: silent, output: output, zero_samples: zero_samples, lap_scratch: lap, coefs: coefs }, samples: output, next_byte: next, silent: false });
+}
+
+@noinline
+function direct_run(data: u8[], pos: i32, size: i32, address: usize, exponent: u32): i32 {
+  let n = 0;
+  while (n < size) {
+    let code = nybble(data, pos + n);
+    if (code < 0) {
+      break;
+    }
+    let word = SIGNED_SQUARE_BITS[code];
+    if (word == 0u32) {
+      break;
+    }
+    unsafe {
+      __store_i32(address + (4 * n) as usize, (word + exponent) as i32);
+    }
+    n += 1;
+  }
+  return n;
 }

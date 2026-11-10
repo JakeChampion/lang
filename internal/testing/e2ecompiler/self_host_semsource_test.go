@@ -180,15 +180,14 @@ function shifted(p: usize): usize { return p >> 3; }
 // carry that conversion — so the producer inserts it, on whichever side is
 // narrow and from whichever width. A comparison is why the width is asked of
 // the operands rather than read off the whole expression, whose type is the
-// boolean. The nested form is the one core/map writes: the inner multiply stays at
-// the i32, since the checker widens only at the operator the address is in.
-function at(buf: usize, off: i32): usize { return buf + off; }
-function at_rev(off: i32, buf: usize): usize { return off + buf; }
-function at_wide(buf: usize, off: i64): usize { return buf - off; }
+// boolean. The nested form keeps the inner multiply at the narrow width, since
+// the checker widens only at the operator the address is in.
+function at(buf: usize, off: u32): usize { return buf + off; }
+function at_rev(off: u32, buf: usize): usize { return off + buf; }
 function at_byte(buf: usize, off: u8): usize { return buf + off; }
-function before(buf: usize, n: i32): boolean { return buf < n; }
-function before_rev(n: i32, buf: usize): boolean { return n < buf; }
-function span(buf: usize, hdr: i32, cap: i32): usize { return buf + hdr + cap * 4; }
+function before(buf: usize, n: u32): boolean { return buf < n; }
+function before_rev(n: u32, buf: usize): boolean { return n < buf; }
+function span(buf: usize, hdr: u32, cap: u32): usize { return buf + hdr + cap * 4; }
 // A codepoint converts where an i32 does and compares only for equality. The
 // golden pins which conversion each direction is: into and out of the 32-bit
 // widths a mask of the destination, out of the byte none at all since it

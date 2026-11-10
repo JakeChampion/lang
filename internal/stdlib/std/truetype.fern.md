@@ -4,13 +4,15 @@ This module reads TrueType fonts and draws their glyphs as coverage maps.
 
 ## Model
 
-`parse` reads the tables of a font: the character map, the horizontal metrics, the outlines and the kerning of the GPOS table. `glyph` gives the glyph of a code point, and `advance` and `kerning` give the space between glyphs in font units. `render` scales the outline of a glyph to a size in pixels and gives the part of each pixel that the outline covers.
+`parse` reads the tables of a font: the character map, the horizontal metrics, the outlines and the kerning of the GPOS table. A variable font holds one set of outlines and the changes that each axis, such as the weight, makes to them. `at_axis` gives the font at a value on one axis. `glyph` gives the glyph of a code point, and `advance` and `kerning` give the space between glyphs in font units. `render` scales the outline of a glyph to a size in pixels and gives the part of each pixel that the outline covers.
 
 The rasterizer adds the signed area that each line of the outline covers to the cells of a buffer. The running sum of the buffer is then the coverage of each pixel. Curves become lines first. The rasterizer uses the nonzero rule, with the coverage limited to one.
 
 ## Contracts
 
 `parse` accepts a font with `glyf` outlines and a Unicode character map of format 4 or 12. It gives None for other fonts. A code point that the font does not map gives glyph 0. The kerning comes from the pair adjustment lookups of the `kern` feature, both formats. Composite glyphs that join their parts at points, not at offsets, draw their parts with no offset. The hinting instructions of the font have no effect.
+
+`at_axis` moves the outlines and the advances of a variable font, from the `gvar` and `HVAR` tables. It limits the value to the range of the axis. The kerning and the line metrics stay those of the default design. A font with no such axis stays as it is.
 
 ## Executable example
 
@@ -37,6 +39,8 @@ The root chunk keeps the order of the declarations.
 
 <<kerning>>
 
+<<variations>>
+
 <<outlines>>
 
 <<the rasterizer>>
@@ -52,6 +56,9 @@ import "std/f64";
 // A font in the bytes `data`, with the offsets of its tables. `cmap` is the
 // offset of the character map subtable, of format `cmap_format`. `pairs`
 // are the offsets of the GPOS pair adjustment subtables of the kern feature.
+// `fvar`, `avar`, `gvar` and `hvar` are the offsets of the tables of a
+// variable font, or -1. `coords` holds the place of the font on each axis,
+// from -1 to 1, and is empty at the default design.
 ```
 
 ### `declarations`
@@ -73,6 +80,11 @@ pub struct Font {
   descender: i32,
   line_gap: i32,
   pairs: i32[],
+  fvar: i32,
+  avar: i32,
+  gvar: i32,
+  hvar: i32,
+  coords: f64[],
 }
 
 // The coverage of a glyph, row by row, from 0 for none to 255 for all of a
@@ -135,7 +147,7 @@ pub function parse(data: [u8]): Option[Font] {
     return None;
   }
   let pairs = kern_subtables(b, table(b, "GPOS"));
-  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: t[4], glyf: t[5], hmtx: t[6], hmetrics: u16_at(b, hhea + 34), glyphs: u16_at(b, maxp + 4), long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs });
+  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: t[4], glyf: t[5], hmtx: t[6], hmetrics: u16_at(b, hhea + 34), glyphs: u16_at(b, maxp + 4), long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs, fvar: table(b, "fvar"), avar: table(b, "avar"), gvar: table(b, "gvar"), hvar: table(b, "HVAR"), coords: [] });
 }
 
 // The offsets of the tables `tags`, or None when one is missing.
@@ -246,7 +258,11 @@ pub function (f: Font) advance(g: i32): i32 {
   if (i >= f.hmetrics) {
     i = f.hmetrics - 1;
   }
-  return u16_at(f.data, f.hmtx + 4 * i);
+  let base = u16_at(f.data, f.hmtx + 4 * i);
+  if (f.coords.len() == 0) {
+    return base;
+  }
+  return base + (advance_delta(f, g) + 0.5).floor() as i32;
 }
 ```
 
@@ -436,6 +452,491 @@ pub function (f: Font) kerning(a: i32, g2: i32): i32 {
 }
 ```
 
+### `variations`
+
+A variable font holds the outlines of its default design. For each glyph the `gvar` table holds lists of changes to the points, and each list applies in a region of the axes. The four points after the last point of a glyph are not on the outline. The first two hold the origin and the advance.
+
+```fern
+<<variations>>=
+function fixed_at(b: [u8], at: i32): f64 {
+  return i16_at(b, at) as f64 + u16_at(b, at + 2) as f64 / 65536.0;
+}
+
+// The index of the axis `tag`, or -1.
+function axis_index(f: Font, tag: string): i32 {
+  if (f.fvar < 0 || tag.len() != 4) {
+    return -1;
+  }
+  let b = f.data;
+  let first = f.fvar + u16_at(b, f.fvar + 4);
+  let size = u16_at(b, f.fvar + 10);
+  for i in 0..u16_at(b, f.fvar + 8) {
+    let r = first + size * i;
+    if (u8_at(b, r) == tag[0] as i32 && u8_at(b, r + 1) == tag[1] as i32 && u8_at(b, r + 2) == tag[2] as i32 && u8_at(b, r + 3) == tag[3] as i32) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// True when the font has the axis `tag`, such as "wght" for the weight.
+pub function (f: Font) has_axis(tag: string): boolean {
+  return axis_index(f, tag) >= 0;
+}
+
+// The place of `value` on axis `i`: -1 at the least value of the axis, 0 at
+// the default and 1 at the greatest.
+function normalized(f: Font, i: i32, value: f64): f64 {
+  let r = f.fvar + u16_at(f.data, f.fvar + 4) + u16_at(f.data, f.fvar + 10) * i;
+  let low = fixed_at(f.data, r + 4);
+  let base = fixed_at(f.data, r + 8);
+  let high = fixed_at(f.data, r + 12);
+  let v = value;
+  if (v < low) {
+    v = low;
+  }
+  if (v > high) {
+    v = high;
+  }
+  if (v < base && base > low) {
+    return (v - base) / (base - low);
+  }
+  if (v > base && high > base) {
+    return (v - base) / (high - base);
+  }
+  return 0.0;
+}
+
+// The place `v` on axis `i` after the segment map of the `avar` table.
+function avar_map(b: [u8], avar: i32, i: i32, v: f64): f64 {
+  if (avar < 0 || i >= u16_at(b, avar + 6)) {
+    return v;
+  }
+  let p = avar + 8;
+  for k in 0..i {
+    p = p + 2 + 4 * u16_at(b, p);
+  }
+  for k in 1..u16_at(b, p) {
+    let r = p + 2 + 4 * k;
+    let from0 = f2dot14(b, r - 4);
+    let from1 = f2dot14(b, r);
+    if (v <= from1 && from1 > from0) {
+      return f2dot14(b, r - 2) + (v - from0) * (f2dot14(b, r + 2) - f2dot14(b, r - 2)) / (from1 - from0);
+    }
+  }
+  return v;
+}
+
+// The font at `value` on the axis `tag`, in the units of the axis: 400 to
+// 700 for the weights from regular to bold on "wght". The other axes keep
+// their places. A font with no such axis stays as it is.
+pub function (f: Font) at_axis(tag: string, value: f64): Font {
+  let at = axis_index(f, tag);
+  if (at < 0) {
+    return f;
+  }
+  let coords: f64[] = [];
+  for i in 0..u16_at(f.data, f.fvar + 8) {
+    let c = 0.0;
+    if (i < f.coords.len()) {
+      c = f.coords[i];
+    }
+    if (i == at) {
+      c = avar_map(f.data, f.avar, i, normalized(f, i, value));
+    }
+    coords = coords.append(c);
+  }
+  return Font { ...f, coords: coords };
+}
+
+// The part of a region that applies at the place `v` on one axis. The
+// region starts at `s`, has its peak at `p` and ends at `e`.
+function axis_scalar(s: f64, p: f64, e: f64, v: f64): f64 {
+  if (p == 0.0 || s > p || p > e || s < 0.0 && e > 0.0) {
+    return 1.0;
+  }
+  if (v < s || v > e) {
+    return 0.0;
+  }
+  if (v == p) {
+    return 1.0;
+  }
+  if (v < p) {
+    return (v - s) / (p - s);
+  }
+  return (e - v) / (e - p);
+}
+
+// The part of a tuple of `gvar` that applies to the font. `peak` is the
+// offset of the peak of each axis. `mid` is the offset of the start and
+// then the end of each axis, or -1 for a region from the default to the
+// peak.
+function tuple_scalar(f: Font, peak: i32, mid: i32): f64 {
+  let n = f.coords.len();
+  let out = 1.0;
+  for a in 0..n {
+    let p = f2dot14(f.data, peak + 2 * a);
+    let s = p.min(0.0);
+    let e = p.max(0.0);
+    if (mid >= 0) {
+      s = f2dot14(f.data, mid + 2 * a);
+      e = f2dot14(f.data, mid + 2 * n + 2 * a);
+    }
+    out = out * axis_scalar(s, p, e, f.coords[a]);
+  }
+  return out;
+}
+
+// A list of point numbers from the font. `every` is true for the list that
+// names each point of the glyph. `next` is the offset after the list.
+struct PointList { points: i32[], every: boolean, next: i32 }
+
+function packed_points(b: [u8], at: i32): PointList {
+  let n = u8_at(b, at);
+  let p = at + 1;
+  if (n == 0) {
+    return PointList { points: [], every: true, next: p };
+  }
+  if ((n & 128) != 0) {
+    n = (n & 127) << 8 | u8_at(b, p);
+    p += 1;
+  }
+  let out: i32[] = [];
+  let v = 0;
+  while (out.len() < n) {
+    let control = u8_at(b, p);
+    p += 1;
+    for r in 0..(control & 127) + 1 {
+      if ((control & 128) != 0) {
+        v += u16_at(b, p);
+        p += 2;
+      } else {
+        v += u8_at(b, p);
+        p += 1;
+      }
+      out = out.append(v);
+    }
+  }
+  return PointList { points: out, every: false, next: p };
+}
+
+// `count` packed deltas from `at`, or some more where the last run is
+// longer.
+function packed_deltas(b: [u8], at: i32, count: i32): i32[] {
+  let out: i32[] = [];
+  let p = at;
+  while (out.len() < count) {
+    let control = u8_at(b, p);
+    p += 1;
+    for r in 0..(control & 63) + 1 {
+      let d = 0;
+      if ((control & 128) != 0) {
+        d = 0;
+      } else if ((control & 64) != 0) {
+        d = i16_at(b, p);
+        p += 2;
+      } else {
+        d = u8_at(b, p) << 24 >> 24;
+        p += 1;
+      }
+      out = out.append(d);
+    }
+  }
+  return out;
+}
+
+function zeros(n: i32): f64[] {
+  let out: f64[] = [];
+  for i in 0..n {
+    out = out.append(0.0);
+  }
+  return out;
+}
+
+// The delta of a point at the coordinate `c` that the tuple does not name,
+// between the named points at `ca` and `cb` with the deltas `da` and `db`.
+function between(c: i32, ca: i32, cb: i32, da: f64, db: f64): f64 {
+  if (ca == cb) {
+    if (da == db) {
+      return da;
+    }
+    return 0.0;
+  }
+  let (lo, hi, dlo, dhi) = (ca, cb, da, db);
+  if (cb < ca) {
+    lo = cb;
+    hi = ca;
+    dlo = db;
+    dhi = da;
+  }
+  if (c <= lo) {
+    return dlo;
+  }
+  if (c >= hi) {
+    return dhi;
+  }
+  return dlo + (c - lo) as f64 * (dhi - dlo) / ((hi - lo) as f64);
+}
+
+// Gives each point of the contour from `first` to `last` that the tuple
+// does not name a delta from the named points before it and after it. `cs`
+// holds the coordinates of the default design.
+function fill_contour(own d: f64[], named: boolean[], cs: i32[], first: i32, last: i32): f64[] {
+  let ts: i32[] = [];
+  for i in first..last + 1 {
+    if (named[i]) {
+      ts = ts.append(i);
+    }
+  }
+  let out = d;
+  for k in 0..ts.len() {
+    let a = ts[k];
+    let b = ts[(k + 1) % ts.len()];
+    let i = a;
+    for step in first..last {
+      i += 1;
+      if (i > last) {
+        i = first;
+      }
+      if (i == b) {
+        break;
+      }
+      let da = out[a];
+      let db = out[b];
+      out = out.with(i, between(cs[i], cs[a], cs[b], da, db));
+    }
+  }
+  return out;
+}
+
+function fill(own d: f64[], named: boolean[], cs: i32[], ends: i32[]): f64[] {
+  let out = d;
+  let first = 0;
+  for e in ends {
+    if (e >= first && e < cs.len()) {
+      out = fill_contour(out, named, cs, first, e);
+    }
+    first = e + 1;
+  }
+  return out;
+}
+
+// The deltas of one coordinate of a tuple for each point of the glyph.
+// `values` holds a delta for each of `points`, from `from`.
+function tuple_deltas(l: PointList, values: i32[], from: i32, cs: i32[], ends: i32[]): f64[] {
+  let total = cs.len() + 4;
+  let out: f64[] = [];
+  if (l.every) {
+    for i in 0..total {
+      out = out.append(values[from + i] as f64);
+    }
+    return out;
+  }
+  out = zeros(total);
+  let named: boolean[] = [];
+  for i in 0..total {
+    named = named.append(false);
+  }
+  for k in 0..l.points.len() {
+    let i = l.points[k];
+    if (i < total) {
+      out = out.with(i, values[from + k] as f64);
+      named = named.with(i, true);
+    }
+  }
+  return fill(out, named, cs, ends);
+}
+
+function add_scaled(own sum: f64[], d: f64[], s: f64): f64[] {
+  let out = sum;
+  for i in 0..d.len() {
+    let old = out[i];
+    out = out.with(i, old + s * d[i]);
+  }
+  return out;
+}
+
+// The offset of the variation data of glyph `g` in the font, or -1.
+function gvar_data(f: Font, g: i32): i32 {
+  let b = f.data;
+  let gv = f.gvar;
+  if (gv < 0 || g >= u16_at(b, gv + 12) || u16_at(b, gv + 4) != f.coords.len()) {
+    return -1;
+  }
+  let start = 0;
+  let end = 0;
+  if ((u16_at(b, gv + 14) & 1) != 0) {
+    start = u32_at(b, gv + 20 + 4 * g);
+    end = u32_at(b, gv + 24 + 4 * g);
+  } else {
+    start = 2 * u16_at(b, gv + 20 + 2 * g);
+    end = 2 * u16_at(b, gv + 22 + 2 * g);
+  }
+  if (end <= start) {
+    return -1;
+  }
+  return gv + u32_at(b, gv + 16) + start;
+}
+
+// The change to the x and the y of each point of glyph `g`, and of its four
+// points that are not on the outline, at the place of the font.
+function glyph_deltas(f: Font, g: i32, o: Outline): (f64[], f64[]) {
+  let total = o.xs.len() + 4;
+  let dx = zeros(total);
+  let dy = zeros(total);
+  if (f.coords.len() == 0) {
+    return (dx, dy);
+  }
+  let d = gvar_data(f, g);
+  if (d < 0) {
+    return (dx, dy);
+  }
+  let b = f.data;
+  let axes = f.coords.len();
+  let count = u16_at(b, d);
+  let data = d + u16_at(b, d + 2);
+  let shared = PointList { points: [], every: true, next: data };
+  if ((count & 32768) != 0) {
+    shared = packed_points(b, data);
+    data = shared.next;
+  }
+  let h = d + 4;
+  for t in 0..count & 4095 {
+    let size = u16_at(b, h);
+    let index = u16_at(b, h + 2);
+    h += 4;
+    let peak = f.gvar + u32_at(b, f.gvar + 8) + 2 * axes * (index & 4095);
+    if ((index & 32768) != 0) {
+      peak = h;
+      h += 2 * axes;
+    }
+    let mid = -1;
+    if ((index & 16384) != 0) {
+      mid = h;
+      h += 4 * axes;
+    }
+    let s = tuple_scalar(f, peak, mid);
+    if (s != 0.0) {
+      let l = PointList { points: shared.points, every: shared.every, next: data };
+      if ((index & 8192) != 0) {
+        l = packed_points(b, data);
+      }
+      let n = l.points.len();
+      if (l.every) {
+        n = total;
+      }
+      let values = packed_deltas(b, l.next, 2 * n);
+      dx = add_scaled(dx, tuple_deltas(l, values, 0, o.xs, o.ends), s);
+      dy = add_scaled(dy, tuple_deltas(l, values, n, o.ys, o.ends), s);
+    }
+    data += size;
+  }
+  return (dx, dy);
+}
+
+// The part of region `region` of the list at `regions` that applies to the
+// font.
+function region_scalar(f: Font, regions: i32, region: i32): f64 {
+  let axes = u16_at(f.data, regions);
+  if (axes != f.coords.len() || region >= u16_at(f.data, regions + 2)) {
+    return 0.0;
+  }
+  let r = regions + 4 + 6 * axes * region;
+  let out = 1.0;
+  for a in 0..axes {
+    out = out * axis_scalar(f2dot14(f.data, r + 6 * a), f2dot14(f.data, r + 6 * a + 2), f2dot14(f.data, r + 6 * a + 4), f.coords[a]);
+  }
+  return out;
+}
+
+// The delta of item `inner` of the data `outer` of the variation store at
+// `store`.
+function store_delta(f: Font, store: i32, outer: i32, inner: i32): f64 {
+  let b = f.data;
+  if (outer >= u16_at(b, store + 6)) {
+    return 0.0;
+  }
+  let d = store + u32_at(b, store + 8 + 4 * outer);
+  let regions = u16_at(b, d + 4);
+  let words = u16_at(b, d + 2) & 32767;
+  let wide = 1;
+  if ((u16_at(b, d + 2) & 32768) != 0) {
+    wide = 2;
+  }
+  if (inner >= u16_at(b, d) || words > regions) {
+    return 0.0;
+  }
+  let p = d + 6 + 2 * regions + inner * wide * (words + regions);
+  let sum = 0.0;
+  for r in 0..regions {
+    let size = wide;
+    if (r < words) {
+      size = 2 * wide;
+    }
+    let v = u8_at(b, p) << 24 >> 24;
+    if (size == 2) {
+      v = i16_at(b, p);
+    } else if (size == 4) {
+      v = u32_at(b, p);
+    }
+    p += size;
+    sum += v as f64 * region_scalar(f, store + u32_at(b, store + 2), u16_at(b, d + 6 + 2 * r));
+  }
+  return sum;
+}
+
+// The data and the item of glyph `g` in the index map at `m`.
+function delta_index(b: [u8], m: i32, g: i32): (i32, i32) {
+  let format = u8_at(b, m + 1);
+  let count = u16_at(b, m + 2);
+  let data = m + 4;
+  if (u8_at(b, m) == 1) {
+    count = u32_at(b, m + 2);
+    data = m + 6;
+  }
+  if (count <= 0) {
+    return (0, g);
+  }
+  let size = ((format & 48) >> 4) + 1;
+  let i = g;
+  if (i >= count) {
+    i = count - 1;
+  }
+  let at = data + size * i;
+  let entry = 0;
+  for k in 0..size {
+    entry = entry << 8 | u8_at(b, at + k);
+  }
+  let bits = (format & 15) + 1;
+  return (entry >> bits, entry & (1 << bits) - 1);
+}
+
+// The change to the advance of glyph `g` at the place of the font: from the
+// `HVAR` table, or from the points of `gvar` in a font with no such table.
+function advance_delta(f: Font, g: i32): f64 {
+  let b = f.data;
+  if (f.hvar >= 0) {
+    let map = u32_at(b, f.hvar + 8);
+    let (outer, inner) = (0, g);
+    if (map != 0) {
+      let (o, i) = delta_index(b, f.hvar + map, g);
+      outer = o;
+      inner = i;
+    }
+    return store_delta(f, f.hvar + u32_at(b, f.hvar + 4), outer, inner);
+  }
+  let at = glyph_at(f, g);
+  let o = Outline { xs: [], ys: [], flags: [], ends: [] };
+  if (at >= 0 && i16_at(b, at) < 0) {
+    o = part_outline(parts(b, at + 10));
+  } else if (at >= 0) {
+    o = simple(b, at, i16_at(b, at));
+  }
+  let (dx, _) = glyph_deltas(f, g, o);
+  return dx[o.xs.len() + 1] - dx[o.xs.len()];
+}
+```
+
 ### `outlines`
 
 ```fern
@@ -443,12 +944,16 @@ pub function (f: Font) kerning(a: i32, g2: i32): i32 {
 // A point of an outline, in font units, on the curve or a control point.
 struct Point { x: f64, y: f64, on: boolean }
 
-// The contours of glyph `g`, each a list of points. `depth` stops composite
-// glyphs that refer to themselves.
-function contours(f: Font, g: i32, depth: i32): Point[][] {
-  let out: Point[][] = [];
-  if (g < 0 || g >= f.glyphs || depth > 8) {
-    return out;
+// The points of a simple glyph in font units, the flags of each, and the
+// last point of each contour. For a composite glyph, the points are the
+// offsets of the parts.
+struct Outline { xs: i32[], ys: i32[], flags: i32[], ends: i32[] }
+
+// The offset of the data of glyph `g` in the font, or -1 for a glyph with
+// no outline.
+function glyph_at(f: Font, g: i32): i32 {
+  if (g < 0 || g >= f.glyphs) {
+    return -1;
   }
   let b = f.data;
   let start = 0;
@@ -461,23 +966,38 @@ function contours(f: Font, g: i32, depth: i32): Point[][] {
     end = 2 * u16_at(b, f.loca + 2 * g + 2);
   }
   if (end <= start) {
-    return out;
+    return -1;
   }
-  let at = f.glyf + start;
-  let n = i16_at(b, at);
-  if (n >= 0) {
-    return simple(b, at, n);
-  }
-  return composite(f, at + 10, depth);
+  return f.glyf + start;
 }
 
-function simple(b: [u8], at: i32, n: i32): Point[][] {
+// The contours of glyph `g`, each a list of points. `depth` stops composite
+// glyphs that refer to themselves.
+function contours(f: Font, g: i32, depth: i32): Point[][] {
+  let at = glyph_at(f, g);
+  if (at < 0 || depth > 8) {
+    return [];
+  }
+  let n = i16_at(f.data, at);
+  if (n < 0) {
+    return composite(f, g, at + 10, depth);
+  }
+  let o = simple(f.data, at, n);
+  let (dx, dy) = glyph_deltas(f, g, o);
+  let pts: Point[] = [];
+  for i in 0..o.xs.len() {
+    pts = pts.append(Point { x: o.xs[i] as f64 + dx[i], y: o.ys[i] as f64 + dy[i], on: (o.flags[i] & 1) != 0 });
+  }
+  return split_contours(pts, o.ends);
+}
+
+function simple(b: [u8], at: i32, n: i32): Outline {
   let ends: i32[] = [];
   for i in 0..n {
     ends = ends.append(u16_at(b, at + 10 + 2 * i));
   }
   if (n == 0) {
-    return [];
+    return Outline { xs: [], ys: [], flags: [], ends: ends };
   }
   let count = ends[n - 1] + 1;
   let p = at + 10 + 2 * n;
@@ -485,11 +1005,7 @@ function simple(b: [u8], at: i32, n: i32): Point[][] {
   let (flags, p1) = read_flags(b, p, count);
   let (xs, p2) = read_coords(b, p1, flags, 2, 16);
   let (ys, _) = read_coords(b, p2, flags, 4, 32);
-  let pts: Point[] = [];
-  for i in 0..count {
-    pts = pts.append(Point { x: xs[i] as f64, y: ys[i] as f64, on: (flags[i] & 1) != 0 });
-  }
-  return split_contours(pts, ends);
+  return Outline { xs: xs, ys: ys, flags: flags, ends: ends };
 }
 
 // The flags of `count` points from `p`, with their repeats, and the offset
@@ -554,56 +1070,90 @@ function split_contours(pts: Point[], ends: i32[]): Point[][] {
   return out;
 }
 
-// A composite glyph: the contours of its parts, each moved and scaled.
-function composite(f: Font, at0: i32, depth: i32): Point[][] {
-  let b = f.data;
-  let out: Point[][] = [];
-  let at = at0;
-  let more = true;
-  while (more) {
-    let flags = u16_at(b, at);
-    let g = u16_at(b, at + 2);
+// A part of a composite glyph: the glyph, its offset, its matrix, and the
+// offset of the next part in the font, or -1 after the last part.
+struct Part { glyph: i32, dx: i32, dy: i32, a: f64, b: f64, c: f64, d: f64, next: i32 }
+
+function read_part(b: [u8], at0: i32): Part {
+  let flags = u16_at(b, at0);
+  let at = at0 + 4;
+  let dx = 0;
+  let dy = 0;
+  if ((flags & 1) != 0) {
+    dx = i16_at(b, at);
+    dy = i16_at(b, at + 2);
     at += 4;
-    let dx = 0.0;
-    let dy = 0.0;
-    if ((flags & 1) != 0) {
-      dx = i16_at(b, at) as f64;
-      dy = i16_at(b, at + 2) as f64;
-      at += 4;
-    } else {
-      dx = (u8_at(b, at) << 24 >> 24) as f64;
-      dy = (u8_at(b, at + 1) << 24 >> 24) as f64;
-      at += 2;
-    }
-    if ((flags & 2) == 0) {
-      // The parts join at points, not at offsets: not supported.
-      dx = 0.0;
-      dy = 0.0;
-    }
-    let (a, bb, c, d) = (1.0, 0.0, 0.0, 1.0);
-    if ((flags & 8) != 0) {
-      a = f2dot14(b, at);
-      d = a;
-      at += 2;
-    } else if ((flags & 64) != 0) {
-      a = f2dot14(b, at);
-      d = f2dot14(b, at + 2);
-      at += 4;
-    } else if ((flags & 128) != 0) {
-      a = f2dot14(b, at);
-      bb = f2dot14(b, at + 2);
-      c = f2dot14(b, at + 4);
-      d = f2dot14(b, at + 6);
-      at += 8;
-    }
-    for part in contours(f, g, depth + 1) {
+  } else {
+    dx = u8_at(b, at) << 24 >> 24;
+    dy = u8_at(b, at + 1) << 24 >> 24;
+    at += 2;
+  }
+  if ((flags & 2) == 0) {
+    // The parts join at points, not at offsets: not supported.
+    dx = 0;
+    dy = 0;
+  }
+  let (a, bb, c, d) = (1.0, 0.0, 0.0, 1.0);
+  if ((flags & 8) != 0) {
+    a = f2dot14(b, at);
+    d = a;
+    at += 2;
+  } else if ((flags & 64) != 0) {
+    a = f2dot14(b, at);
+    d = f2dot14(b, at + 2);
+    at += 4;
+  } else if ((flags & 128) != 0) {
+    a = f2dot14(b, at);
+    bb = f2dot14(b, at + 2);
+    c = f2dot14(b, at + 4);
+    d = f2dot14(b, at + 6);
+    at += 8;
+  }
+  if ((flags & 32) == 0) {
+    at = -1;
+  }
+  return Part { glyph: u16_at(b, at0 + 2), dx: dx, dy: dy, a: a, b: bb, c: c, d: d, next: at };
+}
+
+// The parts of the composite glyph at `at`. A font can hold at most 65535
+// glyphs, so a longer list is not a font.
+function parts(b: [u8], at: i32): Part[] {
+  let out: Part[] = [];
+  let next = at;
+  while (next >= 0 && next < b.len() && out.len() < 65536) {
+    let part = read_part(b, next);
+    out = out.append(part);
+    next = part.next;
+  }
+  return out;
+}
+
+// The offsets of the parts as an outline: each part is a point and a
+// contour of its own.
+function part_outline(ps: Part[]): Outline {
+  let o = Outline { xs: [], ys: [], flags: [], ends: [] };
+  for i in 0..ps.len() {
+    o = Outline { xs: o.xs.append(ps[i].dx), ys: o.ys.append(ps[i].dy), flags: o.flags, ends: o.ends.append(i) };
+  }
+  return o;
+}
+
+// A composite glyph: the contours of its parts, each moved and scaled.
+function composite(f: Font, g: i32, at: i32, depth: i32): Point[][] {
+  let out: Point[][] = [];
+  let ps = parts(f.data, at);
+  let (ddx, ddy) = glyph_deltas(f, g, part_outline(ps));
+  for i in 0..ps.len() {
+    let q = ps[i];
+    let dx = q.dx as f64 + ddx[i];
+    let dy = q.dy as f64 + ddy[i];
+    for part in contours(f, q.glyph, depth + 1) {
       let moved: Point[] = [];
       for p in part {
-        moved = moved.append(Point { x: a * p.x + c * p.y + dx, y: bb * p.x + d * p.y + dy, on: p.on });
+        moved = moved.append(Point { x: q.a * p.x + q.c * p.y + dx, y: q.b * p.x + q.d * p.y + dy, on: p.on });
       }
       out = out.append(moved);
     }
-    more = (flags & 32) != 0;
   }
   return out;
 }
