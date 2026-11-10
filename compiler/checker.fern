@@ -12025,6 +12025,22 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
   return "";
 }
 
+// True when the union named en lists the variant nm, bare or with its module
+// prefix. Two enums can have a variant of one name, and a lookup by the name
+// can give the other enum.
+function union_lists_variant(unions: UnionTable, en: string, nm: string): boolean {
+  let at = unions.index.find(en);
+  if (at < 0 || nm.len() == 0) {
+    return false;
+  }
+  for v in unions.unions[at].variants {
+    if (v == nm || v.ends_with("__" + nm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unions: UnionTable, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let Some(ss) = find_variant_sig(structs, pv.type_name) else {
@@ -12041,6 +12057,9 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unio
       let owner = union_of_variant(nm, unions);
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
+      }
+      if (union_lists_variant(unions, pt, nm)) {
+        owner = pt;
       }
       if (pt.len() > 0 && owner == pt && variant_payload_count(nm, structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + pt + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
@@ -12069,6 +12088,9 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
       }
+      if (union_lists_variant(s.unions, u.name, nm)) {
+        owner = u.name;
+      }
       if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
       }
@@ -12090,6 +12112,9 @@ function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], 
       let owner = scope_variant_owner(nm, s);
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
+      }
+      if (union_lists_variant(s.unions, u.name, nm)) {
+        owner = u.name;
       }
       if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
