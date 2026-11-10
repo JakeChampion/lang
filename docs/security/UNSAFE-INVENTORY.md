@@ -55,6 +55,22 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `share_unchecked(v)` | `T -> T` | The result shares what `v` holds, and an own parameter accepts it through local aliases and helper returns. The caller must prevent use of a handle after a holder closes it. |
 | `__fern_rc_inc(p)`, `__fern_arr_dec(p, n)`, `__fern_box_free(p, n)`, `__fern_drop_arr_ptr(p, n)`, `__fern_str_dec(s)` | box pointer and count | `p` must be a live box with a correct count. A wrong count double-frees or leaks. |
 
+The interpreter uses `share_unchecked` when an evaluation branch keeps a shared environment, array value, or managed root list.
+The native reference counts keep the shared boxes live.
+The managed heap checks each root's generation and releases its payload after the last root.
+
+Loop bodies, conditional bodies, and match arms keep a shared branch environment.
+Each native holder keeps its root boxes live.
+The managed collector follows their graph edges.
+A trim of one branch does not invalidate the other live holders.
+
+These calls do not authorize two close operations on a descriptor in the interpreted program.
+The program's ownership check must still reject that use.
+
+A closure environment shares its captured values and call arguments during evaluation.
+These values retain their managed heap roots for that call.
+The environment does not transfer a source program's borrowed handle to an own parameter.
+
 The TLS identity constructor shares only its `PrivateKey` value.
 `EcdsaKey` contains a curve tag and a scalar byte array.
 `Ed25519Seed` contains a seed byte array.

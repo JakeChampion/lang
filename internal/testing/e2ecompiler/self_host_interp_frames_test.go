@@ -82,6 +82,12 @@ pub function contract_frame_sessions(): i32 {
   if (!second_show || second_used.show(second_value) != "9") { return 25; }
   let (old_used, old_show, old_value) = contract_session_line(first_used, "let old = answer; old();");
   if (!old_show || old_used.show(old_value) != "7") { return 26; }
+  let (guarded, guard_show, guard_value) = contract_session_line(old_used, "match (Some(3)) { Some(n) if missing() => { let hidden = n; }, None => {} }");
+  if (!is_err(guard_value)) { return 27; }
+  let (resumed, resumed_show, resumed_value) = contract_session_line(guarded, "old();");
+  if (!resumed_show || resumed.show(resumed_value) != "7") { return 28; }
+  let (unbound, unbound_show, unbound_value) = contract_session_line(resumed, "n;");
+  if (!is_err(unbound_value)) { return 29; }
   return 0;
 }
 `
