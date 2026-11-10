@@ -526,7 +526,9 @@ pub function main(): i32 {
     }
   }
 
-  f = spell_table(f);
+  if (f.np || f.tabs || f.ends) {
+    f = spell_table(f);
+  }
   if (f.number || f.nonblank) {
     f = Fmt { ...f, tails: number_tails() };
   }

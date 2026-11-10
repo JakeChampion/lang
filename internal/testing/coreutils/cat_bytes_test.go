@@ -7,5 +7,11 @@ import (
 )
 
 func TestCatBytesParity(t *testing.T) {
-	e2eharness.RunCatByteCases(t, fernBin(t, "cat"), crossPrefix(), nil)
+	e2eharness.RunCatByteCasesAgainst(t, fernBin(t, "cat"), crossPrefix(), crossArgv(referenceBin(t, "cat")), nil)
+}
+
+func TestCatBytesReferenceCommand(t *testing.T) {
+	oracle, marker := digestReferenceCommand(t, "cat")
+	e2eharness.RunCatByteCasesAgainst(t, fernBin(t, "cat"), crossPrefix(), oracle, nil)
+	requireDigestReferenceCommand(t, marker)
 }
