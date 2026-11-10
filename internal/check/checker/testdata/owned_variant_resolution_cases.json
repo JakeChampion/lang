@@ -1,0 +1,117 @@
+[
+  {
+    "name": "bare variant",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { return consume(Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "qualified variant",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { return consume(Tail.Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed parameter",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(Empty: Tail): i32 { return consume(Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "owned parameter",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(own Empty: Tail): i32 { return consume(Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed local",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(value: Tail): i32 { let Empty = value; return consume(Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "fresh local",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { let Empty = Tail.Empty; return consume(Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "nested borrowed local",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(value: Tail, b: boolean): i32 { if (b) { let Empty = value; return consume(Empty); } return 0; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed loop binding",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(values: Tail[]): i32 { for Empty in values { consume(Empty); } return values.len(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed lambda parameter",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { let apply = (Empty: Tail): i32 => consume(Empty); return 0; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed pattern binding",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nenum Outer { Have(Tail) } function f(value: Outer): i32 { return match (value) { Have(Empty @ Held(_)) => consume(Empty), _ => 0 }; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(Empty: () => Tail): i32 { return consume(Empty()); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed callback match",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(Empty: () => Tail): i32 { return match (Empty()) { Held(h) => take_h(h), _ => 0 }; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed struct callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nstruct Pack { h: H } function f(Pack: () => H): i32 { return take_h(Pack()); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed qualifier",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nstruct Wrap { Empty: Tail } function f(Tail: Wrap): i32 { return consume(Tail.Empty); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed generic qualifier",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction id[T](x: T): T { return x; } trait Factory { const Empty: Self; } function take_generic[T](own x: T): i32 { return 0; } function f[Tail: Factory](): i32 { return take_generic(id(Tail.Empty)); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "fresh function shadow",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction Empty(): Tail { return Tail.Empty; } function f(): i32 { return consume(Empty()); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "qualified payload constructor",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { return consume(Tail.Held(H { fd: 1 })); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "qualified payload match",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(): i32 { return match (Tail.Held(H { fd: 1 })) { Held(h) => take_h(h), _ => 0 }; }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed function shadow",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction Empty(x: H): H { return x; } function f(x: H): i32 { return take_h(Empty(x)); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "fresh function and borrowed callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction Empty(): Tail { return Tail.Empty; } function f(Empty: () => Tail): i32 { return consume(Empty()); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "fresh function and borrowed callback match",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction Empty(): Tail { return Tail.Empty; } function f(Empty: () => Tail): i32 { return match (Empty()) { Held(h) => take_h(h), _ => 0 }; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "checked callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(Empty: () => own Tail): i32 { return consume(Empty()); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "checked callback match",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction f(Empty: () => own Tail): i32 { return match (Empty()) { Held(h) => take_h(h), _ => 0 }; }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  }
+]

@@ -339,11 +339,14 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	if freshAssociatedResult(x) {
 		return false
 	}
+	if c.callValueCallees[x] {
+		return true
+	}
 	id, ok := x.Callee.(*ast.Ident)
 	if !ok || x.Method != nil && c.freshMethodResult(x) {
 		return !c.freshMethodResult(x)
 	}
-	if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+	if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 		// A variant carries its payload, so the result borrows what the
 		// payload borrows.
 		return true
@@ -594,15 +597,18 @@ func (c *checker) signatureResultBorrows(name string) bool {
 // handle, or a function whose body returns a handle-bearing value with no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
+		if c.callValueCallees[call] {
+			return inferred(tag)
+		}
 		if freshAssociatedResult(call) {
+			return true
+		}
+		if _, isVariant := c.info.EnumConstructions[call]; isVariant {
 			return true
 		}
 		id, isIdent := call.Callee.(*ast.Ident)
 		if !isIdent {
 			return c.freshMethodResult(call)
-		}
-		if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
-			return true
 		}
 		sig, known := c.info.FuncSigs[id.Name]
 		if !known || sig.Result == nil || !ast.IsPointerType(sig.Result) {

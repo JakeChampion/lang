@@ -5945,13 +5945,14 @@ type checker struct {
 	handleFreeTypes   map[handleTypeKey]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
-	consumingTypes  map[string]bool
-	callOwnFlags    map[*ast.Call][]bool
-	callOwnResults  map[*ast.Call]bool
-	callCopyTypes   map[string]bool
-	resultCopyParts map[ast.Expr]bool
-	scalarArgs      map[ast.Expr]bool
-	valueArgs       map[ast.Expr]bool
+	consumingTypes   map[string]bool
+	callOwnFlags     map[*ast.Call][]bool
+	callOwnResults   map[*ast.Call]bool
+	callValueCallees map[*ast.Call]bool
+	callCopyTypes    map[string]bool
+	resultCopyParts  map[ast.Expr]bool
+	scalarArgs       map[ast.Expr]bool
+	valueArgs        map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -10772,7 +10773,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.BlockExpr:
 			return x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil && isOwnedExpr(x.Tail)
 		case *ast.Ident:
-			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
 			return owned[x.Name] || selfMoveArgs[e] || !borrowedParam[x.Name] && atLastUse(e) && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
@@ -10796,11 +10797,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if freshAssociatedResult(x) {
 				return true
 			}
+			if c.callValueCallees[x] {
+				return false
+			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if c.arrayUpdateOwned(x, isOwnedExpr, isOwnedExpr) {
 					return true
 				}
-				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+				if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 					return true
 				}
 				if id.Name == "share_unchecked" {
@@ -15455,6 +15459,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
 			}
+		}
+		if calleeIsValue {
+			if c.callValueCallees == nil {
+				c.callValueCallees = map[*ast.Call]bool{}
+			}
+			c.callValueCallees[n] = true
+		} else {
+			delete(c.callValueCallees, n)
 		}
 		if len(calleeOwnFlags) == 0 && ft != nil {
 			calleeOwnFlags = ft.ParamOwn
