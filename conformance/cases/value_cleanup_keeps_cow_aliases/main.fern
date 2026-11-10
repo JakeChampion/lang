@@ -1,20 +1,13 @@
 // spec: VT-01
-import "std/crypto";
+import "./key" as keys;
 
-@value
-struct Key { bytes: u8[] }
-
-function (own key: Key) erase(): void {
-  crypto.erase(key.bytes);
-}
-
-function cleanup(key: Key): void {
+function cleanup(key: keys.Key): void {
   key.erase();
 }
 
-struct Identity { key: Key }
+struct Identity { key: keys.Key }
 
-function paired(key: Key): Identity {
+function paired(key: keys.Key): Identity {
   return Identity { key: key };
 }
 
@@ -23,7 +16,7 @@ function inspect(own identity: Identity): i32 {
 }
 
 function main(): i32 {
-  let key = Key { bytes: [7u8, 9u8] };
+  let key = keys.Key { bytes: [7u8, 9u8] };
   let alias = key;
   cleanup(key);
   print(alias.bytes[0]);
