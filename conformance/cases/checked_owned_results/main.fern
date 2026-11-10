@@ -1,3 +1,5 @@
+import "core/map";
+
 // spec: OR-01
 struct Box { values: u8[] }
 
@@ -40,6 +42,14 @@ function choose(own pair: Pair): own Token {
   return pair.second;
 }
 
+function copy_map(m: Map[string, i32]): own Map[string, i32] {
+  return m;
+}
+
+function update_map(m: Map[string, i32]): own Map[string, i32] {
+  return m.insert("k", 2);
+}
+
 function main(): i32 {
   let calls = Callbacks { step: next };
   let box = fold(Box { values: [7u8] }, (own x: Box): own Box => calls.step(x));
@@ -57,5 +67,12 @@ function main(): i32 {
   print(closed.get());
   print(token.close());
   print(closed.get());
+  let empty: Map[string, i32] = map_new(4);
+  let base = empty.insert("k", 1);
+  let saved = copy_map(base);
+  let updated = update_map(base);
+  print(saved.get_or("k", 0));
+  print(updated.get_or("k", 0));
+  print(base.get_or("k", 0));
   return 0;
 }

@@ -23905,6 +23905,9 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
       return false;
     }
   }
+  if (name == "Map") {
+    return open > 0 && parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1).to_owned()).len() == 2;
+  }
   return ow_named_holds_no_handle(name, dx, seen);
 }
 

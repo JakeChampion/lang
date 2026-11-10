@@ -37,6 +37,7 @@ The closure cannot return such a capture as an owned result.
 
 The caller can copy immutable data results.
 The checker validates their full type.
+This rule includes maps when their keys and values contain only immutable data.
 A cleanup type needs `@value` to retain this copy contract.
 Cells and callbacks do not satisfy that immutable-data proof.
 
