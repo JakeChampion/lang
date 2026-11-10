@@ -7,6 +7,46 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## SIMD byte stores
+
+Source `3fb03cacc6601474db0f53d3e577a0efb157d4e4` combines adjacent scalar stores whose bytes come from SIMD values.
+The compiler keeps these bytes in vector registers and writes exactly four, eight, twelve, or sixteen bytes.
+The codec source and arithmetic match baseline `2fa4d82b27c43eb9cc34c062d307218111d2db44`.
+Each executable uses its own release compiler and standard library.
+
+The 2026-11-10 sweep uses CPU 0 of the Xeon Platinum 8573C and one worker.
+Each case has 120 repetitions in six balanced execution orders.
+Silence, tone, noise, and transients cover all three PCM depths.
+Ten-second inputs use blocks of 32768, and hundred-second inputs use blocks of 2048.
+Measurements include process startup and file I/O, with no concurrent local builds or tests.
+Every final Fern WAV equals the baseline byte for byte, and all independent float64 checks pass.
+
+Fern has lower medians than tuned C in 22 of 24 cases.
+The geometric-mean C/Fern ratio is 1.739× overall and 1.261× without silence.
+The fixed-suite intervals are 1.728× to 1.748× and 1.254× to 1.266×.
+Large-block PCM8 and PCM24 noise slightly favor C, with ratios of 0.99980× and 0.99964×.
+These results do not establish a universal performance rank.
+
+Fern has lower medians than the baseline in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.024× overall and 1.026× without silence.
+The intervals are 1.018× to 1.030× and 1.021× to 1.031×.
+The report retains every regression.
+The intervals use 2000 paired bootstrap repetitions and seed 417 within this fixed suite.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10.0 | 32768 | PCM16 | 1.024 | 1.605 |
+| 10.0 | 32768 | PCM24 | 1.024 | 1.468 |
+| 10.0 | 32768 | PCM8 | 1.000 | 1.727 |
+| 100.0 | 2048 | PCM16 | 1.041 | 1.925 |
+| 100.0 | 2048 | PCM24 | 1.040 | 1.621 |
+| 100.0 | 2048 | PCM8 | 1.014 | 2.183 |
+
+[The complete report](x86-64-byte-stores.json) retains all repetitions, regressions, executable hashes, compiler hashes, oracle checks, and source revisions.
+Use the [unsigned-guard commands](#unsigned-bounds-guards) with candidate source `3fb03cacc6601474db0f53d3e577a0efb157d4e4` and baseline source `2fa4d82b27c43eb9cc34c062d307218111d2db44`.
+Set `--repetitions 120` and use each source's own release compiler and standard library.
+Retain the pinned C and float64 oracle builds.
+
 ## Paired-double plan recurrence and integer code generation
 
 Source `6c828d2a318bed60e5a8f9ea109e52145a37f8a6` combines paired-double transform-plan recurrences with narrow right shifts and backward bit-demand analysis in the compiler.

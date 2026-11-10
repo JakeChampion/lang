@@ -1,0 +1,54 @@
+import "std/audio/mp3/bits";
+import "std/test";
+
+function reference(input: [u8], pos: i32, width: i32): u32 {
+  let value = 0u32;
+  for i in 0..width {
+    let at = pos + i;
+    let bit = if (at / 8 < input.len()) { input[at / 8] >> (7 - at % 8) as u8 & 1u8 } else { 0u8 };
+    value = value * 2u32 + bit as u32;
+  }
+  return value;
+}
+
+function fields(): test.TestOutcome {
+  let bytes = [255u8, 0u8, 170u8, 85u8, 129u8, 126u8];
+  for size in 0..7 {
+    let input = bytes[:size];
+    for pos in 0..57 {
+      for width in 0..33 {
+        if (bits.peek(input, pos, width) != reference(input, pos, width)) {
+          return test.fail("independent bit order or physical-end padding");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let input = [170u8, 85u8, 129u8];
+  for limit in [-1, 0, 1, 7, 8, 9, 23, 24, 25, 48] {
+    for pos in [-1, 0, 1, 7, 8, 9, 23, 24, 25, 48, 2147483647] {
+      for width in [-1, 0, 1, 7, 8, 16, 24, 25] {
+        let (next, value) = bits.read(input, bits.Bits { pos: pos, limit: limit, bad: false }, width);
+        let valid = width >= 0 && width <= 24 && pos >= 0 && pos <= limit && width <= limit - pos;
+        if (valid) {
+          if (next.bad || next.pos != pos + width || value as u32 != reference(input, pos, width)) {
+            return test.fail("valid logical read");
+          }
+        } else if (!next.bad || next.pos != pos || value != 0) {
+          return test.fail("invalid logical read");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MPEG bounded bit extraction");
+  runner = runner.it("independent bits across offsets, widths, and physical ends", fields);
+  runner = runner.it("logical limits and invalid widths", limits);
+  return runner.finish();
+}

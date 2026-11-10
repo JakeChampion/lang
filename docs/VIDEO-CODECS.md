@@ -58,6 +58,10 @@ It reuses the existing ISO box, sample-table, clock, and data-reference readers.
 It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
 Each packet range refers to the original byte view, without a payload copy.
 
+Absent composition and sync tables use packet defaults without per-sample temporary arrays.
+Explicit tables retain their validation, including the distinction between absent and empty sync tables.
+The public timing readers still return one value per sample.
+
 AVC and HEVC descriptions use the existing NAL configuration readers.
 The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
 The native decode and encode columns above remain unchanged.

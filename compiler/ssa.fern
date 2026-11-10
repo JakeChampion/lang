@@ -4165,7 +4165,7 @@ pub function register_form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = zero_extended_indices(drop_null_counts(g));
+  g = combine_byte_stores(zero_extended_indices(drop_null_counts(g)));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
@@ -6147,4 +6147,314 @@ pub function runtime_helper_name(op: string): string {
     "read_chunk_bytes_u8" => "reader_read_chunk_bytes_u8",
     _ => op,
   };
+}
+
+// Scalar masks and byte shifts can describe a vector byte permutation. Keep
+// each search bounded and refuse any bit whose provenance is not exact.
+struct ByteOrigin { atom: i32, fuel: i32 }
+
+struct ByteAddress { base: i32, offset: i32 }
+
+function byte_unknown(fuel: i32): ByteOrigin {
+  return ByteOrigin { atom: -2, fuel: fuel };
+}
+
+function byte_constant(ins: SInst): boolean {
+  return ins.kind_tag == CONST_INT || ins.kind_tag == CONST_I64;
+}
+
+function byte_constant_value(ins: SInst): i64 {
+  return if (ins.kind_tag == CONST_INT) { ins.imm as i64 } else { util.lit_to_i64(ins.str) };
+}
+
+function byte_shift_op(op: string): boolean {
+  return op == "shl" || op == "shr_s" || op == "shr_u";
+}
+
+function byte_wrap_op(ins: SInst): boolean {
+  return low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend";
+}
+
+function byte_extract(ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  let lane = (ins.str[ins.str.len() - 1] - b'0') as i32;
+  let bytes = ins.imm / 8;
+  if (byte >= bytes || lane < 0 || lane * bytes + byte >= 16) {
+    return byte_unknown(fuel);
+  }
+  let vector = ins.args[0];
+  if (vector < 0 || vector > 134217727) {
+    return byte_unknown(fuel);
+  }
+  return ByteOrigin { atom: vector * 16 + lane * bytes + byte, fuel: fuel };
+}
+
+function byte_unary(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  if (ins.args.len() != 1) {
+    return byte_unknown(fuel);
+  }
+  if (ins.str.starts_with("vextract_bits:")) {
+    return byte_extract(ins, byte, fuel);
+  }
+  if (byte_wrap_op(ins) && byte < low_wrap_bits(ins) / 8) {
+    return byte_origin(defs, ins.args[0], byte, fuel);
+  }
+  return byte_unknown(fuel);
+}
+
+function byte_and(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  for k in 0..2 {
+    let c = def_of(defs, ins.args[k]);
+    if (byte_constant(c)) {
+      let mask = byte_constant_value(c) >> 8 * byte & 255i64;
+      if (mask == 0i64) {
+        return ByteOrigin { atom: -1, fuel: fuel };
+      }
+      if (mask == 255i64) {
+        return byte_origin(defs, ins.args[1 - k], byte, fuel);
+      }
+    }
+  }
+  return byte_unknown(fuel);
+}
+
+function byte_or(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  let a = byte_origin(defs, ins.args[0], byte, fuel);
+  if (a.atom == -2) {
+    return a;
+  }
+  let b = byte_origin(defs, ins.args[1], byte, a.fuel);
+  if (a.atom == -1 || a.atom == b.atom) {
+    return b;
+  }
+  if (b.atom == -1) {
+    return ByteOrigin { atom: a.atom, fuel: b.fuel };
+  }
+  return byte_unknown(b.fuel);
+}
+
+function byte_shift(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  let c = def_of(defs, ins.args[1]);
+  if (!byte_constant(c)) {
+    return byte_unknown(fuel);
+  }
+  let width = if (ins.imm == 64) { 64 } else { 32 };
+  let count = (byte_constant_value(c) & (width - 1) as i64) as i32;
+  if ((count & 7) != 0 || byte >= width / 8) {
+    return byte_unknown(fuel);
+  }
+  let at = byte + (if (ins.str == "shl") { -count / 8 } else { count / 8 });
+  if (at < 0 || at >= width / 8 && ins.str == "shr_u") {
+    return ByteOrigin { atom: -1, fuel: fuel };
+  }
+  if (at >= width / 8) {
+    return byte_unknown(fuel);
+  }
+  return byte_origin(defs, ins.args[0], at, fuel);
+}
+
+function byte_binary(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin {
+  if (ins.args.len() != 2) {
+    return byte_unknown(fuel);
+  }
+  if (ins.str == "and") {
+    return byte_and(defs, ins, byte, fuel);
+  }
+  if (ins.str == "or") {
+    return byte_or(defs, ins, byte, fuel);
+  }
+  if (byte_shift_op(ins.str)) {
+    return byte_shift(defs, ins, byte, fuel);
+  }
+  return byte_unknown(fuel);
+}
+
+function byte_origin(defs: SInst[], value: i32, byte: i32, fuel: i32): ByteOrigin {
+  if (fuel <= 0 || byte < 0 || byte >= 8) {
+    return byte_unknown(0);
+  }
+  fuel -= 1;
+  let ins = def_of(defs, value);
+  if (ins.kind_tag == COPY && ins.args.len() == 1) {
+    return byte_origin(defs, ins.args[0], byte, fuel);
+  }
+  if (ins.kind_tag == UNARY) {
+    return byte_unary(defs, ins, byte, fuel);
+  }
+  if (byte_constant(ins)) {
+    let zero = (byte_constant_value(ins) >> 8 * byte & 255i64) == 0i64;
+    return ByteOrigin { atom: if (zero) { -1 } else { -2 }, fuel: fuel };
+  }
+  if (ins.kind_tag == BINARY) {
+    return byte_binary(defs, ins, byte, fuel);
+  }
+  return byte_unknown(fuel);
+}
+
+function byte_store_size(ins: SInst): i32 {
+  if (ins.kind_tag == ST_BYTE && ins.args.len() == 3) {
+    return 1;
+  }
+  if (ins.kind_tag != ST_AT || ins.args.len() != 2) {
+    return 0;
+  }
+  if (ins.str == "u8") {
+    return 1;
+  }
+  if (ins.str == "i32") {
+    return 4;
+  }
+  return if (ins.str == "") { 8 } else { 0 };
+}
+
+function byte_store_address(defs: SInst[], ins: SInst): ByteAddress {
+  let base = ins.args[0];
+  let offset = ins.imm;
+  if (ins.kind_tag == ST_BYTE) {
+    let index = offset_const(defs, ins.args[1]);
+    if (index < 0i64 || index > 32i64) {
+      return ByteAddress { base: -1, offset: 0 };
+    }
+    offset = index as i32;
+  }
+  for depth in 0..4 {
+    let d = def_of(defs, base);
+    if (d.kind_tag != BINARY || d.str != "add" || d.imm != 64 || d.args.len() != 2) {
+      break;
+    }
+    let n = offset_const(defs, d.args[1]);
+    if (n < 0i64 || n > 32i64 || offset > 64) {
+      break;
+    }
+    offset += n as i32;
+    base = d.args[0];
+  }
+  return ByteAddress { base: base, offset: offset };
+}
+
+// Only operations which cannot observe memory or trap may move between the
+// old stores and their replacement. A load, call or unknown opcode is a fence.
+function byte_store_transparent(ins: SInst): boolean {
+  if (ins.kind_tag == CONST_INT || ins.kind_tag == CONST_I64 || ins.kind_tag == COPY) {
+    return true;
+  }
+  if (ins.kind_tag == UNARY) {
+    return byte_wrap_op(ins) || ins.str.starts_with("vextract_bits:");
+  }
+  return ins.kind_tag == BINARY && (low_half_binary(ins.str) || byte_shift_op(ins.str));
+}
+
+function shuffled_byte_store(defs: SInst[], insts: SInst[], stores: i32[], count: i32): SInst {
+  if (stores.len() < 2 || count != 4 && count != 8 && count != 12 && count != 16) {
+    return no_inst();
+  }
+  let first = insts[stores[0]];
+  if (first.imm != 0 || first.kind_tag == ST_BYTE && offset_const(defs, first.args[1]) != 0i64) {
+    return no_inst();
+  }
+  let atoms: i32[] = [];
+  let vectors: i32[] = [];
+  for at in stores {
+    let store = insts[at];
+    for byte in 0..byte_store_size(store) {
+      let value = store.args[if (store.kind_tag == ST_BYTE) { 2 } else { 1 }];
+      let origin = byte_origin(defs, value, byte, 64);
+      if (origin.atom == -2) {
+        return no_inst();
+      }
+      atoms = atoms.append(origin.atom);
+      if (origin.atom >= 0 && util.index_of_i32(vectors, origin.atom / 16) < 0) {
+        vectors = vectors.append(origin.atom / 16);
+        if (vectors.len() > 2) {
+          return no_inst();
+        }
+      }
+    }
+  }
+  if (vectors.len() == 0) {
+    return no_inst();
+  }
+  let mask = __alloc_u8(16);
+  for i in 0..16 {
+    let byte = b'?';
+    if (i < atoms.len() && atoms[i] >= 0) {
+      let atom = atoms[i];
+      byte = (65 + 16 * util.index_of_i32(vectors, atom / 16) + atom % 16) as u8;
+    }
+    mask = mask.with(i, byte);
+  }
+  let other = if (vectors.len() == 2) { vectors[1] } else { vectors[0] };
+  let text = "";
+  unsafe {
+    // Every mask byte is an ASCII index or the zero-fill marker.
+    text = string_from_bytes_unchecked(mask);
+  }
+  return SInst { ...first, kind_tag: LANE_STORE, args: [first.args[0], vectors[0], other], str: "vstore:shuffle:" + text, imm: count };
+}
+
+pub function combine_byte_stores(f: SFunc): SFunc {
+  let extracts = false;
+  let stores = 0;
+  for block in f.blocks {
+    for ins in block.insts {
+      extracts = extracts || ins.kind_tag == UNARY && ins.str.starts_with("vextract_bits:");
+      if (byte_store_size(ins) > 0) {
+        stores += 1;
+      }
+    }
+  }
+  if (!extracts || stores < 2) {
+    return f;
+  }
+  let defs = inst_defs(f);
+  let blocks: SBlock[] = [];
+  let changed = false;
+  for block in f.blocks {
+    let insts = block.insts;
+    let i = 0;
+    while (i < insts.len()) {
+      if (byte_store_size(insts[i]) == 0) {
+        i += 1;
+        continue;
+      }
+      let start = byte_store_address(defs, insts[i]);
+      if (start.base < 0) {
+        i += 1;
+        continue;
+      }
+      let count = 0;
+      let group: i32[] = [];
+      let j = i;
+      while (j < insts.len() && j - i < 64) {
+        let size = byte_store_size(insts[j]);
+        if (size > 0) {
+          let address = byte_store_address(defs, insts[j]);
+          if (address.base != start.base || address.offset != start.offset + count || count + size > 16) {
+            break;
+          }
+          count += size;
+          group = group.append(j);
+        } else if (!byte_store_transparent(insts[j])) {
+          break;
+        }
+        j += 1;
+      }
+      let packed = shuffled_byte_store(defs, insts, group, count);
+      if (packed.kind_tag != 0) {
+        for at in group {
+          insts = insts.with(at, no_inst());
+        }
+        insts = insts.with(group[group.len() - 1], packed);
+        changed = true;
+      }
+      i = if (j > i) { j } else { i + 1 };
+    }
+    let kept: SInst[] = [];
+    for ins in insts {
+      if (ins.kind_tag != 0) {
+        kept = kept.append(ins);
+      }
+    }
+    blocks = blocks.append(SBlock { ...block, insts: kept });
+  }
+  return if (changed) { prune_dead(SFunc { ...f, blocks: blocks }) } else { f };
 }

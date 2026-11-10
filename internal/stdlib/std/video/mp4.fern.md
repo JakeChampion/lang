@@ -30,6 +30,9 @@ AVC and HEVC still require `ftyp`. A malformed or duplicate `ftyp` remains an er
 Limits bound input bytes, boxes, tracks, packets, descriptions, edits, dimensions, and each packet.
 The packet budget is cumulative across video tracks. The track budget includes non-video tracks.
 These limits bound retained entries, not exact process memory.
+Absent composition and sync tables do not require default arrays in the packet indexer.
+Their packet defaults remain zero composition offset and an all-sync track.
+An explicit empty sync table still marks every packet as a non-sync sample.
 The complete byte view uses signed 32-bit indices. This API does not stream a large file.
 
 ```fern
@@ -190,15 +193,16 @@ function raw_packets(input: [u8], children: [boxes.Box], scan: Scan, description
 
 function packets(input: [u8], children: [boxes.Box], scan: Scan, descriptions: i32): Result[Packet[], pcm.AudioError] {
   let raw = raw_packets(input, children, scan, descriptions)?;
-  let composition = timing.composition(input, children, raw.len())?;
-  let sync = timing.sync_samples(input, children, raw.len())?;
+  let composition = timing.indexed_composition(input, children, raw.len())?;
+  let sync = timing.indexed_sync_samples(input, children, raw.len())?;
   let output: Packet[] = [];
   for i in 0..raw.len() {
     let packet = raw[i];
-    let Some(pts) = packet.position +? composition[i] else {
+    let offset = if (composition.len() == 0) { 0i64 } else { composition[i] };
+    let Some(pts) = packet.position +? offset else {
       return Err(pcm.Limit);
     };
-    output = output.append(Packet { offset: packet.offset, bytes: packet.bytes, description: packet.description, decode_time: packet.position, presentation_time: pts, duration: packet.duration, sync: sync[i] });
+    output = output.append(Packet { offset: packet.offset, bytes: packet.bytes, description: packet.description, decode_time: packet.position, presentation_time: pts, duration: packet.duration, sync: sync.len() == 0 || sync[i] });
   }
   return Ok(output);
 }

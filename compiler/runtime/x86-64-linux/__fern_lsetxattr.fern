@@ -1,7 +1,4 @@
 function __fern_lsetxattr(path: string, name: string, value: string): Result[void, IoError] {
-  if (__count_byte(value, 0) > 0) {
-    return Err(__fern_io_error(22, __fern_path_copy(value, value.len())));
-  }
   if (__count_byte(name, 0) > 0) {
     return Err(__fern_io_error(22, __fern_path_copy(name, name.len())));
   }

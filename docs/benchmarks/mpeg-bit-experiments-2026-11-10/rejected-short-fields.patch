@@ -1,0 +1,26 @@
+--- a/internal/stdlib/std/audio/mp3/bits.fern.md
++++ b/internal/stdlib/std/audio/mp3/bits.fern.md
+@@ -17,0 +18,3 @@
++  if (pos >= 0 && n > 0 && n <= 24) {
++    return short_field(input, pos, n);
++  }
+@@ -34,0 +38,19 @@
++function byte_at(input: [u8], at: i32): u32 {
++  return if (at < input.len()) { input[at] as u32 } else { 0u32 };
++}
++
++function short_field(input: [u8], pos: i32, n: i32): u32 {
++  let at = pos / 8;
++  let end = (pos & 7) + n;
++  let mask = (1u32 << n as u32) - 1u32;
++  if (end <= 8) {
++    return byte_at(input, at) >> (8 - end) as u32 & mask;
++  }
++  let word = byte_at(input, at) << 16u32 | byte_at(input, at + 1) << 8u32 | byte_at(input, at + 2);
++  if (end <= 24) {
++    return word >> (24 - end) as u32 & mask;
++  }
++  word = word << 8u32 | byte_at(input, at + 3);
++  return word >> (32 - end) as u32 & mask;
++}
++
