@@ -45,14 +45,12 @@ function arm64_rec_gpr(tok: string): i32 {
     return -1;
   }
   let v = 0;
-  let k = 1;
-  while (k < n) {
+  for k in 1..n {
     let c = tok[k] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
     v = v * 10 + (c - 48);
-    k += 1;
   }
   if (v > 30) {
     return -1;
@@ -8653,10 +8651,8 @@ function arm64_gas_alignment(line: string): i32 {
     return 0;
   }
   let a = 1;
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     a *= 2;
-    k += 1;
   }
   return a;
 }
@@ -8699,12 +8695,10 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
 }
 
 function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
-  let i = 0;
-  while (i < p.bss_names.len()) {
+  for i in 0..p.bss_names.len() {
     if (p.bss_names[i] == name) {
       return p.bss_offs[i];
     }
-    i += 1;
   }
   return -1;
 }
@@ -8714,14 +8708,12 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string, sec: i32): 
     let width = arm64_gas_data_width(line);
     if (width > 0) {
       let vals = arm64_gas_values(line);
-      let vi = 0;
-      while (vi < vals.len()) {
+      for vi in 0..vals.len() {
         if (width == 8 && !arm64_gas_numeric_tok(vals[vi])) {
           p = arm64_gas_sym_word(p, vals[vi], sec);
         } else {
           p = arm64_gas_data_le(p, arm64_gas_atoi64(vals[vi]), width);
         }
-        vi += 1;
       }
       return p;
     }
@@ -8863,13 +8855,11 @@ function arm64_lit_reach(): i32 {
 
 function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
   let worst = 0;
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let d = code_len - p.lit_sites[i];
     if (d > worst) {
       worst = d;
     }
-    i += 1;
   }
   return worst;
 }
@@ -8881,14 +8871,12 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
   while ((buf_len(aw.code) & 7) != 0) {
     buf_push_byte(aw.code, 0);
   }
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let site = p.lit_sites[i];
     let rel = buf_len(aw.code) - site;
     aw = arm64_queue_patch(aw, site, 1, rel);
     arm64_push_word(aw.code, p.lit_vals[i]);
     arm64_push_word(aw.code, p.lit_vals[i] >> 32);
-    i += 1;
   }
   return aw;
 }
@@ -9323,18 +9311,14 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
     a = Arm64Asm { ...a, text: text };
     p = Arm64GasProg { ...p, ro: [], ro_base: ro_base, code_end: code_end };
   }
-  let ui = 0;
-  while (ui < a.unres.len()) {
+  for ui in 0..a.unres.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
-    ui += 1;
   }
   for name in a.twice {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + name + " defined twice") };
   }
-  let oi = 0;
-  while (oi < a.oor.len()) {
+  for oi in 0..a.oor.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
-    oi += 1;
   }
   return Arm64GasProg { ...p, asm: a, cfi: cfi, pf_sites: pf_sites, pf_syms: pf_syms, pf_kinds: pf_kinds };
 }
@@ -9445,10 +9429,8 @@ function arm64_gas_link_image(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: 
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
     } else {
       let v = dres.addr + addend;
-      let b: i32 = 0;
-      while (b < 8) {
+      for b in 0..8 {
         dat = dat.with(off + b, (v >> b * 8 & 255) as i32);
-        b += 1;
       }
     }
     di += 1;
@@ -9464,10 +9446,8 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 }
 
 function macho_le64(buf: i32[], v: i64): i32[] {
-  let b: i32 = 0;
-  while (b < 8) {
+  for b in 0..8 {
     buf = buf.append((v >> b * 8 & 255) as i32);
-    b += 1;
   }
   return buf;
 }
@@ -9511,10 +9491,8 @@ function macho_name16(buf: i32[], s: string): i32[] {
 }
 
 function macho_zeros(buf: i32[], n: i32): i32[] {
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     buf = buf.append(0);
-    i += 1;
   }
   return buf;
 }
@@ -9679,10 +9657,8 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
     buf = util.le32(buf, 0);
     buf = util.le32(buf, 0);
   }
-  let i = 0;
-  while (i < path.len()) {
+  for i in 0..path.len() {
     buf = buf.append(path[i] as i32);
-    i += 1;
   }
   return macho_zeros(buf, size - fixed - path.len());
 }
@@ -9705,8 +9681,7 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1, 0x50 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x40);
     let k = 0;
     while (k < syms[i].len()) {
@@ -9717,7 +9692,6 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     buf = buf.append(0x70 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x90);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9740,12 +9714,10 @@ function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x20 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x50 | 1);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9844,10 +9816,8 @@ function macho_strtab(buf: i32[], names: string[], idx: i32[]): i32[] {
   buf = buf.append(0);
   for i in idx {
     let n = names[i];
-    let k = 0;
-    while (k < n.len()) {
+    for k in 0..n.len() {
       buf = buf.append(n[k] as i32);
-      k += 1;
     }
     buf = buf.append(0);
   }
@@ -9910,16 +9880,13 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
   sb = macho_be64(sb, exec_seg_limit as i64);
   sb = macho_be64(sb, 1);
 
-  let i = 0;
-  while (i < ident.len()) {
+  for i in 0..ident.len() {
     sb = sb.append(ident[i] as i32);
-    i += 1;
   }
   sb = sb.append(0);
 
   let bytes = util.to_u8(content);
-  let slot = 0;
-  while (slot < n_slots) {
+  for slot in 0..n_slots {
     let pstart = slot * 4096;
     let pend = pstart + 4096;
     if (pend > code_limit) {
@@ -9928,7 +9895,6 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
     for b in crypto.sha256(bytes[pstart:pend]) {
       sb = sb.append(b as i32);
     }
-    slot += 1;
   }
   return sb;
 }
@@ -10053,10 +10019,8 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   if (has_dwarf) {
     let names = macho_dwarf_sects();
     buf = macho_seg(buf, "__DWARF", dwarf_vaddr, 0 as i64, dwarf_off as i64, dwarf_file_len as i64, 0, 0, names.len());
-    let ds = 0;
-    while (ds < names.len()) {
+    for ds in 0..names.len() {
       buf = macho_sect(buf, names[ds], "__DWARF", dwarf_vaddr + dwarf_at[ds] as i64, dwarf[ds].len(), dwarf_off + dwarf_at[ds], 0, 0x02000000);
-      ds += 1;
     }
   }
 
@@ -10092,11 +10056,9 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
     buf = util.append_all(buf, data);
     buf = macho_pad_to(buf, dwarf_off);
   }
-  let k = 0;
-  while (k < dwarf.len()) {
+  for k in 0..dwarf.len() {
     buf = macho_pad_to(buf, dwarf_off + dwarf_at[k]);
     buf = util.append_all(buf, dwarf[k]);
-    k += 1;
   }
   buf = macho_pad_to(buf, linkedit_off);
   buf = util.append_all(buf, rebase);

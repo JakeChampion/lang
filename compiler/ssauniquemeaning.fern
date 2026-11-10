@@ -11,8 +11,7 @@ function merge_order(ids: i32[], order: i32[], left: i32, mid: i32, end: i32, ou
   let out = output;
   let a = left;
   let b = mid;
-  let at = left;
-  while (at < end) {
+  for at in left..end {
     if (b >= end || a < mid && ids[order[a]] <= ids[order[b]]) {
       out = out.with(at, order[a]);
       a += 1;
@@ -20,7 +19,6 @@ function merge_order(ids: i32[], order: i32[], left: i32, mid: i32, end: i32, ou
       out = out.with(at, order[b]);
       b += 1;
     }
-    at += 1;
   }
   return out;
 }

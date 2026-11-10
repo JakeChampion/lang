@@ -28,12 +28,10 @@ function mutation(s: string, string_entry: boolean, from: string, to: string, ex
 function identities(s: string, string_entry: boolean): void {
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 0;
-  while (i < regs.len()) {
+  for i in 0..regs.len() {
     mutation(s, string_entry, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     mutation(s, string_entry, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 0 && !string_entry);
     mutation(s, string_entry, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
-    i += 1;
   }
   mutation(s, string_entry, "movq 8(%rsp), %rax", "movl 8(%rsp), %eax", !string_entry);
   mutation(s, string_entry, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);

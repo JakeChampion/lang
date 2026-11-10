@@ -469,10 +469,8 @@ function fold_block(body: ast.Stmt[]): ast.Stmt[] {
 
 pub function fold_module(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
-    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
@@ -517,10 +515,8 @@ function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
     return body;
   }
   let leading: ast.Stmt[] = [];
-  let i = 0;
-  while (i < body.len() - 1) {
+  for i in 0..body.len() - 1 {
     leading = leading.append(body[i]);
-    i += 1;
   }
   let out = prune_block(leading);
   let last = body[body.len() - 1];
@@ -628,10 +624,8 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 
 pub function elide_asserts(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
-    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
 }

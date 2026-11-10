@@ -118,8 +118,7 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
   let paired = 0;
   let elided = 0;
   let sites = "";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (is_paired_alloc(ops[i])) {
       paired += 1;
       elided += elided_carried_at(ops, i);
@@ -133,7 +132,6 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
         fresh += 1;
       }
     }
-    i += 1;
   }
   if (!claim.is_fip && !claim.is_fbip) {
     return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };

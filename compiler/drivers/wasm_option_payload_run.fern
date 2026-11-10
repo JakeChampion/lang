@@ -19,13 +19,11 @@ function main(): i32 {
     "i32", "string", "Foo", "u8[]", "", "Map[string, i32]",
   ];
   let out = "";
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let t = corpus[i];
     let opt = wasm_ir.parse_option_payload(t);
     let err = wasm_ir.parse_result_err_payload(t);
     out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
-    i += 1;
   }
   write(out);
   return 0;

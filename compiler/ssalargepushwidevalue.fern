@@ -90,10 +90,8 @@ pub function power(bit: i32): i64 {
     return 0 as i64;
   }
   let result = 1 as i64;
-  let at = 0;
-  while (at < bit) {
+  for at in 0..bit {
     result *= 2 as i64;
-    at += 1;
   }
   return result;
 }

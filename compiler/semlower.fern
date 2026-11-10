@@ -171,12 +171,10 @@ function collected_bodies(bodies: Result[Option[irtables.Lowered], irtables.Lowe
 }
 
 function report_rows(r: Rows, prefix: string): i32 {
-  let i = 0;
-  while (i < r.why.len()) {
+  for i in 0..r.why.len() {
     if (r.why[i].len() > 0) {
       report(prefix + r.n1[i], r.why[i]);
     }
-    i += 1;
   }
   return 0;
 }
@@ -232,10 +230,8 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     i += 1;
   }
   let fresh = ssaunits.fresh_rows(keys, funcs, plans);
-  i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
-    i += 1;
   }
   let grows = ssaunits.grow_table(keys, funcs, plans);
   let held = false;
@@ -274,21 +270,18 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
   let tables_agree = ssaunits.write_tables_agree(prev.writes, inferred.r.writes);
-  let i = 0;
-  while (i < inferred.r.plans.len()) {
+  for i in 0..inferred.r.plans.len() {
     let p = produced_at(built, mod, i);
     let callees = ssaunits.grow_callees(p.func);
     out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees)
       || !tables_agree || !ssaunits.written_rows_agree(prev.writes, inferred.r.writes, callees));
-    i += 1;
   }
   return out;
 }
 
 function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: semsource.Built, a: Planned, b_built: semsource.Built, b: Planned, take_b: boolean[]): Rows {
   let r = b.r;
-  let i = 0;
-  while (i < b.r.plans.len()) {
+  for i in 0..b.r.plans.len() {
     let p = produced_at(a_built, mod, i);
     let pl = a;
     if (i < take_b.len() && take_b[i]) {
@@ -298,7 +291,6 @@ function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: 
     let body = produced_body(p, pl.r.plans[i], structs, pl.r.grows, pl.r.pure, pl.views[i], pl.r.susp);
     let keep = match (body) { Ok(_) => true, Err(_) => false };
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(keep), why: r.why.append(refusal(p, body)) };
-    i += 1;
   }
   return r;
 }
@@ -316,8 +308,7 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
     bad = bad.append(false);
     callers = callers.append([]);
   }
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     for b in funcs[i].graph.blocks {
       for ins in b.insts {
         let callee: i32 = -1;
@@ -335,7 +326,6 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
         }
       }
     }
-    i += 1;
   }
   return util.name_index(unmarked(keys, spread_marks(bad, callers)));
 }
@@ -364,12 +354,10 @@ function effect_builtins(): string[] {
 function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
   let marks = seed;
   let work: i32[] = [];
-  let i = 0;
-  while (i < marks.len()) {
+  for i in 0..marks.len() {
     if (marks[i]) {
       work = work.append(i);
     }
-    i += 1;
   }
   let next = 0;
   while (next < work.len()) {
@@ -386,12 +374,10 @@ function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
 
 function unmarked(keys: string[], marks: boolean[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < keys.len()) {
+  for i in 0..keys.len() {
     if (!marks[i]) {
       out = out.append(keys[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -399,8 +385,7 @@ function unmarked(keys: string[], marks: boolean[]): string[] {
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
-  let i = 0;
-  while (i < keep.len()) {
+  for i in 0..keep.len() {
     if (!keep[i]) {
       if (i >= built.decls.len()) {
         if (!built.instances[i - built.decls.len()].dropped) {
@@ -410,7 +395,6 @@ function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
         return false;
       }
     }
-    i += 1;
   }
   return true;
 }
@@ -583,8 +567,7 @@ function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies 
   let helpers = module_helpers(built);
   let bodies: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let n = 0;
-  let i = 0;
-  while (i < built.decls.len()) {
+  for i in 0..built.decls.len() {
     if (built.decls[i].dropped) {
       bodies = bodies.append(Ok(None));
       n += 1;
@@ -601,7 +584,6 @@ function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies 
     } else {
       bodies = bodies.append(Err(declined_state(r.why[i])));
     }
-    i += 1;
   }
   return DeclarationBodies { helpers: helpers, bodies: bodies, count: n };
 }
@@ -612,8 +594,7 @@ function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers
   let instances: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let instance_origins: physicalbody.Origin[] = [];
   let unspliced = 0;
-  let at = 0;
-  while (at < built.instances.len()) {
+  for at in 0..built.instances.len() {
     if (built.instances[at].dropped) {
       unspliced += 1;
     } else if (r.keep[built.decls.len() + at]) {
@@ -621,7 +602,6 @@ function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers
       instances = instances.append(r.body[built.decls.len() + at]);
       instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[built.decls.len() + at], helper: None });
     }
-    at += 1;
   }
   return InstanceBodies { helpers: helpers, bodies: instances, origins: instance_origins, unspliced: unspliced };
 }
@@ -657,10 +637,8 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let kept_origins = physicalbody.select_origins(extra_origins, kept.extra_indices);
   let reached = semhelperreach.select(kept.result.bodies, kept.result.extra, kept_origins);
   let declarations: string[] = [];
-  let i = 0;
-  while (i < bodies.len()) {
+  for i in 0..bodies.len() {
     declarations = declarations.append(built.names[i]);
-    i += 1;
   }
   let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(kept_origins, reached.indices) };
   return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: reached.bodies, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
@@ -756,10 +734,8 @@ function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
   for name in r.pure.names {
     out = out.append("P:" + name);
   }
-  let k = 0;
-  while (k < r.susp.rows.names.len()) {
+  for k in 0..r.susp.rows.names.len() {
     out = out.append("S:" + r.susp.rows.names[k] + "|" + r.susp.classes[k]);
-    k += 1;
   }
   if (r.susp.indirect) {
     out = out.append("S:indirect");
@@ -774,15 +750,13 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
   let sites: semarrayreport.Site[] = [];
   let scales: semarrayreport.Site[] = [];
   let appends: semarrayreport.Site[] = [];
-  let i = 0;
-  while (i < r.plans.len()) {
+  for i in 0..r.plans.len() {
     if (r.keep[i]) {
       let p = produced_at(built, mod, i);
       sites = util.append_all(sites, ssarc.map_report(p.func, p.modes, r.plans[i], r.pure));
       scales = util.append_all(scales, ssarc.scale_report(p.func, r.plans[i]));
       appends = util.append_all(appends, ssarc.append_report(p.func, r.plans[i]));
     }
-    i += 1;
   }
   semarrayreport.write(sink, semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
   semarrayreport.write(sink, semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
@@ -828,10 +802,8 @@ pub function runtime_bodies(src: string): irtables.Lowered[] {
 
 function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
   let out: parser.StructDecl[] = [];
-  let i = 0;
-  while (i < structs.len()) {
+  for i in 0..structs.len() {
     out = out.append(parser.StructDecl { ...structs[i], line: 0, col: 0 });
-    i += 1;
   }
   return out;
 }
@@ -997,12 +969,10 @@ pub function verdict_ok(mod: parser.Module, target: string): boolean {
   }
   let im = verdict_module(t.mod, target);
   let inf = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
-  let i = 0;
-  while (i < inf.rows.keep.len()) {
+  for i in 0..inf.rows.keep.len() {
     if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -1023,14 +993,12 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   let inf = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   let rows: VerdictRow[] = [];
   let ok = true;
-  let i = 0;
-  while (i < inf.rows.keep.len()) {
+  for i in 0..inf.rows.keep.len() {
     let row = verdict_row(im, inf, i);
     if (row.state == "refused") {
       ok = false;
     }
     rows = rows.append(row);
-    i += 1;
   }
   return Verdict { ok: ok, errors: [], rows: rows };
 }

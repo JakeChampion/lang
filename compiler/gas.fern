@@ -65,10 +65,8 @@ pub function label_buckets(): i32 {
 pub function empty_buckets(): i32[] {
   let n = label_buckets();
   let b = __alloc_i32(n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     b = b.with(i, -1);
-    i += 1;
   }
   return b;
 }
@@ -193,15 +191,13 @@ function cfi_trim(s: string): string {
 function cfi_split_ops(rest: string): string[] {
   let out: string[] = [];
   let tok = "";
-  let i = 0;
-  while (i < rest.len()) {
+  for i in 0..rest.len() {
     if (rest[i] == b',') {
       out = out.append(cfi_trim(tok));
       tok = "";
     } else {
       tok += slice_unchecked(rest, i, i + 1);
     }
-    i += 1;
   }
   if (cfi_trim(tok).len() > 0 || out.len() > 0) {
     out = out.append(cfi_trim(tok));
@@ -261,12 +257,10 @@ function cfi_reg_num(p: CfiProfile, tok: string): i32 {
     }
     return n;
   }
-  let i = 0;
-  while (i < p.reg_names.len()) {
+  for i in 0..p.reg_names.len() {
     if (p.reg_names[i] == tok) {
       return p.reg_nums[i];
     }
-    i += 1;
   }
   return -1;
 }
@@ -307,10 +301,8 @@ function cfi_le64_i64(own b: i32[], v: i64): i32[] {
 
 function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
   let pos = s.rule_bytes.len();
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) };
-    i += 1;
   }
   return CfiState {
     ...s,
@@ -397,12 +389,10 @@ pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): C
 }
 
 function cfi_reg_label(p: CfiProfile, r: i32): string {
-  let i = 0;
-  while (i < p.reg_nums.len()) {
+  for i in 0..p.reg_nums.len() {
     if (p.reg_nums[i] == r) {
       return p.reg_names[i];
     }
-    i += 1;
   }
   return cfi_uleb_text(r);
 }
@@ -559,10 +549,8 @@ function cfi_cie(p: CfiProfile): i32[] {
   b = cfi_uleb(b, p.ra_column);
   b = cfi_uleb(b, 1);
   b = b.append(p.ptr_enc);
-  let i = 0;
-  while (i < p.initial.len()) {
+  for i in 0..p.initial.len() {
     b = b.append(p.initial[i]);
-    i += 1;
   }
   b = cfi_pad4(b);
   return util.append_all(util.le32([], b.len()), b);
@@ -620,15 +608,13 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
   cie = util.append_all(cie, p.initial);
   cie = cfi_pad_entry(cie, 0, 8);
   let out = util.append_all(util.le32([], cie.len()), cie);
-  let k = 0;
-  while (k < s.fde_start.len()) {
+  for k in 0..s.fde_start.len() {
     let b = util.le32([], 0);
     b = cfi_le64_i64(b, text_vaddr + s.fde_start[k] as i64);
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
     b = cfi_fde_rules(b, s, p, k);
     b = cfi_pad_entry(b, out.len(), 8);
     out = util.append_all(util.le32(out, b.len()), b);
-    k += 1;
   }
   return out;
 }
@@ -654,8 +640,7 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
     k += 1;
   }
   let pos = 0;
-  k = 0;
-  while (k < n) {
+  for k in 0..n {
     out = util.le32(out, lens[k]);
     let q = 0;
     while (q < lens[k]) {
@@ -663,7 +648,6 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
       q += 1;
     }
     pos += lens[k];
-    k += 1;
   }
   out = util.append_all(out, [0, 0, 0, 0]);
   return out;
@@ -697,8 +681,7 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
     at = at + 4 + plen;
     k += 1;
   }
-  let i = 1;
-  while (i < n) {
+  for i in 1..n {
     let j = i;
     while (j > 0 && fns[j] < fns[j - 1]) {
       let tf = fns[j];
@@ -709,16 +692,13 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
       fdes = fdes.with(j - 1, td);
       j -= 1;
     }
-    i += 1;
   }
   let b: i32[] = [1, 27, 3, 59];
   b = cfi_le32_i64(b, eh_vaddr - (hdr_vaddr + 4 as i64));
   b = util.le32(b, n);
-  k = 0;
-  while (k < n) {
+  for k in 0..n {
     b = cfi_le32_i64(b, fns[k] - hdr_vaddr);
     b = cfi_le32_i64(b, fdes[k] - hdr_vaddr);
-    k += 1;
   }
   return b;
 }

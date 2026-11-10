@@ -56,10 +56,8 @@ function hex_nibble(v: i32): string {
 
 function to_hex(b: i32[]): string {
   let out = "";
-  let i = 0;
-  while (i < b.len()) {
+  for i in 0..b.len() {
     out = out + hex_nibble(b[i] >> 4 & 15) + hex_nibble(b[i] & 15);
-    i += 1;
   }
   return out;
 }
@@ -76,12 +74,10 @@ function bytes_equal(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

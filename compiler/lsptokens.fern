@@ -43,12 +43,10 @@ pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
   let types = type_classes(v, type_params(lspquery.parsed_module(p, m)), m, x, kinds);
   kinds = applied(kinds, types);
   let out: SemTok[] = [];
-  let i = 0;
-  while (i < x.toks.len()) {
+  for i in 0..x.toks.len() {
     if (kinds[i] >= 0) {
       out = out.append(SemTok { line: x.toks[i].line, col: x.toks[i].col, len: x.toks[i].text.len(), kind: kinds[i] });
     }
-    i += 1;
   }
   return out;
 }
@@ -159,12 +157,10 @@ function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[]
     return acc;
   }
   let end = lspquery.pattern_end(x.toks, i);
-  let j = i;
-  while (j < end) {
+  for j in i..end {
     if (spells_variant(x.toks[j], name) && lspquery.text_at(x.toks, j + 1) != ":") {
       acc = pattern_class(x, qualifier_of(x, j), acc);
     }
-    j += 1;
   }
   return acc;
 }
@@ -208,10 +204,8 @@ function expr_class(s: checker.Scope, x: Ctx, e: ast.Expr, params: string[], own
     },
     ast.ExprStructLit(sl) => {
       acc = node_at(x, sl.line, sl.col, T_STRUCT, acc);
-      let i = 0;
-      while (i < sl.field_lines.len()) {
+      for i in 0..sl.field_lines.len() {
         acc = node_at(x, sl.field_lines[i], sl.field_cols[i], T_PROPERTY, acc);
-        i += 1;
       }
     },
     _ => {}
@@ -314,12 +308,10 @@ function type_classes(v: lspquery.View, tparams: string[], m: i32, x: Ctx, kinds
   let s = checker.module_scope(v.types);
   let q = lspquery.quals_of(v, m);
   let out: Mark[] = [];
-  let i = 0;
-  while (i < x.toks.len()) {
+  for i in 0..x.toks.len() {
     if (kinds[i] < 0 && !lspquery.punct_before(x.toks, i, ".")) {
       out = type_class(s, q, tparams, x, i, out);
     }
-    i += 1;
   }
   return out;
 }

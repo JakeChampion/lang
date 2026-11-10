@@ -42,11 +42,9 @@ function any_byte_update(f: ssasem.Func): boolean {
 function index(f: ssasem.Func): Index {
   let defs: ssa.SInst[] = [];
   let homes: i32[] = [];
-  let i = 0;
-  while (i < f.values.len()) {
+  for i in 0..f.values.len() {
     defs = defs.append(ssa.no_inst());
     homes = homes.append(-1);
-    i += 1;
   }
   for b in f.graph.blocks {
     for ins in b.insts {

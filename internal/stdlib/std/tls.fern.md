@@ -71,6 +71,7 @@ pub enum TlsError {
   HandshakeTimeout,
   ClosedEarly,
   RecordCut,
+  Truncated,
   OffloadRefused(i32),
   KeysRefused(i32),
   KernelReadFailed(i32),
@@ -150,6 +151,9 @@ function __later_message(e: TlsError): string {
     },
     RecordCut => {
       return "the peer closed the connection inside a record";
+    },
+    Truncated => {
+      return "the peer closed the connection with no close_notify";
     },
     _ => {
       return __kernel_message(e);

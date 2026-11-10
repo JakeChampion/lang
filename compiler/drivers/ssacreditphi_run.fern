@@ -44,10 +44,8 @@ function reject(j: Result[phi.Joined, guard.BuildError], why: string, id: i32): 
 
 function blank(n: i32): phi.Value[] {
   let values: phi.Value[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     values = values.append(phi.Value { kind: -1, identity: -1, available: 0 });
-    i += 1;
   }
   return values;
 }

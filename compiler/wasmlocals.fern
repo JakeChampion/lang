@@ -30,8 +30,7 @@ function scopes(ops: ir.Op[]): Scopes {
   let open_loop: i32[] = [];
   let nopen = 0;
   let cur = 0;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let k = ops[i].kind_tag;
     scope_of = scope_of.append(cur);
     if (k == k_block || k == k_loop || k == k_if) {
@@ -57,7 +56,6 @@ function scopes(ops: ir.Op[]): Scopes {
       }
       cur = parent[cur];
     }
-    i += 1;
   }
   return Scopes { scope_of: scope_of, parent: parent, depth: depth, loop_start: loop_start, loop_end: loop_end };
 }
@@ -94,8 +92,7 @@ function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
   let first_scope = filled_i32(n_locals, 0);
   let inner = filled_i32(n_locals, 0);
   let stored_first = filled_bool(n_locals, false);
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let k = ops[i].kind_tag;
     if (k == k_load || k == k_store || k == k_tee) {
       let s = ops[i].i32_imm;
@@ -110,14 +107,11 @@ function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
       }
       last = last.with(s, i);
     }
-    i += 1;
   }
   let pinned = dyn_dispatch_slots(ops, n_locals);
   let share: boolean[] = [];
-  let s = 0;
-  while (s < n_locals) {
+  for s in 0..n_locals {
     share = share.append(s >= n_params && !pinned[s] && stored_first[s] && first_scope[s] == inner[s]);
-    s += 1;
   }
   return Slots { first: first, last: last, share: share, pinned: pinned };
 }
@@ -127,10 +121,8 @@ function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
   let pinned = filled_bool(n_locals, false);
   for o in ops {
     if (o.kind_tag == k_dyn) {
-      let j = 0;
-      while (j < o.width) {
+      for j in 0..o.width {
         pinned = pinned.with(o.i32_imm + j, true);
-        j += 1;
       }
     }
   }
@@ -139,20 +131,16 @@ function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
 
 function extend_over_loops(sl: Slots, sc: Scopes): i32[] {
   let last = sl.last;
-  let s = 0;
-  while (s < sl.share.len()) {
+  for s in 0..sl.share.len() {
     if (sl.share[s]) {
       let l = last[s];
-      let j = 0;
-      while (j < sc.loop_start.len()) {
+      for j in 0..sc.loop_start.len() {
         if (sc.loop_start[j] > sl.first[s] && sc.loop_start[j] < l && sc.loop_end[j] > l) {
           l = sc.loop_end[j];
         }
-        j += 1;
       }
       last = last.with(s, l);
     }
-    s += 1;
   }
   return last;
 }
@@ -176,20 +164,17 @@ function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
   let map = filled_i32(n, -1);
   let starts = filled_i32(ops.len(), -1);
   let next = 0;
-  let s = 0;
-  while (s < n) {
+  for s in 0..n {
     if (s < n_params || sl.pinned[s] || sl.first[s] >= 0 && !sl.share[s]) {
       map = map.with(s, next);
       next += 1;
     } else if (sl.share[s]) {
       starts = starts.with(sl.first[s], s);
     }
-    s += 1;
   }
   let kind: i32[] = [];
   let until: i32[] = [];
-  let i = 0;
-  while (i < starts.len()) {
+  for i in 0..starts.len() {
     let t = starts[i];
     if (t >= 0) {
       let k = free_local(kind, until, types[t], i);
@@ -202,18 +187,15 @@ function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
       }
       map = map.with(t, next + k);
     }
-    i += 1;
   }
   return map;
 }
 
 function free_local(kind: i32[], until: i32[], ty: i32, at: i32): i32 {
-  let k = 0;
-  while (k < kind.len()) {
+  for k in 0..kind.len() {
     if (kind[k] == ty && until[k] < at) {
       return k;
     }
-    k += 1;
   }
   return -1;
 }
@@ -224,24 +206,20 @@ function remapped_types(map: i32[], types: i32[]): i32[] {
     n = max_i32(n, m + 1);
   }
   let out = filled_i32(n, 0);
-  let s = 0;
-  while (s < map.len()) {
+  for s in 0..map.len() {
     if (map[s] >= 0) {
       out = out.with(map[s], types[s]);
     }
-    s += 1;
   }
   return out;
 }
 
 function slots_of_type(types: i32[], ty: i32): i32[] {
   let out: i32[] = [];
-  let s = 0;
-  while (s < types.len()) {
+  for s in 0..types.len() {
     if (types[s] == ty) {
       out = out.append(s);
     }
-    s += 1;
   }
   return out;
 }
@@ -272,20 +250,16 @@ function max_i32(a: i32, b: i32): i32 {
 
 function filled_i32(n: i32, v: i32): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(v);
-    i += 1;
   }
   return out;
 }
 
 function filled_bool(n: i32, v: boolean): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(v);
-    i += 1;
   }
   return out;
 }

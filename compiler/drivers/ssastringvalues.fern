@@ -44,15 +44,13 @@ function scalar_class(n: i64): i32 {
     return -3;
   }
   let quarter = 16384 as i64;
-  let index = 0;
-  while (index < 45) {
+  for index in 0..45 {
     if (n <= (4 + index % 4) as i64 * quarter) {
       return index;
     }
     if (index % 4 == 3) {
       quarter *= 2 as i64;
     }
-    index += 1;
   }
   return -2;
 }
@@ -77,10 +75,8 @@ function sample(r: value.Interval, fused: boolean, w: i64, d: i32): void {
 function interval(r: value.Interval, fused: boolean): void {
   require(value.valid_interval(r), "partition validity");
   for w in [r.low, r.low + (r.high - r.low) / (2 as i64), r.high] {
-    let d = r.min_residue;
-    while (d <= r.max_residue) {
+    for d in r.min_residue..=r.max_residue {
       sample(r, fused, w, d);
-      d += 1;
     }
   }
 }

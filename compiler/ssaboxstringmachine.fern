@@ -46,10 +46,8 @@ function narrowed(w: Word, width: i32): Word {
 
 function initial(register_entry: boolean): State {
   let regs: Word[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
@@ -358,12 +356,10 @@ function finished(s: State, register_entry: boolean): boolean {
     i += 1;
   }
   let expected = put(put(initial(register_entry), 0, 64, identity(8, 0)), 6, 64, identity(6, -8));
-  i = 0;
-  while (i < 8) {
+  for i in 0..8 {
     if (!same_half(s.cells[i], expected.cells[i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -384,12 +380,10 @@ function unguarded(s: State, original: State): State {
     }
     i += 1;
   }
-  i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 };
 }

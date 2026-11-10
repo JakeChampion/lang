@@ -18,10 +18,8 @@ function probe(reads: i32): ssa.Alloc {
   }
   let f = ssa.SFunc { name: "spill", nparams: 0, nvals: 100, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 0 } }] };
   let no_home: boolean[] = [false, false];
-  i = 2;
-  while (i < 100) {
+  for i in 2..100 {
     no_home = no_home.append(true);
-    i += 1;
   }
   return ssa.regalloc_linear(f, 1, 0, -1, false, no_home, [], [], 0, 0);
 }

@@ -5,13 +5,11 @@ import "../util";
 
 function render(ops: ir.Op[]): string {
   let s = "";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (i > 0) {
       s += " ; ";
     }
     s += ir.render_op(ops[i]);
-    i += 1;
   }
   return s;
 }
@@ -22,10 +20,8 @@ function show(r: ir.OptimizedOps): string {
 
 function cat(a: ir.Op[], b: ir.Op[]): ir.Op[] {
   let out = a;
-  let i = 0;
-  while (i < b.len()) {
+  for i in 0..b.len() {
     out = out.append(b[i]);
-    i += 1;
   }
   return out;
 }

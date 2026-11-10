@@ -796,6 +796,15 @@ function __content(c: Conn, code: i32, content: u8[], app: boolean, out: Out): R
   return Err(UnexpectedRecord(code));
 }
 
+// A close_notify closes a connection that is open. Before the handshake
+// ends, it is an error.
+function __closed_from(state: i32, open: i32, shut: i32): Result[i32, HandshakeError] {
+  if (state != open && state != shut) {
+    return Err(PeerAlert(0));
+  }
+  return Ok(shut);
+}
+
 function __peer_alert(c: Conn, content: u8[], out: Out): Result[Absorbed, HandshakeError] {
   if (content.len() != 2) {
     return Err(Message(message.DecodeError("alert")));
@@ -1147,6 +1156,19 @@ function __shares(config: ClientConfig): i32 {
   return config.shares;
 }
 
+// RFC 6066 section 3: the name goes on the wire with no trailing dot.
+function __sni(name: string): string {
+  match (name.strip_suffix(".")) {
+    Some(bare) => {
+      return bare;
+    },
+    None => {
+      return name;
+    }
+  }
+  return name;
+}
+
 function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]): message.Extension[] {
   let entries: message.KeyShareEntry[] = [];
   for sh in shares {
@@ -1154,7 +1176,7 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
   }
   let exts: message.Extension[] = [];
   if (config.server_name.len() > 0) {
-    exts = exts.append(message.ext_server_name(config.server_name));
+    exts = exts.append(message.ext_server_name(__sni(config.server_name)));
   }
   let versions = [message.TLS13];
   if (config.tls12) {
@@ -2106,7 +2128,7 @@ function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, Hands
     let a = __absorb(r.client.conn, rec, r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
     let state = r.client.state;
     if (a.out.closed) {
-      state = C_CLOSED;
+      state = __closed_from(state, C_CONNECTED, C_CLOSED)?;
     }
     r = __client_drain(Client { ...r.client, conn: a.conn, state: state }, a.out)?;
   }
@@ -3085,7 +3107,7 @@ function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, Hands
     let a = __absorb(r.server.conn, rec, ccs, r.server.state == S_CONNECTED, r.out)?;
     let state = r.server.state;
     if (a.out.closed) {
-      state = S_CLOSED;
+      state = __closed_from(state, S_CONNECTED, S_CLOSED)?;
     }
     r = __server_drain(Server { ...r.server, conn: a.conn, state: state }, a.out)?;
   }

@@ -60,8 +60,7 @@ function bind_names(s: Scope, packed: string, line: i32, col: i32): Scope {
 function names(s: Scope, packed: string): string {
   let out = "";
   let start = 0;
-  let i = 0;
-  while (i <= packed.len()) {
+  for i in 0..=packed.len() {
     if (i == packed.len() || packed[i] == b',' || packed[i] == b'(' || packed[i] == b')') {
       out += lookup(s, slice_unchecked(packed, start, i).to_owned());
       if (i < packed.len()) {
@@ -69,7 +68,6 @@ function names(s: Scope, packed: string): string {
       }
       start = i + 1;
     }
-    i += 1;
   }
   return out;
 }
