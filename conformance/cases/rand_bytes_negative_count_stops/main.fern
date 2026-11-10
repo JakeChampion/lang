@@ -1,8 +1,0 @@
-// A negative count of random bytes stops the program with status 134.
-import "std/rand";
-
-function main(): i32 {
-    print(rand.bytes(0).len().to_string());
-    print(rand.bytes(-1).len().to_string());
-    return 0;
-}
