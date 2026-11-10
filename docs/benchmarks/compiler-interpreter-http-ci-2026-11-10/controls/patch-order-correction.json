@@ -1,0 +1,4 @@
+{
+  "first_apply": "No file changed. The multi-file patch failed because selfhost row hunks were not in file order.",
+  "corrected_apply": "The second patch sorts row hunks by file position. Both patch files and proposed snapshots remain intact."
+}

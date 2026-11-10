@@ -259,7 +259,10 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16542
+# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
+# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
+# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
+selfhost/arm64-linux/http_hello.emit	17566
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -295,7 +298,7 @@ selfhost/wasm32-wasi/deflate_decode.emit	20140
 selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18928
+selfhost/wasm32-wasi/http_hello.emit	20294
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
@@ -330,7 +333,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12766
 selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15591
+selfhost/x86-64-linux/http_hello.emit	16696
 selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482

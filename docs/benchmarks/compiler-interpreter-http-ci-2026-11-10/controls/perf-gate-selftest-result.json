@@ -1,0 +1,9 @@
+{
+  "args": [
+    "node",
+    "scripts/perf-gate-selftest.mjs"
+  ],
+  "started": "2026-11-10T05:28:25.260696+00:00",
+  "finished": "2026-11-10T05:28:25.594188+00:00",
+  "exit_code": 0
+}

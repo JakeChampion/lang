@@ -61,6 +61,12 @@ The current Opus shard passes all 72 selected subtests in 814.060 seconds under 
 The complete source gate also passes.
 The archive records an inherited ARM64 assembly-size decrease and the separately owned Plex ownership diagnostic.
 
+The [HTTP baseline controls](benchmarks/compiler-interpreter-http-ci-2026-11-10/README.md) retain 24 exact CI row updates after main `da3282d0`.
+Nine target and profile pairs produce identical assembly between main and candidate `597b6e78`.
+Eight native pairs also produce identical executables.
+The archive retains the higher costs, two diagnostic-size differences from CI, and a failed controller assumption about hardened instruction counts.
+These inherited HTTP costs establish no interpreter gain.
+
 The [upstream qualification](benchmarks/compiler-interpreter-index-upstream-2026-11-10/README.md) compares main `f9904974` with candidate `206df7ee` after the callback repair.
 Five alternating pairs reduce CPU time by 17.89% to 43.64% on the first interpreter subset.
 Three pairs reduce CPU time by 81.08% to 83.87% on the second subset.
