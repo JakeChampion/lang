@@ -1,0 +1,19 @@
+// A use gives a literal local its type. A wide literal that is assigned
+// later fits that type.
+function main(): i32 {
+    let a = 5;
+    let wide: i64 = a;
+    a = 5000000000;
+    print(a.to_string());
+    let b = 5;
+    let sum = b + 5000000000;
+    print(sum.to_string());
+    let c = 5;
+    c = 5000000000 as i64;
+    print(c.to_string());
+    let d = 5000000000;
+    d = 7;
+    print(d.to_string());
+    print(wide.to_string());
+    return 0;
+}
