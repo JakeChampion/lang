@@ -22,6 +22,12 @@ function tick(own state: Handle, other: Handle): Result[Handle,string] {
 }
 function fresh_from(h: Handle): Handle { return call((): Handle => Handle { fd: h.fd }); }
 function copied(h: Handle): i32 { return keep(fresh_from(h)); }
+function keep_data(own xs: i32[]): i32 { return xs[0]; }
+function take_data(slot: Cell[i32[]]): i32[] {
+ let xs = slot.get();
+ slot.set([]);
+ return xs;
+}
 function main(): i32 {
  let state = advance(Handle { fd: 7 }, (own s: Handle): Handle => s);
  if (keep(state) != 7) { return 1; }
@@ -30,6 +36,8 @@ function main(): i32 {
  let final_state = match (tick(Handle { fd: 13 }, other)) { Ok(value) => value, Err(_) => { return 3; } };
  if (keep(final_state) != 13) { return 4; }
  if (copied(other) != 11 || other.close() != 11) { return 5; }
+ let slot = cell_new([19]);
+ if (keep_data(take_data(slot)) != 19 || slot.get().len() != 0) { return 7; }
  return 0;
 }
 `

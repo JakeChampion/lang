@@ -24109,6 +24109,12 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 }
 
 function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    // Cell.get returns an independent snapshot for data without handles.
+    if (ast.receiver_tag(fa.obj) == "Cell" && fa.field == "get" && c.ty.len() > 0 && ow_holds_no_handle(c.ty, lenders.decls)) {
+      return false;
+    }
+  }
   if let Some(tail) = ow_unsafe_value(c) {
     return ow_expr_borrows(tail, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
   }
