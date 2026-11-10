@@ -34,6 +34,14 @@ func RunCksumByteCases(t *testing.T, bin string, runner []string, census func(*t
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU cksum")
 	}
+	RunCksumByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunCksumByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU cksum reference command")
+	}
 	type testCase struct {
 		name, data string
 		args       []string
@@ -44,7 +52,7 @@ func RunCksumByteCases(t *testing.T, bin string, runner []string, census func(*t
 		all[at] = byte(at)
 	}
 	for _, algorithm := range []string{"crc", "crc32b", "bsd", "sysv"} {
-		for _, n := range []int{0, 1, 15, 16, 17, 127, 128, 129, 65535, 65536, 65537, 131073} {
+		for _, n := range []int{0, 1, 15, 16, 17, 127, 128, 129, 255, 256, 257, 383, 384, 385, 511, 512, 513, 767, 768, 769, 65535, 65536, 65537, 131073} {
 			data := string(bytes.Repeat(all, (n+255)/256)[:n])
 			for _, raw := range []bool{false, true} {
 				args := []string{"-a", algorithm}
@@ -61,9 +69,9 @@ func RunCksumByteCases(t *testing.T, bin string, runner []string, census func(*t
 			wantCode := 0
 			for _, impl := range []struct {
 				name, bin string
-				runner    []string
-			}{{"gnu", oracle, nil}, {"fern", bin, runner}} {
-				argv := append(append(append([]string{}, impl.runner...), impl.bin), tc.args...)
+				command   []string
+			}{{"gnu", oracle[len(oracle)-1], oracle}, {"fern", bin, append(append([]string{}, runner...), bin)}} {
+				argv := append(append([]string{}, impl.command...), tc.args...)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
