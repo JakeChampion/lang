@@ -2726,7 +2726,11 @@ function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fm
     ast.ExprLambda(lm) => {
       let out = "function " + v.name + print_lambda_params(lm, depth);
       if (lm.ret_type.len() > 0) {
-        out = out + ": " + lm.ret_type;
+        out += ": ";
+        if (lm.ret_own) {
+          out += "own ";
+        }
+        out += lm.ret_type;
       }
       let (body, g) = print_block(lm.body, depth, anchored(f, lm.line));
       return (out + " " + body, g);
