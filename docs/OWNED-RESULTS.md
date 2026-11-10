@@ -22,6 +22,8 @@ Annotate an owned-result lambda explicitly:
 let step = (own value: string): own string => value;
 ```
 
+The same result annotation applies to a local named function.
+
 An ordinary result does not carry this promise.
 An owned-result function can satisfy an ordinary-result function type.
 The reverse assignment fails, even when one implementation returns an owned input.
@@ -37,10 +39,12 @@ The closure cannot return such a capture as an owned result.
 
 The caller can copy immutable data results.
 This also applies to a call with an ordinary result type.
-The call supplies an independent reference; COW preserves the borrowed source.
-A local holding this result can transfer that reference at its last use.
+The call supplies an independent reference.
+COW preserves the borrowed source.
+A local with this result can transfer that reference at its last use.
 This value-level copy rule does not strengthen a function type's result promise.
-The checker validates their full type.
+
+The checker validates the complete result type.
 This rule includes maps when their keys and values contain only immutable data.
 A cleanup type needs `@value` to retain this copy contract.
 Cells and callbacks do not satisfy that immutable-data proof.

@@ -258,7 +258,7 @@ BreakStmt   = 'break' [ IDENT ] ';' ;
 ContinueStmt
             = 'continue' [ IDENT ] ';' ;
 DeferStmt   = ( 'defer' | 'errdefer' ) ( Block | Assign ';' ) ;
-LocalFunc   = 'function' IDENT [ TypeParams ] '(' [ ParamList ] ')' [ ':' Type ] Block ;
+LocalFunc   = 'function' IDENT [ TypeParams ] '(' [ ParamList ] ')' [ ':' FnResult ] Block ;
 
 # Assignment is a statement, not an expression: it yields no value, so
 # `let a = b = 1;` and `while ((n = n - 1) > 0)` do not derive. It is

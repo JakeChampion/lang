@@ -22,6 +22,14 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"nested-owned-results", `function main(): i32 {
+  function make(): own i32[] { return [7]; }
+  function step(own xs: i32[]): own i32[] { return xs.append(1); }
+  let factory: () => own i32[] = make;
+  let transform: (own i32[]) => own i32[] = step;
+  let xs = transform(factory());
+  return xs[0] + xs.len();
+}`},
 	{"checked-owned-results", `function apply[T](own x: T, step: (own T) => own T): own T { return step(x); }
 function main(): i32 { let step = (own x: string): own string => x; return 0; }`},
 	{"norc-marks-the-free-function-not-the-method", `struct Pool { base: usize }
