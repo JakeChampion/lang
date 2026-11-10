@@ -139,10 +139,8 @@ function parse_argv(av: string[]): Argv {
 
 function args_after(av: string[], at: i32): string[] {
   let rest: string[] = [];
-  let i = at + 1;
-  while (i < av.len()) {
+  for i in at + 1..av.len() {
     rest = rest.append(av[i]);
-    i += 1;
   }
   return rest;
 }

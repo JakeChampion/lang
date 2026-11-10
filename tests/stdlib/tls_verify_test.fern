@@ -297,6 +297,17 @@ function test_bad_signature(): test.TestOutcome {
   return test.assert_eq(outcome(verify.server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
 }
 
+// The outer signatureAlgorithm follows the TBSCertificate. Its tag is not
+// in the signed part.
+function test_an_algorithm_with_another_tag(): test.TestOutcome {
+  let b = ec_leaf();
+  let at = 8 + (b[6] as i32 << 8 | b[7] as i32);
+  if (b[at] != 0x30 as u8) {
+    return test.fail("the fixture moved");
+  }
+  return test.assert_eq(outcome(verify.server([b.with(at, 0x31 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0: x509: malformed AlgorithmIdentifier");
+}
+
 function test_roots_from_pem(): test.TestOutcome {
   let bundle = pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
   match (verify.roots_from_pem(bundle)) {
@@ -406,6 +417,7 @@ function main(): i32 {
   r = r.it("refusals", test_refusals);
   r = r.it("denied keys", test_denied_keys);
   r = r.it("a bad signature", test_bad_signature);
+  r = r.it("an algorithm with a tag that is not SEQUENCE", test_an_algorithm_with_another_tag);
   r = r.it("roots from PEM", test_roots_from_pem);
   r = r.it("name constraints", test_name_constraints);
   r = r.it("a wildcard reaches an excluded name", test_a_wildcard_reaches_an_excluded_name);

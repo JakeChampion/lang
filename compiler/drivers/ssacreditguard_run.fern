@@ -102,8 +102,7 @@ function main(): i32 {
   require(is_failed(guard.select(invalid_mask.arena, zero.id, one.id, -1)), 32);
   let negative_mask = guard.constant(invalid_mask.arena, -1);
   require(is_failed(guard.combine(negative_mask.arena, 4, negative_mask.id, zero.id)), 33);
-  mask = 0;
-  while (mask < 8) {
+  for mask in 0..8 {
     let pv = mask & 1;
     let qv = mask >> 1 & 1;
     let rv = mask >> 2 & 1;
@@ -121,7 +120,6 @@ function main(): i32 {
     let feasible_value = guard.evaluate(negative_mask.arena, feasible.id, [17, 3, 2147483647], values);
     require(is_value(nested_value, expected), 35);
     require(is_value(feasible_value, pv * qv), 36);
-    mask += 1;
   }
   require(is_absent(guard.evaluate(guard.empty(), 0, [], [])), 37);
   require(is_absent(guard.evaluate(negative_mask.arena, -1, [], [])), 38);

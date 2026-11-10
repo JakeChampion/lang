@@ -377,8 +377,7 @@ function split_binding_names(csv: string): string[] {
   let out: string[] = [];
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
+  for i in 0..=csv.len() {
     if (i == csv.len() || csv[i] == b',' && depth == 0) {
       out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
@@ -387,7 +386,6 @@ function split_binding_names(csv: string): string[] {
     } else if (csv[i] == b')') {
       depth -= 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -432,8 +430,7 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     if (tv.elements.len() != binds.len()) {
       return (env, v_err("destructuring `" + names + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
     }
-    let i = 0;
-    while (i < binds.len()) {
+    for i in 0..binds.len() {
       let b = binds[i];
       if (b.starts_with("(")) {
         let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1).to_owned(), "", tv.elements[i]);
@@ -444,7 +441,6 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
       } else {
         out = out.bind(b, tv.elements[i]);
       }
-      i += 1;
     }
     return (out, v_void());
   }
@@ -602,10 +598,8 @@ function arr_els(a: VArr): Value[] {
   }
   let out: Value[] = [];
   let n = arr_len(a);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(v_int(st[1 + a.offset + i] as i32));
-    i += 1;
   }
   return out;
 }
@@ -626,10 +620,8 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
 function arr_view(a: VArr, from: i32, to: i32): Value {
   let els = arr_els(a);
   let out: Value[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(els[i]);
-    i += 1;
   }
   return VArr { items: out, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
 }
@@ -639,10 +631,8 @@ function arr_slots(a: VArr): i64[] {
   let st = interpheap.get(a.store).words;
   let out: i64[] = [];
   if (st.len() > 0) {
-    let i = 1;
-    while (i < st.len()) {
+    for i in 1..st.len() {
       out = out.append(st[i]);
-      i += 1;
     }
     return out;
   }
@@ -807,8 +797,7 @@ pub function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[
 // (`Pair[3]`).
 function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
   let r = parser.parse_type_ref(sname);
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == sname || decls[i].name == r.base && r.args.len() > 0) {
       let j = 0;
       while (j < decls[i].fields.len()) {
@@ -819,7 +808,6 @@ function struct_field_type(decls: parser.StructDecl[], sname: string, field: str
       }
       return "";
     }
-    i += 1;
   }
   return "";
 }
@@ -838,33 +826,27 @@ function applied_spelling(spelling: string, vars: string[], args: parser.TypeRef
 }
 
 function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
-  let i = 0;
-  while (i < acc.len()) {
+  for i in 0..acc.len() {
     if (acc[i].name == name) {
       return acc;
     }
-    i += 1;
   }
   let fields: parser.StructFieldDecl[] = [];
-  let f = 0;
-  while (f < arity) {
+  for f in 0..arity {
     let fname = "__ev";
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
     fields = fields.append(parser.bare_field(fname, ""));
-    f += 1;
   }
   return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == name && decls[i].enum_owner.len() > 0) {
       return decls[i].fields.len();
     }
-    i += 1;
   }
   return -1;
 }
@@ -884,14 +866,12 @@ function v_variant(name: string, args: Value[]): Value {
 
 function v_variant_of(owner: string, name: string, args: Value[]): Value {
   let vnames: string[] = [];
-  let vi = 0;
-  while (vi < args.len()) {
+  for vi in 0..args.len() {
     if (vi == 0) {
       vnames = vnames.append("__ev");
     } else {
       vnames = vnames.append("__ev" + util.i32_to_string(vi));
     }
-    vi += 1;
   }
   return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [] };
 }
@@ -955,12 +935,10 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
 function (f: Funcs) named(name: string): i32[] {
   let out: i32[] = [];
   if (name == "__iterator") {
-    let k = 0;
-    while (k < f.decls.len()) {
+    for k in 0..f.decls.len() {
       if (f.decls[k].name == name) {
         out = out.append(k);
       }
-      k += 1;
     }
     return out;
   }
@@ -1213,12 +1191,10 @@ pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]):
   }
   let reads = lam_read_names(st);
   let hit: string[] = [];
-  let i = 0;
-  while (i < reads.len()) {
+  for i in 0..reads.len() {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
       hit = hit.append(reads[i]);
     }
-    i += 1;
   }
   if (hit.len() == 0) {
     return out;
@@ -1270,8 +1246,7 @@ function (e: Env) raw_value(name: string): Option[Value] {
 function cellify_env(own e: Env, names: string[]): Env {
   let heap = e.heap;
   let out = e;
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     match (out.raw_value(names[i])) {
       Some(cur) => {
         if (!is_cell(cur)) {
@@ -1280,7 +1255,6 @@ function cellify_env(own e: Env, names: string[]): Env {
       },
       None => {}
     }
-    i += 1;
   }
   return out;
 }
@@ -1609,14 +1583,12 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
 function cell_hex_value(s: string, at: Cell[i32]): i64 {
   let i = at.get();
   let bits: i64 = 0i64;
-  let j = 0;
-  while (j < 16) {
+  for j in 0..16 {
     let digit = s[i + j] as i32 - 48;
     if (digit > 9) {
       digit -= 39;
     }
     bits = bits << 4i64 | digit as i64;
-    j += 1;
   }
   at.set(i + 16);
   return bits;
@@ -1632,10 +1604,8 @@ function cell_name_value(s: string, at: Cell[i32]): string {
 function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
   let n = cell_hex_value(s, at) as i32;
   let out: Value[] = [];
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     out = out.append(cell_any_value(s, at, edges));
-    k += 1;
   }
   return out;
 }
@@ -1731,10 +1701,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
 
 function byte_array_value(heap: interpheap.Heap, bytes: u8[]): Value {
   let out: Value[] = [];
-  let i = 0;
-  while (i < bytes.len()) {
+  for i in 0..bytes.len() {
     out = out.append(v_int(bytes[i] as i32));
-    i += 1;
   }
   return v_arr_of(heap, out, "u8");
 }
@@ -2357,10 +2325,8 @@ function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
-      let i = 0;
-      while (i < a.bits.len()) {
+      for i in 0..a.bits.len() {
         bits = bits.append(lane_bits(a.width, lane_arith(op, lane_at(a, i), lane_at(b, i))));
-        i += 1;
       }
       return VLanes { width: a.width, bits: bits };
     }
@@ -2421,13 +2387,11 @@ function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
     ones = 4294967295;
   }
   let bits: i64[] = [];
-  let i = 0;
-  while (i < a.bits.len()) {
+  for i in 0..a.bits.len() {
     let x = lane_at(a, i);
     let y = lane_at(b, i);
     let hold = verb == "lt" && x < y || verb == "ne" && x != y;
     bits = bits.append(if (hold) { ones } else { 0 });
-    i += 1;
   }
   return VLanes { width: a.width, bits: bits };
 }
@@ -3077,10 +3041,8 @@ function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i3
   }
   let out_froms = froms;
   if (froms.len() >= 19) {
-    let k = 0;
-    while (k < 19) {
+    for k in 0..19 {
       out_froms = out_froms.with(k, from[k]);
-      k += 1;
     }
   }
   return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
@@ -3094,8 +3056,7 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
   let n = lens.len() / 3;
   let off = 0;
   let sent = 0;
-  let m = 0;
-  while (m < n) {
+  for m in 0..n {
     let size = lens[3 * m];
     let seg = lens[3 * m + 1];
     if (size < 0 || off + size > data.len()) {
@@ -3137,7 +3098,6 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
     }
     off += size;
     sent += 1;
-    m += 1;
   }
   return sent;
 }
@@ -5094,14 +5054,12 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     },
     ast.ExprArray(a) => {
       let elems: Value[] = [];
-      let i = 0;
-      while (i < a.elements.len()) {
+      for i in 0..a.elements.len() {
         let ev = eval_expr(a.elements[i], env);
         if (is_err(ev)) {
           return ev;
         }
         elems = elems.append(ev);
-        i += 1;
       }
       return v_arr(env.heap, elems);
     },
@@ -5271,14 +5229,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   let targs = bound_type_args(c.type_args, env);
   let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
   let arg_vals: Value[] = [];
-  let i = 0;
-  while (i < c.args.len()) {
+  for i in 0..c.args.len() {
     let av = eval_pinned_arg(c, i, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
     arg_vals = arg_vals.append(av);
-    i += 1;
   }
   if (is_variant) {
     return v_variant_of(variant_enum, variant_name, arg_vals);
@@ -5547,27 +5503,23 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
       VStruct(sv) => {
         let bnames = sv.field_names;
         let bvals = sv.field_values;
-        let oi = 0;
-        while (oi < sl.field_values.len()) {
+        for oi in 0..sl.field_values.len() {
           let oname = sl.field_names[oi];
           let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
           if (is_err(ov2)) {
             return ov2;
           }
           let replaced = false;
-          let bi = 0;
-          while (bi < bnames.len()) {
+          for bi in 0..bnames.len() {
             if (bnames[bi] == oname) {
               bvals = bvals.with(bi, ov2);
               replaced = true;
             }
-            bi += 1;
           }
           if (!replaced) {
             bnames = bnames.append(oname);
             bvals = bvals.append(ov2);
           }
-          oi += 1;
         }
         return v_struct_at(sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
       },
@@ -5577,14 +5529,12 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     }
   }
   let fvs: Value[] = [];
-  let i = 0;
-  while (i < sl.field_values.len()) {
+  for i in 0..sl.field_values.len() {
     let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
     if (is_err(fv)) {
       return fv;
     }
     fvs = fvs.append(fv);
-    i += 1;
   }
   return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
 }
@@ -5661,12 +5611,10 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
   }
   match (ov) {
     VStruct(sv) => {
-      let i = 0;
-      while (i < sv.field_names.len()) {
+      for i in 0..sv.field_names.len() {
         if (sv.field_names[i] == fa.field) {
           return sv.field_values[i];
         }
-        i += 1;
       }
       return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
     },
@@ -5701,8 +5649,7 @@ function socket_field(ov: Value, field: string): Value {
 }
 
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
-  let i = 0;
-  while (i < aliases.len()) {
+  for i in 0..aliases.len() {
     if (aliases[i].name == union_name) {
       let j = 0;
       while (j < aliases[i].variants.len()) {
@@ -5713,7 +5660,6 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
       }
       return false;
     }
-    i += 1;
   }
   return false;
 }
@@ -5758,8 +5704,7 @@ function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
 function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out = aliases;
   let base = aliases.len();
-  let i = 0;
-  while (i < types.len()) {
+  for i in 0..types.len() {
     let owner = types[i].enum_owner;
     if (owner.len() > 0) {
       let k = base;
@@ -5772,7 +5717,6 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -5798,10 +5742,8 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     return v_err("arity mismatch calling closure");
   }
   let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", heap: heap };
-  let j = 0;
-  while (j < fv.params.len()) {
+  for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
-    j += 1;
   }
   // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
@@ -5892,10 +5834,8 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
     t += 1;
   }
-  let j = 0;
-  while (j < fd.params.len()) {
+  for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-    j += 1;
   }
   let step = eval_block(fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
@@ -5935,13 +5875,11 @@ function tyarg_of_value(v: Value): string {
         return sv.type_name;
       }
       let name = util.base_type_name(sv.type_name) + "[";
-      let i = 0;
-      while (i < sv.targs.len()) {
+      for i in 0..sv.targs.len() {
         if (i > 0) {
           name += ", ";
         }
         name += sv.targs[i];
-        i += 1;
       }
       return name + "]";
     },
@@ -5963,13 +5901,11 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
     return "";
   }
-  let i = 0;
-  while (i < dref.args.len()) {
+  for i in 0..dref.args.len() {
     let r = tyarg_match_names(parser.render_type_ref(dref.args[i]), tp, parser.render_type_ref(aref.args[i]));
     if (r.len() > 0) {
       return r;
     }
-    i += 1;
   }
   return "";
 }
@@ -6170,8 +6106,7 @@ function dispatch_type_name(v: Value): string {
 
 function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq = has_key_eq(k, funcs, aliases);
-  let i = 0;
-  while (i < m.keys.len()) {
+  for i in 0..m.keys.len() {
     if (by_eq) {
       if let VBool(b) = call_method(heap, m.keys[i], "eq", [k], funcs, aliases, type_decls) {
         if (b.v) {
@@ -6181,7 +6116,6 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, a
     } else if (value_eq(m.keys[i], k)) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -6231,10 +6165,8 @@ function string_method(heap: interpheap.Heap, sv: VString, name: string, args: V
       return Some(v_err("string." + name + ": takes no arguments"));
     }
     let bs: Value[] = [];
-    let bi = 0;
-    while (bi < sv.v.len()) {
+    for bi in 0..sv.v.len() {
       bs = bs.append(v_byte(sv.v[bi] as i32));
-      bi += 1;
     }
     if (name == "as_bytes") {
       return Some(v_view_of(heap, bs, "u8"));
@@ -6382,14 +6314,12 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let i = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (i >= 0) {
           let nvs: Value[] = [];
-          let j = 0;
-          while (j < m.values.len()) {
+          for j in 0..m.values.len() {
             if (j == i) {
               nvs = nvs.append(args[1]);
             } else {
               nvs = nvs.append(m.values[j]);
             }
-            j += 1;
           }
           return VMap { keys: m.keys, values: nvs };
         }
@@ -6430,8 +6360,7 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let last = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
-        let di = 0;
-        while (di < m.keys.len()) {
+        for di in 0..m.keys.len() {
           if (di == at && at != last) {
             nk = nk.append(m.keys[last]);
             nv = nv.append(m.values[last]);
@@ -6439,7 +6368,6 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
             nk = nk.append(m.keys[di]);
             nv = nv.append(m.values[di]);
           }
-          di += 1;
         }
         return v_map(nk, nv);
       }
@@ -6499,10 +6427,8 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -6539,8 +6465,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   }
   match (recv) {
     VStruct(sv2) => {
-      let fi = 0;
-      while (fi < sv2.field_names.len()) {
+      for fi in 0..sv2.field_names.len() {
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
@@ -6549,7 +6474,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
             _ => {}
           }
         }
-        fi += 1;
       }
     },
     VBool(bv) => {
@@ -6697,10 +6621,8 @@ function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_into: range out of bounds");
   }
   let out = bs[0];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(at + i, bs[1][from + i]);
-    i += 1;
   }
   return written_bytes(heap, args[0], out);
 }
@@ -6716,10 +6638,8 @@ function call_bytes_range(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_range: range out of bounds");
   }
   let out: u8[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(bs[0][i]);
-    i += 1;
   }
   return byte_value(heap, out);
 }
@@ -6811,28 +6731,24 @@ function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value
 
 function crc32_cksum_byte(crc: i32, b: i32): i32 {
   crc = crc ^ b << 24;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if (crc < 0) {
       crc = crc << 1 ^ 0x04c11db7;
     } else {
       crc = crc << 1;
     }
-    k += 1;
   }
   return crc;
 }
 
 function crc32_ieee_byte(crc: i32, b: i32): i32 {
   let c = (crc ^ b) as u32;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if ((c & 1) != 0) {
       c = c >> 1 ^ 0xedb88320;
     } else {
       c = c >> 1;
     }
-    k += 1;
   }
   return c as i32;
 }
@@ -6905,13 +6821,10 @@ function inner_mul_values(heap: interpheap.Heap, a: Value[], b: Value[], rows: i
 
 function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
   let out: Value[] = [];
-  let row = 0;
-  while (row < rows) {
-    let col = 0;
-    while (col < columns) {
+  for row in 0..rows {
+    for col in 0..columns {
       let acc = init;
-      let at = 0;
-      while (at < extent) {
+      for at in 0..extent {
         if let VFloat(x) = a[row * extent + at] {
           if let VFloat(y) = b[at * columns + col] {
             let product = x.v * y.v;
@@ -6922,12 +6835,9 @@ function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32
         } else {
           return v_err("__inner_mul_add_f64: elements must be f64");
         }
-        at += 1;
       }
       out = out.append(v_float(acc));
-      col += 1;
     }
-    row += 1;
   }
   return v_arr_of(heap, out, "f64");
 }
@@ -7088,12 +6998,10 @@ function call_mismatch_bytes(args: Value[]): Value {
         room = arr_len(b) - bo;
       }
       let n = clamp_offset(vint_bits(args[4]), room);
-      let i = 0;
-      while (i < n) {
+      for i in 0..n {
         if (vint_bits(arr_at(a, ao + i)) != vint_bits(arr_at(b, bo + i))) {
           return v_int(i);
         }
-        i += 1;
       }
       return v_int(n);
     }
@@ -7126,12 +7034,10 @@ function call_mismatch_bytes_str(args: Value[]): Value {
     if (n < 0) {
       n = 0;
     }
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       if (vint_bits(arr_at(a, ao + i)) != b[bo + i] as i32) {
         return v_int(i);
       }
-      i += 1;
     }
     return v_int(n);
   }
@@ -7370,10 +7276,8 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
         return v_err(name + ": expected string arg");
       }
       let s = vstr_of(args[1]);
-      let i = 0;
-      while (i < s.len()) {
+      for i in 0..s.len() {
         push_table_byte(name, h, s[i] as i32, table);
-        i += 1;
       }
       return v_void();
     },
@@ -7393,10 +7297,8 @@ function push_table_byte(name: string, h: usize, c: i32, table: Value[]): void {
     if (n > 7) {
       n = 7;
     }
-    let k = 1;
-    while (k <= n) {
+    for k in 1..=n {
       buf_push_byte(h, vint_bits(table[c * 8 + k]) & 255);
-      k += 1;
     }
     return;
   }
@@ -7432,10 +7334,8 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
       return v_err("buf_push_u64: expected number");
     }
     let w = vint_as_i64(args[1]);
-    let k = 0;
-    while (k < 8) {
+    for k in 0..8 {
       buf_push_byte(h, (w >> (k * 8) as i64) as i32 & 255);
-      k += 1;
     }
     return v_void();
   }
@@ -7520,13 +7420,11 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
     return v_err(name + ": expected " + util.i32_to_string(want) + " args");
   }
   let w: i64[] = [];
-  let k = 0;
-  while (k < want) {
+  for k in 0..want {
     if (!is_int_like(args[k])) {
       return v_err(name + ": arg " + util.i32_to_string(k + 1) + " must be an integer");
     }
     w = w.append(vint_as_i64(args[k]));
-    k += 1;
   }
   if (name == "__ptr_width") {
     return v_int((ptr_bits() / 8i64) as i32);
@@ -7786,10 +7684,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       zero = v_bool(false);
     }
     let zs: Value[] = [];
-    let zi = 0;
-    while (zi < an) {
+    for zi in 0..an {
       zs = zs.append(zero);
-      zi += 1;
     }
     return v_arr(heap, zs);
   }
@@ -8020,11 +7916,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     let bs = vstr_of(args[0]);
     let sum = vint_bits(args[1]) & 65535;
-    let bi = 0;
-    while (bi < bs.len()) {
+    for bi in 0..bs.len() {
       sum = (sum >> 1 | sum << 15) & 65535;
       sum = sum + bs[bi] as i32 & 65535;
-      bi += 1;
     }
     return v_int(sum);
   }
@@ -8194,10 +8088,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     match (args[1]) {
       VString(s) => {
         let crc = vint_bits(args[0]);
-        let ci = 0;
-        while (ci < s.v.len()) {
+        for ci in 0..s.v.len() {
           crc = crc32_cksum_byte(crc, s.v[ci] as i32);
-          ci += 1;
         }
         return v_int(crc);
       },
@@ -8230,12 +8122,10 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     if (mn < 0) {
       mn = 0;
     }
-    let mk = 0;
-    while (mk < mn) {
+    for mk in 0..mn {
       if (ma[mao + mk] != mb[mbo + mk]) {
         return v_int(mk);
       }
-      mk += 1;
     }
     return v_int(mn);
   }
@@ -8319,10 +8209,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -8468,12 +8356,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (asv.field_values.len() != bsv.field_values.len()) {
             return false;
           }
-          let si = 0;
-          while (si < asv.field_values.len()) {
+          for si in 0..asv.field_values.len() {
             if (!value_eq(asv.field_values[si], bsv.field_values[si])) {
               return false;
             }
-            si += 1;
           }
           return true;
         },
@@ -8488,12 +8374,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (at.elements.len() != bt.elements.len()) {
             return false;
           }
-          let ti = 0;
-          while (ti < at.elements.len()) {
+          for ti in 0..at.elements.len() {
             if (!value_eq(at.elements[ti], bt.elements[ti])) {
               return false;
             }
-            ti += 1;
           }
           return true;
         },
@@ -8687,8 +8571,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
   if (is_err(sv)) {
     return step_stop(env, sv);
   }
-  let i = 0;
-  while (i < m.arms.len()) {
+  for i in 0..m.arms.len() {
     let arm = m.arms[i];
     let matched = false;
     let bind_names: string[] = [];
@@ -8758,10 +8641,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
                 if (pv.binding.len() > 0) {
                   pat_binds = pat_binds.append(pv.binding);
                 }
-                let xi = 0;
-                while (xi < pv.extra_bindings.len()) {
+                for xi in 0..pv.extra_bindings.len() {
                   pat_binds = pat_binds.append(pv.extra_bindings[xi]);
-                  xi += 1;
                 }
                 let pbi = 0;
                 while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
@@ -8788,10 +8669,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
     if (matched) {
       let base = env.depth;
       let bodyEnv = scope_env(Env { ...env }, bind_names.len() > 0 || body_binds(arm.body));
-      let bk = 0;
-      while (bk < bind_names.len()) {
+      for bk in 0..bind_names.len() {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
-        bk += 1;
       }
       let reassigned = body_assign_names(arm.body, []);
       for st in arm.body {
@@ -8821,7 +8700,6 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
-    i += 1;
   }
   return step_stop(env, v_err("non-exhaustive match"));
 }
@@ -9057,8 +8935,7 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
   let heap = env.heap;
   let released = env.update(a.target, v_int(0));
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
@@ -9069,7 +8946,6 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
       return step_stop(released, out);
     }
     cur = out;
-    i += 1;
   }
   return step_none(released.update(a.target, cur));
 }
@@ -9087,10 +8963,8 @@ function for_elements(iv: Value): Option[Value[]] {
       return Some(elems);
     },
     VMap(m) => {
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         elems = elems.append(v_tuple([m.keys[i], m.values[i]]));
-        i += 1;
       }
       return Some(elems);
     },
@@ -9203,15 +9077,13 @@ function flattened_env(e: Env): Env {
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
   let reassigned = body_assign_names(body, []);
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     cur = cellify_captures(cur, body[i], reassigned);
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
     }
-    i += 1;
   }
   return step_none(cur);
 }
@@ -9257,15 +9129,13 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   }
   let env = new_module_env(heap, funcs, all_aliases, all_variants);
   let mreassigned = body_assign_names(mod.top_stmts, []);
-  let j = 0;
-  while (j < mod.top_stmts.len()) {
+  for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
     let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
     }
-    j += 1;
   }
   return v_err("module has no `main` and no top-level `return`");
 }
@@ -9329,8 +9199,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     }
   }
   let env = s.env;
-  let k = 0;
-  while (k < body.len()) {
+  for k in 0..body.len() {
     if (k == body.len() - 1) {
       match (body[k]) {
         ast.StmtExpr(x) => {
@@ -9345,7 +9214,6 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
     }
-    k += 1;
   }
   return (Session { ...s, env: session_env(env) }, false, v_void());
 }
@@ -9433,13 +9301,11 @@ function value_text(v: Value): string {
     },
     VMap(m) => {
       let out = "";
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         if (i > 0) {
           out += ", ";
         }
         out = out + value_text(m.keys[i]) + ": " + value_text(m.values[i]);
-        i += 1;
       }
       return "Map { " + out + " }";
     },
@@ -9465,15 +9331,13 @@ function values_text(vs: Value[]): string {
 function struct_text(sv: VStruct): string {
   let fields = "";
   let payloads = "";
-  let i = 0;
-  while (i < sv.field_names.len()) {
+  for i in 0..sv.field_names.len() {
     if (i > 0) {
       fields += ", ";
       payloads += ", ";
     }
     fields = fields + sv.field_names[i] + ": " + value_text(sv.field_values[i]);
     payloads += value_text(sv.field_values[i]);
-    i += 1;
   }
   if (sv.field_names.len() == 0) {
     return sv.type_name;

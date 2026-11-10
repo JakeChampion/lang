@@ -99,12 +99,10 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
   if (!allocated || !shaped) {
     return refused(f, "incomplete allocation producer initialization");
   }
-  i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     if (!params[i] || !fields[i] || credits[i] != 0) {
       return refused(f, "incomplete allocation producer initialization");
     }
-    i += 1;
   }
   let returned = util.index_of_i32(defined, b.term.value);
   if (returned < 0 || values[returned] != 1) {

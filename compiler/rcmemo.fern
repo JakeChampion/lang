@@ -140,15 +140,13 @@ function lines_of(path: string): string[] {
 function split_lines(text: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i < text.len()) {
+  for i in 0..text.len() {
     if (text[i] == b'\n') {
       if (i > start) {
         out = out.append(slice_unchecked(text, start, i).to_owned());
       }
       start = i + 1;
     }
-    i += 1;
   }
   if (text.len() > start) {
     out = out.append(slice_unchecked(text, start, text.len()).to_owned());
@@ -161,10 +159,8 @@ function newest(lines: string[]): string[] {
     return lines;
   }
   let out: string[] = [];
-  let i = lines.len() - keep();
-  while (i < lines.len()) {
+  for i in lines.len() - keep()..lines.len() {
     out = out.append(lines[i]);
-    i += 1;
   }
   return out;
 }

@@ -93,25 +93,21 @@ function find_struct(records: Records, name: string, ty: typeinfo.Type): i32 {
 }
 
 function find_union(enums: Enum[], name: string, ty: typeinfo.Type): i32 {
-  let i = 0;
-  while (i < enums.len()) {
+  for i in 0..enums.len() {
     if let typeinfo.TypeUnion(e) = enums[i].ty {
       if (e.name == name && semtypes.equal(enums[i].ty, ty)) {
         return i;
       }
     }
-    i += 1;
   }
   return -1;
 }
 
 pub function find_variant(e: Enum, name: string): i32 {
-  let i = 0;
-  while (i < e.variants.len()) {
+  for i in 0..e.variants.len() {
     if (e.variants[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -158,8 +154,7 @@ function resolved_structural(ty: typeinfo.Type, records: Records, enums: Enum[])
 }
 
 function fields_error(fields: Field[], records: Records, enums: Enum[], variant: boolean): string {
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     let field = fields[i];
     if (field.name == "") {
       return "empty record field name";
@@ -170,14 +165,11 @@ function fields_error(fields: Field[], records: Records, enums: Enum[], variant:
     if (!resolved(field.ty, records, enums)) {
       return "missing nested record schema";
     }
-    let j = 0;
-    while (j < i) {
+    for j in 0..i {
       if (fields[j].name == field.name) {
         return "duplicate record field name";
       }
-      j += 1;
     }
-    i += 1;
   }
   return "";
 }
@@ -194,12 +186,10 @@ function instance_error(a: Record, b: Record): string {
       if (x.args.len() != y.args.len() || a.fields.len() != b.fields.len()) {
         return "inconsistent record instance schema";
       }
-      let i = 0;
-      while (i < a.fields.len()) {
+      for i in 0..a.fields.len() {
         if (a.fields[i].name != b.fields[i].name) {
           return "inconsistent record instance schema";
         }
-        i += 1;
       }
     }
   }
@@ -214,8 +204,7 @@ pub function record_name(r: Record): string {
 }
 
 function records_error(records: Records, enums: Enum[]): string {
-  let i = 0;
-  while (i < records.list.len()) {
+  for i in 0..records.list.len() {
     let record = records.list[i];
     if (!semtypes.concrete(record.ty, false)) {
       return "unresolved record identity";
@@ -238,7 +227,6 @@ function records_error(records: Records, enums: Enum[]): string {
     if (why != "") {
       return why;
     }
-    i += 1;
   }
   return "";
 }
@@ -253,23 +241,19 @@ pub function inhabited(v: Variant): boolean {
 }
 
 function variants_error(variants: Variant[], records: Records, enums: Enum[]): string {
-  let i = 0;
-  while (i < variants.len()) {
+  for i in 0..variants.len() {
     if (variants[i].name == "") {
       return "empty variant name";
     }
-    let j = 0;
-    while (j < i) {
+    for j in 0..i {
       if (variants[j].name == variants[i].name) {
         return "duplicate variant name";
       }
-      j += 1;
     }
     let why = fields_error(variants[i].fields, records, enums, true);
     if (why != "") {
       return why;
     }
-    i += 1;
   }
   return "";
 }
@@ -320,19 +304,16 @@ function same_fields(a: Field[], b: Field[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i].name != b[i].name || !semtypes.equal(a[i].ty, b[i].ty)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 function enums_error(records: Records, enums: Enum[]): string {
-  let i = 0;
-  while (i < enums.len()) {
+  for i in 0..enums.len() {
     let e = enums[i];
     if (!semtypes.concrete(e.ty, false)) {
       return "unresolved enum identity";
@@ -340,12 +321,10 @@ function enums_error(records: Records, enums: Enum[]): string {
     if let typeinfo.TypeUnion(_) = e.ty {} else {
       return "non-union enum identity";
     }
-    let j = 0;
-    while (j < i) {
+    for j in 0..i {
       if (semtypes.equal(e.ty, enums[j].ty)) {
         return "duplicate enum schema";
       }
-      j += 1;
     }
     let why = variants_error(e.variants, records, enums);
     if (why != "") {
@@ -355,7 +334,6 @@ function enums_error(records: Records, enums: Enum[]): string {
     if (why != "") {
       return why;
     }
-    i += 1;
   }
   return "";
 }

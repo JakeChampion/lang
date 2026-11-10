@@ -68,11 +68,9 @@ function initial(params: i32, register_entry: boolean, h: heap.Heap): State {
     regs = regs.append(initial_register(params, register_entry, i));
     i += 1;
   }
-  i = 0;
-  while (i < 22) {
+  for i in 0..22 {
     let w = initial_word(params, register_entry, i);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
-    i += 1;
   }
   return State { regs: regs, memory: memory, objects: [], heap: h, event: 0, flags: unknown_flags(), ok: true };
 }
@@ -412,12 +410,10 @@ function finished(s: State, original: State, r: flow.Relation): boolean {
 }
 
 function finished_memory(s: State, original: State, r: flow.Relation): boolean {
-  let i = 16;
-  while (i < s.memory.len()) {
+  for i in 16..s.memory.len() {
     if (!same(s.memory[i], original.memory[i])) {
       return false;
     }
-    i += 1;
   }
   for obj in s.objects {
     if (obj.live) {

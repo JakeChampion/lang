@@ -2052,13 +2052,11 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
   let tag = "";
-  let i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     if (i > 0) {
       tag += ",";
     }
     tag += arms[i];
-    i += 1;
   }
   return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
@@ -2066,15 +2064,13 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
 pub function dyn_dispatch_arms(tag: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let k = 0;
-  while (k <= tag.len()) {
+  for k in 0..=tag.len() {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
         out = out.append(slice_unchecked(tag, start, k).to_owned());
       }
       start = k + 1;
     }
-    k += 1;
   }
   return out;
 }
@@ -3793,10 +3789,8 @@ pub function op_pops_by(by_kind: i32[], o: Op): i32 {
 
 pub function pops_by_kind(): i32[] {
   let out: i32[] = [];
-  let t = 0;
-  while (t < 1024) {
+  for t in 0..1024 {
     out = out.append(kind_pops(t));
-    t += 1;
   }
   return out;
 }
@@ -3959,8 +3953,7 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
   let k_end = K_END;
   let else_at: i32 = -1;
   let d = 0;
-  let i = if_at + 1;
-  while (i < ops.len()) {
+  for i in if_at + 1..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3972,7 +3965,6 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
     } else if (t == k_else && d == 0 && else_at < 0) {
       else_at = i;
     }
-    i += 1;
   }
   return IfSpan { else_at: else_at, end_at: -1 };
 }
@@ -3985,8 +3977,7 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
   let k_br = K_BR;
   let k_brif = K_BRIF;
   let d = 0;
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3999,7 +3990,6 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
         return true;
       }
     }
-    i += 1;
   }
   return false;
 }
@@ -4136,10 +4126,8 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
           if (wrap) {
             out = out.append(op_block(0));
           }
-          let j = lo;
-          while (j < hi) {
+          for j in lo..hi {
             out = out.append(cur[j]);
-            j += 1;
           }
           if (wrap) {
             out = out.append(op_end());
@@ -4182,10 +4170,8 @@ function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
     out = out.append(ops[j]);
     j += 1;
   }
-  j = 0;
-  while (j < tail.len()) {
+  for j in 0..tail.len() {
     out = out.append(tail[j]);
-    j += 1;
   }
   return out;
 }
@@ -4676,10 +4662,8 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
           if (!changed) {
             out = fold_prefixed(ops, i, []);
           }
-          let r = 0;
-          while (r < repl.len()) {
+          for r in 0..repl.len() {
             out = out.append(repl[r]);
-            r += 1;
           }
           changed = true;
           i += 2;
@@ -4713,15 +4697,13 @@ function tv_dump(pass: string, before: Op[], after: Op[]): void {
 
 function tv_ops(side: string, ops: Op[]): string {
   let s = "fern-tv " + side + " " + util.i32_to_string(ops.len()) + "\n";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let u = "0";
     if (o.unsigned) {
       u = "1";
     }
     s = s + kind_name(o.kind_tag) + " " + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm) + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + u + " " + util.i32_to_string(o.decl) + " :" + hex_text(o.str) + "\n";
-    i += 1;
   }
   return s;
 }
@@ -4743,8 +4725,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   let k_end = K_END;
   let k_br = K_BR;
   let k_return = K_RETURN;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_end || t == k_else) {
       if (dead && depth == dead_depth) {
@@ -4767,7 +4748,6 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
       dead = true;
       dead_depth = depth;
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -4837,12 +4817,10 @@ function slot_reads(ops: Op[]): i32[] {
 }
 
 function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
-  let s = first;
-  while (s < first + n) {
+  for s in first..first + n {
     if (s >= 0 && s < loads.len()) {
       loads = loads.with(s, loads[s] + 1);
     }
-    s += 1;
   }
   return loads;
 }
@@ -4880,12 +4858,10 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
     return Cancelled { ops: ops, loads: loads, emptied: false };
   }
   let out: Op[] = [];
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (!gone[i]) {
       out = out.append(ops[i]);
     }
-    i += 1;
   }
   return Cancelled { ops: out, loads: loads, emptied: emptied };
 }
@@ -4914,24 +4890,18 @@ function zg_first_write(ops: Op[], nslots: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let first = __alloc_i32(nslots);
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     first = first.with(z, ops.len());
-    z += 1;
   }
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if ((t == k_store || t == k_tee) && !zg_rezero(ops, i)) {
       first = zg_mark(first, ops[i].i32_imm, i);
     } else if (frame_box_base(ops[i]) >= 0) {
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         first = zg_mark(first, frame_box_base(ops[i]) + fk, i);
-        fk += 1;
       }
     }
-    i += 1;
   }
   return first;
 }
@@ -5214,15 +5184,13 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
   }
   let data_for = licm_data_slots(ops, loop_idx, end, slot_for, cur.n_locals + n);
   let slots = n;
-  let d = 0;
-  while (d < data_for.len()) {
+  for d in 0..data_for.len() {
     if (data_for[d] >= 0) {
       pre = pre.append(op_load_local(d));
       pre = pre.append(op_str_data());
       pre = pre.append(op_store_local(data_for[d]));
       slots += 1;
     }
-    d += 1;
   }
   let out: Op[] = [];
   let j = 0;
@@ -5230,10 +5198,8 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
     out = out.append(ops[j]);
     j += 1;
   }
-  let p = 0;
-  while (p < pre.len()) {
+  for p in 0..pre.len() {
     out = out.append(pre[p]);
-    p += 1;
   }
   out = out.append(ops[loop_idx]);
   let k_load = K_LOAD_LOCAL;
@@ -5297,12 +5263,10 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: i32[], 
 }
 
 function licm_listed(order: i32[], src: i32): boolean {
-  let i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     if (order[i] == src) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -5334,8 +5298,7 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
   let k_if = K_IF;
   let k_end = K_END;
   let depth = 0;
-  let j = open;
-  while (j < ops.len()) {
+  for j in open..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       depth += 1;
@@ -5345,7 +5308,6 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
         return j;
       }
     }
-    j += 1;
   }
   return -1;
 }
@@ -5353,13 +5315,11 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
 function licm_stored_locals(ops: Op[], lo: i32, hi: i32, own stored: i32[], mark: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
-  let j = lo;
-  while (j < hi) {
+  for j in lo..hi {
     let t = ops[j].kind_tag;
     if (t == k_store || t == k_tee) {
       stored = stored.with(ops[j].i32_imm, mark);
     }
-    j += 1;
   }
   return stored;
 }
@@ -5369,39 +5329,33 @@ function cp_max_slot(ops: Op[]): i32 {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let maxs: i32 = -1;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let kt = ops[i].kind_tag;
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (ops[i].i32_imm > maxs) {
         maxs = ops[i].i32_imm;
       }
     }
-    i += 1;
   }
   return maxs;
 }
 
 function cp_kill_after(own has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     let s = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
-    k += 1;
   }
   return has;
 }
 
 function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
   let out: i32[] = [];
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     if (has[bound[k]]) {
       out = out.append(bound[k]);
     }
-    k += 1;
   }
   return out;
 }
@@ -5414,8 +5368,7 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
   let k_if = K_IF;
   let k_end = K_END;
   let d = 0;
-  let j = at + 1;
-  while (j < ops.len()) {
+  for j in at + 1..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -5431,15 +5384,12 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
       }
     } else if (frame_box_base(ops[j]) >= 0) {
       let fb = frame_box_base(ops[j]);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         if (fb + fk >= 0 && fb + fk < has.len()) {
           has = has.with(fb + fk, false);
         }
-        fk += 1;
       }
     }
-    j += 1;
   }
   return has;
 }
@@ -5467,10 +5417,8 @@ pub function const_propagate(ops: Op[]): Op[] {
   let has = __alloc_bool(nslots);
   let wrote = util.minus_ones(nslots);
   let bound: i32[] = [];
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     known = known.append(zero);
-    z += 1;
   }
 
   let fr_kind: i32[] = [];
@@ -5482,8 +5430,7 @@ pub function const_propagate(ops: Op[]): Op[] {
 
   let out: Op[] = [];
   let copying = false;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let kt = o.kind_tag;
     let emit = o;
@@ -5524,8 +5471,7 @@ pub function const_propagate(ops: Op[]): Op[] {
       }
     } else if (frame_box_base(o) >= 0) {
       let fb = frame_box_base(o);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         let fs = fb + fk;
         if (fs >= 0 && fs < nslots) {
           wrote = wrote.with(fs, i);
@@ -5534,7 +5480,6 @@ pub function const_propagate(ops: Op[]): Op[] {
             has = has.with(fs, false);
           }
         }
-        fk += 1;
       }
     } else if (kt == k_store || kt == k_tee) {
       let sl = o.i32_imm;
@@ -5562,7 +5507,6 @@ pub function const_propagate(ops: Op[]): Op[] {
     if (copying) {
       out = out.append(emit);
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -5618,8 +5562,7 @@ pub function propagate_copies(ops: Op[]): Op[] {
   }
   let out: Op[] = [];
   let copying = false;
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let dead_tee = false;
     let sl2 = ops[i].i32_imm;
     if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
@@ -5633,7 +5576,6 @@ pub function propagate_copies(ops: Op[]): Op[] {
       out = fold_prefixed(ops, i, []);
       copying = true;
     }
-    i += 1;
   }
   if (copying) {
     return out;

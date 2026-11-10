@@ -79,10 +79,8 @@ function initial(r: value.Interval): State {
     regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
     i += 1;
   }
-  i = 0;
-  while (i < 6) {
+  for i in 0..6 {
     cells = cells.append(token(5, i, 0));
-    i += 1;
   }
   let argument = numeric(r, value.original(r));
   cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1)).append(argument.low).append(argument.high);
@@ -310,13 +308,11 @@ function branch(f: value.Comparison, name: string): i32 {
 }
 
 function finished(s: State, r: value.Interval): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = if (i == 4) { identity(3, 0) } else { identity(2, i) };
     if (!same_word(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   for reg in [2, 1, 0] {
     let at = (2 - reg) * 2;

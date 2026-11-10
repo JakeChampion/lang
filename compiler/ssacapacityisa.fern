@@ -62,8 +62,7 @@ function operands(s: string): string[] {
   let result: string[] = [];
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == b'(') {
       depth += 1;
     }
@@ -77,7 +76,6 @@ function operands(s: string): string[] {
       result = result.append(slice_unchecked(s, start, i).to_owned().trim());
       start = i + 1;
     }
-    i += 1;
   }
   if (depth != 0) {
     return [];
@@ -689,8 +687,7 @@ function large_literal(s: string): string {
     return "";
   }
   let n: i64 = 0;
-  let i = 3;
-  while (i < s.len()) {
+  for i in 3..s.len() {
     let digit = hex_digit(s[i]);
     if (digit < 0) {
       return "";
@@ -699,7 +696,6 @@ function large_literal(s: string): string {
     if (n > 2147483647) {
       return "";
     }
-    i += 1;
   }
   return n.to_string();
 }

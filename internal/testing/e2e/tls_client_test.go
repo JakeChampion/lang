@@ -79,6 +79,7 @@ type tlsWorld struct {
 	main, retry, rsa, ed, bad, echo, px int
 	mtls, h2                            int
 	tls12ec, tls12rsa, tls12chacha      int
+	greet, early, cut                   int
 	mainConns, h2Conns                  atomic.Int64
 	mu                                  sync.Mutex
 	tunnels                             []string
@@ -128,6 +129,9 @@ func startTLSWorld(t *testing.T) *tlsWorld {
 	clients.AddCert(ca.cert)
 	w.mtls = serveEcho(t, ecLeaf, clients)
 	w.px = w.serveProxy(t)
+	w.greet = serveGreeter(t, ecLeaf, "greeting\n", false)
+	w.early = serveGreeter(t, ecLeaf, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nearly", true)
+	w.cut = serveCut(t, ecLeaf)
 	return w
 }
 
@@ -150,6 +154,7 @@ func (w *tlsWorld) source(total time.Duration) string {
 		"@ED@", strconv.Itoa(w.ed), "@BAD@", strconv.Itoa(w.bad), "@ECHO@", strconv.Itoa(w.echo), "@PROXY@", strconv.Itoa(w.px),
 		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey, "@H2@", strconv.Itoa(w.h2),
 		"@TLS12EC@", strconv.Itoa(w.tls12ec), "@TLS12RSA@", strconv.Itoa(w.tls12rsa), "@TLS12CHACHA@", strconv.Itoa(w.tls12chacha),
+		"@GREET@", strconv.Itoa(w.greet), "@EARLY@", strconv.Itoa(w.early), "@CUT@", strconv.Itoa(w.cut),
 	).Replace(tlsClientSource)
 }
 
@@ -317,6 +322,66 @@ function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
   return "";
 }
 
+// drained reads a connection to its end. It answers the data, then how the
+// stream ended.
+function drained(c: client.Connection): string {
+  let conn = c;
+  let text = "";
+  while (true) {
+    match (conn.read(time.duration_seconds(10 as i64))) {
+      Ok(got) => {
+        text = text + unsafe { string_from_bytes_unchecked(got.data) }.trim();
+        if (got.ended) {
+          got.conn.close();
+          return text + " / ended";
+        }
+        if (got.data.len() == 0) {
+          return text + " / nothing came";
+        }
+        conn = got.conn;
+      },
+      Err(e) => {
+        conn.close();
+        return text + " / " + e.message();
+      }
+    }
+  }
+  return text;
+}
+
+// greeted reads from a server that writes at once after its handshake.
+function greeted(roots: verify.Roots): string {
+  match (client.connect("localhost", @GREET@, client.config("localhost", roots), time.duration_seconds(@TOTAL@ as i64))) {
+    Ok(c) => {
+      return drained(c);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// cut reads from a server that closes with no close_notify.
+function cut(roots: verify.Roots): string {
+  match (client.connect("localhost", @CUT@, client.config("localhost", roots), time.duration_seconds(10 as i64))) {
+    Ok(c) => {
+      match (c.write("cut\n".bytes())) {
+        Ok(sent) => {
+          return drained(sent);
+        },
+        Err(e) => {
+          return "send " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
 function main(): i32 {
   let tr: fetch.Sockets = fetch.sockets();
   show("first", fetch.send_on(tr, interop_get("https://localhost:@MAIN@/a"), proxies("")));
@@ -348,11 +413,16 @@ function main(): i32 {
       fetch.close_idle(held);
       print("socket: " + socket(roots));
       print("mtls: " + mtls(roots));
+      print("greeted: " + greeted(roots));
+      print("cut: " + cut(roots));
     },
     None => {
       print("socket: no roots");
     }
   }
+  show("early body", fetch.send(interop_get("https://localhost:@EARLY@/early")));
+  show("cut body", fetch.send(interop_get("https://localhost:@CUT@/cut")));
+  show("clean body", fetch.send(interop_get("https://localhost:@CUT@/clean")));
   return 0;
 }
 `
@@ -383,6 +453,11 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"given again: " + ok("/j", "X25519MLKEM768"),
 		"socket: fern-echo echo ping / resumed resumed-echo again",
 		"mtls: echo fern-client hello / recv tls handshake: the peer sent alert 116",
+		"greeted: greeting / ended",
+		"cut: partial / the peer closed the connection with no close_notify",
+		"early body: 200 early",
+		"cut body: error TLS: the peer closed the connection with no close_notify",
+		"clean body: 200 partial",
 	}, "\n") + "\n"
 	if got != want {
 		t.Errorf("output:\n%s\nwant:\n%s", got, want)
@@ -485,6 +560,90 @@ func serveEcho(t *testing.T, cert tls.Certificate, clients *x509.CertPool) int {
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// serveGreeter is a TLS 1.2 server that writes `text` at once after its
+// handshake, then closes with a close_notify. With awaitRequest it reads
+// one HTTP request head before the close.
+func serveGreeter(t *testing.T, cert tls.Certificate, text string, awaitRequest bool) int {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, MaxVersion: tls.VersionTLS12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(4 * time.Minute))
+				if c.(*tls.Conn).Handshake() != nil {
+					return
+				}
+				_, _ = io.WriteString(c, text)
+				r := bufio.NewReader(c)
+				for awaitRequest {
+					if h, err := r.ReadString('\n'); err != nil || h == "\r\n" {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// serveCut answers one line or one HTTP request, then closes. A request
+// that names "cut" gets no close_notify before the TCP close.
+func serveCut(t *testing.T, cert tls.Certificate) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+	go func() {
+		for {
+			raw, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go answerCut(raw, tls.Server(raw, cfg))
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func answerCut(raw net.Conn, c *tls.Conn) {
+	defer raw.Close()
+	_ = raw.SetDeadline(time.Now().Add(time.Minute))
+	r := bufio.NewReader(c)
+	first, err := r.ReadString('\n')
+	if err != nil {
+		return
+	}
+	answer := "partial\n"
+	if strings.HasPrefix(first, "GET ") {
+		answer = "HTTP/1.1 200 OK\r\n\r\npartial"
+		for {
+			h, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if h == "\r\n" {
+				break
+			}
+		}
+	}
+	_, _ = io.WriteString(c, answer)
+	if !strings.Contains(first, "cut") {
+		_ = c.Close()
+	}
 }
 
 func (w *tlsWorld) serveProxy(t *testing.T) int {

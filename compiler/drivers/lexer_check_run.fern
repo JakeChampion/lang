@@ -396,8 +396,7 @@ function test_chained_tuple(): i32 {
 function test_float_after_nondot(): i32 {
   let toks = lexer.tokenize("let f = 1.5;");
   let floats = 0;
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     match (toks[i]) {
       lexer.TokNumber(t) => {
         if (t.is_float()) {
@@ -406,7 +405,6 @@ function test_float_after_nondot(): i32 {
       },
       _ => {}
     }
-    i += 1;
   }
   if (floats != 1) {
     return 1650;

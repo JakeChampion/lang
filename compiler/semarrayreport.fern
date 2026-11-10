@@ -295,10 +295,8 @@ pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
     counts = counts.with(site.reason, counts[site.reason] + 1);
   }
   out = out + kind + " decisions: " + util.i32_to_string(sites.len()) + "\n";
-  let i = 0;
-  while (i < tags.len()) {
+  for i in 0..tags.len() {
     out = out + "  " + tags[i] + " " + util.i32_to_string(counts[i]) + "\n";
-    i += 1;
   }
   return out;
 }

@@ -73,20 +73,16 @@ pub function roll(d: i64, w: i32): i64 {
 
 pub function roll_text(d: i64, s: string): i64 {
   let out = roll(d, s.len());
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     out = roll(out, s[i] as i32);
-    i += 1;
   }
   return out;
 }
 
 pub function roll_words(d: i64, xs: i32[]): i64 {
   let out = roll(d, xs.len());
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     out = roll(out, xs[i]);
-    i += 1;
   }
   return out;
 }
@@ -105,12 +101,10 @@ pub function digest_text(d: i64): string {
 pub function hash_key(s: string): string {
   let a = 208357;
   let b = 5381;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let c = s[i] as i32;
     a = a * 31 + c + 1 & 1073741823;
     b = b * 131 + c + 7 & 1073741823;
-    i += 1;
   }
   a = a * 31 + s.len() & 1073741823;
   b = b * 131 + s.len() & 1073741823;
@@ -126,10 +120,8 @@ pub function hash_bucket(s: string, n: i32): i32 {
 
 pub function minus_ones(n: i32): i32[] {
   let out = __alloc_i32(n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(i, -1);
-    i += 1;
   }
   return out;
 }
@@ -220,8 +212,7 @@ pub function lit_to_i32(s: string): i32 {
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
     let acc = 0;
-    let i = start + 2;
-    while (i < s.len()) {
+    for i in start + 2..s.len() {
       let b = s[i] as i32;
       let d: i32 = -1;
       if (b >= 48 && b <= 57) {
@@ -235,7 +226,6 @@ pub function lit_to_i32(s: string): i32 {
         break;
       }
       acc = acc * 16 + d;
-      i += 1;
     }
     if (neg) {
       return -acc;
@@ -244,14 +234,12 @@ pub function lit_to_i32(s: string): i32 {
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
     let bacc = 0;
-    let bi = start + 2;
-    while (bi < s.len()) {
+    for bi in start + 2..s.len() {
       let bb = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
       bacc = bacc * 2 + (bb - 48);
-      bi += 1;
     }
     if (neg) {
       return -bacc;
@@ -273,8 +261,7 @@ pub function lit_to_i64(s: string): i64 {
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
     let acc: i64 = 0;
-    let i = start + 2;
-    while (i < s.len()) {
+    for i in start + 2..s.len() {
       let b = s[i] as i32;
       let d: i32 = -1;
       if (b >= 48 && b <= 57) {
@@ -288,7 +275,6 @@ pub function lit_to_i64(s: string): i64 {
         break;
       }
       acc = acc * 16 + d as i64;
-      i += 1;
     }
     if (neg) {
       return -acc;
@@ -297,14 +283,12 @@ pub function lit_to_i64(s: string): i64 {
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
     let bacc: i64 = 0;
-    let bi = start + 2;
-    while (bi < s.len()) {
+    for bi in start + 2..s.len() {
       let bb = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
       bacc = bacc * 2 + (bb - 48) as i64;
-      bi += 1;
     }
     if (neg) {
       return -bacc;
@@ -325,8 +309,7 @@ pub function digits_to_i32(s: string): i32 {
     start = 1;
   }
   let acc = 0;
-  let i = start;
-  while (i < s.len()) {
+  for i in start..s.len() {
     let b = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
@@ -335,7 +318,6 @@ pub function digits_to_i32(s: string): i32 {
       return acc;
     }
     acc = acc * 10 + (b - 48);
-    i += 1;
   }
   if (neg) {
     return -acc;
@@ -377,12 +359,10 @@ function decimal_within(s: string, pos: string, neg: string): boolean {
   if (n != limit.len()) {
     return n < limit.len();
   }
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (s[start + i] != limit[i]) {
       return s[start + i] < limit[i];
     }
-    i += 1;
   }
   return true;
 }
@@ -398,8 +378,7 @@ pub function digits_to_i64(s: string): i64 {
     start = 1;
   }
   let acc: i64 = 0;
-  let i = start;
-  while (i < s.len()) {
+  for i in start..s.len() {
     let b = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
@@ -408,7 +387,6 @@ pub function digits_to_i64(s: string): i64 {
       return acc;
     }
     acc = acc * 10 + (b - 48) as i64;
-    i += 1;
   }
   if (neg) {
     return -acc;
@@ -420,35 +398,29 @@ pub function is_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 pub function has_str(xs: string[], s: string): boolean {
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (xs[i] == s) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 pub function base_type_name(t: string): string {
-  let i = 0;
-  while (i < t.len()) {
+  for i in 0..t.len() {
     if (t[i] == b'[') {
       return slice_unchecked(t, 0, i).to_owned();
     }
-    i += 1;
   }
   return t;
 }
@@ -484,34 +456,28 @@ pub function str_less(a: string, b: string): boolean {
   if (b.len() < n) {
     n = b.len();
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (a[i] != b[i]) {
       return a[i] < b[i];
     }
-    i += 1;
   }
   return a.len() < b.len();
 }
 
 pub function index_of_str(xs: string[], s: string): i32 {
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (xs[i] == s) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 pub function index_of_i32(xs: i32[], n: i32): i32 {
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (xs[i] == n) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -590,12 +556,10 @@ pub function append_bytes(out: u8[], b: [u8]): u8[] {
 
 // index_of_byte is the first index at or after from that holds c, or -1.
 pub function index_of_byte(s: string, c: u8, from: i32): i32 {
-  let i = from;
-  while (i < s.len()) {
+  for i in from..s.len() {
     if (s[i] == c) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -611,12 +575,10 @@ pub function hex_digit(d: i32): u8 {
 // path_base is the part of path after its last slash.
 pub function path_base(path: string): string {
   let start = 0;
-  let i = 0;
-  while (i < path.len()) {
+  for i in 0..path.len() {
     if (path[i] == b'/') {
       start = i + 1;
     }
-    i += 1;
   }
   return slice_unchecked(path, start, path.len()).to_owned();
 }
@@ -625,12 +587,10 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -638,10 +598,8 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
 // drop_last_i32 is a without its last element.
 pub function drop_last_i32(a: i32[]): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 1) {
+  for i in 0..a.len() - 1 {
     out = out.append(a[i]);
-    i += 1;
   }
   return out;
 }
@@ -821,11 +779,9 @@ pub function parse_f64_bits(s: string): i64 {
     return signbit;
   }
   let mant: i64 = 0;
-  let k2 = 0;
-  while (k2 < nbits) {
+  for k2 in 0..nbits {
     mant = mant * 2 + pf64_top_bit(buf, lo);
     buf = pf64_double(buf, lo, hi);
-    k2 += 1;
   }
   let roundbit = pf64_top_bit(buf, lo);
   buf = pf64_double(buf, lo, hi);
@@ -928,12 +884,10 @@ const PF64_CAP: i32 = 2560;
 
 function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
   let r = 0;
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     let cur = r * 10 + buf[i];
     buf = buf.with(i, cur / 2);
     r = cur % 2;
-    i += 1;
   }
   if (r != 0) {
     buf = buf.with(hi, 5);
@@ -1054,13 +1008,11 @@ pub function is_diagnostic_code(code: string): boolean {
   if (head != 69 && head != 80 && head != 87) {
     return false;
   }
-  let i = 1;
-  while (i < 4) {
+  for i in 1..4 {
     let b = code[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -1147,8 +1099,7 @@ pub function doc_pos(maps: LineMap[], line: i32, col: i32): (i32, i32) {
 
 pub function format_diags(diags: Diag[]): string {
   let out = "";
-  let i = 0;
-  while (i < diags.len()) {
+  for i in 0..diags.len() {
     let d = diags[i];
     let tag = "";
     if (d.code.len() > 0) {
@@ -1161,7 +1112,6 @@ pub function format_diags(diags: Diag[]): string {
     for r in d.related {
       out = out + "\n    note: " + r.message + " (" + pos_str("", [], r.line, r.col) + ")";
     }
-    i += 1;
   }
   return out;
 }
@@ -1209,10 +1159,8 @@ pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
 }
 
 pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
-  let i = 0;
-  while (i < b.len()) {
+  for i in 0..b.len() {
     a = a.append(b[i]);
-    i += 1;
   }
   return a;
 }
@@ -1276,12 +1224,10 @@ pub function is_ident(s: string): boolean {
   if (s.len() == 0 || !ident_start_byte(s[0])) {
     return false;
   }
-  let i = 1;
-  while (i < s.len()) {
+  for i in 1..s.len() {
     if (!ident_start_byte(s[i]) && !(s[i] >= b'0' && s[i] <= b'9')) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -1385,12 +1331,10 @@ pub function without_fern_ext(path: string): string {
 }
 
 pub function dep_name(import_path: string): string {
-  let i = 0;
-  while (i < import_path.len()) {
+  for i in 0..import_path.len() {
     if (import_path[i] == b'/') {
       return slice_unchecked(import_path, 0, i).to_owned();
     }
-    i += 1;
   }
   return import_path;
 }
@@ -1418,21 +1362,18 @@ pub function import_qualifier(path: string): string {
   }
   let out = "";
   let from = start;
-  i = start;
-  while (i < end) {
+  for i in start..end {
     if (path[i] == b'-') {
       out = out + slice_unchecked(path, from, i) + "_";
       from = i + 1;
     }
-    i += 1;
   }
   return out + slice_unchecked(path, from, end);
 }
 
 pub function mangle_prefix(name: string): string {
   let out = "";
-  let i = 0;
-  while (i < name.len()) {
+  for i in 0..name.len() {
     let c = name[i] as i32;
     let ok = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95;
     if (ok) {
@@ -1447,7 +1388,6 @@ pub function mangle_prefix(name: string): string {
         out += "_";
       }
     }
-    i += 1;
   }
   if (out.len() == 0) {
     return "_";
@@ -1562,16 +1502,12 @@ pub function levenshtein(a: string, b: string): i32 {
     return a.len();
   }
   let prev: i32[] = [];
-  let j = 0;
-  while (j <= b.len()) {
+  for j in 0..=b.len() {
     prev = prev.append(j);
-    j += 1;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     let cur: i32[] = [i + 1];
-    let k = 0;
-    while (k < b.len()) {
+    for k in 0..b.len() {
       let cost = 1;
       if (a[i] == b[k]) {
         cost = 0;
@@ -1584,10 +1520,8 @@ pub function levenshtein(a: string, b: string): i32 {
         best = prev[k + 1] + 1;
       }
       cur = cur.append(best);
-      k += 1;
     }
     prev = cur;
-    i += 1;
   }
   return prev[b.len()];
 }
@@ -1602,8 +1536,7 @@ pub function suggest(name: string, candidates: string[]): string {
   }
   let best = "";
   let best_dist = budget + 1;
-  let i = 0;
-  while (i < candidates.len()) {
+  for i in 0..candidates.len() {
     if (candidates[i] != name) {
       let d = levenshtein(name, candidates[i]);
       if (d < best_dist) {
@@ -1611,7 +1544,6 @@ pub function suggest(name: string, candidates: string[]): string {
         best_dist = d;
       }
     }
-    i += 1;
   }
   if (best_dist > budget) {
     return "";
@@ -1620,10 +1552,8 @@ pub function suggest(name: string, candidates: string[]): string {
 }
 
 pub function append_all[T](into: T[], more: T[]): T[] {
-  let i = 0;
-  while (i < more.len()) {
+  for i in 0..more.len() {
     into = into.append(more[i]);
-    i += 1;
   }
   return into;
 }
@@ -1637,22 +1567,18 @@ pub function le32(buf: i32[], v: i32): i32[] {
 
 // is_inner_label is true for an assembler label that stays out of the symbol table.
 pub function is_inner_label(s: string): boolean {
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == b'.' || s[i] == b'#') {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 pub function to_u8(b: i32[]): u8[] {
   let o: u8[] = [];
-  let i = 0;
-  while (i < b.len()) {
+  for i in 0..b.len() {
     o = o.append(b[i] as u8);
-    i += 1;
   }
   return o;
 }
@@ -1689,13 +1615,11 @@ function cache_dir(): string {
 pub function split_char(s: string, c: u8): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == c) {
       out = out.append(slice_unchecked(s, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   return out;

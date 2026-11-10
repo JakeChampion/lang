@@ -9,10 +9,8 @@ pub struct Boundary { arm: boolean, input: string, result: string, flags: boolea
 
 pub function initial(b: Boundary): State {
   let regs: i32[] = [];
-  let i = 0;
-  while (i < 31) {
+  for i in 0..31 {
     regs = regs.append(0);
-    i += 1;
   }
   let r = isa.reg(b.input, b.arm, 64);
   if (r >= 0) {

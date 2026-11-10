@@ -21,8 +21,7 @@ pub function rc_coverage_str(r: RcResult): string {
     + "/" + util.i32_to_string(r.sites);
   let seen: string[] = [];
   let count: i32[] = [];
-  let i = 0;
-  while (i < r.skips.len()) {
+  for i in 0..r.skips.len() {
     let at = util.index_of_str(seen, r.skips[i]);
     if (at < 0) {
       seen = seen.append(r.skips[i]);
@@ -30,12 +29,9 @@ pub function rc_coverage_str(r: RcResult): string {
     } else {
       count = count.with(at, count[at] + 1);
     }
-    i += 1;
   }
-  let j = 0;
-  while (j < seen.len()) {
+  for j in 0..seen.len() {
     out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
-    j += 1;
   }
   return out;
 }
@@ -322,8 +318,7 @@ function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
 function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
   let else_at: i32 = -1;
   let depth = 0;
-  let i = if_at + 1;
-  while (i < ops.len()) {
+  for i in if_at + 1..ops.len() {
     if (ops[i].kind_tag == ir.K_BLOCK || ops[i].kind_tag == ir.K_LOOP || ops[i].kind_tag == ir.K_IF) {
       depth += 1;
     } else if (ops[i].kind_tag == ir.K_END) {
@@ -334,7 +329,6 @@ function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
     } else if (ops[i].kind_tag == ir.K_ELSE && depth == 0) {
       else_at = i;
     }
-    i += 1;
   }
   return IfSpan { ok: false, if_at: 0, else_at: -1, end_at: -1 };
 }
@@ -472,8 +466,7 @@ function flow_graph(ops: ir.Op[]): Flow {
     }
     i += 1;
   }
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (ops[i].kind_tag == ir.K_IF && other[i] == ops.len()) {
       other = other.with(i, ends[i] + 1);
     } else if (ops[i].kind_tag == ir.K_ELSE || ops[i].kind_tag == ir.K_BR || ops[i].kind_tag == ir.K_BRIF) {
@@ -493,7 +486,6 @@ function flow_graph(ops: ir.Op[]): Flow {
     } else if (ops[i].kind_tag == ir.K_RETURN) {
       next = next.with(i, ops.len());
     }
-    i += 1;
   }
   return Flow { next: next, other: other };
 }
@@ -551,8 +543,7 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
   let r = rc_result_new();
   let claims: Claim[] = [];
   let k_calld = ir.K_CALL_DIRECT;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (is_reuse_alloc(ops[i], k_calld)) {
       r = RcResult { ...r, sites: r.sites + 1 };
       let s = read_site(ops, i);
@@ -570,7 +561,6 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
         r = RcResult { ...r, skips: r.skips.append(s.why) };
       }
     }
-    i += 1;
   }
   let dp = double_claim_problems(fn_name, ops, claims);
   let k = 0;
