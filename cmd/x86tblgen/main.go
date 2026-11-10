@@ -59,6 +59,22 @@ func lookup(b *strings.Builder, fn, param string, rows []string) {
 	b.WriteString("        _ => { return -1; }\n    }\n}\n")
 }
 
+// optionLookup is lookup for a table whose miss is None. Each row's value
+// is wrapped in Some.
+func optionLookup(b *strings.Builder, fn, param string, rows []optionRow) {
+	allowLongTable(b, len(rows))
+	fmt.Fprintf(b, "function %s(%s: string): Option[i32] {\n    match (%s) {\n", fn, param, param)
+	for _, r := range rows {
+		fmt.Fprintf(b, "        %q => { return Some(%d); },\n", r.key, r.value)
+	}
+	b.WriteString("        _ => { return None; }\n    }\n}\n")
+}
+
+type optionRow struct {
+	key   string
+	value int
+}
+
 func genNamedTables() string {
 	var b strings.Builder
 	for _, f := range x86tbl.Named {
@@ -72,6 +88,16 @@ func genNamedTables() string {
 			continue
 		}
 		if f.FernFn != "" {
+			if f.Optional {
+				var rows []optionRow
+				for _, o := range f.Ops {
+					if o.ATT != "" {
+						rows = append(rows, optionRow{o.ATT, f.Pack(o)})
+					}
+				}
+				optionLookup(&b, f.FernFn, "mnem", rows)
+				continue
+			}
 			var rows []string
 			for _, o := range f.Ops {
 				if o.ATT == "" {
@@ -102,13 +128,13 @@ func genNamedTables() string {
 func genGPRTables() string {
 	var b strings.Builder
 	group := func(fn string, g x86tbl.Group) {
-		var rows []string
+		var rows []optionRow
 		for _, op := range g.Ops {
 			for _, sp := range op.Spellings {
-				rows = append(rows, fmt.Sprintf("%q => { return %d; }", sp, op.Ext))
+				rows = append(rows, optionRow{sp, int(op.Ext)})
 			}
 		}
-		lookup(&b, fn, "mnem", rows)
+		optionLookup(&b, fn, "mnem", rows)
 		b.WriteString("\n")
 	}
 	group("x86_gas_alu_ext", x86tbl.ALU)

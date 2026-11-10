@@ -74,10 +74,11 @@ func genFamily(b *strings.Builder) {
 	sort.Ints(lens)
 	b.WriteString("// arm64_gas_family returns the mnemonic family index, or -1 for an unknown mnemonic.\n")
 	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    let n: i32 = mnem.len();\n")
+	b.WriteString("    return match (n) {\n")
 	for _, n := range lens {
-		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
+		fmt.Fprintf(b, "        %d => arm64_gas_family_len%d(mnem),\n", n, n)
 	}
-	b.WriteString("    return -1;\n}\n")
+	b.WriteString("        _ => -1,\n    };\n}\n")
 	for _, n := range lens {
 		genFamilyGroup(b, fmt.Sprintf("arm64_gas_family_len%d", n), 0, byLen[n])
 	}
@@ -85,13 +86,24 @@ func genFamily(b *strings.Builder) {
 
 const leafSpellings = 4
 
+// A leaf group of this many spellings or more is a match expression.
+const matchSpellings = 3
+
 func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling) {
 	if len(group) <= leafSpellings {
 		fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", name)
-		for _, s := range group {
-			fmt.Fprintf(b, "    if (mnem == %q) { return %s(); }\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
+		if len(group) < matchSpellings {
+			for _, s := range group {
+				fmt.Fprintf(b, "    if (mnem == %q) { return %s(); }\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
+			}
+			b.WriteString("    return -1;\n}\n")
+			return
 		}
-		b.WriteString("    return -1;\n}\n")
+		b.WriteString("    return match (mnem) {\n")
+		for _, s := range group {
+			fmt.Fprintf(b, "        %q => %s(),\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
+		}
+		b.WriteString("        _ => -1,\n    };\n}\n")
 		return
 	}
 	byByte := map[byte][]spelling{}

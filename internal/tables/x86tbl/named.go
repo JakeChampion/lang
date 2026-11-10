@@ -11,8 +11,11 @@ type NamedFamily struct {
 	Name   string
 	Doc    string
 	FernFn string
-	Pack   func(NamedOp) int
-	Ops    []NamedOp
+	// Optional makes FernFn return Option[i32], None for a miss, in place
+	// of i32 with -1 for a miss.
+	Optional bool
+	Pack     func(NamedOp) int
+	Ops      []NamedOp
 }
 
 func (f NamedFamily) PredicateName() string { return "x86_gas_is_" + f.Name }
@@ -26,7 +29,7 @@ func pfxExt(o NamedOp) int   { return int(o.Prefix)*256 + int(o.Ext) }
 func pfxOpExt(o NamedOp) int { return int(o.Prefix)*65536 + int(o.Op)*256 + int(o.Ext) }
 
 var Named = []NamedFamily{
-	{Name: "rep", Doc: "the repeat prefixes; Prefix is the byte — rep/repe/repz are one F3, repne/repnz the F2, since the condition only means anything on cmps/scas", FernFn: "x86_gas_rep_pfx", Pack: pfxOnly, Ops: []NamedOp{
+	{Name: "rep", Doc: "the repeat prefixes; Prefix is the byte — rep/repe/repz are one F3, repne/repnz the F2, since the condition only means anything on cmps/scas", FernFn: "x86_gas_rep_pfx", Optional: true, Pack: pfxOnly, Ops: []NamedOp{
 		{ATT: "rep", Prefix: 0xF3, ATTProbe: "rep movsb"},
 		{ATT: "repe", Prefix: 0xF3, ATTProbe: "repe cmpsb"},
 		{ATT: "repz", Prefix: 0xF3, ATTProbe: "repz cmpsb"},
@@ -44,7 +47,7 @@ var Named = []NamedFamily{
 		{ATT: "pushq", Op: 0x50, ATTProbe: "pushq %rbp"},
 		{ATT: "popq", Op: 0x58, ATTProbe: "popq %rbp"},
 	}},
-	{Name: "lea", Doc: "lea at every width AT&T spells; Ext is the destination size", FernFn: "x86_gas_lea_size", Pack: extOnly, Ops: []NamedOp{
+	{Name: "lea", Doc: "lea at every width AT&T spells; Ext is the destination size", FernFn: "x86_gas_lea_size", Optional: true, Pack: extOnly, Ops: []NamedOp{
 		{ATT: "leaq", Ext: 64, ATTProbe: "leaq -8(%rbp), %rax"},
 		{ATT: "leal", Ext: 32, ATTProbe: "leal -8(%rbp), %eax"},
 		{ATT: "leaw", Ext: 16, ATTProbe: "leaw -8(%rbp), %ax"},
@@ -60,7 +63,7 @@ var Named = []NamedFamily{
 		{ATT: "movabs", ATTProbe: "movabs $4294967296, %rax"},
 	}},
 	{Name: "extend", Doc: "the zero- and sign-extending loads. Op is B6/B7 (movzx) or BE/BF (movsx) — a byte or word SOURCE — and Ext the destination size AT&T names in the suffix's second letter; packed as op*256 + size/8",
-		FernFn: "x86_gas_extend_op", Pack: func(o NamedOp) int { return int(o.Op)*256 + int(o.Ext)/8 }, Ops: []NamedOp{
+		FernFn: "x86_gas_extend_op", Optional: true, Pack: func(o NamedOp) int { return int(o.Op)*256 + int(o.Ext)/8 }, Ops: []NamedOp{
 			{ATT: "movzbw", Op: 0xB6, Ext: 16, ATTProbe: "movzbw (%rdi), %ax"},
 			{ATT: "movzbl", Op: 0xB6, Ext: 32, ATTProbe: "movzbl (%rdi), %eax"},
 			{ATT: "movzbq", Op: 0xB6, Ext: 64, ATTProbe: "movzbq (%rdi), %rax"},
@@ -83,7 +86,7 @@ var Named = []NamedFamily{
 		{ATT: "imul", Suffixed: true, ATTProbe: "imulq %rcx"},
 	}},
 	{Name: "bitscan", Doc: "the bit scans and counts: [Prefix] [REX.W] 0F Op /r, Ext the REX.W bit; packed as pfx*65536 + op*256 + w",
-		FernFn: "x86_gas_bitscan_op", Pack: pfxOpExt, Ops: []NamedOp{
+		FernFn: "x86_gas_bitscan_op", Optional: true, Pack: pfxOpExt, Ops: []NamedOp{
 			{ATT: "bsfl", Op: 0xBC, Ext: 0, ATTProbe: "bsfl %ecx, %eax"},
 			{ATT: "bsfq", Op: 0xBC, Ext: 1, ATTProbe: "bsfq %rcx, %rax"},
 			{ATT: "bsrl", Op: 0xBD, Ext: 0, ATTProbe: "bsrl %ecx, %eax"},
@@ -95,14 +98,14 @@ var Named = []NamedFamily{
 			{ATT: "popcntl", Prefix: 0xF3, Op: 0xB8, Ext: 0, ATTProbe: "popcntl %ecx, %eax"},
 			{ATT: "popcntq", Prefix: 0xF3, Op: 0xB8, Ext: 1, ATTProbe: "popcntq %rcx, %rax"},
 		}},
-	{Name: "shld", Doc: "the double-precision shifts: 0F Op ib by immediate, 0F Op+1 by cl", FernFn: "x86_gas_shld_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "shld", Doc: "the double-precision shifts: 0F Op ib by immediate, 0F Op+1 by cl", FernFn: "x86_gas_shld_op", Optional: true, Pack: opOnly, Ops: []NamedOp{
 		{ATT: "shld", Suffixed: true, Op: 0xA4, ATTProbe: "shldq %cl, %rdi, %rsi"},
 		{ATT: "shrd", Suffixed: true, Op: 0xAC, ATTProbe: "shrdq $5, %rdi, %rsi"},
 	}},
 	{Name: "bswap", Doc: "byte swap, 32- and 64-bit registers only", Ops: []NamedOp{
 		{ATT: "bswap", Suffixed: true, ATTProbe: "bswapq %rax"},
 	}},
-	{Name: "rmw", Doc: "the read-modify-write exchanges: 0F Op /r for the byte width, 0F Op+1 otherwise", FernFn: "x86_gas_rmw_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "rmw", Doc: "the read-modify-write exchanges: 0F Op /r for the byte width, 0F Op+1 otherwise", FernFn: "x86_gas_rmw_op", Optional: true, Pack: opOnly, Ops: []NamedOp{
 		{ATT: "xadd", Suffixed: true, Op: 0xC0, ATTProbe: "xaddq %rcx, %rax"},
 		{ATT: "cmpxchg", Suffixed: true, Op: 0xB0, ATTProbe: "cmpxchgq %rcx, (%rdi)"},
 	}},
@@ -112,7 +115,7 @@ var Named = []NamedFamily{
 	{Name: "crc32", Doc: "crc32 with the source width in the suffix", Ops: []NamedOp{
 		{ATT: "crc32", Suffixed: true, ATTProbe: "crc32b %cl, %eax"},
 	}},
-	{Name: "port", Doc: "port I/O between the accumulator of the suffix's width and the port in %dx; packed as prefix*256 + op", FernFn: "x86_gas_port_op", Pack: pfxOp, Ops: []NamedOp{
+	{Name: "port", Doc: "port I/O between the accumulator of the suffix's width and the port in %dx; packed as prefix*256 + op", FernFn: "x86_gas_port_op", Optional: true, Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "inb", Op: 0xEC, ATTProbe: "inb %dx, %al"},
 		{ATT: "inw", Prefix: 0x66, Op: 0xED, ATTProbe: "inw %dx, %ax"},
 		{ATT: "inl", Op: 0xED, ATTProbe: "inl %dx, %eax"},
@@ -120,7 +123,7 @@ var Named = []NamedFamily{
 		{ATT: "outw", Prefix: 0x66, Op: 0xEF, ATTProbe: "outw %ax, %dx"},
 		{ATT: "outl", Op: 0xEF, ATTProbe: "outl %eax, %dx"},
 	}},
-	{Name: "memext", Doc: "a two-byte 0F op on a memory operand, with the ModRM reg field as an opcode extension; packed as ext*256 + op", FernFn: "x86_gas_memext_op", Pack: extOp, Ops: []NamedOp{
+	{Name: "memext", Doc: "a two-byte 0F op on a memory operand, with the ModRM reg field as an opcode extension; packed as ext*256 + op", FernFn: "x86_gas_memext_op", Optional: true, Pack: extOp, Ops: []NamedOp{
 		{ATT: "clflush", Op: 0xAE, Ext: 7, ATTProbe: "clflush (%rax)"},
 		{ATT: "invlpg", Op: 0x01, Ext: 7, ATTProbe: "invlpg 8(%r9)"},
 		{ATT: "lidt", Op: 0x01, Ext: 3, ATTProbe: "lidt (%rsp)"},
@@ -130,7 +133,7 @@ var Named = []NamedFamily{
 		{ATT: "", ATTProbe: "movq %rax, %xmm0"},
 		{ATT: "movd", ATTProbe: "movd %eax, %xmm0"},
 	}},
-	{Name: "mov10", Doc: "the 0F 10/11 move family; Prefix is the mandatory prefix, 0 for movups", FernFn: "x86_gas_mov10_pfx", Pack: pfxOnly, Ops: []NamedOp{
+	{Name: "mov10", Doc: "the 0F 10/11 move family; Prefix is the mandatory prefix, 0 for movups", FernFn: "x86_gas_mov10_pfx", Optional: true, Pack: pfxOnly, Ops: []NamedOp{
 		{ATT: "movsd", Prefix: 0xF2, ATTProbe: "movsd (%rdi), %xmm0"},
 		{ATT: "movss", Prefix: 0xF3, ATTProbe: "movss %xmm2, %xmm1"},
 		{ATT: "movups", Prefix: 0x00, ATTProbe: "movups (%rdi), %xmm0"},
@@ -141,7 +144,7 @@ var Named = []NamedFamily{
 		{ATT: "movdqa", Prefix: 0x66, ATTProbe: "movdqa %xmm0, (%rdi)"},
 	}},
 	{Name: "cvt2s", Doc: "integer to scalar float: Prefix 0F 2A, Ext the REX.W bit the AT&T suffix names; packed as pfx*256 + w",
-		FernFn: "x86_gas_cvt2s_op", Pack: pfxExt, Ops: []NamedOp{
+		FernFn: "x86_gas_cvt2s_op", Optional: true, Pack: pfxExt, Ops: []NamedOp{
 			{ATT: "cvtsi2sd", Prefix: 0xF2, Ext: 1, ATTProbe: "cvtsi2sd %rax, %xmm0"},
 			{ATT: "cvtsi2sdq", Prefix: 0xF2, Ext: 1, ATTProbe: "cvtsi2sdq %rax, %xmm0"},
 			{ATT: "cvtsi2sdl", Prefix: 0xF2, Ext: 0, ATTProbe: "cvtsi2sdl %eax, %xmm0"},
@@ -150,7 +153,7 @@ var Named = []NamedFamily{
 			{ATT: "cvtsi2ssl", Prefix: 0xF3, Ext: 0, ATTProbe: "cvtsi2ssl %eax, %xmm1"},
 		}},
 	{Name: "cvt2si", Doc: "scalar float to integer: Prefix 0F Op, 2C truncating and 2D rounding; the AT&T l/q suffix names the width the destination register carries; packed as pfx*256 + op",
-		FernFn: "x86_gas_cvt2si", Pack: pfxOp, Ops: []NamedOp{
+		FernFn: "x86_gas_cvt2si", Optional: true, Pack: pfxOp, Ops: []NamedOp{
 			{ATT: "cvttsd2si", Prefix: 0xF2, Op: 0x2C, ATTProbe: "cvttsd2si %xmm1, %eax"},
 			{ATT: "cvttsd2sil", Prefix: 0xF2, Op: 0x2C, ATTProbe: "cvttsd2sil %xmm1, %eax"},
 			{ATT: "cvttsd2siq", Prefix: 0xF2, Op: 0x2C, ATTProbe: "cvttsd2siq %xmm1, %rax"},
@@ -164,7 +167,7 @@ var Named = []NamedFamily{
 			{ATT: "cvtss2sil", Prefix: 0xF3, Op: 0x2D, ATTProbe: "cvtss2sil %xmm1, %eax"},
 			{ATT: "cvtss2siq", Prefix: 0xF3, Op: 0x2D, ATTProbe: "cvtss2siq %xmm1, %rax"},
 		}},
-	{Name: "imm3a", Doc: "the 66 0F 3A Op /r ib three-operand forms with an xmm destination. pclmulqdq's imm8 picks a 64-bit half of each source, which gas disassembles under a per-value alias name; the encoding is one row", FernFn: "x86_gas_imm3a_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "imm3a", Doc: "the 66 0F 3A Op /r ib three-operand forms with an xmm destination. pclmulqdq's imm8 picks a 64-bit half of each source, which gas disassembles under a per-value alias name; the encoding is one row", FernFn: "x86_gas_imm3a_op", Optional: true, Pack: opOnly, Ops: []NamedOp{
 		{ATT: "roundss", Op: 0x0A, ATTProbe: "roundss $0, %xmm1, %xmm0"},
 		{ATT: "roundsd", Op: 0x0B, ATTProbe: "roundsd $0, %xmm1, %xmm0"},
 		{ATT: "roundps", Op: 0x08, ATTProbe: "roundps $1, %xmm1, %xmm0"},
@@ -194,7 +197,7 @@ var Named = []NamedFamily{
 		{ATT: "pinsrd", ATTProbe: "pinsrd $0, %eax, %xmm1"},
 		{ATT: "pinsrq", ATTProbe: "pinsrq $0, %rax, %xmm1"},
 	}},
-	{Name: "movmsk", Doc: "the sign-bit gathers into a GPR: [Prefix] 0F Op /r; packed as pfx*256 + op", FernFn: "x86_gas_movmsk_op", Pack: pfxOp, Ops: []NamedOp{
+	{Name: "movmsk", Doc: "the sign-bit gathers into a GPR: [Prefix] 0F Op /r; packed as pfx*256 + op", FernFn: "x86_gas_movmsk_op", Optional: true, Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pmovmskb", Prefix: 0x66, Op: 0xD7, ATTProbe: "pmovmskb %xmm0, %eax"},
 		{ATT: "movmskps", Prefix: 0x00, Op: 0x50, ATTProbe: "movmskps %xmm0, %eax"},
 		{ATT: "movmskpd", Prefix: 0x66, Op: 0x50, ATTProbe: "movmskpd %xmm0, %eax"},
@@ -212,7 +215,7 @@ var Named = []NamedFamily{
 			{ATT: "psrldq", Op: 0x73, Ext: 3, ATTProbe: "psrldq $8, %xmm0"},
 			{ATT: "pslldq", Op: 0x73, Ext: 7, ATTProbe: "pslldq $8, %xmm0"},
 		}},
-	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline", FernFn: "x86_gas_sse38_op", Optional: true, Pack: opOnly, Ops: []NamedOp{
 		{ATT: "pshufb", Op: 0x00, ATTProbe: "pshufb %xmm1, %xmm0"},
 		{ATT: "ptest", Op: 0x17, ATTProbe: "ptest %xmm1, %xmm0"},
 		{ATT: "pmulld", Op: 0x40, ATTProbe: "pmulld %xmm1, %xmm0"},
