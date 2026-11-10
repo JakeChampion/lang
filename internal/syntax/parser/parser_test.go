@@ -1365,7 +1365,10 @@ func TestCallTypeArgsShapes(t *testing.T) {
 		{`f[(i32) => i32](a)`, []string{"(i32) => i32"}},
 		{`f[(Box) => Loc, i32](a)`, []string{"(Box) => Loc", "i32"}},
 		{`f[((Box) => Loc) => Box](a)`, []string{"((Box) => Loc) => Box"}},
+		{`f[Pair[Box, Loc]](a)`, []string{"Pair[Box, Loc]"}},
+		{`f[Outer[Pair[Box, Loc]]](a)`, []string{"Outer[Pair[Box, Loc]]"}},
 		{`f[Box](a)`, nil},
+		{`fs[[m, k][0]](a)`, nil},
 		{`fs[(i)](a)`, nil},
 		{`fs[(i - 1)](a)`, nil},
 		{`fs[(m, k)](a)`, nil},
@@ -2959,7 +2962,7 @@ function take(hs: own Pollable[]): i32 { return 0; }`)
 	if subscribe == nil || ready == nil || take == nil {
 		t.Fatal("functions not parsed")
 	}
-	if h, ok := subscribe.ReturnType.(ast.HandleType); !ok || h.Resource != "Pollable" || h.Borrowed {
+	if h, ok := subscribe.ReturnType.(ast.StructType); !ok || h.Name != "Pollable" || !subscribe.ReturnOwn {
 		t.Errorf("subscribe return = %#v, want own Pollable", subscribe.ReturnType)
 	}
 	if h, ok := ready.Params[0].Type.(ast.HandleType); !ok || h.Resource != "Pollable" || !h.Borrowed {

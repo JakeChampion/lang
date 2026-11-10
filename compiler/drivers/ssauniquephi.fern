@@ -172,11 +172,9 @@ function predecessor_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32):
   check(row, replace(good, tail, phi, b.preds.with(last, f.blocks[join].id)), false);
   let args: i32[] = [];
   let preds: i32[] = [];
-  let i = 0;
-  while (i < last) {
+  for i in 0..last {
     args = args.append(phi.args[i]);
     preds = preds.append(b.preds[i]);
-    i += 1;
   }
   check(row, replace(good, tail, ssa.SInst { ...phi, args: args }, preds), false);
 }

@@ -1,0 +1,1 @@
+26:14: error[E060]: 'as?' downcast target must be a concrete struct or enum type (slice 1), got Box[string]

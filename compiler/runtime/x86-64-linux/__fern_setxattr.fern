@@ -1,4 +1,13 @@
 function __fern_setxattr(path: string, name: string, value: string): Result[void, IoError] {
+  if (__count_byte(value, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(value, value.len())));
+  }
+  if (__count_byte(name, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(name, name.len())));
+  }
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let vlen = value.len();
   let vp = __raw_alloc(vlen + 1);
   let k = 0;

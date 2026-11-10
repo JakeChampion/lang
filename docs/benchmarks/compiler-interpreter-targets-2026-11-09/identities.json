@@ -1,0 +1,14 @@
+{
+  "baseline_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "compiler_source_sha256": "c5b54cb12b1c3eaeaaff1f93659518cd27eac6c17e68aa009eed1beb81d80552",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "code_matches_measured_source": true,
+  "local_checks": {
+    "source_check_exit": 0,
+    "format_exit": 0,
+    "diff_check_exit": 0
+  },
+  "scope_note": "Initial completed subset evidence. Full-corpus controls, allocation controls and targeted Go suites remain in flight. Later records must retain their own exact outcomes."
+}

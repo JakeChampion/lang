@@ -4,8 +4,7 @@ import "../wasmlocals";
 
 function render(ops: ir.Op[]): string {
   let s = "";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (i > 0) {
       s += " ; ";
     }
@@ -13,20 +12,17 @@ function render(ops: ir.Op[]): string {
     if (ops[i].kind_tag == ir.kind_id("dyn_dispatch")) {
       s = s + " from " + util.i32_to_string(ops[i].i32_imm);
     }
-    i += 1;
   }
   return s;
 }
 
 function list(xs: i32[]): string {
   let s = "[";
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (i > 0) {
       s += " ";
     }
     s += util.i32_to_string(xs[i]);
-    i += 1;
   }
   return s + "]";
 }

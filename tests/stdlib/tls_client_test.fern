@@ -359,6 +359,25 @@ function closes(p: Pair): Result[string, tls.TlsError] {
   return Ok("missed");
 }
 
+function test_a_close_before_the_handshake_ends(): test.TestOutcome {
+  match (begin(client.config("tls.example", roots(ROOT)), WALL_MS)) {
+    Ok(start) => {
+      match (rd(start.session, __codec_bytes(hex.decode("15030300020100")))) {
+        Ok(_) => {
+          return test.fail("the close_notify was taken");
+        },
+        Err(e) => {
+          return test.assert_eq(e.message(), "tls handshake: the peer sent alert 0");
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_close(): test.TestOutcome {
   match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
     Ok(p) => {
@@ -390,8 +409,8 @@ function has_resume(events: handshake.Event[]): boolean {
   return false;
 }
 
-function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
-  let t = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+function issued(p: Pair, lifetime: u32): Result[(client.Ticket, u8[]), tls.TlsError] {
+  let t = message.NewSessionTicket { lifetime: lifetime, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
   let st = srv(p.server.ticket(t))?;
   let cr = rd(p.session, st.output)?;
   if (cr.tickets.len() != 1) {
@@ -419,7 +438,17 @@ function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsErr
 function test_resumption(): test.TestOutcome {
   match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
     Ok(p) => {
-      match (issued(p)) {
+      match (issued(p, 2592000 as u32)) {
+        Ok(long) => {
+          if (!long.0.lifetime.eq(time.duration_seconds(604800))) {
+            return test.fail("a lifetime above seven days");
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+      match (issued(p, 7200 as u32)) {
         Ok(got) => {
           let t = got.0;
           if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || !t.lifetime.eq(time.duration_seconds(7200)) || hex.encode(t.psk) != hex.encode(got.1)) {
@@ -548,6 +577,7 @@ function main(): i32 {
   r = r.it("a forged CertificateVerify", test_forged);
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
+  r = r.it("a close_notify before the handshake ends is an error", test_a_close_before_the_handshake_ends);
   r = r.it("resumption", test_resumption);
   r = r.it("an identity", test_identity);
   return r.finish();

@@ -155,5 +155,7 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	39262456
-x86_64/checker.cliff_count	380506
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured these counts.
+# Bank both measured reductions after main 5d6c692eb2. Keep all tolerances.
+x86_64/checker.cliff_bytes	38416000
+x86_64/checker.cliff_count	369099

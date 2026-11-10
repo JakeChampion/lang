@@ -199,6 +199,12 @@ function test_downgraded(): test.TestOutcome {
   if (!tls12.downgraded(marked)) {
     return test.fail("the sentinel");
   }
+  if (!tls12.downgraded(filled(24, 7).concat(bytes("444f574e47524400")))) {
+    return test.fail("the sentinel of TLS 1.1 and below");
+  }
+  if (tls12.downgraded(filled(24, 7).concat(bytes("444f574e47524402")))) {
+    return test.fail("another last byte");
+  }
   return test.assert_false(tls12.downgraded(server_random()));
 }
 

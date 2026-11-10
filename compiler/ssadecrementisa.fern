@@ -24,8 +24,8 @@ function address(s: string): Address {
   if (!s.ends_with(")")) {
     return Address { base: -1, offset: 0 };
   }
-  let displacement = slice_unchecked(s, 0, at) + "";
-  let base = slice_unchecked(s, at + 1, s.len() - 1) + "";
+  let displacement = slice_unchecked(s, 0, at).to_owned();
+  let base = slice_unchecked(s, at + 1, s.len() - 1).to_owned();
   let reg = registers.reg(base, false, 64);
   if (reg < 0 || displacement != "" && !util.is_decimal_i32(displacement)) {
     return Address { base: -1, offset: 0 };
@@ -76,7 +76,7 @@ function flags(name: string, a: string, b: string): Op {
     return Op { ...empty(9), width: 32, source: reg, destination: reg, immediate: 1 };
   }
   if (name == "cmpl" && a.starts_with("$")) {
-    let literal = slice_unchecked(a, 1, a.len()) + "";
+    let literal = slice_unchecked(a, 1, a.len()).to_owned();
     if (util.is_decimal_i32(literal)) {
       return Op { ...empty(7), width: 32, source: reg, immediate: util.digits_to_i32(literal) };
     }
@@ -93,19 +93,17 @@ function branch(name: string): boolean {
   return false;
 }
 
-function split_at(line: string): i32 {
-  let at = 0;
-  while (at < line.len()) {
+function split_at(line: string): Option[i32] {
+  for at in 0..line.len() {
     if (line[at] == b' ' || line[at] == b'\t') {
-      return at;
+      return Some(at);
     }
-    at += 1;
   }
-  return -1;
+  return None;
 }
 
 function label(line: string): string {
-  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1) + "" } else { "" };
+  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1).to_owned() } else { "" };
 }
 
 function decode(line: string, labels: names.Names): Op {
@@ -115,12 +113,11 @@ function decode(line: string, labels: names.Names): Op {
   if (line == "ret") {
     return empty(11);
   }
-  let at = split_at(line);
-  if (at < 0) {
+  let Some(at) = split_at(line) else {
     return empty(0);
-  }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  };
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (name == "incl" && rest == "__fern_rc_underflow(%rip)") {
     return Op { ...empty(12), width: 32 };
   }

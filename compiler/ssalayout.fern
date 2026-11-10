@@ -48,8 +48,7 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
   let n = f.blocks.len();
   let at = ssa.block_positions(f);
   let l = Loops { n: n, header: __alloc_bool(n), members: __alloc_bool(n * n), at: at, succ: successor_table(f, at) };
-  let u = 0;
-  while (u < n) {
+  for u in 0..n {
     if (reachable[u]) {
       for h in l.succ[u] {
         if (ssadeps.dom_holds(dom, u, h)) {
@@ -58,17 +57,14 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
         }
       }
     }
-    u += 1;
   }
   return l;
 }
 
 function representatives(l: Loops, list: i32[], root: i32): i32[] {
   let out = __alloc_i32(l.n);
-  let x = 0;
-  while (x < l.n) {
+  for x in 0..l.n {
     out = out.with(x, x);
-    x += 1;
   }
   let taken = __alloc_bool(l.n);
   for h in list {
@@ -165,45 +161,37 @@ function next_ready(l: Loops, region: boolean[], list: i32[], ready: Ready, done
       return (candidate, ready.floor);
     }
   }
-  let i = ready.floor;
-  while (i < list.len()) {
+  for i in ready.floor..list.len() {
     let x = list[i];
     if (!done[x] && reps[x] == x && ready.pending[x] == 0) {
       return (x, i);
     }
-    i += 1;
   }
   return (-1, list.len());
 }
 
 function row(l: Loops, h: i32): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < l.n) {
+  for i in 0..l.n {
     out = out.append(l.members[h * l.n + i]);
-    i += 1;
   }
   return out;
 }
 
 function row_list(l: Loops, h: i32): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < l.n) {
+  for i in 0..l.n {
     if (l.members[h * l.n + i]) {
       out = out.append(i);
     }
-    i += 1;
   }
   return out;
 }
 
 function indexes_of(l: Loops, list: i32[]): i32[] {
   let out = util.minus_ones(l.n);
-  let i = 0;
-  while (i < list.len()) {
+  for i in 0..list.len() {
     out = out.with(list[i], i);
-    i += 1;
   }
   return out;
 }
@@ -261,12 +249,10 @@ pub function compute(f: ssa.SFunc, dom: ssadeps.Dom): Layout {
 
 function marked(region: boolean[]): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < region.len()) {
+  for i in 0..region.len() {
     if (region[i]) {
       out = out.append(i);
     }
-    i += 1;
   }
   return out;
 }

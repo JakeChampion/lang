@@ -1,0 +1,8 @@
+waiver: implementation-gap
+issue: 14970
+reason: the arm64-darwin `subprocess` routine is hand-written assembly in
+  compiler/asm_arm64_ir.fern (emit_rt_subprocess) and does not test for a
+  NUL byte yet, so it starts `/bin/sh` for `/bin/sh\0/nonexistent`. The
+  Linux targets and the interpreter refuse. #14970 stays open for the
+  Darwin routine. The Android legs and the wasm legs do not start a
+  process in the harness.

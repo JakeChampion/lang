@@ -85,19 +85,17 @@ function display_import(): parser.Import {
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
 pub function dirname(path: string): string {
   let cut = 0;
-  let i = 0;
-  while (i < path.len()) {
+  for i in 0..path.len() {
     if (path[i] == b'/') {
       cut = i + 1;
     }
-    i += 1;
   }
-  return slice_unchecked(path, 0, cut) + "";
+  return slice_unchecked(path, 0, cut).to_owned();
 }
 
 function rel_path(path: string): string {
   if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
-    return util.without_fern_ext(slice_unchecked(path, 2, path.len()) + "");
+    return util.without_fern_ext(slice_unchecked(path, 2, path.len()).to_owned());
   }
   return util.without_fern_ext(path);
 }
@@ -349,8 +347,7 @@ pub function manifest_dir(dir: string): string {
 
 pub function find_manifest(dir: string): Option[string] {
   let d = dir;
-  let steps = 0;
-  while (steps < 64) {
+  for steps in 0..64 {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
         return Some(d);
@@ -365,7 +362,6 @@ pub function find_manifest(dir: string): Option[string] {
         return None;
       }
     }
-    steps += 1;
   }
   return None;
 }
@@ -416,8 +412,7 @@ function same_dir(a: string, b: string): boolean {
 
 function vendor_dir(dir: string, name: string): Option[string] {
   let d = dir;
-  let steps = 0;
-  while (steps < 64) {
+  for steps in 0..64 {
     if (util.is_dir(d + "vendor/" + name)) {
       return Some(d + "vendor/" + name + "/");
     }
@@ -429,26 +424,22 @@ function vendor_dir(dir: string, name: string): Option[string] {
         return None;
       }
     }
-    steps += 1;
   }
   return None;
 }
 
 function workspace_member_dir(dir: string, name: string): Option[string] {
   let d = dir;
-  let steps = 0;
-  while (steps < 64) {
+  for steps in 0..64 {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
         let wm = fern_toml.parse(src);
         if (wm.members.len() > 0) {
-          let mi = 0;
-          while (mi < wm.members.len()) {
+          for mi in 0..wm.members.len() {
             let memdir = d + wm.members[mi] + "/";
             if (member_name(memdir) == name) {
               return Some(memdir);
             }
-            mi += 1;
           }
           return None;
         }
@@ -463,7 +454,6 @@ function workspace_member_dir(dir: string, name: string): Option[string] {
         return None;
       }
     }
-    steps += 1;
   }
   return None;
 }
@@ -629,8 +619,7 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
     return dir;
   }
   let d = dir;
-  let steps = 0;
-  while (steps < 64) {
+  for steps in 0..64 {
     if (util.is_dir(d + "std") || util.is_dir(d + "core")) {
       return d;
     }
@@ -642,7 +631,6 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
         return dir;
       }
     }
-    steps += 1;
   }
   return dir;
 }
@@ -742,10 +730,8 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     queue = graph_queue_module(queue, m, mdir);
   }
   let stamped: flatten.LoadedModule[] = [];
-  let i = 0;
-  while (i < loaded.len()) {
+  for i in 0..loaded.len() {
     stamped = stamped.append(flatten.LoadedModule { ...loaded[i], mod: stamp_imports(ov, loaded[i].mod, mod_dirs[i], sroot, keys, idents) });
-    i += 1;
   }
   return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
 }
@@ -797,29 +783,21 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 
 pub function module_sig_string(mod: parser.Module): string {
   let out = "";
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let f = mod.funcs[fi];
     out = out + "fn " + f.receiver_type + "." + f.name + "(";
-    let pi = 0;
-    while (pi < f.params.len()) {
+    for pi in 0..f.params.len() {
       out = out + f.params[pi].type_name + ",";
-      pi += 1;
     }
     out = out + ")" + f.ret_type + ";";
-    fi += 1;
   }
-  let si = 0;
-  while (si < mod.structs.len()) {
+  for si in 0..mod.structs.len() {
     let sd = mod.structs[si];
     out = out + "st " + sd.name + "{";
-    let di = 0;
-    while (di < sd.fields.len()) {
+    for di in 0..sd.fields.len() {
       out = out + sd.fields[di].name + ":" + sd.fields[di].type_name + ",";
-      di += 1;
     }
     out += "}";
-    si += 1;
   }
   return out;
 }
@@ -827,15 +805,13 @@ pub function module_sig_string(mod: parser.Module): string {
 pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string {
   let deps = import_closure_ns(parts, infmods, idx);
   let out = "";
-  let j = 0;
-  while (j < parts.len()) {
+  for j in 0..parts.len() {
     if (util.has_str(deps, parts[j].ns)) {
       if (out.len() > 0) {
         out += ",";
       }
       out += parts[j].ns;
     }
-    j += 1;
   }
   return out;
 }
@@ -845,7 +821,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   if (!parts[idx].is_entry) {
     let id = parts[idx].ident;
     if (id.starts_with("stdlib://")) {
-      let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
+      let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()).to_owned());
       if (!source.ok) {
         return None;
       }
@@ -854,7 +830,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
     path = id + ".fern";
   }
   if (path.ends_with(".fern.md")) {
-    path = slice_unchecked(path, 0, path.len() - 3) + "";
+    path = slice_unchecked(path, 0, path.len() - 3).to_owned();
   }
   let source = read_module(ov.files, path);
   if (source.ok) {
@@ -875,8 +851,7 @@ pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.Per
 }
 
 function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string {
-  let k = 0;
-  while (k < parts.len()) {
+  for k in 0..parts.len() {
     if (imp.resolved.len() > 0) {
       if (parts[k].ident == imp.resolved) {
         return parts[k].ns;
@@ -884,7 +859,6 @@ function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string 
     } else if (!parts[k].is_entry && parts[k].ns == util.mangle_prefix(util.path_base(imp.path))) {
       return parts[k].ns;
     }
-    k += 1;
   }
   return "";
 }
@@ -894,8 +868,7 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
   let grew = true;
   while (grew) {
     grew = false;
-    let j = 0;
-    while (j < parts.len()) {
+    for j in 0..parts.len() {
       if (j == idx || util.has_str(seen, parts[j].ns)) {
         for imp in infmods[j].imports {
           let nm = import_part_ns(parts, imp);
@@ -905,7 +878,6 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
           }
         }
       }
-      j += 1;
     }
   }
   return seen;
@@ -916,8 +888,7 @@ pub struct FactHashes { per_mod: string[], global: string }
 function ident_tokens(s: string): string[] {
   let out: string[] = [];
   let start: i32 = -1;
-  let i = 0;
-  while (i <= s.len()) {
+  for i in 0..=s.len() {
     let word = false;
     if (i < s.len()) {
       let c = s[i] as i32;
@@ -927,20 +898,17 @@ function ident_tokens(s: string): string[] {
       start = i;
     }
     if (!word && start >= 0) {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       start = -1;
     }
-    i += 1;
   }
   return out;
 }
 
 function roll131(s: string): i32 {
   let b = 5381;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     b = b * 131 + s[i] as i32 + 7 & 1073741823;
-    i += 1;
   }
   return b * 131 + s.len() & 1073741823;
 }
@@ -957,18 +925,15 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
   let nb = infmods.len() + 1;
   let sa: i32[] = [];
   let sb: i32[] = [];
-  let bi = 0;
-  while (bi < nb) {
+  for bi in 0..nb {
     sa = sa.append(0);
     sb = sb.append(0);
-    bi += 1;
   }
   let seen: Map[string, i32] = map_new(rows.len() + 1);
   for row in rows {
     let toks = ident_tokens(row);
     let owners: i32[] = [];
-    let j = 0;
-    while (j < names.len()) {
+    for j in 0..names.len() {
       let owned = false;
       for t in toks {
         if (util.has_str(names[j], t)) {
@@ -978,7 +943,6 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
       if (owned) {
         owners = owners.append(j);
       }
-      j += 1;
     }
     if (owners.len() == 0) {
       owners = [infmods.len()];
@@ -993,20 +957,16 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
     }
   }
   let per: string[] = [];
-  let pj = 0;
-  while (pj < infmods.len()) {
+  for pj in 0..infmods.len() {
     per = per.append(util.i32_to_string(sa[pj]) + "_" + util.i32_to_string(sb[pj]));
-    pj += 1;
   }
   return FactHashes { per_mod: per, global: util.i32_to_string(sa[infmods.len()]) + "_" + util.i32_to_string(sb[infmods.len()]) };
 }
 
 pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[] {
   let out: string[] = [];
-  let j = 0;
-  while (j < infmods.len()) {
+  for j in 0..infmods.len() {
     out = out.append(util.hash_key(module_sig_string(infmods[j]) + "|f" + fh.per_mod[j]));
-    j += 1;
   }
   return out;
 }
@@ -1017,19 +977,15 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
   }
   let key = parts[idx].ns + "|" + src_hash;
   let deps = import_closure_ns(parts, infmods, idx);
-  let j = 0;
-  while (j < parts.len()) {
+  for j in 0..parts.len() {
     if (util.has_str(deps, parts[j].ns)) {
       key = key + "#" + sighashes[j];
     }
-    j += 1;
   }
   if (parts[idx].is_entry) {
     let ex = "";
-    let ei = 0;
-    while (ei < extra.len()) {
+    for ei in 0..extra.len() {
       ex = ex + extra[ei] + ",";
-      ei += 1;
     }
     key = key + "@" + util.hash_key(ex);
   }

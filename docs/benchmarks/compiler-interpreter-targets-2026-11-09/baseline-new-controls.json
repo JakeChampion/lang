@@ -1,0 +1,37 @@
+[
+  {
+    "name": "call-explicit-type-arguments",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-zero-arguments-generic",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-static-const-type-argument",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-method",
+    "expected": 42,
+    "got": 254,
+    "stdout": "",
+    "stderr": "fern: interp: struct make has no field `n`\n"
+  },
+  {
+    "name": "call-nested-generic-associated",
+    "expected": 42,
+    "got": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:11: error[P001]: at top level: expected an expression, got \".\"\n    function P.choose[T](first: T, next: T): T { return next; }\n              ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:11: error[P001]: statement at top level: a module declaring `main` runs that, so this never executes \u2014 move it inside a function\n    function P.choose[T](first: T, next: T): T { return next; }\n              ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:27: error[P001]: at top level: expected \")\" to close this call\n    function P.choose[T](first: T, next: T): T { return next; }\n                              ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:27: error[P001]: statement at top level: a module declaring `main` runs that, so this never executes \u2014 move it inside a function\n    function P.choose[T](first: T, next: T): T { return next; }\n                              ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:40: error[P001]: at top level: expected an expression, got \":\"\n    function P.choose[T](first: T, next: T): T { return next; }\n                                           ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:40: error[P001]: statement at top level: a module declaring `main` runs that, so this never executes \u2014 move it inside a function\n    function P.choose[T](first: T, next: T): T { return next; }\n                                           ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:46: error[P001]: at top level: expected a field name in this struct literal\n    function P.choose[T](first: T, next: T): T { return next; }\n                                                 ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:46: error[P001]: statement at top level: a module declaring `main` runs that, so this never executes \u2014 move it inside a function\n    function P.choose[T](first: T, next: T): T { return next; }\n                                                 ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:59: error[P001]: at top level: expected an expression, got \"}\"\n    function P.choose[T](first: T, next: T): T { return next; }\n                                                              ^\n/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/call-nested-generic-associated.fern:5:59: error[P001]: statement at top level: a module declaring `main` runs that, so this never executes \u2014 move it inside a function\n    function P.choose[T](first: T, next: T): T { return next; }\n                                                              ^\n"
+  }
+]

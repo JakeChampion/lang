@@ -1,0 +1,32 @@
+[
+  {
+    "name": "call-explicit-type-arguments-corrected.fern",
+    "exit_code": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-associated-corrected.fern",
+    "exit_code": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-method-corrected.fern",
+    "exit_code": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-static-const-type-argument-corrected.fern",
+    "exit_code": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-zero-arguments-generic-corrected.fern",
+    "exit_code": 42,
+    "stdout": "",
+    "stderr": ""
+  }
+]

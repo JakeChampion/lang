@@ -1,0 +1,102 @@
+{
+  "started": "2026-11-10T16:51:19.286046+00:00",
+  "source": "Existing approved Debian snapshot package lists. Private extraction only, no system package/configuration change.",
+  "packages": [
+    "libaio1t64",
+    "libbrlapi0.8",
+    "libcacard0",
+    "libcapstone5",
+    "libdaxctl1",
+    "libexecs1",
+    "libfdt1",
+    "libndctl6",
+    "libpmem1",
+    "liburing2",
+    "libusbredirparser1t64",
+    "libvdeplug2t64",
+    "qemu-system-common",
+    "qemu-system-data",
+    "qemu-system-arm"
+  ],
+  "runs": [
+    {
+      "package": "libaio1t64_0.3.113-8+b1_amd64.deb",
+      "sha256": "490c8a2d116001a5f3b0a6d7a7aabf6a7b629366590dc5c3f75b078e931dd129",
+      "exit_code": 0
+    },
+    {
+      "package": "libbrlapi0.8_6.7-3.1+deb13u3_amd64.deb",
+      "sha256": "d8767805735bfae0edbe793fc8b6f6266ac9e55bec88c3d36b567c41b6438ca2",
+      "exit_code": 0
+    },
+    {
+      "package": "libcacard0_1%3a2.8.0-3+b2_amd64.deb",
+      "sha256": "1d6a8d17b893e54dfea8fe78df16c9a8ab4a6e626f9312881784592d480d9317",
+      "exit_code": 0
+    },
+    {
+      "package": "libcapstone5_5.0.7-1~deb13u1_amd64.deb",
+      "sha256": "775187a7be26bb0b076d1979a02163b943dbc13eb4adb0efc503223a03c75422",
+      "exit_code": 0
+    },
+    {
+      "package": "libdaxctl1_81-1_amd64.deb",
+      "sha256": "6296eb5c976743ba0defb7a061ef081238ca072cf569c6bb96fd3f9095c58a30",
+      "exit_code": 0
+    },
+    {
+      "package": "libexecs1_1.4-2+b2_amd64.deb",
+      "sha256": "05b578fead365a81141fe834c3b3b6df89d17a050784a237f736489fbd426105",
+      "exit_code": 0
+    },
+    {
+      "package": "libfdt1_1.7.2-2+b1_amd64.deb",
+      "sha256": "8e37034d7864807ae2063efcc82fc79aad59069546212e6e0908ed67f9f7e107",
+      "exit_code": 0
+    },
+    {
+      "package": "libndctl6_81-1_amd64.deb",
+      "sha256": "fe60a05d42e61cb9f49a90b872aa5ca569363b13459ee0d405243c37a7de7c93",
+      "exit_code": 0
+    },
+    {
+      "package": "libpmem1_1.13.1-1.1+b1_amd64.deb",
+      "sha256": "7d972d6958e915ce602e4b90debc6b4b91a01dfea1fe003d0b013756e7d9d863",
+      "exit_code": 0
+    },
+    {
+      "package": "liburing2_2.9-1_amd64.deb",
+      "sha256": "4b589c00c7a51172aace2cb2fb3d3ff32daf86c644023126dcfcaa840cc941ea",
+      "exit_code": 0
+    },
+    {
+      "package": "libusbredirparser1t64_0.15.0-1_amd64.deb",
+      "sha256": "4b039802dac140bae5a6f3fb6341eeeb9ea8c3e4d7b95ad36a07a8c28572f177",
+      "exit_code": 0
+    },
+    {
+      "package": "libvdeplug2t64_4.0.1-5.1+b1_amd64.deb",
+      "sha256": "01291e2c8e28e91eac6b59c983a3a44e29ad0ddb8622699fbb84cbd5f26334a4",
+      "exit_code": 0
+    },
+    {
+      "package": "qemu-system-arm_1%3a10.0.13+ds-0+deb13u1_amd64.deb",
+      "sha256": "babb8ab3c9f5f045184bd8c20604237d28c1b5e6a578d7f400566b9f257b59e7",
+      "exit_code": 0
+    },
+    {
+      "package": "qemu-system-common_1%3a10.0.13+ds-0+deb13u1_amd64.deb",
+      "sha256": "3a99dc23c42c66bb7e96dc1f2ba12b1797d154a472fbdb1cfcd822d9fb69e85b",
+      "exit_code": 0
+    },
+    {
+      "package": "qemu-system-data_1%3a10.0.13+ds-0+deb13u1_all.deb",
+      "sha256": "a0e03c526cc09d4c2ab20aa19a8c12e916cdc49a170acb16a6563c28f70eafd3",
+      "exit_code": 0
+    }
+  ],
+  "download_exit": 0,
+  "version_exit": 0,
+  "exit_code": 0,
+  "finished": "2026-11-10T16:51:23.127562+00:00"
+}

@@ -146,8 +146,7 @@ pub function split(f: ssasem.Func): ssasem.Func {
   let active = candidates(f);
   let values = f.values;
   let payloads: i32[] = [];
-  let v = 0;
-  while (v < f.values.len()) {
+  for v in 0..f.values.len() {
     let p: i32 = -1;
     if (active[v]) {
       p = values.len();
@@ -156,7 +155,6 @@ pub function split(f: ssasem.Func): ssasem.Func {
       values = values.with(v, typeinfo.TypeBool { tag: 0 });
     }
     payloads = payloads.append(p);
-    v += 1;
   }
   if (values.len() == f.values.len()) {
     return f;
@@ -183,14 +181,12 @@ pub function split(f: ssasem.Func): ssasem.Func {
 function unsplit_debug_bindings(f: ssasem.Func, split: boolean[]): ssasem.Func {
   let vals: i32[] = [];
   let names: string[] = [];
-  let i = 0;
-  while (i < f.dbg_vals.len()) {
+  for i in 0..f.dbg_vals.len() {
     let v = f.dbg_vals[i];
     if (!member(split, v)) {
       vals = vals.append(v);
       names = names.append(f.dbg_names[i]);
     }
-    i += 1;
   }
   return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
 }

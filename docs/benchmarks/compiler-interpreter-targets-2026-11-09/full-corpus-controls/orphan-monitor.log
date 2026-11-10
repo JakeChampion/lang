@@ -1,0 +1,34 @@
+{
+  "note": "The tool lost the parent sessions. These monitors read orphan status from procfs and enforce the original wall deadlines. These are completion controls, not paired timing samples. CPU counters have clock-tick precision. Observed VmHWM is a lower bound if the final status omits it.",
+  "clock_ticks_per_second": 100,
+  "processes": {
+    "base": {
+      "pid": 9207,
+      "original_record": "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/full-normal.json",
+      "observed_peak_rss_lower_bound_kib": 205872,
+      "last_observed": "2026-11-09T22:18:58.928232+00:00",
+      "state": "Z",
+      "cpu_user_seconds": 1914.63,
+      "cpu_system_seconds": 1.36,
+      "deadline_signal_sent": "2026-11-09T22:18:58.826952+00:00",
+      "timed_out": true,
+      "finished": true,
+      "exit_code": -15,
+      "completion": "zombie exit status from procfs"
+    },
+    "candidate": {
+      "pid": 10522,
+      "original_record": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/full-candidate.json",
+      "observed_peak_rss_lower_bound_kib": 206468,
+      "last_observed": "2026-11-09T22:38:45.966846+00:00",
+      "state": "Z",
+      "cpu_user_seconds": 1941.82,
+      "cpu_system_seconds": 1.58,
+      "deadline_signal_sent": "2026-11-09T22:38:45.865867+00:00",
+      "timed_out": true,
+      "finished": true,
+      "exit_code": -15,
+      "completion": "zombie exit status from procfs"
+    }
+  }
+}

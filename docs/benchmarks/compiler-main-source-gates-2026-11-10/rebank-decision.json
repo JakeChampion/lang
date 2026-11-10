@@ -1,0 +1,12 @@
+{
+  "qualified_source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "cases_per_target": 1566,
+  "targets": 3,
+  "records": 4698,
+  "workers": 588,
+  "all_cases_unchanged": true,
+  "raw_change_only_two_source_hashes": true,
+  "reference_before_sha256": "11c8bfafc6dda7556c04e139ae7fd32aa8276ef96868504fed61ce031bb01434",
+  "reference_after_sha256": "aa59c49eeffa3a085f8e8557774716d1a46cd0d29bf71ff84f593d30013bb64f",
+  "old_reference_preserved": true
+}

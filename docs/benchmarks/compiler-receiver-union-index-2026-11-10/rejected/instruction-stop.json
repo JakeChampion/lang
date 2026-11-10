@@ -1,0 +1,7 @@
+{
+  "parent": 110682,
+  "child": 113971,
+  "signal": "SIGTERM",
+  "reason": "Measured trial rejected. No completed current-source instruction pair, no count speedup claim. Partial artifacts retained.",
+  "time": "2026-11-10T17:46:03.554574+00:00"
+}

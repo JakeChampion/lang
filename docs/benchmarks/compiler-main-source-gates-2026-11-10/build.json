@@ -1,0 +1,51 @@
+{
+  "source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "producer_sha256": "11407d36edde3ce430806655b5f7506e84f32962d671d22777fd14abe9013f61",
+  "runs": [
+    {
+      "label": "assets",
+      "args": [
+        "/workspace/lang-free-wide-requalification-20261110-1015/scripts/fern-embed-stage",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/embed"
+      ],
+      "cwd": "/workspace/lang-free-wide-requalification-20261110-1015",
+      "started": "2026-11-10T10:18:59.428254+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-10T10:18:59.559474+00:00"
+    },
+    {
+      "label": "shipped-cli",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/embed",
+        "-o",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/shipped-compiler",
+        "compiler/fern_main.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-free-wide-requalification-20261110-1015",
+      "started": "2026-11-10T10:18:59.559915+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-10T10:20:31.231160+00:00"
+    }
+  ],
+  "purpose": "Build the standard embedded CLI required by the unchanged qualification collector. The earlier no-embed compiler failed before worker execution.",
+  "exit_code": 0,
+  "finished": "2026-11-10T10:20:31.233556+00:00",
+  "binary_sha256": "520eacbc68e69ee4b56ff066098b1ecf53953fc094eb959921def624013a42ad"
+}

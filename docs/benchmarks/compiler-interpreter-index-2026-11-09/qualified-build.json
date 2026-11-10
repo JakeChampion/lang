@@ -1,0 +1,25 @@
+{
+  "source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "interp_sha256": "3dcbe446cdecec07bb5640772186f39beb6d067c98f6238156f545700348dd40",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "cwd": "/workspace/lang-interpreter-index-20261109",
+  "args": [
+    "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+    "compiler/fern.fern",
+    "internal/stdlib"
+  ],
+  "environment": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "started": "2026-11-09T22:47:59.922175+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-09T22:49:29.362497+00:00",
+  "binary_sha256": "cdc5289233e4fe4dc6f3f2da8c9cd5eaf6400ae35e9f7520ad963eb7a7b05be0"
+}

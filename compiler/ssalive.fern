@@ -59,15 +59,13 @@ function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32, v
   }
   let out = __alloc_i32(n);
   let k = 0;
-  w = 0;
-  while (w < words) {
+  for w in 0..words {
     let x = set_word(rows, base, minus, mbase, w);
     while (x != 0i64) {
       out = out.with(k, values[w * 64 + __ctz64(x as u64)]);
       k += 1;
       x = x & x - 1i64;
     }
-    w += 1;
   }
   return out;
 }
@@ -90,14 +88,10 @@ pub function live_out_bits(fl: Flow, nblocks: i32, nvals: i32): boolean[] {
 
 function spelled(fl: Flow, rows: i64[], nblocks: i32, nvals: i32): boolean[] {
   let out: boolean[] = [];
-  let bi = 0;
-  while (bi < nblocks) {
-    let v = 0;
-    while (v < nvals) {
+  for bi in 0..nblocks {
+    for v in 0..nvals {
       out = out.append(bit_has(rows, bi * fl.words, slot_of(fl, v)));
-      v += 1;
     }
-    bi += 1;
   }
   return out;
 }
@@ -118,12 +112,10 @@ function bit_set(own rows: i64[], base: i32, v: i32): i64[] {
 }
 
 function pred_index(b: ssa.SBlock, id: i32): i32 {
-  let i = 0;
-  while (i < b.preds.len()) {
+  for i in 0..b.preds.len() {
     if (b.preds[i] == id) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -180,8 +172,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
   if (f.nvals > 0 && f.blocks.len() > 2147483647 / f.nvals) {
     return "live matrix overflow";
   }
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let b = f.blocks[bi];
     if (b.id < 0 || ssa.position_of(at, b.id) != bi) {
       return "duplicate or negative block id";
@@ -195,8 +186,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
     if (b.term.kind_tag == ssa.TERM_BRIF && (b.term.cond < 0 || b.term.cond >= f.nvals)) {
       return "condition value out of range";
     }
-    let pi = 0;
-    while (pi < b.preds.len()) {
+    for pi in 0..b.preds.len() {
       let pb = ssa.position_of(at, b.preds[pi]);
       if (pb < 0 || pred_index(b, b.preds[pi]) != pi) {
         return "invalid predecessor";
@@ -205,7 +195,6 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
       if (successor(pt, 0) != b.id && successor(pt, 1) != b.id) {
         return "predecessor is not an edge";
       }
-      pi += 1;
     }
     for ins in b.insts {
       if (ins.result < -1 || ins.result >= f.nvals) {
@@ -220,8 +209,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
         }
       }
     }
-    let si = 0;
-    while (si < 2) {
+    for si in 0..2 {
       let target = successor(b.term, si);
       if (target >= 0) {
         let sb = ssa.position_of(at, target);
@@ -234,9 +222,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
       } else if (b.term.kind_tag == ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BR && si == 0) {
         return "negative successor";
       }
-      si += 1;
     }
-    bi += 1;
   }
   return "";
 }
@@ -409,13 +395,10 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
   let at = ssa.block_positions(f);
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
-  let v = 0;
-  while (v < f.nvals) {
+  for v in 0..f.nvals {
     def_b = def_b.with(v, -1);
-    v += 1;
   }
-  let bi = 0;
-  while (bi < nb) {
+  for bi in 0..nb {
     let k = 0;
     for ins in f.blocks[bi].insts {
       if (ins.result >= 0) {
@@ -424,7 +407,6 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
       }
       k += 1;
     }
-    bi += 1;
   }
   return compute_prepared(f, dependencies, keep, at, def_b, def_k);
 }
@@ -470,15 +452,13 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
   }
   let slot = __alloc_i32(f.nvals);
   let slot_value: i32[] = [];
-  let v = 0;
-  while (v < f.nvals) {
+  for v in 0..f.nvals {
     if (named[v] && (keep.len() == 0 || keep[v])) {
       slot = slot.with(v, slot_value.len());
       slot_value = slot_value.append(v);
     } else {
       slot = slot.with(v, -1);
     }
-    v += 1;
   }
   let words: i32 = (slot_value.len() + 63) / 64;
   let uses = __alloc_i64(nb * words);
@@ -520,8 +500,7 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
       let base = bi * words;
       let w = 0;
       let seeded = false;
-      let si = 0;
-      while (si < 2) {
+      for si in 0..2 {
         let target = successor(b.term, si);
         if (target >= 0) {
           let sb = at[target];
@@ -547,7 +526,6 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
             }
           }
         }
-        si += 1;
       }
       if (!seeded) {
         w = 0;
@@ -557,8 +535,7 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
         }
       }
       let grew = false;
-      w = 0;
-      while (w < words) {
+      for w in 0..words {
         if (row[w] != live_out[base + w]) {
           live_out = live_out.with(base + w, row[w]);
         }
@@ -567,7 +544,6 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
           live_in = live_in.with(base + w, inw);
           grew = true;
         }
-        w += 1;
       }
       if (grew) {
         for pid in b.preds {

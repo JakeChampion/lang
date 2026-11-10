@@ -585,6 +585,16 @@ function test_resumption(): test.TestOutcome {
   if (how(connect(cc, sc.without_tickets())) != "full ping pong 0") {
     return test.fail("without tickets: " + how(connect(cc, sc.without_tickets())));
   }
+  match (connect(cc, sc.with_ticket_lifetime(time.duration_seconds(2592000 as i64)))) {
+    Ok(p) => {
+      if (p.tickets.len() != 1 || !p.tickets[0].lifetime.eq(time.duration_seconds(604800 as i64))) {
+        return test.fail("a lifetime above seven days");
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
   match (connect(cc, sc.with_ticket_lifetime(time.duration_seconds(0 as i64)))) {
     Ok(p) => {
       if (p.tickets.len() != 1) {

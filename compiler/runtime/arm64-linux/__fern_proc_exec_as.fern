@@ -1,4 +1,21 @@
 function __fern_proc_exec_as(path: string, argv: string[], envp: string[]): i32 {
+  if (__count_byte(path, 0) > 0) {
+    return -22;
+  }
+  let nz = 0;
+  while (nz < argv.len()) {
+    if (__count_byte(argv[nz], 0) > 0) {
+      return -22;
+    }
+    nz += 1;
+  }
+  let ez = 0;
+  while (ez < envp.len()) {
+    if (__count_byte(envp[ez], 0) > 0) {
+      return -22;
+    }
+    ez += 1;
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i: i32 = 0;
@@ -21,7 +38,7 @@ function __fern_proc_exec_as(path: string, argv: string[], envp: string[]): i32 
   while (ak < an) {
     let aa = argv[ak];
     let aal = aa.len();
-    __raw_store_ptr(av, ak, ab + aoff);
+    __raw_store_ptr(av, ak, ab + aoff as usize);
     let aj: i32 = 0;
     while (aj < aal) {
       __raw_store8(ab, aoff + aj, aa[aj] as i32);
@@ -46,7 +63,7 @@ function __fern_proc_exec_as(path: string, argv: string[], envp: string[]): i32 
   while (ek < en) {
     let ea = envp[ek];
     let eal = ea.len();
-    __raw_store_ptr(ev, ek, eb + eoff);
+    __raw_store_ptr(ev, ek, eb + eoff as usize);
     let ej: i32 = 0;
     while (ej < eal) {
       __raw_store8(eb, eoff + ej, ea[ej] as i32);

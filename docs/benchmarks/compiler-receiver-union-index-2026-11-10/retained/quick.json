@@ -1,0 +1,42 @@
+{
+  "purpose": "Candidate source and format checks before immutable qualification.",
+  "runs": [
+    {
+      "label": "gofmt",
+      "args": [
+        "gofmt",
+        "-l",
+        "internal/testing/e2ecompiler/self_host_receiver_union_membership_test.go"
+      ],
+      "started": "2026-11-10T17:52:30.416319+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:52:30.429547+00:00"
+    },
+    {
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "started": "2026-11-10T17:52:30.429925+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:52:51.953171+00:00"
+    },
+    {
+      "label": "format-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-fmt",
+        "-d",
+        "compiler/checker.fern"
+      ],
+      "started": "2026-11-10T17:52:51.954191+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:52:52.146933+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T17:52:52.147304+00:00"
+}

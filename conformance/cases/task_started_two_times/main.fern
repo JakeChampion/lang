@@ -1,0 +1,15 @@
+// A task starts one time. A second start stops the program with status 134.
+import "std/async";
+
+function main(): i32 {
+    let t = async.task_new((): i32 => 7);
+    match (async.task_start(t)) {
+        Done(v) => { print(v.to_string()); },
+        Suspended(_) => { print("parked"); }
+    }
+    match (async.task_start(t)) {
+        Done(v) => { print("again " + v.to_string()); },
+        Suspended(_) => { print("parked"); }
+    }
+    return 0;
+}

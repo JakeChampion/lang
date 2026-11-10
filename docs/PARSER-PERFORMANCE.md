@@ -135,7 +135,7 @@ The counter-free lexer and parser profiles contain 492 and 3,802 samples, respec
 The emitted-assembly audit confirms that the allocation counter symbol is absent.
 Some parser stacks reach the 64-frame limit, which limits inclusive attribution.
 
-The counter-free parser profile attributes 19.86% of exclusive samples to boxed array reads.
+The counter-free parser profile attributes 19.86% of exclusive samples to the generic box allocator, `__fern_arr_box`.
 Lookahead calls also appear, but these samples do not prove that lookahead causes all boxing.
 The archive retains the earlier counter-enabled profiles with their instrumentation correction.
 Those profiles do not represent the counter-free allocator paths.

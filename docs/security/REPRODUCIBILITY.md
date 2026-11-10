@@ -26,7 +26,7 @@ The images must be byte-identical:
 | arm64-android | plain |
 | wasm32-wasi | plain component |
 
-The `-g` images are compared twice on x86-64-linux, arm64-linux and arm64-darwin.
+The `-g` images are compared twice on x86-64-linux, arm64-linux, arm64-darwin and arm64-android.
 Without `-remap-path-prefix` the images must differ. This is the negative control: it shows that the test sees the paths.
 The second comparison uses `-remap-path-prefix` for the source root and the working directory.
 Then the images must be byte-identical and must not contain the original root.
@@ -41,7 +41,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostReproducibleAcrossPaths
 
 ## Paths in a debug image
 
-A `-g` image on x86-64-linux, arm64-linux and arm64-darwin holds two kinds of path in its DWARF:
+A `-g` image on x86-64-linux, arm64-linux, arm64-darwin and arm64-android holds two kinds of path in its DWARF:
 
 - The compile directory, which is the working directory of the compiler.
 - The entry file name, as the command line gives it, and the directory of that file.
@@ -80,5 +80,5 @@ But a map iterates in the order of its storage, not in the order of its hash buc
 
 - The test does not vary the host, the kernel, or the toolchain. The three CI hosts cover that for the compiler alone, through `make distcheck`.
 - The arm64 rows run under QEMU user mode on an x86-64 host. That is emulated evidence only.
-- `-g` writes no DWARF for arm64-android and for the WASI targets. Those images are the same with and without `-g`.
+- `-g` writes no DWARF for the WASI targets. Those images are the same with and without `-g`.
 - A diverse second compiler for a diverse double-compile is not available, which SEC-045 records.

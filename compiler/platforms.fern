@@ -39,28 +39,16 @@ function capability_profile(profile: string): string[] {
 }
 
 function environment_profile(environment: string): string {
-  if (environment == "android") {
-    return "hosted-android";
-  }
-  if (environment == "linux") {
-    return "hosted-linux";
-  }
-  if (environment == "darwin") {
-    return "hosted-darwin";
-  }
-  if (environment == "wasi") {
-    return "wasi-cli";
-  }
-  if (environment == "wasi-http") {
-    return "wasi-proxy";
-  }
-  if (environment == "freestanding") {
-    return "none";
-  }
-  if (environment == "kernel") {
-    return "kernel";
-  }
-  return "";
+  return match (environment) {
+    "android" => "hosted-android",
+    "linux" => "hosted-linux",
+    "darwin" => "hosted-darwin",
+    "wasi" => "wasi-cli",
+    "wasi-http" => "wasi-proxy",
+    "freestanding" => "none",
+    "kernel" => "kernel",
+    _ => "",
+  };
 }
 
 // One branch for each environment's targets.
@@ -108,43 +96,23 @@ pub function targets(): string[] {
   ];
 }
 
-// One branch for each target, in the shape that the parity test reads.
+// One arm for each target, in the shape that the parity test reads.
 // fern-lint: allow cyclomatic-complexity
 pub function description(name: string): string {
-  if (name == "arm64-linux") {
-    return "ARM64 Linux ELF (AWS Graviton, Apple Silicon via container; ARMv8.2-A with the crypto extensions).";
-  }
-  if (name == "arm64-darwin") {
-    return "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).";
-  }
-  if (name == "arm64-android") {
-    return "ARM64 Android — Linux ELF as a static position-independent executable (ET_DYN, W^X), so it loads at an arbitrary base under Android's loader. Same syscalls / AAPCS64 as arm64-linux.";
-  }
-  if (name == "arm64-freestanding") {
-    return "ARM64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.";
-  }
-  if (name == "arm64-kernel") {
-    return "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.";
-  }
-  if (name == "x86-64-kernel") {
-    return "x86-64 kernel image — an ELF with a PVH entry that the VMM loads at -ram BASE. The entry switches to long mode, sets the stack, clears .bss and calls main. No host and no syscalls.";
-  }
-  if (name == "x86-64-linux") {
-    return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
-  }
-  if (name == "x86-64-android") {
-    return "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a static position-independent executable, like arm64-android. Same syscalls / System V ABI as x86-64-linux.";
-  }
-  if (name == "x86-64-freestanding") {
-    return "x86-64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.";
-  }
-  if (name == "wasm32-wasi") {
-    return "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).";
-  }
-  if (name == "wasm32-wasi-http") {
-    return "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).";
-  }
-  return "";
+  return match (name) {
+    "arm64-linux" => "ARM64 Linux ELF (AWS Graviton, Apple Silicon via container; ARMv8.2-A with the crypto extensions).",
+    "arm64-darwin" => "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
+    "arm64-android" => "ARM64 Android — Linux ELF as a static position-independent executable (ET_DYN, W^X), so it loads at an arbitrary base under Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
+    "arm64-freestanding" => "ARM64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.",
+    "arm64-kernel" => "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.",
+    "x86-64-kernel" => "x86-64 kernel image — an ELF with a PVH entry that the VMM loads at -ram BASE. The entry switches to long mode, sets the stack, clears .bss and calls main. No host and no syscalls.",
+    "x86-64-linux" => "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
+    "x86-64-android" => "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a static position-independent executable, like arm64-android. Same syscalls / System V ABI as x86-64-linux.",
+    "x86-64-freestanding" => "x86-64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.",
+    "wasm32-wasi" => "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).",
+    "wasm32-wasi-http" => "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).",
+    _ => "",
+  };
 }
 
 pub function handler_kinds(name: string): string[] {
@@ -202,12 +170,10 @@ pub function has_capability(target: string, capability: string): boolean {
 pub function targets_providing(capability: string): string[] {
   let out: string[] = [];
   let all = targets();
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     if (has_capability(all[i], capability)) {
       out = out.append(all[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -488,12 +454,10 @@ pub function core_builtin(name: string): boolean {
 
 pub function gated_capability(name: string): string {
   let gates = gated_builtins();
-  let i = 0;
-  while (i < gates.len()) {
+  for i in 0..gates.len() {
     if (gates[i].builtin == name) {
       return gates[i].capability;
     }
-    i += 1;
   }
   return "";
 }
@@ -544,12 +508,10 @@ pub function forbidden_gates(target: string, provided_caps: string[]): Gate[] {
     return out;
   }
   let gates = gated_builtins();
-  let i = 0;
-  while (i < gates.len()) {
+  for i in 0..gates.len() {
     if (!util.has_str(d.capabilities, gates[i].capability) && !util.has_str(provided_caps, gates[i].capability)) {
       out = out.append(gates[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -571,27 +533,20 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
     return out;
   }
   let wanted: string[] = [];
-  let wi = 0;
-  while (wi < forbidden.len()) {
+  for wi in 0..forbidden.len() {
     wanted = wanted.append(forbidden[wi].builtin);
-    wi += 1;
   }
   let want = util.name_index(wanted);
 
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let calls: astwalk.CallSite[] = [];
-    let bi = 0;
-    while (bi < fd.body.len()) {
+    for bi in 0..fd.body.len() {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
-      bi += 1;
     }
     let seen: string[] = [];
-    let ci = 0;
-    while (ci < calls.len()) {
-      let gi = 0;
-      while (gi < forbidden.len()) {
+    for ci in 0..calls.len() {
+      for gi in 0..forbidden.len() {
         if (!calls[ci].method && calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
           seen = seen.append(calls[ci].name);
           out = out.append(Violation {
@@ -604,11 +559,8 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
             fn_module: util.mangled_module(fd.name),
           });
         }
-        gi += 1;
       }
-      ci += 1;
     }
-    fi += 1;
   }
   return out;
 }
@@ -616,41 +568,34 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
 pub function reach(mod: parser.Module): string[] {
   let gates = gated_builtins();
   let wanted: string[] = [];
-  let wi = 0;
-  while (wi < gates.len()) {
+  for wi in 0..gates.len() {
     wanted = wanted.append(gates[wi].builtin);
-    wi += 1;
   }
   let want = util.name_index(wanted);
 
   let found: string[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let calls: astwalk.CallSite[] = [];
     let bi = 0;
     while (bi < mod.funcs[fi].body.len()) {
       calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
       bi += 1;
     }
-    let ci = 0;
-    while (ci < calls.len()) {
+    for ci in 0..calls.len() {
       if (!calls[ci].method) {
         let cap = gated_capability(calls[ci].name);
         if (cap.len() > 0 && !util.has_str(found, cap)) {
           found = found.append(cap);
         }
       }
-      ci += 1;
     }
-    fi += 1;
   }
   return sorted(found);
 }
 
 function sorted(xs: string[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     let pos = 0;
     while (pos < out.len() && util.str_less(out[pos], xs[i])) {
       pos += 1;
@@ -667,7 +612,6 @@ function sorted(xs: string[]): string[] {
       j += 1;
     }
     out = next;
-    i += 1;
   }
   return out;
 }
@@ -726,13 +670,11 @@ pub function violation_message(v: Violation): string {
   }
   let providers = targets_providing(v.capability);
   let list = "";
-  let i = 0;
-  while (i < providers.len()) {
+  for i in 0..providers.len() {
     if (i > 0) {
       list += " ";
     }
     list += providers[i];
-    i += 1;
   }
   let msg: string = "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
     + v.builtin + "`" + where + "; targets providing it: [" + list + "]";

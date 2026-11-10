@@ -1,0 +1,19 @@
+{
+  "checked": "2026-11-10T09:01:43.031177+00:00",
+  "main": "e23f590d1e523a2a90c7b202c7631b80aa4635da",
+  "retained": "1fb070786cd3bf799b78873d9dbaa6f2c9500ed3",
+  "worktrees": {
+    "main": {
+      "path": "/workspace/lang-interpreter-main-base-20261110-0845",
+      "head": "e23f590d1e523a2a90c7b202c7631b80aa4635da",
+      "tracked_status": ""
+    },
+    "retained": {
+      "path": "/workspace/lang-interpreter-retained-main-20261110-0845",
+      "head": "1fb070786cd3bf799b78873d9dbaa6f2c9500ed3",
+      "tracked_status": ""
+    }
+  },
+  "compiler_and_stdlib_delta": "",
+  "all_numerical_baselines_and_tolerances_match_main": true
+}

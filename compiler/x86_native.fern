@@ -2,6 +2,7 @@ import "./sysreg";
 import "./util";
 import "./gas";
 import "std/string";
+import "std/option";
 
 function x86_rax(): i32 {
   return 0;
@@ -343,16 +344,12 @@ function x86_lea_idx_nobase(own buf: i32[], dst: i32, index: i32, scale: i32, di
 }
 
 function x86_scale_bits(scale: i32): i32 {
-  if (scale == 2) {
-    return 1;
-  }
-  if (scale == 4) {
-    return 2;
-  }
-  if (scale == 8) {
-    return 3;
-  }
-  return 0;
+  return match (scale) {
+    2 => 1,
+    4 => 2,
+    8 => 3,
+    _ => 0,
+  };
 }
 
 function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
@@ -725,12 +722,10 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
 }
 
 function x86_fix_tail(a: X86Asm, patch_off: i32): i32 {
-  let i = 0;
-  while (i < a.fix_tail_offs.len()) {
+  for i in 0..a.fix_tail_offs.len() {
     if (a.fix_tail_offs[i] == patch_off) {
       return a.fix_tail_bytes[i];
     }
-    i += 1;
   }
   return 0;
 }
@@ -1192,13 +1187,12 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   if (direct >= 0) {
     return direct;
   }
-  let split = x86_symbol_addend_at(name);
-  if (split < 0) {
+  let Some(split) = x86_symbol_addend_at(name) else {
     return -1;
-  }
-  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split) + "") + "";
+  };
+  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split).to_owned()) + "";
   let target = x86_final_off(a, symbol, padded_text, bss_base);
-  let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()) + "");
+  let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()).to_owned());
   if (target < 0 || addend < 0) {
     return -1;
   }
@@ -1212,11 +1206,10 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   return value as i32;
 }
 
-function x86_symbol_addend_at(name: string): i32 {
+function x86_symbol_addend_at(name: string): Option[i32] {
   let quoted = false;
   let escaped = false;
-  let i = 0;
-  while (i < name.len()) {
+  for i in 0..name.len() {
     let c = name[i] as i32;
     if (escaped) {
       escaped = false;
@@ -1225,11 +1218,10 @@ function x86_symbol_addend_at(name: string): i32 {
     } else if (c == 34) {
       quoted = !quoted;
     } else if (!quoted && i > 0 && (c == 43 || c == 45)) {
-      return i;
+      return Some(i);
     }
-    i += 1;
   }
-  return -1;
+  return None;
 }
 
 function x86_addend_digit(c: i32): i32 {
@@ -1562,10 +1554,8 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
     } else {
       let at = a.dfix_offs[i];
       let abs = text_vaddr as i64 + target as i64;
-      let j = 0;
-      while (j < 8) {
+      for j in 0..8 {
         rodata = rodata.with(at + j, (abs >> (j * 8) as i64 & 255 as i64) as i32);
-        j += 1;
       }
     }
     i += 1;
@@ -1641,8 +1631,7 @@ function x86_patch(own a: X86Asm): X86Asm {
   let fq = a.fixes;
   a = X86Asm { ...a, text: [], fixes: [] };
   let nfix = fq.len() / 8;
-  let i = 0;
-  while (i < nfix) {
+  for i in 0..nfix {
     let at = 8 * i;
     let patch_off = fq[at] as i32 | fq[at + 1] as i32 << 8 | fq[at + 2] as i32 << 16 | fq[at + 3] as i32 << 24;
     let hi = fq[at + 4] as i32 | fq[at + 5] as i32 << 8 | fq[at + 6] as i32 << 16 | fq[at + 7] as i32 << 24;
@@ -1667,7 +1656,6 @@ function x86_patch(own a: X86Asm): X86Asm {
     } else {
       code = x86_patch_rel32_bytes(code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off));
     }
-    i += 1;
   }
   return X86Asm { ...a, text: code };
 }
@@ -1698,14 +1686,14 @@ function x86_str_split(s: string, sep: string): string[] {
       j += 1;
     }
     if (j == m) {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       i += m;
       start = i;
     } else {
       i += 1;
     }
   }
-  out = out.append(slice_unchecked(s, start, n) + "");
+  out = out.append(slice_unchecked(s, start, n).to_owned());
   return out;
 }
 
@@ -1867,16 +1855,12 @@ function x86_gas_reg64(tok: string): i32 {
 }
 
 function x86_gas_reg_w(tok: string, size: i32): i32 {
-  if (size == 8) {
-    return x86_gas_reg8(tok);
-  }
-  if (size == 16) {
-    return x86_gas_reg16(tok);
-  }
-  if (size == 32) {
-    return x86_gas_reg32(tok);
-  }
-  return x86_gas_reg64(tok);
+  return match (size) {
+    8 => x86_gas_reg8(tok),
+    16 => x86_gas_reg16(tok),
+    32 => x86_gas_reg32(tok),
+    _ => x86_gas_reg64(tok),
+  };
 }
 
 function x86_gas_suffix_size(mnem: string): i32 {
@@ -1900,7 +1884,7 @@ function x86_gas_suffix_size(mnem: string): i32 {
 }
 
 function x86_gas_strip_suffix(mnem: string): string {
-  return slice_unchecked(mnem, 0, mnem.len() - 1) + "";
+  return slice_unchecked(mnem, 0, mnem.len() - 1).to_owned();
 }
 
 function x86_gas_is_xmm(tok: string): boolean {
@@ -1914,7 +1898,7 @@ function x86_gas_is_xmm(tok: string): boolean {
 function x86_gas_xmm(tok: string): i32 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   if (s.len() < 4) {
     return -1;
@@ -1923,13 +1907,11 @@ function x86_gas_xmm(tok: string): i32 {
     return -1;
   }
   let v = 0;
-  let i = 3;
-  while (i < s.len()) {
+  for i in 3..s.len() {
     let c = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
-    i += 1;
   }
   return v;
 }
@@ -1937,7 +1919,7 @@ function x86_gas_xmm(tok: string): i32 {
 function x86_gas_ymm(tok: string): i32 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   if (s.len() < 4) {
     return -1;
@@ -1946,13 +1928,11 @@ function x86_gas_ymm(tok: string): i32 {
     return -1;
   }
   let v = 0;
-  let i = 3;
-  while (i < s.len()) {
+  for i in 3..s.len() {
     let c = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
-    i += 1;
   }
   return v;
 }
@@ -2038,7 +2018,7 @@ function x86_gas_atoi(tok: string): i32 {
 function x86_gas_atoi64(tok: string): i64 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'$') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   let neg = false;
   let i = 0;
@@ -2122,7 +2102,7 @@ function x86_gas_creg(tok: string): i32 {
   if (!tok.starts_with("%cr")) {
     return -1;
   }
-  return sysreg.x86_control(slice_unchecked(tok, 1, tok.len()) + "");
+  return sysreg.x86_control(slice_unchecked(tok, 1, tok.len()).to_owned());
 }
 
 // movq to or from a control register: 0F 20 reads it and 0F 22 writes it. The
@@ -2202,8 +2182,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
 
 function x86_gas_top_comma(s: string): i32 {
   let depth = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let c = s[i];
     if (c == b'(') {
       depth += 1;
@@ -2216,31 +2195,30 @@ function x86_gas_top_comma(s: string): i32 {
         }
       }
     }
-    i += 1;
   }
   return -1;
 }
 
 // BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.
-function x86_gas_rep_pfx(mnem: string): i32 {
+function x86_gas_rep_pfx(mnem: string): Option[i32] {
   match (mnem) {
     "rep" => {
-      return 243;
+      return Some(243);
     },
     "repe" => {
-      return 243;
+      return Some(243);
     },
     "repz" => {
-      return 243;
+      return Some(243);
     },
     "repne" => {
-      return 242;
+      return Some(242);
     },
     "repnz" => {
-      return 242;
+      return Some(242);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2257,19 +2235,19 @@ function x86_gas_is_pushpop(mnem: string): boolean {
   return mnem == "pushq" || mnem == "popq";
 }
 
-function x86_gas_lea_size(mnem: string): i32 {
+function x86_gas_lea_size(mnem: string): Option[i32] {
   match (mnem) {
     "leaq" => {
-      return 64;
+      return Some(64);
     },
     "leal" => {
-      return 32;
+      return Some(32);
     },
     "leaw" => {
-      return 16;
+      return Some(16);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2300,40 +2278,40 @@ function x86_gas_is_movabs(mnem: string): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_extend_op(mnem: string): i32 {
+function x86_gas_extend_op(mnem: string): Option[i32] {
   match (mnem) {
     "movzbw" => {
-      return 46594;
+      return Some(46594);
     },
     "movzbl" => {
-      return 46596;
+      return Some(46596);
     },
     "movzbq" => {
-      return 46600;
+      return Some(46600);
     },
     "movzwl" => {
-      return 46852;
+      return Some(46852);
     },
     "movzwq" => {
-      return 46856;
+      return Some(46856);
     },
     "movsbw" => {
-      return 48642;
+      return Some(48642);
     },
     "movsbl" => {
-      return 48644;
+      return Some(48644);
     },
     "movsbq" => {
-      return 48648;
+      return Some(48648);
     },
     "movswl" => {
-      return 48900;
+      return Some(48900);
     },
     "movswq" => {
-      return 48904;
+      return Some(48904);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2352,54 +2330,54 @@ function x86_gas_is_imul(mnem: string): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_bitscan_op(mnem: string): i32 {
+function x86_gas_bitscan_op(mnem: string): Option[i32] {
   match (mnem) {
     "bsfl" => {
-      return 48128;
+      return Some(48128);
     },
     "bsfq" => {
-      return 48129;
+      return Some(48129);
     },
     "bsrl" => {
-      return 48384;
+      return Some(48384);
     },
     "bsrq" => {
-      return 48385;
+      return Some(48385);
     },
     "lzcntl" => {
-      return 15973632;
+      return Some(15973632);
     },
     "lzcntq" => {
-      return 15973633;
+      return Some(15973633);
     },
     "tzcntl" => {
-      return 15973376;
+      return Some(15973376);
     },
     "tzcntq" => {
-      return 15973377;
+      return Some(15973377);
     },
     "popcntl" => {
-      return 15972352;
+      return Some(15972352);
     },
     "popcntq" => {
-      return 15972353;
+      return Some(15972353);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_shld_op(mnem: string): i32 {
+function x86_gas_shld_op(mnem: string): Option[i32] {
   match (mnem) {
     "shld" => {
-      return 164;
+      return Some(164);
     },
     "shrd" => {
-      return 172;
+      return Some(172);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2408,16 +2386,16 @@ function x86_gas_is_bswap(mnem: string): boolean {
   return mnem == "bswap";
 }
 
-function x86_gas_rmw_op(mnem: string): i32 {
+function x86_gas_rmw_op(mnem: string): Option[i32] {
   match (mnem) {
     "xadd" => {
-      return 192;
+      return Some(192);
     },
     "cmpxchg" => {
-      return 176;
+      return Some(176);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2430,45 +2408,45 @@ function x86_gas_is_crc32(mnem: string): boolean {
   return mnem == "crc32";
 }
 
-function x86_gas_port_op(mnem: string): i32 {
+function x86_gas_port_op(mnem: string): Option[i32] {
   match (mnem) {
     "inb" => {
-      return 236;
+      return Some(236);
     },
     "inw" => {
-      return 26349;
+      return Some(26349);
     },
     "inl" => {
-      return 237;
+      return Some(237);
     },
     "outb" => {
-      return 238;
+      return Some(238);
     },
     "outw" => {
-      return 26351;
+      return Some(26351);
     },
     "outl" => {
-      return 239;
+      return Some(239);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_memext_op(mnem: string): i32 {
+function x86_gas_memext_op(mnem: string): Option[i32] {
   match (mnem) {
     "clflush" => {
-      return 1966;
+      return Some(1966);
     },
     "invlpg" => {
-      return 1793;
+      return Some(1793);
     },
     "lidt" => {
-      return 769;
+      return Some(769);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2477,22 +2455,22 @@ function x86_gas_is_movqd(mnem: string): boolean {
   return mnem == "movd";
 }
 
-function x86_gas_mov10_pfx(mnem: string): i32 {
+function x86_gas_mov10_pfx(mnem: string): Option[i32] {
   match (mnem) {
     "movsd" => {
-      return 242;
+      return Some(242);
     },
     "movss" => {
-      return 243;
+      return Some(243);
     },
     "movups" => {
-      return 0;
+      return Some(0);
     },
     "movupd" => {
-      return 102;
+      return Some(102);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2511,109 +2489,109 @@ function x86_gas_movdq_pfx(mnem: string): i32 {
   }
 }
 
-function x86_gas_cvt2s_op(mnem: string): i32 {
+function x86_gas_cvt2s_op(mnem: string): Option[i32] {
   match (mnem) {
     "cvtsi2sd" => {
-      return 61953;
+      return Some(61953);
     },
     "cvtsi2sdq" => {
-      return 61953;
+      return Some(61953);
     },
     "cvtsi2sdl" => {
-      return 61952;
+      return Some(61952);
     },
     "cvtsi2ss" => {
-      return 62209;
+      return Some(62209);
     },
     "cvtsi2ssq" => {
-      return 62209;
+      return Some(62209);
     },
     "cvtsi2ssl" => {
-      return 62208;
+      return Some(62208);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_cvt2si(mnem: string): i32 {
+function x86_gas_cvt2si(mnem: string): Option[i32] {
   match (mnem) {
     "cvttsd2si" => {
-      return 61996;
+      return Some(61996);
     },
     "cvttsd2sil" => {
-      return 61996;
+      return Some(61996);
     },
     "cvttsd2siq" => {
-      return 61996;
+      return Some(61996);
     },
     "cvtsd2si" => {
-      return 61997;
+      return Some(61997);
     },
     "cvtsd2sil" => {
-      return 61997;
+      return Some(61997);
     },
     "cvtsd2siq" => {
-      return 61997;
+      return Some(61997);
     },
     "cvttss2si" => {
-      return 62252;
+      return Some(62252);
     },
     "cvttss2sil" => {
-      return 62252;
+      return Some(62252);
     },
     "cvttss2siq" => {
-      return 62252;
+      return Some(62252);
     },
     "cvtss2si" => {
-      return 62253;
+      return Some(62253);
     },
     "cvtss2sil" => {
-      return 62253;
+      return Some(62253);
     },
     "cvtss2siq" => {
-      return 62253;
+      return Some(62253);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_imm3a_op(mnem: string): i32 {
+function x86_gas_imm3a_op(mnem: string): Option[i32] {
   match (mnem) {
     "roundss" => {
-      return 10;
+      return Some(10);
     },
     "roundsd" => {
-      return 11;
+      return Some(11);
     },
     "roundps" => {
-      return 8;
+      return Some(8);
     },
     "roundpd" => {
-      return 9;
+      return Some(9);
     },
     "pcmpestri" => {
-      return 97;
+      return Some(97);
     },
     "pcmpistri" => {
-      return 99;
+      return Some(99);
     },
     "pclmulqdq" => {
-      return 68;
+      return Some(68);
     },
     "aeskeygenassist" => {
-      return 223;
+      return Some(223);
     },
     "palignr" => {
-      return 15;
+      return Some(15);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2649,19 +2627,19 @@ function x86_gas_is_pinsr(mnem: string): boolean {
   return mnem == "pinsrb" || mnem == "pinsrw" || mnem == "pinsrd" || mnem == "pinsrq";
 }
 
-function x86_gas_movmsk_op(mnem: string): i32 {
+function x86_gas_movmsk_op(mnem: string): Option[i32] {
   match (mnem) {
     "pmovmskb" => {
-      return 26327;
+      return Some(26327);
     },
     "movmskps" => {
-      return 80;
+      return Some(80);
     },
     "movmskpd" => {
-      return 26192;
+      return Some(26192);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2708,49 +2686,49 @@ function x86_gas_vshift_op(mnem: string): i32 {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_sse38_op(mnem: string): i32 {
+function x86_gas_sse38_op(mnem: string): Option[i32] {
   match (mnem) {
     "pshufb" => {
-      return 0;
+      return Some(0);
     },
     "ptest" => {
-      return 23;
+      return Some(23);
     },
     "pmulld" => {
-      return 64;
+      return Some(64);
     },
     "pminsb" => {
-      return 56;
+      return Some(56);
     },
     "pminsd" => {
-      return 57;
+      return Some(57);
     },
     "pminuw" => {
-      return 58;
+      return Some(58);
     },
     "pminud" => {
-      return 59;
+      return Some(59);
     },
     "pmaxsb" => {
-      return 60;
+      return Some(60);
     },
     "pmaxsd" => {
-      return 61;
+      return Some(61);
     },
     "pmaxuw" => {
-      return 62;
+      return Some(62);
     },
     "pmaxud" => {
-      return 63;
+      return Some(63);
     },
     "aesenc" => {
-      return 220;
+      return Some(220);
     },
     "aesenclast" => {
-      return 221;
+      return Some(221);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -3146,133 +3124,133 @@ function x86_gas_split_ops(rest: string): string[] {
   let c = x86_gas_top_comma(s);
   while (c >= 0) {
     out = out.append(slice_unchecked(s, 0, c).trim());
-    s = slice_unchecked(s, c + 1, s.len()) + "";
+    s = slice_unchecked(s, c + 1, s.len()).to_owned();
     c = x86_gas_top_comma(s);
   }
   return out.append(s.trim());
 }
 
 // BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.
-function x86_gas_alu_ext(mnem: string): i32 {
+function x86_gas_alu_ext(mnem: string): Option[i32] {
   match (mnem) {
     "add" => {
-      return 0;
+      return Some(0);
     },
     "or" => {
-      return 1;
+      return Some(1);
     },
     "adc" => {
-      return 2;
+      return Some(2);
     },
     "sbb" => {
-      return 3;
+      return Some(3);
     },
     "and" => {
-      return 4;
+      return Some(4);
     },
     "sub" => {
-      return 5;
+      return Some(5);
     },
     "xor" => {
-      return 6;
+      return Some(6);
     },
     "cmp" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_unary_ext(mnem: string): i32 {
+function x86_gas_unary_ext(mnem: string): Option[i32] {
   match (mnem) {
     "not" => {
-      return 2;
+      return Some(2);
     },
     "neg" => {
-      return 3;
+      return Some(3);
     },
     "mul" => {
-      return 4;
+      return Some(4);
     },
     "imul" => {
-      return 5;
+      return Some(5);
     },
     "div" => {
-      return 6;
+      return Some(6);
     },
     "idiv" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_incdec_ext(mnem: string): i32 {
+function x86_gas_incdec_ext(mnem: string): Option[i32] {
   match (mnem) {
     "inc" => {
-      return 0;
+      return Some(0);
     },
     "dec" => {
-      return 1;
+      return Some(1);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_shift_ext(mnem: string): i32 {
+function x86_gas_shift_ext(mnem: string): Option[i32] {
   match (mnem) {
     "rol" => {
-      return 0;
+      return Some(0);
     },
     "ror" => {
-      return 1;
+      return Some(1);
     },
     "rcl" => {
-      return 2;
+      return Some(2);
     },
     "rcr" => {
-      return 3;
+      return Some(3);
     },
     "shl" => {
-      return 4;
+      return Some(4);
     },
     "sal" => {
-      return 4;
+      return Some(4);
     },
     "shr" => {
-      return 5;
+      return Some(5);
     },
     "sar" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_bt_idx(mnem: string): i32 {
+function x86_gas_bt_idx(mnem: string): Option[i32] {
   match (mnem) {
     "bt" => {
-      return 0;
+      return Some(0);
     },
     "bts" => {
-      return 1;
+      return Some(1);
     },
     "btr" => {
-      return 2;
+      return Some(2);
     },
     "btc" => {
-      return 3;
+      return Some(3);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -3297,12 +3275,10 @@ function x86_gas_lockable(mnem: string): boolean {
     "xchg",
     "xor",
   ];
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (names[i] == mnem) {
+  for name in names {
+    if (name == mnem) {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
@@ -3592,7 +3568,7 @@ function x86_vex_shift_imm(mnem: string): i32 {
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {
-    let name = slice_unchecked(mnem, 1, mnem.len()) + "";
+    let name = slice_unchecked(mnem, 1, mnem.len()).to_owned();
     for packed in [
       "addpd", "subpd", "mulpd", "divpd", "andpd", "orpd", "xorpd", "andnpd", "minpd", "maxpd",
       "addps", "subps", "mulps", "divps", "andps", "orps", "xorps", "andnps", "minps", "maxps",
@@ -4042,8 +4018,8 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 }
 
 function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
-  if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()) + "")) {
-    let name = slice_unchecked(src, 1, src.len()) + "";
+  if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()).to_owned())) {
+    let name = slice_unchecked(src, 1, src.len()).to_owned();
     if (size != 64 && size != 32) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -4457,7 +4433,7 @@ function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string
 }
 
 function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  let cond = slice_unchecked(mnem, 4, mnem.len()) + "";
+  let cond = slice_unchecked(mnem, 4, mnem.len()).to_owned();
   let size = 0;
   let cc = x86_gas_cc_code(cond);
   if (cc >= 0) {
@@ -4473,7 +4449,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
     if (size == 0 || size == 8) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    cc = x86_gas_cc_code(slice_unchecked(cond, 0, cond.len() - 1) + "");
+    cc = x86_gas_cc_code(slice_unchecked(cond, 0, cond.len() - 1).to_owned());
     if (cc < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5115,8 +5091,7 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (xs < 0 || xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op3a = x86_gas_imm3a_op(mnem);
-  if (op3a >= 0) {
+  if let Some(op3a) = x86_gas_imm3a_op(mnem) {
     util.push_bytes(a.code, x86_sse_3a_imm([], 0, op3a, xd, xs, imm));
     return a;
   }
@@ -5328,7 +5303,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     let lm = rest;
     let lr = "";
     if (lsp >= 0) {
-      lm = slice_unchecked(rest, 0, lsp) + "";
+      lm = slice_unchecked(rest, 0, lsp).to_owned();
       lr = slice_unchecked(rest, lsp + 1, rest.len()).trim();
     }
     let lb = lm;
@@ -5648,7 +5623,7 @@ function x86_file_entry(own a: X86Asm, line: string): X86Asm {
   while (files.len() < n) {
     files = files.append("");
   }
-  return X86Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2) + "") };
+  return X86Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2).to_owned()) };
 }
 
 function x86_loc_row(own a: X86Asm, line: string): X86Asm {
@@ -5680,7 +5655,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   if (sp < 0) {
     return x86_gas_bad(a, line);
   }
-  let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
+  let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()).to_owned(), ",");
   let n = x86_gas_atoi(parts[0].trim());
   let align = n;
   if (line.starts_with(".p2align")) {
@@ -5909,21 +5884,17 @@ function x86_relax_settle(a: X86Asm): RelaxPlan {
   let st = x86_relax_fresh(n, short);
   let laid = x86_relax_pass(a, l, t, st, false);
   st = laid.st;
-  let iter = 0;
-  while (iter < n + 2) {
+  for iter in 0..n + 2 {
     st = RelaxPass { ...st, before: st.prefix, prefix: st.before };
     let r = x86_relax_pass(a, l, t, st, true);
     st = r.st;
     if (!r.changed) {
       return RelaxPlan { l: l, st: st };
     }
-    iter += 1;
   }
   let longs: boolean[] = [];
-  k = 0;
-  while (k < nb) {
+  for k in 0..nb {
     longs = longs.append(false);
-    k += 1;
   }
   let all = x86_relax_fresh(n, longs);
   return RelaxPlan { l: l, st: x86_relax_pass(a, l, t, all, false).st };
@@ -5948,8 +5919,7 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
   a = X86Asm { ...a, text: [] };
   let out = buf_new(text.len() + 64);
   let pos = 0;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let s = l.start[i];
     buf_push_bytes_range(out, text, pos, s);
     let e = l.ev[i];
@@ -5966,7 +5936,6 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
       }
       pos = s + 2;
     }
-    i += 1;
   }
   buf_push_bytes_range(out, text, pos, text.len());
   let code = buf_take_bytes(out);
@@ -6049,8 +6018,7 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
 }
 
 function x86_events_near(starts: i32[], off: i32, j: i32): i32 {
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if (j > 0 && starts[j - 1] >= off) {
       j -= 1;
     } else if (j < starts.len() && starts[j] < off) {
@@ -6058,7 +6026,6 @@ function x86_events_near(starts: i32[], off: i32, j: i32): i32 {
     } else {
       return j;
     }
-    k += 1;
   }
   return x86_events_before(starts, off);
 }
@@ -6074,13 +6041,11 @@ function x86_relax_moved(xs: i32[], l: RelaxLayout, st: RelaxPass, marks: i32[],
   let out: i32[] = [];
   let n = l.ev.len();
   let j = 0;
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     while (j < n && x86_relax_before(l, marks, cat, j, xs[i], i)) {
       j += 1;
     }
     out = out.append(xs[i] + x86_relax_shift(st, j));
-    i += 1;
   }
   return out;
 }
@@ -6102,8 +6067,7 @@ function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: Rela
   let short = st.short;
   let cum = 0;
   let changed = false;
-  let i = 0;
-  while (i < l.ev.len()) {
+  for i in 0..l.ev.len() {
     let at = l.start[i] + cum;
     let size = 0;
     let e = l.ev[i];
@@ -6127,7 +6091,6 @@ function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: Rela
     new_size = new_size.with(i, size);
     cum = cum + size - l.size[i];
     prefix = prefix.with(i, cum);
-    i += 1;
   }
   return RelaxStep { st: RelaxPass { new_start: new_start, new_size: new_size, prefix: prefix, before: st.before, short: short }, changed: changed };
 }
@@ -6421,10 +6384,8 @@ struct LineMemo { keys: string[], head: i32[], next: i32[], at: i32[] }
 
 function x86_line_bucket(s: str): i32 {
   let h = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     h = h * 131 + s[i] as i32 & 8388607;
-    i += 1;
   }
   return h % 4093;
 }
@@ -6483,19 +6444,16 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
 
 // The rep and lock prefixes, port I/O, and clflush and invlpg.
 function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdict] {
-  let rpfx = x86_gas_rep_pfx(mnem);
-  if (rpfx >= 0) {
+  if let Some(rpfx) = x86_gas_rep_pfx(mnem) {
     return Some(MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx });
   }
   if (x86_gas_is_lock(mnem)) {
     return Some(MnemVerdict { ...v, a_kind: GK_LOCK });
   }
-  let port = x86_gas_port_op(mnem);
-  if (port >= 0) {
+  if let Some(port) = x86_gas_port_op(mnem) {
     return Some(MnemVerdict { ...v, b_kind: GK_PORT, b_ext: port });
   }
-  let memext = x86_gas_memext_op(mnem);
-  if (memext >= 0) {
+  if let Some(memext) = x86_gas_memext_op(mnem) {
     return Some(MnemVerdict { ...v, a_kind: GK_MEMEXT, a_ext: memext });
   }
   return None;
@@ -6514,7 +6472,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return sys;
   }
   if (mnem.starts_with("set")) {
-    let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+    let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()).to_owned());
     if (scc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
@@ -6527,7 +6485,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (mnem.starts_with("j")) {
-    let jcc = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+    let jcc = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()).to_owned());
     if (jcc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
@@ -6546,26 +6504,23 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     if (x86_gas_is_imul(bse)) {
       return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
-    let ue = x86_gas_unary_ext(bse);
-    if (ue >= 0) {
+    if let Some(ue) = x86_gas_unary_ext(bse) {
       return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
-    let ide = x86_gas_incdec_ext(bse);
-    if (ide >= 0) {
+    if let Some(ide) = x86_gas_incdec_ext(bse) {
       return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
       return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
-    let sho = x86_gas_shld_op(bse);
-    if (sho >= 0) {
+    if let Some(sho) = x86_gas_shld_op(bse) {
       return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
   }
   if (x86_gas_is_bswap(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_BSWAP };
   }
-  if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
+  if (x86_gas_imm3a_op(mnem).is_some() || x86_gas_shuf_op(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_SSE_IMM3 };
   }
   if (x86_gas_is_pextr(mnem)) {
@@ -6574,8 +6529,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pinsr(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
-  let lsz = x86_gas_lea_size(mnem);
-  if (lsz >= 0) {
+  if let Some(lsz) = x86_gas_lea_size(mnem) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
   }
   let msz = x86_gas_mov_size(mnem);
@@ -6594,51 +6548,41 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_movdq_pfx(mnem) >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVDQ };
   }
-  let m10 = x86_gas_mov10_pfx(mnem);
-  if (m10 >= 0) {
+  if let Some(m10) = x86_gas_mov10_pfx(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
   }
-  let mmk = x86_gas_movmsk_op(mnem);
-  if (mmk >= 0) {
+  if let Some(mmk) = x86_gas_movmsk_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
   }
-  let bsc = x86_gas_bitscan_op(mnem);
-  if (bsc >= 0) {
+  if let Some(bsc) = x86_gas_bitscan_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
   }
   if (x86_gas_is_movqd(mnem)) {
     return MnemVerdict { ...v, b_kind: GK_MOVQD };
   }
-  let mx = x86_gas_extend_op(mnem);
-  if (mx >= 0) {
+  if let Some(mx) = x86_gas_extend_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
   }
-  let f2i = x86_gas_cvt2si(mnem);
-  if (f2i >= 0) {
+  if let Some(f2i) = x86_gas_cvt2si(mnem) {
     return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
   }
-  let c2s = x86_gas_cvt2s_op(mnem);
-  if (c2s >= 0) {
+  if let Some(c2s) = x86_gas_cvt2s_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
   }
   if (sfx > 0) {
-    let ae = x86_gas_alu_ext(bse);
-    if (ae >= 0) {
+    if let Some(ae) = x86_gas_alu_ext(bse) {
       return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
     }
     if (x86_gas_is_test(bse)) {
       return MnemVerdict { ...v, b_kind: GK_TEST };
     }
-    let she = x86_gas_shift_ext(bse);
-    if (she >= 0) {
+    if let Some(she) = x86_gas_shift_ext(bse) {
       return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
     }
-    let bti = x86_gas_bt_idx(bse);
-    if (bti >= 0) {
+    if let Some(bti) = x86_gas_bt_idx(bse) {
       return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
     }
-    let rmw = x86_gas_rmw_op(bse);
-    if (rmw >= 0) {
+    if let Some(rmw) = x86_gas_rmw_op(bse) {
       return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
     }
     if (x86_gas_is_xchg(bse)) {
@@ -6655,8 +6599,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (sse >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
   }
-  let s38 = x86_gas_sse38_op(mnem);
-  if (s38 >= 0) {
+  if let Some(s38) = x86_gas_sse38_op(mnem) {
     return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
   }
   if (x86_gas_is_movsxd(mnem)) {
@@ -6745,7 +6688,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       }
       if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
         ops = ops.append(if (src[pos] == 7) { GP_NAMED } else { GP_NAMED_ABS }).append(wi).append(named.len());
-        named = named.append(slice_unchecked(src, pos + 1, nl7) + "");
+        named = named.append(slice_unchecked(src, pos + 1, nl7).to_owned());
         wi = wi + 1 + words[wi] as i32;
       } else {
         ops = ops.append(GP_BYTES).append(-1).append(0);
@@ -6784,7 +6727,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       mark = raw[0];
     }
     if (mark == 3) {
-      line = slice_unchecked(raw, 1, raw.len()) + "";
+      line = slice_unchecked(raw, 1, raw.len()).to_owned();
     } else {
       let mi0 = x86_line_memo_lookup(memo, raw);
       if (mi0 >= 0) {
@@ -6819,7 +6762,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       mnem = line;
       let sp = util.index_of_sub(line, " ");
       if (sp >= 0) {
-        mnem = slice_unchecked(line, 0, sp) + "";
+        mnem = slice_unchecked(line, 0, sp).to_owned();
         rest = slice_unchecked(line, sp + 1, line.len()).trim();
       }
     }
@@ -6858,10 +6801,8 @@ function x86_rodata_zero(own a: X86Asm, n: i32): X86Asm {
   }
   let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  let zi = 0;
-  while (zi < n) {
+  for zi in 0..n {
     rodata = rodata.append(0);
-    zi += 1;
   }
   return X86Asm { ...a, rodata: rodata };
 }
@@ -6870,15 +6811,13 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
   let btok = "";
-  let bci = 0;
-  while (bci < brest.len()) {
+  for bci in 0..brest.len() {
     if (brest[bci] == b',') {
       rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
       btok = "";
     } else {
       btok += slice_unchecked(brest, bci, bci + 1);
     }
-    bci += 1;
   }
   if (btok.trim().len() > 0) {
     rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
@@ -6993,7 +6932,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       if (line.starts_with(".loc ")) {
         a = x86_loc_row(a, line);
       } else if (line.starts_with(".fern_var ")) {
-        a = X86Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
+        a = X86Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()).to_owned()) };
       } else if (line.starts_with(".file ")) {
         a = x86_file_entry(a, line);
       } else if (line.starts_with(".cfi_")) {
@@ -7023,8 +6962,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
         a = x86_bss_skip(a, x86_gas_data_width(line) * x86_gas_values(line).len());
       } else if (line.starts_with(".quad")) {
         let qvals = x86_gas_values(line);
-        let qi = 0;
-        while (qi < qvals.len()) {
+        for qi in 0..qvals.len() {
           if (x86_gas_is_symbol(qvals[qi])) {
             let qref: i32 = -1;
             if (qvals.len() == 1) {
@@ -7034,7 +6972,6 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
           } else {
             a = x86_rodata_quad(a, x86_gas_atoi64(qvals[qi]));
           }
-          qi += 1;
         }
       } else if (line.starts_with(".long")) {
         a = x86_gas_longs(a, section, x86_gas_values(line));

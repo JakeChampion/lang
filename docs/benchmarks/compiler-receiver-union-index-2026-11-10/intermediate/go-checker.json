@@ -1,0 +1,17 @@
+{
+  "source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "purpose": "Main integration changes the Go checker for struct-field binder diagnostics. This package checks the updated oracle, without a timing claim.",
+  "args": [
+    "go",
+    "test",
+    "./internal/check/checker",
+    "-count=1",
+    "-json"
+  ],
+  "started": "2026-11-10T16:46:07.006601+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T16:46:58.762341+00:00",
+  "test_subtest_passes": 2387,
+  "skips": 0,
+  "failures": []
+}

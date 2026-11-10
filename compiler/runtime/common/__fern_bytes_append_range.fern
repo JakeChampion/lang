@@ -23,7 +23,7 @@ function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32):
     }
     out = __fern_bytes_clone(out, words as i32);
   }
-  __memcpy(__raw_arr_ptr(out) + 8 + len, __raw_arr_ptr(src) + 8 + from, n);
+  __memcpy(__raw_arr_ptr(out) + 8 + len as usize, __raw_arr_ptr(src) + 8 + from as usize, n);
   __store_i64(__raw_arr_ptr(out), total64);
   return out;
 }

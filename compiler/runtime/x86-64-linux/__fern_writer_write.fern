@@ -3,7 +3,7 @@ function __fern_writer_write(fd: i32, s: string): Result[void, IoError] {
   let data = __raw_data(s);
   let off = 0;
   while (off < n) {
-    let w = __syscall3(1, fd as i64, (data + off) as i64, (n - off) as i64) as i32;
+    let w = __syscall3(1, fd as i64, (data + off as usize) as i64, (n - off) as i64) as i32;
     if (w == -4 && off > 0) {
       continue;
     }

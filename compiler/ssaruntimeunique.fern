@@ -9,16 +9,14 @@ function verdict(ok: boolean, message: string): helper.Proof {
 }
 
 function definition(line: string): string {
-  let i = 0;
-  while (i < line.len()) {
+  for i in 0..line.len() {
     let c = line[i];
     if (c == b':') {
-      return slice_unchecked(line, 0, i) + "";
+      return slice_unchecked(line, 0, i).to_owned();
     }
     if (!util.is_symbol_byte(c)) {
       return "";
     }
-    i += 1;
   }
   return "";
 }
@@ -36,7 +34,7 @@ function assignment(line: string): boolean {
   while (i < line.len() && util.is_symbol_byte(line[i])) {
     i += 1;
   }
-  let rest = (slice_unchecked(line, i, line.len()) + "").trim();
+  let rest = slice_unchecked(line, i, line.len()).to_owned().trim();
   return i > 0 && rest.starts_with("=");
 }
 
@@ -61,14 +59,12 @@ function lines(text: string): string[] {
 
 function body(all: string[], start: i32): string[] {
   let out: string[] = [];
-  let at = start + 1;
-  while (at < all.len()) {
+  for at in start + 1..all.len() {
     let line = all[at];
     if (definition(line) != "" && !line.starts_with(".L")) {
       return out;
     }
     out = out.append(line);
-    at += 1;
   }
   return out;
 }

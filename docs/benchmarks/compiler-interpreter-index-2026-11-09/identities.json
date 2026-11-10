@@ -1,0 +1,11 @@
+{
+  "baseline_source": "424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2",
+  "candidate_source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "integrated_source": "b348dd59968684eeb19e37a48fc45a46fee85158",
+  "candidate_code_matches_integrated_source": true,
+  "source_check_exit": 0,
+  "format_exit": 0,
+  "diff_check_exit": 0
+}

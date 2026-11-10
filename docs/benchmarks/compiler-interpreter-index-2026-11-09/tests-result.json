@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-09T22:47:59Z",
+  "finished": "2026-11-09T22:53:28.640883+00:00",
+  "command": "go test ./internal/testing/e2ecompiler -run '^TestSelfHostInterp(Driver(X86_64|Arm64)|CallableValues|StructOps|AssocConsts|ScopeFrames|DynProvider|MapKeysCompareThroughEq)$' -count=1 -v -timeout=25m"
+}

@@ -493,6 +493,9 @@ const TICKET_AAD: string = "fern tls ticket";
 
 const TICKET_VERSION: i32 = 3;
 
+// RFC 8446 section 4.6.1: a ticket lives seven days at most.
+const TICKET_LIFETIME_MAX: i64 = 604800;
+
 // The most bytes of client certificates that a ticket holds.
 const TICKET_CHAIN_MAX: i32 = 16384;
 
@@ -507,6 +510,9 @@ pub const TICKET_ENTROPY: i32 = 16;
 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket {
   let nonce = [0 as u8];
   let seconds = lifetime.as_millis() / (1000 as i64);
+  if (seconds > TICKET_LIFETIME_MAX) {
+    seconds = TICKET_LIFETIME_MAX;
+  }
   let body = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);
@@ -747,6 +753,8 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
 <<16 pub struct Connection>>=
 pub struct Connection { sock: Socket, session: Session, pending: u8[], ended: boolean, open: Cell[boolean] }
 
+// ended is true after the close_notify of the peer. A stream that ends
+// with no close_notify gives the error Truncated.
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ```
 
@@ -795,9 +803,6 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
     s = step.session;
     pending = __cat(pending, step.data);
     ended = step.closed;
-  }
-  if (!s.connected()) {
-    return Err(tls.ClosedEarly);
   }
   return Ok(Shook { session: s, pending: pending, ended: ended });
 }
@@ -977,7 +982,7 @@ function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsErro
   if (s.held.len() > 0) {
     return Err(tls.RecordCut);
   }
-  return Ok(__received(c, s, [], true));
+  return Err(tls.Truncated);
 }
 
 function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.TlsError] {

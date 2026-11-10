@@ -1,0 +1,17 @@
+baseline-prime exit0
+baseline-probe exit0
+candidate-prime exit0
+candidate-probe exit0
+cold-0-baseline exit0
+cold-0-candidate exit0
+cold-1-candidate exit0
+cold-1-baseline exit0
+cold-2-baseline exit0
+cold-2-candidate exit0
+warm-0-baseline exit0
+warm-0-candidate exit0
+warm-1-candidate exit0
+warm-1-baseline exit0
+warm-2-baseline exit0
+warm-2-candidate exit0
+complete

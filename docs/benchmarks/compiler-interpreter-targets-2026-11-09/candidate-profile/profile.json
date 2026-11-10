@@ -1,0 +1,49 @@
+{
+  "source": "424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2",
+  "interp_source_sha256": "c5b54cb12b1c3eaeaaff1f93659518cd27eac6c17e68aa009eed1beb81d80552",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "note": "Candidate diagnostic profile only. Same counter-free CPU build policy and second group as the baseline profile. Other collectors can run concurrently.",
+  "build": {
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-candidate-profile-20261109/fern-cpu",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-interpreter-dispatch-20261109",
+    "environment": {
+      "FERN_PROFILE": "cpu",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:32:35.555522+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-09T22:35:23.456227+00:00"
+  },
+  "binary_sha256": "e997ce8f2c0006375b80edcef30bb51cb6939e180527d510a2da347a40059598",
+  "run": {
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-candidate-profile-20261109/fern-cpu",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "started": "2026-11-09T22:35:23.498450+00:00",
+    "timeout_seconds": 1980,
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "exit_code": 0,
+    "finished": "2026-11-09T22:36:41.988978+00:00",
+    "wall_seconds": 78.4898320379998
+  }
+}

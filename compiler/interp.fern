@@ -167,7 +167,7 @@ function zero_value_of(heap: interpheap.Heap, type_name: string): Value {
     return v_view_of(heap, [], parser.array_method_element(type_name));
   }
   if (name_ends_with(type_name, "[]")) {
-    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2).to_owned());
   }
   if (type_name == "f64" || type_name == "f32") {
     return v_float(0.0);
@@ -377,17 +377,15 @@ function split_binding_names(csv: string): string[] {
   let out: string[] = [];
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
+  for i in 0..=csv.len() {
     if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     } else if (csv[i] == b'(') {
       depth += 1;
     } else if (csv[i] == b')') {
       depth -= 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -409,8 +407,8 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
   }
   let binds = split_binding_names(names);
   if (dm.tag.starts_with("@sd:")) {
-    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()) + "", ":");
-    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()) + "");
+    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()).to_owned(), ":");
+    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()).to_owned());
     if let VStruct(sv) = val {
       let i = 0;
       while (i < binds.len() && i < fields.len()) {
@@ -432,11 +430,10 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     if (tv.elements.len() != binds.len()) {
       return (env, v_err("destructuring `" + names + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
     }
-    let i = 0;
-    while (i < binds.len()) {
+    for i in 0..binds.len() {
       let b = binds[i];
       if (b.starts_with("(")) {
-        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1) + "", "", tv.elements[i]);
+        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1).to_owned(), "", tv.elements[i]);
         if (is_err(err)) {
           return (env, err);
         }
@@ -444,7 +441,6 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
       } else {
         out = out.bind(b, tv.elements[i]);
       }
-      i += 1;
     }
     return (out, v_void());
   }
@@ -602,10 +598,8 @@ function arr_els(a: VArr): Value[] {
   }
   let out: Value[] = [];
   let n = arr_len(a);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(v_int(st[1 + a.offset + i] as i32));
-    i += 1;
   }
   return out;
 }
@@ -626,10 +620,8 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
 function arr_view(a: VArr, from: i32, to: i32): Value {
   let els = arr_els(a);
   let out: Value[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(els[i]);
-    i += 1;
   }
   return VArr { items: out, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
 }
@@ -639,10 +631,8 @@ function arr_slots(a: VArr): i64[] {
   let st = interpheap.get(a.store).words;
   let out: i64[] = [];
   if (st.len() > 0) {
-    let i = 1;
-    while (i < st.len()) {
+    for i in 1..st.len() {
       out = out.append(st[i]);
-      i += 1;
     }
     return out;
   }
@@ -807,8 +797,7 @@ pub function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[
 // (`Pair[3]`).
 function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
   let r = parser.parse_type_ref(sname);
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == sname || decls[i].name == r.base && r.args.len() > 0) {
       let j = 0;
       while (j < decls[i].fields.len()) {
@@ -819,7 +808,6 @@ function struct_field_type(decls: parser.StructDecl[], sname: string, field: str
       }
       return "";
     }
-    i += 1;
   }
   return "";
 }
@@ -838,44 +826,36 @@ function applied_spelling(spelling: string, vars: string[], args: parser.TypeRef
 }
 
 function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
-  let i = 0;
-  while (i < acc.len()) {
+  for i in 0..acc.len() {
     if (acc[i].name == name) {
       return acc;
     }
-    i += 1;
   }
   let fields: parser.StructFieldDecl[] = [];
-  let f = 0;
-  while (f < arity) {
+  for f in 0..arity {
     let fname = "__ev";
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
     fields = fields.append(parser.bare_field(fname, ""));
-    f += 1;
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == name && decls[i].enum_owner.len() > 0) {
       return decls[i].fields.len();
     }
-    i += 1;
   }
   return -1;
 }
 
-function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+function user_func_exists(name: string, funcs: Funcs): boolean {
+  for at in funcs.named(name) {
+    if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -886,14 +866,12 @@ function v_variant(name: string, args: Value[]): Value {
 
 function v_variant_of(owner: string, name: string, args: Value[]): Value {
   let vnames: string[] = [];
-  let vi = 0;
-  while (vi < args.len()) {
+  for vi in 0..args.len() {
     if (vi == 0) {
       vnames = vnames.append("__ev");
     } else {
       vnames = vnames.append("__ev" + util.i32_to_string(vi));
     }
-    vi += 1;
   }
   return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [] };
 }
@@ -938,7 +916,41 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
+
+// The program's functions in declaration order, indexed by the name a call
+// uses: the declared name, except that a Map `__iterator` is `iter`.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex }
+
+function funcs_of(decls: parser.FuncDecl[]): Funcs {
+  let names: string[] = [];
+  for fd in decls {
+    names = names.append(runtime_method_name(fd));
+  }
+  return Funcs { decls: decls, runtime_names: util.name_index(names) };
+}
+
+// The positions of the functions that a call of `name` can reach, in
+// declaration order: those declared or called as `name`.
+function (f: Funcs) named(name: string): i32[] {
+  let out: i32[] = [];
+  if (name == "__iterator") {
+    for k in 0..f.decls.len() {
+      if (f.decls[k].name == name) {
+        out = out.append(k);
+      }
+    }
+    return out;
+  }
+  let i = f.runtime_names.chain(name);
+  while (i >= 0) {
+    if (f.runtime_names.names[i] == name) {
+      out = out.append(i);
+    }
+    i = f.runtime_names.next[i];
+  }
+  return out;
+}
 
 pub function new_env(heap: interpheap.Heap): Env {
   let ns: string[] = [];
@@ -947,10 +959,10 @@ pub function new_env(heap: interpheap.Heap): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
 }
 
-function new_module_env(heap: interpheap.Heap, fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
+function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
@@ -987,7 +999,7 @@ function (e: Env) static_type_of(x: ast.Expr): string {
     ast.ExprIndex(ix) => {
       let at = e.static_type_of(ix.array);
       if (name_ends_with(at, "[]")) {
-        return slice_unchecked(at, 0, at.len() - 2) + "";
+        return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
       return "";
     },
@@ -1024,20 +1036,19 @@ function (e: Env) static_type_of(x: ast.Expr): string {
   }
 }
 
-function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string): string {
+function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   let found = "";
   let seen = false;
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && receiver_matches(funcs[i].receiver_type, recv_ty)) {
-      let rt = applied_ret_type(funcs[i], recv_ty);
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && receiver_matches(fd.receiver_type, recv_ty)) {
+      let rt = applied_ret_type(fd, recv_ty);
       if (seen && rt != found) {
         return "";
       }
       found = rt;
       seen = true;
     }
-    i += 1;
   }
   return found;
 }
@@ -1084,17 +1095,16 @@ function (e: Env) binds_name(name: string): boolean {
 
 // func_ret_type is the declared result type of function `name`, with the
 // call's written type arguments put in.
-function func_ret_type(funcs: parser.FuncDecl[], name: string, targs: string[]): string {
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       let refs: parser.TypeRef[] = [];
       for ta in targs {
         refs = refs.append(parser.parse_type_ref(ta));
       }
-      return applied_spelling(funcs[i].ret_type, funcs[i].all_type_params, refs);
+      return applied_spelling(fd.ret_type, fd.all_type_params, refs);
     }
-    i += 1;
   }
   return "";
 }
@@ -1181,12 +1191,10 @@ pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]):
   }
   let reads = lam_read_names(st);
   let hit: string[] = [];
-  let i = 0;
-  while (i < reads.len()) {
+  for i in 0..reads.len() {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
       hit = hit.append(reads[i]);
     }
-    i += 1;
   }
   if (hit.len() == 0) {
     return out;
@@ -1238,8 +1246,7 @@ function (e: Env) raw_value(name: string): Option[Value] {
 function cellify_env(own e: Env, names: string[]): Env {
   let heap = e.heap;
   let out = e;
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     match (out.raw_value(names[i])) {
       Some(cur) => {
         if (!is_cell(cur)) {
@@ -1248,7 +1255,6 @@ function cellify_env(own e: Env, names: string[]): Env {
       },
       None => {}
     }
-    i += 1;
   }
   return out;
 }
@@ -1416,7 +1422,7 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
     let (ok, next) = cell_any_text(h, v, edges, heap, captures);
-    edges = next;
+    edges = unsafe { share_unchecked(next) };
     if (!ok) {
       return (false, edges);
     }
@@ -1467,7 +1473,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       cell_hex_text(h, view);
       cell_name_text(h, a.elem);
       let store = a.store;
-      edges = edges.append(store);
+      edges = unsafe { share_unchecked(edges.append(store)) };
       return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
@@ -1480,7 +1486,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next, heap, captures);
+      return cell_parts_text(h, m.values, unsafe { share_unchecked(next) }, heap, captures);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1577,14 +1583,12 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
 function cell_hex_value(s: string, at: Cell[i32]): i64 {
   let i = at.get();
   let bits: i64 = 0i64;
-  let j = 0;
-  while (j < 16) {
+  for j in 0..16 {
     let digit = s[i + j] as i32 - 48;
     if (digit > 9) {
       digit -= 39;
     }
     bits = bits << 4i64 | digit as i64;
-    j += 1;
   }
   at.set(i + 16);
   return bits;
@@ -1594,16 +1598,14 @@ function cell_name_value(s: string, at: Cell[i32]): string {
   let n = cell_hex_value(s, at) as i32;
   let i = at.get();
   at.set(i + n);
-  return slice_unchecked(s, i, i + n) + "";
+  return slice_unchecked(s, i, i + n).to_owned();
 }
 
 function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
   let n = cell_hex_value(s, at) as i32;
   let out: Value[] = [];
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     out = out.append(cell_any_value(s, at, edges));
-    k += 1;
   }
   return out;
 }
@@ -1699,10 +1701,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
 
 function byte_array_value(heap: interpheap.Heap, bytes: u8[]): Value {
   let out: Value[] = [];
-  let i = 0;
-  while (i < bytes.len()) {
+  for i in 0..bytes.len() {
     out = out.append(v_int(bytes[i] as i32));
-    i += 1;
   }
   return v_arr_of(heap, out, "u8");
 }
@@ -2252,16 +2252,12 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (util.has_str(["__task_park", "__task_park_until", "__task_timeout"], name)) {
     return v_int(-1);
   }
-  if (name == "__task_until") {
-    return v_int64(-1i64);
-  }
-  if (name == "__task_new") {
-    return v_int(1);
-  }
-  if (name == "__task_wait") {
-    return v_arr(heap, []);
-  }
-  return v_err("not a runtime intrinsic");
+  return match (name) {
+    "__task_until" => v_int64(-1i64),
+    "__task_new" => v_int(1),
+    "__task_wait" => v_arr(heap, []),
+    _ => v_err("not a runtime intrinsic"),
+  };
 }
 
 function lane_bits(width: i32, x: f64): i64 {
@@ -2303,32 +2299,26 @@ function lanes_splat(width: i32, x: f64): Value {
 function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
   let bits: i64[] = [];
   for b in l.bits {
-    bits = bits.append((b ^ flip) & (clear ^ 0 - 1));
+    bits = bits.append((b ^ flip) & (clear ^ -1));
   }
   return VLanes { width: l.width, bits: bits };
 }
 
 function lane_arith(op: string, x: f64, y: f64): f64 {
-  if (op == "+") {
-    return x + y;
-  }
-  if (op == "-") {
-    return x - y;
-  }
-  if (op == "*") {
-    return x * y;
-  }
-  return x / y;
+  return match (op) {
+    "+" => x + y,
+    "-" => x - y,
+    "*" => x * y,
+    _ => x / y,
+  };
 }
 
 function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
-      let i = 0;
-      while (i < a.bits.len()) {
+      for i in 0..a.bits.len() {
         bits = bits.append(lane_bits(a.width, lane_arith(op, lane_at(a, i), lane_at(b, i))));
-        i += 1;
       }
       return VLanes { width: a.width, bits: bits };
     }
@@ -2389,13 +2379,11 @@ function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
     ones = 4294967295;
   }
   let bits: i64[] = [];
-  let i = 0;
-  while (i < a.bits.len()) {
+  for i in 0..a.bits.len() {
     let x = lane_at(a, i);
     let y = lane_at(b, i);
     let hold = verb == "lt" && x < y || verb == "ne" && x != y;
     bits = bits.append(if (hold) { ones } else { 0 });
-    i += 1;
   }
   return VLanes { width: a.width, bits: bits };
 }
@@ -2405,7 +2393,7 @@ function lanes_select(ls: VLanes[]): Value {
   let i = 0;
   while (i < ls[0].bits.len()) {
     let m = ls[2].bits[i];
-    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ 0 - 1));
+    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ -1));
     i += 1;
   }
   return VLanes { width: ls[0].width, bits: bits };
@@ -2620,22 +2608,14 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
 }
 
 function f64_primitive(name: string, x: f64): f64 {
-  if (name == "__sqrt_f64") {
-    return __sqrt_f64(x);
-  }
-  if (name == "__floor_f64") {
-    return __floor_f64(x);
-  }
-  if (name == "__ceil_f64") {
-    return __ceil_f64(x);
-  }
-  if (name == "__round_f64") {
-    return __round_f64(x);
-  }
-  if (name == "__trunc_f64") {
-    return __trunc_f64(x);
-  }
-  return __abs_f64(x);
+  return match (name) {
+    "__sqrt_f64" => __sqrt_f64(x),
+    "__floor_f64" => __floor_f64(x),
+    "__ceil_f64" => __ceil_f64(x),
+    "__round_f64" => __round_f64(x),
+    "__trunc_f64" => __trunc_f64(x),
+    _ => __abs_f64(x),
+  };
 }
 
 // The worker builtins in an engine that runs every worker inline: the copy
@@ -2732,16 +2712,12 @@ function call_host_portable(heap: interpheap.Heap, name: string, cap: string, ar
 }
 
 function call_host_stdio(name: string, args: Value[]): Value {
-  if (name == "stdin") {
-    return reader_value(stdin());
-  }
-  if (name == "stdout") {
-    return writer_value(stdout());
-  }
-  if (name == "stderr") {
-    return writer_value(stderr());
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "stdin" => reader_value(stdin()),
+    "stdout" => writer_value(stdout()),
+    "stderr" => writer_value(stderr()),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_process(heap: interpheap.Heap, name: string, vals: Value[]): Value {
@@ -2762,6 +2738,9 @@ function call_host_process(heap: interpheap.Heap, name: string, vals: Value[]): 
     return v_string(hostname());
   }
   if (name == "random_bytes") {
+    if (arg_i32(vals, 0) < 0) {
+      return v_abort(aborts.alloc_size(), "random_bytes length " + util.i32_to_string(arg_i32(vals, 0)));
+    }
     return byte_array_value(heap, rand.bytes(arg_i32(vals, 0)));
   }
   if (name == "random_i32") {
@@ -2797,51 +2776,29 @@ function call_host_wait(name: string, args: Value[]): Value {
 }
 
 function call_host_clock(name: string, args: Value[]): Value {
-  if (name == "now_unix_ms") {
-    return v_int64(now_unix_ms());
-  }
-  if (name == "now_ns") {
-    return v_int64(now_ns());
-  }
-  if (name == "monotonic_ns") {
-    return v_int64(monotonic_ns());
-  }
-  if (name == "clock_resolution") {
-    return v_int64(clock_resolution());
-  }
-  if (name == "clock_set") {
-    return void_result_value(clock_set(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "now_unix_ms" => v_int64(now_unix_ms()),
+    "now_ns" => v_int64(now_ns()),
+    "monotonic_ns" => v_int64(monotonic_ns()),
+    "clock_resolution" => v_int64(clock_resolution()),
+    "clock_set" => void_result_value(clock_set(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_signal(name: string, args: Value[]): Value {
   let sig = arg_i32(args, 0);
-  if (name == "signal_ignore") {
-    return v_int(signal_ignore(sig));
-  }
-  if (name == "signal_default") {
-    return v_int(signal_default(sig));
-  }
-  if (name == "signal_catch") {
-    return v_int(signal_catch(sig));
-  }
-  if (name == "signal_catch_interrupting") {
-    return v_int(signal_catch_interrupting(sig));
-  }
-  if (name == "signal_disposition") {
-    return v_int(signal_disposition(sig));
-  }
-  if (name == "signal_raise") {
-    return v_int(signal_raise(sig));
-  }
-  if (name == "signal_taken") {
-    return v_bool(signal_taken(sig));
-  }
-  if (name == "signal_mask") {
-    return v_int64(signal_mask(sig, arg_i64(args, 1)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "signal_ignore" => v_int(signal_ignore(sig)),
+    "signal_default" => v_int(signal_default(sig)),
+    "signal_catch" => v_int(signal_catch(sig)),
+    "signal_catch_interrupting" => v_int(signal_catch_interrupting(sig)),
+    "signal_disposition" => v_int(signal_disposition(sig)),
+    "signal_raise" => v_int(signal_raise(sig)),
+    "signal_taken" => v_bool(signal_taken(sig)),
+    "signal_mask" => v_int64(signal_mask(sig, arg_i64(args, 1))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_reactor(name: string, args: Value[]): Value {
@@ -2877,110 +2834,68 @@ function call_host_fs(heap: interpheap.Heap, name: string, args: Value[]): Value
 }
 
 function call_host_fs_path(name: string, path: string): Value {
-  if (name == "remove_file") {
-    return void_result_value(remove_file(path));
-  }
-  if (name == "remove_dir") {
-    return void_result_value(remove_dir(path));
-  }
-  if (name == "remove_dir_all") {
-    return void_result_value(remove_dir_all(path));
-  }
-  return void_result_value(create_dir_all(path));
+  return match (name) {
+    "remove_file" => void_result_value(remove_file(path)),
+    "remove_dir" => void_result_value(remove_dir(path)),
+    "remove_dir_all" => void_result_value(remove_dir_all(path)),
+    _ => void_result_value(create_dir_all(path)),
+  };
 }
 
 function call_host_fs_paths(name: string, from: string, to: string): Value {
-  if (name == "create_link") {
-    return void_result_value(create_link(from, to));
-  }
-  if (name == "clone_file") {
-    return void_result_value(clone_file(from, to));
-  }
-  if (name == "create_symlink") {
-    return void_result_value(create_symlink(from, to));
-  }
-  return void_result_value(rename(from, to));
+  return match (name) {
+    "create_link" => void_result_value(create_link(from, to)),
+    "clone_file" => void_result_value(clone_file(from, to)),
+    "create_symlink" => void_result_value(create_symlink(from, to)),
+    _ => void_result_value(rename(from, to)),
+  };
 }
 
 function call_host_open(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "open_reader") {
-    return reader_result_value(open_reader(path));
-  }
-  if (name == "open_reader_with") {
-    return reader_result_value(open_reader_with(path, arg_i32(args, 1)));
-  }
-  if (name == "open_writer") {
-    return writer_result_value(open_writer(path));
-  }
-  if (name == "open_writer_with") {
-    return writer_result_value(open_writer_with(path, arg_i32(args, 1)));
-  }
-  if (name == "open_appender") {
-    return writer_result_value(open_appender(path));
-  }
-  return writer_result_value(open_exclusive(path));
+  return match (name) {
+    "open_reader" => reader_result_value(open_reader(path)),
+    "open_reader_with" => reader_result_value(open_reader_with(path, arg_i32(args, 1))),
+    "open_writer" => writer_result_value(open_writer(path)),
+    "open_writer_with" => writer_result_value(open_writer_with(path, arg_i32(args, 1))),
+    "open_appender" => writer_result_value(open_appender(path)),
+    _ => writer_result_value(open_exclusive(path)),
+  };
 }
 
 function call_host_fs_write(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "write_file") {
-    return void_result_value(write_file(path, arg_str(args, 1)));
-  }
-  if (name == "write_file_bytes") {
-    return void_result_value(write_file_bytes(path, arg_bytes(args, 1)));
-  }
-  if (name == "create_dir") {
-    return void_result_value(create_dir(path, arg_i32(args, 1)));
-  }
-  if (name == "truncate") {
-    return void_result_value(truncate(path, arg_i64(args, 1)));
-  }
-  return void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5)));
+  return match (name) {
+    "write_file" => void_result_value(write_file(path, arg_str(args, 1))),
+    "write_file_bytes" => void_result_value(write_file_bytes(path, arg_bytes(args, 1))),
+    "create_dir" => void_result_value(create_dir(path, arg_i32(args, 1))),
+    "truncate" => void_result_value(truncate(path, arg_i64(args, 1))),
+    _ => void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5))),
+  };
 }
 
 function call_host_fs_read(heap: interpheap.Heap, name: string, path: string): Value {
-  if (name == "read_file") {
-    return string_result_value(read_file(path));
-  }
-  if (name == "read_file_bytes") {
-    return bytes_result_value(heap, read_file_bytes(path));
-  }
-  if (name == "read_link") {
-    return string_result_value(read_link(path));
-  }
-  if (name == "read_link_bytes") {
-    return bytes_result_value(heap, read_link_bytes(path));
-  }
-  if (name == "temp_dir") {
-    return string_result_value(temp_dir(path));
-  }
-  if (name == "stat") {
-    return stat_result_value(stat(path));
-  }
-  if (name == "lstat") {
-    return stat_result_value(lstat(path));
-  }
-  return call_host_fs_list(heap, name, path);
+  return match (name) {
+    "read_file" => string_result_value(read_file(path)),
+    "read_file_bytes" => bytes_result_value(heap, read_file_bytes(path)),
+    "read_link" => string_result_value(read_link(path)),
+    "read_link_bytes" => bytes_result_value(heap, read_link_bytes(path)),
+    "temp_dir" => string_result_value(temp_dir(path)),
+    "stat" => stat_result_value(stat(path)),
+    "lstat" => stat_result_value(lstat(path)),
+    _ => call_host_fs_list(heap, name, path),
+  };
 }
 
 function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): Value {
-  if (name == "read_dir_bytes") {
-    return byte_arrays_result_value(heap, read_dir_bytes(path));
-  }
-  if (name == "read_dir") {
-    return strings_result_value(heap, read_dir(path));
-  }
-  if (name == "read_dir_all") {
-    return strings_result_value(heap, read_dir_all(path));
-  }
-  if (name == "read_dir_ino") {
-    return dir_entries_result_value(heap, read_dir_ino(path));
-  }
-  if (name == "read_dir_ino_all") {
-    return dir_entries_result_value(heap, read_dir_ino_all(path));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "read_dir_bytes" => byte_arrays_result_value(heap, read_dir_bytes(path)),
+    "read_dir" => strings_result_value(heap, read_dir(path)),
+    "read_dir_all" => strings_result_value(heap, read_dir_all(path)),
+    "read_dir_ino" => dir_entries_result_value(heap, read_dir_ino(path)),
+    "read_dir_ino_all" => dir_entries_result_value(heap, read_dir_ino_all(path)),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 // A guest Socket runs as its descriptor number, which the host takes as a Socket.
@@ -3045,10 +2960,8 @@ function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i3
   }
   let out_froms = froms;
   if (froms.len() >= 19) {
-    let k = 0;
-    while (k < 19) {
+    for k in 0..19 {
       out_froms = out_froms.with(k, from[k]);
-      k += 1;
     }
   }
   return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
@@ -3062,8 +2975,7 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
   let n = lens.len() / 3;
   let off = 0;
   let sent = 0;
-  let m = 0;
-  while (m < n) {
+  for m in 0..n {
     let size = lens[3 * m];
     let seg = lens[3 * m + 1];
     if (size < 0 || off + size > data.len()) {
@@ -3105,7 +3017,6 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
     }
     off += size;
     sent += 1;
-    m += 1;
   }
   return sent;
 }
@@ -3186,16 +3097,12 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
       return v_int(__tcp_close_unchecked(sock));
     }
   }
-  if (name == "tcp_local_port") {
-    return v_int(tcp_local_port(sock));
-  }
-  if (name == "tcp_pollable") {
-    return v_int(tcp_pollable(sock.fd));
-  }
-  if (name == "tcp_socket_ctl") {
-    return v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "tcp_local_port" => v_int(tcp_local_port(sock)),
+    "tcp_pollable" => v_int(tcp_pollable(sock.fd)),
+    "tcp_socket_ctl" => v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_native(heap: interpheap.Heap, name: string, cap: string, args: Value[]): Value {
@@ -3228,58 +3135,36 @@ function call_host_native(heap: interpheap.Heap, name: string, cap: string, args
 
 function call_host_fsmode(name: string, args: Value[]): Value {
   let path = arg_str(args, 0);
-  if (name == "write_file_exec") {
-    return void_result_value(write_file_exec(path, arg_str(args, 1)));
-  }
-  if (name == "access") {
-    return void_result_value(access(path, arg_i32(args, 1)));
-  }
-  if (name == "umask") {
-    return v_int(umask(arg_i32(args, 0)));
-  }
-  if (name == "chmod") {
-    return void_result_value(chmod(path, arg_i32(args, 1)));
-  }
-  if (name == "chmod_at") {
-    return void_result_value(chmod_at(path, arg_i32(args, 1), arg_bool(args, 2)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "write_file_exec" => void_result_value(write_file_exec(path, arg_str(args, 1))),
+    "access" => void_result_value(access(path, arg_i32(args, 1))),
+    "umask" => v_int(umask(arg_i32(args, 0))),
+    "chmod" => void_result_value(chmod(path, arg_i32(args, 1))),
+    "chmod_at" => void_result_value(chmod_at(path, arg_i32(args, 1), arg_bool(args, 2))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_userid(heap: interpheap.Heap, name: string, args: Value[]): Value {
-  if (name == "geteuid") {
-    return v_uint(geteuid() as i32);
-  }
-  if (name == "getegid") {
-    return v_uint(getegid() as i32);
-  }
-  if (name == "getuid") {
-    return v_uint(getuid() as i32);
-  }
-  if (name == "getgid") {
-    return v_uint(getgid() as i32);
-  }
-  if (name == "getgroups") {
-    return i64_array_value(heap, getgroups());
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "geteuid" => v_uint(geteuid() as i32),
+    "getegid" => v_uint(getegid() as i32),
+    "getuid" => v_uint(getuid() as i32),
+    "getgid" => v_uint(getgid() as i32),
+    "getgroups" => i64_array_value(heap, getgroups()),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_tty(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let fd = arg_i32(args, 0);
-  if (name == "window_size") {
-    return win_size_result_value(window_size(fd));
-  }
-  if (name == "set_window_size") {
-    return void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2)));
-  }
-  if (name == "termios_get") {
-    return i64s_result_value(heap, termios_get(fd));
-  }
-  if (name == "termios_set") {
-    return void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2)));
-  }
-  return void_result_value(set_extproc(fd, arg_bool(args, 1)));
+  return match (name) {
+    "window_size" => win_size_result_value(window_size(fd)),
+    "set_window_size" => void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2))),
+    "termios_get" => i64s_result_value(heap, termios_get(fd)),
+    "termios_set" => void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2))),
+    _ => void_result_value(set_extproc(fd, arg_bool(args, 1))),
+  };
 }
 
 function call_host_proc(name: string, args: Value[]): Value {
@@ -3303,50 +3188,28 @@ function call_host_proc(name: string, args: Value[]): Value {
 }
 
 function call_host_limits(name: string, args: Value[]): Value {
-  if (name == "rlimit_nofile") {
-    return v_int64(rlimit_nofile());
-  }
-  if (name == "disable_core_dumps") {
-    return v_bool(disable_core_dumps());
-  }
-  if (name == "priority") {
-    return v_int(priority());
-  }
-  if (name == "set_priority") {
-    return void_result_value(set_priority(arg_i32(args, 0)));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "rlimit_nofile" => v_int64(rlimit_nofile()),
+    "disable_core_dumps" => v_bool(disable_core_dumps()),
+    "priority" => v_int(priority()),
+    "set_priority" => void_result_value(set_priority(arg_i32(args, 0))),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_system(heap: interpheap.Heap, name: string, args: Value[]): Value {
-  if (name == "uname_field") {
-    return v_string(uname_field(arg_i32(args, 0)));
-  }
-  if (name == "cpu_count") {
-    return v_int(cpu_count());
-  }
-  if (name == "prctl_query") {
-    return v_int64(prctl_query(arg_i32(args, 0)));
-  }
-  if (name == "getcwd") {
-    return string_result_value(getcwd());
-  }
-  if (name == "chdir") {
-    return void_result_value(chdir(arg_str(args, 0)));
-  }
-  if (name == "unix_listen") {
-    return socket_number(unix_listen(arg_str(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "unix_connect") {
-    return socket_number(unix_connect(arg_str(args, 0)));
-  }
-  if (name == "timer_fd") {
-    return v_int(timer_fd(arg_i32(args, 0)));
-  }
-  if (name == "sysctl") {
-    return call_host_sysctl(heap, arg_i32s(args, 0));
-  }
-  return v_err("undefined function: " + name);
+  return match (name) {
+    "uname_field" => v_string(uname_field(arg_i32(args, 0))),
+    "cpu_count" => v_int(cpu_count()),
+    "prctl_query" => v_int64(prctl_query(arg_i32(args, 0))),
+    "getcwd" => string_result_value(getcwd()),
+    "chdir" => void_result_value(chdir(arg_str(args, 0))),
+    "unix_listen" => socket_number(unix_listen(arg_str(args, 0), arg_i32(args, 1))),
+    "unix_connect" => socket_number(unix_connect(arg_str(args, 0))),
+    "timer_fd" => v_int(timer_fd(arg_i32(args, 0))),
+    "sysctl" => call_host_sysctl(heap, arg_i32s(args, 0)),
+    _ => v_err("undefined function: " + name),
+  };
 }
 
 function call_host_sysctl(heap: interpheap.Heap, mib: i32[]): Value {
@@ -3475,31 +3338,17 @@ function read_chunk_value(r: Reader, n: i32): Value {
 }
 
 function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
-  if (name == "stat") {
-    return stat_result_value(r.stat());
-  }
-  if (name == "seek") {
-    return i64_result_value(r.seek(arg_i64(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "flags") {
-    return i64_result_value(r.flags());
-  }
-  if (name == "isatty") {
-    return v_bool(r.isatty());
-  }
-  if (name == "fsync") {
-    return void_result_value(r.fsync());
-  }
-  if (name == "fdatasync") {
-    return void_result_value(r.fdatasync());
-  }
-  if (name == "syncfs") {
-    return void_result_value(r.syncfs());
-  }
-  if (name == "drop_cache") {
-    return void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return void_result_value(r.dup_onto(arg_i32(args, 0)));
+  return match (name) {
+    "stat" => stat_result_value(r.stat()),
+    "seek" => i64_result_value(r.seek(arg_i64(args, 0), arg_i32(args, 1))),
+    "flags" => i64_result_value(r.flags()),
+    "isatty" => v_bool(r.isatty()),
+    "fsync" => void_result_value(r.fsync()),
+    "fdatasync" => void_result_value(r.fdatasync()),
+    "syncfs" => void_result_value(r.syncfs()),
+    "drop_cache" => void_result_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => void_result_value(r.dup_onto(arg_i32(args, 0))),
+  };
 }
 
 function writer_method(w: Writer, name: string, args: Value[]): Value {
@@ -3533,34 +3382,18 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
 }
 
 function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
-  if (name == "set_times") {
-    return void_result_value(w.set_times(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i32(args, 4)));
-  }
-  if (name == "stat") {
-    return stat_result_value(w.stat());
-  }
-  if (name == "seek") {
-    return i64_result_value(w.seek(arg_i64(args, 0), arg_i32(args, 1)));
-  }
-  if (name == "flags") {
-    return i64_result_value(w.flags());
-  }
-  if (name == "isatty") {
-    return v_bool(w.isatty());
-  }
-  if (name == "fsync") {
-    return void_result_value(w.fsync());
-  }
-  if (name == "fdatasync") {
-    return void_result_value(w.fdatasync());
-  }
-  if (name == "syncfs") {
-    return void_result_value(w.syncfs());
-  }
-  if (name == "drop_cache") {
-    return void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
-  }
-  return void_result_value(w.dup_onto(arg_i32(args, 0)));
+  return match (name) {
+    "set_times" => void_result_value(w.set_times(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i32(args, 4))),
+    "stat" => stat_result_value(w.stat()),
+    "seek" => i64_result_value(w.seek(arg_i64(args, 0), arg_i32(args, 1))),
+    "flags" => i64_result_value(w.flags()),
+    "isatty" => v_bool(w.isatty()),
+    "fsync" => void_result_value(w.fsync()),
+    "fdatasync" => void_result_value(w.fdatasync()),
+    "syncfs" => void_result_value(w.syncfs()),
+    "drop_cache" => void_result_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1))),
+    _ => void_result_value(w.dup_onto(arg_i32(args, 0))),
+  };
 }
 
 function call_dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]): Value {
@@ -3688,19 +3521,13 @@ function io_error_named(e: IoError, entry: string): IoError {
 }
 
 function dir_change_method(d: Dir, name: string, entry: string, args: Value[]): Value {
-  if (name == "access") {
-    return void_result_value(d.access(entry, arg_i32(args, 1)));
-  }
-  if (name == "remove_file") {
-    return void_result_value(d.remove_file(entry));
-  }
-  if (name == "remove_dir") {
-    return void_result_value(d.remove_dir(entry));
-  }
-  if (name == "chmod") {
-    return void_result_value(d.chmod(entry, arg_i32(args, 1), arg_bool(args, 2)));
-  }
-  return void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
+  return match (name) {
+    "access" => void_result_value(d.access(entry, arg_i32(args, 1))),
+    "remove_file" => void_result_value(d.remove_file(entry)),
+    "remove_dir" => void_result_value(d.remove_dir(entry)),
+    "chmod" => void_result_value(d.chmod(entry, arg_i32(args, 1), arg_bool(args, 2))),
+    _ => void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3))),
+  };
 }
 
 function (own e: Env) update(name: string, v: Value): Env {
@@ -3870,16 +3697,12 @@ function eval_usize_binary(op: string, a: u64, b: u64): Value {
 }
 
 function usize_bitwise(op: string, a: u64, b: u64): Value {
-  if (op == "&") {
-    return v_usize((a & b) as i64);
-  }
-  if (op == "|") {
-    return v_usize((a | b) as i64);
-  }
-  if (op == "^") {
-    return v_usize((a ^ b) as i64);
-  }
-  return usize_compare(op, a, b);
+  return match (op) {
+    "&" => v_usize((a & b) as i64),
+    "|" => v_usize((a | b) as i64),
+    "^" => v_usize((a ^ b) as i64),
+    _ => usize_compare(op, a, b),
+  };
 }
 
 function usize_divide(quotient: boolean, a: u64, b: u64): Value {
@@ -3896,38 +3719,24 @@ function usize_divide(quotient: boolean, a: u64, b: u64): Value {
 }
 
 function usize_compare(op: string, a: u64, b: u64): Value {
-  if (op == "==") {
-    return v_bool(a == b);
-  }
-  if (op == "!=") {
-    return v_bool(a != b);
-  }
-  if (op == "<") {
-    return v_bool(a < b);
-  }
-  if (op == "<=") {
-    return v_bool(a <= b);
-  }
-  if (op == ">") {
-    return v_bool(a > b);
-  }
-  if (op == ">=") {
-    return v_bool(a >= b);
-  }
-  return v_err("operator `" + op + "` is not defined on usize");
+  return match (op) {
+    "==" => v_bool(a == b),
+    "!=" => v_bool(a != b),
+    "<" => v_bool(a < b),
+    "<=" => v_bool(a <= b),
+    ">" => v_bool(a > b),
+    ">=" => v_bool(a >= b),
+    _ => v_err("operator `" + op + "` is not defined on usize"),
+  };
 }
 
 function strings_ordered(op: string, a: string, b: string): boolean {
-  if (op == "<") {
-    return a < b;
-  }
-  if (op == "<=") {
-    return a <= b;
-  }
-  if (op == ">") {
-    return a > b;
-  }
-  return a >= b;
+  return match (op) {
+    "<" => a < b,
+    "<=" => a <= b,
+    ">" => a > b,
+    _ => a >= b,
+  };
 }
 
 function is_checked_op(op: string): boolean {
@@ -4392,16 +4201,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VFloat(lf) => {
         match (rv) {
           VFloat(rf) => {
-            if (op == "-") {
-              return v_float(lf.v - rf.v);
-            }
-            if (op == "*") {
-              return v_float(lf.v * rf.v);
-            }
-            if (op == "/") {
-              return v_float(lf.v / rf.v);
-            }
-            return v_err("`%` on f64 is unsupported");
+            return match (op) {
+              "-" => v_float(lf.v - rf.v),
+              "*" => v_float(lf.v * rf.v),
+              "/" => v_float(lf.v / rf.v),
+              _ => v_err("`%` on f64 is unsupported"),
+            };
           },
           _ => {
             return v_err("arithmetic rhs not f64");
@@ -4418,16 +4223,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VInt(li) => {
         match (rv) {
           VInt(ri) => {
-            if (op == "<") {
-              return v_bool(li.v < ri.v);
-            }
-            if (op == "<=") {
-              return v_bool(li.v <= ri.v);
-            }
-            if (op == ">") {
-              return v_bool(li.v > ri.v);
-            }
-            return v_bool(li.v >= ri.v);
+            return match (op) {
+              "<" => v_bool(li.v < ri.v),
+              "<=" => v_bool(li.v <= ri.v),
+              ">" => v_bool(li.v > ri.v),
+              _ => v_bool(li.v >= ri.v),
+            };
           },
           _ => {
             return v_err("comparison rhs not i32");
@@ -4437,16 +4238,12 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VFloat(lf) => {
         match (rv) {
           VFloat(rf) => {
-            if (op == "<") {
-              return v_bool(lf.v < rf.v);
-            }
-            if (op == "<=") {
-              return v_bool(lf.v <= rf.v);
-            }
-            if (op == ">") {
-              return v_bool(lf.v > rf.v);
-            }
-            return v_bool(lf.v >= rf.v);
+            return match (op) {
+              "<" => v_bool(lf.v < rf.v),
+              "<=" => v_bool(lf.v <= rf.v),
+              ">" => v_bool(lf.v > rf.v),
+              _ => v_bool(lf.v >= rf.v),
+            };
           },
           _ => {
             return v_err("comparison rhs not f64");
@@ -4496,19 +4293,13 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       VInt(li) => {
         match (rv) {
           VInt(ri) => {
-            if (op == "&") {
-              return v_int(li.v & ri.v);
-            }
-            if (op == "|") {
-              return v_int(li.v | ri.v);
-            }
-            if (op == "^") {
-              return v_int(li.v ^ ri.v);
-            }
-            if (op == "<<") {
-              return v_int(li.v << ri.v);
-            }
-            return v_int(li.v >> ri.v);
+            return match (op) {
+              "&" => v_int(li.v & ri.v),
+              "|" => v_int(li.v | ri.v),
+              "^" => v_int(li.v ^ ri.v),
+              "<<" => v_int(li.v << ri.v),
+              _ => v_int(li.v >> ri.v),
+            };
           },
           _ => {
             return v_err("bitwise rhs not i32");
@@ -4768,7 +4559,7 @@ function eval_unary(op: string, ov: Value): Value {
     return v_variant("None", none);
   }
   if (is_as_opt) {
-    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()) + "")) {
+    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
       return v_variant("Some", [ov]);
     }
     let none: Value[] = [];
@@ -4847,21 +4638,19 @@ function eval_int_literal(t: string): Value {
 function resolve_ident_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
-    let ci = 0;
-    while (ci < env.funcs.len()) {
-      if (env.funcs[ci].name == name && env.funcs[ci].receiver_type.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
+    for ci in env.funcs.named(name) {
+      let cfd = env.funcs.decls[ci];
+      if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
         let no_args: Value[] = [];
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
-      ci += 1;
     }
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
-    let vfi = 0;
-    while (vfi < env.funcs.len()) {
-      let vfd = env.funcs[vfi];
+    for vfi in env.funcs.named(name) {
+      let vfd = env.funcs.decls[vfi];
       if (vfd.name == name && vfd.receiver_type.len() == 0) {
         let no_names: string[] = [];
         let no_values: Value[] = [];
@@ -4880,7 +4669,6 @@ function resolve_ident_value(name: string, env: Env): Value {
           generic_name: generic_name,
         };
       }
-      vfi += 1;
     }
   }
   return idv;
@@ -4975,22 +4763,14 @@ function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
 function struct_op_method(op: string, lv: Value): string {
   match (lv) {
     VStruct(_) => {
-      if (op == "+") {
-        return "add";
-      }
-      if (op == "-") {
-        return "sub";
-      }
-      if (op == "*") {
-        return "mul";
-      }
-      if (op == "/") {
-        return "div";
-      }
-      if (op == "%") {
-        return "rem";
-      }
-      return bit_op_method(op);
+      return match (op) {
+        "+" => "add",
+        "-" => "sub",
+        "*" => "mul",
+        "/" => "div",
+        "%" => "rem",
+        _ => bit_op_method(op),
+      };
     },
     _ => {
       return "";
@@ -4999,22 +4779,14 @@ function struct_op_method(op: string, lv: Value): string {
 }
 
 function bit_op_method(op: string): string {
-  if (op == "&") {
-    return "bitand";
-  }
-  if (op == "|") {
-    return "bitor";
-  }
-  if (op == "^") {
-    return "bitxor";
-  }
-  if (op == "<<") {
-    return "shl";
-  }
-  if (op == ">>") {
-    return "shr";
-  }
-  return "";
+  return match (op) {
+    "&" => "bitand",
+    "|" => "bitor",
+    "^" => "bitxor",
+    "<<" => "shl",
+    ">>" => "shr",
+    _ => "",
+  };
 }
 
 function eval_expr(e: ast.Expr, env: Env): Value {
@@ -5065,14 +4837,12 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     },
     ast.ExprArray(a) => {
       let elems: Value[] = [];
-      let i = 0;
-      while (i < a.elements.len()) {
+      for i in 0..a.elements.len() {
         let ev = eval_expr(a.elements[i], env);
         if (is_err(ev)) {
           return ev;
         }
         elems = elems.append(ev);
-        i += 1;
       }
       return v_arr(env.heap, elems);
     },
@@ -5174,15 +4944,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       match (fa.obj) {
         ast.ExprIdent(ns_id) => {
           let qname = ns_id.name + "." + fa.field;
-          let qi = 0;
-          let qfound = false;
-          while (qi < env.funcs.len()) {
-            if (env.funcs[qi].name == qname && env.funcs[qi].receiver_type.len() == 0) {
-              qfound = true;
-            }
-            qi += 1;
-          }
-          if (qfound) {
+          if (user_func_exists(qname, env.funcs)) {
             name = qname;
             qualified_handled = true;
           }
@@ -5250,14 +5012,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   let targs = bound_type_args(c.type_args, env);
   let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
   let arg_vals: Value[] = [];
-  let i = 0;
-  while (i < c.args.len()) {
+  for i in 0..c.args.len() {
     let av = eval_pinned_arg(c, i, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
     arg_vals = arg_vals.append(av);
-    i += 1;
   }
   if (is_variant) {
     return v_variant_of(variant_enum, variant_name, arg_vals);
@@ -5335,7 +5095,7 @@ function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: bo
 }
 
 function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_own: false, ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   if (is_closure) {
     return (none, false);
   }
@@ -5348,7 +5108,7 @@ function call_target(name: string, is_method: boolean, is_closure: boolean, recv
   if (idx < 0) {
     return (none, false);
   }
-  return (env.funcs[idx], true);
+  return (env.funcs.decls[idx], true);
 }
 
 function method_target_index(name: string, recv: Value, env: Env): i32 {
@@ -5356,25 +5116,21 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
     return assoc_index(env.funcs, tv.name, name);
   }
   let rt = value_type_name(recv);
-  let i = 0;
-  while (i < env.funcs.len()) {
-    let fd = env.funcs[i];
+  for at in env.funcs.named(name) {
+    let fd = env.funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
-      return i;
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
 
 function free_target_index(name: string, env: Env): i32 {
-  let i = 0;
-  while (i < env.funcs.len()) {
-    let fd = env.funcs[i];
+  for at in env.funcs.named(name) {
+    let fd = env.funcs.decls[at];
     if (fd.name == name && fd.receiver_name.len() == 0 && fd.receiver_type.len() == 0) {
-      return i;
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
@@ -5530,27 +5286,23 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
       VStruct(sv) => {
         let bnames = sv.field_names;
         let bvals = sv.field_values;
-        let oi = 0;
-        while (oi < sl.field_values.len()) {
+        for oi in 0..sl.field_values.len() {
           let oname = sl.field_names[oi];
           let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
           if (is_err(ov2)) {
             return ov2;
           }
           let replaced = false;
-          let bi = 0;
-          while (bi < bnames.len()) {
+          for bi in 0..bnames.len() {
             if (bnames[bi] == oname) {
               bvals = bvals.with(bi, ov2);
               replaced = true;
             }
-            bi += 1;
           }
           if (!replaced) {
             bnames = bnames.append(oname);
             bvals = bvals.append(ov2);
           }
-          oi += 1;
         }
         return v_struct_at(sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
       },
@@ -5560,14 +5312,12 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     }
   }
   let fvs: Value[] = [];
-  let i = 0;
-  while (i < sl.field_values.len()) {
+  for i in 0..sl.field_values.len() {
     let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
     if (is_err(fv)) {
       return fv;
     }
     fvs = fvs.append(fv);
-    i += 1;
   }
   return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
 }
@@ -5644,12 +5394,10 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
   }
   match (ov) {
     VStruct(sv) => {
-      let i = 0;
-      while (i < sv.field_names.len()) {
+      for i in 0..sv.field_names.len() {
         if (sv.field_names[i] == fa.field) {
           return sv.field_values[i];
         }
-        i += 1;
       }
       return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
     },
@@ -5684,8 +5432,7 @@ function socket_field(ov: Value, field: string): Value {
 }
 
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
-  let i = 0;
-  while (i < aliases.len()) {
+  for i in 0..aliases.len() {
     if (aliases[i].name == union_name) {
       let j = 0;
       while (j < aliases[i].variants.len()) {
@@ -5696,7 +5443,6 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
       }
       return false;
     }
-    i += 1;
   }
   return false;
 }
@@ -5741,8 +5487,7 @@ function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
 function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out = aliases;
   let base = aliases.len();
-  let i = 0;
-  while (i < types.len()) {
+  for i in 0..types.len() {
     let owner = types[i].enum_owner;
     if (owner.len() > 0) {
       let k = base;
@@ -5755,16 +5500,15 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
     }
-    i += 1;
   }
   return out;
 }
 
-function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_closure_mode(heap, cv, args, funcs, aliases, type_decls, false);
 }
 
-function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
+function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
   let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5781,17 +5525,16 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     return v_err("arity mismatch calling closure");
   }
   let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", heap: heap };
-  let j = 0;
-  while (j < fv.params.len()) {
+  for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
-    j += 1;
   }
+  // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
     let before_tail: ast.Stmt[] = [];
     for i in 0..fv.body.len() - 1 {
       before_tail = before_tail.append(fv.body[i]);
     }
-    let leading = eval_block(before_tail, env);
+    let leading = eval_block(before_tail, unsafe { share_unchecked(env) });
     if (leading.sig != 0) {
       if (leading.sig == 1 && is_err(leading.ret)) {
         return leading.ret;
@@ -5801,21 +5544,20 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     let tail = eval_stmt(fv.body[fv.body.len() - 1], leading.env);
     return coerce_int_width(tail.ret, fv.ret_type);
   }
-  let step = eval_block(fv.body, env);
+  let step = eval_block(fv.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
   return coerce_int_width(unwrap_try(step.ret), fv.ret_type);
 }
 
-function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string): i32 {
+function assoc_index(funcs: Funcs, type_name: string, name: string): i32 {
   let base = util.base_type_name(type_name);
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && util.base_type_name(funcs[i].receiver_type) == base) {
-      return i;
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_name.len() == 0 && util.base_type_name(fd.receiver_type) == base) {
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
@@ -5855,12 +5597,12 @@ function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[
   return none;
 }
 
-function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let ai = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
   }
-  let fd = funcs[ai];
+  let fd = funcs.decls[ai];
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
@@ -5875,12 +5617,10 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
     t += 1;
   }
-  let j = 0;
-  while (j < fd.params.len()) {
+  for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-    j += 1;
   }
-  let step = eval_block(fd.body, Env { ...env });
+  let step = eval_block(fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -5918,13 +5658,11 @@ function tyarg_of_value(v: Value): string {
         return sv.type_name;
       }
       let name = util.base_type_name(sv.type_name) + "[";
-      let i = 0;
-      while (i < sv.targs.len()) {
+      for i in 0..sv.targs.len() {
         if (i > 0) {
           name += ", ";
         }
         name += sv.targs[i];
-        i += 1;
       }
       return name + "]";
     },
@@ -5946,13 +5684,11 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
     return "";
   }
-  let i = 0;
-  while (i < dref.args.len()) {
+  for i in 0..dref.args.len() {
     let r = tyarg_match_names(parser.render_type_ref(dref.args[i]), tp, parser.render_type_ref(aref.args[i]));
     if (r.len() > 0) {
       return r;
     }
-    i += 1;
   }
   return "";
 }
@@ -6104,8 +5840,9 @@ function runtime_method_name(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
-  for fd in funcs {
+function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
       return true;
     }
@@ -6130,12 +5867,12 @@ function runtime_receiver_name(spelling: string): string {
   return util.base_type_name(spelling);
 }
 
-function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: parser.FuncDecl[]): string {
+function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: Funcs): string {
   let traits = parser.dyn_trait_set(decl_ty);
   if (traits.len() == 0) {
     return name;
   }
-  return parser.dyn_provider_name(funcs, dispatch_type_name(recv), traits, name);
+  return parser.dyn_provider_name(funcs.decls, dispatch_type_name(recv), traits, name);
 }
 
 function dispatch_type_name(v: Value): string {
@@ -6150,10 +5887,9 @@ function dispatch_type_name(v: Value): string {
   return value_type_name(v);
 }
 
-function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
+function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq = has_key_eq(k, funcs, aliases);
-  let i = 0;
-  while (i < m.keys.len()) {
+  for i in 0..m.keys.len() {
     if (by_eq) {
       if let VBool(b) = call_method(heap, m.keys[i], "eq", [k], funcs, aliases, type_decls) {
         if (b.v) {
@@ -6163,16 +5899,16 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.F
     } else if (value_eq(m.keys[i], k)) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 // `==` on a struct or an enum value calls an `eq` method of its type, as
 // the compiled code does, whether an impl declares it or the type itself.
-function has_eq_method(v: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+function has_eq_method(v: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = v {
-    for fd in funcs {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && (base == sv.type_name || variant_of_enum(v, base, aliases))) {
         return true;
@@ -6182,9 +5918,10 @@ function has_eq_method(v: Value, funcs: parser.FuncDecl[], aliases: parser.TypeA
   return false;
 }
 
-function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+function has_key_eq(k: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = k {
-    for fd in funcs {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || variant_of_enum(k, base, aliases))) {
         return true;
@@ -6194,7 +5931,7 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_method_targs(heap, recv, "", name, args, [], funcs, aliases, type_decls);
 }
 
@@ -6211,10 +5948,8 @@ function string_method(heap: interpheap.Heap, sv: VString, name: string, args: V
       return Some(v_err("string." + name + ": takes no arguments"));
     }
     let bs: Value[] = [];
-    let bi = 0;
-    while (bi < sv.v.len()) {
+    for bi in 0..sv.v.len() {
       bs = bs.append(v_byte(sv.v[bi] as i32));
-      bi += 1;
     }
     if (name == "as_bytes") {
       return Some(v_view_of(heap, bs, "u8"));
@@ -6327,7 +6062,7 @@ function reserved_concat(heap: interpheap.Heap, av: VArr, args: Value[]): Option
   return None;
 }
 
-function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
       return call_assoc(heap, tv.name, name, args, funcs, aliases, type_decls);
@@ -6362,14 +6097,12 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let i = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (i >= 0) {
           let nvs: Value[] = [];
-          let j = 0;
-          while (j < m.values.len()) {
+          for j in 0..m.values.len() {
             if (j == i) {
               nvs = nvs.append(args[1]);
             } else {
               nvs = nvs.append(m.values[j]);
             }
-            j += 1;
           }
           return VMap { keys: m.keys, values: nvs };
         }
@@ -6410,8 +6143,7 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let last = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
-        let di = 0;
-        while (di < m.keys.len()) {
+        for di in 0..m.keys.len() {
           if (di == at && at != last) {
             nk = nk.append(m.keys[last]);
             nv = nv.append(m.values[last]);
@@ -6419,7 +6151,6 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
             nk = nk.append(m.keys[di]);
             nv = nv.append(m.values[di]);
           }
-          di += 1;
         }
         return v_map(nk, nv);
       }
@@ -6455,15 +6186,14 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
   return call_declared_method(heap, recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
-function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   let own_method = has_receiver_method(funcs, recv_type, name);
-  let i = 0;
-  while (i < funcs.len()) {
-    let fd = funcs[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     let receiver_base = runtime_receiver_name(fd.receiver_type);
     let rt_match = receiver_base == recv_type;
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
@@ -6480,10 +6210,8 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -6491,7 +6219,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   if (name == "to_string" && args.len() == 0) {
     match (recv) {
@@ -6521,8 +6248,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   }
   match (recv) {
     VStruct(sv2) => {
-      let fi = 0;
-      while (fi < sv2.field_names.len()) {
+      for fi in 0..sv2.field_names.len() {
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
@@ -6531,7 +6257,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
             _ => {}
           }
         }
-        fi += 1;
       }
     },
     VBool(bv) => {
@@ -6679,10 +6404,8 @@ function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_into: range out of bounds");
   }
   let out = bs[0];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(at + i, bs[1][from + i]);
-    i += 1;
   }
   return written_bytes(heap, args[0], out);
 }
@@ -6698,10 +6421,8 @@ function call_bytes_range(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_range: range out of bounds");
   }
   let out: u8[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(bs[0][i]);
-    i += 1;
   }
   return byte_value(heap, out);
 }
@@ -6793,28 +6514,24 @@ function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value
 
 function crc32_cksum_byte(crc: i32, b: i32): i32 {
   crc = crc ^ b << 24;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if (crc < 0) {
       crc = crc << 1 ^ 0x04c11db7;
     } else {
       crc = crc << 1;
     }
-    k += 1;
   }
   return crc;
 }
 
 function crc32_ieee_byte(crc: i32, b: i32): i32 {
   let c = (crc ^ b) as u32;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if ((c & 1) != 0) {
       c = c >> 1 ^ 0xedb88320;
     } else {
       c = c >> 1;
     }
-    k += 1;
   }
   return c as i32;
 }
@@ -6887,13 +6604,10 @@ function inner_mul_values(heap: interpheap.Heap, a: Value[], b: Value[], rows: i
 
 function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
   let out: Value[] = [];
-  let row = 0;
-  while (row < rows) {
-    let col = 0;
-    while (col < columns) {
+  for row in 0..rows {
+    for col in 0..columns {
       let acc = init;
-      let at = 0;
-      while (at < extent) {
+      for at in 0..extent {
         if let VFloat(x) = a[row * extent + at] {
           if let VFloat(y) = b[at * columns + col] {
             let product = x.v * y.v;
@@ -6904,12 +6618,9 @@ function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32
         } else {
           return v_err("__inner_mul_add_f64: elements must be f64");
         }
-        at += 1;
       }
       out = out.append(v_float(acc));
-      col += 1;
     }
-    row += 1;
   }
   return v_arr_of(heap, out, "f64");
 }
@@ -7070,12 +6781,10 @@ function call_mismatch_bytes(args: Value[]): Value {
         room = arr_len(b) - bo;
       }
       let n = clamp_offset(vint_bits(args[4]), room);
-      let i = 0;
-      while (i < n) {
+      for i in 0..n {
         if (vint_bits(arr_at(a, ao + i)) != vint_bits(arr_at(b, bo + i))) {
           return v_int(i);
         }
-        i += 1;
       }
       return v_int(n);
     }
@@ -7108,12 +6817,10 @@ function call_mismatch_bytes_str(args: Value[]): Value {
     if (n < 0) {
       n = 0;
     }
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       if (vint_bits(arr_at(a, ao + i)) != b[bo + i] as i32) {
         return v_int(i);
       }
-      i += 1;
     }
     return v_int(n);
   }
@@ -7352,10 +7059,8 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
         return v_err(name + ": expected string arg");
       }
       let s = vstr_of(args[1]);
-      let i = 0;
-      while (i < s.len()) {
+      for i in 0..s.len() {
         push_table_byte(name, h, s[i] as i32, table);
-        i += 1;
       }
       return v_void();
     },
@@ -7375,10 +7080,8 @@ function push_table_byte(name: string, h: usize, c: i32, table: Value[]): void {
     if (n > 7) {
       n = 7;
     }
-    let k = 1;
-    while (k <= n) {
+    for k in 1..=n {
       buf_push_byte(h, vint_bits(table[c * 8 + k]) & 255);
-      k += 1;
     }
     return;
   }
@@ -7414,10 +7117,8 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
       return v_err("buf_push_u64: expected number");
     }
     let w = vint_as_i64(args[1]);
-    let k = 0;
-    while (k < 8) {
+    for k in 0..8 {
       buf_push_byte(h, (w >> (k * 8) as i64) as i32 & 255);
-      k += 1;
     }
     return v_void();
   }
@@ -7502,13 +7203,11 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
     return v_err(name + ": expected " + util.i32_to_string(want) + " args");
   }
   let w: i64[] = [];
-  let k = 0;
-  while (k < want) {
+  for k in 0..want {
     if (!is_int_like(args[k])) {
       return v_err(name + ": arg " + util.i32_to_string(k + 1) + " must be an integer");
     }
     w = w.append(vint_as_i64(args[k]));
-    k += 1;
   }
   if (name == "__ptr_width") {
     return v_int((ptr_bits() / 8i64) as i32);
@@ -7556,16 +7255,12 @@ function raw_mmio(name: string, w: i64[]): Value {
   let p = w[0] as usize;
   unsafe {
     if (!builtinsigs.access_store(name)) {
-      if (bits == 8) {
-        return v_int(__load_u8(p));
-      }
-      if (bits == 16) {
-        return v_int(__load_u8(p) | __load_u8(p + 1) << 8);
-      }
-      if (bits == 32) {
-        return v_int(__load_i32(p));
-      }
-      return v_int64(__load_i64(p));
+      return match (bits) {
+        8 => v_int(__load_u8(p)),
+        16 => v_int(__load_u8(p) | __load_u8(p + 1) << 8),
+        32 => v_int(__load_i32(p)),
+        _ => v_int64(__load_i64(p)),
+      };
     }
     if (bits == 8) {
       __store_u8(p, w[1] as i32 & 255);
@@ -7583,16 +7278,12 @@ function raw_mmio(name: string, w: i64[]): Value {
 
 function raw_mem_load(name: string, p: usize): Value {
   unsafe {
-    if (name == "__load_u8") {
-      return v_int(__load_u8(p));
-    }
-    if (name == "__load_i32") {
-      return v_int(__load_i32(p));
-    }
-    if (name == "__load_i64") {
-      return v_int64(__load_i64(p));
-    }
-    return v_usize(__load_ptr(p) as i64);
+    return match (name) {
+      "__load_u8" => v_int(__load_u8(p)),
+      "__load_i32" => v_int(__load_i32(p)),
+      "__load_i64" => v_int64(__load_i64(p)),
+      _ => v_usize(__load_ptr(p) as i64),
+    };
   }
 }
 
@@ -7687,11 +7378,11 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_func_targs(heap, name, args, [], "", funcs, aliases, type_decls);
 }
 
-function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
@@ -7768,10 +7459,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       zero = v_bool(false);
     }
     let zs: Value[] = [];
-    let zi = 0;
-    while (zi < an) {
+    for zi in 0..an {
       zs = zs.append(zero);
-      zi += 1;
     }
     return v_arr(heap, zs);
   }
@@ -7876,22 +7565,14 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       return v_err(name + ": arg must be an integer");
     }
     let bits = vint_as_i64(args[0]) as u64;
-    if (name == "__clz32") {
-      return v_int(__clz32(bits as u32));
-    }
-    if (name == "__ctz32") {
-      return v_int(__ctz32(bits as u32));
-    }
-    if (name == "__popcount32") {
-      return v_int(__popcount32(bits as u32));
-    }
-    if (name == "__clz64") {
-      return v_int(__clz64(bits));
-    }
-    if (name == "__ctz64") {
-      return v_int(__ctz64(bits));
-    }
-    return v_int(__popcount64(bits));
+    return match (name) {
+      "__clz32" => v_int(__clz32(bits as u32)),
+      "__ctz32" => v_int(__ctz32(bits as u32)),
+      "__popcount32" => v_int(__popcount32(bits as u32)),
+      "__clz64" => v_int(__clz64(bits)),
+      "__ctz64" => v_int(__ctz64(bits)),
+      _ => v_int(__popcount64(bits)),
+    };
   }
   if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
     || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
@@ -8002,11 +7683,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     let bs = vstr_of(args[0]);
     let sum = vint_bits(args[1]) & 65535;
-    let bi = 0;
-    while (bi < bs.len()) {
+    for bi in 0..bs.len() {
       sum = (sum >> 1 | sum << 15) & 65535;
       sum = sum + bs[bi] as i32 & 65535;
-      bi += 1;
     }
     return v_int(sum);
   }
@@ -8176,10 +7855,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     match (args[1]) {
       VString(s) => {
         let crc = vint_bits(args[0]);
-        let ci = 0;
-        while (ci < s.v.len()) {
+        for ci in 0..s.v.len() {
           crc = crc32_cksum_byte(crc, s.v[ci] as i32);
-          ci += 1;
         }
         return v_int(crc);
       },
@@ -8212,12 +7889,10 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     if (mn < 0) {
       mn = 0;
     }
-    let mk = 0;
-    while (mk < mn) {
+    for mk in 0..mn {
       if (ma[mao + mk] != mb[mbo + mk]) {
         return v_int(mk);
       }
-      mk += 1;
     }
     return v_int(mn);
   }
@@ -8292,20 +7967,17 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
   }
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
-      let fd = funcs[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
       let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -8313,7 +7985,6 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   return call_host(heap, name, args);
 }
@@ -8452,12 +8123,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (asv.field_values.len() != bsv.field_values.len()) {
             return false;
           }
-          let si = 0;
-          while (si < asv.field_values.len()) {
+          for si in 0..asv.field_values.len() {
             if (!value_eq(asv.field_values[si], bsv.field_values[si])) {
               return false;
             }
-            si += 1;
           }
           return true;
         },
@@ -8472,12 +8141,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (at.elements.len() != bt.elements.len()) {
             return false;
           }
-          let ti = 0;
-          while (ti < at.elements.len()) {
+          for ti in 0..at.elements.len() {
             if (!value_eq(at.elements[ti], bt.elements[ti])) {
               return false;
             }
-            ti += 1;
           }
           return true;
         },
@@ -8636,7 +8303,7 @@ function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scr
   let owner = r.base;
   let simple = parser.derive_simple_name(pattern);
   if (simple.len() < pattern.len()) {
-    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
+    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1).to_owned();
   }
   let only: i32 = -1;
   let many = false;
@@ -8671,8 +8338,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
   if (is_err(sv)) {
     return step_stop(env, sv);
   }
-  let i = 0;
-  while (i < m.arms.len()) {
+  for i in 0..m.arms.len() {
     let arm = m.arms[i];
     let matched = false;
     let bind_names: string[] = [];
@@ -8742,10 +8408,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
                 if (pv.binding.len() > 0) {
                   pat_binds = pat_binds.append(pv.binding);
                 }
-                let xi = 0;
-                while (xi < pv.extra_bindings.len()) {
+                for xi in 0..pv.extra_bindings.len() {
                   pat_binds = pat_binds.append(pv.extra_bindings[xi]);
-                  xi += 1;
                 }
                 let pbi = 0;
                 while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
@@ -8772,10 +8436,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
     if (matched) {
       let base = env.depth;
       let bodyEnv = scope_env(Env { ...env }, bind_names.len() > 0 || body_binds(arm.body));
-      let bk = 0;
-      while (bk < bind_names.len()) {
+      for bk in 0..bind_names.len() {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
-        bk += 1;
       }
       let reassigned = body_assign_names(arm.body, []);
       for st in arm.body {
@@ -8789,7 +8451,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       if (arm.has_guard) {
         let gv = eval_expr(arm.guard, bodyEnv);
         if (is_err(gv)) {
-          return step_stop(trim_env(bodyEnv, base), gv);
+          return step_stop(trim_env(unsafe { share_unchecked(bodyEnv) }, base), gv);
         }
         match (gv) {
           VBool(gb) => {
@@ -8801,11 +8463,10 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         }
       }
       if (pass) {
-        let step: StepResult = if (value_form) { eval_value_body(arm.body, Env { ...bodyEnv }, expect) } else { eval_block(arm.body, bodyEnv) };
+        let step: StepResult = if (value_form) { eval_value_body(arm.body, unsafe { share_unchecked(bodyEnv) }, expect) } else { eval_block(arm.body, unsafe { share_unchecked(bodyEnv) }) };
         return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
-    i += 1;
   }
   return step_stop(env, v_err("non-exhaustive match"));
 }
@@ -8828,7 +8489,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let elem_ty = "";
   let iter_ty = env.static_type_of(f.iter);
   if (name_ends_with(iter_ty, "[]")) {
-    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
+    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2).to_owned();
   }
   if (elem_ty.len() == 0) {
     if let VArr(a) = iv {
@@ -8843,7 +8504,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let i = 0;
   while (i < elems.len()) {
     let iter_env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
-    let step = eval_block(f.body, Env { ...iter_env });
+    let step = eval_block(f.body, unsafe { share_unchecked(iter_env) });
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
@@ -9041,19 +8702,17 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
   let heap = env.heap;
   let released = env.update(a.target, v_int(0));
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
-    let Some(out) = array_method(heap, VArr { ...av }, names[i], args[i]) else {
+    let Some(out) = array_method(heap, unsafe { share_unchecked(VArr { ...av }) }, names[i], args[i]) else {
       return step_stop(released, v_err("in-place write: not an array method"));
     };
     if (is_err(out)) {
       return step_stop(released, out);
     }
     cur = out;
-    i += 1;
   }
   return step_none(released.update(a.target, cur));
 }
@@ -9071,10 +8730,8 @@ function for_elements(iv: Value): Option[Value[]] {
       return Some(elems);
     },
     VMap(m) => {
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         elems = elems.append(v_tuple([m.keys[i], m.values[i]]));
-        i += 1;
       }
       return Some(elems);
     },
@@ -9104,13 +8761,14 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
     subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base = env.depth;
-  let step = eval_stmt(parser.iterator_loop(f, subject, 0), Env { ...scope_env(env, true).bind("$for_subject", iv) });
+  let step = eval_stmt(parser.iterator_loop(f, subject, 0), unsafe { share_unchecked(scope_env(env, true).bind("$for_subject", iv)) });
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
-function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
+function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
   let rt = value_type_name(recv);
-  for fd in funcs {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return true;
     }
@@ -9135,7 +8793,7 @@ function scope_env(own e: Env, needed: boolean): Env {
   if (!needed) {
     return e;
   }
-  return Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] };
+  return unsafe { share_unchecked(Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] }) };
 }
 
 function trim_env(own e: Env, base: i32): Env {
@@ -9186,15 +8844,13 @@ function flattened_env(e: Env): Env {
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
   let reassigned = body_assign_names(body, []);
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     cur = cellify_captures(cur, body[i], reassigned);
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
     }
-    i += 1;
   }
   return step_none(cur);
 }
@@ -9233,25 +8889,20 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let mod = lowered(raw_mod);
   let all_variants = module_type_decls(mod.structs);
   let all_aliases = aliases_with_enums(mod.aliases, all_variants, mod.enums);
-  let i = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
-      let empty_args: Value[] = [];
-      return call_func(heap, "main", empty_args, mod.funcs, all_aliases, all_variants);
-    }
-    i += 1;
+  let funcs = funcs_of(mod.funcs);
+  if (funcs.named("main").len() > 0) {
+    let empty_args: Value[] = [];
+    return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
-  let env = new_module_env(heap, mod.funcs, all_aliases, all_variants);
+  let env = new_module_env(heap, funcs, all_aliases, all_variants);
   let mreassigned = body_assign_names(mod.top_stmts, []);
-  let j = 0;
-  while (j < mod.top_stmts.len()) {
+  for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    let r = eval_stmt(mod.top_stmts[j], env);
+    let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
     }
-    j += 1;
   }
   return v_err("module has no `main` and no top-level `return`");
 }
@@ -9261,7 +8912,7 @@ pub struct Session { decls: parser.Module, env: Env }
 pub function new_session(): Session {
   let heap = interpheap.create();
   set_args(["-"]);
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, [], [], module_type_decls([])) };
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, funcs_of([]), [], module_type_decls([])) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -9295,7 +8946,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod = lowered(decls);
   let types = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: funcs_of(mod.funcs), aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {
@@ -9315,8 +8966,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     }
   }
   let env = s.env;
-  let k = 0;
-  while (k < body.len()) {
+  for k in 0..body.len() {
     if (k == body.len() - 1) {
       match (body[k]) {
         ast.StmtExpr(x) => {
@@ -9331,7 +8981,6 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
     }
-    k += 1;
   }
   return (Session { ...s, env: session_env(env) }, false, v_void());
 }
@@ -9419,13 +9068,11 @@ function value_text(v: Value): string {
     },
     VMap(m) => {
       let out = "";
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         if (i > 0) {
           out += ", ";
         }
         out = out + value_text(m.keys[i]) + ": " + value_text(m.values[i]);
-        i += 1;
       }
       return "Map { " + out + " }";
     },
@@ -9451,15 +9098,13 @@ function values_text(vs: Value[]): string {
 function struct_text(sv: VStruct): string {
   let fields = "";
   let payloads = "";
-  let i = 0;
-  while (i < sv.field_names.len()) {
+  for i in 0..sv.field_names.len() {
     if (i > 0) {
       fields += ", ";
       payloads += ", ";
     }
     fields = fields + sv.field_names[i] + ": " + value_text(sv.field_values[i]);
     payloads += value_text(sv.field_values[i]);
-    i += 1;
   }
   if (sv.field_names.len() == 0) {
     return sv.type_name;

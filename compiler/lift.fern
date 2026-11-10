@@ -10,6 +10,7 @@ import "./callsubst";
 import "./capturebox";
 import "./captureflow";
 import "./irtables";
+import "std/string";
 
 function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
   return decltypes.fn_param_decl(name, tys, ret);
@@ -17,14 +18,12 @@ function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl 
 
 pub function fn_param_from_func(name: string, f: parser.FuncDecl, skip: i32): ast.ParamDecl {
   let tys: string[] = [];
-  let i = skip;
-  while (i < f.params.len()) {
+  for i in skip..f.params.len() {
     let ty = nested_fn_spelling(f.params[i].type_name, f.params[i].fn_ret, f.params[i].fn_param_types);
     if (f.params[i].own) {
       ty = "own " + ty;
     }
     tys = tys.append(ty);
-    i += 1;
   }
   return fn_param_decl(name, tys, nested_fn_spelling(f.ret_type, f.ret_fn_ret, f.ret_fn_param_types));
 }
@@ -51,7 +50,7 @@ function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string
           if (mkid.name.len() <= 8 || slice_unchecked(mkid.name, 0, 8) != "__mkclo$") {
             return "";
           }
-          let tgt = slice_unchecked(mkid.name, 8, mkid.name.len()) + "";
+          let tgt = slice_unchecked(mkid.name, 8, mkid.name.len()).to_owned();
           for fn in funcs {
             if (fn.name == tgt) {
               let p = fn_param_from_func(v.name, fn, 1);
@@ -85,8 +84,7 @@ function stamp_fn_local_types(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
 
 function stamp_fn_local_types_stmts(body: ast.Stmt[], funcs: parser.FuncDecl[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     match (body[i]) {
       ast.StmtVar(v) => {
         let sp = fn_local_spelling_for(v, funcs);
@@ -116,7 +114,6 @@ function stamp_fn_local_types_stmts(body: ast.Stmt[], funcs: parser.FuncDecl[]):
         out = out.append(body[i]);
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -137,7 +134,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       if (irtables.lambda_has_no_captures(lam, gfns)) {
         let nm = "__lam_" + util.i32_to_string(acc.counter);
         let tp: string[] = [];
-        let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+        let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: tp, params: lam.params, ret_own: lam.ret_own, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
         let nacc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
         return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "", builtin: false }, acc: nacc };
       }
@@ -182,7 +179,7 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
     capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "", builtin: false });
   }
   let nm = "__lam_" + util.i32_to_string(acc.counter);
-  let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: params, ret_own: lam.ret_own, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   let a = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
   let nargs: ast.Expr[] = [];
   for arg in c.args {
@@ -199,16 +196,12 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
 function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns: string[]): LiftExpr {
   let ba = acc;
   let nb: ast.Stmt[] = [];
-  let bi = 0;
-  while (bi < lam.body.len()) {
+  for bi in 0..lam.body.len() {
     let br = lift_stmt(lam.body[bi], ba, gfns);
     ba = br.acc;
-    let bj = 0;
-    while (bj < br.stmts.len()) {
+    for bj in 0..br.stmts.len() {
       nb = nb.append(br.stmts[bj]);
-      bj += 1;
     }
-    bi += 1;
   }
   return LiftExpr { expr: ast.ExprLambda { ...lam, body: nb }, acc: ba };
 }
@@ -238,24 +231,20 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
     ast.ExprTuple(tu) => {
       let ta = acc;
       let nte: ast.Expr[] = [];
-      let ti = 0;
-      while (ti < tu.elements.len()) {
+      for ti in 0..tu.elements.len() {
         let ter = lift_call_arg(tu.elements[ti], ta, gfns);
         ta = ter.acc;
         nte = nte.append(ter.expr);
-        ti += 1;
       }
       return LiftExpr { expr: ast.ExprTuple { elements: nte, line: tu.line, col: tu.col }, acc: ta };
     },
     ast.ExprArray(arr) => {
       let aa = acc;
       let nelems: ast.Expr[] = [];
-      let ei = 0;
-      while (ei < arr.elements.len()) {
+      for ei in 0..arr.elements.len() {
         let er = lift_call_arg(arr.elements[ei], aa, gfns);
         aa = er.acc;
         nelems = nelems.append(er.expr);
-        ei += 1;
       }
       return LiftExpr { expr: ast.ExprArray { ...arr, elements: nelems }, acc: aa };
     },
@@ -338,8 +327,7 @@ function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string
 }
 
 function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFuncs): (string, string) {
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     match (body[i]) {
       ast.StmtReturn(r) => {
         let (vr, vp, found) = value_fn_contract(r.value, shadowed, mfuncs);
@@ -358,13 +346,11 @@ function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFun
         }
       },
       ast.StmtMatch(m) => {
-        let a = 0;
-        while (a < m.arms.len()) {
+        for a in 0..m.arms.len() {
           let (mr, mp) = returned_fn_contract(m.arms[a].body, shadowed, mfuncs);
           if (mr.len() > 0) {
             return (mr, mp);
           }
-          a += 1;
         }
       },
       ast.StmtWhile(w) => {
@@ -381,7 +367,6 @@ function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFun
       },
       _ => {}
     }
-    i += 1;
   }
   return ("", "");
 }
@@ -421,8 +406,7 @@ function params_fn_contract(params: ast.ParamDecl[], res: string): (string, stri
     return ("", "");
   }
   let ptys = "";
-  let k = 0;
-  while (k < params.len()) {
+  for k in 0..params.len() {
     let pt = contract_spelling(params[k].type_name, params[k].fn_ret, params[k].fn_param_types);
     if (pt.len() == 0) {
       return ("", "");
@@ -434,7 +418,6 @@ function params_fn_contract(params: ast.ParamDecl[], res: string): (string, stri
       ptys += ",";
     }
     ptys += pt;
-    k += 1;
   }
   return (res, ptys);
 }
@@ -442,8 +425,7 @@ function params_fn_contract(params: ast.ParamDecl[], res: string): (string, stri
 function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): DesugarRet {
   let out: ast.Stmt[] = [];
   let c = counter;
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     match (body[i]) {
       ast.StmtReturn(r) => {
         let islam = false;
@@ -492,7 +474,6 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
         out = out.append(body[i]);
       }
     }
-    i += 1;
   }
   return DesugarRet { body: out, counter: c };
 }
@@ -572,10 +553,8 @@ function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts 
   for stmt in stmts {
     let r = lift_stmt(stmt, a, gfns);
     a = r.acc;
-    let j = 0;
-    while (j < r.stmts.len()) {
+    for j in 0..r.stmts.len() {
       out = out.append(r.stmts[j]);
-      j += 1;
     }
   }
   return LiftStmts { stmts: out, acc: a };
@@ -651,19 +630,15 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     return ClosureLift { body: body, acc: acc, changed: false };
   }
   let lparams: ast.ParamDecl[] = [];
-  let pj = 0;
-  while (pj < lam.params.len()) {
+  for pj in 0..lam.params.len() {
     lparams = lparams.append(lam.params[pj]);
-    pj += 1;
   }
-  let cj = 0;
-  while (cj < caps.len()) {
+  for cj in 0..caps.len() {
     let lcp = lambda_capture_param(lam, caps[cj]);
     if (lcp.type_name.len() == 0) {
       return ClosureLift { body: body, acc: acc, changed: false };
     }
     lparams = lparams.append(ast.ParamDecl { ...lcp, own: false, send: false, has_default: false, default_value: parser.e_unknown("") });
-    cj += 1;
   }
   let lname = prefix + util.i32_to_string(acc.counter);
   let notp: string[] = [];
@@ -671,36 +646,26 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
   if (lam.origin == ast.ORIGIN_NESTED_FN) {
     lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body;
   }
-  let newfn = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: lname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let newfn = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: lname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: lparams, ret_own: lam.ret_own, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   let capargs: ast.Expr[] = [];
-  let ca = 0;
-  while (ca < caps.len()) {
+  for ca in 0..caps.len() {
     capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "", builtin: false });
-    ca += 1;
   }
   let rest: ast.Stmt[] = [];
-  let ri = idx + 1;
-  while (ri < body.len()) {
+  for ri in idx + 1..body.len() {
     rest = rest.append(body[ri]);
-    ri += 1;
   }
   let subst_rest = callsubst.subst_fcall_stmts(rest, fname, lname, capargs, lam.captures);
   let newbody: ast.Stmt[] = [];
-  let ki = 0;
-  while (ki < idx) {
+  for ki in 0..idx {
     newbody = newbody.append(body[ki]);
-    ki += 1;
   }
-  let sj = 0;
-  while (sj < subst_rest.len()) {
+  for sj in 0..subst_rest.len() {
     newbody = newbody.append(subst_rest[sj]);
-    sj += 1;
   }
   let allids: string[] = [];
-  let aj = 0;
-  while (aj < newbody.len()) {
+  for aj in 0..newbody.len() {
     allids = astwalk.collect_idents_stmt(newbody[aj], allids);
-    aj += 1;
   }
   if (util.index_of_str(allids, fname) >= 0) {
     return ClosureLift { body: body, acc: acc, changed: false };
@@ -711,14 +676,12 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
 
 function cl_replace_at(body: ast.Stmt[], at: i32, ns: ast.Stmt): ast.Stmt[] {
   let nb: ast.Stmt[] = [];
-  let k = 0;
-  while (k < body.len()) {
+  for k in 0..body.len() {
     if (k == at) {
       nb = nb.append(ns);
     } else {
       nb = nb.append(body[k]);
     }
-    k += 1;
   }
   return nb;
 }
@@ -726,8 +689,7 @@ function cl_replace_at(body: ast.Stmt[], at: i32, ns: ast.Stmt): ast.Stmt[] {
 function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, prefix: string, acc: LiftAcc, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): ClosureLift {
   let assigns: string[] = [];
   let assigns_done = false;
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     match (body[i]) {
       ast.StmtVar(v) => {
         match (v.init) {
@@ -767,28 +729,23 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, prefix: string,
         }
       },
       ast.StmtMatch(mm) => {
-        let ami = 0;
-        while (ami < mm.arms.len()) {
+        for ami in 0..mm.arms.len() {
           let sm = closure_lift_one(mm.arms[ami].body, fd, prefix, acc, gfns, structs, mfuncs);
           if (sm.changed) {
             let narms: ast.MatchArm[] = [];
-            let q = 0;
-            while (q < mm.arms.len()) {
+            for q in 0..mm.arms.len() {
               if (q == ami) {
                 narms = narms.append(ast.MatchArm { pattern: mm.arms[q].pattern, body: sm.body, line: mm.arms[q].line, col: mm.arms[q].col, guard: mm.arms[q].guard, has_guard: mm.arms[q].has_guard, alt_cont: false });
               } else {
                 narms = narms.append(mm.arms[q]);
               }
-              q += 1;
             }
             return ClosureLift { body: cl_replace_at(body, i, ast.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms }), acc: sm.acc, changed: true };
           }
-          ami += 1;
         }
       },
       _ => {}
     }
-    i += 1;
   }
   return ClosureLift { body: body, acc: acc, changed: false };
 }
@@ -803,8 +760,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     return None;
   }
   let ctys: string[] = [];
-  let ci = 0;
-  while (ci < caps.len()) {
+  for ci in 0..caps.len() {
     let cty = lambda_capture_type(lam, caps[ci]);
     if (!cap_slot_ok(cty)) {
       return None;
@@ -817,28 +773,21 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
       cty = fn_spelling_of(cfp);
     }
     ctys = ctys.append(cty);
-    ci += 1;
   }
   let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
-  let pj = 0;
-  while (pj < lam.params.len()) {
+  for pj in 0..lam.params.len() {
     ps = ps.append(lam.params[pj]);
-    pj += 1;
   }
   let bd: ast.Stmt[] = [];
-  let cj = 0;
-  while (cj < caps.len()) {
+  for cj in 0..caps.len() {
     let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
     bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
-    cj += 1;
   }
-  let bk = 0;
-  while (bk < lam.body.len()) {
+  for bk in 0..lam.body.len() {
     bd = bd.append(lam.body[bk]);
-    bk += 1;
   }
   let notp: string[] = [];
-  let clo = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: cloname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let clo = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: cloname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: lam.ret_own, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   return Some(clo);
 }
 
@@ -854,10 +803,8 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
   let cloname = parser.decl_key(fd) + "$clo" + util.i32_to_string(counter);
   if let Some(clo) = make_clo_func(lam, cloname, fd, gfns, structs, mfuncs) {
     let capargs: ast.Expr[] = [];
-    let ci = 0;
-    while (ci < caps.len()) {
+    for ci in 0..caps.len() {
       capargs = capargs.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "", builtin: false });
-      ci += 1;
     }
     let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + cloname, line: 0, col: 0, ty: "", builtin: false }, args: capargs, line: 0, col: 0, type_args: [], ty: "" };
     return InlineCloRes { expr: marker, funcs: funcs.append(clo), counter: counter + 1 };
@@ -867,27 +814,22 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
   let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
-  let pj = 0;
-  while (pj < lam.params.len()) {
+  for pj in 0..lam.params.len() {
     ps = ps.append(lam.params[pj]);
-    pj += 1;
   }
   let notp: string[] = [];
-  return parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  return parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: lam.ret_own, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
 }
 
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): Option[parser.FuncDecl] {
-  let fi = 0;
-  while (fi < mfuncs.decls.len()) {
+  for fi in 0..mfuncs.decls.len() {
     if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
       let tgt = mfuncs.decls[fi];
       let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
       let args: ast.Expr[] = [];
-      let pj = 0;
-      while (pj < tgt.params.len()) {
+      for pj in 0..tgt.params.len() {
         ps = ps.append(tgt.params[pj]);
         args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "", builtin: false });
-        pj += 1;
       }
       let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
       let body: ast.Stmt = ast.StmtReturn { value: call, line: 0, col: 0 };
@@ -896,9 +838,8 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
       }
       let bd: ast.Stmt[] = [body];
       let notp: string[] = [];
-      return Some(parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false });
+      return Some(parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: tgt.ret_own, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false });
     }
-    fi += 1;
   }
   return None;
 }
@@ -973,8 +914,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
           let pfs = funcs;
           let pct = counter;
           let pargs: ast.Expr[] = [];
-          let pi2 = 0;
-          while (pi2 < c.args.len()) {
+          for pi2 in 0..c.args.len() {
             if (passthrough_slot_holds_fn(c, cid.name, pi2, mfuncs)) {
               let pr = try_fn_field_value(c.args[pi2], fd, vars, pfs, pct, gfns, mfuncs, structs);
               pfs = pr.funcs;
@@ -986,7 +926,6 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
               pct = wr.counter;
               pargs = pargs.append(wr.expr);
             }
-            pi2 += 1;
           }
           if (pct == counter) {
             return InlineCloRes { expr: e, funcs: funcs, counter: counter };
@@ -1010,10 +949,8 @@ function iife_arms_all_boxable(stmts: ast.Stmt[], fd: parser.FuncDecl, mfuncs: M
 
 function iife_scope_fd(fd: parser.FuncDecl, body: ast.Stmt[]): parser.FuncDecl {
   let nb = fd.body;
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     nb = nb.append(body[i]);
-    i += 1;
   }
   return parser.FuncDecl { ...fd, body: nb };
 }
@@ -1074,13 +1011,11 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
         }
       },
       ast.StmtMatch(mm) => {
-        let a = 0;
-        while (a < mm.arms.len()) {
+        for a in 0..mm.arms.len() {
           n = iife_arm_values_boxable(mm.arms[a].body, n, fd, mfuncs);
           if (n < 0) {
             return -1;
           }
-          a += 1;
         }
       },
       _ => {}
@@ -1091,8 +1026,7 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
 
 function passthrough_call_boxable(rc: ast.ExprCall, callee: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
   let found = false;
-  let i = 0;
-  while (i < rc.args.len()) {
+  for i in 0..rc.args.len() {
     if (lift_callee_is_typevar_passthrough(mfuncs, callee, i)) {
       if let ast.ExprCall(ic) = rc.args[i] {
         if let ast.ExprLambda(il) = ic.callee {
@@ -1109,7 +1043,6 @@ function passthrough_call_boxable(rc: ast.ExprCall, callee: string, fd: parser.F
         found = true;
       }
     }
-    i += 1;
   }
   return found;
 }
@@ -1120,12 +1053,10 @@ function passthrough_slot_holds_fn(c: ast.ExprCall, callee: string, i: i32, mfun
 }
 
 function passthrough_call_has_fn_arg(c: ast.ExprCall, callee: string, mfuncs: MFuncs): boolean {
-  let i = 0;
-  while (i < c.args.len()) {
+  for i in 0..c.args.len() {
     if (passthrough_slot_holds_fn(c, callee, i, mfuncs)) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -1174,8 +1105,7 @@ function names_local_fn_value(id: ast.ExprIdent, mfuncs: MFuncs): boolean {
 
 function passthrough_call_marked(rc: ast.ExprCall, callee: string, mfuncs: MFuncs): boolean {
   let boxed = false;
-  let i = 0;
-  while (i < rc.args.len()) {
+  for i in 0..rc.args.len() {
     if (lift_callee_is_typevar_passthrough(mfuncs, callee, i)) {
       if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
         return false;
@@ -1186,7 +1116,6 @@ function passthrough_call_marked(rc: ast.ExprCall, callee: string, mfuncs: MFunc
         return false;
       }
     }
-    i += 1;
   }
   return boxed;
 }
@@ -1252,12 +1181,10 @@ function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
         }
       },
       ast.StmtMatch(mm) => {
-        let a = 0;
-        while (a < mm.arms.len()) {
+        for a in 0..mm.arms.len() {
           if (!iife_arms_all_marked(mm.arms[a].body, mfuncs)) {
             return false;
           }
-          a += 1;
         }
       },
       _ => {}
@@ -1458,13 +1385,11 @@ function box_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDe
 function passthrough_array_arg(c: ast.ExprCall, mfuncs: MFuncs): i32 {
   match (c.callee) {
     ast.ExprIdent(cid) => {
-      let i = 0;
-      while (i < c.args.len()) {
+      for i in 0..c.args.len() {
         if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
           && passthrough_leads_to_array(c.args[i], mfuncs)) {
           return i;
         }
-        i += 1;
       }
     },
     _ => {}
@@ -1528,14 +1453,12 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
         return e;
       }
       let na: ast.Expr[] = [];
-      let k = 0;
-      while (k < c.args.len()) {
+      for k in 0..c.args.len() {
         if (k == i) {
           na = na.append(passthrough_rebuilt_with(c.args[k], repl, mfuncs));
         } else {
           na = na.append(c.args[k]);
         }
-        k += 1;
       }
       return ast.ExprCall { callee: c.callee, args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
     },
@@ -1558,8 +1481,7 @@ function array_literal_boxes(arr: ast.ExprArray, fd: parser.FuncDecl, structs: i
 }
 
 function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
-  let i = 0;
-  while (i < arr.elements.len()) {
+  for i in 0..arr.elements.len() {
     match (arr.elements[i]) {
       ast.ExprLambda(_) => {
         return true;
@@ -1572,13 +1494,11 @@ function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
       ast.ExprCall(ac) => {
         match (ac.callee) {
           ast.ExprIdent(acid) => {
-            let a = 0;
-            while (a < ac.args.len()) {
+            for a in 0..ac.args.len() {
               if (lift_callee_is_typevar_passthrough(mfuncs, acid.name, a)
                 && lift_arg_is_fn_value(ac.args[a], mfuncs)) {
                 return true;
               }
-              a += 1;
             }
           },
           _ => {}
@@ -1586,17 +1506,14 @@ function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
       },
       _ => {}
     }
-    i += 1;
   }
   return false;
 }
 
 function fd_bound_names(fd: parser.FuncDecl): string[] {
   let acc: string[] = [];
-  let p = 0;
-  while (p < fd.params.len()) {
+  for p in 0..fd.params.len() {
     acc = acc.append(fd.params[p].name);
-    p += 1;
   }
   return astwalk.collect_bound_stmts(fd.body, acc);
 }
@@ -1742,10 +1659,8 @@ pub function mfuncs_table(decls: parser.FuncDecl[], local: irtables.SigReg): MFu
     b += 1;
   }
   let next: i32[] = [];
-  let j = 0;
-  while (j < decls.len()) {
+  for j in 0..decls.len() {
     next = next.append(-1);
-    j += 1;
   }
   let k = decls.len() - 1;
   while (k >= 0) {
@@ -1812,18 +1727,14 @@ function lift_ident_is_param(fd: parser.FuncDecl, name: string): boolean {
   if (fd.receiver_name == name && fd.receiver_name.len() > 0) {
     return true;
   }
-  let i = 0;
-  while (i < fd.params.len()) {
+  for i in 0..fd.params.len() {
     if (fd.params[i].name == name) {
       return true;
     }
-    i += 1;
   }
   let bound: string[] = [];
-  let b = 0;
-  while (b < fd.body.len()) {
+  for b in 0..fd.body.len() {
     bound = astwalk.collect_bound_stmt(fd.body[b], bound);
-    b += 1;
   }
   return util.index_of_str(bound, name) >= 0;
 }
@@ -1862,13 +1773,11 @@ function lift_arg_is_passthrough_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolea
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          let i = 0;
-          while (i < c.args.len()) {
+          for i in 0..c.args.len() {
             if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
               && lift_arg_is_passthrough_fn_value(c.args[i], mfuncs)) {
               return true;
             }
-            i += 1;
           }
         },
         _ => {}
@@ -1892,14 +1801,12 @@ function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: irta
             && iife_arms_hold_fn_value(il.body, fd, structs, mfuncs);
         },
         ast.ExprIdent(cid) => {
-          let i = 0;
-          while (i < c.args.len()) {
+          for i in 0..c.args.len() {
             if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
               && (lift_arg_is_passthrough_fn_value(c.args[i], mfuncs)
               || array_elem_is_env_boxed(c.args[i], fd, structs, mfuncs))) {
               return true;
             }
-            i += 1;
           }
         },
         _ => {}
@@ -1958,12 +1865,10 @@ function iife_arms_have_unboxed_fn(stmts: ast.Stmt[], fd: parser.FuncDecl, mfunc
         }
       },
       ast.StmtMatch(mm) => {
-        let a = 0;
-        while (a < mm.arms.len()) {
+        for a in 0..mm.arms.len() {
           if (iife_arms_have_unboxed_fn(mm.arms[a].body, fd, mfuncs)) {
             return true;
           }
-          a += 1;
         }
       },
       _ => {}
@@ -2002,13 +1907,11 @@ function passthrough_arg_has_lambda(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MF
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          let i = 0;
-          while (i < c.args.len()) {
+          for i in 0..c.args.len() {
             if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
               && passthrough_arg_has_lambda(c.args[i], fd, mfuncs)) {
               return true;
             }
-            i += 1;
           }
         },
         ast.ExprLambda(il) => {
@@ -2070,12 +1973,10 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
         }
       },
       ast.StmtMatch(mm) => {
-        let a = 0;
-        while (a < mm.arms.len()) {
+        for a in 0..mm.arms.len() {
           if (iife_arms_hold_fn_value(mm.arms[a].body, fd, structs, mfuncs)) {
             return true;
           }
-          a += 1;
         }
       },
       _ => {}
@@ -2139,13 +2040,11 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: 
         match (r.value) {
           ast.ExprArray(arr) => {
             let nelems: ast.Expr[] = [];
-            let e = 0;
-            while (e < arr.elements.len()) {
+            for e in 0..arr.elements.len() {
               let er = try_fn_field_value(arr.elements[e], fd, vars, fs, ct, gfns, mfuncs, structs);
               fs = er.funcs;
               ct = er.counter;
               nelems = nelems.append(er.expr);
-              e += 1;
             }
             nv = ast.ExprArray { ...arr, elements: nelems };
           },
@@ -2166,13 +2065,11 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: 
                   match (pl2[0]) {
                     ast.ExprArray(parr2) => {
                       let pnel: ast.Expr[] = [];
-                      let pj = 0;
-                      while (pj < parr2.elements.len()) {
+                      for pj in 0..parr2.elements.len() {
                         let per = try_fn_field_value(parr2.elements[pj], fd, vars, fs, ct, gfns, mfuncs, structs);
                         fs = per.funcs;
                         ct = per.counter;
                         pnel = pnel.append(per.expr);
-                        pj += 1;
                       }
                       nv = passthrough_rebuilt_with(r.value, ast.ExprArray { ...parr2, elements: pnel }, mfuncs);
                     },
@@ -2249,15 +2146,13 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
   let caps = lambda_captures(lam, fd);
   let ps: ast.ParamDecl[] = [];
   let args: ast.Expr[] = [];
-  let ci = 0;
-  while (ci < caps.len()) {
+  for ci in 0..caps.len() {
     let cp = lambda_capture_param(lam, caps[ci]);
     if (cp.type_name.len() == 0) {
       return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter };
     }
     ps = ps.append(cp);
     args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "", builtin: false });
-    ci += 1;
   }
   let nm = parser.decl_key(fd) + "$iife" + util.i32_to_string(counter);
   let notp: string[] = [];
@@ -2269,7 +2164,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     fnptys = armptys;
   }
   let dlr = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-  let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let nf = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: nm, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: false, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   let ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
   return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -2296,8 +2191,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       let fs = acc.funcs;
       let ct = acc.counter;
       let nargs: ast.Expr[] = [];
-      let ai = 0;
-      while (ai < call.args.len()) {
+      for ai in 0..call.args.len() {
         if (call_argument_needs_box(call, cnm, mfield, ai, fd, vars, structs, mfuncs)) {
           let fr = try_fn_field_value(call.args[ai], fd, vars, fs, ct, gfns, mfuncs, structs);
           fs = fr.funcs;
@@ -2309,7 +2203,6 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           ct = er.counter;
           nargs = nargs.append(er.expr);
         }
-        ai += 1;
       }
       let ncallee = call.callee;
       match (call.callee) {
@@ -2427,8 +2320,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       let tct = acc.counter;
       let tnelems: ast.Expr[] = [];
       let tbound = fd_bound_names(fd);
-      let tei = 0;
-      while (tei < tl.elements.len()) {
+      for tei in 0..tl.elements.len() {
         let twrapped = false;
         match (tl.elements[tei]) {
           ast.ExprLambda(_) => {
@@ -2441,12 +2333,10 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           ast.ExprIdent(ttid) => {
             if (util.index_of_str(tbound, ttid.name) < 0) {
               let tfnok = false;
-              let tmi = 0;
-              while (tmi < mfuncs.decls.len()) {
+              for tmi in 0..mfuncs.decls.len() {
                 if (mfuncs.decls[tmi].name == ttid.name && mfuncs.decls[tmi].receiver_type.len() == 0 && !mfuncs.decls[tmi].is_const) {
                   tfnok = true;
                 }
-                tmi += 1;
               }
               if (tfnok) {
                 let ttw = try_fn_field_value(tl.elements[tei], fd, vars, tfs, tct, gfns, mfuncs, structs);
@@ -2465,7 +2355,6 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           tct = ter.counter;
           tnelems = tnelems.append(ter.expr);
         }
-        tei += 1;
       }
       return (ast.ExprTuple { elements: tnelems, line: tl.line, col: tl.col }, InlineCloAcc { funcs: tfs, counter: tct }, true);
     },
@@ -2473,8 +2362,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       let fs = acc.funcs;
       let ct = acc.counter;
       let nvals: ast.Expr[] = [];
-      let i = 0;
-      while (i < sl.field_values.len()) {
+      for i in 0..sl.field_values.len() {
         let is_fn_field: boolean = sl.type_name.len() > 0 && i < sl.field_names.len()
           && irtables.decl_field_type(structs, sl.type_name, sl.field_names[i]) == "fn";
         if (is_fn_field) {
@@ -2488,7 +2376,6 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           ct = er.counter;
           nvals = nvals.append(er.expr);
         }
-        i += 1;
       }
       let nbase = sl.base;
       if (sl.has_base) {
@@ -2599,10 +2486,8 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
       return value_use_idents_expr(u.operand, acc);
     },
     ast.ExprArray(a) => {
-      let i = 0;
-      while (i < a.elements.len()) {
+      for i in 0..a.elements.len() {
         acc = value_use_idents_expr(a.elements[i], acc);
-        i += 1;
       }
       return acc;
     },
@@ -2637,21 +2522,17 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
       return astwalk.collect_idents_expr(e, acc);
     },
     ast.ExprMapLit(ml) => {
-      let mi = 0;
-      while (mi < ml.keys.len()) {
+      for mi in 0..ml.keys.len() {
         acc = value_use_idents_expr(ml.keys[mi], acc);
         acc = value_use_idents_expr(ml.vals[mi], acc);
-        mi += 1;
       }
       return acc;
     },
     ast.ExprFString(fs) => {
-      let fi = 0;
-      while (fi < fs.exprs.len()) {
+      for fi in 0..fs.exprs.len() {
         if (fs.is_expr[fi]) {
           acc = value_use_idents_expr(fs.exprs[fi], acc);
         }
-        fi += 1;
       }
       return acc;
     },
@@ -2666,23 +2547,17 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
 
 function iife_body_value_use_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
   let inner: string[] = [];
-  let iu = 0;
-  while (iu < lm.body.len()) {
+  for iu in 0..lm.body.len() {
     inner = value_use_idents_stmt(lm.body[iu], inner);
-    iu += 1;
   }
   let bound: string[] = [];
-  let ib = 0;
-  while (ib < lm.body.len()) {
+  for ib in 0..lm.body.len() {
     bound = astwalk.collect_bound_stmt(lm.body[ib], bound);
-    ib += 1;
   }
-  let ik = 0;
-  while (ik < inner.len()) {
+  for ik in 0..inner.len() {
     if (util.index_of_str(bound, inner[ik]) < 0) {
       acc = acc.append(inner[ik]);
     }
-    ik += 1;
   }
   return acc;
 }
@@ -2703,15 +2578,11 @@ function value_use_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
     },
     ast.StmtIf(i) => {
       acc = value_use_idents_expr(i.cond, acc);
-      let ti = 0;
-      while (ti < i.then_body.len()) {
+      for ti in 0..i.then_body.len() {
         acc = value_use_idents_stmt(i.then_body[ti], acc);
-        ti += 1;
       }
-      let ei = 0;
-      while (ei < i.else_body.len()) {
+      for ei in 0..i.else_body.len() {
         acc = value_use_idents_stmt(i.else_body[ei], acc);
-        ei += 1;
       }
       return acc;
     },
@@ -2734,20 +2605,16 @@ function value_use_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
         if (arm.has_guard) {
           acc = value_use_idents_expr(arm.guard, acc);
         }
-        let bi = 0;
-        while (bi < arm.body.len()) {
+        for bi in 0..arm.body.len() {
           acc = value_use_idents_stmt(arm.body[bi], acc);
-          bi += 1;
         }
       }
       return acc;
     },
     ast.StmtFor(f) => {
       acc = value_use_idents_expr(f.iter, acc);
-      let i = 0;
-      while (i < f.body.len()) {
+      for i in 0..f.body.len() {
         acc = value_use_idents_stmt(f.body[i], acc);
-        i += 1;
       }
       return acc;
     },
@@ -2831,15 +2698,11 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
         match (rpre) {
           ast.ExprIdent(rid) => {
             let rbound: string[] = [];
-            let rbp = 0;
-            while (rbp < fd.params.len()) {
+            for rbp in 0..fd.params.len() {
               rbound = rbound.append(fd.params[rbp].name);
-              rbp += 1;
             }
-            let rbs = 0;
-            while (rbs < fd.body.len()) {
+            for rbs in 0..fd.body.len() {
               rbound = astwalk.collect_bound_stmt(fd.body[rbs], rbound);
-              rbs += 1;
             }
             if (util.index_of_str(rbound, rid.name) < 0 && lift_names_fn_value(mfuncs, rid.name)) {
               let rwr = try_fn_field_value(rpre, fd, vars, fs, ct, gfns, mfuncs, structs);
@@ -2979,12 +2842,10 @@ function ident_used_as_value_expr(e: ast.Expr, name: string): boolean {
       return ident_used_as_value_expr(c.callee, name);
     },
     ast.ExprArray(a) => {
-      let i = 0;
-      while (i < a.elements.len()) {
+      for i in 0..a.elements.len() {
         if (ident_used_as_value_expr(a.elements[i], name)) {
           return true;
         }
-        i += 1;
       }
       return false;
     },
@@ -3116,12 +2977,10 @@ function wcaps_add(acc: WCaps, name: string, ty: string, atargets: string[]): WC
 
 function wcaps_join(a: WCaps, b: WCaps): WCaps {
   let out = a;
-  let i = 0;
-  while (i < b.names.len()) {
+  for i in 0..b.names.len() {
     if (util.index_of_str(out.names, b.names[i]) < 0) {
       out = WCaps { names: out.names.append(b.names[i]), types: out.types.append(b.types[i]) };
     }
-    i += 1;
   }
   return out;
 }
@@ -3143,35 +3002,27 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
       let mine = WCaps { names: [], types: [] };
       let caps = lambda_captures(lm, fd);
       let shared = wcap_shared_targets(lm, atargets);
-      let ci = 0;
-      while (ci < caps.len()) {
+      for ci in 0..caps.len() {
         mine = wcaps_add(mine, caps[ci], lambda_capture_type(lm, caps[ci]), shared);
-        ci += 1;
       }
       let inner = acc;
       let nb: ast.Stmt[] = [];
       let bchanged = false;
-      let bi = 0;
-      while (bi < lm.body.len()) {
+      for bi in 0..lm.body.len() {
         let rs = wcap_stmt(lm.body[bi], fd, gfns, structs, mfuncs, inner, atargets);
         inner = rs.caps;
         if (rs.changed) {
           bchanged = true;
         }
         nb = nb.append(rs.stmt);
-        bi += 1;
       }
       let pre: ast.Stmt[] = [];
-      let mi = 0;
-      while (mi < mine.names.len()) {
+      for mi in 0..mine.names.len() {
         pre = pre.append(wcap_cell_read(mine.names[mi], mine.types[mi]));
-        mi += 1;
       }
       let full = pre;
-      let fi = 0;
-      while (fi < nb.len()) {
+      for fi in 0..nb.len() {
         full = full.append(nb[fi]);
-        fi += 1;
       }
       let typed_caps: ast.TypedBinding[] = [];
       for cap in lm.captures {
@@ -3197,15 +3048,13 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
         let iacc = acc;
         let ib: ast.Stmt[] = [];
         let ichanged = false;
-        let ii = 0;
-        while (ii < ilm.body.len()) {
+        for ii in 0..ilm.body.len() {
           let irs = wcap_stmt(ilm.body[ii], fd, gfns, structs, mfuncs, iacc, atargets);
           iacc = irs.caps;
           if (irs.changed) {
             ichanged = true;
           }
           ib = ib.append(irs.stmt);
-          ii += 1;
         }
         let iargs: ast.Expr[] = [];
         for iarg in c.args {
@@ -3237,15 +3086,13 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
       let a = acc;
       let ne: ast.Expr[] = [];
       let achanged = false;
-      let i = 0;
-      while (i < ar.elements.len()) {
+      for i in 0..ar.elements.len() {
         let er = wcap_expr(ar.elements[i], fd, gfns, structs, mfuncs, a, atargets);
         a = er.caps;
         if (er.changed) {
           achanged = true;
         }
         ne = ne.append(er.expr);
-        i += 1;
       }
       return WCapExpr { expr: ast.ExprArray { ...ar, elements: ne }, caps: a, changed: achanged };
     },
@@ -3386,12 +3233,10 @@ function wcap_stmt_needs_env_box(stmts: ast.Stmt[], i: i32): boolean {
   if (bname.len() == 0) {
     return true;
   }
-  let j = i + 1;
-  while (j < stmts.len()) {
+  for j in i + 1..stmts.len() {
     if (ident_used_as_value_stmt(stmts[j], bname)) {
       return true;
     }
-    j += 1;
   }
   return false;
 }
@@ -3411,11 +3256,9 @@ function box_wide_captures_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, gfns: s
     if (r.changed) {
       changed = true;
     }
-    let ci = 0;
-    while (ci < r.caps.names.len()) {
+    for ci in 0..r.caps.names.len() {
       out = out.append(wcap_cell_decl(r.caps.names[ci], r.caps.types[ci]));
       changed = true;
-      ci += 1;
     }
     out = out.append(r.stmt);
     i += 1;
@@ -3428,20 +3271,16 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
     ast.ExprLambda(lm) => {
       let caps = lambda_captures(lm, fd);
       let shared = wcap_shared_targets(lm, atargets);
-      let ci = 0;
-      while (ci < caps.len()) {
+      for ci in 0..caps.len() {
         let cn = caps[ci];
         if (util.index_of_str(shared, cn) < 0 && is_wide_cap_type(lambda_capture_type(lm, cn))) {
           return true;
         }
-        ci += 1;
       }
-      let si = 0;
-      while (si < lm.body.len()) {
+      for si in 0..lm.body.len() {
         if (has_wide_cap_stmt(lm.body[si], fd, gfns, structs, mfuncs, atargets)) {
           return true;
         }
-        si += 1;
       }
       return false;
     },
@@ -3453,12 +3292,10 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
     },
     ast.ExprCall(c) => {
       if let ast.ExprLambda(ilm) = c.callee {
-        let isi = 0;
-        while (isi < ilm.body.len()) {
+        for isi in 0..ilm.body.len() {
           if (has_wide_cap_stmt(ilm.body[isi], fd, gfns, structs, mfuncs, atargets)) {
             return true;
           }
-          isi += 1;
         }
         for iarg in c.args {
           if (has_wide_cap_expr(iarg, fd, gfns, structs, mfuncs, atargets)) {
@@ -3478,12 +3315,10 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
       return false;
     },
     ast.ExprArray(ar) => {
-      let i = 0;
-      while (i < ar.elements.len()) {
+      for i in 0..ar.elements.len() {
         if (has_wide_cap_expr(ar.elements[i], fd, gfns, structs, mfuncs, atargets)) {
           return true;
         }
-        i += 1;
       }
       return false;
     },
@@ -3595,21 +3430,17 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     return fd;
   }
   let bsites: string[] = [];
-  let si = 0;
-  while (si < boxed.len()) {
+  for si in 0..boxed.len() {
     bsites = bsites.append(first_var_site(fd.body, boxed[si]));
-    si += 1;
   }
   let bound: string[] = [];
   let body = capturebox.box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound);
   let pcells: ast.Stmt[] = [];
-  let pi = 0;
-  while (pi < boxed.len()) {
+  for pi in 0..boxed.len() {
     if (bsites[pi].len() == 0 && is_param_name(fd.params, boxed[pi])) {
       let pref: ast.Expr = ast.ExprIdent { name: boxed[pi], line: fd.line, col: fd.col, ty: "", builtin: false };
       pcells = pcells.append(capturebox.cell_decl(boxed[pi], btypes[pi], pref, fd.line, fd.col));
     }
-    pi += 1;
   }
   for st in body {
     pcells = pcells.append(st);
@@ -3658,11 +3489,10 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
   let writes = captureflow.block(stmts, future);
   let boxed = acc.names;
   let btypes = acc.types;
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     let lam_ok = false;
     let bname = "";
-    let lam = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+    let lam = ast.ExprLambda { params: [], ret_own: false, ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
     let nested: ast.ExprLambda[] = [];
     match (stmts[i]) {
       ast.StmtVar(v) => {
@@ -3723,30 +3553,25 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
       },
       _ => {}
     }
-    let ni = 0;
-    while (ni < nested.len()) {
+    for ni in 0..nested.len() {
       let nacc = box_apply_lambda(nested[ni], true, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, true), BoxScan { names: boxed, types: btypes });
       boxed = nacc.names;
       btypes = nacc.types;
-      ni += 1;
     }
     if (lam_ok) {
       let esc = true;
       if (bname.len() > 0) {
         esc = false;
-        let esci = i + 1;
-        while (esci < stmts.len()) {
+        for esci in i + 1..stmts.len() {
           if (ident_used_as_value_stmt(stmts[esci], bname)) {
             esc = true;
           }
-          esci += 1;
         }
       }
       let applied = box_apply_lambda(lam, esc, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, true), BoxScan { names: boxed, types: btypes });
       boxed = applied.names;
       btypes = applied.types;
     }
-    i += 1;
   }
   return BoxScan { names: boxed, types: btypes };
 }
@@ -3756,8 +3581,7 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
   let btypes = acc.types;
   let caps = lambda_captures(lam, fd);
   let wtargets = irtables.lambda_write_targets(lam.body);
-  let ci = 0;
-  while (ci < caps.len()) {
+  for ci in 0..caps.len() {
     let cn = caps[ci];
     let ct = lambda_capture_type(lam, cn);
     if (ct.len() > 0 && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
@@ -3768,7 +3592,6 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
       boxed = boxed.append(cn);
       btypes = btypes.append(ct);
     }
-    ci += 1;
   }
   return BoxScan { names: boxed, types: btypes };
 }
@@ -3803,10 +3626,8 @@ function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[
       return out;
     },
     ast.ExprArray(ar) => {
-      let i = 0;
-      while (i < ar.elements.len()) {
+      for i in 0..ar.elements.len() {
         out = box_nested_lambdas(ar.elements[i], out);
-        i += 1;
       }
       return out;
     },
@@ -3917,14 +3738,12 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
 
 pub function module_sig_view(mods: parser.Module[]): parser.FuncDecl[] {
   let view: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mods.len()) {
+  for i in 0..mods.len() {
     let f = 0;
     while (f < mods[i].funcs.len()) {
       view = view.append(mods[i].funcs[f]);
       f += 1;
     }
-    i += 1;
   }
   return view;
 }
@@ -3998,8 +3817,7 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
   let newfuncs: parser.FuncDecl[] = [];
   let hoisted: string[] = [];
   let worklist: parser.FuncDecl[] = [];
-  let wlcp = 0;
-  while (wlcp < mod.funcs.len()) {
+  for wlcp in 0..mod.funcs.len() {
     let wf = mod.funcs[wlcp];
     let resolved = lexical.resolve_func(wf);
     wf = parser.lower_defers_func(resolved.func);
@@ -4008,7 +3826,6 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
       wf = parser.FuncDecl { ...wf, body: wdlr.body };
     }
     worklist = worklist.append(wf);
-    wlcp += 1;
   }
   // A lifted function has a name of its own, so the names and signatures of
   // the functions lifted so far serve each later function too.
@@ -4055,10 +3872,8 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     acc = r.acc;
     let nb = r.stmts;
     newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
-    let k = before;
-    while (k < acc.funcs.len()) {
+    for k in before..acc.funcs.len() {
       worklist = worklist.append(parser.FuncDecl { ...acc.funcs[k], module: fd.module });
-      k += 1;
     }
     acc = LiftAcc { funcs: [], counter: acc.counter };
     wi += 1;

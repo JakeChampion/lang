@@ -11,20 +11,16 @@ import "../util";
 
 function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[] {
   let out: parser.FuncDecl[] = [];
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     out = out.append(fs[i]);
-    i += 1;
   }
   return out;
 }
 
 function slice_cache(c: irtables.LowerResult[], lo: i32, hi: i32): irtables.LowerResult[] {
   let out: irtables.LowerResult[] = [];
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     out = out.append(c[i]);
-    i += 1;
   }
   return out;
 }

@@ -7,6 +7,7 @@ import "./util";
 import "./astwalk";
 import "./typeinfo";
 import "./capturebox";
+import "std/string";
 
 pub struct SigReg {
   rows: string[],
@@ -83,11 +84,10 @@ pub function csv_nth(enc: string, n: i32): string {
   let depth = 0;
   let idx = 0;
   let start = 0;
-  let k = 0;
-  while (k <= enc.len()) {
+  for k in 0..=enc.len() {
     if (k == enc.len() || depth == 0 && enc[k] == b',') {
       if (idx == n) {
-        return slice_unchecked(enc, start, k) + "";
+        return slice_unchecked(enc, start, k).to_owned();
       }
       idx += 1;
       start = k + 1;
@@ -99,7 +99,6 @@ pub function csv_nth(enc: string, n: i32): string {
         depth -= 1;
       }
     }
-    k += 1;
   }
   return "";
 }
@@ -284,12 +283,10 @@ pub function prim_type_ids(): string[] {
 
 pub function prim_type_id(structs: StructTab, name: string): i32 {
   let names = prim_type_ids();
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (names[i] == name) {
       return structs.decls.len() + i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -521,16 +518,12 @@ function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
   if (k != "add" && k != "sub" && k != "mul" && k != "shl") {
     return ops;
   }
-  if (kind == "u32") {
-    return ops.append(ir.op_u32_wrap());
-  }
-  if (kind == "i32") {
-    return ops.append(ir.op_int_cast("i32"));
-  }
-  if (kind == "u8") {
-    return ops.append(ir.op_int_cast("u8"));
-  }
-  return ops;
+  return match (kind) {
+    "u32" => ops.append(ir.op_u32_wrap()),
+    "i32" => ops.append(ir.op_int_cast("i32")),
+    "u8" => ops.append(ir.op_int_cast("u8")),
+    _ => ops,
+  };
 }
 
 function shift_count_oor(kind: string, uns: boolean, w: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
@@ -765,84 +758,44 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
 }
 
 pub function to_unsigned_kind(kind: string): string {
-  if (kind == "lt_s") {
-    return "lt_u";
-  }
-  if (kind == "gt_s") {
-    return "gt_u";
-  }
-  if (kind == "le_s") {
-    return "le_u";
-  }
-  if (kind == "ge_s") {
-    return "ge_u";
-  }
-  if (kind == "shr_s") {
-    return "shr_u";
-  }
-  if (kind == "div_s") {
-    return "div_u";
-  }
-  if (kind == "rem_s") {
-    return "rem_u";
-  }
-  return kind;
+  return match (kind) {
+    "lt_s" => "lt_u",
+    "gt_s" => "gt_u",
+    "le_s" => "le_u",
+    "ge_s" => "ge_u",
+    "shr_s" => "shr_u",
+    "div_s" => "div_u",
+    "rem_s" => "rem_u",
+    _ => kind,
+  };
 }
 
 pub function map_fbinop(op: string): string {
-  if (op == "+") {
-    return "fadd";
-  }
-  if (op == "-") {
-    return "fsub";
-  }
-  if (op == "*") {
-    return "fmul";
-  }
-  if (op == "/") {
-    return "fdiv";
-  }
-  if (op == "==") {
-    return "feq";
-  }
-  if (op == "!=") {
-    return "fne";
-  }
-  if (op == "<") {
-    return "flt";
-  }
-  if (op == "<=") {
-    return "fle";
-  }
-  if (op == ">") {
-    return "fgt";
-  }
-  if (op == ">=") {
-    return "fge";
-  }
-  return "";
+  return match (op) {
+    "+" => "fadd",
+    "-" => "fsub",
+    "*" => "fmul",
+    "/" => "fdiv",
+    "==" => "feq",
+    "!=" => "fne",
+    "<" => "flt",
+    "<=" => "fle",
+    ">" => "fgt",
+    ">=" => "fge",
+    _ => "",
+  };
 }
 
 pub function f64_math_builtin_kind(name: string): string {
-  if (name == "__sqrt_f64") {
-    return "fsqrt";
-  }
-  if (name == "__floor_f64") {
-    return "ffloor";
-  }
-  if (name == "__ceil_f64") {
-    return "fceil";
-  }
-  if (name == "__trunc_f64") {
-    return "ftrunc";
-  }
-  if (name == "__abs_f64") {
-    return "fabs";
-  }
-  if (name == "__round_f64") {
-    return "fround";
-  }
-  return "";
+  return match (name) {
+    "__sqrt_f64" => "fsqrt",
+    "__floor_f64" => "ffloor",
+    "__ceil_f64" => "fceil",
+    "__trunc_f64" => "ftrunc",
+    "__abs_f64" => "fabs",
+    "__round_f64" => "fround",
+    _ => "",
+  };
 }
 
 pub struct LowerResult {
@@ -1026,39 +979,31 @@ pub function lane_operator(kind: i32, op: string): string {
   if (kind == 10) {
     return "vneg";
   }
-  if (op == "+") {
-    return "vadd";
-  }
-  if (op == "-") {
-    return "vsub";
-  }
-  if (op == "*") {
-    return "vmul";
-  }
-  return "vdiv";
+  return match (op) {
+    "+" => "vadd",
+    "-" => "vsub",
+    "*" => "vmul",
+    _ => "vdiv",
+  };
 }
 
 pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
   let bound = astwalk.collect_bound_stmts(stmts, []);
   let n = 0;
-  let i = 0;
-  while (i < bound.len()) {
+  for i in 0..bound.len() {
     if (bound[i] == name) {
       n += 1;
     }
-    i += 1;
   }
   return n;
 }
 
 function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
   let ids = astwalk.collect_idents_expr(e, []);
-  let i = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     if (util.index_of_str(names, ids[i]) >= 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -1170,12 +1115,10 @@ pub function erased_passthrough_safe(fn: parser.FuncDecl): boolean {
     return false;
   }
   let enames: string[] = [];
-  let i = 0;
-  while (i < fn.params.len()) {
+  for i in 0..fn.params.len() {
     if (parser.looks_type_var(fn.params[i].type_name)) {
       enames = enames.append(fn.params[i].name);
     }
-    i += 1;
   }
   if (enames.len() == 0) {
     return false;
@@ -1230,15 +1173,11 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     bound = bound.append(fd.params[pi].name);
-    pi += 1;
   }
-  let b = 0;
-  while (b < fd.body.len()) {
+  for b in 0..fd.body.len() {
     bound = astwalk.collect_bound_stmt(fd.body[b], bound);
-    b += 1;
   }
   if (bound.len() == 0) {
     return gfns;
@@ -1257,26 +1196,22 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
     return gfns;
   }
   let out: string[] = [];
-  let i = 0;
-  while (i < gfns.len()) {
+  for i in 0..gfns.len() {
     if (util.index_of_str(bound, gfns[i]) < 0) {
       out = out.append(gfns[i]);
     }
-    i += 1;
   }
   return out;
 }
 
 pub function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
   let used = astwalk.collect_lambda_idents(lam, []);
-  let ui = 0;
-  while (ui < used.len()) {
+  for ui in 0..used.len() {
     let u = used[ui];
     if (util.index_of_str(gfns, u) < 0
       && u != "None" && u != "true" && u != "false") {
       return false;
     }
-    ui += 1;
   }
   return true;
 }

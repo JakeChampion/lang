@@ -23,7 +23,7 @@ pub struct ExprBytes { value: u8[], line: i32, col: i32 }
 
 pub struct TypedBinding { name: string, ty: typeinfo.Type }
 
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
+pub struct ExprLambda { params: ParamDecl[], ret_own: boolean, ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
 
 pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 
@@ -417,37 +417,19 @@ pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: 
 pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, rest_written: boolean, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 pub function operator_method(op: string): string {
-  if (op == "+") {
-    return "add";
-  }
-  if (op == "-") {
-    return "sub";
-  }
-  if (op == "*") {
-    return "mul";
-  }
-  if (op == "/") {
-    return "div";
-  }
-  if (op == "%") {
-    return "rem";
-  }
-  if (op == "&") {
-    return "bitand";
-  }
-  if (op == "|") {
-    return "bitor";
-  }
-  if (op == "^") {
-    return "bitxor";
-  }
-  if (op == "<<") {
-    return "shl";
-  }
-  if (op == ">>") {
-    return "shr";
-  }
-  return "";
+  return match (op) {
+    "+" => "add",
+    "-" => "sub",
+    "*" => "mul",
+    "/" => "div",
+    "%" => "rem",
+    "&" => "bitand",
+    "|" => "bitor",
+    "^" => "bitxor",
+    "<<" => "shl",
+    ">>" => "shr",
+    _ => "",
+  };
 }
 
 pub function is_operator_method(name: string): boolean {

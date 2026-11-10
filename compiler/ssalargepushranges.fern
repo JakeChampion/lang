@@ -9,24 +9,20 @@ pub function valid(r: Interval): boolean {
 pub function capacities(): i32[] {
   let result: i32[] = [];
   let quarter = 131072;
-  let index = 0;
-  while (index < 45) {
+  for index in 0..45 {
     result = result.append((4 + index % 4) * quarter);
     if (index % 4 == 3) {
       quarter *= 2;
     }
-    index += 1;
   }
   return result;
 }
 
 function class_at(n: i32, bins: i32[]): i32 {
-  let at = 0;
-  while (at < bins.len()) {
+  for at in 0..bins.len() {
     if (n <= bins[at]) {
       return at;
     }
-    at += 1;
   }
   return -1;
 }
@@ -79,10 +75,8 @@ pub function rounded(r: Interval): i64 {
     return -(1 as i64);
   }
   let quantum = 131072 as i64;
-  let at = 19;
-  while (at < bit) {
+  for at in 19..bit {
     quantum *= 2 as i64;
-    at += 1;
   }
   let a = ((low - 1 as i64) / quantum + 1 as i64) * quantum;
   let b = ((high - 1 as i64) / quantum + 1 as i64) * quantum;

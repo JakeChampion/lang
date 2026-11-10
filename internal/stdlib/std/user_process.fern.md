@@ -18,7 +18,7 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 ## The system calls
 
-`run` returns to the caller at each event that the kernel must see: output, the end of the process, or an IRQ. The other calls are answered in the loop. The kernel reads each pointer argument through the page tables of the process, so a bad pointer gives `EFAULT` and does not fault the kernel.
+`run` returns to the caller at each event that the kernel must see: output, the end of the process, an IRQ, or a call that waits. The other calls are answered in the loop. The kernel reads each pointer argument through the page tables of the process, so a bad pointer gives `EFAULT` and does not fault the kernel.
 
 | Call | Number | What the kernel does |
 |---|---|---|
@@ -39,7 +39,7 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, and a closed descriptor is used again.
 
-The process can make directories and files in memory, write them, rename them, change their modes and remove them. The archive stays read-only: a write, a rename or a removal of an entry of the archive gives `EROFS`. A new file in memory can go in a directory of the archive. A file in memory keeps its bytes as a list of chunks, so a long run of writes at the end copies each byte once. `written` gives the kernel the bytes of a file in memory, for example the output of a compile, after the process ends.
+The process can make directories and files in memory, write them, rename them, change their modes and remove them. The archive stays read-only: a write, a rename or a removal of an entry of the archive gives `EROFS`. A new file in memory can go in a directory of the archive. A file in memory keeps its bytes as a list of chunks, so a long run of writes at the end copies each byte once. `written` gives the kernel the bytes of a file in memory, for example the output of a compile, after the process ends. `image` gives the whole root as one `newc` archive: the entries of the archive, then the files and directories in memory. A kernel can write it to a disk, and read it back as the root of a later boot.
 
 | Call | Number | What the kernel does |
 |---|---|---|
@@ -60,6 +60,28 @@ The process can make directories and files in memory, write them, rename them, c
 | `fsync`, `fdatasync` | 82, 83 | Gives 0, because the files are in memory |
 
 `with_exe` names the path of the program in the root. `/proc/self/exe` is then a symbolic link to it. Thus a program can read its own image, as the compiler does for the key of its cache.
+
+## Sockets
+
+`with_net` gives a process a network: a `std/user_net` state over an interface of `std/ip`. The process can then listen on one TCP port and serve connections with the Linux calls, as a `std/serve` program does. A socket, an epoll instance and a signalfd are descriptors, beside the files.
+
+A call that waits ends `run` with `Waiting`, and the next `run` starts the call again. `signal` gives the process a signal, which a signalfd reads. A program that stops on SIGTERM thus stops when the kernel calls `signal(15)`.
+
+| Call | Number | What the kernel does |
+|---|---|---|
+| `socket` | 198 | Makes a TCP socket for `AF_INET` and `SOCK_STREAM`. `EAFNOSUPPORT` for another family, or with no network |
+| `bind`, `listen` | 200, 201 | Takes the port, and listens on it. `EADDRINUSE` for a second listener |
+| `accept`, `accept4` | 202, 242 | Takes the oldest connection that completed its handshake, and writes the address of the peer |
+| `getsockname`, `getpeername` | 204, 205 | Writes the local or the peer `sockaddr_in` |
+| `read`, `recvfrom` | 63, 207 | Takes the bytes that the connection received, and 0 at its end |
+| `write`, `writev`, `sendto` | 64, 66, 206 | Queues the bytes and sends them. `EPIPE` for a connection that is gone |
+| `shutdown`, `close` | 210, 57 | Ends the stream of the process. `close` of the listener stops it |
+| `setsockopt`, `getsockopt` | 208, 209 | Change nothing, and every option reads 0 |
+| `fcntl` | 25 | Reads and sets `O_NONBLOCK`. The other commands change nothing |
+| `epoll_create1`, `epoll_ctl`, `epoll_pwait` | 20, 21, 22 | Keeps the descriptors and the events of each instance, and gives the ready ones. A timeout is a deadline that the restarted call keeps |
+| `signalfd4` | 74 | Makes a signalfd for a mask, or changes the mask. A read gives the lowest pending signal of the mask |
+
+A descriptor with `O_NONBLOCK` gives `EAGAIN` where a blocking one waits.
 
 ## Randomness
 
@@ -99,6 +121,8 @@ A second core can run processes too, through `serve_core` and a mailbox (see `ot
 
 <<system calls>>
 
+<<sockets>>
+
 <<files>>
 ```
 
@@ -121,6 +145,7 @@ import "std/option";
 import "std/pagetable";
 import "std/raw";
 import "std/string";
+import "std/user_net";
 ```
 
 ### `constants`
@@ -167,15 +192,15 @@ const EM_AARCH64: u32 = 183;
 
 ### `pub struct Process`
 
-`Stop` is the event that ends a `run`. `Output` is the bytes of a `write` to fd 1 or 2. `Exited` gives the exit status. `Killed` gives the reason that the kernel ended the process. `Interrupted` is an IRQ that arrived while the process ran. The caller handles the IRQ and calls `run` again.
+`Stop` is the event that ends a `run`. `Output` is the bytes of a `write` to fd 1 or 2. `Exited` gives the exit status. `Killed` gives the reason that the kernel ended the process. `Interrupted` is an IRQ that arrived while the process ran. The caller handles the IRQ and calls `run` again. `Waiting` is a call that waits for a socket, an epoll instance or a signal. The caller can run other work, and then calls `run` again, which starts the call again.
 
 ```fern
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[], next_inode: u32 }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[], next_inode: u32, net: Option[user_net.Net], epolls: Epoll[], signals: u64, wait_until: i64 }
 
-pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted }
+pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted, Waiting }
 
 function reg(frame: usize, n: i32): u64 {
   return raw.load_u64(frame + (8 * n) as usize);
@@ -337,7 +362,7 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [], next_inode: NODE_INODE };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [], next_inode: NODE_INODE, net: None, epolls: [], signals: 0 as u64, wait_until: 0i64 };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -648,6 +673,9 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
   let a0 = reg(f, 0);
   let a1 = reg(f, 1);
   let a2 = reg(f, 2);
+  if (p.takes_net_call(n, a0)) {
+    return p.net_call(n, a0, a1, a2, reg(f, 3));
+  }
   if (n == 64 as u64) {
     return p.write_to(a0, p.copy_in(a1 as usize, limit(a2 as usize)));
   }
@@ -824,13 +852,533 @@ function (p: Process) mprotect(va: usize, len: usize, prot: u64): (Process, Opti
 }
 ```
 
+### `sockets`
+
+A socket, an epoll instance and a signalfd are descriptors, beside the files. The kind of a descriptor says which it is.
+
+The handle of a socket is its port before `listen`, and the slot of its connection after `accept4`. The generation of a connection socket names the accept of its slot. The handle of an epoll instance is its index in the instances of the process. The mask of a signalfd is the set of its signals.
+
+Each socket call first runs `pump`, so the call sees the frames that arrived. A call that must wait moves the PC back to the `svc`, and `run` ends with `Waiting`. The next `run` starts the call again. A timeout of `epoll_pwait` becomes a deadline, which the call that starts again keeps. A struct `epoll_event` on arm64 has 16 bytes: the events, 4 bytes of padding, and the data.
+
+```fern
+<<sockets>>=
+const FD_FILE: i32 = 0;
+
+const FD_SOCKET: i32 = 1;
+
+const FD_LISTENER: i32 = 2;
+
+const FD_CONNECTION: i32 = 3;
+
+const FD_EPOLL: i32 = 4;
+
+const FD_SIGNALFD: i32 = 5;
+
+const EAGAIN: i64 = 11;
+
+const EPIPE: i64 = 32;
+
+const ENOTSOCK: i64 = 88;
+
+const EOPNOTSUPP: i64 = 95;
+
+const EAFNOSUPPORT: i64 = 97;
+
+const EADDRINUSE: i64 = 98;
+
+const ENOTCONN: i64 = 107;
+
+const O_NONBLOCK: u64 = 0x800;
+
+const EPOLLIN: u32 = 1;
+
+const EPOLLOUT: u32 = 4;
+
+const EPOLLHUP: u32 = 16;
+
+const SIGINFO_BYTES: usize = 128;
+
+pub struct Watch { fd: u64, events: u32, data: u64 }
+
+pub struct Epoll { watches: Watch[] }
+
+// Gives the process a network.
+pub function (p: Process) with_net(n: user_net.Net): Process {
+  return Process { ...p, net: Some(n) };
+}
+
+// Marks a signal as pending. A signalfd whose mask has it becomes readable.
+pub function (p: Process) signal(signo: i32): Process {
+  return Process { ...p, signals: p.signals | 1 as u64 << (signo - 1) as u64 };
+}
+
+// The connections of the process that closed.
+pub function (p: Process) closed_connections(): i32 {
+  let Some(n) = p.net else {
+    return 0;
+  };
+  return n.closed_count();
+}
+
+const NET_CALLS: i32[] = [198, 200, 201, 202, 242, 204, 205, 206, 207, 208, 209, 210, 25, 20, 21, 22, 74];
+
+const DESCRIPTOR_CALLS: i32[] = [198, 25, 20, 74, 21, 22];
+
+const RECEIVE_CALLS: i32[] = [63, 207];
+
+const SEND_CALLS: i32[] = [64, 206, 66];
+
+function one_of(n: u64, calls: i32[]): boolean {
+  for c in calls {
+    if (c as u64 == n) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The socket, epoll, signalfd and fcntl calls, and read, write, writev and
+// close on a descriptor that is not a file.
+function (p: Process) takes_net_call(n: u64, fd: u64): boolean {
+  return one_of(n, NET_CALLS) || p.special_fd_call(n, fd);
+}
+
+// read, write, writev and close on a descriptor that is not a file.
+function (p: Process) special_fd_call(n: u64, fd: u64): boolean {
+  if (n != 63 as u64 && n != 64 as u64 && n != 66 as u64 && n != 57 as u64) {
+    return false;
+  }
+  let Some(f) = p.open_file(fd) else {
+    return false;
+  };
+  return f.kind != FD_FILE;
+}
+
+function (p: Process) net_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  let q = p.pump();
+  if (one_of(n, DESCRIPTOR_CALLS)) {
+    return q.descriptor_call(n, a0, a1, a2, a3);
+  }
+  let Some(f) = q.open_file(a0) else {
+    return q.failed(EBADF);
+  };
+  if (n == 57 as u64) {
+    return q.close_special(a0, f);
+  }
+  if (one_of(n, RECEIVE_CALLS)) {
+    return q.receive(f, a1 as usize, a2 as usize);
+  }
+  if (one_of(n, SEND_CALLS)) {
+    return q.send_call(n, f, a1 as usize, a2 as usize);
+  }
+  return q.socket_call(n, a0, f, a1, a2, a3);
+}
+
+// socket, fcntl, the epoll calls and signalfd4.
+function (p: Process) descriptor_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  if (n == 198 as u64) {
+    return p.socket(a0, a1);
+  }
+  if (n == 25 as u64) {
+    return p.fcntl(a0, a1, a2);
+  }
+  if (n == 20 as u64) {
+    return Process { ...p, epolls: p.epolls.append(Epoll { watches: [] }) }.add_file(special_file(FD_EPOLL, p.epolls.len(), false));
+  }
+  if (n == 74 as u64) {
+    return p.signalfd(a0, a1 as usize, a2, a3);
+  }
+  return p.epoll_call(n, a0, a1, a2, a3);
+}
+
+// write and sendto take one buffer, and writev a vector.
+function (p: Process) send_call(n: u64, f: OpenFile, va: usize, len: usize): (Process, Option[Stop]) {
+  let bytes = p.copy_in(va, limit(len));
+  if (n == 66 as u64) {
+    bytes = p.gather(va, len);
+  }
+  let Some(b) = bytes else {
+    return p.failed(EFAULT);
+  };
+  return p.send(f, b);
+}
+
+// bind, listen, accept, the names, the options and shutdown of a socket.
+function (p: Process) socket_call(n: u64, fd: u64, f: OpenFile, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  if (f.kind != FD_SOCKET && f.kind != FD_LISTENER && f.kind != FD_CONNECTION) {
+    return p.failed(ENOTSOCK);
+  }
+  if (n == 200 as u64) {
+    let Some(addr) = p.copy_in(a1 as usize, 4 as usize) else {
+      return p.failed(EFAULT);
+    };
+    return p.set_file(fd, OpenFile { ...f, handle: addr[2] as i32 * 256 + addr[3] as i32 }).done(0i64);
+  }
+  if (n == 201 as u64) {
+    return p.listen(fd, f);
+  }
+  if (n == 202 as u64 || n == 242 as u64) {
+    return p.accept(f, a1 as usize, a2 as usize, a3);
+  }
+  return p.socket_option_call(n, f, a1, a2);
+}
+
+// The names, the options and shutdown of a socket.
+function (p: Process) socket_option_call(n: u64, f: OpenFile, a1: u64, a2: u64): (Process, Option[Stop]) {
+  if (n == 204 as u64 || n == 205 as u64) {
+    return p.socket_name(n == 205 as u64, f, a1 as usize, a2 as usize);
+  }
+  if (n == 209 as u64) {
+    // getsockopt: every option reads 0, so SO_ERROR has no error.
+    return (p, p.answer(p.copy_out(reg(p.frame, 3) as usize, zeros(4)) && p.copy_out(reg(p.frame, 4) as usize, u32_bytes(4 as u32)), 0i64));
+  }
+  if (n == 210 as u64) {
+    return p.end_stream(f, a1 != 0 as u64);
+  }
+  // setsockopt: the options change nothing that the kernel does.
+  return p.done(0i64);
+}
+
+function special_file(kind: i32, handle: i32, nonblock: boolean): OpenFile {
+  let mode = 0o140777 as u32;
+  if (kind == FD_EPOLL || kind == FD_SIGNALFD) {
+    mode = 0o600 as u32;
+  }
+  let e = cpio.Entry { name: "", inode: 0 as u32, mode: mode, uid: 0 as u32, gid: 0 as u32, links: 1 as u32, mtime: 0 as u32, start: 0, size: 0 };
+  return OpenFile { path: "", entry: e, offset: ZERO, open: true, memory: false, writable: true, kind: kind, handle: handle, gen: 0, nonblock: nonblock, mask: 0 as u64 };
+}
+
+function (p: Process) pump(): Process {
+  let Some(n) = p.net else {
+    return p;
+  };
+  return Process { ...p, net: Some(n.pump(counter_ns() / 1000000i64)) };
+}
+
+function (p: Process) socket(domain: u64, kind: u64): (Process, Option[Stop]) {
+  if (p.net.is_none() || domain != 2 as u64) {
+    return p.failed(EAFNOSUPPORT);
+  }
+  if ((kind & 15 as u64) != 1 as u64) {
+    return p.failed(EOPNOTSUPP);
+  }
+  return p.add_file(special_file(FD_SOCKET, 0, (kind & O_NONBLOCK) != 0 as u64));
+}
+
+function (p: Process) listen(fd: u64, f: OpenFile): (Process, Option[Stop]) {
+  let Some(n) = p.net else {
+    return p.failed(EAFNOSUPPORT);
+  };
+  if (f.kind != FD_SOCKET) {
+    return p.failed(EINVAL);
+  }
+  let Some(listening) = n.listen(f.handle) else {
+    return p.failed(EADDRINUSE);
+  };
+  return Process { ...p, net: Some(listening) }.set_file(fd, OpenFile { ...f, kind: FD_LISTENER }).done(0i64);
+}
+
+function (p: Process) accept(f: OpenFile, addr: usize, len: usize, flags: u64): (Process, Option[Stop]) {
+  let Some(n) = p.net else {
+    return p.failed(EINVAL);
+  };
+  if (f.kind != FD_LISTENER) {
+    return p.failed(EINVAL);
+  }
+  let (taken, found) = n.accept();
+  let Some(c) = found else {
+    return p.would_block(f);
+  };
+  let (id, gen) = c;
+  let q = Process { ...p, net: Some(taken) };
+  if (addr != ZERO && !q.copy_out(addr, sockaddr(taken.peer(id))) || len != ZERO && !q.copy_out(len, u32_bytes(16 as u32))) {
+    return q.failed(EFAULT);
+  }
+  return q.add_file(OpenFile { ...special_file(FD_CONNECTION, id, (flags & O_NONBLOCK) != 0 as u64), gen: gen });
+}
+
+// A sockaddr_in: the family, the port and the address in network order.
+function sockaddr(peer: (u8[], i32)): u8[] {
+  let (address, port) = peer;
+  let out = [2u8, 0u8, (port >> 8) as u8, (port & 255) as u8];
+  return out.concat(address).concat(zeros(8));
+}
+
+function (p: Process) socket_name(peer: boolean, f: OpenFile, addr: usize, len: usize): (Process, Option[Stop]) {
+  let Some(n) = p.net else {
+    return p.failed(EINVAL);
+  };
+  let name = sockaddr(([0u8, 0u8, 0u8, 0u8], f.handle));
+  if (f.kind == FD_LISTENER) {
+    name = sockaddr(([0u8, 0u8, 0u8, 0u8], n.port()));
+  }
+  if (f.kind == FD_CONNECTION) {
+    name = sockaddr((n.iface.address, n.port()));
+    if (peer) {
+      name = sockaddr(n.peer(f.handle));
+    }
+  } else if (peer) {
+    return p.failed(ENOTCONN);
+  }
+  return (p, p.answer(p.copy_out(addr, name) && p.copy_out(len, u32_bytes(16 as u32)), 0i64));
+}
+
+function (p: Process) receive(f: OpenFile, va: usize, len: usize): (Process, Option[Stop]) {
+  if (f.kind == FD_SIGNALFD) {
+    return p.read_signal(f, va, len);
+  }
+  let Some(n) = p.net else {
+    return p.failed(EINVAL);
+  };
+  if (f.kind != FD_CONNECTION) {
+    return p.failed(ENOTCONN);
+  }
+  let (read, got) = n.read(f.handle, f.gen, limit(len) as i32);
+  let Some(bytes) = got else {
+    return p.would_block(f);
+  };
+  let q = Process { ...p, net: Some(read) };
+  return (q, q.answer(q.copy_out(va, bytes), bytes.len() as i64));
+}
+
+function (p: Process) send(f: OpenFile, b: u8[]): (Process, Option[Stop]) {
+  let Some(n) = p.net else {
+    return p.failed(EINVAL);
+  };
+  if (f.kind != FD_CONNECTION) {
+    return p.failed(ENOTCONN);
+  }
+  let (written, ok) = n.write(f.handle, f.gen, b);
+  if (!ok) {
+    return p.failed(EPIPE);
+  }
+  return Process { ...p, net: Some(written) }.pump().done(b.len() as i64);
+}
+
+// shutdown with SHUT_WR or SHUT_RDWR ends the stream of the process.
+function (p: Process) end_stream(f: OpenFile, write: boolean): (Process, Option[Stop]) {
+  let Some(n) = p.net else {
+    return p.done(0i64);
+  };
+  if (f.kind == FD_CONNECTION && write) {
+    return Process { ...p, net: Some(n.close(f.handle, f.gen)) }.pump().done(0i64);
+  }
+  return p.done(0i64);
+}
+
+function (p: Process) close_special(fd: u64, f: OpenFile): (Process, Option[Stop]) {
+  let q = p.set_file(fd, OpenFile { ...f, open: false });
+  let Some(n) = q.net else {
+    return q.done(0i64);
+  };
+  if (f.kind == FD_CONNECTION) {
+    return Process { ...q, net: Some(n.close(f.handle, f.gen)) }.pump().done(0i64);
+  }
+  if (f.kind == FD_LISTENER) {
+    return Process { ...q, net: Some(n.unlisten()) }.done(0i64);
+  }
+  return q.done(0i64);
+}
+
+// A blocking descriptor waits, and a nonblocking one gives EAGAIN.
+function (p: Process) would_block(f: OpenFile): (Process, Option[Stop]) {
+  if (f.nonblock) {
+    return p.failed(EAGAIN);
+  }
+  return p.wait();
+}
+
+// Moves the PC back to the svc, so the next run starts the call again.
+function (p: Process) wait(): (Process, Option[Stop]) {
+  set_reg(p.frame, 32, reg(p.frame, 32) as i64 - 4i64);
+  return (p, Some(Waiting));
+}
+
+function (p: Process) fcntl(fd: u64, cmd: u64, arg: u64): (Process, Option[Stop]) {
+  let Some(f) = p.open_file(fd) else {
+    if (fd < FIRST_FD) {
+      return p.done(2i64);
+    }
+    return p.failed(EBADF);
+  };
+  if (cmd == 3 as u64) {
+    let flags = 2i64;
+    if (f.nonblock) {
+      flags |= O_NONBLOCK as i64;
+    }
+    return p.done(flags);
+  }
+  if (cmd == 4 as u64) {
+    return p.set_file(fd, OpenFile { ...f, nonblock: (arg & O_NONBLOCK) != 0 as u64 }).done(0i64);
+  }
+  // F_GETFD gives no flags, and F_SETFD and the other commands change nothing.
+  return p.done(0i64);
+}
+
+function (p: Process) signalfd(fd: u64, mask_va: usize, size: u64, flags: u64): (Process, Option[Stop]) {
+  if (size != 8 as u64) {
+    return p.failed(EINVAL);
+  }
+  let Some(m) = p.copy_in(mask_va, 8 as usize) else {
+    return p.failed(EFAULT);
+  };
+  let mask = raw_u64(m, 0);
+  if (fd == 0xffffffffffffffff as u64) {
+    return p.add_file(OpenFile { ...special_file(FD_SIGNALFD, 0, (flags & O_NONBLOCK) != 0 as u64), mask: mask });
+  }
+  let Some(f) = p.open_file(fd) else {
+    return p.failed(EBADF);
+  };
+  if (f.kind != FD_SIGNALFD) {
+    return p.failed(EINVAL);
+  }
+  return p.set_file(fd, OpenFile { ...f, mask: mask }).done(fd as i64);
+}
+
+// Gives the lowest pending signal of the mask as a signalfd_siginfo.
+function (p: Process) read_signal(f: OpenFile, va: usize, len: usize): (Process, Option[Stop]) {
+  if (len < SIGINFO_BYTES) {
+    return p.failed(EINVAL);
+  }
+  let ready = p.signals & f.mask;
+  if (ready == 0 as u64) {
+    return p.would_block(f);
+  }
+  let signo = 1;
+  while ((ready & 1 as u64 << (signo - 1) as u64) == 0 as u64) {
+    signo += 1;
+  }
+  let q = Process { ...p, signals: p.signals & ~(1 as u64 << (signo - 1) as u64) };
+  let info = u32_bytes(signo as u32).concat(zeros(124));
+  return (q, q.answer(q.copy_out(va, info), SIGINFO_BYTES as i64));
+}
+
+function (p: Process) epoll_call(n: u64, epfd: u64, a1: u64, a2: u64, a3: u64): (Process, Option[Stop]) {
+  let Some(f) = p.open_file(epfd) else {
+    return p.failed(EBADF);
+  };
+  if (f.kind != FD_EPOLL) {
+    return p.failed(EINVAL);
+  }
+  if (n == 21 as u64) {
+    return p.epoll_ctl(f.handle, a1, a2, a3 as usize);
+  }
+  return p.epoll_wait(f.handle, a1 as usize, a2 as i32, (a3 as u32) as i32);
+}
+
+function (p: Process) epoll_ctl(ep: i32, op: u64, fd: u64, event: usize): (Process, Option[Stop]) {
+  if (p.open_file(fd).is_none()) {
+    return p.failed(EBADF);
+  }
+  let watches = p.epoll(ep).watches;
+  let kept: Watch[] = [];
+  let found = false;
+  for w in watches {
+    if (w.fd == fd) {
+      found = true;
+    } else {
+      kept = kept.append(w);
+    }
+  }
+  if (op == 1 as u64 && found) {
+    return p.failed(EEXIST);
+  }
+  if (op != 1 as u64 && !found) {
+    return p.failed(ENOENT);
+  }
+  if (op != 2 as u64) {
+    let Some(e) = p.copy_in(event, 16 as usize) else {
+      return p.failed(EFAULT);
+    };
+    kept = kept.append(Watch { fd: fd, events: raw_u64(e, 0) as u32, data: raw_u64(e, 8) });
+  }
+  return p.set_epoll(ep, Epoll { watches: kept }).done(0i64);
+}
+
+function (p: Process) epoll(ep: i32): Epoll {
+  return p.epolls[ep];
+}
+
+function (p: Process) set_epoll(ep: i32, e: Epoll): Process {
+  return Process { ...p, epolls: p.epolls.with(ep, e) };
+}
+
+function (p: Process) epoll_wait(ep: i32, va: usize, max: i32, timeout: i32): (Process, Option[Stop]) {
+  if (max <= 0) {
+    return p.failed(EINVAL);
+  }
+  let (out, count) = p.ready_events(ep, max);
+  let now = counter_ns();
+  if (count > 0 || timeout == 0 || p.wait_until != 0i64 && now >= p.wait_until) {
+    let q = Process { ...p, wait_until: 0i64 };
+    return (q, q.answer(q.copy_out(va, out), count as i64));
+  }
+  if (timeout > 0 && p.wait_until == 0i64) {
+    return Process { ...p, wait_until: now + timeout as i64 * 1000000i64 }.wait();
+  }
+  return p.wait();
+}
+
+// The struct epoll_event of each ready descriptor of instance ep, at most max.
+function (p: Process) ready_events(ep: i32, max: i32): (u8[], i32) {
+  let out: u8[] = [];
+  let count = 0;
+  for w in p.epoll(ep).watches {
+    let ready = p.readiness(w.fd) & (w.events | EPOLLHUP);
+    if (ready != 0 as u32 && count < max) {
+      out = out.concat(u32_bytes(ready)).concat(zeros(4)).concat(u64_bytes(w.data));
+      count += 1;
+    }
+  }
+  return (out, count);
+}
+
+// The epoll events that the descriptor has now.
+function (p: Process) readiness(fd: u64): u32 {
+  let Some(f) = p.open_file(fd) else {
+    return EPOLLHUP;
+  };
+  if (f.kind == FD_SIGNALFD) {
+    return events_if((p.signals & f.mask) != 0 as u64, EPOLLIN);
+  }
+  let Some(n) = p.net else {
+    return EPOLLIN | EPOLLOUT;
+  };
+  if (f.kind == FD_LISTENER) {
+    return events_if(n.pending(), EPOLLIN);
+  }
+  if (f.kind == FD_CONNECTION) {
+    return connection_readiness(n, f);
+  }
+  if (f.kind == FD_SOCKET || f.kind == FD_EPOLL) {
+    return 0 as u32;
+  }
+  return EPOLLIN | EPOLLOUT;
+}
+
+function connection_readiness(n: user_net.Net, f: OpenFile): u32 {
+  let events = events_if(n.readable(f.handle, f.gen), EPOLLIN);
+  if (n.live(f.handle, f.gen)) {
+    return events | EPOLLOUT;
+  }
+  return events | EPOLLHUP;
+}
+
+function events_if(ok: boolean, events: u32): u32 {
+  if (ok) {
+    return events;
+  }
+  return 0 as u32;
+}
+```
+
 ### `files`
 
 An open file holds its entry and its offset. For a directory the offset is the index of the next name in the listing. The root directory has no entry in an archive, so `root_entry` stands for it.
 
 ```fern
 <<files>>=
-pub struct OpenFile { path: string, entry: cpio.Entry, offset: usize, open: boolean, memory: boolean, writable: boolean }
+pub struct OpenFile { path: string, entry: cpio.Entry, offset: usize, open: boolean, memory: boolean, writable: boolean, kind: i32, handle: i32, gen: i32, nonblock: boolean, mask: u64 }
 
 // A file or a directory that the process made, in memory. The entry holds its
 // kind, mode, inode and size, as for an entry of the archive.
@@ -1171,11 +1719,11 @@ function (p: Process) node_file(path: string): Option[OpenFile] {
   let Some(i) = p.node_index(path) else {
     return None;
   };
-  return Some(OpenFile { path: path, entry: p.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: false });
+  return Some(OpenFile { path: path, entry: p.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: false, kind: FD_FILE, handle: 0, gen: 0, nonblock: false, mask: 0 as u64 });
 }
 
 function archive_file(path: string, e: cpio.Entry): OpenFile {
-  return OpenFile { path: path, entry: e, offset: ZERO, open: true, memory: false, writable: false };
+  return OpenFile { path: path, entry: e, offset: ZERO, open: true, memory: false, writable: false, kind: FD_FILE, handle: 0, gen: 0, nonblock: false, mask: 0 as u64 };
 }
 
 function parent_of(path: string): string {
@@ -1467,6 +2015,21 @@ pub function (p: Process) written(path: string): Option[u8[]] {
   return Some(join_chunks(p.nodes[i].chunks));
 }
 
+// The root of the process as one cpio archive: the entries of the archive,
+// then the files and directories in memory, in the order of their creation.
+pub function (p: Process) image(): u8[] {
+  let items: cpio.Item[] = [];
+  if let Some(a) = p.root {
+    for e in a.entries {
+      items = items.append(cpio.Item { name: cpio.clean(e.name), mode: e.mode, data: a.read(e) });
+    }
+  }
+  for n in p.nodes {
+    items = items.append(cpio.Item { name: cpio.clean(n.path), mode: n.entry.mode, data: join_chunks(n.chunks) });
+  }
+  return cpio.write(items);
+}
+
 function join_chunks(chunks: u8[][]): u8[] {
   let out: u8[] = [];
   for c in chunks {
@@ -1593,7 +2156,7 @@ function (p: Process) create_at(dirfd: u64, va: usize, mode: u64): (Process, Opt
       let Some(i) = q.node_index(path) else {
         return q.failed(EIO);
       };
-      return q.add_file(OpenFile { path: path, entry: q.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: true });
+      return q.add_file(OpenFile { path: path, entry: q.nodes[i].entry, offset: ZERO, open: true, memory: true, writable: true, kind: FD_FILE, handle: 0, gen: 0, nonblock: false, mask: 0 as u64 });
     },
     Err(errno) => {
       return p.failed(errno);

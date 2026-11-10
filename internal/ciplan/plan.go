@@ -257,8 +257,8 @@ func (g *Graph) Select(changes []string) Plan {
 		for pkg, tests := range p.Tests {
 			var ordinary []string
 			for _, test := range tests {
-				if g.special[test] {
-					p.Lanes["test-e2e-selfhost"] = true
+				if owner := g.special[test]; owner != "" {
+					p.Lanes[owner] = true
 					continue
 				}
 				linux, darwinOnly := g.testPlatforms(pkg, test)
@@ -340,5 +340,5 @@ func (g *Graph) dedicated(test string) bool {
 			return true
 		}
 	}
-	return g.special[test]
+	return g.special[test] != ""
 }

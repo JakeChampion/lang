@@ -1,5 +1,6 @@
 import "../wasm_ir";
 import "../util";
+import "std/string";
 
 function ref_trim(s: string): string {
   let n = s.len();
@@ -11,7 +12,7 @@ function ref_trim(s: string): string {
   while (hi > lo && s[hi - 1] == b' ') {
     hi -= 1;
   }
-  return slice_unchecked(s, lo, hi) + "";
+  return slice_unchecked(s, lo, hi).to_owned();
 }
 
 function ref_sum_supported(t: string): boolean {
@@ -63,8 +64,7 @@ function main(): i32 {
   ];
   let out = "";
   let bad = 0;
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let t = corpus[i];
     let ns = wasm_ir.extern_sum_param_supported(t);
     let no = wasm_ir.extern_sum_param_is_option(t);
@@ -76,7 +76,6 @@ function main(): i32 {
       bad += 1;
     }
     out = out + mark + t + " sum=" + b(ns) + " opt=" + b(no) + "\n";
-    i += 1;
   }
   out = out + "mismatches=" + util.i32_to_string(bad) + "\n";
   write(out);

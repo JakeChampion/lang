@@ -6,6 +6,17 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
+func (c *checker) recordOwnedResult(call *ast.Call, own bool) {
+	if own {
+		if c.callOwnResults == nil {
+			c.callOwnResults = map[*ast.Call]bool{}
+		}
+		c.callOwnResults[call] = true
+	} else {
+		delete(c.callOwnResults, call)
+	}
+}
+
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
 	c.resultAnalysed = make(map[string]bool, len(prog.Funcs))
@@ -39,11 +50,18 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 }
 
 func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
+	return c.funcResultBorrowsWith(fn, false)
+}
+
+func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool {
 	// A scalar result is a copy, so it cannot borrow from a parameter.
 	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType)}
+	if ownedResult && c.valueData(fn.ReturnType, map[string]bool{}) {
+		return false
+	}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType), ownedResult: ownedResult}
 	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
@@ -135,6 +153,27 @@ func valueElementIterable(e ast.Expr, values map[string]bool) bool {
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
 	handlesOnly              bool
+	ownedResult              bool
+}
+
+// binding is the scope inside a pattern that binds names. They shadow the
+// outer names, and they borrow only when lends is true.
+func (b borrowScope) binding(names []string, lends bool) borrowScope {
+	if len(names) == 0 {
+		return b
+	}
+	out := borrowScope{borrowed: map[string]bool{}, locals: map[string]bool{}, values: b.values, handlesOnly: b.handlesOnly, ownedResult: b.ownedResult}
+	for k, v := range b.borrowed {
+		out.borrowed[k] = v
+	}
+	for k, v := range b.locals {
+		out.locals[k] = v
+	}
+	for _, n := range names {
+		out.borrowed[n] = lends
+		delete(out.locals, n)
+	}
+	return out
 }
 
 // A type parameter can hold a handle after substitution.
@@ -153,7 +192,58 @@ func elemType(t ast.Type) ast.Type {
 	return nil
 }
 
+func (c *checker) resultPartBorrows(e ast.Expr, b borrowScope) bool {
+	return !c.resultCopyParts[e] && c.exprBorrows(e, b)
+}
+
 func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
+	if b.ownedResult {
+		if c.scalarArgs[e] || c.valueArgs[e] {
+			return false
+		}
+		switch x := e.(type) {
+		case *ast.BlockExpr:
+			return x.Tail == nil || c.exprBorrows(x.Tail, b)
+		case *ast.StructLit:
+			if x.Base != nil && c.resultPartBorrows(x.Base, b) {
+				return true
+			}
+			for _, f := range x.Fields {
+				if c.resultPartBorrows(f.Value, b) {
+					return true
+				}
+			}
+			return false
+		case *ast.ArrayLit:
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.resultPartBorrows(e, b) })
+		case *ast.TupleLit:
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.resultPartBorrows(e, b) })
+		case *ast.MapLit:
+			for _, entry := range x.Entries {
+				if c.resultPartBorrows(entry.Key, b) || c.resultPartBorrows(entry.Value, b) {
+					return true
+				}
+			}
+			return false
+		case *ast.Call:
+			if c.callOwnResults[x] {
+				return false
+			}
+			if c.exprBorrows(x.Callee, b) {
+				return true
+			}
+			flags := c.callOwnFlags[x]
+			if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
+				flags = c.ownFuncs[id.Name]
+			}
+			for i, arg := range x.Args {
+				if (i >= len(flags) || !flags[i]) && c.resultPartBorrows(arg, b) {
+					return true
+				}
+			}
+			return false
+		}
+	}
 	switch x := e.(type) {
 	case nil:
 		return false
@@ -185,6 +275,15 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		return c.exprBorrows(x.Source, b)
 	case *ast.IfExpr:
 		return c.exprBorrows(x.Then, b) || c.exprBorrows(x.Else, b)
+	case *ast.MatchExpr:
+		// An arm's binders come from the scrutinee, so they borrow only when it does.
+		lends := c.exprBorrows(x.Tag, b)
+		for _, arm := range x.Arms {
+			if c.exprBorrows(arm.Body, b.binding(arm.Binders(), lends)) {
+				return true
+			}
+		}
+		return false
 	case *ast.Call:
 		if !c.calleeResultBorrows(x) {
 			return false
@@ -213,6 +312,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 }
 
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
+	if c.callOwnResults[x] {
+		return false
+	}
 	if freshAssociatedResult(x) {
 		return false
 	}
@@ -288,14 +390,14 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 // A callback can return a captured handle without consuming its capture.
 func (c *checker) callbackCanLend(t ast.Type) bool {
 	fn, ok := t.(*ast.FuncType)
-	return ok && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
+	return ok && !fn.ResultOwn && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
 }
 
 func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType)}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType), ownedResult: outer.ownedResult}
 	for name := range outer.borrowed {
 		b.borrowed[name] = true
 	}
@@ -339,6 +441,10 @@ func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
 			}
 			return !found
 		case *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
+			if b.ownedResult {
+				found = c.exprBorrows(x.(ast.Expr), b)
+				return false
+			}
 			ast.Walk(n, func(part ast.Node) bool {
 				if id, ok := part.(*ast.Ident); ok && (b.borrowed[id.Name] || b.locals[id.Name]) {
 					found = true
@@ -449,6 +555,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	sig, ok := c.info.FuncSigs[name]
 	if !ok {
 		return true
+	}
+	if sig.ResultOwn {
+		return false
 	}
 	flags := c.ownFuncs[name]
 	for i := range sig.Params {

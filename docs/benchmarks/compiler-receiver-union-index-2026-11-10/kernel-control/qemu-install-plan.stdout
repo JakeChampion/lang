@@ -1,0 +1,51 @@
+NOTE: This is only a simulation!
+      apt-get needs root privileges for real execution.
+      Keep also in mind that locking is deactivated,
+      so don't depend on the relevance to the real current situation!
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  libaio1t64 libbrlapi0.8 libcacard0 libcapstone5 libdaxctl1 libexecs1 libfdt1
+  libndctl6 libpmem1 liburing2 libusbredirparser1t64 libvdeplug2t64
+  qemu-system-common qemu-system-data
+Suggested packages:
+  samba vde2
+Recommended packages:
+  qemu-utils ipxe-qemu seabios qemu-efi-aarch64 qemu-efi-arm qemu-system-gui
+  qemu-system-modules-spice qemu-system-modules-opengl qemu-block-extra
+The following NEW packages will be installed:
+  libaio1t64 libbrlapi0.8 libcacard0 libcapstone5 libdaxctl1 libexecs1 libfdt1
+  libndctl6 libpmem1 liburing2 libusbredirparser1t64 libvdeplug2t64
+  qemu-system-arm qemu-system-common qemu-system-data
+0 upgraded, 15 newly installed, 0 to remove and 6 not upgraded.
+Inst libaio1t64 (0.3.113-8+b1 Debian:13.7/stable [amd64])
+Inst libbrlapi0.8 (6.7-3.1+deb13u3 Debian:13.7/stable [amd64])
+Inst libcacard0 (1:2.8.0-3+b2 Debian:13.7/stable [amd64])
+Inst libcapstone5 (5.0.7-1~deb13u1 Debian:13.7/stable [amd64])
+Inst libdaxctl1 (81-1 Debian:13.7/stable [amd64])
+Inst libexecs1 (1.4-2+b2 Debian:13.7/stable [amd64])
+Inst libfdt1 (1.7.2-2+b1 Debian:13.7/stable [amd64])
+Inst libndctl6 (81-1 Debian:13.7/stable [amd64])
+Inst libpmem1 (1.13.1-1.1+b1 Debian:13.7/stable [amd64])
+Inst liburing2 (2.9-1 Debian:13.7/stable [amd64])
+Inst libusbredirparser1t64 (0.15.0-1 Debian:13.7/stable [amd64])
+Inst libvdeplug2t64 (4.0.1-5.1+b1 Debian:13.7/stable [amd64])
+Inst qemu-system-common (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [amd64])
+Inst qemu-system-data (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [all])
+Inst qemu-system-arm (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [amd64])
+Conf libaio1t64 (0.3.113-8+b1 Debian:13.7/stable [amd64])
+Conf libbrlapi0.8 (6.7-3.1+deb13u3 Debian:13.7/stable [amd64])
+Conf libcacard0 (1:2.8.0-3+b2 Debian:13.7/stable [amd64])
+Conf libcapstone5 (5.0.7-1~deb13u1 Debian:13.7/stable [amd64])
+Conf libdaxctl1 (81-1 Debian:13.7/stable [amd64])
+Conf libexecs1 (1.4-2+b2 Debian:13.7/stable [amd64])
+Conf libfdt1 (1.7.2-2+b1 Debian:13.7/stable [amd64])
+Conf libndctl6 (81-1 Debian:13.7/stable [amd64])
+Conf libpmem1 (1.13.1-1.1+b1 Debian:13.7/stable [amd64])
+Conf liburing2 (2.9-1 Debian:13.7/stable [amd64])
+Conf libusbredirparser1t64 (0.15.0-1 Debian:13.7/stable [amd64])
+Conf libvdeplug2t64 (4.0.1-5.1+b1 Debian:13.7/stable [amd64])
+Conf qemu-system-common (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [amd64])
+Conf qemu-system-data (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [all])
+Conf qemu-system-arm (1:10.0.13+ds-0+deb13u1 Debian:13.7/stable [amd64])

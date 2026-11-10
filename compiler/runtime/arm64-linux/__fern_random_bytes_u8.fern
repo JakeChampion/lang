@@ -1,6 +1,8 @@
 function __fern_random_bytes_u8(n: i32): i32[] {
   if (n < 0) {
-    n = 0;
+    let size = "fern: allocation size out of range\n";
+    __syscall3(64, 2, __raw_data(size) as i64, size.len() as i64);
+    exit(134);
   }
   let b = __raw_arr_box(((n as i64 + 7) / 8) as i32);
   __store_i64(b, n as i64);
@@ -10,7 +12,7 @@ function __fern_random_bytes_u8(n: i32): i32[] {
     if (want > 256) {
       want = 256;
     }
-    let r = __syscall3(278, (b + 8 + off) as i64, want as i64, 0) as i32;
+    let r = __syscall3(278, (b + 8 + off as usize) as i64, want as i64, 0) as i32;
     if (r == -4) {
       continue;
     }

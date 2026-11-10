@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Compare native/WASI AVC PPS metadata with independent FFmpeg syntax traces."""
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location("pps_fixtures", ROOT / "scripts/gen-video-avc-pps-fixtures.py")
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/avc-pps-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+source = "scripts/video-reference/avc-pps.fern"
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary), source, "internal/stdlib"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm), source, "internal/stdlib"], check=True)
+def compare(sps_path, pps_path, expected):
+    native = subprocess.run([str(binary), str(sps_path), str(pps_path)], capture_output=True, text=True)
+    wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), sps_path.name, pps_path.name],
+                          cwd=sps_path.parent, capture_output=True, text=True)
+    assert "live_bytes=0" in native.stderr, (pps_path.name, native.stderr)
+    assert (native.returncode == 0) == bool(expected), (pps_path.name, native.stderr)
+    assert (wasi.returncode == 0) == bool(expected), (pps_path.name, wasi.stderr)
+    if expected:
+        assert native.stdout == wasi.stdout
+        assert list(map(int, native.stdout.split())) == expected, pps_path.name
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    trace = fixtures.syntax.build_trace()
+    for name, sps, pps, expected, encoded in fixtures.vectors(directory):
+        sps_path = directory / (name + ".sps")
+        pps_path = directory / (name + ".pps")
+        sps_path.write_bytes(sps)
+        pps_path.write_bytes(pps)
+        compare(sps_path, pps_path, expected)
+        print(f"{name}: all 22 native/WASI PPS fields match FFmpeg's coded-bitstream reader", flush=True)
+        if encoded:
+            for size in range(len(pps)):
+                prefix = pps[:size]
+                prefix_expected = fixtures.prefix_reference(trace, sps, prefix, directory)
+                prefix_path = directory / (name + "-prefix.pps")
+                prefix_path.write_bytes(prefix)
+                compare(sps_path, prefix_path, prefix_expected)
+            print(f"{name}: every byte prefix matches independent PPS admission and metadata", flush=True)

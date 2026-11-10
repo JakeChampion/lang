@@ -242,6 +242,8 @@ func tacCases(t *testing.T) []invocation {
 		{name: "stdout full, pending after a block", args: []string{w12000}, stdout: stdoutFull},
 		{name: "stdout full, dropped after a block", args: []string{w13192}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{w13192}, stdout: stdoutClosed},
+		{name: "stdout full with before records", args: []string{"-b", w12000}, stdout: stdoutFull},
+		{name: "stdout closed with before records", args: []string{"-b", w13192}, stdout: stdoutClosed},
 		{name: "stdout full from stdin", stdin: lines(3000), stdout: stdoutFull},
 	}
 	cases = append(cases, invocation{name: "operand that is not valid UTF-8", args: []string{raw}, rawByteName: true})

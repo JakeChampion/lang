@@ -6,7 +6,7 @@ function __fern_scan_set(s: usize, state: i32, set: usize): i32 {
     i = 0;
   }
   while (i < len) {
-    let b = __load_u8(s + 4 + i) as u32;
+    let b = __load_u8(s + 4 + i as usize) as u32;
     if (b < n) {
       if (__load_u8(set + 8 + b) == 0) {
         i += 1;

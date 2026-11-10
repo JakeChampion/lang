@@ -1,0 +1,14 @@
+// spec: ML-05
+@value
+struct Key { bytes: u8[] }
+
+function (own key: Key) erase(): void {}
+
+function consume(own key: Key): i32 {
+  key.erase();
+  return key.bytes.len();
+}
+
+function main(): i32 {
+  return 0;
+}

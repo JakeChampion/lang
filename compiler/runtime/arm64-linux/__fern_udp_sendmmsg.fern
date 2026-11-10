@@ -31,7 +31,7 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
     __raw_store8(ap, j, addrs[j]);
     j += 1;
   }
-  let extra = base + 64 * n;
+  let extra = base + (64 * n) as usize;
   let lp = __raw_arr_ptr(lens);
   let off = 0;
   let v4 = -1;
@@ -44,8 +44,8 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
       let dropped: i32[] = __raw_array(p);
       return -22;
     }
-    let hdr = base + 64 * i;
-    let iov = extra + 96 * i;
+    let hdr = base + (64 * i) as usize;
+    let iov = extra + (96 * i) as usize;
     let sa = iov + 16;
     let cm = sa + 32;
     __raw_store_ptr(iov, 0, bytes + off as usize);

@@ -120,7 +120,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32>>
 
-<<47 function __plain_path(buf: u8[], from: i32, end: i32): boolean>>
+<<47 function __plain_path(buf: [u8], from: i32, end: i32): boolean>>
 
 <<48 function __version_status(buf: u8[], from: i32, end: i32): i32>>
 
@@ -1991,6 +1991,9 @@ function __declared(f: __BodyFraming): i32 {
 ```fern
 <<43 pub function request_target(method: string, target: string): Result[string, i32]>>=
 pub function request_target(method: string, target: string): Result[string, i32] {
+  if (__plain_origin(target.as_bytes())) {
+    return Ok(target);
+  }
   let buf = target.bytes();
   let end = target.len();
   let path_from = __target_start(buf, 0, end, method == "OPTIONS");
@@ -2011,6 +2014,19 @@ pub function request_target(method: string, target: string): Result[string, i32]
     return Ok(slice_unchecked(target, path_from, end).to_owned());
   }
   return __decoded_path(buf, path_from, path_end, end);
+}
+
+// __plain_origin says the target is an origin-form path that request_target
+// hands back as it is: a plain path, then a valid query or none.
+function __plain_origin(view: [u8]): boolean {
+  if (view.len() == 0 || view[0] != 47 as u8) {
+    return false;
+  }
+  let q = __find_char(view, 0, view.len(), 63 as u8);
+  if (q < 0) {
+    return __plain_path(view, 0, view.len());
+  }
+  return __query_ok(view, q + 1, view.len()) && __plain_path(view, 0, q);
 }
 ```
 
@@ -2181,11 +2197,11 @@ function __pct_byte(s: [u8], at: i32, end: i32): i32 {
 }
 ```
 
-### `47 function __plain_path(buf: u8[], from: i32, end: i32): boolean`
+### `47 function __plain_path(buf: [u8], from: i32, end: i32): boolean`
 
 ```fern
-<<47 function __plain_path(buf: u8[], from: i32, end: i32): boolean>>=
-function __plain_path(buf: u8[], from: i32, end: i32): boolean {
+<<47 function __plain_path(buf: [u8], from: i32, end: i32): boolean>>=
+function __plain_path(buf: [u8], from: i32, end: i32): boolean {
   let seg = from + 1;
   let i = from;
   while (i < end) {
@@ -2203,7 +2219,7 @@ function __plain_path(buf: u8[], from: i32, end: i32): boolean {
   return __dot_segment(buf, seg, end) == 0;
 }
 
-function __dot_segment(s: u8[], from: i32, end: i32): i32 {
+function __dot_segment(s: [u8], from: i32, end: i32): i32 {
   let n = end - from;
   if (n < 1 || n > 2 || s[from] != 46 as u8 || s[end - 1] != 46 as u8) {
     return 0;

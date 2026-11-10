@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**138 of 141** claims are pinned by a conformance case. The remaining
+**147 of 150** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -138,6 +138,7 @@ of them.
 | `DI-11` | `docs/INITIALIZATION.md` | An enum constructor requires every payload argument (`E036`) | `init_variant_payload_missing` |
 | `DI-12` | `docs/INITIALIZATION.md` | Both empty and payload enum variants produce initialized typed values | `init_variant_control` |
 | `DI-13` | `docs/INITIALIZATION.md` | A struct update retains initialized fields from its base | `init_struct_update_control` |
+| `DI-14` | `docs/INITIALIZATION.md` | A local callable or callback parameter shadows a builtin function name, including in a nested closure; calls use the resolved signature | `cell_constructor_shadowed_callbacks` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
@@ -174,6 +175,11 @@ of them.
 | `AL-05` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that recycles a block still calls the allocator every round: the allocation COUNT scales with the round count where the fresh-byte mark stays flat | `alloc_count_sees_recycling` |
 | `AL-06` | `docs/ALLOCATION-OBSERVABLE.md` | An aggregate literal buys its box after evaluating its operands, so an operand that reads the allocation count does not see the literal's own box | `eval_order_aggregate_literal` |
 | `SH-01` | `docs/security/UNSAFE-INVENTORY.md` | The owned result of share_unchecked survives local aliases and helper returns. An unsafe block alone grants no ownership | `share_owner_result_survives_aliases` |
+| `VT-01` | `docs/VALUE-TYPES.md` | A checked value cleanup preserves retained COW holders | `value_cleanup_keeps_cow_aliases` |
+| `VT-02` | `docs/VALUE-TYPES.md` | Value fields cannot retain resource handles | `diag_e051_value_descriptor` |
+| `VT-03` | `docs/VALUE-TYPES.md` | Value fields cannot retain mutable cells or callbacks | `diag_e051_value_cell` |
+| `VT-04` | `docs/VALUE-TYPES.md` | Value fields cannot retain borrowed views or unconstrained types | `diag_e051_value_view` |
+| `VT-05` | `docs/VALUE-TYPES.md` | Value fields cannot retain consumption obligations | `diag_e051_value_obligation` |
 | `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
@@ -219,6 +225,10 @@ of them.
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
+
+| `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through a generic callback and a function-valued field | `checked_owned_results` |
+| `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
+| `OR-03` | `docs/OWNED-RESULTS.md` | An ordinary-result function cannot satisfy an owned-result function type (`E003`) | `diag_e003_checked_result_strengthening` |
 
 ## Every gap this index opened with is now closed
 

@@ -19,6 +19,13 @@ func TestSelfHostInterpImplementsHostedBuiltins(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name == "([^"]+)"`).FindAllStringSubmatch(src, -1) {
 		dispatched[m[1]] = true
 	}
+	for _, body := range regexp.MustCompile(`(?s)match \(name\) \{(.*?)\n\s*\};`).FindAllStringSubmatch(src, -1) {
+		for _, arm := range regexp.MustCompile(`(?m)^\s*("[^"]+"(?:\s*\|\s*"[^"]+")*)\s*=>`).FindAllStringSubmatch(body[1], -1) {
+			for _, n := range fernStringList(arm[1]) {
+				dispatched[n] = true
+			}
+		}
+	}
 	for _, m := range regexp.MustCompile(`has_str\(\s*\[([^\]]*)\],\s*name,?\s*\)`).FindAllStringSubmatch(src, -1) {
 		for _, n := range fernStringList(m[1]) {
 			dispatched[n] = true

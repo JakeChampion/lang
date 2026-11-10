@@ -1,0 +1,36 @@
+{
+  "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "fixed_input_source": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "compiler_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+  "purpose": "One current-main-equivalent native Opus correctness control after upstream parser and mismatch-kernel changes. Not a paired timing or normal-run leak check.",
+  "runs": [
+    {
+      "label": "compile",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/opus-native",
+        "/workspace/lang-compiler-main-20261110-1845/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1845/internal/stdlib"
+      ],
+      "started": "2026-11-10T18:45:41.380127+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:47.386977+00:00"
+    },
+    {
+      "label": "program",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/opus-native"
+      ],
+      "started": "2026-11-10T18:45:47.387768+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:47.422294+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "native_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+  "tap_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+  "finished": "2026-11-10T18:45:47.423078+00:00"
+}

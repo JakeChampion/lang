@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory() as directory:
     directory = Path(directory)
     cases = fixtures.generate(directory)
     sparse = directory / "avc-sparse-co64.mp4"
-    sparse_movie(cases[-1][1], sparse)
+    compact = next(path for name, path in cases if name == "avc-compact-co64")
+    sparse_movie(compact, sparse)
     cases.append(("avc-sparse-co64", sparse))
     for name, path in cases:
         metadata = fixtures.packets(path)

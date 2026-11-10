@@ -1,0 +1,236 @@
+{
+  "id": 129627638421,
+  "run_id": 42754163314,
+  "workflow_name": "CI",
+  "head_branch": "perf/interpreter-opus-timeout",
+  "run_url": "https://api.github.com/repos/JakeChampion/lang/actions/runs/42754163314",
+  "run_attempt": 1,
+  "node_id": "CR_kwDOSVpu_M8AAAAeLmjKlQ",
+  "head_sha": "36d1f7b521f58c90c9fcd79aafe9326677d82850",
+  "url": "https://api.github.com/repos/JakeChampion/lang/actions/jobs/129627638421",
+  "html_url": "https://github.com/JakeChampion/lang/actions/runs/42754163314/job/129627638421",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-11-10T04:19:31Z",
+  "started_at": "2026-11-10T05:13:16Z",
+  "completed_at": "2026-11-10T05:21:10Z",
+  "name": "Full suite / Perf / perf-x86_64",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1,
+      "started_at": "2026-11-10T05:13:17Z",
+      "completed_at": "2026-11-10T05:13:18Z"
+    },
+    {
+      "name": "Run actions/checkout@v7",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2,
+      "started_at": "2026-11-10T05:13:18Z",
+      "completed_at": "2026-11-10T05:13:30Z"
+    },
+    {
+      "name": "Run ./.github/actions/setup-fern",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 3,
+      "started_at": "2026-11-10T05:13:30Z",
+      "completed_at": "2026-11-10T05:13:48Z"
+    },
+    {
+      "name": "Run ./.github/actions/disable-chrome-apt",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 4,
+      "started_at": "2026-11-10T05:13:48Z",
+      "completed_at": "2026-11-10T05:13:48Z"
+    },
+    {
+      "name": "Install valgrind",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 5,
+      "started_at": "2026-11-10T05:13:48Z",
+      "completed_at": "2026-11-10T05:14:08Z"
+    },
+    {
+      "name": "Benchmark",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 6,
+      "started_at": "2026-11-10T05:14:08Z",
+      "completed_at": "2026-11-10T05:16:40Z"
+    },
+    {
+      "name": "Compare against the baseline",
+      "status": "completed",
+      "conclusion": "failure",
+      "number": 7,
+      "started_at": "2026-11-10T05:16:40Z",
+      "completed_at": "2026-11-10T05:16:40Z"
+    },
+    {
+      "name": "Record the report in refs/notes/perf",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 8,
+      "started_at": "2026-11-10T05:16:40Z",
+      "completed_at": "2026-11-10T05:16:40Z"
+    },
+    {
+      "name": "Upload the report",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9,
+      "started_at": "2026-11-10T05:16:40Z",
+      "completed_at": "2026-11-10T05:16:41Z"
+    },
+    {
+      "name": "Run ./.github/actions/selfhost-driver-cache",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10,
+      "started_at": "2026-11-10T05:16:41Z",
+      "completed_at": "2026-11-10T05:16:55Z"
+    },
+    {
+      "name": "Constant-time gate",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 11,
+      "started_at": "2026-11-10T05:16:55Z",
+      "completed_at": "2026-11-10T05:18:05Z"
+    },
+    {
+      "name": "Syscall gates",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 12,
+      "started_at": "2026-11-10T05:18:05Z",
+      "completed_at": "2026-11-10T05:18:19Z"
+    },
+    {
+      "name": "Measure the append cliff",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 13,
+      "started_at": "2026-11-10T05:18:19Z",
+      "completed_at": "2026-11-10T05:18:27Z"
+    },
+    {
+      "name": "Compare the append cliff against the baseline",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 14,
+      "started_at": "2026-11-10T05:18:27Z",
+      "completed_at": "2026-11-10T05:18:27Z"
+    },
+    {
+      "name": "Measure the self-host compiler's emitted size",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 15,
+      "started_at": "2026-11-10T05:18:27Z",
+      "completed_at": "2026-11-10T05:18:53Z"
+    },
+    {
+      "name": "Compare the emitted size against the baseline",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 16,
+      "started_at": "2026-11-10T05:18:53Z",
+      "completed_at": "2026-11-10T05:18:53Z"
+    },
+    {
+      "name": "Measure the cost of each build profile",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 17,
+      "started_at": "2026-11-10T05:18:53Z",
+      "completed_at": "2026-11-10T05:20:10Z"
+    },
+    {
+      "name": "Compare the profile costs against the baseline",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 18,
+      "started_at": "2026-11-10T05:20:10Z",
+      "completed_at": "2026-11-10T05:20:10Z"
+    },
+    {
+      "name": "Measure the self-host compiler's allocation",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 19,
+      "started_at": "2026-11-10T05:20:10Z",
+      "completed_at": "2026-11-10T05:21:05Z"
+    },
+    {
+      "name": "Compare the allocation against the baseline",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 20,
+      "started_at": "2026-11-10T05:21:05Z",
+      "completed_at": "2026-11-10T05:21:05Z"
+    },
+    {
+      "name": "Record the reports in refs/notes/perf",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 21,
+      "started_at": "2026-11-10T05:21:05Z",
+      "completed_at": "2026-11-10T05:21:05Z"
+    },
+    {
+      "name": "Upload the reports",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 22,
+      "started_at": "2026-11-10T05:21:05Z",
+      "completed_at": "2026-11-10T05:21:06Z"
+    },
+    {
+      "name": "Post Run ./.github/actions/selfhost-driver-cache",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 42,
+      "started_at": "2026-11-10T05:21:06Z",
+      "completed_at": "2026-11-10T05:21:06Z"
+    },
+    {
+      "name": "Post Run ./.github/actions/setup-fern",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 43,
+      "started_at": "2026-11-10T05:21:06Z",
+      "completed_at": "2026-11-10T05:21:06Z"
+    },
+    {
+      "name": "Post Run actions/checkout@v7",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 44,
+      "started_at": "2026-11-10T05:21:06Z",
+      "completed_at": "2026-11-10T05:21:07Z"
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 45,
+      "started_at": "2026-11-10T05:21:07Z",
+      "completed_at": "2026-11-10T05:21:07Z"
+    }
+  ],
+  "check_run_url": "https://api.github.com/repos/JakeChampion/lang/check-runs/129627638421",
+  "labels": [
+    "ubuntu-24.04"
+  ],
+  "runner_id": 1000993750,
+  "runner_name": "GitHub Actions 1000993750",
+  "runner_group_id": 0,
+  "runner_group_name": "GitHub Actions"
+}

@@ -1,4 +1,7 @@
 function __fern_read_dir_bytes(path: string): Result[i32[][], IoError] {
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i = 0;
@@ -44,7 +47,7 @@ function __fern_read_dir_bytes(path: string): Result[i32[][], IoError] {
           if (skip == 0) {
             let nbuf = __raw_arr_box((nlen + 7) / 8);
             __store_i64(nbuf, nlen as i64);
-            __memcpy(nbuf + 8, buf + pos + 21, nlen);
+            __memcpy(nbuf + 8, buf + pos as usize + 21, nlen);
             let name_bytes = __raw_array(nbuf);
             names = names.append(name_bytes);
           }

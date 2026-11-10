@@ -1,0 +1,3 @@
+/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_struct_field/main.fern:4:20: error[E098]: builtin "__clz32" can only be called, not used as a value
+        let s = S { f: __clz32 };
+                       ^

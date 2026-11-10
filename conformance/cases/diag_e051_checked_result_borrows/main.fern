@@ -1,0 +1,10 @@
+// spec: OR-02
+struct Box { values: u8[] }
+
+function bad[T](x: T): own T {
+  return x;
+}
+
+function main(): i32 {
+  return 0;
+}

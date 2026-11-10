@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-09T22:13:43Z",
+  "finished": "2026-11-09T22:20:01.235075+00:00",
+  "command": "go test ./internal/testing/e2ecompiler -run '^TestSelfHostInterp(Driver(X86_64|Arm64)|CallableValues|StructOps|AssocConsts)$' -count=1 -v -timeout=20m",
+  "note": "Detached retry after parent-session loss. Reuses the existing completed driver cache with the same source and producer. No test cache."
+}

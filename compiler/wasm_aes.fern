@@ -108,10 +108,8 @@ function sbox_func(): string {
     body += gate_wat(g[i], g[i + 1], g[i + 2], g[i + 3]);
     i += 4;
   }
-  k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     body = body + "    (i64.store offset=" + util.i32_to_string(8 * (7 - k)) + " (local.get $p) (local.get $s" + util.i32_to_string(k) + "))\n";
-    k += 1;
   }
   return "  (func $__fern_aes_bs_sbox (param $p i32)" + locals + "\n" + body + "  )\n";
 }
@@ -130,10 +128,8 @@ function ortho_func(): string {
   let cl: string[] = ["0x5555555555555555", "0x3333333333333333", "0x0F0F0F0F0F0F0F0F"];
   let ch: string[] = ["0xAAAAAAAAAAAAAAAA", "0xCCCCCCCCCCCCCCCC", "0xF0F0F0F0F0F0F0F0"];
   let sh: string[] = ["1", "2", "4"];
-  let i = 0;
-  while (i < 12) {
+  for i in 0..12 {
     o += swap_wat(pairs[2 * i], pairs[2 * i + 1], cl[i / 4], ch[i / 4], sh[i / 4]);
-    i += 1;
   }
   return o + "  )\n";
 }
@@ -166,10 +162,8 @@ function interleave_funcs(): string {
     + "    (local.set $x1 (i64.and (i64.load offset=32 (local.get $q)) " + i64c("0x00FF00FF00FF00FF") + "))\n"
     + "    (local.set $x2 (i64.and (i64.shr_u (i64.load (local.get $q)) (i64.const 8)) " + i64c("0x00FF00FF00FF00FF") + "))\n"
     + "    (local.set $x3 (i64.and (i64.shr_u (i64.load offset=32 (local.get $q)) (i64.const 8)) " + i64c("0x00FF00FF00FF00FF") + "))\n";
-  k = 0;
-  while (k < 4) {
+  for k in 0..4 {
     o += gather_wat("x" + util.i32_to_string(k), util.i32_to_string(4 * k));
-    k += 1;
   }
   return o + "  )\n";
 }
@@ -201,13 +195,11 @@ function mix_row(k: i32, terms: string[]): string {
 function mix_columns_func(): string {
   let o = "  (func $__fern_aes_bs_mix_columns (param $p i32)";
   let body = "";
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     let ks = util.i32_to_string(k);
     o = o + " (local $q" + ks + " i64) (local $r" + ks + " i64)";
     body = body + "    (local.set $q" + ks + " (i64.load offset=" + util.i32_to_string(8 * k) + " (local.get $p)))\n"
       + "    (local.set $r" + ks + " (i64.rotr (local.get $q" + ks + ") (i64.const 16)))\n";
-    k += 1;
   }
   body = body + mix_row(0, ["q7", "r7", "r0"]) + mix_row(1, ["q0", "r0", "q7", "r7", "r1"]) + mix_row(2, ["q1", "r1", "r2"])
     + mix_row(3, ["q2", "r2", "q7", "r7", "r3"]) + mix_row(4, ["q3", "r3", "q7", "r7", "r4"]) + mix_row(5, ["q4", "r4", "r5"])
@@ -292,21 +284,17 @@ function ctr_chunk_wat(): string {
     j += 1;
   }
   o += "      (call $__fern_aes_bs_ortho (local.get $q))\n      (call $__fern_aes_bs_encrypt (local.get $q) (local.get $sk) (local.get $rounds))\n      (call $__fern_aes_bs_ortho (local.get $q))\n";
-  j = 0;
-  while (j < 4) {
+  for j in 0..4 {
     o = o + "      (call $__fern_aes_bs_out (local.get $q) (i32.add (local.get $w) (i32.const " + util.i32_to_string(16 * j) + ")) (i32.const " + util.i32_to_string(j) + "))\n";
-    j += 1;
   }
   return o;
 }
 
 function ctr_xor_wat(): string {
   let o = "      (if (i32.ge_u (i32.sub (local.get $n) (local.get $at)) (i32.const 64)) (then\n";
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     let off = util.i32_to_string(8 * k);
     o = o + "        (i64.store offset=" + off + " (i32.add (local.get $op) (local.get $at)) (i64.xor (i64.load offset=" + off + " (i32.add (local.get $ip) (local.get $at))) (i64.load offset=" + off + " (local.get $w))))\n";
-    k += 1;
   }
   return o + "      ) (else\n        (local.set $k (i32.const 0))\n        (block $bd (loop $byte\n          (br_if $bd (i32.ge_u (i32.add (local.get $at) (local.get $k)) (local.get $n)))\n"
     + "          (i32.store8 (i32.add (local.get $op) (i32.add (local.get $at) (local.get $k))) (i32.xor (i32.load8_u (i32.add (local.get $ip) (i32.add (local.get $at) (local.get $k)))) (i32.load8_u (i32.add (local.get $w) (local.get $k)))))\n"
@@ -452,19 +440,13 @@ function gcm_func(): string {
 }
 
 pub function kernel_name(tag: i32): string {
-  if (tag == 402) {
-    return "$__fern_aes_expand_key";
-  }
-  if (tag == 403) {
-    return "$__fern_aes_ctr32";
-  }
-  if (tag == 444) {
-    return "$__fern_aes_gcm_seal_into";
-  }
-  if (tag == 445) {
-    return "$__fern_aes_gcm_open_into";
-  }
-  return "$__fern_ghash";
+  return match (tag) {
+    402 => "$__fern_aes_expand_key",
+    403 => "$__fern_aes_ctr32",
+    444 => "$__fern_aes_gcm_seal_into",
+    445 => "$__fern_aes_gcm_open_into",
+    _ => "$__fern_ghash",
+  };
 }
 
 pub function funcs(): string {

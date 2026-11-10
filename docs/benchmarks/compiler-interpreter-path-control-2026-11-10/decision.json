@@ -1,0 +1,13 @@
+{
+  "decided": "2026-11-10T08:19:46.482929+00:00",
+  "decision": "Reject the lazy argument-target shortcut and retain eager lookup from upstream main.",
+  "reason": "Both original and equal-path follow-up studies retain higher candidate complete-compilation medians. Paired changes have large variation. The work-count and allocation benefits do not justify the unresolved throughput cost. This does not establish a specific layout or timing cause.",
+  "source_patch_sha256": "fba509cf93c96360d87fe81297bf2b7df1132982eb15ff232283b1c413eeed91",
+  "preserved": [
+    "Every earlier sample, output identity and measurement archive",
+    "Upstream Funcs Map index and function-count guard",
+    "Generic-call and same-count session regression controls",
+    "Proof rules, negative controls, corpus, test and diagnostic budgets, tolerances"
+  ],
+  "sampling_rule": "The follow-up stopped after its fixed 36 commands. No further timing sample is requested to seek a favorable result."
+}

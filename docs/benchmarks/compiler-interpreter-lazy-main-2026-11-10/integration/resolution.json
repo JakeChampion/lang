@@ -1,0 +1,10 @@
+{
+  "main": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+  "retained_both_dated_notes": true,
+  "all_numeric_baselines_equal_main": true,
+  "diagnostic_bytes_from_main": {
+    "arm64": 134872,
+    "x86_64": 124320
+  },
+  "staged_diff_check": 0
+}

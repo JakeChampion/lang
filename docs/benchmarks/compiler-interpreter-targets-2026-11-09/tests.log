@@ -1,0 +1,39 @@
+=== RUN   TestSelfHostInterpCallableValues
+=== RUN   TestSelfHostInterpCallableValues/field-closure-on-local
+=== RUN   TestSelfHostInterpCallableValues/field-closure-through-array
+=== RUN   TestSelfHostInterpCallableValues/field-closure-captures
+=== RUN   TestSelfHostInterpCallableValues/method-wins-over-field
+=== RUN   TestSelfHostInterpCallableValues/ordinary-method
+=== RUN   TestSelfHostInterpCallableValues/tuple-element-closure
+=== RUN   TestSelfHostInterpCallableValues/fn-pointer-field
+=== RUN   TestSelfHostInterpCallableValues/fn-name-as-argument
+=== RUN   TestSelfHostInterpCallableValues/method-returned-closure
+=== RUN   TestSelfHostInterpCallableValues/local-shadows-fn-name
+=== RUN   TestSelfHostInterpCallableValues/plain-tuple-read
+=== RUN   TestSelfHostInterpCallableValues/const-ref
+=== RUN   TestSelfHostInterpCallableValues/const-two
+=== RUN   TestSelfHostInterpCallableValues/const-in-callee
+=== RUN   TestSelfHostInterpCallableValues/const-receiver
+=== RUN   TestSelfHostInterpCallableValues/const-as-argument
+=== RUN   TestSelfHostInterpCallableValues/enum-variant-nullary
+=== RUN   TestSelfHostInterpCallableValues/enum-variant-payload
+--- PASS: TestSelfHostInterpCallableValues (22.27s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-on-local (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-through-array (0.03s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-captures (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/method-wins-over-field (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/ordinary-method (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/tuple-element-closure (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/fn-pointer-field (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/fn-name-as-argument (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/method-returned-closure (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/local-shadows-fn-name (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/plain-tuple-read (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-ref (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/const-two (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-in-callee (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/const-receiver (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/const-as-argument (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/enum-variant-nullary (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/enum-variant-payload (0.02s)
+=== RUN   TestSelfHostInterpDriverX86_64

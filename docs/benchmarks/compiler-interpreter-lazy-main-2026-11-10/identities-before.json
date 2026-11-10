@@ -1,0 +1,17 @@
+{
+  "baseline": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+  "candidate": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "fixed_controls": {
+    "first": {
+      "path": "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern",
+      "sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96"
+    },
+    "second": {
+      "path": "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern",
+      "sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527"
+    }
+  },
+  "product_delta": " compiler/interp.fern                                 | 20 +++++++++++++++-----\n .../e2ecompiler/self_host_interp_driver_test.go      | 14 ++++++++++++++\n .../e2ecompiler/self_host_interp_frames_test.go      |  9 +++++++++\n 3 files changed, 38 insertions(+), 5 deletions(-)\n",
+  "pin_contents": "# stage0 pin for `make bootstrap` \u2014 docs/BOOTSTRAP.md. Refresh: dispatch\n# .github/workflows/bootstrap.yml with publish=true and commit the lock it releases.\nsource a19e87208c5931d2600fdb75cc966fd179ae8c8f\nurl https://github.com/JakeChampion/lang/releases/download/stage0-20261109-a19e872\nx86-64-linux a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751\narm64-linux 14730f0fd87f323cb2c1d54da0be990346b21114bf5260c1197facb9ee12a37a\narm64-darwin d348597a2bc17dd2d3948f477981d909830899a91f45b138f4f973efe146914b\n"
+}

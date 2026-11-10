@@ -15,6 +15,8 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const main = "\nfunction main(): void {}\n"
 	accepted := []string{
+		"@value\nstruct S { a: i32 }" + main,
+		"@value\npub opaque struct S { a: i32 }" + main,
 		"import \"core/cmp\";\n@derive(cmp.Eq, cmp.Display)\nstruct S { a: i32 }" + main,
 		"import \"core/cmp\";\n@derive(cmp.Eq)\nenum E { A, B }" + main,
 		"import \"core/cmp\";\n@derive(cmp.Eq)\npub opaque struct S { a: i32 }" + main,
@@ -31,6 +33,9 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@export(\"a:b/c\", \"d\")\nfunction f(): void {}" + main,
 	}
 	rejected := []string{
+		"@value\nfunction f(): void {}",
+		"@value\nenum E { Empty }",
+		"@value(1)\nstruct S { a: i32 }",
 		"@@@",
 		"@\nstruct S { a: i32 }",
 		"function main(): void {}\n@",

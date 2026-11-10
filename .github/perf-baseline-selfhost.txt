@@ -1,3 +1,7 @@
+# 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
+# Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
+# Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
+# 2026-11-10: PR #15079, a local scripts/perf-bench-selfhost run on main's tree at da3282d0. http_hello.emit grows 6.2% to 7.2% on the three targets with f79f524d of #15076, which reads a request target through a view. This PR changes no emitted code. Pinned at the measured values.
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-10: PR #15061, perf-aarch64 job 129516573802 and perf-x86_64 job 129534712785. The video_qtrle rows fall 1-9% on main's tree. This PR changes no codec source. Pinned at the measured values.
@@ -259,7 +263,11 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16542
+# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
+# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
+# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
+# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
+selfhost/arm64-linux/http_hello.emit	16619
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -295,7 +303,7 @@ selfhost/wasm32-wasi/deflate_decode.emit	20140
 selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18928
+selfhost/wasm32-wasi/http_hello.emit	19039
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
@@ -330,7 +338,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12766
 selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15591
+selfhost/x86-64-linux/http_hello.emit	15691
 selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
@@ -345,7 +353,9 @@ selfhost/x86-64-linux/sort_strings.emit	3098
 selfhost/x86-64-linux/string_build.emit	1926
 selfhost/x86-64-linux/string_count_byte.emit	1321
 selfhost/x86-64-linux/string_find_byte.emit	1593
-selfhost/x86-64-linux/string_rfind_byte.emit	1737
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
+# Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
+selfhost/x86-64-linux/string_rfind_byte.emit	1758
 selfhost/x86-64-linux/string_scan.emit	2166
 selfhost/x86-64-linux/string_slice.emit	944
 selfhost/x86-64-linux/struct_drop.emit	2341

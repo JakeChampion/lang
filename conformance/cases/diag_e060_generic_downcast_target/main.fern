@@ -1,0 +1,43 @@
+// A downcast target is a concrete type. The type tag of a trait object names
+// the declaration and not its type arguments, so a generic instance is
+// refused.
+trait Show {
+    function show(self: Self): string;
+}
+
+struct Box[T] { v: T }
+
+impl[T] Show for Box[T] {
+    function show(self: Self): string {
+        return "Box";
+    }
+}
+
+struct Plain { n: i32 }
+
+impl Show for Plain {
+    function show(self: Self): string {
+        return "Plain";
+    }
+}
+
+function main(): i32 {
+    let d: dyn Show = Box { v: 77 };
+    match (d as? Box[string]) {
+        Some(b) => {
+            print("box");
+        },
+        None => {
+            print("no");
+        }
+    }
+    match (d as? Plain) {
+        Some(p) => {
+            print(p.n.to_string());
+        },
+        None => {
+            print("not plain");
+        }
+    }
+    return 0;
+}

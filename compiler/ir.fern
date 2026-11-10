@@ -1,5 +1,6 @@
 import "./util";
 import "./rtbytecopy";
+import "std/string";
 
 pub struct Op {
   kind_tag: i32,
@@ -1797,32 +1798,22 @@ pub function is_crc32_op(tag: i32): boolean {
 }
 
 pub function sha_builtin_tag(name: string): i32 {
-  if (name == "__sha256_hw") {
-    return 409;
-  }
-  if (name == "__sha256_hw_blocks") {
-    return 410;
-  }
-  if (name == "__sha1_hw") {
-    return 440;
-  }
-  if (name == "__sha1_hw_blocks") {
-    return 441;
-  }
-  return 0;
+  return match (name) {
+    "__sha256_hw" => 409,
+    "__sha256_hw_blocks" => 410,
+    "__sha1_hw" => 440,
+    "__sha1_hw_blocks" => 441,
+    _ => 0,
+  };
 }
 
 pub function sha_builtin_op(tag: i32): Op {
-  if (tag == 409) {
-    return op_sha256_hw();
-  }
-  if (tag == 440) {
-    return op_sha1_hw();
-  }
-  if (tag == 410) {
-    return packed(op_sha256_hw_blocks());
-  }
-  return packed(op_sha1_hw_blocks());
+  return match (tag) {
+    409 => op_sha256_hw(),
+    440 => op_sha1_hw(),
+    410 => packed(op_sha256_hw_blocks()),
+    _ => packed(op_sha1_hw_blocks()),
+  };
 }
 
 pub function op_proc_exec(): Op {
@@ -1846,7 +1837,7 @@ pub function const_struct_type(packed: string): string {
   while (i < packed.len() && packed[i] != 124) {
     i += 1;
   }
-  return slice_unchecked(packed, 0, i) + "";
+  return slice_unchecked(packed, 0, i).to_owned();
 }
 
 pub function const_struct_payload(packed: string): string {
@@ -1857,7 +1848,7 @@ pub function const_struct_payload(packed: string): string {
   if (i == packed.len()) {
     return "";
   }
-  return slice_unchecked(packed, i + 1, packed.len()) + "";
+  return slice_unchecked(packed, i + 1, packed.len()).to_owned();
 }
 
 pub function const_struct_values(packed: string): string[] {
@@ -1875,13 +1866,13 @@ pub function const_struct_values(packed: string): string[] {
     } else if (packed[i] == b'}') {
       depth -= 1;
     } else if (packed[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(packed, start, i) + "");
+      out = out.append(slice_unchecked(packed, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
   if (start < packed.len()) {
-    out = out.append(slice_unchecked(packed, start, packed.len()) + "");
+    out = out.append(slice_unchecked(packed, start, packed.len()).to_owned());
   }
   return out;
 }
@@ -1932,7 +1923,7 @@ pub function const_struct_ref(word: string): string {
   if (word.len() < 2 || word[0] != b'{' || word[word.len() - 1] != b'}') {
     return "";
   }
-  return slice_unchecked(word, 1, word.len() - 1) + "";
+  return slice_unchecked(word, 1, word.len() - 1).to_owned();
 }
 
 // A constant closure whose stub carries the signature word `cfi` under -harden.
@@ -1973,7 +1964,7 @@ pub function const_struct_fn_body(packed: string): string {
   if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
     return "";
   }
-  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)) + "";
+  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)).to_owned();
 }
 
 // The signature word of a constant closure.
@@ -1983,7 +1974,7 @@ pub function const_struct_fn_sig(packed: string): i32 {
   if (at >= t.len()) {
     return 0;
   }
-  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()) + "");
+  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()).to_owned());
 }
 
 function const_struct_fn_hash_at(t: string): i32 {
@@ -2051,13 +2042,11 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
   let tag = "";
-  let i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     if (i > 0) {
       tag += ",";
     }
     tag += arms[i];
-    i += 1;
   }
   return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
@@ -2065,15 +2054,13 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
 pub function dyn_dispatch_arms(tag: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let k = 0;
-  while (k <= tag.len()) {
+  for k in 0..=tag.len() {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
-        out = out.append(slice_unchecked(tag, start, k) + "");
+        out = out.append(slice_unchecked(tag, start, k).to_owned());
       }
       start = k + 1;
     }
-    k += 1;
   }
   return out;
 }
@@ -3734,32 +3721,32 @@ function pops3(t: i32): boolean {
     || t == 433;
 }
 
-function pops_buf(t: i32): i32 {
+function pops_buf(t: i32): Option[i32] {
   if (t >= 487 && t <= 489) {
-    return 5;
+    return Some(5);
   }
   if (t == 351) {
-    return 4;
+    return Some(4);
   }
   if (t == 347 || t == 386) {
-    return 1;
+    return Some(1);
   }
   if (t == 306 || t == 485) {
-    return 2;
+    return Some(2);
   }
   if (t == 325 || t == 326 || t == 328 || t == 370 || t == 371 || t == 372) {
-    return 3;
+    return Some(3);
   }
   if (t < 291 || t > 297) {
-    return -1;
+    return None;
   }
   if (t == 293) {
-    return 4;
+    return Some(4);
   }
   if (t == 292 || t == 294) {
-    return 2;
+    return Some(2);
   }
-  return 1;
+  return Some(1);
 }
 
 function pops_dir(t: i32): i32 {
@@ -3792,10 +3779,8 @@ pub function op_pops_by(by_kind: i32[], o: Op): i32 {
 
 pub function pops_by_kind(): i32[] {
   let out: i32[] = [];
-  let t = 0;
-  while (t < 1024) {
+  for t in 0..1024 {
     out = out.append(kind_pops(t));
-    t += 1;
   }
   return out;
 }
@@ -3827,8 +3812,7 @@ function kind_pops(t: i32): i32 {
   if (is_lane_kind(t)) {
     return lane_kind_pops()[t - LANE_KIND_FIRST];
   }
-  let bufn = pops_buf(t);
-  if (bufn >= 0) {
+  if let Some(bufn) = pops_buf(t) {
     return bufn;
   }
   if (t >= 420 && t <= 428) {
@@ -3958,8 +3942,7 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
   let k_end = K_END;
   let else_at: i32 = -1;
   let d = 0;
-  let i = if_at + 1;
-  while (i < ops.len()) {
+  for i in if_at + 1..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3971,7 +3954,6 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
     } else if (t == k_else && d == 0 && else_at < 0) {
       else_at = i;
     }
-    i += 1;
   }
   return IfSpan { else_at: else_at, end_at: -1 };
 }
@@ -3984,8 +3966,7 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
   let k_br = K_BR;
   let k_brif = K_BRIF;
   let d = 0;
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3998,7 +3979,6 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
         return true;
       }
     }
-    i += 1;
   }
   return false;
 }
@@ -4135,10 +4115,8 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
           if (wrap) {
             out = out.append(op_block(0));
           }
-          let j = lo;
-          while (j < hi) {
+          for j in lo..hi {
             out = out.append(cur[j]);
-            j += 1;
           }
           if (wrap) {
             out = out.append(op_end());
@@ -4181,10 +4159,8 @@ function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
     out = out.append(ops[j]);
     j += 1;
   }
-  j = 0;
-  while (j < tail.len()) {
+  for j in 0..tail.len() {
     out = out.append(tail[j]);
-    j += 1;
   }
   return out;
 }
@@ -4675,10 +4651,8 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
           if (!changed) {
             out = fold_prefixed(ops, i, []);
           }
-          let r = 0;
-          while (r < repl.len()) {
+          for r in 0..repl.len() {
             out = out.append(repl[r]);
-            r += 1;
           }
           changed = true;
           i += 2;
@@ -4712,15 +4686,13 @@ function tv_dump(pass: string, before: Op[], after: Op[]): void {
 
 function tv_ops(side: string, ops: Op[]): string {
   let s = "fern-tv " + side + " " + util.i32_to_string(ops.len()) + "\n";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let u = "0";
     if (o.unsigned) {
       u = "1";
     }
     s = s + kind_name(o.kind_tag) + " " + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm) + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + u + " " + util.i32_to_string(o.decl) + " :" + hex_text(o.str) + "\n";
-    i += 1;
   }
   return s;
 }
@@ -4742,8 +4714,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   let k_end = K_END;
   let k_br = K_BR;
   let k_return = K_RETURN;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_end || t == k_else) {
       if (dead && depth == dead_depth) {
@@ -4766,7 +4737,6 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
       dead = true;
       dead_depth = depth;
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -4836,12 +4806,10 @@ function slot_reads(ops: Op[]): i32[] {
 }
 
 function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
-  let s = first;
-  while (s < first + n) {
+  for s in first..first + n {
     if (s >= 0 && s < loads.len()) {
       loads = loads.with(s, loads[s] + 1);
     }
-    s += 1;
   }
   return loads;
 }
@@ -4879,12 +4847,10 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
     return Cancelled { ops: ops, loads: loads, emptied: false };
   }
   let out: Op[] = [];
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (!gone[i]) {
       out = out.append(ops[i]);
     }
-    i += 1;
   }
   return Cancelled { ops: out, loads: loads, emptied: emptied };
 }
@@ -4913,24 +4879,18 @@ function zg_first_write(ops: Op[], nslots: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let first = __alloc_i32(nslots);
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     first = first.with(z, ops.len());
-    z += 1;
   }
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if ((t == k_store || t == k_tee) && !zg_rezero(ops, i)) {
       first = zg_mark(first, ops[i].i32_imm, i);
     } else if (frame_box_base(ops[i]) >= 0) {
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         first = zg_mark(first, frame_box_base(ops[i]) + fk, i);
-        fk += 1;
       }
     }
-    i += 1;
   }
   return first;
 }
@@ -5087,10 +5047,9 @@ struct SlotUse { stores: i32[], first_load: i32[], last_load: i32[] }
 // later in the same loop. A local that it stores counts as invariant after it.
 // Every slot of `ops` is below `nslots`.
 function licm_hoist_pure(ops: Op[], loop_idx: i32, nslots: i32): PureHoist {
-  let end = licm_scope_end(ops, loop_idx);
-  if (end < 0) {
+  let Some(end) = licm_scope_end(ops, loop_idx) else {
     return PureHoist { ops: ops, at: loop_idx };
-  }
+  };
   let uses = SlotUse { stores: [], first_load: [], last_load: [] };
   let stored = __alloc_bool(nslots);
   for j in loop_idx + 1..end {
@@ -5190,10 +5149,9 @@ function licm_slot_use(ops: Op[], n: i32): SlotUse {
 
 function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own stored: i32[]): Hoisted {
   let ops = cur.ops;
-  let end = licm_scope_end(ops, loop_idx);
-  if (end < 0) {
+  let Some(end) = licm_scope_end(ops, loop_idx) else {
     return Hoisted { cur: cur, stored: stored };
-  }
+  };
   let hdr_end = licm_header_end(ops, loop_idx);
   let mark = loop_idx + 1;
   stored = licm_stored_locals(ops, loop_idx + 1, end, stored, mark);
@@ -5213,15 +5171,13 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
   }
   let data_for = licm_data_slots(ops, loop_idx, end, slot_for, cur.n_locals + n);
   let slots = n;
-  let d = 0;
-  while (d < data_for.len()) {
+  for d in 0..data_for.len() {
     if (data_for[d] >= 0) {
       pre = pre.append(op_load_local(d));
       pre = pre.append(op_str_data());
       pre = pre.append(op_store_local(data_for[d]));
       slots += 1;
     }
-    d += 1;
   }
   let out: Op[] = [];
   let j = 0;
@@ -5229,10 +5185,8 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
     out = out.append(ops[j]);
     j += 1;
   }
-  let p = 0;
-  while (p < pre.len()) {
+  for p in 0..pre.len() {
     out = out.append(pre[p]);
-    p += 1;
   }
   out = out.append(ops[loop_idx]);
   let k_load = K_LOAD_LOCAL;
@@ -5296,12 +5250,10 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: i32[], 
 }
 
 function licm_listed(order: i32[], src: i32): boolean {
-  let i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     if (order[i] == src) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -5327,38 +5279,34 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
   return j;
 }
 
-function licm_scope_end(ops: Op[], open: i32): i32 {
+function licm_scope_end(ops: Op[], open: i32): Option[i32] {
   let k_block = K_BLOCK;
   let k_loop = K_LOOP;
   let k_if = K_IF;
   let k_end = K_END;
   let depth = 0;
-  let j = open;
-  while (j < ops.len()) {
+  for j in open..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       depth += 1;
     } else if (t == k_end) {
       depth -= 1;
       if (depth == 0) {
-        return j;
+        return Some(j);
       }
     }
-    j += 1;
   }
-  return -1;
+  return None;
 }
 
 function licm_stored_locals(ops: Op[], lo: i32, hi: i32, own stored: i32[], mark: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
-  let j = lo;
-  while (j < hi) {
+  for j in lo..hi {
     let t = ops[j].kind_tag;
     if (t == k_store || t == k_tee) {
       stored = stored.with(ops[j].i32_imm, mark);
     }
-    j += 1;
   }
   return stored;
 }
@@ -5368,39 +5316,33 @@ function cp_max_slot(ops: Op[]): i32 {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let maxs: i32 = -1;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let kt = ops[i].kind_tag;
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (ops[i].i32_imm > maxs) {
         maxs = ops[i].i32_imm;
       }
     }
-    i += 1;
   }
   return maxs;
 }
 
 function cp_kill_after(own has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     let s = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
-    k += 1;
   }
   return has;
 }
 
 function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
   let out: i32[] = [];
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     if (has[bound[k]]) {
       out = out.append(bound[k]);
     }
-    k += 1;
   }
   return out;
 }
@@ -5413,8 +5355,7 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
   let k_if = K_IF;
   let k_end = K_END;
   let d = 0;
-  let j = at + 1;
-  while (j < ops.len()) {
+  for j in at + 1..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -5430,15 +5371,12 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
       }
     } else if (frame_box_base(ops[j]) >= 0) {
       let fb = frame_box_base(ops[j]);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         if (fb + fk >= 0 && fb + fk < has.len()) {
           has = has.with(fb + fk, false);
         }
-        fk += 1;
       }
     }
-    j += 1;
   }
   return has;
 }
@@ -5466,10 +5404,8 @@ pub function const_propagate(ops: Op[]): Op[] {
   let has = __alloc_bool(nslots);
   let wrote = util.minus_ones(nslots);
   let bound: i32[] = [];
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     known = known.append(zero);
-    z += 1;
   }
 
   let fr_kind: i32[] = [];
@@ -5481,8 +5417,7 @@ pub function const_propagate(ops: Op[]): Op[] {
 
   let out: Op[] = [];
   let copying = false;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let kt = o.kind_tag;
     let emit = o;
@@ -5523,8 +5458,7 @@ pub function const_propagate(ops: Op[]): Op[] {
       }
     } else if (frame_box_base(o) >= 0) {
       let fb = frame_box_base(o);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         let fs = fb + fk;
         if (fs >= 0 && fs < nslots) {
           wrote = wrote.with(fs, i);
@@ -5533,7 +5467,6 @@ pub function const_propagate(ops: Op[]): Op[] {
             has = has.with(fs, false);
           }
         }
-        fk += 1;
       }
     } else if (kt == k_store || kt == k_tee) {
       let sl = o.i32_imm;
@@ -5561,7 +5494,6 @@ pub function const_propagate(ops: Op[]): Op[] {
     if (copying) {
       out = out.append(emit);
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -5617,8 +5549,7 @@ pub function propagate_copies(ops: Op[]): Op[] {
   }
   let out: Op[] = [];
   let copying = false;
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let dead_tee = false;
     let sl2 = ops[i].i32_imm;
     if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
@@ -5632,7 +5563,6 @@ pub function propagate_copies(ops: Op[]): Op[] {
       out = fold_prefixed(ops, i, []);
       copying = true;
     }
-    i += 1;
   }
   if (copying) {
     return out;

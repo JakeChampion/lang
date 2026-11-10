@@ -1,4 +1,7 @@
 function __fern_chdir(path: string): Result[void, IoError] {
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i = 0;

@@ -4,7 +4,7 @@ function __fern_bsd_sum_bytes(s: usize, seed: i32): i32 {
   let sum = seed as u32 & 65535;
   while (i < n) {
     sum = sum >> 1 | sum << 15;
-    sum = sum + __load_u8(s + 8 + i) as u32;
+    sum = sum + __load_u8(s + 8 + i as usize) as u32;
     sum = sum & 65535;
     i += 1;
   }

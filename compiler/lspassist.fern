@@ -260,10 +260,8 @@ function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
   let out: Item[] = [];
   if let typeinfo.TypeStruct(st) = t {
     if let Some(sig) = checker.struct_sig(s, st.name) {
-      let i = 0;
-      while (i < sig.field_names.len()) {
+      for i in 0..sig.field_names.len() {
         out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
-        i += 1;
       }
     }
   }
@@ -303,10 +301,8 @@ function bound_in_func(v: checker.QueryView, fd: parser.FuncDecl): Bound[] {
 }
 
 function added(from: i32, s: checker.Scope, param: boolean, line: i32, col: i32, annotated: boolean, own acc: Bound[]): Bound[] {
-  let i = from;
-  while (i < s.names.len()) {
+  for i in from..s.names.len() {
     acc = acc.append(Bound { name: lexical.source_name(s.names[i]), t: s.types[i], param: param, let_line: line, let_col: col, annotated: annotated });
-    i += 1;
   }
   return acc;
 }
@@ -483,8 +479,7 @@ function signature(name: string, parts: lspquery.Parts, commas: i32): Signature 
   let label = "function " + name + "(";
   let starts: i32[] = [];
   let ends: i32[] = [];
-  let i = 0;
-  while (i < parts.params.len()) {
+  for i in 0..parts.params.len() {
     if (i > 0) {
       label += ", ";
     }
@@ -492,7 +487,6 @@ function signature(name: string, parts: lspquery.Parts, commas: i32): Signature 
     starts = starts.append(label.len());
     label += shown;
     ends = ends.append(label.len());
-    i += 1;
   }
   let active = commas;
   if (active >= parts.params.len()) {
@@ -596,8 +590,7 @@ function tok_len(t: lspquery.Tok): i32 {
 
 function statement_end(toks: lspquery.Tok[], from: i32): i32 {
   let depth = 0;
-  let i = from;
-  while (i < toks.len()) {
+  for i in from..toks.len() {
     let t = punct(toks[i]);
     if (t == "(" || t == "[" || t == "{") {
       depth += 1;
@@ -606,7 +599,6 @@ function statement_end(toks: lspquery.Tok[], from: i32): i32 {
     } else if (t == ";" && depth == 0) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -634,32 +626,29 @@ function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
   let from = lspquery.after(toks, s.name_line, s.name_col) + 1;
   let variants: Symbol[] = [];
   for vn in ed.variant_names {
-    let i = variant_tok(toks, from, vn);
-    if (i >= 0) {
+    if let Some(i) = variant_tok(toks, from, vn) {
       variants = variants.append(member_symbol(toks, i, vn, "", SK_ENUM_MEMBER));
     }
   }
   return Symbol { ...s, children: variants };
 }
 
-function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
+function variant_tok(toks: lspquery.Tok[], from: i32, name: string): Option[i32] {
   let depth = 0;
-  let i = from;
-  while (i < toks.len()) {
+  for i in from..toks.len() {
     let t = punct(toks[i]);
     if (t == "(" || t == "{") {
       depth += 1;
     } else if (t == ")" || t == "}") {
       depth -= 1;
       if (depth <= 0) {
-        return -1;
+        return None;
       }
     } else if (depth == 1 && toks[i].ident && toks[i].text == name) {
-      return i;
+      return Some(i);
     }
-    i += 1;
   }
-  return -1;
+  return None;
 }
 
 function decl_sig(fd: parser.FuncDecl): string {
@@ -746,10 +735,8 @@ function sorted(items: Item[]): Item[] {
 
 function part(items: Item[], from: i32, to: i32): Item[] {
   let out: Item[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(items[i]);
-    i += 1;
   }
   return out;
 }

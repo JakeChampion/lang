@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 function leb128_mask25(): i32 {
   return 33554431;
@@ -84,7 +85,7 @@ function wat_tokenize(src: string): WatTok[] {
           j += 1;
         }
       }
-      toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j) + "" });
+      toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j).to_owned() });
       i = j + 1;
     } else {
       let astart = i;
@@ -95,7 +96,7 @@ function wat_tokenize(src: string): WatTok[] {
         }
         i += 1;
       }
-      toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i) + "" });
+      toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i).to_owned() });
     }
   }
   return toks;
@@ -167,25 +168,15 @@ function global_valtype(gn: SExpr): string {
 }
 
 function valtype_byte(t: string): i32 {
-  if (t == "i32") {
-    return 127;
-  }
-  if (t == "i64") {
-    return 126;
-  }
-  if (t == "f32") {
-    return 125;
-  }
-  if (t == "f64") {
-    return 124;
-  }
-  if (t == "funcref") {
-    return 112;
-  }
-  if (t == "v128") {
-    return 123;
-  }
-  return 127;
+  return match (t) {
+    "i32" => 127,
+    "i64" => 126,
+    "f32" => 125,
+    "f64" => 124,
+    "funcref" => 112,
+    "v128" => 123,
+    _ => 127,
+  };
 }
 
 function wmagic(): i32[] {
@@ -363,24 +354,20 @@ function collect_func_names(mod: SExpr): string[] {
     }
     i += 1;
   }
-  i = 0;
-  while (i < mod.items.len()) {
+  for i in 0..mod.items.len() {
     if (node_head(mod.items[i]) == "func") {
       names = names.append(func_name(mod.items[i]));
     }
-    i += 1;
   }
   return names;
 }
 
 function func_header_end(fnode: SExpr): i32 {
-  let i = 2;
-  while (i < fnode.items.len()) {
+  for i in 2..fnode.items.len() {
     let h = node_head(fnode.items[i]);
     if (h != "param" && h != "result" && h != "local") {
       return i;
     }
-    i += 1;
   }
   return fnode.items.len();
 }
@@ -388,21 +375,17 @@ function func_header_end(fnode: SExpr): i32 {
 function func_param_types(fnode: SExpr): string[] {
   let out: string[] = [];
   let stop = func_header_end(fnode);
-  let i = 1;
-  while (i < stop) {
+  for i in 1..stop {
     let c = fnode.items[i];
     if (node_head(c) == "param") {
       if (c.items.len() >= 2 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[2].text);
       } else {
-        let j = 1;
-        while (j < c.items.len()) {
+        for j in 1..c.items.len() {
           out = out.append(c.items[j].text);
-          j += 1;
         }
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -410,17 +393,13 @@ function func_param_types(fnode: SExpr): string[] {
 function func_result_types(fnode: SExpr): string[] {
   let out: string[] = [];
   let stop = func_header_end(fnode);
-  let i = 1;
-  while (i < stop) {
+  for i in 1..stop {
     let c = fnode.items[i];
     if (node_head(c) == "result") {
-      let j = 1;
-      while (j < c.items.len()) {
+      for j in 1..c.items.len() {
         out = out.append(c.items[j].text);
-        j += 1;
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -435,12 +414,10 @@ function local_names(fnode: SExpr): string[] {
     }
     i += 1;
   }
-  i = 2;
-  while (i < stop) {
+  for i in 2..stop {
     if (node_head(fnode.items[i]) == "local") {
       out = add_slot_names(out, fnode.items[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -449,10 +426,8 @@ function add_slot_names(out: string[], c: SExpr): string[] {
   if (c.items.len() >= 2 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
     return out.append(c.items[1].text);
   }
-  let k = 1;
-  while (k < c.items.len()) {
+  for k in 1..c.items.len() {
     out = out.append("");
-    k += 1;
   }
   return out;
 }
@@ -460,320 +435,126 @@ function add_slot_names(out: string[], c: SExpr): string[] {
 function local_decl_types(fnode: SExpr): string[] {
   let out: string[] = [];
   let stop = func_header_end(fnode);
-  let i = 2;
-  while (i < stop) {
+  for i in 2..stop {
     let c = fnode.items[i];
     if (node_head(c) == "local") {
       if (c.items.len() >= 3 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[2].text);
       } else {
-        let k = 1;
-        while (k < c.items.len()) {
+        for k in 1..c.items.len() {
           out = out.append(c.items[k].text);
-          k += 1;
         }
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function arith_opcode(op: string): i32 {
-  if (op == "i32.add") {
-    return 106;
-  }
-  if (op == "i32.sub") {
-    return 107;
-  }
-  if (op == "i32.mul") {
-    return 108;
-  }
-  if (op == "i32.div_s") {
-    return 109;
-  }
-  if (op == "i32.div_u") {
-    return 110;
-  }
-  if (op == "i32.rem_s") {
-    return 111;
-  }
-  if (op == "i32.rem_u") {
-    return 112;
-  }
-  if (op == "i32.and") {
-    return 113;
-  }
-  if (op == "i32.or") {
-    return 114;
-  }
-  if (op == "i32.xor") {
-    return 115;
-  }
-  if (op == "i32.shl") {
-    return 116;
-  }
-  if (op == "i32.shr_s") {
-    return 117;
-  }
-  if (op == "i32.shr_u") {
-    return 118;
-  }
-  if (op == "i32.rotl") {
-    return 119;
-  }
-  if (op == "i32.rotr") {
-    return 120;
-  }
-  if (op == "i32.eq") {
-    return 70;
-  }
-  if (op == "i32.ne") {
-    return 71;
-  }
-  if (op == "i32.lt_s") {
-    return 72;
-  }
-  if (op == "i32.lt_u") {
-    return 73;
-  }
-  if (op == "i32.gt_s") {
-    return 74;
-  }
-  if (op == "i32.gt_u") {
-    return 75;
-  }
-  if (op == "i32.le_s") {
-    return 76;
-  }
-  if (op == "i32.le_u") {
-    return 77;
-  }
-  if (op == "i32.ge_s") {
-    return 78;
-  }
-  if (op == "i32.ge_u") {
-    return 79;
-  }
-  if (op == "i32.eqz") {
-    return 69;
-  }
-  if (op == "i32.clz") {
-    return 103;
-  }
-  if (op == "i32.ctz") {
-    return 104;
-  }
-  if (op == "i32.popcnt") {
-    return 105;
-  }
-  if (op == "i64.add") {
-    return 124;
-  }
-  if (op == "i64.sub") {
-    return 125;
-  }
-  if (op == "i64.mul") {
-    return 126;
-  }
-  if (op == "i64.div_s") {
-    return 127;
-  }
-  if (op == "i64.div_u") {
-    return 128;
-  }
-  if (op == "i64.rem_s") {
-    return 129;
-  }
-  if (op == "i64.rem_u") {
-    return 130;
-  }
-  if (op == "i64.and") {
-    return 131;
-  }
-  if (op == "i64.or") {
-    return 132;
-  }
-  if (op == "i64.xor") {
-    return 133;
-  }
-  if (op == "i64.shl") {
-    return 134;
-  }
-  if (op == "i64.shr_s") {
-    return 135;
-  }
-  if (op == "i64.shr_u") {
-    return 136;
-  }
-  if (op == "i64.rotl") {
-    return 137;
-  }
-  if (op == "i64.rotr") {
-    return 138;
-  }
-  if (op == "i64.eqz") {
-    return 80;
-  }
-  if (op == "i64.eq") {
-    return 81;
-  }
-  if (op == "i64.ne") {
-    return 82;
-  }
-  if (op == "i64.lt_s") {
-    return 83;
-  }
-  if (op == "i64.lt_u") {
-    return 84;
-  }
-  if (op == "i64.gt_s") {
-    return 85;
-  }
-  if (op == "i64.gt_u") {
-    return 86;
-  }
-  if (op == "i64.le_s") {
-    return 87;
-  }
-  if (op == "i64.le_u") {
-    return 88;
-  }
-  if (op == "i64.ge_s") {
-    return 89;
-  }
-  if (op == "i64.ge_u") {
-    return 90;
-  }
-  if (op == "i64.clz") {
-    return 121;
-  }
-  if (op == "i64.ctz") {
-    return 122;
-  }
-  if (op == "i64.popcnt") {
-    return 123;
-  }
-  if (op == "i32.wrap_i64") {
-    return 167;
-  }
-  if (op == "i64.extend_i32_s") {
-    return 172;
-  }
-  if (op == "i64.extend_i32_u") {
-    return 173;
-  }
-  if (op == "i32.trunc_f64_s") {
-    return 170;
-  }
-  if (op == "i32.trunc_f64_u") {
-    return 171;
-  }
-  if (op == "i64.trunc_f64_s") {
-    return 176;
-  }
-  if (op == "i64.trunc_f64_u") {
-    return 177;
-  }
-  if (op == "f64.convert_i32_s") {
-    return 183;
-  }
-  if (op == "f64.convert_i32_u") {
-    return 184;
-  }
-  if (op == "f64.convert_i64_s") {
-    return 185;
-  }
-  if (op == "f64.convert_i64_u") {
-    return 186;
-  }
-  if (op == "f32.demote_f64") {
-    return 182;
-  }
-  if (op == "f64.promote_f32") {
-    return 187;
-  }
-  if (op == "i32.reinterpret_f32") {
-    return 188;
-  }
-  if (op == "i64.reinterpret_f64") {
-    return 189;
-  }
-  if (op == "f32.reinterpret_i32") {
-    return 190;
-  }
-  if (op == "f64.reinterpret_i64") {
-    return 191;
-  }
-  if (op == "f64.eq") {
-    return 97;
-  }
-  if (op == "f64.ne") {
-    return 98;
-  }
-  if (op == "f64.lt") {
-    return 99;
-  }
-  if (op == "f64.gt") {
-    return 100;
-  }
-  if (op == "f64.le") {
-    return 101;
-  }
-  if (op == "f64.ge") {
-    return 102;
-  }
-  if (op == "f64.abs") {
-    return 153;
-  }
-  if (op == "f64.neg") {
-    return 154;
-  }
-  if (op == "f64.ceil") {
-    return 155;
-  }
-  if (op == "f64.floor") {
-    return 156;
-  }
-  if (op == "f64.trunc") {
-    return 157;
-  }
-  if (op == "f64.nearest") {
-    return 158;
-  }
-  if (op == "f64.sqrt") {
-    return 159;
-  }
-  if (op == "f64.add") {
-    return 160;
-  }
-  if (op == "f64.sub") {
-    return 161;
-  }
-  if (op == "f64.mul") {
-    return 162;
-  }
-  if (op == "f64.div") {
-    return 163;
-  }
-  if (op == "f64.min") {
-    return 164;
-  }
-  if (op == "f64.max") {
-    return 165;
-  }
-  if (op == "f64.copysign") {
-    return 166;
-  }
-  return 0;
+  return match (op) {
+    "i32.add" => 106,
+    "i32.sub" => 107,
+    "i32.mul" => 108,
+    "i32.div_s" => 109,
+    "i32.div_u" => 110,
+    "i32.rem_s" => 111,
+    "i32.rem_u" => 112,
+    "i32.and" => 113,
+    "i32.or" => 114,
+    "i32.xor" => 115,
+    "i32.shl" => 116,
+    "i32.shr_s" => 117,
+    "i32.shr_u" => 118,
+    "i32.rotl" => 119,
+    "i32.rotr" => 120,
+    "i32.eq" => 70,
+    "i32.ne" => 71,
+    "i32.lt_s" => 72,
+    "i32.lt_u" => 73,
+    "i32.gt_s" => 74,
+    "i32.gt_u" => 75,
+    "i32.le_s" => 76,
+    "i32.le_u" => 77,
+    "i32.ge_s" => 78,
+    "i32.ge_u" => 79,
+    "i32.eqz" => 69,
+    "i32.clz" => 103,
+    "i32.ctz" => 104,
+    "i32.popcnt" => 105,
+    "i64.add" => 124,
+    "i64.sub" => 125,
+    "i64.mul" => 126,
+    "i64.div_s" => 127,
+    "i64.div_u" => 128,
+    "i64.rem_s" => 129,
+    "i64.rem_u" => 130,
+    "i64.and" => 131,
+    "i64.or" => 132,
+    "i64.xor" => 133,
+    "i64.shl" => 134,
+    "i64.shr_s" => 135,
+    "i64.shr_u" => 136,
+    "i64.rotl" => 137,
+    "i64.rotr" => 138,
+    "i64.eqz" => 80,
+    "i64.eq" => 81,
+    "i64.ne" => 82,
+    "i64.lt_s" => 83,
+    "i64.lt_u" => 84,
+    "i64.gt_s" => 85,
+    "i64.gt_u" => 86,
+    "i64.le_s" => 87,
+    "i64.le_u" => 88,
+    "i64.ge_s" => 89,
+    "i64.ge_u" => 90,
+    "i64.clz" => 121,
+    "i64.ctz" => 122,
+    "i64.popcnt" => 123,
+    "i32.wrap_i64" => 167,
+    "i64.extend_i32_s" => 172,
+    "i64.extend_i32_u" => 173,
+    "i32.trunc_f64_s" => 170,
+    "i32.trunc_f64_u" => 171,
+    "i64.trunc_f64_s" => 176,
+    "i64.trunc_f64_u" => 177,
+    "f64.convert_i32_s" => 183,
+    "f64.convert_i32_u" => 184,
+    "f64.convert_i64_s" => 185,
+    "f64.convert_i64_u" => 186,
+    "f32.demote_f64" => 182,
+    "f64.promote_f32" => 187,
+    "i32.reinterpret_f32" => 188,
+    "i64.reinterpret_f64" => 189,
+    "f32.reinterpret_i32" => 190,
+    "f64.reinterpret_i64" => 191,
+    "f64.eq" => 97,
+    "f64.ne" => 98,
+    "f64.lt" => 99,
+    "f64.gt" => 100,
+    "f64.le" => 101,
+    "f64.ge" => 102,
+    "f64.abs" => 153,
+    "f64.neg" => 154,
+    "f64.ceil" => 155,
+    "f64.floor" => 156,
+    "f64.trunc" => 157,
+    "f64.nearest" => 158,
+    "f64.sqrt" => 159,
+    "f64.add" => 160,
+    "f64.sub" => 161,
+    "f64.mul" => 162,
+    "f64.div" => 163,
+    "f64.min" => 164,
+    "f64.max" => 165,
+    "f64.copysign" => 166,
+    _ => 0,
+  };
 }
 
 function labels_push(labels: string[], x: string): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < labels.len()) {
+  for i in 0..labels.len() {
     out = out.append(labels[i]);
-    i += 1;
   }
   out = out.append(x);
   return out;
@@ -791,239 +572,91 @@ function label_depth(labels: string[], name: string): i32 {
 }
 
 function sat_trunc_opcode(op: string): i32 {
-  if (op == "i32.trunc_sat_f32_s") {
-    return 0;
-  }
-  if (op == "i32.trunc_sat_f32_u") {
-    return 1;
-  }
-  if (op == "i32.trunc_sat_f64_s") {
-    return 2;
-  }
-  if (op == "i32.trunc_sat_f64_u") {
-    return 3;
-  }
-  if (op == "i64.trunc_sat_f32_s") {
-    return 4;
-  }
-  if (op == "i64.trunc_sat_f32_u") {
-    return 5;
-  }
-  if (op == "i64.trunc_sat_f64_s") {
-    return 6;
-  }
-  if (op == "i64.trunc_sat_f64_u") {
-    return 7;
-  }
-  return -1;
+  return match (op) {
+    "i32.trunc_sat_f32_s" => 0,
+    "i32.trunc_sat_f32_u" => 1,
+    "i32.trunc_sat_f64_s" => 2,
+    "i32.trunc_sat_f64_u" => 3,
+    "i64.trunc_sat_f32_s" => 4,
+    "i64.trunc_sat_f32_u" => 5,
+    "i64.trunc_sat_f64_s" => 6,
+    "i64.trunc_sat_f64_u" => 7,
+    _ => -1,
+  };
 }
 
 function simd_opcode(op: string): i32 {
-  if (op == "i8x16.shuffle") {
-    return 13;
-  }
-  if (op == "v128.load") {
-    return 0;
-  }
-  if (op == "v128.store") {
-    return 11;
-  }
-  if (op == "i8x16.splat") {
-    return 15;
-  }
-  if (op == "i8x16.eq") {
-    return 35;
-  }
-  if (op == "i8x16.bitmask") {
-    return 100;
-  }
-  if (op == "v128.not") {
-    return 77;
-  }
-  if (op == "v128.and") {
-    return 78;
-  }
-  if (op == "v128.andnot") {
-    return 79;
-  }
-  if (op == "v128.or") {
-    return 80;
-  }
-  if (op == "v128.xor") {
-    return 81;
-  }
-  if (op == "v128.bitselect") {
-    return 82;
-  }
-  if (op == "f64x2.splat") {
-    return 20;
-  }
-  if (op == "i32x4.bitmask") {
-    return 164;
-  }
-  if (op == "i64x2.bitmask") {
-    return 196;
-  }
-  if (op == "i64x2.splat") {
-    return 18;
-  }
-  if (op == "i64x2.lt_s") {
-    return 216;
-  }
-  if (op == "f64x2.extract_lane") {
-    return 33;
-  }
-  if (op == "f64x2.replace_lane") {
-    return 34;
-  }
-  if (op == "f64x2.eq") {
-    return 71;
-  }
-  if (op == "f64x2.ne") {
-    return 72;
-  }
-  if (op == "f64x2.lt") {
-    return 73;
-  }
-  if (op == "f64x2.gt") {
-    return 74;
-  }
-  if (op == "f64x2.le") {
-    return 75;
-  }
-  if (op == "f64x2.ge") {
-    return 76;
-  }
-  if (op == "f64x2.ceil") {
-    return 116;
-  }
-  if (op == "f64x2.floor") {
-    return 117;
-  }
-  if (op == "f64x2.trunc") {
-    return 122;
-  }
-  if (op == "f64x2.nearest") {
-    return 148;
-  }
-  if (op == "f64x2.abs") {
-    return 236;
-  }
-  if (op == "f64x2.neg") {
-    return 237;
-  }
-  if (op == "f64x2.sqrt") {
-    return 239;
-  }
-  if (op == "f64x2.add") {
-    return 240;
-  }
-  if (op == "f64x2.sub") {
-    return 241;
-  }
-  if (op == "f64x2.mul") {
-    return 242;
-  }
-  if (op == "f64x2.div") {
-    return 243;
-  }
-  if (op == "f64x2.min") {
-    return 244;
-  }
-  if (op == "f64x2.max") {
-    return 245;
-  }
-  if (op == "f64x2.pmin") {
-    return 246;
-  }
-  if (op == "f64x2.pmax") {
-    return 247;
-  }
-  if (op == "f32x4.splat") {
-    return 19;
-  }
-  if (op == "f32x4.extract_lane") {
-    return 31;
-  }
-  if (op == "f32x4.replace_lane") {
-    return 32;
-  }
-  if (op == "f32x4.eq") {
-    return 65;
-  }
-  if (op == "f32x4.ne") {
-    return 66;
-  }
-  if (op == "f32x4.lt") {
-    return 67;
-  }
-  if (op == "f32x4.gt") {
-    return 68;
-  }
-  if (op == "f32x4.le") {
-    return 69;
-  }
-  if (op == "f32x4.ge") {
-    return 70;
-  }
-  if (op == "f32x4.ceil") {
-    return 103;
-  }
-  if (op == "f32x4.floor") {
-    return 104;
-  }
-  if (op == "f32x4.trunc") {
-    return 105;
-  }
-  if (op == "f32x4.nearest") {
-    return 106;
-  }
-  if (op == "f32x4.abs") {
-    return 224;
-  }
-  if (op == "f32x4.neg") {
-    return 225;
-  }
-  if (op == "f32x4.sqrt") {
-    return 227;
-  }
-  if (op == "f32x4.add") {
-    return 228;
-  }
-  if (op == "f32x4.sub") {
-    return 229;
-  }
-  if (op == "f32x4.mul") {
-    return 230;
-  }
-  if (op == "f32x4.div") {
-    return 231;
-  }
-  if (op == "f32x4.min") {
-    return 232;
-  }
-  if (op == "f32x4.max") {
-    return 233;
-  }
-  if (op == "f32x4.pmin") {
-    return 234;
-  }
-  if (op == "f32x4.pmax") {
-    return 235;
-  }
-  if (op == "f32x4.demote_f64x2_zero") {
-    return 94;
-  }
-  if (op == "f64x2.promote_low_f32x4") {
-    return 95;
-  }
-  if (op == "i32x4.extract_lane") {
-    return 27;
-  }
-  if (op == "i64x2.extract_lane") {
-    return 29;
-  }
-  return -1;
+  return match (op) {
+    "i8x16.shuffle" => 13,
+    "v128.load" => 0,
+    "v128.store" => 11,
+    "i8x16.splat" => 15,
+    "i8x16.eq" => 35,
+    "i8x16.bitmask" => 100,
+    "v128.not" => 77,
+    "v128.and" => 78,
+    "v128.andnot" => 79,
+    "v128.or" => 80,
+    "v128.xor" => 81,
+    "v128.bitselect" => 82,
+    "f64x2.splat" => 20,
+    "i32x4.bitmask" => 164,
+    "i64x2.bitmask" => 196,
+    "i64x2.splat" => 18,
+    "i64x2.lt_s" => 216,
+    "f64x2.extract_lane" => 33,
+    "f64x2.replace_lane" => 34,
+    "f64x2.eq" => 71,
+    "f64x2.ne" => 72,
+    "f64x2.lt" => 73,
+    "f64x2.gt" => 74,
+    "f64x2.le" => 75,
+    "f64x2.ge" => 76,
+    "f64x2.ceil" => 116,
+    "f64x2.floor" => 117,
+    "f64x2.trunc" => 122,
+    "f64x2.nearest" => 148,
+    "f64x2.abs" => 236,
+    "f64x2.neg" => 237,
+    "f64x2.sqrt" => 239,
+    "f64x2.add" => 240,
+    "f64x2.sub" => 241,
+    "f64x2.mul" => 242,
+    "f64x2.div" => 243,
+    "f64x2.min" => 244,
+    "f64x2.max" => 245,
+    "f64x2.pmin" => 246,
+    "f64x2.pmax" => 247,
+    "f32x4.splat" => 19,
+    "f32x4.extract_lane" => 31,
+    "f32x4.replace_lane" => 32,
+    "f32x4.eq" => 65,
+    "f32x4.ne" => 66,
+    "f32x4.lt" => 67,
+    "f32x4.gt" => 68,
+    "f32x4.le" => 69,
+    "f32x4.ge" => 70,
+    "f32x4.ceil" => 103,
+    "f32x4.floor" => 104,
+    "f32x4.trunc" => 105,
+    "f32x4.nearest" => 106,
+    "f32x4.abs" => 224,
+    "f32x4.neg" => 225,
+    "f32x4.sqrt" => 227,
+    "f32x4.add" => 228,
+    "f32x4.sub" => 229,
+    "f32x4.mul" => 230,
+    "f32x4.div" => 231,
+    "f32x4.min" => 232,
+    "f32x4.max" => 233,
+    "f32x4.pmin" => 234,
+    "f32x4.pmax" => 235,
+    "f32x4.demote_f64x2_zero" => 94,
+    "f64x2.promote_low_f32x4" => 95,
+    "i32x4.extract_lane" => 27,
+    "i64x2.extract_lane" => 29,
+    _ => -1,
+  };
 }
 
 function shuffle_digits(text: string, start: i32, radix: i32): Option[i32] {
@@ -1188,53 +821,29 @@ function memarg_align(op: string): i32 {
 }
 
 function mem_load_opcode(op: string): i32 {
-  if (op == "i32.load") {
-    return 40;
-  }
-  if (op == "i64.load") {
-    return 41;
-  }
-  if (op == "f32.load") {
-    return 42;
-  }
-  if (op == "f64.load") {
-    return 43;
-  }
-  if (op == "i32.load8_u") {
-    return 45;
-  }
-  if (op == "i32.load8_s") {
-    return 44;
-  }
-  if (op == "i32.load16_s") {
-    return 46;
-  }
-  if (op == "i32.load16_u") {
-    return 47;
-  }
-  return 0;
+  return match (op) {
+    "i32.load" => 40,
+    "i64.load" => 41,
+    "f32.load" => 42,
+    "f64.load" => 43,
+    "i32.load8_u" => 45,
+    "i32.load8_s" => 44,
+    "i32.load16_s" => 46,
+    "i32.load16_u" => 47,
+    _ => 0,
+  };
 }
 
 function mem_store_opcode(op: string): i32 {
-  if (op == "i32.store") {
-    return 54;
-  }
-  if (op == "i64.store") {
-    return 55;
-  }
-  if (op == "f32.store") {
-    return 56;
-  }
-  if (op == "f64.store") {
-    return 57;
-  }
-  if (op == "i32.store8") {
-    return 58;
-  }
-  if (op == "i32.store16") {
-    return 59;
-  }
-  return 0;
+  return match (op) {
+    "i32.store" => 54,
+    "i64.store" => 55,
+    "f32.store" => 56,
+    "f64.store" => 57,
+    "i32.store8" => 58,
+    "i32.store16" => 59,
+    _ => 0,
+  };
 }
 
 function enc_instr(node: SExpr, lnames: util.NameIndex, fnames: util.NameIndex, gnames: util.NameIndex, labels: string[], tnames: util.NameIndex): i32[] {
@@ -1308,10 +917,8 @@ function enc_instr(node: SExpr, lnames: util.NameIndex, fnames: util.NameIndex, 
   }
   if (op == "call_indirect") {
     let lasti = node.items.len() - 1;
-    let k = 2;
-    while (k < lasti) {
+    for k in 2..lasti {
       out = util.append_all(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
-      k += 1;
     }
     out = util.append_all(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
     out = out.append(17);
@@ -1374,18 +981,14 @@ function enc_instr(node: SExpr, lnames: util.NameIndex, fnames: util.NameIndex, 
     out = out.append(ibt);
     let iinner = labels_push(labels, "");
     let thenN = node.items[ci + 1];
-    let tk = 1;
-    while (tk < thenN.items.len()) {
+    for tk in 1..thenN.items.len() {
       out = util.append_all(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
-      tk += 1;
     }
     if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
       out = out.append(5);
       let elseN = node.items[ci + 2];
-      let ek = 1;
-      while (ek < elseN.items.len()) {
+      for ek in 1..elseN.items.len() {
         out = util.append_all(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
-        ek += 1;
       }
     }
     out = out.append(11);
@@ -1443,10 +1046,8 @@ function enc_instr(node: SExpr, lnames: util.NameIndex, fnames: util.NameIndex, 
     if (op == "i8x16.shuffle") {
       first = 17;
     }
-    let sk = first;
-    while (sk < first + sa) {
+    for sk in first..first + sa {
       out = util.append_all(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
-      sk += 1;
     }
     out = out.append(253);
     out = leb_u32(out, sop);
@@ -1509,10 +1110,8 @@ function enc_flat_body(instrs: SExpr[], lnames: util.NameIndex, fnames: util.Nam
     } else if (op == "f64.const") {
       out = out.append(68);
       let fbits = util.parse_f64_bits(instrs[i + 1].text);
-      let fk: i32 = 0;
-      while (fk < 8) {
+      for fk in 0..8 {
         out = out.append((fbits >> fk * 8 & 255) as i32);
-        fk += 1;
       }
       i += 2;
     } else if (op == "local.get") {
@@ -1664,10 +1263,8 @@ function enc_functype(params: string[], results: string[]): i32[] {
   }
   o = util.append_all(o, wvec(params.len(), pb));
   let rb: i32[] = [];
-  i = 0;
-  while (i < results.len()) {
+  for i in 0..results.len() {
     rb = rb.append(valtype_byte(results[i]));
-    i += 1;
   }
   o = util.append_all(o, wvec(results.len(), rb));
   return o;
@@ -1675,10 +1272,8 @@ function enc_functype(params: string[], results: string[]): i32[] {
 
 function body_instrs(fnode: SExpr): SExpr[] {
   let out: SExpr[] = [];
-  let i = func_header_end(fnode);
-  while (i < fnode.items.len()) {
+  for i in func_header_end(fnode)..fnode.items.len() {
     out = out.append(fnode.items[i]);
-    i += 1;
   }
   return out;
 }
@@ -1686,12 +1281,10 @@ function body_instrs(fnode: SExpr): SExpr[] {
 function emit_binary(mod: SExpr): i32[] {
   let fnames = util.name_index(collect_func_names(mod));
   let global_names: string[] = [];
-  let gi = 0;
-  while (gi < mod.items.len()) {
+  for gi in 0..mod.items.len() {
     if (node_head(mod.items[gi]) == "global") {
       global_names = global_names.append(mod.items[gi].items[1].text);
     }
-    gi += 1;
   }
   let gnames = util.name_index(global_names);
 
@@ -1790,15 +1383,13 @@ function emit_binary(mod: SExpr): i32[] {
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
       let mm = mod.items[i];
-      let j = 1;
-      while (j < mm.items.len()) {
+      for j in 1..mm.items.len() {
         if (node_head(mm.items[j]) == "export") {
           expBody = wname(expBody, mm.items[j].items[1].text);
           expBody = expBody.append(2);
           expBody = leb_u32(expBody, 0);
           expCount += 1;
         }
-        j += 1;
       }
     }
     if (node_head(mod.items[i]) == "export") {
@@ -1821,10 +1412,8 @@ function emit_binary(mod: SExpr): i32[] {
     if (instrs.len() > 0 && instrs[0].kind != 0) {
       fbody = util.append_all(fbody, enc_flat_body(instrs, lnames, fnames, gnames, tnames));
     } else {
-      let k = 0;
-      while (k < instrs.len()) {
+      for k in 0..instrs.len() {
         fbody = util.append_all(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
-        k += 1;
       }
     }
     fbody = fbody.append(11);
@@ -1866,23 +1455,19 @@ function emit_binary(mod: SExpr): i32[] {
 
   let elemBody: i32[] = [];
   let elemCount = 0;
-  i = 0;
-  while (i < mod.items.len()) {
+  for i in 0..mod.items.len() {
     if (node_head(mod.items[i]) == "elem") {
       let en = mod.items[i];
       elemBody = elemBody.append(0);
       elemBody = util.append_all(elemBody, enc_instr(en.items[1], util.name_index([]), fnames, gnames, [], util.name_index([])));
       elemBody = elemBody.append(11);
       let fb: i32[] = [];
-      let ei = 2;
-      while (ei < en.items.len()) {
+      for ei in 2..en.items.len() {
         fb = leb_u32(fb, name_idx(fnames, en.items[ei].text));
-        ei += 1;
       }
       elemBody = util.append_all(elemBody, wvec(en.items.len() - 2, fb));
       elemCount += 1;
     }
-    i += 1;
   }
 
   let out = wmagic();
@@ -1921,10 +1506,8 @@ function func_sig(fn: SExpr): string {
   }
   o += "->";
   let rs = func_result_types(fn);
-  i = 0;
-  while (i < rs.len()) {
+  for i in 0..rs.len() {
     o = o + rs[i] + ",";
-    i += 1;
   }
   return o;
 }
@@ -1941,10 +1524,8 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
     return n;
   }
   let out: SExpr[] = [];
-  let i = 0;
-  while (i < n.items.len()) {
+  for i in 0..n.items.len() {
     out = out.append(rename_atoms(n.items[i], from, to));
-    i += 1;
   }
   return SExpr { kind: 0, text: n.text, items: out };
 }
@@ -2144,10 +1725,8 @@ pub function hex_to_bytes(s: string): i32[] {
 
 pub function blob_to_bytes(s: string): i32[] {
   let o: i32[] = [];
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     o = o.append(s[i] as i32);
-    i += 1;
   }
   return o;
 }
@@ -2299,11 +1878,9 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   ex = ex.append(0);
   o = util.append_all(o, wsection(7, ex));
   let body: i32[] = [0];
-  let k = 0;
-  while (k < params.len()) {
+  for k in 0..params.len() {
     body = body.append(32);
     body = body.append(k);
-    k += 1;
   }
   body = body.append(65);
   body = body.append(0);
@@ -2351,12 +1928,10 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
   let b: i32[] = [1, 0];
   b = leb_u32(b, modidx);
   b = leb_u32(b, names.len());
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     b = wname(b, names[i]);
     b = b.append(18);
     b = leb_u32(b, insts[i]);
-    i += 1;
   }
   return wsection(2, b);
 }
@@ -2364,12 +1939,10 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
 function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
   let b: i32[] = [1, 1];
   b = leb_u32(b, names.len());
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     b = wname(b, names[i]);
     b = b.append(sorts[i]);
     b = leb_u32(b, idxs[i]);
-    i += 1;
   }
   return wsection(2, b);
 }
@@ -2490,10 +2063,8 @@ function comp_canon_task_return(vt: i32): i32[] {
 function async_functype(b: i32[], names: string[], vts: i32[][], result: i32[]): i32[] {
   b = b.append(67);
   b = leb_u32(b, vts.len());
-  let i = 0;
-  while (i < vts.len()) {
+  for i in 0..vts.len() {
     b = util.append_all(wname(b, names[i]), vts[i]);
-    i += 1;
   }
   return comp_resultlist(b, result);
 }
@@ -2578,10 +2149,8 @@ pub function lowered_name(name: string): string {
     return name;
   }
   let bytes: u8[] = [];
-  let i = pre.len();
-  while (i < name.len()) {
+  for i in pre.len()..name.len() {
     bytes = bytes.append(name[i]);
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(bytes);
@@ -2623,12 +2192,10 @@ function comp_export_one_func(name: string, funcidx: i32): i32[] {
 }
 
 function suffix_group_find(order: string[], iface: string): i32 {
-  let i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     if (order[i] == iface) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -2715,20 +2282,16 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     i += 1;
   }
   let arg_insts: i32[] = [];
-  let g = 0;
-  while (g < order.len()) {
+  for g in 0..order.len() {
     let gn = group_names[g];
     let gx = group_idxs[g];
     let sorts: i32[] = [];
-    let s = 0;
-    while (s < gn.len()) {
+    for s in 0..gn.len() {
       sorts = sorts.append(0);
-      s += 1;
     }
     o = util.append_all(o, comp_core_instance_from_exports(gn, sorts, gx));
     arg_insts = arg_insts.append(n_coreinst);
     n_coreinst += 1;
-    g += 1;
   }
   let user_inst = n_coreinst;
   o = util.append_all(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
@@ -2770,8 +2333,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     }
     i += 1;
   }
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (trampolined(imp_kind[i])) {
       let arg = n_coreinst;
       o = util.append_all(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
@@ -2779,7 +2341,6 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       o = util.append_all(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
       n_coreinst += 1;
     }
-    i += 1;
   }
   return SuffixWired { o: o, n_cfunc: n_cfunc, n_corefunc: n_corefunc, n_inst: n_inst, user_inst: user_inst };
 }
@@ -2795,13 +2356,11 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
   let run_inst = w.n_inst;
   o = util.append_all(o, comp_instance_one_func("run", lifted));
   o = util.append_all(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
-  let i = 0;
-  while (i < lifts.len()) {
+  for i in 0..lifts.len() {
     o = util.append_all(o, comp_alias_core_func(w.user_inst, "[async-lift]" + lifts[i].core_name));
     o = util.append_all(o, comp_type_async_func(lifts[i]));
     o = util.append_all(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
     o = util.append_all(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
-    i += 1;
   }
   return o;
 }
@@ -2824,10 +2383,8 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
 function no_results(n: i32): i32[][] {
   let out: i32[][] = [];
   let none: i32[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(none);
-    i += 1;
   }
   return out;
 }
@@ -2848,8 +2405,7 @@ function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: 
   let inst: i32[] = [];
   let params: i32[][] = [];
   let res: i32[] = [];
-  i = 0;
-  while (i <= imp_iface.len()) {
+  for i in 0..=imp_iface.len() {
     if (i == at) {
       iface = iface.append("wasi:io/error@0.2.0");
       name = name.append("[resource-drop]error");
@@ -2866,7 +2422,6 @@ function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: 
       params = params.append(imp_params[i]);
       res = res.append(imp_typeop[i]);
     }
-    i += 1;
   }
   return component_suffix(iface, name, kind, inst, params, no_results(params.len()), res, n_type0, n_inst0, user_mod, core_export, []);
 }

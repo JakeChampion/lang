@@ -1,0 +1,20 @@
+{
+  "source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+  "design": "Six fixed baseline repetitions of the actual failing two-core test. All outcomes retained. This is a correctness diagnosis of an observed CI failure, not a performance comparison or a retry until green.",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostKernelTwoCoreSchedulerOnQemu$",
+    "-count=6",
+    "-timeout=25m",
+    "-json"
+  ],
+  "started": "2026-11-10T16:52:25.981285+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T16:54:33.997016+00:00",
+  "test_passes": 6,
+  "test_failures": 0,
+  "skips": 0
+}

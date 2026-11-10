@@ -9,8 +9,7 @@ pub function helpers(offsets: i32[], mode: i32): string {
   let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free"];
   let messages = texts();
   let out = "";
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     out = out + "  (func $__fern_abort_" + names[i] + "\n";
     if (i < offsets.len()) {
       let ptr = util.i32_to_string(offsets[i] + 4);
@@ -24,7 +23,6 @@ pub function helpers(offsets: i32[], mode: i32): string {
       }
     }
     out += "    (unreachable))\n";
-    i += 1;
   }
   return out;
 }

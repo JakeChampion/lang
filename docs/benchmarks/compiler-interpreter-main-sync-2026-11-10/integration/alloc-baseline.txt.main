@@ -1,0 +1,116 @@
+# 2026-11-10: PR #15091, perf-x86_64 job 129644270390 on 7a1541eab3 measured 40824273 allocations and frees for the expanded checker source. Keep the 1% tolerance.
+# 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
+# 40405424 balanced checker events after the merge of main d04e79179f.
+# Bank both counts. The combined decrease is not an isolated liveness gain.
+# 2026-11-09: PR #14847, perf-x86_64 job 129087018092. allocs and frees fall 2.39% with the four slices of that PR. Pinned at the measured values.
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The checker's counts grow with the counted call roots of the tree shaker (#14747), which each body keeps for each method call, and with the drift of main since the last bank. Both are pinned at their measured values.
+# 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f, the merge with main 1c692d87. checker.allocs and checker.frees +6.8%.
+# 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. The checker's counts moved with the drift of main since the last bank, not with this change. Both are pinned at their measured values.
+# 2026-11-06: PR #14284. A local selfhost-alloc-bench run per main merge puts a +1,483,941 step in #14272:
+# 38,044,519 at bf687b4b and 39,528,460 at f290670c. ecbc66e3 makes 1,341,434 of it: each function is now
+# resolved before the last-use pass, which rebuilds its body. Each limit adds only that measured step.
+# The earlier growth stays visible under #14179.
+# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the ownership-checker changes of #14145
+# and this PR: 38,890,700 balanced events, +7.92%.
+# Retain the preceding limits. The measured regression must remain visible.
+# 2026-11-03: PR #14122 reports 37,552,609 balanced events locally, against 37,489,484 on main 0a339915.
+# Preserve the original limits. The existing allocation ceiling must expose this cost.
+# 2026-11-01: #13988 retains the original main limits. CI 41287852525
+# reports 36,537,877 balanced events. Keep this cost visible under the existing CI budget.
+# 2026-10-31: PR #13910, measured by CI job 124561576376.
+# 2026-10-31: PR #13923, measured by CI job 124561596792.
+# 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
+# Record the lane's measured changes after the lifetime and shared-helper repairs.
+# 2026-10-29: #13863 (#13061) at 84b2ea38, from a local selfhost-alloc-bench run: 35,192,548
+# balanced events. Main at 0c591828 measures 34,176,143. The clones that #13863 makes for the
+# parser's named visitors add 2.97%. The pass with its result discarded adds 0.18%.
+# 2026-10-28: scripts/selfhost-alloc-bench on #13820 at the head that carries this note measured 33,886,499 balanced events, +1.65%, merged with main at b3520921. The new unroll and constant-fold passes run on every function, and the CG3b expansion grew parser.fern and checker.fern, which the subject imports.
+# 2026-10-28: Perf run 40717781776 on main at 903c9a490 measured 33,337,938 balanced events, -11.16%. #13718 removes return allocations from the compiler.
+# 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.
+# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
+# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
+# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
+# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
+# 2026-10-28: scripts/selfhost-alloc-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which runs the IR verifier in every compile and grew checker.fern with the unsafe obligation pass; the build manifest of #13726 adds a few allocations per compile.
+# 2026-10-26: Full CI run 40337273239 at 7cd5b7d81 measured 34,951,426 balanced events. Reachability also runs before scalar transforms.
+# 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges (#13153, #13242, #13261): +10.2% allocations.
+# 2026-10-23: combined source 160186731f, Perf run 40026009089. The receiver checks and FIP table add compiler source.
+# Allocation baselines for the self-host compiler compiling one real module,
+# checked against every run by scripts/ci-check-perf.
+#
+# FORMAT: metric  value  [tolerance%]. The metric key is
+# <arch>/<subject>.<allocs|frees> — heap events the compiler performed while
+# compiling compiler/checker.fern against internal/stdlib, counted by
+# a FERN_LEAKCHECK-instrumented build (scripts/selfhost-alloc-bench).
+#
+# EXACT FOR A GIVEN CHECKOUT PATH, and that qualifier is the whole subtlety
+# here. These count events the program performed rather than time it took,
+# so on one path they repeat to the digit over every run. But the compiler
+# is handed ABSOLUTE paths to the subject and the stdlib, and it allocates a
+# handful FEWER for a longer one: a spread of 5 counts between a short path
+# and a deeply-nested one, with GitHub's /home/runner/work/lang/lang sitting
+# one BELOW /home/user/lang. That spread reproduced identically on two
+# unrelated compiler binaries, so it is structural and not incidental. Four
+# orders of magnitude inside the 1% tolerance, so it cannot trip the gate —
+# but a local run legitimately differs from CI by a count or two, and that is
+# not a regression to chase. The tolerance stays a significance threshold
+# rather than a noise floor, the same as the instruction-count lanes.
+#
+# Quoted as a SPREAD rather than as absolute figures per path, deliberately:
+# absolutes go stale every time the compiler moves, and a stale absolute reads
+# as a real measurement. The pair banked below is the one GitHub's runner
+# produces, since that is where the gate runs.
+#
+# WHY THE GAP. allocs exceeds frees by the objects live when the process exits —
+# a compiler that runs once and exits does not tear its world down. The
+# two are baselined separately so a change that stops freeing shows up as one
+# row moving rather than being netted away.
+#
+# PEAK RSS IS DELIBERATELY ABSENT. scripts/selfhost-alloc-bench can also read
+# peak RSS out of a scratch cgroup, and that figure is not comparable across
+# hosts — transparent_hugepage alone spreads the same allocation 12x — so it
+# cannot be baselined against whatever runner CI hands you. The lane sets
+# FERN_ALLOC_PEAK_RSS=0; peak RSS stays a local instrument, worked through in
+# docs/SELFHOST-SYMBOL-INTERNING.md.
+#
+# x86_64 ONLY, like the append-cliff lane: the aarch64 lane does not build a
+# self-host compiler. Keys stay arch-namespaced anyway, so adding that arch
+# later does not renumber this one.
+#
+# ADVISORY AT THE TOLERANCE, FATAL AT A CEILING. The 1% above stays a
+# significance threshold: a move past it is a warning, in both directions.
+# perf.yml additionally sets FERN_CI_PERF_GATE_MAX_DRIFT=10 on this comparison
+# alone, so drift past 10% FAILS. Two different jobs, deliberately: this pair
+# sat 82% behind main for six days because a warning was the only consequence
+# (#9963), while it also moves a few tenths of a percent from unrelated merges
+# in a couple of hours — so a fatal 1% would fail PRs for drift they did not
+# cause. When a number moves on purpose, update it in the same PR; the job
+# summary prints the corrected lines ready to paste. Keep the reason in the PR,
+# not here.
+
+# Re-pinned 2026-10-15 (#12418): main measured 24,702,797 on the dev
+# container (the previous pin was drift); semreach's walk adds 803,363.
+# Re-pinned 2026-10-15 again: semreach no longer walks the `__` folds
+# nothing calls, 1.8% fewer.
+# Re-pinned 2026-10-18: main's merges since moved it 14.4% (28,649,016 on main
+# d497b435 on the dev container); #12791 adds 0.1%.
+# Re-pinned 2026-10-21 (#12922): main's merges since moved it 7.4% (26,564,102
+# on main 53442b39 on the dev container); the leaf inliner no longer builds an
+# Op per op it walks and semreach's walk no longer returns a record per step,
+# 4.5% fewer again.
+# Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
+# ddc5b110 on the dev container); const_propagate's known table starts on one
+# placeholder op, 0.5% fewer.
+# Measured 2026-11-04 (PR #14170): CI recorded 38,587,649 on 6858ecfe.
+# Keep the prior limits while the compiler cost is repaired. A higher
+# measurement does not authorize a higher limit.
+# 2026-11-04: after integration with main 05a98461, filtered AST map
+# visitors measured 35,901,919 events. The main compiler measured
+# 36,293,688 on the same candidate checker source. Both x86-64 leak-check
+# compilers used the same qualified producer and emitted identical
+# assembly under QEMU. Both counts balance with zero live bytes.
+# This lowers the prior branch measurement of 35,915,045. No timing claim.
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
+x86_64/checker.allocs	40824273
+x86_64/checker.frees	40824273

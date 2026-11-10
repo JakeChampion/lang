@@ -54,16 +54,12 @@ pub function known_rules(): string {
 }
 
 function parse_severity(v: string): i32 {
-  if (v == "allow") {
-    return ALLOW;
-  }
-  if (v == "warn") {
-    return WARN;
-  }
-  if (v == "deny") {
-    return DENY;
-  }
-  return -1;
+  return match (v) {
+    "allow" => ALLOW,
+    "warn" => WARN,
+    "deny" => DENY,
+    _ => -1,
+  };
 }
 
 function severity_name(sev: i32): string {
@@ -92,8 +88,8 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   if (dot < 0) {
     return (c, "lint option \"" + dotted + "\" must be spelled <rule>.<key>");
   }
-  let rule = slice_unchecked(dotted, 0, dot) + "";
-  let key = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
+  let rule = slice_unchecked(dotted, 0, dot).to_owned();
+  let key = slice_unchecked(dotted, dot + 1, dotted.len()).to_owned();
   let bad_rule = option_rule_error(dotted, rule);
   if (bad_rule.len() > 0) {
     return (c, bad_rule);
@@ -294,12 +290,10 @@ function expr_forks(e: ast.Expr): i32 {
     },
     ast.ExprFString(fs) => {
       let n = 0;
-      let i = 0;
-      while (i < fs.exprs.len()) {
+      for i in 0..fs.exprs.len() {
         if (fs.is_expr[i]) {
           n += expr_forks(fs.exprs[i]);
         }
-        i += 1;
       }
       return n;
     },
@@ -355,13 +349,11 @@ function is_blank(line: string): boolean {
 function split_src(src: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i <= src.len()) {
+  for i in 0..=src.len() {
     if (i == src.len() || src[i] == b'\n') {
-      out = out.append(slice_unchecked(src, start, i) + "");
+      out = out.append(slice_unchecked(src, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -379,8 +371,7 @@ function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Commen
   if (!comment_only(lines, c)) {
     return c.line;
   }
-  let ln = c.line + 1;
-  while (ln <= lines.len()) {
+  for ln in c.line + 1..=lines.len() {
     let skip = is_blank(lines[ln - 1]);
     if (!skip) {
       for o in comments {
@@ -393,7 +384,6 @@ function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Commen
     if (!skip) {
       return ln;
     }
-    ln += 1;
   }
   return 0;
 }
@@ -405,7 +395,7 @@ function directive_finding(c: lexer.Comment, msg: string, help: string): Finding
 function comment_body(text: string): string {
   let t = text.trim();
   if (t.starts_with("//")) {
-    t = (slice_unchecked(t, 2, t.len()) + "").trim();
+    t = slice_unchecked(t, 2, t.len()).to_owned().trim();
   }
   return t;
 }
@@ -418,13 +408,13 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     if (!text.starts_with("fern-lint:")) {
       continue;
     }
-    let body = (slice_unchecked(text, 10, text.len()) + "").trim();
+    let body = slice_unchecked(text, 10, text.len()).to_owned().trim();
     let sp = util.index_of_sub(body, " ");
     let verb = body;
     let rest = "";
     if (sp >= 0) {
-      verb = slice_unchecked(body, 0, sp) + "";
-      rest = slice_unchecked(body, sp + 1, body.len()) + "";
+      verb = slice_unchecked(body, 0, sp).to_owned();
+      rest = slice_unchecked(body, sp + 1, body.len()).to_owned();
     }
     if (verb != "allow" && verb != "allow-file") {
       sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "unknown lint directive \"" + verb + "\" (want `fern-lint: allow RULE` or `fern-lint: allow-file RULE`)", "")) };
@@ -432,16 +422,14 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     }
     let names: string[] = [];
     let start = 0;
-    let i = 0;
-    while (i <= rest.len()) {
+    for i in 0..=rest.len() {
       if (i == rest.len() || rest[i] == b',') {
-        let r = (slice_unchecked(rest, start, i) + "").trim();
+        let r = slice_unchecked(rest, start, i).to_owned().trim();
         if (r.len() > 0) {
           names = names.append(r);
         }
         start = i + 1;
       }
-      i += 1;
     }
     if (names.len() == 0) {
       sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "lint directive `" + verb + "` names no rule", "")) };
@@ -471,12 +459,10 @@ function allows(sup: Suppressions, rule: string, line: i32): boolean {
   if (util.has_str(sup.file_rules, rule)) {
     return true;
   }
-  let i = 0;
-  while (i < sup.lines.len()) {
+  for i in 0..sup.lines.len() {
     if (sup.lines[i] == line && sup.rules[i] == rule) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -524,8 +510,7 @@ function max_expr_line(e: ast.Expr, own acc: i32): i32 {
 
 pub function cover_of(cover: coverreport.File[], file: string): i32 {
   let best: i32 = -1;
-  let i = 0;
-  while (i < cover.len()) {
+  for i in 0..cover.len() {
     let n = cover[i].name;
     if (n == file) {
       return i;
@@ -533,7 +518,6 @@ pub function cover_of(cover: coverreport.File[], file: string): i32 {
     if ((n.ends_with("/" + file) || file.ends_with("/" + n)) && (best < 0 || n.len() > cover[best].name.len())) {
       best = i;
     }
-    i += 1;
   }
   return best;
 }
@@ -734,7 +718,7 @@ function evident_type(e: ast.Expr): string {
     },
     ast.ExprUnary(u) => {
       if (u.op.starts_with("as_")) {
-        return slice_unchecked(u.op, 3, u.op.len()) + "";
+        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
       }
     },
     _ => {}

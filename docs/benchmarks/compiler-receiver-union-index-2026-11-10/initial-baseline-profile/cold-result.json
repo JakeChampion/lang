@@ -1,0 +1,8 @@
+{
+  "finished": "2026-11-10T15:50:17.469904+00:00",
+  "exit_code": 0,
+  "normal_sha256": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+  "guest_instructions": 16923277666,
+  "source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "raw_callgrind_sha256": "0e2ae4380cc34456ae09c9a43aa9a16b85095254589c04502ecff79f46a1d796"
+}

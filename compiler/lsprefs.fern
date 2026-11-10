@@ -452,8 +452,7 @@ function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, 
 
 function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
   let out: Ref[] = [];
-  let m = 0;
-  while (m < p.srcs.len()) {
+  for m in 0..p.srcs.len() {
     let mine: Anchor[] = [];
     for a in anchors {
       if (util.pos_file_index(a.line) == m) {
@@ -465,7 +464,6 @@ function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
     if (mine.len() > 0 || quals.len() > 0 || declared) {
       out = module_refs(p, t, m, mine, quals, out);
     }
-    m += 1;
   }
   return out;
 }
@@ -491,12 +489,10 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
       marks = marked(marks, decl_tok(toks, decl), 2);
     }
   }
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     if (marks[i] > 0) {
       out = out.append(Ref { line: toks[i].line, col: toks[i].col, len: toks[i].text.len(), decl: marks[i] == 2 });
     }
-    i += 1;
   }
   return out;
 }
@@ -573,8 +569,7 @@ function type_quals(p: lspquery.Program, t: Target, m: i32): string[] {
 function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[], quals: string[], own marks: i32[]): i32[] {
   let values: Read[] = [];
   let scanned = false;
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     let at = type_ref_at(toks, i, t.spelled, quals);
     if (at >= 0 && !(i + 1 < toks.len() && !toks[i + 1].ident && toks[i + 1].text == "(")) {
       if (!scanned) {
@@ -585,7 +580,6 @@ function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[]
         marks = marked(marks, i, 1);
       }
     }
-    i += 1;
   }
   return marks;
 }

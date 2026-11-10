@@ -323,7 +323,7 @@ pub function builtin_result(name: string): string {
   if (close < 0) {
     return "";
   }
-  return slice_unchecked(row, close + 3, row.len()) + "";
+  return slice_unchecked(row, close + 3, row.len()).to_owned();
 }
 
 // An intrinsic that reaches a device or raw memory: an MMIO, raw memory or

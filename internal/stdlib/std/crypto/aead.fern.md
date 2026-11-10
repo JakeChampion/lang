@@ -53,6 +53,7 @@ pub enum AeadError {
   NonceLength(i32),
   Forged,
   CounterRange,
+  Overlap,
 }
 ```
 
@@ -91,8 +92,18 @@ pub function (e: AeadError) message(): string {
     },
     CounterRange => {
       return "aead: the data needs more blocks than the 32-bit block counter has left";
+    },
+    Overlap => {
+      return "aead: the additional data overlaps the text or its tag";
     }
   }
   return "";
+}
+
+// An in-place call writes the text and the 16-byte tag over buf[at:at + n + 16].
+// The additional data at buf[aad_at:aad_at + aad_n] must not be in that range:
+// the tag then covers bytes that the call changes.
+pub function overlaps(aad_at: i32, aad_n: i32, at: i32, n: i32): boolean {
+  return aad_n > 0 && aad_at < at + n + 16 && at < aad_at + aad_n;
 }
 ```

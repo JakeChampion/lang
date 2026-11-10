@@ -1,4 +1,5 @@
 function __fern_subprocess(cmd: string, args: string[], input: string): ProcessResult {
+  let has_nul = __count_byte(cmd, 0) > 0;
   let clen = cmd.len();
   let cmdz = __raw_alloc(clen + 1);
   let i: i32 = 0;
@@ -21,8 +22,11 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
   let k: i32 = 0;
   while (k < n) {
     let a = args[k];
+    if (__count_byte(a, 0) > 0) {
+      has_nul = true;
+    }
     let al = a.len();
-    __raw_store_ptr(argv, k + 1, ab + off);
+    __raw_store_ptr(argv, k + 1, ab + off as usize);
     let j: i32 = 0;
     while (j < al) {
       __raw_store8(ab, off + j, a[j] as i32);
@@ -55,6 +59,9 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
     __syscall3(57, err_r as i64, 0, 0);
     __syscall3(57, err_w as i64, 0, 0);
     let envp = __raw_environ();
+    if (has_nul) {
+      __fern_sp_exec_failed(cmdz, clen, -22);
+    }
     let rc0 = __syscall3(221, cmdz as i64, argv as i64, envp as i64) as i32;
     let pre = __raw_alloc(9);
     __raw_store8(pre, 0, 47);

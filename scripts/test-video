@@ -14,7 +14,7 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/video
-for suite in video video_annex_b video_ivf_input video_ivf_input_boundary video_mp4 video_mp4_boundary video_mp4_file video_mp4_file_boundary android_video_policy android_video_source; do
+for suite in video video_avc video_avc_pps video_annex_b video_ivf_input video_ivf_input_boundary video_mp4 video_mp4_boundary video_mp4_file video_mp4_file_boundary video_qtrle_mov android_video_policy android_video_source; do
   source="tests/stdlib/${suite}_test.fern"
   "$fern_video_compiler" -check "$source" internal/stdlib
   "$fern_video_compiler" -target "$target" -sanitize -o "build/video/${suite}-tests" "$source" internal/stdlib
@@ -26,7 +26,8 @@ done
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/hardware-api.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/android-api.so tests/stdlib/android_video_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c
+  scripts/libandroid-stubs scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c > build/video/stubs.c
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c build/video/stubs.c
   ln -sf libmediandk.so build/video/libandroid.so
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/android-mock.so tests/stdlib/android_video_mock_test.fern internal/stdlib
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/hardware-mock.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
@@ -45,7 +46,8 @@ fi
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/source-api.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
   mkdir -p build/video/source
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/source/libandroid.so scripts/video-reference/source-jni-mock.c
+  scripts/libandroid-stubs scripts/video-reference/source-jni-mock.c > build/video/source/stubs.c
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/source/libandroid.so scripts/video-reference/source-jni-mock.c build/video/source/stubs.c
   ln -sf "$(cc -print-file-name=libc.so.6)" build/video/source/libc.so
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/source/mock.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
   LD_LIBRARY_PATH="$PWD/build/video/source${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'

@@ -60,12 +60,10 @@ function entries(s: string, entry: string): void {
   check(change(s, entry + ":\n    movq 8(%rsp), %rax", entry + ":\nmovq 16(%rsp), %rax"), entry, false);
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 2;
-  while (i < regs.len()) {
+  for i in 2..regs.len() {
     check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
     check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
     check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
-    i += 1;
   }
 }
 
@@ -77,10 +75,8 @@ function increment(s: string, entry: string, to: string): string {
   let pieces = bodies[1].split(inc);
   require(pieces.len() > 1);
   let tail = pieces[0] + to + pieces[1];
-  let i = 2;
-  while (i < pieces.len()) {
+  for i in 2..pieces.len() {
     tail = tail + inc + pieces[i];
-    i += 1;
   }
   return bodies[0] + marker + tail;
 }
@@ -99,13 +95,11 @@ function counter_flags(s: string, entry: string): void {
 function comparisons(s: string, entry: string): void {
   let values = [-2147483648, -1, 0, 1, 2147483647];
   let truths: string[][] = [["jne", "js", "jb", "jo", "jge", "jg"], ["jne", "jns", "jb", "jno", "jge", "jg"], ["je", "jns", "jae", "jno", "jge", "jle"], ["jne", "js", "jb", "jno", "jl", "jle"], ["jne", "js", "jb", "jno", "jl", "jle"]];
-  let i = 0;
-  while (i < values.len()) {
+  for i in 0..values.len() {
     for name in truths[i] {
       let lines = "movl -8(%rax), %ecx\ncmpl $" + values[i].to_string() + ", %ecx\n" + name + " .Lzero_cmp\nunknown_instruction\n.Lzero_cmp:";
       check(prefix(s, entry, lines), entry, true);
     }
-    i += 1;
   }
 }
 

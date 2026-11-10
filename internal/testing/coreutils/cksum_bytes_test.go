@@ -7,5 +7,11 @@ import (
 )
 
 func TestCksumBytes(t *testing.T) {
-	e2eharness.RunCksumByteCases(t, fernBin(t, "cksum"), crossPrefix(), nil)
+	e2eharness.RunCksumByteCasesAgainst(t, fernBin(t, "cksum"), crossPrefix(), crossArgv(referenceBin(t, "cksum")), nil)
+}
+
+func TestCksumBytesReferenceCommand(t *testing.T) {
+	oracle, marker := digestReferenceCommand(t, "cksum")
+	e2eharness.RunCksumByteCasesAgainst(t, fernBin(t, "cksum"), crossPrefix(), oracle, nil)
+	requireDigestReferenceCommand(t, marker)
 }

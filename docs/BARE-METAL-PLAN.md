@@ -697,7 +697,9 @@ check time, in the same mechanism that enforces the OS boundary today.
   `std/ip` is Ethernet, ARP, IPv4, UDP and the TCP segments over the driver.
   `std/tcp/conn` is the TCP connection, `std/tcp` binds connections to an
   interface, and `std/tcp/serve` serves HTTP over it with the shape of
-  `std/serve`. `std/serve` itself over `std/tcp` waits for milestone 4.
+  `std/serve`. A user process can also serve (#15096): `std/user_net` holds
+  its sockets over `std/tcp`, and an unmodified `std/serve` program, built for
+  `arm64-linux`, serves HTTP as a process of the kernel.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -708,7 +710,11 @@ check time, in the same mechanism that enforces the OS boundary today.
 - **A filesystem** (#14264). The first one is a read-only cpio archive, the
   format of a Linux initramfs: `std/cpio` reads it. A VMM loads it as the
   initrd, or a virtio-blk disk holds it, and `std/virtio_blk` reads the disk.
-  A writable filesystem comes later, on the same driver.
+  The first writable step is on the same driver (#15078): `std/cpio` also
+  writes an archive, and `image` of `std/user_process` gives the root of a
+  process, with its files in memory, as one archive. A kernel writes it to the
+  disk, and a later boot reads it back as the root. A filesystem that writes
+  one file in place comes later.
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
   reads the header and the program headers of an ELF64 image, and
@@ -1015,7 +1021,17 @@ and three `mmap` reservations at start.
    ("5. Atomics" above). The two cores add to one word, and the total is
    exact. The second core runs only `@norc` code. It runs the EL0 code of a
    user process from a mailbox, and core 0 answers the events.
-26. Beside those: the panic scope is decided (#14257, see the north-star
+26. **The root outlives the kernel on arm64** (#15078). A process writes a
+   file, and the kernel writes the root of the process to the virtio-blk disk
+   as one cpio archive. The next boot takes the archive on the disk as its
+   root, and a process reads the file back.
+27. **A process serves HTTP on arm64** (#15096). `std/user_process` answers
+   the socket, epoll and signalfd calls of a `std/serve` program over
+   `std/user_net` and the virtio-net interface. A call that waits ends the run
+   with `Waiting`, and the next run starts it again. The program answers three
+   requests from the host. Then the kernel sends SIGTERM, and the program exits
+   with 0.
+28. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

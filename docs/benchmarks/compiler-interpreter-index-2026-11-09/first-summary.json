@@ -1,0 +1,31 @@
+{
+  "sample_count": 10,
+  "scope": "First32-recorddiagnostic only. Additional benefit relative to skip-only424fe, not a pooled comparison with the originalebb baseline.",
+  "binaries": {
+    "skip": {
+      "wall_median_s": 8.77247241,
+      "wall_range_s": [
+        5.97286869,
+        9.068611213
+      ],
+      "cpu_median_s": 8.598951999999999,
+      "rss_median_kib": 148168
+    },
+    "index": {
+      "wall_median_s": 7.031007564,
+      "wall_range_s": [
+        4.428853477,
+        7.214205093
+      ],
+      "cpu_median_s": 6.959663,
+      "rss_median_kib": 148296
+    }
+  },
+  "paired_cpu_percent": [
+    -25.60224855687515,
+    -20.12236789883881,
+    -17.04958929878896,
+    -20.211447598525822,
+    -16.830496791690088
+  ]
+}

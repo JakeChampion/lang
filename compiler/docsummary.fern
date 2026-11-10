@@ -2,6 +2,7 @@ import "./util";
 import "./docprintable";
 import "std/utf8";
 import "std/unicode";
+import "std/string";
 
 function decoded(s: string, i: i32): (i32, i32) {
   match (utf8.decode_at(s, i)) {
@@ -61,31 +62,29 @@ pub function summary(intro: string): string {
   let para = intro;
   let end = util.index_of_sub(para, "\n\n");
   if (end >= 0) {
-    para = slice_unchecked(para, 0, end) + "";
+    para = slice_unchecked(para, 0, end).to_owned();
   }
   let s = words(para);
   let label = util.index_of_sub(s, " — ");
   if (label >= 0) {
-    s = slice_unchecked(s, label + 5, s.len()) + "";
+    s = slice_unchecked(s, label + 5, s.len()).to_owned();
   }
   let sentence = util.index_of_sub(s, ". ");
   if (sentence >= 0) {
-    s = slice_unchecked(s, 0, sentence + 1) + "";
+    s = slice_unchecked(s, 0, sentence + 1).to_owned();
   }
   return capitalize(s);
 }
 
 function hex_value(s: string, p: i32): i32 {
   let out = 0;
-  let i = p;
-  while (i < p + 6) {
+  for i in p..p + 6 {
     let b = s[i] as i32;
     let digit = b - 48;
     if (b >= 97) {
       digit = b - 87;
     }
     out = out * 16 + digit;
-    i += 1;
   }
   return out;
 }
@@ -114,12 +113,10 @@ function hex_escape(cp: i32, digits: i32, prefix: string): string {
   let hex = "0123456789abcdef";
   let out = "";
   let value = cp;
-  let i = 0;
-  while (i < digits) {
+  for i in 0..digits {
     let d = value & 15;
     out = slice_unchecked(hex, d, d + 1) + out;
     value = value >> 4;
-    i += 1;
   }
   return prefix + out;
 }

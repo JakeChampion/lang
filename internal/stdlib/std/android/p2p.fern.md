@@ -62,10 +62,10 @@ pub function event(e: android.Event): Option[Event] {
         return Some(Enabled(arg != 0 as usize));
       }
       if (kind == PEERS) {
-        return Some(Peers(peers_of(taken_text(arg))));
+        return Some(Peers(peers_of(android.taken_text(arg))));
       }
       if (kind == GROUP) {
-        return Some(Group(group_of(taken_text(arg))));
+        return Some(Group(group_of(android.taken_text(arg))));
       }
       return None;
     },
@@ -183,9 +183,9 @@ pub function received(e: usize, receiver: usize, intent: usize): void {
     }
     android.send(activity, STATE, on);
   } else if (action == ACTIONS[1]) {
-    android.send(activity, PEERS, text_buffer(peers_text(e, intent_extra(e, intent, "wifiP2pDeviceList"))));
+    android.send(activity, PEERS, android.text_buffer(peers_text(e, intent_extra(e, intent, "wifiP2pDeviceList"))));
   } else if (action == ACTIONS[2]) {
-    android.send(activity, GROUP, text_buffer(group_text(e, intent_extra(e, intent, "wifiP2pInfo"))));
+    android.send(activity, GROUP, android.text_buffer(group_text(e, intent_extra(e, intent, "wifiP2pInfo"))));
   }
 }
 
@@ -235,30 +235,6 @@ function group_text(e: usize, info: usize): string {
     host = jni.string_of(e, jni.call_object(e, address, "getHostAddress", "()Ljava/lang/String;", []));
   }
   return flag_field(e, info, "groupFormed") + "\t" + flag_field(e, info, "isGroupOwner") + "\t" + host;
-}
-
-// A heap copy of `text` for the loop thread: its length, then its bytes.
-function text_buffer(text: string): usize {
-  let b = text.as_bytes();
-  unsafe {
-    let buf: usize = __alloc(4 + b.len());
-    __store_i32(buf, b.len());
-    __memcpy(buf + 4 as usize, __bytes_data(b), b.len());
-    return buf;
-  }
-}
-
-// The text of a buffer from text_buffer, which it frees.
-function taken_text(buf: usize): string {
-  let b: u8[] = [];
-  unsafe {
-    let n: i32 = __load_i32(buf);
-    for k in 0..n {
-      b = b.append(__load_u8(buf + (4 + k) as usize) as u8);
-    }
-    __free(buf, 4 + n);
-  }
-  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function digit_of(s: string): i32 {

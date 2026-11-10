@@ -17,9 +17,9 @@ func TestSelfHostPrinterX86_64(t *testing.T) {
 	dir := writeSelfHostPrinterProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/printer_check_run.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port printer assertion %d failed", code)
+		t.Errorf("printer self-checks exit %d:\n%s", code, out)
 	}
 }
 
@@ -28,8 +28,8 @@ func TestSelfHostPrinterArm64(t *testing.T) {
 	dir := writeSelfHostPrinterProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/printer_check_run.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port printer assertion %d failed", code)
+		t.Errorf("printer self-checks exit %d:\n%s", code, out)
 	}
 }

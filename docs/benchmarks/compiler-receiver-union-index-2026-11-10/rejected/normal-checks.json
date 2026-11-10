@@ -1,0 +1,187 @@
+{
+  "baseline": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "purpose": "Both fresh normal compilers check their own sources and preserve main E098 refusals. Negative cases expect exit1, not a successful compilation.",
+  "runs": [
+    {
+      "label": "baseline-own-source",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "expected_exit": 0,
+      "started": "2026-11-10T17:20:02.378475+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:20:20.698176+00:00"
+    },
+    {
+      "label": "candidate-own-source",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-checker-union-candidate-20261110-1705",
+      "expected_exit": 0,
+      "started": "2026-11-10T17:20:20.698831+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:20:39.230445+00:00"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_argument-baseline",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_argument/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.240273+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.252547+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "64cbe0a170c1364dbe368d73a9694f338b1336a0faf55e1f1399c8eed1f357ba"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_argument-candidate",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_argument/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.253149+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.259408+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "64cbe0a170c1364dbe368d73a9694f338b1336a0faf55e1f1399c8eed1f357ba"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_array_element-baseline",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_array_element/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.260324+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.270719+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9a3424ae19aa93edaa05e735451adfec7d077ee6e6a8dc5c5e0fa02ebc15a756"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_array_element-candidate",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_array_element/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.271678+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.278766+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9a3424ae19aa93edaa05e735451adfec7d077ee6e6a8dc5c5e0fa02ebc15a756"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_local-baseline",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_local/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.279134+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.288358+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "96d16c1b72859c33e021c31318e9e7d269b3b8f6aa7d88d5cb02f7a74d445da3"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_local-candidate",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_local/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.289704+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.292868+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "96d16c1b72859c33e021c31318e9e7d269b3b8f6aa7d88d5cb02f7a74d445da3"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_result-baseline",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_result/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.293188+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.297397+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "b1bb3ad542a5b2add18426e989abe7ac09565f626ec8ff069b68458025856e69"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_result-candidate",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_result/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.297771+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.301464+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "b1bb3ad542a5b2add18426e989abe7ac09565f626ec8ff069b68458025856e69"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_struct_field-baseline",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_struct_field/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.301756+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.305594+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e7f7e9ac728a395a16986132db59dd3de179fc8c2e7ab9367b80fea14d318ad5"
+    },
+    {
+      "label": "diag_e098_intrinsic_as_value_struct_field-candidate",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-normal",
+        "-check",
+        "/workspace/lang-compiler-main-20261110-1705/conformance/cases/diag_e098_intrinsic_as_value_struct_field/main.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-10T17:20:39.306355+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T17:20:39.311063+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e7f7e9ac728a395a16986132db59dd3de179fc8c2e7ab9367b80fea14d318ad5"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T17:20:39.311407+00:00"
+}

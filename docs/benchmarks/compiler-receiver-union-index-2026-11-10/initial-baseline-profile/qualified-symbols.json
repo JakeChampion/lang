@@ -1,0 +1,10 @@
+{
+  "source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "normal_sha256": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+  "reconstruction_sha256": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+  "symbol_map_sha256": "a8fff789ec186b6641a72ef3c9e2b43c9abe9c895486bdf247ad5e31e695f11c",
+  "normal_assembly_sha256": "6fba16bd85336b848db5984f010c8d2f2b3578965b3fd31c5e4199d687b2c102",
+  "helper_binary_sha256": "c4783777166a46cfc4b04991b8ebd5759a1dbc7e99b2ebc9f8408e9c6e14afca",
+  "helper_source_sha256": "0ef46ec4ab5e45425cbbdbd667ddccb8bec6dad96fa1b62f91664a8b7baa2a37",
+  "note": "Full byte identity qualifies the offline map. The reconstructed image never executes."
+}

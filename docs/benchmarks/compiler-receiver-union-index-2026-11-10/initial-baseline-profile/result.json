@@ -1,0 +1,155 @@
+{
+  "source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "phase": "complete",
+  "runs": [
+    {
+      "label": "normal-build",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:43:02.888890+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:44:24.063003+00:00"
+    },
+    {
+      "label": "normal-check",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:44:24.125928+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:44:45.282712+00:00"
+    },
+    {
+      "label": "cold",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/cold.callgrind",
+        "--log-file=/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/cold.valgrind.log",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/opus-native",
+        "/workspace/lang-compiler-main-20261110-1540/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1540/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:44:45.283875+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:50:17.469904+00:00"
+    },
+    {
+      "label": "program",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/opus-native"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:50:17.829440+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:50:17.906314+00:00",
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161"
+    },
+    {
+      "label": "assembly",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal.s",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:50:17.907407+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:51:26.126390+00:00"
+    },
+    {
+      "label": "symbol-map",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-normal-profile-20261110-0435/reconstruct",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal.s",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-profile-20261110-1540/normal-reconstructed"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T15:51:26.144240+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T15:52:03.946395+00:00"
+    }
+  ],
+  "started": "2026-11-10T15:43:02.507380+00:00",
+  "note": "One cold compilation diagnosis of the original stock 0e715dff production compiler and fixed 0e715dff Opus input/stdlib. Not a source-pair timing or speedup comparison. The reconstructed symbol image never executes.",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "helper_sha256": "c4783777166a46cfc4b04991b8ebd5759a1dbc7e99b2ebc9f8408e9c6e14afca",
+  "tool_version": "valgrind-3.24.0",
+  "tool_sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+  "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+  "stdlib_tree": "6a60304dd15c97b83f8a67dd5f006c77cb78edcf",
+  "normal_sha256": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+  "guest_instructions": 16923277666,
+  "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+  "analysis_exit": 0,
+  "exit_code": 0,
+  "finished": "2026-11-10T15:52:04.855178+00:00"
+}

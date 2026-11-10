@@ -1,0 +1,5 @@
+{
+  "date": "2026-11-10T16:34:54.936804+00:00",
+  "policy": "LEAKCHECK1 only when A19 builds counter compiler. Execute this counter binary with FERN_LEAKCHECK0 so emitted programs retain normal output policy. Embedded counters still count the compiler process itself. Counter outputs must match production native output.",
+  "source": "compiler/fern.fern switches: asmcore.leak_check_on reads execution environment for emitted program."
+}

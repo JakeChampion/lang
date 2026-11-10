@@ -1,0 +1,5 @@
+from pathlib import Path
+import subprocess,json,datetime,os,hashlib
+out=Path(__file__).resolve().parent;root=Path('/workspace/lang-checker-union-retained-20261110-1750');build=json.loads((out/'build.json').read_text());assert build['exit_code']==0;binary=out/'retained-normal';assert hashlib.sha256(binary.read_bytes()).hexdigest()==build['identical_normal_sha256'];env={k:v for k,v in os.environ.items()if not k.startswith('FERN_')};env.update(FERN_PROFILE='0',FERN_LEAKCHECK='0',FERN_RC_CERTIFY='1',FERN_RC_CERTIFY_MEMO='0');row={'source':'c02d2b4c1b2e3232da1dc4f7575383a65c3d9eaa','args':[str(binary),'-check','compiler/fern.fern','internal/stdlib'],'binary_sha256':build['identical_normal_sha256'],'started':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+with(out/'normal-own-source.stdout').open('wb')as so,(out/'normal-own-source.stderr').open('wb')as se:r=subprocess.run(row['args'],cwd=root,env=env,stdout=so,stderr=se,timeout=1980)
+row.update(exit_code=r.returncode,finished=datetime.datetime.now(datetime.timezone.utc).isoformat());(out/'normal-own-source.json').write_text(json.dumps(row,indent=2)+'\n');assert r.returncode==0

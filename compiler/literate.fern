@@ -28,7 +28,7 @@ pub function leading_ws(s: string): string {
   while (k < n && (s[k] == b' ' || s[k] == b'\t')) {
     k += 1;
   }
-  return slice_unchecked(s, 0, k) + "";
+  return slice_unchecked(s, 0, k).to_owned();
 }
 
 pub function split_lines(src: string): string[] {
@@ -38,24 +38,22 @@ pub function split_lines(src: string): string[] {
   let n = src.len();
   while (i < n) {
     if (src[i] == b'\n') {
-      lines = lines.append(slice_unchecked(src, start, i) + "");
+      lines = lines.append(slice_unchecked(src, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
-  lines = lines.append(slice_unchecked(src, start, n) + "");
+  lines = lines.append(slice_unchecked(src, start, n).to_owned());
   return lines;
 }
 
 function join_lines(lines: string[]): string {
   let s = "";
-  let i = 0;
-  while (i < lines.len()) {
+  for i in 0..lines.len() {
     if (i > 0) {
       s += "\n";
     }
     s += lines[i];
-    i += 1;
   }
   return s;
 }
@@ -88,19 +86,17 @@ function fence_lang(line: string): string {
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
     j += 1;
   }
-  return ascii_lower(slice_unchecked(info, 0, j) + "");
+  return ascii_lower(slice_unchecked(info, 0, j).to_owned());
 }
 
 function ascii_lower(s: string): string {
   let buf: u8[] = [];
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let c = s[i];
     if (c >= b'A' && c <= b'Z') {
       c += 32;
     }
     buf = buf.append(c);
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(buf);
@@ -130,7 +126,7 @@ function split_ws(s: string): string[] {
       i += 1;
     }
     if (i > start) {
-      words = words.append(slice_unchecked(s, start, i) + "");
+      words = words.append(slice_unchecked(s, start, i).to_owned());
     }
   }
   return words;
@@ -142,9 +138,9 @@ function directives(line: string): Directives {
   let d = Directives { file: "", name: "", entry: false, test: false };
   for w in split_ws(fence_info(line)) {
     if (starts_with(w, "file=")) {
-      d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+      d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
     } else if (starts_with(w, "name=")) {
-      d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+      d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
     } else if (w == "entry") {
       d = Directives { ...d, entry: true };
     } else if (w == "test") {
@@ -163,7 +159,7 @@ function trim_quotes(s: string): string {
   while (b > a && s[b - 1] == b'"') {
     b -= 1;
   }
-  return slice_unchecked(s, a, b) + "";
+  return slice_unchecked(s, a, b).to_owned();
 }
 
 function is_fence_close(line: string, open_len: i32): boolean {
@@ -172,12 +168,10 @@ function is_fence_close(line: string, open_len: i32): boolean {
   if (n < open_len) {
     return false;
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (!is_backtick(t[i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -217,7 +211,7 @@ pub function ref_name(t: string): string {
 
 pub function de_escape(text: string): string {
   let ws = leading_ws(text);
-  if (starts_with(slice_unchecked(text, ws.len(), text.len()) + "", "\\<<")) {
+  if (starts_with(slice_unchecked(text, ws.len(), text.len()).to_owned(), "\\<<")) {
     return ws + slice_unchecked(text, ws.len() + 1, text.len());
   }
   return text;
@@ -257,13 +251,11 @@ function header_index(lines: string[], first: i32, count: i32): i32 {
 
 pub function join_range(lines: string[], from: i32, to: i32): string {
   let s = "";
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     if (i > from) {
       s += "\n";
     }
     s += lines[i];
-    i += 1;
   }
   return s;
 }
@@ -322,10 +314,8 @@ function pieces_of(d: Doc): Piece[] {
   let pieces: Piece[] = [];
   for b in d.blocks {
     if (b.kind == CHUNK) {
-      let k = b.first;
-      while (k < b.first + b.count) {
+      for k in b.first..b.first + b.count {
         pieces = pieces.append(Piece { chunk: b.name, text: d.lines[k], line: k + 1 });
-        k += 1;
       }
     }
   }
@@ -357,34 +347,28 @@ pub function defined_chunks(d: Doc): string[] {
 }
 
 function chunk_defined(pieces: Piece[], name: string): boolean {
-  let i = 0;
-  while (i < pieces.len()) {
+  for i in 0..pieces.len() {
     if (pieces[i].chunk == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 function stack_has(stack: string[], name: string): boolean {
-  let i = 0;
-  while (i < stack.len()) {
+  for i in 0..stack.len() {
     if (stack[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 function header_line(pieces: Piece[], name: string): i32 {
-  let i = 0;
-  while (i < pieces.len()) {
+  for i in 0..pieces.len() {
     if (pieces[i].chunk == name) {
       return pieces[i].line - 1;
     }
-    i += 1;
   }
   return 1;
 }
@@ -414,10 +398,8 @@ function emit_line(o: ExpandOk, indent: string, text: string, line: i32): Expand
 
 function append_lines(o: ExpandOk, more: ExpandOk): ExpandOk {
   let out = o;
-  let k = 0;
-  while (k < more.lines.len()) {
+  for k in 0..more.lines.len() {
     out = ExpandOk { lines: out.lines.append(more.lines[k]), lits: out.lits.append(more.lits[k]), shifts: out.shifts.append(more.shifts[k]) };
-    k += 1;
   }
   return out;
 }
@@ -428,8 +410,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
   }
   let active2 = active.append(name);
   let out = no_lines();
-  let i = 0;
-  while (i < pieces.len()) {
+  for i in 0..pieces.len() {
     if (pieces[i].chunk == name) {
       let text = pieces[i].text;
       let t = text.trim();
@@ -451,7 +432,6 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
         out = emit_line(out, indent, text, pieces[i].line);
       }
     }
-    i += 1;
   }
   return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
@@ -507,12 +487,10 @@ pub function unused_chunks(src: string): string[] {
     todo = todo.append("*");
   }
   let fp = parse_file_pieces(src);
-  let i = 0;
-  while (i < fp.len()) {
+  for i in 0..fp.len() {
     if (is_ref(fp[i].text.trim())) {
       todo = todo.append(ref_name(fp[i].text.trim()));
     }
-    i += 1;
   }
   let reached: string[] = [];
   let qi = 0;
@@ -521,22 +499,18 @@ pub function unused_chunks(src: string): string[] {
     qi += 1;
     if (!stack_has(reached, n)) {
       reached = reached.append(n);
-      let k = 0;
-      while (k < pieces.len()) {
+      for k in 0..pieces.len() {
         if (pieces[k].chunk == n && is_ref(pieces[k].text.trim())) {
           todo = todo.append(ref_name(pieces[k].text.trim()));
         }
-        k += 1;
       }
     }
   }
   let out: string[] = [];
-  let j = 0;
-  while (j < pieces.len()) {
+  for j in 0..pieces.len() {
     if (!stack_has(reached, pieces[j].chunk) && !stack_has(out, pieces[j].chunk)) {
       out = insert_sorted(out, pieces[j].chunk);
     }
-    j += 1;
   }
   return out;
 }
@@ -544,14 +518,12 @@ pub function unused_chunks(src: string): string[] {
 pub function insert_sorted(xs: string[], s: string): string[] {
   let out: string[] = [];
   let placed = false;
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (!placed && bytes_less(s, xs[i])) {
       out = out.append(s);
       placed = true;
     }
     out = out.append(xs[i]);
-    i += 1;
   }
   if (!placed) {
     out = out.append(s);
@@ -585,22 +557,18 @@ pub function parse_file_pieces(src: string): FilePiece[] {
 
 function append_body(pieces: FilePiece[], d: Doc, b: Block): FilePiece[] {
   let out = pieces;
-  let k = b.first;
-  while (k < b.first + b.count) {
+  for k in b.first..b.first + b.count {
     out = out.append(FilePiece { path: b.name, text: d.lines[k], line: k + 1, is_entry: b.is_entry });
-    k += 1;
   }
   return out;
 }
 
 function file_paths(fp: FilePiece[]): string[] {
   let paths: string[] = [];
-  let i = 0;
-  while (i < fp.len()) {
+  for i in 0..fp.len() {
     if (!stack_has(paths, fp[i].path)) {
       paths = paths.append(fp[i].path);
     }
-    i += 1;
   }
   return paths;
 }
@@ -610,15 +578,13 @@ function path_escapes(path: string): boolean {
     return true;
   }
   let start = 0;
-  let i = 0;
-  while (i <= path.len()) {
+  for i in 0..=path.len() {
     if (i == path.len() || path[i] == b'/' || path[i] == b'\\') {
       if (i - start == 2 && path[start] == b'.' && path[start + 1] == b'.') {
         return true;
       }
       start = i + 1;
     }
-    i += 1;
   }
   return false;
 }
@@ -633,20 +599,17 @@ pub function fence_line(src: string, path: string): i32 {
 }
 
 function path_is_entry(fp: FilePiece[], path: string): boolean {
-  let i = 0;
-  while (i < fp.len()) {
+  for i in 0..fp.len() {
     if (fp[i].path == path && fp[i].is_entry) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
   let out = no_lines();
-  let i = 0;
-  while (i < fp.len()) {
+  for i in 0..fp.len() {
     if (fp[i].path == path) {
       let text = fp[i].text;
       let t = text.trim();
@@ -669,7 +632,6 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
         out = emit_line(out, "", text, fp[i].line);
       }
     }
-    i += 1;
   }
   return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
@@ -690,8 +652,7 @@ pub function tangle_files(src: string): FileTangleResult {
     return FileTangleErr { msg: "literate: no `file=PATH` blocks defined (a multi-file document needs at least one ```fern file=… root)", line: 1, col: 1 };
   }
   let results: FileResult[] = [];
-  let i = 0;
-  while (i < paths.len()) {
+  for i in 0..paths.len() {
     let p = paths[i];
     if (path_escapes(p)) {
       return FileTangleErr { msg: "literate: `file=" + p + "` must name a file below the output directory (no absolute path, no `..` segment)", line: fence_line(src, p), col: 1 };
@@ -705,7 +666,6 @@ pub function tangle_files(src: string): FileTangleResult {
         return FileTangleErr { msg: e.msg, line: e.line, col: e.col };
       }
     }
-    i += 1;
   }
   return FileTangleOk { files: results };
 }
@@ -740,12 +700,10 @@ pub function doctests(src: string): DoctestsResult {
 
 pub function entry_file(files: FileResult[]): string {
   let marked: string[] = [];
-  let i = 0;
-  while (i < files.len()) {
+  for i in 0..files.len() {
     if (files[i].is_entry) {
       marked = marked.append(files[i].path);
     }
-    i += 1;
   }
   if (marked.len() == 1) {
     return marked[0];
@@ -754,12 +712,10 @@ pub function entry_file(files: FileResult[]): string {
     return files[0].path;
   }
   let mains: string[] = [];
-  let j = 0;
-  while (j < files.len()) {
+  for j in 0..files.len() {
     if (defines_main(files[j].code)) {
       mains = mains.append(files[j].path);
     }
-    j += 1;
   }
   if (mains.len() == 1) {
     return mains[0];
@@ -769,8 +725,7 @@ pub function entry_file(files: FileResult[]): string {
 
 function defines_main(code: string): boolean {
   let lines = split_lines(code);
-  let i = 0;
-  while (i < lines.len()) {
+  for i in 0..lines.len() {
     let w = split_ws(lines[i]);
     let k = 0;
     if (w.len() > 0 && w[0] == "pub") {
@@ -779,7 +734,6 @@ function defines_main(code: string): boolean {
     if (w.len() > k + 1 && (w[k] == "function" || w[k] == "fn") && is_main_name(w[k + 1])) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -858,23 +812,19 @@ function lines_are(got: i32[], want: i32[]): boolean {
   if (got.len() != want.len()) {
     return false;
   }
-  let i = 0;
-  while (i < got.len()) {
+  for i in 0..got.len() {
     if (got[i] != want[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 function file_code(files: FileResult[], path: string): string {
-  let i = 0;
-  while (i < files.len()) {
+  for i in 0..files.len() {
     if (files[i].path == path) {
       return files[i].code;
     }
-    i += 1;
   }
   return "";
 }

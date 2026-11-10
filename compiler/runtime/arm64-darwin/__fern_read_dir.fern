@@ -1,4 +1,7 @@
 function __fern_read_dir(path: string): Result[string[], IoError] {
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i = 0;
@@ -27,7 +30,7 @@ function __fern_read_dir(path: string): Result[string[], IoError] {
       while (pos < n) {
         let reclen = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
         let nlen = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256;
-        if (__fern_utf8_valid(buf + pos + 21, nlen) == 0) {
+        if (__fern_utf8_valid(buf + pos as usize + 21, nlen) == 0) {
           bad = -92;
           done = 1;
           pos = n;
@@ -47,7 +50,7 @@ function __fern_read_dir(path: string): Result[string[], IoError] {
           }
           if (skip == 0) {
             let nbuf = __raw_alloc(nlen);
-            __memcpy(nbuf, buf + pos + 21, nlen);
+            __memcpy(nbuf, buf + pos as usize + 21, nlen);
             names = names.append(__raw_string(nbuf, nlen));
           }
           pos += reclen;

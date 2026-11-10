@@ -67,10 +67,8 @@ function unknown_flags(): Flags {
 
 function initial(r: value.Interval, register_entry: boolean): State {
   let regs: Word[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
@@ -149,19 +147,13 @@ function store(s: State, r: value.Interval, at: i32, width: i32, w: Word): State
 }
 
 function movement(s: State, r: value.Interval, op: isa.Op): State {
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return write(s, op.destination, read(s, r, address(s, r, op), op.width));
-  }
-  if (op.kind == 4) {
-    return store(s, r, address(s, r, op), op.width, s.regs[op.source]);
-  }
-  if (op.kind == 5) {
-    return write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width));
-  }
-  return State { ...s, ok: false };
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    _ => State { ...s, ok: false },
+  };
 }
 
 function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
@@ -357,34 +349,22 @@ function signed_branch(f: Flags, name: string): i32 {
 
 function expected_register(r: value.Interval, reg: i32): Word {
   let class = value.expected_class(r);
-  if (reg == 0) {
-    return if (class >= 0) { numeric(r, value.number(r, class as i64)) } else { identity(6, 0) };
-  }
-  if (reg == 1) {
-    return if (class >= 0) { identity(8, 0) } else { numeric(r, words(r)) };
-  }
-  if (reg == 2) {
-    return if (class >= 0) { identity(7, 0) } else { identity(6, -16) };
-  }
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 6) {
-    return numeric(r, bytes(r));
-  }
-  if (reg == 8) {
-    return identity(6, -16);
-  }
-  return identity(2, reg);
+  return match (reg) {
+    0 => if (class >= 0) { numeric(r, value.number(r, class as i64)) } else { identity(6, 0) },
+    1 => if (class >= 0) { identity(8, 0) } else { numeric(r, words(r)) },
+    2 => if (class >= 0) { identity(7, 0) } else { identity(6, -16) },
+    4 => identity(3, 0),
+    6 => numeric(r, bytes(r)),
+    8 => identity(6, -16),
+    _ => identity(2, reg),
+  };
 }
 
 function final_registers(s: State, r: value.Interval): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     if (!same_word(s.regs[i], expected_register(r, i))) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -401,12 +381,10 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     expected = put(expected, 0, 64, identity(8, 0));
     expected = put(expected, 10, 64, identity(6, -16));
   }
-  let i = 0;
-  while (i < 12) {
+  for i in 0..12 {
     if (!same_half(s.cells[i], expected.cells[i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -427,12 +405,10 @@ function unguarded(s: State, original: State, r: value.Interval): State {
     }
     i += 1;
   }
-  i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }

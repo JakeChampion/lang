@@ -1,0 +1,10 @@
+// spec: VT-05
+@must_consume
+enum Part { SomeData(u8[]), Empty }
+
+@value
+struct Bad { part: Part }
+
+function main(): i32 {
+  return 0;
+}

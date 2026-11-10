@@ -30,7 +30,7 @@ pub function decode(line: string, arm: boolean): Decoded {
   i = 20;
   for prefix in branches(arm) {
     if (prefix != "" && line.starts_with(prefix)) {
-      return Decoded { kind: i, target: slice_unchecked(line, prefix.len(), line.len()) + "" };
+      return Decoded { kind: i, target: slice_unchecked(line, prefix.len(), line.len()).to_owned() };
     }
     i += 1;
   }
@@ -101,10 +101,8 @@ function result(s: State, tagged: boolean, low: boolean, rc: i32): boolean {
 
 function path_marks(size: i32): boolean[] {
   let marks: boolean[] = [];
-  let i = 0;
-  while (i < size) {
+  for i in 0..size {
     marks = marks.append(false);
-    i += 1;
   }
   return marks;
 }

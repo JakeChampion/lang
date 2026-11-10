@@ -1,5 +1,5 @@
-// The printer's round-trip and diff self-checks. Each check returns 0, or
-// the number of the assertion that failed.
+// The printer's round-trip and diff self-checks. Each check is a std/test
+// case. A failed case names the condition that did not hold.
 
 import "../ast";
 import "../lexer";
@@ -8,6 +8,7 @@ import "../printer";
 import "../util";
 import "core/map";
 import "std/string";
+import "std/test";
 
 function roundtrip_verbatim(src: string): parser.Module {
   let mod = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
@@ -23,177 +24,130 @@ function roundtrip_module(src: string): parser.Module {
 }
 
 function main(): i32 {
-  let rc = check_expressions_and_control_flow();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_checked_casts();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_string_and_slice_literals();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structs_and_aliases();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_match_statements();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_annotations_and_receivers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_imports();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_loops_and_tuples();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_lambdas();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_qualified_names_and_externs();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_declaration_modifiers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_enums();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_record_patterns();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_const_and_for_sugar();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_visibility_and_destructuring();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_traits_and_impls();
-  if (rc != 0) {
-    return rc;
-  }
-
-  return 0;
+  let r = test.new("printer");
+  r = r.it("expressions and control flow", check_expressions_and_control_flow);
+  r = r.it("checked casts", check_checked_casts);
+  r = r.it("string and slice literals", check_string_and_slice_literals);
+  r = r.it("structs and aliases", check_structs_and_aliases);
+  r = r.it("match statements", check_match_statements);
+  r = r.it("annotations and receivers", check_annotations_and_receivers);
+  r = r.it("imports", check_imports);
+  r = r.it("loops and tuples", check_loops_and_tuples);
+  r = r.it("lambdas", check_lambdas);
+  r = r.it("qualified names and externs", check_qualified_names_and_externs);
+  r = r.it("declaration modifiers", check_declaration_modifiers);
+  r = r.it("enums", check_enums);
+  r = r.it("record patterns", check_record_patterns);
+  r = r.it("const and for sugar", check_const_and_for_sugar);
+  r = r.it("visibility and destructuring", check_visibility_and_destructuring);
+  r = r.it("traits and impls", check_traits_and_impls);
+  r = r.it("diff", diff_selftest);
+  return r.finish();
 }
 
-function check_expressions_and_control_flow(): i32 {
+function check_expressions_and_control_flow(): test.TestOutcome {
   let toks1 = lexer.tokenize("let a = 1 + 2 * 3; return a;");
   let mod1 = parser.parse_module(toks1);
   let s1 = printer.print_module(mod1);
   let rt1 = parser.parse_module(lexer.tokenize(s1));
   if (rt1.top_stmts.len() != 2) {
-    return 10;
+    return test.fail("rt1.top_stmts.len() != 2");
   }
   match (rt1.top_stmts[0]) {
     ast.StmtVar(v) => {
       if (v.name != "a") {
-        return 11;
+        return test.fail("v.name != \"a\"");
       }
       match (v.init) {
         ast.ExprBinary(b) => {
           if (b.op != "+") {
-            return 12;
+            return test.fail("b.op != \"+\"");
           }
         },
         _ => {
-          return 13;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 14;
+      return test.fail("unexpected variant of rt1.top_stmts[0]");
     }
   }
 
   let src2 = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
   let rt2 = roundtrip_module(src2);
   if (rt2.funcs.len() != 2) {
-    return 20;
+    return test.fail("rt2.funcs.len() != 2");
   }
   if (rt2.funcs[0].name != "add") {
-    return 21;
+    return test.fail("rt2.funcs[0].name != \"add\"");
   }
   if (rt2.funcs[0].params.len() != 2) {
-    return 22;
+    return test.fail("rt2.funcs[0].params.len() != 2");
   }
   if (rt2.funcs[0].params[0].type_name != "i32") {
-    return 23;
+    return test.fail("rt2.funcs[0].params[0].type_name != \"i32\"");
   }
   if (rt2.funcs[1].name != "main") {
-    return 24;
+    return test.fail("rt2.funcs[1].name != \"main\"");
   }
 
   let src3 = "let x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
   let rt3 = roundtrip_module(src3);
   if (rt3.top_stmts.len() != 3) {
-    return 30;
+    return test.fail("rt3.top_stmts.len() != 3");
   }
   match (rt3.top_stmts[1]) {
     ast.StmtIf(ifs) => {
       if (ifs.then_body.len() != 1) {
-        return 31;
+        return test.fail("ifs.then_body.len() != 1");
       }
       if (ifs.else_body.len() != 1) {
-        return 32;
+        return test.fail("ifs.else_body.len() != 1");
       }
     },
     _ => {
-      return 33;
+      return test.fail("unexpected variant of rt3.top_stmts[1]");
     }
   }
 
   let src4 = "let a = [3, 5, 7]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
   let rt4 = roundtrip_module(src4);
   if (rt4.top_stmts.len() != 5) {
-    return 40;
+    return test.fail("rt4.top_stmts.len() != 5");
   }
   match (rt4.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
         ast.ExprArray(a) => {
           if (a.elements.len() != 3) {
-            return 41;
+            return test.fail("a.elements.len() != 3");
           }
         },
         _ => {
-          return 42;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 43;
+      return test.fail("unexpected variant of rt4.top_stmts[0]");
     }
   }
   match (rt4.top_stmts[3]) {
     ast.StmtWhile(w) => {
       if (w.body.len() != 2) {
-        return 44;
+        return test.fail("w.body.len() != 2");
       }
     },
     _ => {
-      return 45;
+      return test.fail("unexpected variant of rt4.top_stmts[3]");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_string_and_slice_literals(): i32 {
+function check_string_and_slice_literals(): test.TestOutcome {
   let src5 = "let s = \"hello\\nworld\"; return 0;";
   let rt5 = roundtrip_module(src5);
   match (rt5.top_stmts[0]) {
@@ -201,12 +155,12 @@ function check_string_and_slice_literals(): i32 {
       match (v.init) {
         ast.ExprString(_) => {},
         _ => {
-          return 50;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 51;
+      return test.fail("unexpected variant of rt5.top_stmts[0]");
     }
   }
 
@@ -217,200 +171,200 @@ function check_string_and_slice_literals(): i32 {
       match (v.init) {
         ast.ExprSlice(_) => {},
         _ => {
-          return 60;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 61;
+      return test.fail("unexpected variant of rt6.top_stmts[1]");
     }
   }
 
   let srcOB = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
   let outOB = printer.print_module(parser.parse_module(lexer.tokenize(srcOB)));
   if (!util.contains(outOB, "s[1:]")) {
-    return 62;
+    return test.fail("!util.contains(outOB, \"s[1:]\")");
   }
   if (!util.contains(outOB, "s[:3]")) {
-    return 63;
+    return test.fail("!util.contains(outOB, \"s[:3]\")");
   }
   if (!util.contains(outOB, "s[:]")) {
-    return 64;
+    return test.fail("!util.contains(outOB, \"s[:]\")");
   }
   if (!util.contains(outOB, "s[1:3]")) {
-    return 65;
+    return test.fail("!util.contains(outOB, \"s[1:3]\")");
   }
   if (util.contains(outOB, "s[1:0]")) {
-    return 66;
+    return test.fail("util.contains(outOB, \"s[1:0]\")");
   }
   if (util.contains(outOB, "s[0:")) {
-    return 67;
+    return test.fail("util.contains(outOB, \"s[0:\")");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_structs_and_aliases(): i32 {
+function check_structs_and_aliases(): test.TestOutcome {
   let src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { let p = Point { x: 3, y: 4 }; return p.x; }";
   let rt7 = roundtrip_module(src7);
   if (rt7.structs.len() != 1) {
-    return 70;
+    return test.fail("rt7.structs.len() != 1");
   }
   if (rt7.structs[0].name != "Point") {
-    return 71;
+    return test.fail("rt7.structs[0].name != \"Point\"");
   }
   if (rt7.structs[0].fields.len() != 2) {
-    return 72;
+    return test.fail("rt7.structs[0].fields.len() != 2");
   }
   if (rt7.funcs.len() != 1) {
-    return 73;
+    return test.fail("rt7.funcs.len() != 1");
   }
 
   let src8 = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
   let rt8 = roundtrip_module(src8);
   if (rt8.aliases.len() != 1) {
-    return 80;
+    return test.fail("rt8.aliases.len() != 1");
   }
   if (rt8.aliases[0].name != "Shape") {
-    return 81;
+    return test.fail("rt8.aliases[0].name != \"Shape\"");
   }
   if (rt8.aliases[0].variants.len() != 2) {
-    return 82;
+    return test.fail("rt8.aliases[0].variants.len() != 2");
   }
   let src8g = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
   let rt8g = roundtrip_verbatim(src8g);
   if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
-    return 83;
+    return test.fail("rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != \"U\"");
   }
   if (rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != "T" || rt8g.aliases[0].variant_args[1] != "" || rt8g.aliases[0].variant_args[2] != "Leaf[U]") {
-    return 84;
+    return test.fail("rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != \"T\" || rt8g.aliases[0].variant_args[1] != \"\" || rt8g.aliases[0].variant_args[2] != \"Leaf[U]\"");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_match_statements(): i32 {
+function check_match_statements(): test.TestOutcome {
   let src9 = "let x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
   let rt9 = roundtrip_module(src9);
   if (rt9.top_stmts.len() != 2) {
-    return 90;
+    return test.fail("rt9.top_stmts.len() != 2");
   }
   match (rt9.top_stmts[1]) {
     ast.StmtMatch(m) => {
       if (m.arms.len() != 2) {
-        return 91;
+        return test.fail("m.arms.len() != 2");
       }
       match (m.arms[0].pattern) {
         ast.PatVariant(pv) => {
           if (pv.type_name != "Foo") {
-            return 92;
+            return test.fail("pv.type_name != \"Foo\"");
           }
           if (pv.binding != "f") {
-            return 93;
+            return test.fail("pv.binding != \"f\"");
           }
         },
         _ => {
-          return 94;
+          return test.fail("unexpected variant of m.arms[0].pattern");
         }
       }
     },
     _ => {
-      return 95;
+      return test.fail("unexpected variant of rt9.top_stmts[1]");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_annotations_and_receivers(): i32 {
+function check_annotations_and_receivers(): test.TestOutcome {
   let srcA = "let n: i32 = 7; let sh: Shape = c; return n;";
   let rtA = roundtrip_module(srcA);
   match (rtA.top_stmts[0]) {
     ast.StmtVar(v) => {
       if (v.type_name != "i32") {
-        return 100;
+        return test.fail("v.type_name != \"i32\"");
       }
     },
     _ => {
-      return 101;
+      return test.fail("unexpected variant of rtA.top_stmts[0]");
     }
   }
   match (rtA.top_stmts[1]) {
     ast.StmtVar(v) => {
       if (v.type_name != "Shape") {
-        return 102;
+        return test.fail("v.type_name != \"Shape\"");
       }
     },
     _ => {
-      return 103;
+      return test.fail("unexpected variant of rtA.top_stmts[1]");
     }
   }
 
   let srcB = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
   let rtB = roundtrip_module(srcB);
   if (rtB.funcs.len() != 2) {
-    return 110;
+    return test.fail("rtB.funcs.len() != 2");
   }
   if (rtB.funcs[0].name != "advance") {
-    return 111;
+    return test.fail("rtB.funcs[0].name != \"advance\"");
   }
   if (rtB.funcs[0].receiver_name != "p") {
-    return 112;
+    return test.fail("rtB.funcs[0].receiver_name != \"p\"");
   }
   if (rtB.funcs[0].receiver_type != "Par") {
-    return 113;
+    return test.fail("rtB.funcs[0].receiver_type != \"Par\"");
   }
   if (rtB.funcs[1].receiver_name != "") {
-    return 114;
+    return test.fail("rtB.funcs[1].receiver_name != \"\"");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_imports(): i32 {
+function check_imports(): test.TestOutcome {
   let srcC = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
   let rtC = roundtrip_module(srcC);
   if (rtC.imports.len() != 2) {
-    return 120;
+    return test.fail("rtC.imports.len() != 2");
   }
   if (rtC.imports[0].path != "./lexer") {
-    return 121;
+    return test.fail("rtC.imports[0].path != \"./lexer\"");
   }
   if (rtC.imports[1].path != "./parser") {
-    return 122;
+    return test.fail("rtC.imports[1].path != \"./parser\"");
   }
   if (rtC.funcs.len() != 1) {
-    return 123;
+    return test.fail("rtC.funcs.len() != 1");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_loops_and_tuples(): i32 {
+function check_loops_and_tuples(): test.TestOutcome {
   let srcD = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
   let rtD = roundtrip_module(srcD);
   if (rtD.top_stmts.len() != 1) {
-    return 130;
+    return test.fail("rtD.top_stmts.len() != 1");
   }
   match (rtD.top_stmts[0]) {
     ast.StmtFor(f) => {
       if (f.var_name != "n") {
-        return 131;
+        return test.fail("f.var_name != \"n\"");
       }
       if (f.body.len() != 2) {
-        return 132;
+        return test.fail("f.body.len() != 2");
       }
       match (f.body[0]) {
         ast.StmtIf(ifs) => {
           match (ifs.then_body[0]) {
             ast.StmtBreak(_) => {},
             _ => {
-              return 133;
+              return test.fail("unexpected variant of ifs.then_body[0]");
             }
           }
         },
         _ => {
-          return 134;
+          return test.fail("unexpected variant of f.body[0]");
         }
       }
       match (f.body[1]) {
@@ -418,40 +372,40 @@ function check_loops_and_tuples(): i32 {
           match (ifs.then_body[0]) {
             ast.StmtContinue(_) => {},
             _ => {
-              return 135;
+              return test.fail("unexpected variant of ifs.then_body[0]");
             }
           }
         },
         _ => {
-          return 136;
+          return test.fail("unexpected variant of f.body[1]");
         }
       }
     },
     _ => {
-      return 137;
+      return test.fail("unexpected variant of rtD.top_stmts[0]");
     }
   }
 
   let srcE = "let t = (10, 20, 30); let x = t.0; return x;";
   let rtE = roundtrip_module(srcE);
   if (rtE.top_stmts.len() != 3) {
-    return 140;
+    return test.fail("rtE.top_stmts.len() != 3");
   }
   match (rtE.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
         ast.ExprTuple(t) => {
           if (t.elements.len() != 3) {
-            return 141;
+            return test.fail("t.elements.len() != 3");
           }
         },
         _ => {
-          return 142;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 143;
+      return test.fail("unexpected variant of rtE.top_stmts[0]");
     }
   }
   match (rtE.top_stmts[1]) {
@@ -459,61 +413,61 @@ function check_loops_and_tuples(): i32 {
       match (v.init) {
         ast.ExprFieldAccess(fa) => {
           if (fa.field != "0") {
-            return 144;
+            return test.fail("fa.field != \"0\"");
           }
         },
         _ => {
-          return 145;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 146;
+      return test.fail("unexpected variant of rtE.top_stmts[1]");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_lambdas(): i32 {
+function check_lambdas(): test.TestOutcome {
   let srcF = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
   let rtF = roundtrip_module(srcF);
   if (rtF.funcs.len() != 1) {
-    return 150;
+    return test.fail("rtF.funcs.len() != 1");
   }
   if (rtF.funcs[0].body.len() != 2) {
-    return 151;
+    return test.fail("rtF.funcs[0].body.len() != 2");
   }
   match (rtF.funcs[0].body[0]) {
     ast.StmtVar(v) => {
       if (v.name != "f") {
-        return 152;
+        return test.fail("v.name != \"f\"");
       }
       match (v.init) {
         ast.ExprLambda(lm) => {
           if (lm.params.len() != 1) {
-            return 153;
+            return test.fail("lm.params.len() != 1");
           }
           if (lm.params[0].name != "x") {
-            return 154;
+            return test.fail("lm.params[0].name != \"x\"");
           }
           if (lm.params[0].type_name != "i32") {
-            return 155;
+            return test.fail("lm.params[0].type_name != \"i32\"");
           }
           if (lm.ret_type != "i32") {
-            return 156;
+            return test.fail("lm.ret_type != \"i32\"");
           }
           if (lm.body.len() != 1) {
-            return 157;
+            return test.fail("lm.body.len() != 1");
           }
         },
         _ => {
-          return 158;
+          return test.fail("unexpected variant of v.init");
         }
       }
     },
     _ => {
-      return 159;
+      return test.fail("unexpected variant of rtF.funcs[0].body[0]");
     }
   }
 
@@ -526,17 +480,17 @@ function check_lambdas(): i32 {
           match (cc.callee) {
             ast.ExprLambda(_) => {},
             _ => {
-              return 161;
+              return test.fail("unexpected variant of cc.callee");
             }
           }
         },
         _ => {
-          return 162;
+          return test.fail("unexpected variant of r.value");
         }
       }
     },
     _ => {
-      return 163;
+      return test.fail("unexpected variant of rtG.funcs[0].body[0]");
     }
   }
 
@@ -544,37 +498,37 @@ function check_lambdas(): i32 {
   let pfR = parser.parse_module_verbatim(lexer.tokenize(srcR));
   let outR = printer.format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
   if (!util.contains(outR, "let g = (): (string, i32) => (\"ab\", 7);")) {
-    return 371;
+    return test.fail("!util.contains(outR, \"let g = (): (string, i32) => (\\\"ab\\\", 7);\")");
   }
   if (!util.contains(outR, "let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) {
-    return 372;
+    return test.fail("!util.contains(outR, \"let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\")");
   }
   let pfR2 = parser.parse_module_verbatim(lexer.tokenize(outR));
   if (printer.format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) {
-    return 373;
+    return test.fail("printer.format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR");
   }
   match (pfR2.pmod.funcs[0].body[0]) {
     ast.StmtVar(vr) => {
       match (vr.init) {
         ast.ExprLambda(lr) => {
           if (lr.ret_type != "(string, i32)") {
-            return 374;
+            return test.fail("lr.ret_type != \"(string, i32)\"");
           }
         },
         _ => {
-          return 375;
+          return test.fail("unexpected variant of vr.init");
         }
       }
     },
     _ => {
-      return 376;
+      return test.fail("unexpected variant of pfR2.pmod.funcs[0].body[0]");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_qualified_names_and_externs(): i32 {
+function check_qualified_names_and_externs(): test.TestOutcome {
   let srcH = "function main(): i32 { return parser.parse_module(42); }";
   let rtH = roundtrip_module(srcH);
   match (rtH.funcs[0].body[0]) {
@@ -584,423 +538,419 @@ function check_qualified_names_and_externs(): i32 {
           match (cc.callee) {
             ast.ExprFieldAccess(fa) => {
               if (fa.field != "parse_module") {
-                return 171;
+                return test.fail("fa.field != \"parse_module\"");
               }
               match (fa.obj) {
                 ast.ExprIdent(id) => {
                   if (id.name != "parser") {
-                    return 172;
+                    return test.fail("id.name != \"parser\"");
                   }
                 },
                 _ => {
-                  return 173;
+                  return test.fail("unexpected variant of fa.obj");
                 }
               }
             },
             _ => {
-              return 174;
+              return test.fail("unexpected variant of cc.callee");
             }
           }
         },
         _ => {
-          return 175;
+          return test.fail("unexpected variant of r.value");
         }
       }
     },
     _ => {
-      return 176;
+      return test.fail("unexpected variant of rtH.funcs[0].body[0]");
     }
   }
 
   let srcI = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
   let modI = parser.parse_module(lexer.tokenize(srcI));
   if (modI.funcs.len() != 2) {
-    return 180;
+    return test.fail("modI.funcs.len() != 2");
   }
   if (modI.funcs[0].name != "random_u64") {
-    return 181;
+    return test.fail("modI.funcs[0].name != \"random_u64\"");
   }
   if (modI.funcs[0].import_iface != "wasi:random/random@0.2.0") {
-    return 182;
+    return test.fail("modI.funcs[0].import_iface != \"wasi:random/random@0.2.0\"");
   }
   if (modI.funcs[0].import_wit != "get-random-u64") {
-    return 183;
+    return test.fail("modI.funcs[0].import_wit != \"get-random-u64\"");
   }
   if (modI.funcs[0].body.len() != 0) {
-    return 184;
+    return test.fail("modI.funcs[0].body.len() != 0");
   }
   if (modI.funcs[1].import_iface.len() != 0) {
-    return 185;
+    return test.fail("modI.funcs[1].import_iface.len() != 0");
   }
   let rtI = roundtrip_module(srcI);
   if (rtI.funcs.len() != 2) {
-    return 186;
+    return test.fail("rtI.funcs.len() != 2");
   }
   if (rtI.funcs[0].import_iface != "wasi:random/random@0.2.0") {
-    return 187;
+    return test.fail("rtI.funcs[0].import_iface != \"wasi:random/random@0.2.0\"");
   }
   if (rtI.funcs[0].import_wit != "get-random-u64") {
-    return 188;
+    return test.fail("rtI.funcs[0].import_wit != \"get-random-u64\"");
   }
   if (rtI.funcs[0].body.len() != 0) {
-    return 189;
+    return test.fail("rtI.funcs[0].body.len() != 0");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_declaration_modifiers(): i32 {
+function check_declaration_modifiers(): test.TestOutcome {
   let srcM = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
   let rtM = roundtrip_module(srcM);
   if (rtM.funcs.len() != 2) {
-    return 190;
+    return test.fail("rtM.funcs.len() != 2");
   }
   if (rtM.funcs[0].name != "pure_add") {
-    return 191;
+    return test.fail("rtM.funcs[0].name != \"pure_add\"");
   }
   if (!rtM.funcs[0].fip) {
-    return 192;
+    return test.fail("!rtM.funcs[0].fip");
   }
   if (rtM.funcs[0].fbip || rtM.funcs[0].fip_allowance != 0) {
-    return 164;
+    return test.fail("rtM.funcs[0].fbip || rtM.funcs[0].fip_allowance != 0");
   }
   if (rtM.funcs[1].fip) {
-    return 193;
+    return test.fail("rtM.funcs[1].fip");
   }
 
   let srcFB = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
   let rtFB = roundtrip_module(srcFB);
   if (rtFB.funcs.len() != 2) {
-    return 165;
+    return test.fail("rtFB.funcs.len() != 2");
   }
   if (!rtFB.funcs[0].fbip || rtFB.funcs[0].fip) {
-    return 166;
+    return test.fail("!rtFB.funcs[0].fbip || rtFB.funcs[0].fip");
   }
   if (rtFB.funcs[0].fip_allowance != 0) {
-    return 167;
+    return test.fail("rtFB.funcs[0].fip_allowance != 0");
   }
 
   let srcFG = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
   let rtFG = roundtrip_module(srcFG);
   if (rtFG.funcs.len() != 3) {
-    return 168;
+    return test.fail("rtFG.funcs.len() != 3");
   }
   if (!rtFG.funcs[0].fbip || rtFG.funcs[0].fip_allowance != 2) {
-    return 169;
+    return test.fail("!rtFG.funcs[0].fbip || rtFG.funcs[0].fip_allowance != 2");
   }
   if (!rtFG.funcs[1].fip || rtFG.funcs[1].fbip || rtFG.funcs[1].fip_allowance != 1) {
-    return 170;
+    return test.fail("!rtFG.funcs[1].fip || rtFG.funcs[1].fbip || rtFG.funcs[1].fip_allowance != 1");
   }
 
   let srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }";
   let rtMC = roundtrip_module(srcMC);
   if (rtMC.structs.len() != 1) {
-    return 194;
+    return test.fail("rtMC.structs.len() != 1");
   }
   if (!rtMC.structs[0].must_consume) {
-    return 195;
+    return test.fail("!rtMC.structs[0].must_consume");
   }
 
   let srcDrv: string = "@derive(Eq)\nstruct Pt { x: i32 } function main(): i32 { let p: Pt = Pt { x: 1 }; return p.x; }";
   let modDrv = parser.parse_module(lexer.tokenize(srcDrv));
   let rtDrv = roundtrip_module(srcDrv);
   if (rtDrv.structs.len() != 1) {
-    return 196;
+    return test.fail("rtDrv.structs.len() != 1");
   }
   if (rtDrv.structs[0].derives.len() != 1) {
-    return 197;
+    return test.fail("rtDrv.structs[0].derives.len() != 1");
   }
   if (rtDrv.structs[0].derives[0] != "Eq") {
-    return 198;
+    return test.fail("rtDrv.structs[0].derives[0] != \"Eq\"");
   }
   if (rtDrv.funcs.len() != modDrv.funcs.len()) {
-    return 199;
+    return test.fail("rtDrv.funcs.len() != modDrv.funcs.len()");
   }
 
   let srcJ = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
   let modJ = parser.parse_module(lexer.tokenize(srcJ));
   if (modJ.funcs.len() != 2) {
-    return 200;
+    return test.fail("modJ.funcs.len() != 2");
   }
   if (!modJ.funcs[0].async) {
-    return 201;
+    return test.fail("!modJ.funcs[0].async");
   }
   if (modJ.funcs[1].async) {
-    return 202;
+    return test.fail("modJ.funcs[1].async");
   }
   let rtJ = roundtrip_module(srcJ);
   if (rtJ.funcs.len() != 2) {
-    return 203;
+    return test.fail("rtJ.funcs.len() != 2");
   }
   if (!rtJ.funcs[0].async) {
-    return 204;
+    return test.fail("!rtJ.funcs[0].async");
   }
   if (rtJ.funcs[1].async) {
-    return 205;
+    return test.fail("rtJ.funcs[1].async");
   }
   let rtK = roundtrip_module("pub async function w(): i32 { return 1; }");
   if (rtK.funcs.len() != 1) {
-    return 206;
+    return test.fail("rtK.funcs.len() != 1");
   }
   if (!rtK.funcs[0].async) {
-    return 207;
+    return test.fail("!rtK.funcs[0].async");
   }
   let rtL = roundtrip_module("function main(): i32 { let async: i32 = 3; return async + 4; }");
   if (rtL.funcs.len() != 1) {
-    return 208;
+    return test.fail("rtL.funcs.len() != 1");
   }
   if (rtL.funcs[0].async) {
-    return 209;
+    return test.fail("rtL.funcs[0].async");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_enums(): i32 {
+function check_enums(): test.TestOutcome {
   let srcEnum = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { let c: Color = Red; return 0; }";
   let modEnum = parser.parse_module(lexer.tokenize(srcEnum));
   let rtEnum = roundtrip_module(srcEnum);
   if (rtEnum.enums.len() != 1) {
-    return 210;
+    return test.fail("rtEnum.enums.len() != 1");
   }
   if (rtEnum.enums[0].name != "Color") {
-    return 211;
+    return test.fail("rtEnum.enums[0].name != \"Color\"");
   }
   if (rtEnum.enums[0].variant_names.len() != 2) {
-    return 212;
+    return test.fail("rtEnum.enums[0].variant_names.len() != 2");
   }
   if (rtEnum.enums[0].variant_names[0] != "Red") {
-    return 213;
+    return test.fail("rtEnum.enums[0].variant_names[0] != \"Red\"");
   }
   if (rtEnum.enums[0].variant_names[1] != "Green") {
-    return 214;
+    return test.fail("rtEnum.enums[0].variant_names[1] != \"Green\"");
   }
   let rgi = printer.variant_decl_index(rtEnum.structs, "Color", "Green");
   if (rgi < 0) {
-    return 215;
+    return test.fail("rgi < 0");
   }
   if (rtEnum.structs[rgi].fields.len() != 1) {
-    return 216;
+    return test.fail("rtEnum.structs[rgi].fields.len() != 1");
   }
   if (rtEnum.structs[rgi].fields[0].type_name != "i32") {
-    return 217;
+    return test.fail("rtEnum.structs[rgi].fields[0].type_name != \"i32\"");
   }
   let rri = printer.variant_decl_index(rtEnum.structs, "Color", "Red");
   if (rri < 0) {
-    return 218;
+    return test.fail("rri < 0");
   }
   if (rtEnum.structs[rri].fields.len() != 0) {
-    return 219;
+    return test.fail("rtEnum.structs[rri].fields.len() != 0");
   }
-  let esi = 0;
-  while (esi < rtEnum.structs.len()) {
+  for esi in 0..rtEnum.structs.len() {
     if (rtEnum.structs[esi].enum_owner.len() == 0) {
-      return 220;
+      return test.fail("rtEnum.structs[esi].enum_owner.len() == 0");
     }
-    esi += 1;
   }
   if (rtEnum.structs[rgi].derives.len() != 1) {
-    return 221;
+    return test.fail("rtEnum.structs[rgi].derives.len() != 1");
   }
   if (rtEnum.structs[rgi].derives[0] != "Eq") {
-    return 222;
+    return test.fail("rtEnum.structs[rgi].derives[0] != \"Eq\"");
   }
   if (rtEnum.funcs.len() != modEnum.funcs.len()) {
-    return 223;
+    return test.fail("rtEnum.funcs.len() != modEnum.funcs.len()");
   }
 
   let srcEG = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
   let modEG = parser.parse_module(lexer.tokenize(srcEG));
   let rtEG = roundtrip_module(srcEG);
   if (rtEG.enums.len() != 1) {
-    return 224;
+    return test.fail("rtEG.enums.len() != 1");
   }
   if (!rtEG.enums[0].must_consume) {
-    return 225;
+    return test.fail("!rtEG.enums[0].must_consume");
   }
   if (rtEG.enums[0].type_params.len() != 1) {
-    return 226;
+    return test.fail("rtEG.enums[0].type_params.len() != 1");
   }
   if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) {
-    return 227;
+    return test.fail("rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]");
   }
   let fgi = printer.variant_decl_index(rtEG.structs, "Slot", "Full");
   if (fgi < 0) {
-    return 228;
+    return test.fail("fgi < 0");
   }
   if (rtEG.structs[fgi].fields[0].type_name != modEG.enums[0].type_params[0]) {
-    return 229;
+    return test.fail("rtEG.structs[fgi].fields[0].type_name != modEG.enums[0].type_params[0]");
   }
   if (!util.contains(printer.print_module(modEG), "enum Slot[T] { Full(T), Empty }")) {
-    return 274;
+    return test.fail("!util.contains(printer.print_module(modEG), \"enum Slot[T] { Full(T), Empty }\")");
   }
 
   let srcEM = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
   let rtEM = roundtrip_module(srcEM);
   let tpi = printer.variant_decl_index(rtEM.structs, "Pair", "Two");
   if (tpi < 0) {
-    return 230;
+    return test.fail("tpi < 0");
   }
   if (rtEM.structs[tpi].fields.len() != 2) {
-    return 231;
+    return test.fail("rtEM.structs[tpi].fields.len() != 2");
   }
   if (rtEM.structs[tpi].fields[0].type_name != "i32") {
-    return 232;
+    return test.fail("rtEM.structs[tpi].fields[0].type_name != \"i32\"");
   }
   if (rtEM.structs[tpi].fields[1].type_name != "string") {
-    return 233;
+    return test.fail("rtEM.structs[tpi].fields[1].type_name != \"string\"");
   }
 
   let srcER = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
   let rtER = roundtrip_module(srcER);
   let rcvi = printer.variant_decl_index(rtER.structs, "Shape", "Rect");
   if (rcvi < 0) {
-    return 234;
+    return test.fail("rcvi < 0");
   }
   if (rtER.structs[rcvi].variant_field_names.len() != 2) {
-    return 235;
+    return test.fail("rtER.structs[rcvi].variant_field_names.len() != 2");
   }
   if (rtER.structs[rcvi].variant_field_names[0] != "w") {
-    return 236;
+    return test.fail("rtER.structs[rcvi].variant_field_names[0] != \"w\"");
   }
   if (rtER.structs[rcvi].variant_field_names[1] != "h") {
-    return 237;
+    return test.fail("rtER.structs[rcvi].variant_field_names[1] != \"h\"");
   }
   if (rtER.structs[rcvi].fields.len() != 2) {
-    return 238;
+    return test.fail("rtER.structs[rcvi].fields.len() != 2");
   }
   if (rtER.structs[rcvi].fields[0].name != "__ev") {
-    return 239;
+    return test.fail("rtER.structs[rcvi].fields[0].name != \"__ev\"");
   }
   if (rtER.structs[rcvi].fields[1].name != "__ev1") {
-    return 240;
+    return test.fail("rtER.structs[rcvi].fields[1].name != \"__ev1\"");
   }
   if (rtER.structs[rcvi].fields[1].type_name != "string") {
-    return 241;
+    return test.fail("rtER.structs[rcvi].fields[1].type_name != \"string\"");
   }
   let uri = printer.variant_decl_index(rtER.structs, "Shape", "Unit");
   if (uri < 0) {
-    return 242;
+    return test.fail("uri < 0");
   }
   if (rtER.structs[uri].variant_field_names.len() != 0) {
-    return 243;
+    return test.fail("rtER.structs[uri].variant_field_names.len() != 0");
   }
 
   let srcPB = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
   let rtPB = roundtrip_module(srcPB);
   if (rtPB.funcs.len() < 1) {
-    return 244;
+    return test.fail("rtPB.funcs.len() < 1");
   }
   match (rtPB.funcs[0].body[0]) {
     ast.StmtMatch(m) => {
       match (m.arms[0].pattern) {
         ast.PatVariant(pv) => {
           if (pv.binding != "a") {
-            return 245;
+            return test.fail("pv.binding != \"a\"");
           }
           if (pv.extra_bindings.len() != 1) {
-            return 246;
+            return test.fail("pv.extra_bindings.len() != 1");
           }
           if (pv.extra_bindings[0] != "b") {
-            return 247;
+            return test.fail("pv.extra_bindings[0] != \"b\"");
           }
         },
         _ => {
-          return 248;
+          return test.fail("unexpected variant of m.arms[0].pattern");
         }
       }
     },
     _ => {
-      return 249;
+      return test.fail("unexpected variant of rtPB.funcs[0].body[0]");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_record_patterns(): i32 {
+function check_record_patterns(): test.TestOutcome {
   let src = "function f(s: Shape): i32 { match (s) { Rect { h: hh, .. } => { return hh; }, Circle { .. } => { return 0; } } return 0; } function main(): i32 { return 0; }";
   let rt = roundtrip_module(src);
   if (rt.funcs.len() < 1) {
-    return 377;
+    return test.fail("rt.funcs.len() < 1");
   }
   if let ast.StmtMatch(m) = rt.funcs[0].body[0] {
     if (m.arms.len() != 2) {
-      return 378;
+      return test.fail("m.arms.len() != 2");
     }
     if let ast.PatVariant(rect) = m.arms[0].pattern {
       if (rect.field_names.len() != 1 || rect.field_names[0] != "h" || rect.binding != "hh" || !rect.rest_written) {
-        return 379;
+        return test.fail("rect.field_names.len() != 1 || rect.field_names[0] != \"h\" || rect.binding != \"hh\" || !rect.rest_written");
       }
     } else {
-      return 380;
+      return test.fail("m.arms[0].pattern is not a variant pattern");
     }
     if let ast.PatVariant(circle) = m.arms[1].pattern {
       if (circle.field_names.len() != 0 || !circle.rest_written) {
-        return 381;
+        return test.fail("circle.field_names.len() != 0 || !circle.rest_written");
       }
     } else {
-      return 382;
+      return test.fail("m.arms[1].pattern is not a variant pattern");
     }
-    return 0;
+    return test.pass();
   }
-  return 383;
+  return test.fail("rt.funcs[0].body[0] is not a match statement");
 }
 
-function check_const_and_for_sugar(): i32 {
+function check_const_and_for_sugar(): test.TestOutcome {
   let srcConst = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
   let rtConst = roundtrip_module(srcConst);
   if (rtConst.funcs.len() != 2) {
-    return 250;
+    return test.fail("rtConst.funcs.len() != 2");
   }
   let limit_i: i32 = -1;
-  let ci = 0;
-  while (ci < rtConst.funcs.len()) {
+  for ci in 0..rtConst.funcs.len() {
     if (rtConst.funcs[ci].name == "LIMIT") {
       limit_i = ci;
     }
-    ci += 1;
   }
   if (limit_i < 0) {
-    return 251;
+    return test.fail("limit_i < 0");
   }
   if (!rtConst.funcs[limit_i].is_const) {
-    return 252;
+    return test.fail("!rtConst.funcs[limit_i].is_const");
   }
   if (rtConst.funcs[limit_i].ret_type != "i32") {
-    return 253;
+    return test.fail("rtConst.funcs[limit_i].ret_type != \"i32\"");
   }
   let rtFn = roundtrip_module("function LIMIT(): i32 { return 41; }");
   if (rtFn.funcs.len() != 1) {
-    return 254;
+    return test.fail("rtFn.funcs.len() != 1");
   }
   if (rtFn.funcs[0].is_const) {
-    return 255;
+    return test.fail("rtFn.funcs[0].is_const");
   }
 
   let srcCFor = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
   let outCFor = printer.print_module(parser.parse_module(lexer.tokenize(srcCFor)));
   if (!util.contains(outCFor, "for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return 260;
+    return test.fail("!util.contains(outCFor, \"for (let i: i32 = 0; i < 3; i = i + 1) {\")");
   }
   if (util.contains(outCFor, "__forc_")) {
-    return 261;
+    return test.fail("util.contains(outCFor, \"__forc_\")");
   }
   let rtCFor = roundtrip_module(srcCFor);
   if (rtCFor.funcs.len() != 1) {
-    return 262;
+    return test.fail("rtCFor.funcs.len() != 1");
   }
   match (rtCFor.funcs[0].body[1]) {
     ast.StmtIf(cf) => {
       match (printer.as_c_for(cf)) {
         Some(_) => {},
         None => {
-          return 263;
+          return test.fail("unexpected variant of printer.as_c_for(cf)");
         }
       }
     },
     _ => {
-      return 264;
+      return test.fail("unexpected variant of rtCFor.funcs[0].body[1]");
     }
   }
 
@@ -1008,111 +958,111 @@ function check_const_and_for_sugar(): i32 {
     "function main(): i32 { let i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }",
   )));
   if (!util.contains(outBare, "for (; i < 3; ) {")) {
-    return 265;
+    return test.fail("!util.contains(outBare, \"for (; i < 3; ) {\")");
   }
 
   let outRange: string = printer.print_module(parser.parse_module(lexer.tokenize(
     "function main(): i32 { let t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }",
   )));
   if (!util.contains(outRange, "for i in 0..4 {")) {
-    return 266;
+    return test.fail("!util.contains(outRange, \"for i in 0..4 {\")");
   }
   if (!util.contains(outRange, "for j in 0..=4 {")) {
-    return 267;
+    return test.fail("!util.contains(outRange, \"for j in 0..=4 {\")");
   }
   if (util.contains(outRange, "__range")) {
-    return 268;
+    return test.fail("util.contains(outRange, \"__range\")");
   }
 
   let outMap: string = printer.print_module(parser.parse_module(lexer.tokenize(
     "function f(m: map[string, i32]): i32 { let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
   )));
   if (!util.contains(outMap, "for (k, v) in m {")) {
-    return 269;
+    return test.fail("!util.contains(outMap, \"for (k, v) in m {\")");
   }
 
   let srcLabels = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
   let outLabels = printer.print_module(parser.parse_module(lexer.tokenize(srcLabels)));
   if (!util.contains(outLabels, "outer: while (t < 10) {")) {
-    return 270;
+    return test.fail("!util.contains(outLabels, \"outer: while (t < 10) {\")");
   }
   if (!util.contains(outLabels, "inner: for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return 271;
+    return test.fail("!util.contains(outLabels, \"inner: for (let i: i32 = 0; i < 3; i = i + 1) {\")");
   }
   if (!util.contains(outLabels, "continue outer;")) {
-    return 272;
+    return test.fail("!util.contains(outLabels, \"continue outer;\")");
   }
   if (!util.contains(outLabels, "break inner;")) {
-    return 273;
+    return test.fail("!util.contains(outLabels, \"break inner;\")");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_visibility_and_destructuring(): i32 {
+function check_visibility_and_destructuring(): test.TestOutcome {
   let srcVis = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
   let rtVis = roundtrip_module(srcVis);
   if (!rtVis.structs[struct_index(rtVis.structs, "A")].is_pub) {
-    return 280;
+    return test.fail("!rtVis.structs[struct_index(rtVis.structs, \"A\")].is_pub");
   }
   if (rtVis.structs[struct_index(rtVis.structs, "B")].is_pub) {
-    return 281;
+    return test.fail("rtVis.structs[struct_index(rtVis.structs, \"B\")].is_pub");
   }
   if (!rtVis.enums[printer.enum_index(rtVis.enums, "C")].is_pub) {
-    return 282;
+    return test.fail("!rtVis.enums[printer.enum_index(rtVis.enums, \"C\")].is_pub");
   }
   if (rtVis.enums[printer.enum_index(rtVis.enums, "D")].is_pub) {
-    return 283;
+    return test.fail("rtVis.enums[printer.enum_index(rtVis.enums, \"D\")].is_pub");
   }
   if (rtVis.aliases.len() != 2) {
-    return 284;
+    return test.fail("rtVis.aliases.len() != 2");
   }
   if (!rtVis.aliases[0].is_pub) {
-    return 285;
+    return test.fail("!rtVis.aliases[0].is_pub");
   }
   if (rtVis.aliases[1].is_pub) {
-    return 286;
+    return test.fail("rtVis.aliases[1].is_pub");
   }
 
   let srcTd = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
   let rtTd = roundtrip_module(srcTd);
   let mti = func_index(rtTd.funcs, "main");
   if (mti < 0) {
-    return 287;
+    return test.fail("mti < 0");
   }
   if (rtTd.funcs[mti].body.len() != 2) {
-    return 288;
+    return test.fail("rtTd.funcs[mti].body.len() != 2");
   }
   match (rtTd.funcs[mti].body[0]) {
     ast.StmtVar(v) => {
       if (v.name != "a,b") {
-        return 289;
+        return test.fail("v.name != \"a,b\"");
       }
       if (v.type_name.len() != 0) {
-        return 290;
+        return test.fail("v.type_name.len() != 0");
       }
     },
     _ => {
-      return 291;
+      return test.fail("unexpected variant of rtTd.funcs[mti].body[0]");
     }
   }
   let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
   let rtSd = roundtrip_module(srcSd);
   let msi = func_index(rtSd.funcs, "main");
   if (msi < 0) {
-    return 292;
+    return test.fail("msi < 0");
   }
   match (rtSd.funcs[msi].body[0]) {
     ast.StmtVar(v) => {
       if (v.name != "x,bb") {
-        return 293;
+        return test.fail("v.name != \"x,bb\"");
       }
       if (v.type_name != "@sd:P:x,y") {
-        return 294;
+        return test.fail("v.type_name != \"@sd:P:x,y\"");
       }
     },
     _ => {
-      return 295;
+      return test.fail("unexpected variant of rtSd.funcs[msi].body[0]");
     }
   }
 
@@ -1120,119 +1070,119 @@ function check_visibility_and_destructuring(): i32 {
   let rtMt = roundtrip_module(srcMt);
   let mmi = func_index(rtMt.funcs, "map");
   if (mmi < 0) {
-    return 296;
+    return test.fail("mmi < 0");
   }
   if (rtMt.funcs[mmi].receiver_name != "o") {
-    return 297;
+    return test.fail("rtMt.funcs[mmi].receiver_name != \"o\"");
   }
   if (rtMt.funcs[mmi].all_type_params.len() != 1) {
-    return 298;
+    return test.fail("rtMt.funcs[mmi].all_type_params.len() != 1");
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_traits_and_impls(): i32 {
+function check_traits_and_impls(): test.TestOutcome {
   let srcTr = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
   let pfTr = parser.parse_module_verbatim(lexer.tokenize(srcTr));
   let outTr = printer.format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
   let rtTr = parser.parse_module_verbatim(lexer.tokenize(outTr));
   if (rtTr.ptraits.len() != 1) {
-    return 299;
+    return test.fail("rtTr.ptraits.len() != 1");
   }
   if (rtTr.ptraits[0].name != "Greet") {
-    return 300;
+    return test.fail("rtTr.ptraits[0].name != \"Greet\"");
   }
   if (!rtTr.ptraits[0].is_pub) {
-    return 301;
+    return test.fail("!rtTr.ptraits[0].is_pub");
   }
   if (rtTr.ptraits[0].type_params.len() != 1) {
-    return 302;
+    return test.fail("rtTr.ptraits[0].type_params.len() != 1");
   }
   if (rtTr.ptraits[0].type_params[0] != "T") {
-    return 303;
+    return test.fail("rtTr.ptraits[0].type_params[0] != \"T\"");
   }
   if (rtTr.ptraits[0].supertraits.len() != 1) {
-    return 304;
+    return test.fail("rtTr.ptraits[0].supertraits.len() != 1");
   }
   if (rtTr.ptraits[0].supertraits[0] != "Display") {
-    return 305;
+    return test.fail("rtTr.ptraits[0].supertraits[0] != \"Display\"");
   }
   if (rtTr.ptraits[0].methods.len() != 2) {
-    return 306;
+    return test.fail("rtTr.ptraits[0].methods.len() != 2");
   }
   if (rtTr.ptraits[0].methods[0].name != "hi") {
-    return 307;
+    return test.fail("rtTr.ptraits[0].methods[0].name != \"hi\"");
   }
   if (rtTr.ptraits[0].methods[0].body.len() != 0) {
-    return 308;
+    return test.fail("rtTr.ptraits[0].methods[0].body.len() != 0");
   }
   if (rtTr.ptraits[0].methods[1].name != "loud") {
-    return 309;
+    return test.fail("rtTr.ptraits[0].methods[1].name != \"loud\"");
   }
   if (rtTr.ptraits[0].methods[1].body.len() == 0) {
-    return 310;
+    return test.fail("rtTr.ptraits[0].methods[1].body.len() == 0");
   }
   let pfQ: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "import \"core/cmp\"; pub trait Sortable: cmp.Ord {} function main(): i32 { return 0; }",
   ));
   if (pfQ.ptraits.len() != 1) {
-    return 311;
+    return test.fail("pfQ.ptraits.len() != 1");
   }
   if (pfQ.ptraits[0].supertraits.len() != 1) {
-    return 312;
+    return test.fail("pfQ.ptraits[0].supertraits.len() != 1");
   }
   if (pfQ.ptraits[0].supertraits[0] != "cmp.Ord") {
-    return 313;
+    return test.fail("pfQ.ptraits[0].supertraits[0] != \"cmp.Ord\"");
   }
   if (!util.contains(printer.format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, pfQ.pflines, [], []), "pub trait Sortable: cmp.Ord {}")) {
-    return 314;
+    return test.fail("!util.contains(printer.format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, pfQ.pflines, [], []), \"pub trait Sortable: cmp.Ord {}\")");
   }
 
   let srcIm = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
   let pfIm = parser.parse_module_verbatim(lexer.tokenize(srcIm));
   if (pfIm.pimpls.len() != 2) {
-    return 315;
+    return test.fail("pfIm.pimpls.len() != 2");
   }
   if (pfIm.pimpls[0].trait_ref != "Display") {
-    return 316;
+    return test.fail("pfIm.pimpls[0].trait_ref != \"Display\"");
   }
   if (pfIm.pimpls[0].type_ref != "i32") {
-    return 317;
+    return test.fail("pfIm.pimpls[0].type_ref != \"i32\"");
   }
   if (pfIm.pimpls[0].methods.len() != 0) {
-    return 318;
+    return test.fail("pfIm.pimpls[0].methods.len() != 0");
   }
   if (pfIm.pimpls[1].methods.len() != 1) {
-    return 319;
+    return test.fail("pfIm.pimpls[1].methods.len() != 1");
   }
   if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
-    return 320;
+    return test.fail("func_index(pfIm.pmod.funcs, \"to_string\") >= 0");
   }
   let outIm = printer.format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
   if (!util.contains(outIm, "impl Display for i32 {}")) {
-    return 321;
+    return test.fail("!util.contains(outIm, \"impl Display for i32 {}\")");
   }
   if (!util.contains(outIm, "function to_string(self: Self): string {")) {
-    return 322;
+    return test.fail("!util.contains(outIm, \"function to_string(self: Self): string {\")");
   }
   let rtIm = parser.parse_module_verbatim(lexer.tokenize(outIm));
   if (rtIm.pimpls.len() != 2) {
-    return 323;
+    return test.fail("rtIm.pimpls.len() != 2");
   }
 
   let pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "import \"core/cmp\"; struct Box[T] { item: T } impl[T: cmp.Eq] cmp.Eq for Box[T] { function eq(self: Self, other: Self): boolean { return true; } } function main(): i32 { return 0; }",
   ));
   if (pfPa.pimpls.len() != 1) {
-    return 328;
+    return test.fail("pfPa.pimpls.len() != 1");
   }
   let outPa = printer.format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
   if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) {
-    return 329;
+    return test.fail("!util.contains(outPa, \"impl[T: cmp.Eq] cmp.Eq for Box[T] {\")");
   }
   if (!util.contains(outPa, "function eq(self: Self, other: Self): boolean {")) {
-    return 330;
+    return test.fail("!util.contains(outPa, \"function eq(self: Self, other: Self): boolean {\")");
   }
 
   let pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
@@ -1240,99 +1190,86 @@ function check_traits_and_impls(): i32 {
   ));
   let outOor = printer.format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
   if (!util.contains(outOor, "let x: f64 = 1e309;")) {
-    return 331;
+    return test.fail("!util.contains(outOor, \"let x: f64 = 1e309;\")");
   }
 
   if (printer.quote_string("héllo\nwörld") != "\"héllo\\nwörld\"") {
-    return 340;
+    return test.fail("printer.quote_string(\"héllo\\nwörld\") != \"\\\"héllo\\\\nwörld\\\"\"");
   }
   if (printer.escape_fstring_lit("pré{x}é") != "pré{{x}}é") {
-    return 341;
+    return test.fail("printer.escape_fstring_lit(\"pré{x}é\") != \"pré{{x}}é\"");
   }
 
   if (printer.quote_string("a\x00b\x1fc\x7fd") != "\"a\\x00b\\x1fc\\x7fd\"") {
-    return 342;
+    return test.fail("printer.quote_string(\"a\\x00b\\x1fc\\x7fd\") != \"\\\"a\\\\x00b\\\\x1fc\\\\x7fd\\\"\"");
   }
   if (printer.escape_fstring_lit("a\x00b") != "a\\x00b") {
-    return 343;
+    return test.fail("printer.escape_fstring_lit(\"a\\x00b\") != \"a\\\\x00b\"");
   }
   if (printer.quote_string("\x07é😀") != "\"\\x07é😀\"") {
-    return 347;
+    return test.fail("printer.quote_string(\"\\x07é😀\") != \"\\\"\\\\x07é😀\\\"\"");
   }
   if (printer.escape_fstring_lit("é{😀") != "é{{😀") {
-    return 348;
+    return test.fail("printer.escape_fstring_lit(\"é{😀\") != \"é{{😀\"");
   }
   let srcMb = "function main(): i32 { let s: string = \"héllo\"; let f: string = f\"pré {s}\"; return 0; }";
   let pfMb = parser.parse_module_verbatim(lexer.tokenize(srcMb));
   let outMb = printer.format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
   let rtMb = parser.parse_module(lexer.tokenize(outMb));
   if (rtMb.funcs.len() != 1) {
-    return 342;
+    return test.fail("rtMb.funcs.len() != 1");
   }
   if (!util.contains(outMb, "\"héllo\"")) {
-    return 343;
+    return test.fail("!util.contains(outMb, \"\\\"héllo\\\"\")");
   }
   if (!util.contains(outMb, "f\"pré {s}\"")) {
-    return 344;
+    return test.fail("!util.contains(outMb, \"f\\\"pré {s}\\\"\")");
   }
   let dl = printer.diff_split_lines("é\nü");
   if (dl.len() != 2) {
-    return 345;
+    return test.fail("dl.len() != 2");
   }
   if (dl[0] != "é\n" || dl[1] != "ü") {
-    return 346;
+    return test.fail("dl[0] != \"é\\n\" || dl[1] != \"ü\"");
   }
 
-  let dcode = diff_selftest();
-  if (dcode != 0) {
-    return dcode;
-  }
-
-  return 0;
+  return test.pass();
 }
 
 function struct_index(structs: parser.StructDecl[], name: string): i32 {
-  let i = 0;
-  while (i < structs.len()) {
+  for i in 0..structs.len() {
     if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 function func_index(funcs: parser.FuncDecl[], name: string): i32 {
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (funcs[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 function diff_replay(sc: printer.DiffScript, keep: i32): string {
   let out = "";
-  let i = 0;
-  while (i < sc.kinds.len()) {
+  for i in 0..sc.kinds.len() {
     if (sc.kinds[i] == 0 || sc.kinds[i] == keep) {
       out += sc.lines[i];
     }
-    i += 1;
   }
   return out;
 }
 
 function diff_edits(sc: printer.DiffScript): i32 {
   let n = 0;
-  let i = 0;
-  while (i < sc.kinds.len()) {
+  for i in 0..sc.kinds.len() {
     if (sc.kinds[i] != 0) {
       n += 1;
     }
-    i += 1;
   }
   return n;
 }
@@ -1342,11 +1279,9 @@ function diff_lcs_edits(a: string[], b: string[]): i32 {
   let n = b.len();
   let prev: i32[] = [];
   let cur: i32[] = [];
-  let z = 0;
-  while (z <= n) {
+  for z in 0..=n {
     prev = prev.append(0);
     cur = cur.append(0);
-    z += 1;
   }
   let i = m - 1;
   while (i >= 0) {
@@ -1375,19 +1310,16 @@ function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
   let vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
   let out: string[] = [];
   let s = seed;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     s = diff_rand(s);
     out = out.append(vocab[(s % (alphabet as i64)) as i32]);
-    i += 1;
   }
   return out;
 }
 
-function diff_selftest(): i32 {
+function diff_selftest(): test.TestOutcome {
   let s: i64 = 12345i64;
-  let iter = 0;
-  while (iter < 300) {
+  for iter in 0..300 {
     s = diff_rand(s);
     let alphabet = 2 + (s % 4i64) as i32;
     s = diff_rand(s);
@@ -1400,64 +1332,63 @@ function diff_selftest(): i32 {
     let b = diff_lines_from(s, nb, alphabet);
     let sc = printer.diff_edit_script(a, b);
     if (diff_replay(sc, 1) != util.str_join_chunks(a)) {
-      return 350;
+      return test.fail("diff_replay(sc, 1) != util.str_join_chunks(a)");
     }
     if (diff_replay(sc, 2) != util.str_join_chunks(b)) {
-      return 351;
+      return test.fail("diff_replay(sc, 2) != util.str_join_chunks(b)");
     }
     if (diff_edits(sc) != diff_lcs_edits(a, b)) {
-      return 352;
+      return test.fail("diff_edits(sc) != diff_lcs_edits(a, b)");
     }
-    iter += 1;
   }
 
   let la = diff_lines_from(777i64, 400, 3);
   let lb = diff_lines_from(999i64, 400, 3);
   let lsc = printer.diff_edit_script(la, lb);
   if (diff_replay(lsc, 1) != util.str_join_chunks(la)) {
-    return 353;
+    return test.fail("diff_replay(lsc, 1) != util.str_join_chunks(la)");
   }
   if (diff_replay(lsc, 2) != util.str_join_chunks(lb)) {
-    return 354;
+    return test.fail("diff_replay(lsc, 2) != util.str_join_chunks(lb)");
   }
   if (diff_edits(lsc) != diff_lcs_edits(la, lb)) {
-    return 355;
+    return test.fail("diff_edits(lsc) != diff_lcs_edits(la, lb)");
   }
 
   let pa = printer.diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
   let pb = printer.diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
   let psc = printer.diff_edit_script(pa, pb);
   if (diff_edits(psc) != 2) {
-    return 356;
+    return test.fail("diff_edits(psc) != 2");
   }
   if (diff_replay(psc, 1) != "one\ntwo\nthree\nfour\nfive\n") {
-    return 357;
+    return test.fail("diff_replay(psc, 1) != \"one\\ntwo\\nthree\\nfour\\nfive\\n\"");
   }
   if (diff_replay(psc, 2) != "one\ntwo\nTHREE\nfour\nfive\n") {
-    return 358;
+    return test.fail("diff_replay(psc, 2) != \"one\\ntwo\\nTHREE\\nfour\\nfive\\n\"");
   }
 
   let ud = printer.unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
   if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") {
-    return 359;
+    return test.fail("ud != \"--- x.fern\\n+++ x.fern\\n@@ -1,5 +1,5 @@\\n one\\n two\\n-three\\n+THREE\\n four\\n five\\n\"");
   }
   if (printer.unified_diff("a\n", "a\n", "x", "y") != "") {
-    return 360;
+    return test.fail("printer.unified_diff(\"a\\n\", \"a\\n\", \"x\", \"y\") != \"\"");
   }
-  return 0;
+  return test.pass();
 }
 
-function check_checked_casts(): i32 {
+function check_checked_casts(): test.TestOutcome {
   for src in ["let x = value as? u8;", "let x = (value + 1) as? u8;", "let x = (value as i64) as? u32;", "let x = (value as? ByteStream)?;"] {
     let m = parser.parse_module(lexer.tokenize(src));
     let printed = printer.print_module(m);
     if (!util.contains(printed, " as? ")) {
-      return 361;
+      return test.fail("!util.contains(printed, \" as? \")");
     }
     let again = parser.parse_module(lexer.tokenize(printed));
     if (again.top_stmts.len() != 1 || printer.print_module(again) != printed) {
-      return 362;
+      return test.fail("again.top_stmts.len() != 1 || printer.print_module(again) != printed");
     }
   }
-  return 0;
+  return test.pass();
 }

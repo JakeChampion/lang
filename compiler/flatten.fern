@@ -23,12 +23,10 @@ function imported_enum_prefix(name: string, ctx: RewriteCtx): string {
 
 function imported_enums(imports: LoadedModule[], pfxs: string[]): ImportedEnum[] {
   let out: ImportedEnum[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     for en in imports[i].mod.enums {
       out = out.append(ImportedEnum { name: pfxs[i] + "__" + en.name, prefix: pfxs[i] });
     }
-    i += 1;
   }
   return out;
 }
@@ -102,24 +100,20 @@ pub function mangled_name(prefix: string, name: string): string {
 
 function build_mangled_names(prefix: string, names: string[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     out = out.append(mangled_name(prefix, names[i]));
-    i += 1;
   }
   return out;
 }
 
 function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
-  let i = 0;
-  while (i < ctx.modnames.len()) {
+  for i in 0..ctx.modnames.len() {
     if (ctx.modnames[i] == qualifier) {
       if (i < ctx.modprefixes.len()) {
         return ctx.modprefixes[i];
       }
       return qualifier;
     }
-    i += 1;
   }
   return qualifier;
 }
@@ -132,21 +126,19 @@ struct IvarMatch { mangled: string, ambiguous: boolean }
 
 function match_ivar(name: string, ctx: RewriteCtx): IvarMatch {
   let first = "";
-  let i = 0;
-  while (i < ctx.ivar_names.len()) {
+  for i in 0..ctx.ivar_names.len() {
     if (ctx.ivar_names[i] == name && ivar_visible(ctx.ivar_mangled[i], name, ctx)) {
       if (first.len() > 0) {
         return IvarMatch { mangled: first, ambiguous: true };
       }
       first = ctx.ivar_mangled[i];
     }
-    i += 1;
   }
   return IvarMatch { mangled: first, ambiguous: first.len() > 0 && parser.builtin_enum_of(name).len() > 0 };
 }
 
 function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
-  return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2) + "");
+  return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2).to_owned());
 }
 
 struct ImportGraph { starts: i32[], edges: i32[] }
@@ -154,13 +146,11 @@ struct ImportGraph { starts: i32[], edges: i32[] }
 function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): ImportGraph {
   let starts: i32[] = [];
   let edges: i32[] = [];
-  let k = 0;
-  while (k < imports.len()) {
+  for k in 0..imports.len() {
     starts = starts.append(edges.len());
     for p in import_prefixes(imports[k].mod, ids, pfxs) {
       edges = edges.append(util.index_of_str(pfxs, p));
     }
-    k += 1;
   }
   starts = starts.append(edges.len());
   return ImportGraph { starts: starts, edges: edges };
@@ -169,8 +159,7 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
 function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs: string[], entry: parser.Module): string[] {
   let out: string[] = [];
   let std = is_stdlib_ident(imports[target].ident);
-  let k = 0;
-  while (k < imports.len()) {
+  for k in 0..imports.len() {
     let direct = false;
     let e = g.starts[k];
     while (e < g.starts[k + 1]) {
@@ -182,7 +171,6 @@ function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs
     if (k != target && (direct || std && is_stdlib_ident(imports[k].ident))) {
       out = out.append(pfxs[k]);
     }
-    k += 1;
   }
   if (util.index_of_str(import_prefixes(entry, module_ids(imports), pfxs), pfxs[target]) >= 0) {
     out = out.append("");
@@ -288,14 +276,12 @@ function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): 
   while (out.len() < pfxs.len()) {
     out = out.append(none);
   }
-  let k = 0;
-  while (k < closures.len()) {
+  for k in 0..closures.len() {
     for t in closures[k] {
       if (t != k) {
         out = out.with(t, out[t].append(pfxs[k]));
       }
     }
-    k += 1;
   }
   for t in entry_closure {
     out = out.with(t, out[t].append(""));
@@ -321,12 +307,10 @@ function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module
 }
 
 function is_in(name: string, list: string[]): boolean {
-  let i = 0;
-  while (i < list.len()) {
+  for i in 0..list.len() {
     if (list[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -334,12 +318,10 @@ function is_in(name: string, list: string[]): boolean {
 // The parser's range desugar qualifies its call with the import path
 // `parser.RANGE_MODULE`, so that path resolves like the import's own name.
 function range_import_at(mod: parser.Module): i32 {
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     if (mod.imports[i].path == parser.RANGE_MODULE) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -361,22 +343,20 @@ function path_aliased_prefixes(mod: parser.Module, prefixes: string[]): string[]
 
 pub function mod_names(mod: parser.Module): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     if (mod.imports[i].alias.len() > 0) {
       out = out.append(mod.imports[i].alias);
     } else {
       out = out.append(util.import_qualifier(mod.imports[i].path));
     }
-    i += 1;
   }
   return out;
 }
 
 pub function module_ident(mpath: string): string {
   if (mpath.len() > 5) {
-    if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()) + "" == ".fern") {
-      return slice_unchecked(mpath, 0, mpath.len() - 5) + "";
+    if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()).to_owned() == ".fern") {
+      return slice_unchecked(mpath, 0, mpath.len() - 5).to_owned();
     }
   }
   return mpath;
@@ -385,14 +365,12 @@ pub function module_ident(mpath: string): string {
 pub function resolve_imports(mod: parser.Module, dir: string, root: string): parser.Module {
   let d = dir;
   if (d.len() > 1 && d[d.len() - 1] == b'/') {
-    d = slice_unchecked(d, 0, d.len() - 1) + "";
+    d = slice_unchecked(d, 0, d.len() - 1).to_owned();
   }
   let out: parser.Import[] = [];
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     let r = module_ident(util.resolve_path(mod.imports[i].path, d, root));
     out = out.append(parser.Import { ...mod.imports[i], resolved: r });
-    i += 1;
   }
   return parser.Module { ...mod, imports: out };
 }
@@ -485,7 +463,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     bound_modules: [], is_unsafe: false,
     stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
-    params: [], ret_type: "i32", body: body, line: 0, col: 0,
+    params: [], ret_own: false, ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", import_weak: false, all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [], streams: [],
@@ -494,12 +472,10 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
 }
 
 function top_fn_index(mod: parser.Module, name: string): i32 {
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     if (mod.funcs[i].name == name && mod.funcs[i].receiver_type.len() == 0) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -544,14 +520,12 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "", builtin: false }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
   let wrapper = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < entry.funcs.len()) {
+  for i in 0..entry.funcs.len() {
     if (i == hi) {
       funcs = funcs.append(parser.FuncDecl { ...handle, name: "__fern_handle_result" });
     } else {
       funcs = funcs.append(entry.funcs[i]);
     }
-    i += 1;
   }
   return parser.Module { ...entry, funcs: funcs.append(wrapper) };
 }
@@ -564,8 +538,7 @@ function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
 }
 
 function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let hit = imports[i].name == util.module_name(path);
     if (imports[i].ident.len() > 0) {
       hit = path_is(imports[i].ident, path);
@@ -573,18 +546,17 @@ function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): s
     if (hit) {
       return pfxs[i];
     }
-    i += 1;
   }
   return "";
 }
 
 function path_is(p: string, want: string): boolean {
-  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want;
+  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()).to_owned() == "/" + want;
 }
 
 function result_of_response(t: string): boolean {
   let s = parser.strip_type_spaces(t);
-  return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
+  return s.len() > 20 && slice_unchecked(s, 0, 20).to_owned() == "Result[HttpResponse,";
 }
 
 function tuple_halves(t: string): (string, string) {
@@ -593,8 +565,7 @@ function tuple_halves(t: string): (string, string) {
     return ("", "");
   }
   let depth = 0;
-  let i = 1;
-  while (i < s.len() - 1) {
+  for i in 1..s.len() - 1 {
     let ch = s[i];
     if (ch == b'[' || ch == b'(') {
       depth += 1;
@@ -603,9 +574,8 @@ function tuple_halves(t: string): (string, string) {
       depth -= 1;
     }
     if (ch == b',' && depth == 0) {
-      return (slice_unchecked(s, 1, i) + "", slice_unchecked(s, i + 1, s.len() - 1) + "");
+      return (slice_unchecked(s, 1, i).to_owned(), slice_unchecked(s, i + 1, s.len() - 1).to_owned());
     }
-    i += 1;
   }
   return ("", "");
 }
@@ -619,8 +589,7 @@ function serve_ref(qual: string, name: string): ast.Expr {
 
 function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     let k: i32 = -1;
     if (mod.imports[i].resolved.len() > 0) {
       k = util.index_of_str(ids, mod.imports[i].resolved);
@@ -630,7 +599,6 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
     } else {
       out = out.append(util.mangle_prefix(util.path_base(mod.imports[i].path)));
     }
-    i += 1;
   }
   return out;
 }
@@ -638,8 +606,7 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
 pub function assign_prefixes(imports: LoadedModule[]): string[] {
   let pfxs: string[] = [];
   let order: i32[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     pfxs = pfxs.append("");
     order = order.append(i);
     let j = order.len() - 1;
@@ -648,7 +615,6 @@ pub function assign_prefixes(imports: LoadedModule[]): string[] {
       order = order.with(j - 1, order[j]).with(j, prev);
       j -= 1;
     }
-    i += 1;
   }
   let used: string[] = [];
   for k in order {
@@ -682,10 +648,8 @@ function prefix_before(a: LoadedModule, b: LoadedModule): boolean {
 
 function module_ids(imports: LoadedModule[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     out = out.append(imports[i].ident);
-    i += 1;
   }
   return out;
 }
@@ -766,19 +730,15 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   }
   if (tref.is_tuple) {
     let out = "(";
-    let ti = 0;
-    while (ti < tref.args.len()) {
+    for ti in 0..tref.args.len() {
       if (ti > 0) {
         out += ", ";
       }
       out += rewrite_type_name(parser.render_type_ref(tref.args[ti]), ctx);
-      ti += 1;
     }
     out += ")";
-    let td = 0;
-    while (td < tref.array_depth) {
+    for td in 0..tref.array_depth {
       out += "[]";
-      td += 1;
     }
     return out;
   }
@@ -793,37 +753,29 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       fi += 1;
     }
     fout = fout + ") => " + rewrite_type_name(parser.render_type_ref(tref.args[tref.args.len() - 1]), ctx);
-    let fd = 0;
-    while (fd < tref.array_depth) {
+    for fd in 0..tref.array_depth {
       fout += "[]";
-      fd += 1;
     }
     return fout;
   }
   if (!tref.is_tuple && !tref.is_fn && tref.args.len() == 0 && parser.dyn_trait_set(tref.base).len() > 0) {
     let dout = canon_dyn(tref.base, ctx);
-    let dd = 0;
-    while (dd < tref.array_depth) {
+    for dd in 0..tref.array_depth {
       dout += "[]";
-      dd += 1;
     }
     return dout;
   }
   if (!tref.is_tuple && tref.args.len() > 0) {
     let gout = rewrite_type_name(tref.base, ctx) + "[";
-    let gi = 0;
-    while (gi < tref.args.len()) {
+    for gi in 0..tref.args.len() {
       if (gi > 0) {
         gout += ", ";
       }
       gout += rewrite_type_name(parser.render_type_ref(tref.args[gi]), ctx);
-      gi += 1;
     }
     gout += "]";
-    let gad = 0;
-    while (gad < tref.array_depth) {
+    for gad in 0..tref.array_depth {
       gout += "[]";
-      gad += 1;
     }
     return gout;
   }
@@ -838,7 +790,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
         let en = lookup_reexport(prefix + "__" + slice_unchecked(rest, 0, member_dot), ctx);
         let owner = imported_enum_prefix(en, ctx);
         if (owner.len() > 0) {
-          return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()) + "");
+          return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()).to_owned());
         }
       }
       let rb = parser.first_bracket(rest);
@@ -849,7 +801,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
     }
     if (is_in(qual, ctx.enumnames)) {
-      return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()) + "", ctx);
+      return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()).to_owned(), ctx);
     }
     return tn;
   }
@@ -1003,10 +955,8 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
     },
     ast.ExprStructLit(slit) => {
       let fvs: ast.Expr[] = [];
-      let i = 0;
-      while (i < slit.field_values.len()) {
+      for i in 0..slit.field_values.len() {
         fvs = fvs.append(rewrite_expr(slit.field_values[i], ctx));
-        i += 1;
       }
       let new_base = slit.base;
       if (slit.has_base) {
@@ -1055,12 +1005,12 @@ function rewrite_var_type(tn: string, ctx: RewriteCtx): string {
     return rewrite_type_name(tn, ctx);
   }
   let at = util.index_of_sub(tn, "@sd:") + 4;
-  let rest = slice_unchecked(tn, at, tn.len()) + "";
+  let rest = slice_unchecked(tn, at, tn.len()).to_owned();
   let colon = util.index_of_sub(rest, ":");
   if (colon < 0) {
     return tn;
   }
-  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon) + "", ctx) + slice_unchecked(rest, colon, rest.len());
+  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon).to_owned(), ctx) + slice_unchecked(rest, colon, rest.len());
 }
 
 function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
@@ -1161,15 +1111,13 @@ function rewrite_match_sugar(sg: ast.MatchSugar, ctx: RewriteCtx): ast.MatchSuga
 
 function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl[] {
   let out: ast.ParamDecl[] = [];
-  let i = 0;
-  while (i < params.len()) {
+  for i in 0..params.len() {
     out = out.append(ast.ParamDecl {
       ...params[i],
       type_name: rewrite_type_name(params[i].type_name, ctx),
       fn_ret: rewrite_type_name(params[i].fn_ret, ctx),
       fn_param_types: rewrite_type_name_list(params[i].fn_param_types, ctx),
     });
-    i += 1;
   }
   return out;
 }
@@ -1180,13 +1128,11 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
   }
   let parts = parser.split_top_commas(list);
   let out = "";
-  let i = 0;
-  while (i < parts.len()) {
+  for i in 0..parts.len() {
     if (i > 0) {
       out += ",";
     }
     out += rewrite_type_name(parts[i], ctx);
-    i += 1;
   }
   return out;
 }
@@ -1202,11 +1148,11 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     }
     return ctx.prefix + "." + d;
   }
-  let k = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+  let k = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot).to_owned());
   if (k < 0) {
     return d;
   }
-  let name = slice_unchecked(d, dot + 1, d.len()) + "";
+  let name = slice_unchecked(d, dot + 1, d.len()).to_owned();
   return canonical_imported_trait(ctx.modprefixes[k], name, ctx.reexport_keys, ctx.reexport_targets);
 }
 
@@ -1235,7 +1181,7 @@ function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
   if (dot < 0) {
     return "";
   }
-  return slice_unchecked(canon, 0, dot) + "";
+  return slice_unchecked(canon, 0, dot).to_owned();
 }
 
 function canon_dyn(set: string, ctx: RewriteCtx): string {
@@ -1254,15 +1200,13 @@ function canon_dyn(set: string, ctx: RewriteCtx): string {
 
 function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx): parser.StructFieldDecl[] {
   let out: parser.StructFieldDecl[] = [];
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     out = out.append(parser.StructFieldDecl {
       ...fields[i],
       type_name: rewrite_type_name(fields[i].type_name, ctx),
       fn_ret: rewrite_type_name(fields[i].fn_ret, ctx),
       fn_param_types: rewrite_type_name_list(fields[i].fn_param_types, ctx),
     });
-    i += 1;
   }
   return out;
 }
@@ -1272,18 +1216,15 @@ function param_names(fd: parser.FuncDecl): string[] {
   if (fd.receiver_name.len() > 0) {
     out = out.append(fd.receiver_name);
   }
-  let i = 0;
-  while (i < fd.params.len()) {
+  for i in 0..fd.params.len() {
     out = out.append(fd.params[i].name);
-    i += 1;
   }
   return out;
 }
 
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
     let tctx = with_type_params(ctx, fd.all_type_params);
     let new_name = fd.name;
@@ -1306,11 +1247,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       }
     }
     funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, import_wit: callback_target(fd, ctx), receiver_type: rewrite_type_name(fd.receiver_type, tctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, tctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, tctx), body: rewrite_block(fd.body, bctx), module: ctx.prefix, bound_modules: bound_modules });
-    i += 1;
   }
   let structs: parser.StructDecl[] = [];
-  let j = 0;
-  while (j < mod.structs.len()) {
+  for j in 0..mod.structs.len() {
     structs = structs.append(parser.StructDecl {
       name: mangle_bare(mod.structs[j].name, ctx),
       fields: rewrite_struct_fields(mod.structs[j].fields, with_type_params(ctx, mod.structs[j].type_params)),
@@ -1320,17 +1259,16 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       col: mod.structs[j].col,
       enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
       must_consume: mod.structs[j].must_consume,
+      value_type: mod.structs[j].value_type,
       variant_field_names: mod.structs[j].variant_field_names,
       is_pub: true,
       is_package: false,
       opaque: mod.structs[j].opaque,
       module: ctx.prefix,
     });
-    j += 1;
   }
   let aliases: parser.TypeAlias[] = [];
-  let k = 0;
-  while (k < mod.aliases.len()) {
+  for k in 0..mod.aliases.len() {
     let tctx = with_type_params(ctx, mod.aliases[k].type_params);
     let variants: string[] = [];
     let v = 0;
@@ -1354,7 +1292,6 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       is_pub: true,
       is_package: false, module: ctx.prefix,
     });
-    k += 1;
   }
   let exports: parser.ExportBinding[] = [];
   for binding in mod.exports {
@@ -1400,15 +1337,12 @@ function mangle_sigs(sigs: parser.FuncDecl[], ctx: RewriteCtx): parser.FuncDecl[
 
 function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInfo[] {
   let out: parser.ImplInfo[] = [];
-  let i = 0;
-  while (i < impls.len()) {
+  for i in 0..impls.len() {
     let im = impls[i];
     let tctx = with_type_params(ctx, im.all_type_params);
     let mangled_vals: string[] = [];
-    let vi = 0;
-    while (vi < im.assoc_values.len()) {
+    for vi in 0..im.assoc_values.len() {
       mangled_vals = mangled_vals.append(rewrite_type_name(im.assoc_values[vi], tctx));
-      vi += 1;
     }
     out = out.append(parser.ImplInfo {
       trait_name: im.trait_name,
@@ -1426,21 +1360,17 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
       line: im.line,
       col: im.col,
     });
-    i += 1;
   }
   return out;
 }
 
 function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.EnumDecl[] {
   let out: parser.EnumDecl[] = [];
-  let i = 0;
-  while (i < enums.len()) {
+  for i in 0..enums.len() {
     let e = enums[i];
     let nvn: string[] = [];
-    let v = 0;
-    while (v < e.variant_names.len()) {
+    for v in 0..e.variant_names.len() {
       nvn = nvn.append(mangle_bare(e.variant_names[v], ctx));
-      v += 1;
     }
     out = out.append(parser.EnumDecl {
       name: mangle_bare(e.name, ctx),
@@ -1456,7 +1386,6 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       instance: rewrite_type_name(e.instance, with_type_params(ctx, e.type_params)),
       visible_from: e.visible_from,
     });
-    i += 1;
   }
   return out;
 }
@@ -1466,13 +1395,11 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
   let own = collect_decl_names(mod);
   let ivn: string[] = [];
   let ivm: string[] = [];
-  let i = 0;
-  while (i < ivar_names.len()) {
+  for i in 0..ivar_names.len() {
     if (!util.has_str(own, ivar_names[i])) {
       ivn = ivn.append(ivar_names[i]);
       ivm = ivm.append(ivar_mangled[i]);
     }
-    i += 1;
   }
   let shadows = builtin_shadows(mod);
   let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
@@ -1516,37 +1443,27 @@ pub function qualify_entry_builtins(mod: parser.Module): parser.Module {
 
 pub function collect_decl_names(mod: parser.Module): string[] {
   let names: string[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     if (mod.funcs[i].receiver_type == "") {
       names = names.append(mod.funcs[i].name);
     }
-    i += 1;
   }
-  let j = 0;
-  while (j < mod.structs.len()) {
+  for j in 0..mod.structs.len() {
     names = names.append(mod.structs[j].name);
-    j += 1;
   }
-  let k = 0;
-  while (k < mod.aliases.len()) {
+  for k in 0..mod.aliases.len() {
     names = names.append(mod.aliases[k].name);
-    k += 1;
   }
-  let en = 0;
-  while (en < mod.enums.len()) {
+  for en in 0..mod.enums.len() {
     names = names.append(mod.enums[en].name);
-    en += 1;
   }
   return names;
 }
 
 pub function collect_enum_names(mod: parser.Module): string[] {
   let names: string[] = [];
-  let i = 0;
-  while (i < mod.enums.len()) {
+  for i in 0..mod.enums.len() {
     names = names.append(mod.enums[i].name);
-    i += 1;
   }
   return names;
 }
@@ -1635,21 +1552,17 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
   let ctxs: RewriteCtx[] = [];
   let closures: i32[][] = [];
   let defaults: TraitDefaultIn[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let closure = import_closure(imports[i].mod, graph, ids, pfxs);
     closures = closures.append(closure);
     let cx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, prefixes_at(closure, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported);
     ctxs = ctxs.append(cx);
     defaults = module_trait_defaults(imports[i].mod, cx, defaults);
-    i += 1;
   }
   let viewers = enum_viewers(closures, import_closure(entry, graph, ids, pfxs), pfxs);
   let mods: parser.Module[] = [];
-  let j = 0;
-  while (j < imports.len()) {
+  for j in 0..imports.len() {
     mods = mods.append(with_enum_viewers(inherit_trait_defaults(rewrite_module_bodies(imports[j].mod, ctxs[j]), pfxs[j], defaults), viewers[j]));
-    j += 1;
   }
   return RenamedImports { mods: mods, defaults: defaults };
 }
@@ -1702,10 +1615,8 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
     i += 1;
   }
   let keys = claimed;
-  let k = 0;
-  while (k < added.len()) {
+  for k in 0..added.len() {
     keys = keys.append(added[k]);
-    k += 1;
   }
   let deduped = parser.Module { ...mod, funcs: out };
   return MethodDedup { mod: deduped, keys: keys };
@@ -1715,8 +1626,7 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
   let ids = module_ids(imports);
   let quals = mod_names(mod);
   let out: string[] = [];
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     let k: i32 = -1;
     if (mod.imports[i].resolved.len() > 0) {
       k = util.index_of_str(ids, mod.imports[i].resolved);
@@ -1729,18 +1639,15 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
         out = out.append(quals[i] + "." + t.name);
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     if (imports[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -1760,11 +1667,9 @@ pub function bundle_qualifiers(entry: parser.Module, imports: LoadedModule[]): Q
   let pfxs = assign_prefixes(imports);
   let rx = build_reexports(imports, ids, pfxs);
   let out: Qualifiers[] = [Qualifiers { aliases: mod_names(entry), prefixes: import_prefixes(entry, ids, pfxs), own: "", reexport_keys: rx.keys, reexport_targets: rx.targets }];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let m = imports[i].mod;
     out = out.append(Qualifiers { aliases: mod_names(m), prefixes: import_prefixes(m, ids, pfxs), own: pfxs[i], reexport_keys: rx.keys, reexport_targets: rx.targets });
-    i += 1;
   }
   return out;
 }
@@ -1797,8 +1702,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
   let ids = module_ids(imports);
   let ivar_names: string[] = [];
   let ivar_mangled: string[] = [];
-  let iv = 0;
-  while (iv < imports.len()) {
+  for iv in 0..imports.len() {
     let isd = 0;
     while (isd < imports[iv].mod.structs.len()) {
       let sd = imports[iv].mod.structs[isd];
@@ -1808,15 +1712,13 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
       }
       isd += 1;
     }
-    iv += 1;
   }
   let rx = build_reexports(imports, ids, pfxs);
   let graph = import_graph(imports, ids, pfxs);
   let inferred = mangled_substituted_consts(imports, pfxs, entry);
   let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let pfx = pfxs[i];
     let md = disambiguate_methods(renamed.mods[i], pfx, mclaims);
     mclaims = md.keys;
@@ -1825,33 +1727,22 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     structs = util.append_all(structs, m.structs);
     aliases = util.append_all(aliases, m.aliases);
     enums = util.append_all(enums, m.enums);
-    let ri = 0;
-    while (ri < m.resources.len()) {
+    for ri in 0..m.resources.len() {
       resources = resources.append(m.resources[ri]);
-      ri += 1;
     }
-    let mxi = 0;
-    while (mxi < m.exports.len()) {
+    for mxi in 0..m.exports.len() {
       exports = exports.append(m.exports[mxi]);
-      mxi += 1;
     }
     marks = util.append_all(marks, m.marks);
-    let mii = 0;
-    while (mii < m.impls.len()) {
+    for mii in 0..m.impls.len() {
       impls = impls.append(m.impls[mii]);
-      mii += 1;
     }
-    let mti = 0;
-    while (mti < m.trait_reqs.len()) {
+    for mti in 0..m.trait_reqs.len() {
       trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx, visible_from: importers_of(i, imports, graph, pfxs, entry) });
-      mti += 1;
     }
-    let mdi = 0;
-    while (mdi < m.trait_decls.len()) {
+    for mdi in 0..m.trait_decls.len() {
       trait_decls = trait_decls.append(m.trait_decls[mdi]);
-      mdi += 1;
     }
-    i += 1;
   }
   let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
@@ -1859,44 +1750,31 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
   structs = util.append_all(structs, e.structs);
   aliases = util.append_all(aliases, e.aliases);
   enums = util.append_all(enums, e.enums);
-  let rj = 0;
-  while (rj < e.resources.len()) {
+  for rj in 0..e.resources.len() {
     resources = resources.append(e.resources[rj]);
-    rj += 1;
   }
-  let exj = 0;
-  while (exj < e.exports.len()) {
+  for exj in 0..e.exports.len() {
     exports = exports.append(e.exports[exj]);
-    exj += 1;
   }
   marks = util.append_all(marks, e.marks);
-  let eii = 0;
-  while (eii < e.impls.len()) {
+  for eii in 0..e.impls.len() {
     impls = impls.append(e.impls[eii]);
-    eii += 1;
   }
-  let eti = 0;
-  while (eti < e.trait_reqs.len()) {
+  for eti in 0..e.trait_reqs.len() {
     trait_reqs = trait_reqs.append(e.trait_reqs[eti]);
-    eti += 1;
   }
-  let edi = 0;
-  while (edi < e.trait_decls.len()) {
+  for edi in 0..e.trait_decls.len() {
     trait_decls = trait_decls.append(e.trait_decls[edi]);
-    edi += 1;
   }
   let closure: parser.Import[] = [];
   let closure_paths: string[] = [];
-  let ci = 0;
-  while (ci < entry.imports.len()) {
+  for ci in 0..entry.imports.len() {
     if (util.index_of_str(closure_paths, entry.imports[ci].path) < 0) {
       closure_paths = closure_paths.append(entry.imports[ci].path);
       closure = closure.append(entry.imports[ci]);
     }
-    ci += 1;
   }
-  let cm = 0;
-  while (cm < imports.len()) {
+  for cm in 0..imports.len() {
     let cmi = 0;
     while (cmi < imports[cm].mod.imports.len()) {
       if (util.index_of_str(closure_paths, imports[cm].mod.imports[cmi].path) < 0) {
@@ -1905,7 +1783,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
       }
       cmi += 1;
     }
-    cm += 1;
   }
   let merged: parser.Module = parser.Module {
     funcs: funcs,
@@ -1929,12 +1806,10 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
 
 function mangled_substituted_consts(imports: LoadedModule[], pfxs: string[], entry: parser.Module): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     for n in imports[i].mod.substituted_consts {
       out = out.append(mangled_name(pfxs[i], n));
     }
-    i += 1;
   }
   return util.append_all(out, entry.substituted_consts);
 }
@@ -1949,12 +1824,10 @@ pub struct ReexportTable { keys: string[], targets: string[] }
 pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
   let keys: string[] = [];
   let targets: string[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let ns = pfxs[i];
     let imps = imports[i].mod.imports;
-    let j = 0;
-    while (j < imps.len()) {
+    for j in 0..imps.len() {
       if (imps[j].is_reexport) {
         let ok: i32 = -1;
         if (imps[j].resolved.len() > 0) {
@@ -1965,16 +1838,12 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
           origin = pfxs[ok];
         }
         let names = imps[j].reexport_names;
-        let n = 0;
-        while (n < names.len()) {
+        for n in 0..names.len() {
           keys = keys.append(ns + "__" + names[n]);
           targets = targets.append(origin + "__" + names[n]);
-          n += 1;
         }
       }
-      j += 1;
     }
-    i += 1;
   }
   return with_reexported_variants(ReexportTable { keys: keys, targets: targets }, imports, pfxs);
 }
@@ -1986,7 +1855,7 @@ function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pf
   let targets = rx.targets;
   for k in 0..rx.keys.len() {
     let enum_name = decltypes.follow_reexports(rx.targets[k], rx.keys, rx.targets);
-    let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2) + "";
+    let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2).to_owned();
     for i in 0..imports.len() {
       for sd in imports[i].mod.structs {
         if (sd.enum_owner.len() > 0 && pfxs[i] + "__" + sd.enum_owner == enum_name) {
@@ -2005,7 +1874,7 @@ function mangled_tail(mangled: string): string {
   while (at > 0 && slice_unchecked(mangled, at, at + 2) != "__") {
     at -= 1;
   }
-  return slice_unchecked(mangled, at, mangled.len()) + "";
+  return slice_unchecked(mangled, at, mangled.len()).to_owned();
 }
 
 pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }
@@ -2017,8 +1886,7 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let pfxs = assign_prefixes(imports);
   let ivar_names: string[] = [];
   let ivar_mangled: string[] = [];
-  let iv = 0;
-  while (iv < imports.len()) {
+  for iv in 0..imports.len() {
     let isd = 0;
     while (isd < imports[iv].mod.structs.len()) {
       let sd = imports[iv].mod.structs[isd];
@@ -2028,7 +1896,6 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
       }
       isd += 1;
     }
-    iv += 1;
   }
   let rx = build_reexports(imports, ids, pfxs);
   let graph = import_graph(imports, ids, pfxs);
@@ -2037,24 +1904,20 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let all_funcs: parser.FuncDecl[] = [];
   let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
-  let i = 0;
-  while (i < imports.len()) {
+  for i in 0..imports.len() {
     let pfx = pfxs[i];
     let md = disambiguate_methods(renamed.mods[i], pfx, mclaims);
     mclaims = md.keys;
     mods = mods.append(md.mod);
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
-    i += 1;
   }
   let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   let table = merged_const_table(all_funcs, inferred);
   let out: PerModule[] = [];
-  let j = 0;
-  while (j < imports.len()) {
+  for j in 0..imports.len() {
     out = out.append(PerModule { ns: pfxs[j], ident: imports[j].ident, mod: parser.lower_stream_signatures(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(mods[j], table))), is_entry: false });
-    j += 1;
   }
   out = out.append(PerModule { ns: "__entry", ident: "", mod: parser.lower_stream_signatures(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(e, table))), is_entry: true });
   return out;

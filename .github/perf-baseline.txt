@@ -1,3 +1,12 @@
+# 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
+# Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
+# Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
+# 2026-11-10: PR #15087, perf-x86_64 job 129617357009 on 4210785b28. #15076
+# gave http.__plain_path a [u8] parameter, and the inliner does not splice a
+# function with an array view parameter (#15093). http_hello.ir is 0.62% over
+# main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
+# 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
 # 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.
@@ -280,14 +289,20 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15591
-x86_64/http_hello.ir	21796408
+# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
+# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
+# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
+# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
+x86_64/http_hello.text	15691
+x86_64/http_hello.ir	22124422
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8488
 x86_64/map_int.ir	24563319
 x86_64/map_probe_chain.text	8492
-x86_64/map_probe_chain.ir	241010587
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this count.
+# Bank the measured reduction after main 5d6c692eb2. Keep the tolerance unchanged.
+x86_64/map_probe_chain.ir	238091314
 x86_64/map_string.text	9311
 x86_64/map_string.ir	53037751	2
 x86_64/ordmap_insert.text	5394
@@ -566,7 +581,7 @@ aarch64/deflate_encode.text	7818
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16538
+aarch64/http_hello.text	16619
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
@@ -575,7 +590,10 @@ aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8497
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8507
-aarch64/map_probe_chain.ir	233221143
+# 2026-11-10: PR #15077, perf-aarch64 job 129585637063 measures map_probe_chain.ir 1.27% lower on main. #15077 changes only -g images.
+# 2026-11-10: PR #15022 at 206df7ee, ARM64 CI job 129589649703.
+# Bank 230251856 guest instructions from run 42743098908. Keep the 1% tolerance.
+aarch64/map_probe_chain.ir	230251856
 aarch64/map_string.text	9472
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
@@ -645,6 +663,10 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # Pin the measured x86-64 reduction. No performance limit increases.
 x86_64/video_qtrle.text 5234
 x86_64/video_qtrle.ir 1717224731
+# 2026-11-10: PR #15022 at 7bd045eb. CI job 129524617582 measures
+# aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
+# Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
+# Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
 aarch64/video_qtrle.text 5600
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.

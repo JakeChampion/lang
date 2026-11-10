@@ -17,9 +17,9 @@ func TestSelfHostInterpX86_64(t *testing.T) {
 	dir := writeSelfHostInterpProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/interp_check_run.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port interp assertion %d failed", code)
+		t.Errorf("interp self-checks exit %d:\n%s", code, out)
 	}
 }
 
@@ -28,8 +28,8 @@ func TestSelfHostInterpArm64(t *testing.T) {
 	dir := writeSelfHostInterpProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/interp_check_run.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port interp assertion %d failed", code)
+		t.Errorf("interp self-checks exit %d:\n%s", code, out)
 	}
 }

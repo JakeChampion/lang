@@ -212,10 +212,8 @@ function joined_form(f: ssa.SFunc): ssa.SFunc {
 }
 
 function mutation_checks(form: ssa.SFunc, phi_form: ssa.SFunc, reasons: string[], first_id: i32): void {
-  let i = 0;
-  while (i < reasons.len()) {
+  for i in 0..reasons.len() {
     expect(changed(control_form(form, phi_form, i), i), false, reasons[i], first_id + i);
-    i += 1;
   }
 }
 

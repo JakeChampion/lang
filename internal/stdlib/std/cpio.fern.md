@@ -22,6 +22,10 @@ For the `070702` format, `parse` refuses a regular file whose checksum is not th
 
 A hard link in a `newc` archive has its bytes only with its last name: the other names of the link have the size 0. This module does not join them.
 
+## Writing
+
+`write` gives a `newc` archive of a list of items, in the order of the list, with the trailer. An item is a name, a mode and the bytes of the entry. Item `i` gets the inode `i + 1` and one link. The user, the group, the time and the device numbers are 0. `write` takes the name as it is, so the caller removes a leading `/`. `parse` reads the result back with the same names, modes and bytes.
+
 ## Executable example
 
 ```fern test name=std-cpio-example
@@ -95,6 +99,8 @@ function main(): i32 {
 <<pub struct Archive>>
 
 <<pub function parse>>
+
+<<pub function write>>
 ```
 
 ### `module introduction`
@@ -269,6 +275,54 @@ pub function (a: Archive) file(path: string): Option[u8[]] {
     return None;
   }
   return Some(a.read(e));
+}
+```
+
+### `pub function write`
+
+```fern
+<<pub function write>>=
+pub struct Item { name: string, mode: u32, data: u8[] }
+
+// A newc archive of the items, in order, with the trailer.
+pub function write(items: Item[]): u8[] {
+  let out: u8[] = [];
+  for i in 0..items.len() {
+    out = put_item(out, (i + 1) as u32, items[i]);
+  }
+  return put_item(out, 0 as u32, Item { name: TRAILER, mode: 0 as u32, data: [] });
+}
+
+function put_item(own out: u8[], inode: u32, item: Item): u8[] {
+  out = out.concat("070701".bytes());
+  for v in [inode, item.mode, 0 as u32, 0 as u32, 1 as u32, 0 as u32, item.data.len() as u32, 0 as u32, 0 as u32, 0 as u32, 0 as u32, (item.name.len() + 1) as u32, 0 as u32] {
+    out = put_hex8(out, v);
+  }
+  out = pad4(out.concat(item.name.bytes()).append(0 as u8));
+  out = out.concat(item.data);
+  return pad4(out);
+}
+
+// The 8 lowercase hexadecimal digits of v.
+function put_hex8(own out: u8[], v: u32): u8[] {
+  let shift = 28;
+  while (shift >= 0) {
+    let d = (v >> shift as u32 & 15 as u32) as u8;
+    if (d < 10 as u8) {
+      out = out.append(48 as u8 + d);
+    } else {
+      out = out.append(87 as u8 + d);
+    }
+    shift -= 4;
+  }
+  return out;
+}
+
+function pad4(own out: u8[]): u8[] {
+  while (out.len() % 4 != 0) {
+    out = out.append(0 as u8);
+  }
+  return out;
 }
 ```
 

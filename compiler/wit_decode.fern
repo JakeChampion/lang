@@ -1,5 +1,6 @@
 import "./util";
 import "./watbin";
+import "std/option";
 
 pub struct UlebRead { value: i32, next: i32 }
 
@@ -35,10 +36,8 @@ pub function wit_reencode_sections(payload: i32[]): i32[] {
     i += 1;
   }
   let o: i32[] = [];
-  i = 0;
-  while (i < 8) {
+  for i in 0..8 {
     o = o.append(payload[i]);
-    i += 1;
   }
   let pos = 8;
   while (pos < payload.len()) {
@@ -49,10 +48,8 @@ pub function wit_reencode_sections(payload: i32[]): i32[] {
     pos = r.next;
     o = o.append(id);
     o = watbin.leb_u32(o, size);
-    let j = 0;
-    while (j < size) {
+    for j in 0..size {
       o = o.append(payload[pos + j]);
-      j += 1;
     }
     pos += size;
   }
@@ -88,10 +85,8 @@ pub function wit_read_name(buf: i32[], pos: i32): NameR {
   let n = r.value;
   let p = r.next;
   let bytes: u8[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     bytes = bytes.append(buf[p + i] as u8);
-    i += 1;
   }
   unsafe {
     return NameR { s: string_from_bytes_unchecked(bytes), next: p + n };
@@ -100,10 +95,8 @@ pub function wit_read_name(buf: i32[], pos: i32): NameR {
 
 pub function wit_append_name(out: i32[], s: string): i32[] {
   out = watbin.leb_u32(out, s.len());
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     out = out.append(s[i] as i32);
-    i += 1;
   }
   return out;
 }
@@ -151,22 +144,19 @@ pub function wit_decode_def(buf: i32[], pos: i32): WitDefR {
     let rc = wit_read_uleb(buf, p);
     let n = rc.value;
     p = rc.next;
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       let nr = wit_read_name(buf, p);
       p = nr.next;
       let vr = wit_read_sleb(buf, p);
       p = vr.next;
       rec_names = rec_names.append(nr.s);
       rec_vals = rec_vals.append(vr.value);
-      i += 1;
     }
   } else if (tag == 113) {
     let rc2 = wit_read_uleb(buf, p);
     let n2 = rc2.value;
     p = rc2.next;
-    let i2 = 0;
-    while (i2 < n2) {
+    for i2 in 0..n2 {
       let nr2 = wit_read_name(buf, p);
       p = nr2.next;
       let ht = 0;
@@ -196,18 +186,15 @@ pub function wit_decode_def(buf: i32[], pos: i32): WitDefR {
       var_ty = var_ty.append(ty);
       var_has_ref = var_has_ref.append(hr);
       var_ref = var_ref.append(rf);
-      i2 += 1;
     }
   } else if (tag == 109 || tag == 110) {
     let rc3 = wit_read_uleb(buf, p);
     let n3 = rc3.value;
     p = rc3.next;
-    let i3 = 0;
-    while (i3 < n3) {
+    for i3 in 0..n3 {
       let nr3 = wit_read_name(buf, p);
       p = nr3.next;
       ef_names = ef_names.append(nr3.s);
-      i3 += 1;
     }
   } else if (tag == 112 || tag == 107) {
     let er = wit_read_sleb(buf, p);
@@ -217,12 +204,10 @@ pub function wit_decode_def(buf: i32[], pos: i32): WitDefR {
     let rc4 = wit_read_uleb(buf, p);
     let n4 = rc4.value;
     p = rc4.next;
-    let i4 = 0;
-    while (i4 < n4) {
+    for i4 in 0..n4 {
       let tr = wit_read_sleb(buf, p);
       p = tr.next;
       tup_elems = tup_elems.append(tr.value);
-      i4 += 1;
     }
   } else if (tag == 106) {
     if (buf[p] == 1) {
@@ -267,16 +252,13 @@ pub function wit_encode_def(out: i32[], d: WitDef): i32[] {
   out = out.append(d.tag);
   if (d.tag == 114) {
     out = watbin.leb_u32(out, d.rec_names.len());
-    let i = 0;
-    while (i < d.rec_names.len()) {
+    for i in 0..d.rec_names.len() {
       out = wit_append_name(out, d.rec_names[i]);
       out = watbin.leb_i32(out, d.rec_vals[i]);
-      i += 1;
     }
   } else if (d.tag == 113) {
     out = watbin.leb_u32(out, d.var_names.len());
-    let i2 = 0;
-    while (i2 < d.var_names.len()) {
+    for i2 in 0..d.var_names.len() {
       out = wit_append_name(out, d.var_names[i2]);
       if (d.var_has_ty[i2] == 1) {
         out = out.append(1);
@@ -290,23 +272,18 @@ pub function wit_encode_def(out: i32[], d: WitDef): i32[] {
       } else {
         out = out.append(0);
       }
-      i2 += 1;
     }
   } else if (d.tag == 109 || d.tag == 110) {
     out = watbin.leb_u32(out, d.ef_names.len());
-    let i3 = 0;
-    while (i3 < d.ef_names.len()) {
+    for i3 in 0..d.ef_names.len() {
       out = wit_append_name(out, d.ef_names[i3]);
-      i3 += 1;
     }
   } else if (d.tag == 112 || d.tag == 107) {
     out = watbin.leb_i32(out, d.elem);
   } else if (d.tag == 111) {
     out = watbin.leb_u32(out, d.tup_elems.len());
-    let i4 = 0;
-    while (i4 < d.tup_elems.len()) {
+    for i4 in 0..d.tup_elems.len() {
       out = watbin.leb_i32(out, d.tup_elems[i4]);
-      i4 += 1;
     }
   } else if (d.tag == 106) {
     if (d.has_ok == 1) {
@@ -345,15 +322,13 @@ pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
   let rc = wit_read_uleb(buf, p);
   let n = rc.value;
   p = rc.next;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let nr = wit_read_name(buf, p);
     p = nr.next;
     let vr = wit_read_sleb(buf, p);
     p = vr.next;
     p_names = p_names.append(nr.s);
     p_vals = p_vals.append(vr.value);
-    i += 1;
   }
   let named = 0;
   let result = 0;
@@ -370,15 +345,13 @@ pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
     let rc2 = wit_read_uleb(buf, p);
     let n2 = rc2.value;
     p = rc2.next;
-    let j = 0;
-    while (j < n2) {
+    for j in 0..n2 {
       let nr2 = wit_read_name(buf, p);
       p = nr2.next;
       let vr2 = wit_read_sleb(buf, p);
       p = vr2.next;
       r_names = r_names.append(nr2.s);
       r_vals = r_vals.append(vr2.value);
-      j += 1;
     }
   }
   return WitFuncR {
@@ -390,20 +363,16 @@ pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
 pub function wit_encode_func(out: i32[], f: WitFunc): i32[] {
   out = out.append(64);
   out = watbin.leb_u32(out, f.p_names.len());
-  let i = 0;
-  while (i < f.p_names.len()) {
+  for i in 0..f.p_names.len() {
     out = wit_append_name(out, f.p_names[i]);
     out = watbin.leb_i32(out, f.p_vals[i]);
-    i += 1;
   }
   if (f.named == 1) {
     out = out.append(1);
     out = watbin.leb_u32(out, f.r_names.len());
-    let j = 0;
-    while (j < f.r_names.len()) {
+    for j in 0..f.r_names.len() {
       out = wit_append_name(out, f.r_names[j]);
       out = watbin.leb_i32(out, f.r_vals[j]);
-      j += 1;
     }
   } else {
     out = out.append(0);
@@ -423,12 +392,10 @@ pub function wit_tx_typedef(buf: i32[], pos: i32, out: i32[]): TxR {
     let count = rc.value;
     p = rc.next;
     out = watbin.leb_u32(out, count);
-    let i = 0;
-    while (i < count) {
+    for i in 0..count {
       let t = wit_tx_decl(buf, p, out);
       p = t.next;
       out = t.out;
-      i += 1;
     }
     return TxR { next: p, out: out };
   } else if (tag == 64) {
@@ -534,12 +501,10 @@ pub function wit_transcode_type_section(buf: i32[]): i32[] {
   let rc = wit_read_uleb(buf, 0);
   out = watbin.leb_u32(out, rc.value);
   let p = rc.next;
-  let i = 0;
-  while (i < rc.value) {
+  for i in 0..rc.value {
     let t = wit_tx_typedef(buf, p, out);
     p = t.next;
     out = t.out;
-    i += 1;
   }
   return out;
 }
@@ -549,8 +514,7 @@ pub function wit_transcode_export_section(buf: i32[]): i32[] {
   let rc = wit_read_uleb(buf, 0);
   out = watbin.leb_u32(out, rc.value);
   let p = rc.next;
-  let i = 0;
-  while (i < rc.value) {
+  for i in 0..rc.value {
     let ne = wit_tx_externname(buf, p, out);
     p = ne.next;
     out = ne.out;
@@ -567,7 +531,6 @@ pub function wit_transcode_export_section(buf: i32[]): i32[] {
       p = de.next;
       out = de.out;
     }
-    i += 1;
   }
   return out;
 }
@@ -583,10 +546,8 @@ pub function wit_section_body(payload: i32[], want_id: i32): i32[] {
     let size = r.value;
     pos = r.next;
     if (id == want_id) {
-      let j = 0;
-      while (j < size) {
+      for j in 0..size {
         found = found.append(payload[pos + j]);
-        j += 1;
       }
       done = true;
     }
@@ -608,8 +569,7 @@ pub function wit_world_import_names(tbody: i32[]): string[] {
   let wc = wit_read_uleb(tbody, p);
   let wcount = wc.value;
   p = wc.next;
-  let i = 0;
-  while (i < wcount) {
+  for i in 0..wcount {
     let kind = tbody[p];
     if (kind == 3) {
       let nr = wit_read_name(tbody, p + 2);
@@ -617,7 +577,6 @@ pub function wit_world_import_names(tbody: i32[]): string[] {
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return names;
 }
@@ -653,8 +612,7 @@ function wit_world_decls(tbody: i32[]): WitWorldDecls {
   let imp_slot: i32[] = [];
   let n_slots = 0;
   let p = wc.next;
-  let i = 0;
-  while (i < wc.value) {
+  for i in 0..wc.value {
     let kind = tbody[p];
     let slot: i32 = -1;
     let imp: i32 = -1;
@@ -688,7 +646,6 @@ function wit_world_decls(tbody: i32[]): WitWorldDecls {
     ainsts = ainsts.append(ainst);
     anames = anames.append(aname);
     p = wit_tx_decl(tbody, p, none).next;
-    i += 1;
   }
   return WitWorldDecls { kind: kinds, pos: poss, slot: slots, imp: imps, alias_inst: ainsts, alias_name: anames, imp_names: imp_names, imp_slot: imp_slot, n_slots: n_slots };
 }
@@ -715,13 +672,10 @@ pub function wit_import_plan(tbody: i32[], ifaces: string[], names: string[]): W
     t_names: wit_no_names(d.n_slots),
     decl_keep: __alloc_bool(d.kind.len()),
   };
-  let u = 0;
-  while (u < ifaces.len()) {
-    let j = wit_names_index(d.imp_names, ifaces[u]);
-    if (j >= 0) {
+  for u in 0..ifaces.len() {
+    if let Some(j) = wit_names_index(d.imp_names, ifaces[u]) {
       n = wit_needs_ask(n, j, names[u]);
     }
-    u += 1;
   }
   let i = d.kind.len() - 1;
   while (i >= 0) {
@@ -746,10 +700,8 @@ struct WitNeeds {
 function wit_no_names(n: i32): string[][] {
   let none: string[] = [];
   let out: string[][] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(none);
-    i += 1;
   }
   return out;
 }
@@ -821,19 +773,17 @@ function wit_numbering(kept: boolean[]): (i32[], i32) {
   return (map, count);
 }
 
-function wit_names_index(names: string[], s: string): i32 {
-  let i = 0;
-  while (i < names.len()) {
+function wit_names_index(names: string[], s: string): Option[i32] {
+  for i in 0..names.len() {
     if (names[i] == s) {
-      return i;
+      return Some(i);
     }
-    i += 1;
   }
-  return -1;
+  return None;
 }
 
 function wit_names_has(names: string[], s: string): boolean {
-  return wit_names_index(names, s) >= 0;
+  return wit_names_index(names, s).is_some();
 }
 
 function wit_world_def_refs(tbody: i32[], q: i32, whole: boolean, names: string[]): i32[] {
@@ -905,12 +855,10 @@ function wit_type_indices(vals: i32[]): i32[] {
 
 function wit_variant_vals(d: WitDef): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < d.var_ty.len()) {
+  for i in 0..d.var_ty.len() {
     if (d.var_has_ty[i] == 1) {
       out = out.append(d.var_ty[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -981,8 +929,7 @@ function wit_inst_prune(tbody: i32[], q: i32, whole: boolean, names: string[]): 
   let keep = wit_inst_closure(tbody, decls, wit_inst_asked(tbody, decls, whole, names));
   let inline: i32[] = [];
   let outer: i32[] = [];
-  let j = 0;
-  while (j < decls.len()) {
+  for j in 0..decls.len() {
     let ws: i32 = -1;
     if (keep[j] && tbody[decls[j]] == 2) {
       ws = wit_outer_slot(tbody, decls[j] + 1);
@@ -995,7 +942,6 @@ function wit_inst_prune(tbody: i32[], q: i32, whole: boolean, names: string[]): 
       outer = outer.append(ws);
     }
     inline = inline.append(off);
-    j += 1;
   }
   return WitInstPrune { keep: keep, inline: inline, outer: outer };
 }
@@ -1005,11 +951,9 @@ function wit_inst_decls(tbody: i32[], q: i32): i32[] {
   let dc = wit_read_uleb(tbody, q + 1);
   let decls: i32[] = [];
   let p = dc.next;
-  let i = 0;
-  while (i < dc.value) {
+  for i in 0..dc.value {
     decls = decls.append(p);
     p = wit_tx_decl(tbody, p, none).next;
-    i += 1;
   }
   return decls;
 }
@@ -1028,12 +972,10 @@ function wit_inst_asked(tbody: i32[], decls: i32[], whole: boolean, names: strin
 
 function wit_inst_closure(tbody: i32[], decls: i32[], keep: boolean[]): boolean[] {
   let slot_decl: i32[] = [];
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (wit_decl_defines_type(tbody, decls[i])) {
       slot_decl = slot_decl.append(i);
     }
-    i += 1;
   }
   let j = decls.len() - 1;
   while (j >= 0) {
@@ -1052,10 +994,8 @@ function wit_inst_closure(tbody: i32[], decls: i32[], keep: boolean[]): boolean[
 pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
   out = out.append(id);
   out = watbin.leb_u32(out, body.len());
-  let k = 0;
-  while (k < body.len()) {
+  for k in 0..body.len() {
     out = out.append(body[k]);
-    k += 1;
   }
   return out;
 }
@@ -1063,8 +1003,7 @@ pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
 pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
   let d = wit_world_decls(tbody);
   let out: i32[] = [];
-  let i = 0;
-  while (i < d.kind.len()) {
+  for i in 0..d.kind.len() {
     let p = d.pos[i];
     if (plan.decl_keep[i] && d.kind[i] == 1) {
       let body: i32[] = [];
@@ -1081,7 +1020,6 @@ pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
       let nm = wit_tx_externname(tbody, p + 1, [1]);
       out = wit_emit_section(out, 10, util.append_all(nm.out, wit_externdesc_mapped(tbody, nm.next, plan.type_map)));
     }
-    i += 1;
   }
   return out;
 }
@@ -1092,8 +1030,7 @@ function wit_inst_emit(tbody: i32[], q: i32, pr: WitInstPrune, type_map: i32[]):
   let n_local = 0;
   let count = 0;
   let decls: i32[] = [];
-  let i = 0;
-  while (i < ds.len()) {
+  for i in 0..ds.len() {
     let defines = wit_decl_defines_type(tbody, ds[i]);
     if (pr.keep[i]) {
       decls = util.append_all(decls, wit_decl_mapped(tbody, ds[i], local, pr.inline[i], type_map));
@@ -1105,7 +1042,6 @@ function wit_inst_emit(tbody: i32[], q: i32, pr: WitInstPrune, type_map: i32[]):
     } else if (defines) {
       local = local.append(-1);
     }
-    i += 1;
   }
   return util.append_all(watbin.leb_u32([66], count), decls);
 }
@@ -1138,10 +1074,8 @@ function wit_val_mapped(map: i32[], v: i32): i32 {
 
 function wit_vals_mapped(map: i32[], vs: i32[]): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < vs.len()) {
+  for i in 0..vs.len() {
     out = out.append(wit_val_mapped(map, vs[i]));
-    i += 1;
   }
   return out;
 }
@@ -1185,14 +1119,12 @@ function wit_defn_mapped(d: WitDef, map: i32[]): WitDef {
 
 function wit_variant_mapped(d: WitDef, map: i32[]): i32[] {
   let tys: i32[] = [];
-  let i = 0;
-  while (i < d.var_ty.len()) {
+  for i in 0..d.var_ty.len() {
     if (d.var_has_ty[i] == 1) {
       tys = tys.append(wit_val_mapped(map, d.var_ty[i]));
     } else {
       tys = tys.append(d.var_ty[i]);
     }
-    i += 1;
   }
   return tys;
 }
@@ -1204,10 +1136,8 @@ function wit_world_alias_mapped(tbody: i32[], sort_pos: i32, inst_map: i32[]): i
     return wit_tx_alias(tbody, sort_pos, none).out;
   }
   let out: i32[] = [];
-  let q = sort_pos;
-  while (q <= tp) {
+  for q in sort_pos..=tp {
     out = out.append(tbody[q]);
-    q += 1;
   }
   let r = wit_read_uleb(tbody, tp + 1);
   out = watbin.leb_u32(out, inst_map[r.value]);
@@ -1306,30 +1236,24 @@ pub function wit_contains_heap(tbody: i32[], scope: WitScope, v: i32): boolean {
     return wit_contains_heap(tbody, inner, d.elem);
   }
   if (d.tag == 111) {
-    let i = 0;
-    while (i < d.tup_elems.len()) {
+    for i in 0..d.tup_elems.len() {
       if (wit_contains_heap(tbody, inner, d.tup_elems[i])) {
         return true;
       }
-      i += 1;
     }
   }
   if (d.tag == 114) {
-    let j = 0;
-    while (j < d.rec_vals.len()) {
+    for j in 0..d.rec_vals.len() {
       if (wit_contains_heap(tbody, inner, d.rec_vals[j])) {
         return true;
       }
-      j += 1;
     }
   }
   if (d.tag == 113) {
-    let k = 0;
-    while (k < d.var_ty.len()) {
+    for k in 0..d.var_ty.len() {
       if (d.var_has_ty[k] == 1 && wit_contains_heap(tbody, inner, d.var_ty[k])) {
         return true;
       }
-      k += 1;
     }
   }
   if (d.tag == 106) {
@@ -1370,26 +1294,21 @@ pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
   }
   if (d.tag == 111) {
     let n = 0;
-    let i = 0;
-    while (i < d.tup_elems.len()) {
+    for i in 0..d.tup_elems.len() {
       n += wit_flatten(tbody, inner, d.tup_elems[i]);
-      i += 1;
     }
     return n;
   }
   if (d.tag == 114) {
     let n2 = 0;
-    let j = 0;
-    while (j < d.rec_vals.len()) {
+    for j in 0..d.rec_vals.len() {
       n2 += wit_flatten(tbody, inner, d.rec_vals[j]);
-      j += 1;
     }
     return n2;
   }
   if (d.tag == 113) {
     let mx = 0;
-    let k = 0;
-    while (k < d.var_ty.len()) {
+    for k in 0..d.var_ty.len() {
       let c = 0;
       if (d.var_has_ty[k] == 1) {
         c = wit_flatten(tbody, inner, d.var_ty[k]);
@@ -1397,7 +1316,6 @@ pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
       if (c > mx) {
         mx = c;
       }
-      k += 1;
     }
     return 1 + mx;
   }
@@ -1426,8 +1344,7 @@ pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
   p = dc.next;
   let offs: i32[] = [];
   let owners: i32[] = [];
-  let i = 0;
-  while (i < dcount) {
+  for i in 0..dcount {
     let kind = tbody[p];
     if (kind == 1) {
       offs = offs.append(p + 1);
@@ -1453,7 +1370,6 @@ pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return WitScope { offs: offs, owners: owners };
 }
@@ -1485,8 +1401,7 @@ function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
   p = wc.next;
   let slot = 0;
   let instances: string[] = [];
-  let i = 0;
-  while (i < wcount) {
+  for i in 0..wcount {
     let kind = tbody[p];
     if (kind == 1) {
       slot += 1;
@@ -1505,7 +1420,6 @@ function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return (-1, -1);
 }
@@ -1543,8 +1457,7 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
   let dcount = dc.value;
   p = dc.next;
   let slot = 0;
-  let i = 0;
-  while (i < dcount) {
+  for i in 0..dcount {
     let kind = tbody[p];
     if (kind == 1) {
       slot += 1;
@@ -1563,7 +1476,6 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return -1;
 }
@@ -1582,8 +1494,7 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
   let dcount = dc.value;
   p = dc.next;
   let funcOff: i32 = -1;
-  let i = 0;
-  while (i < dcount) {
+  for i in 0..dcount {
     if (tbody[p] == 4) {
       let nr = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 1 && nr.s == fname) {
@@ -1593,7 +1504,6 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return WitFuncLookup { found: funcOff >= 0, off: funcOff, scope: scope };
 }
@@ -1608,8 +1518,7 @@ pub function wit_iface_has_resource(tbody: i32[], iface: string, res: string): b
   let dc = wit_read_uleb(tbody, p);
   let dcount = dc.value;
   p = dc.next;
-  let i = 0;
-  while (i < dcount) {
+  for i in 0..dcount {
     if (tbody[p] == 4) {
       let nr = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 3 && tbody[nr.next + 1] == 1 && nr.s == res) {
@@ -1618,7 +1527,6 @@ pub function wit_iface_has_resource(tbody: i32[], iface: string, res: string): b
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
   return false;
 }
@@ -1636,32 +1544,26 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
       needR = true;
     }
   } else {
-    let r = 0;
-    while (r < f.r_vals.len()) {
+    for r in 0..f.r_vals.len() {
       if (wit_contains_heap(tbody, offs, f.r_vals[r])) {
         needR = true;
       }
-      r += 1;
     }
   }
   if (needR) {
     return 2;
   }
-  let pj = 0;
-  while (pj < f.p_vals.len()) {
+  for pj in 0..f.p_vals.len() {
     if (wit_contains_heap(tbody, offs, f.p_vals[pj])) {
       return 1;
     }
-    pj += 1;
   }
   let flat = 0;
   if (f.named == 0) {
     flat = wit_flatten(tbody, offs, f.result);
   } else {
-    let rk = 0;
-    while (rk < f.r_vals.len()) {
+    for rk in 0..f.r_vals.len() {
       flat += wit_flatten(tbody, offs, f.r_vals[rk]);
-      rk += 1;
     }
   }
   if (flat > 1) {
@@ -1671,14 +1573,13 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
 }
 
 pub function wit_world_declares(tbody: i32[], iface: string): boolean {
-  return wit_names_index(wit_world_decls(tbody).imp_names, iface) >= 0;
+  return wit_names_index(wit_world_decls(tbody).imp_names, iface).is_some();
 }
 
 pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
-  let j = wit_names_index(wit_world_decls(tbody).imp_names, iface);
-  if (j < 0) {
+  let Some(j) = wit_names_index(wit_world_decls(tbody).imp_names, iface) else {
     return -1;
-  }
+  };
   return plan.index[j];
 }
 
@@ -1701,32 +1602,26 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
       let cr = wit_read_uleb(bin, body);
       let count = cr.value;
       let p = cr.next;
-      let i = 0;
-      while (i < count) {
+      for i in 0..count {
         p += 1;
         let pr = wit_read_uleb(bin, p);
         let pc = pr.value;
         p = pr.next;
         let params: i32[] = [];
-        let j = 0;
-        while (j < pc) {
+        for j in 0..pc {
           params = params.append(bin[p]);
           p += 1;
-          j += 1;
         }
         let rr = wit_read_uleb(bin, p);
         let rcount = rr.value;
         p = rr.next;
         let results: i32[] = [];
-        let k = 0;
-        while (k < rcount) {
+        for k in 0..rcount {
           results = results.append(bin[p]);
           p += 1;
-          k += 1;
         }
         typeParams = typeParams.append(params);
         typeResults = typeResults.append(results);
-        i += 1;
       }
       doneTypes = true;
     }
@@ -1749,8 +1644,7 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
       let cr2 = wit_read_uleb(bin, body2);
       let count2 = cr2.value;
       let p = cr2.next;
-      let i2 = 0;
-      while (i2 < count2) {
+      for i2 in 0..count2 {
         let mr = wit_read_name(bin, p);
         p = mr.next;
         let fr = wit_read_name(bin, p);
@@ -1787,7 +1681,6 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
         } else {
           p += 2;
         }
-        i2 += 1;
       }
       doneImports = true;
     }

@@ -122,6 +122,7 @@ pub enum VerifyError {
   UnsupportedAlgorithm(string),
   Distrusted(i32),
   DeniedKey(i32),
+  WeakKey(i32),
   SearchLimit,
 }
 ```
@@ -207,6 +208,9 @@ pub function (e: VerifyError) message(): string {
     },
     DeniedKey(i) => {
       return "tls verify: certificate " + i.to_string() + "'s key is known to be compromised";
+    },
+    WeakKey(i) => {
+      return "tls verify: certificate " + i.to_string() + "'s RSA key is shorter than 2048 bits";
     },
     SearchLimit => {
       return "tls verify: the certificates need too many signature checks to find a path";
@@ -652,6 +656,19 @@ function __in_path(below: x509.Certificate[], candidate: x509.Certificate): bool
   return false;
 }
 
+// The practice of the Web PKI: an RSA modulus has 2048 bits or more, which
+// is 256 bytes after its leading zero bytes.
+function __weak_key(c: x509.Certificate): boolean {
+  if let x509.RsaKey(n, _) = c.key {
+    let lead = 0;
+    while (lead < n.len() && n[lead] == 0 as u8) {
+      lead += 1;
+    }
+    return n.len() - lead < 256;
+  }
+  return false;
+}
+
 function __distrusted(roots: Roots, i: i32, leaf: x509.Certificate): boolean {
   let after = roots.distrust_after[i];
   return after > 0 as i64 && leaf.not_before > after;
@@ -664,6 +681,9 @@ function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, 
   }
   if (denied_key(candidate)) {
     return Search { found: false, err: DeniedKey(at), checks: s.checks };
+  }
+  if (__weak_key(candidate)) {
+    return Search { found: false, err: WeakKey(at), checks: s.checks };
   }
   match (__issuer_ok(candidate, at, now)) {
     Ok(ok) => {
@@ -692,7 +712,7 @@ function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, 
 function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): boolean {
   for b in below {
     for d in b.dns_names {
-      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns)) {
+      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns) || __wildcard_reaches(d, ca.excluded_dns)) {
         return false;
       }
     }
@@ -703,6 +723,25 @@ function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): bool
     }
   }
   return true;
+}
+
+// A wildcard name matches each name one label below its base, so it reaches
+// an excluded subtree that lies below that base.
+function __wildcard_reaches(name: string, subtrees: string[]): boolean {
+  match (__normal(name).strip_prefix("*")) {
+    Some(below) => {
+      for t in subtrees {
+        if (below.starts_with(".") && __normal(t).ends_with(below)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
 }
 
 function __dns_within_any(name: string, subtrees: string[]): boolean {
@@ -828,6 +867,9 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
   }
   if (denied_key(certs[0])) {
     return Err(DeniedKey(0));
+  }
+  if (__weak_key(certs[0])) {
+    return Err(WeakKey(0));
   }
   return Ok(certs);
 }

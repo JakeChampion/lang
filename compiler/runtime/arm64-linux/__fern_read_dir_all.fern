@@ -1,4 +1,7 @@
 function __fern_read_dir_all(path: string): Result[string[], IoError] {
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i = 0;
@@ -30,7 +33,7 @@ function __fern_read_dir_all(path: string): Result[string[], IoError] {
         let room = reclen - 19;
         let scan = 1;
         while (scan == 1 && nlen + 8 <= room) {
-          let w = __load_i64(buf + pos + 19 + nlen);
+          let w = __load_i64(buf + pos as usize + 19 + nlen as usize);
           let z = w - 72340172838076673 as i64 & (w ^ (-1) as i64) & (-9187201950435737472) as i64;
           if (z != 0 as i64) {
             nlen += __ctz64(z as u64) >> 3;
@@ -44,13 +47,13 @@ function __fern_read_dir_all(path: string): Result[string[], IoError] {
             nlen += 1;
           }
         }
-        if (__fern_utf8_valid(buf + pos + 19, nlen) == 0) {
+        if (__fern_utf8_valid(buf + pos as usize + 19, nlen) == 0) {
           bad = -84;
           done = 1;
           pos = n;
         } else {
           let nbuf = __raw_alloc(nlen);
-          __memcpy(nbuf, buf + pos + 19, nlen);
+          __memcpy(nbuf, buf + pos as usize + 19, nlen);
           names = names.append(__raw_string(nbuf, nlen));
           pos += reclen;
         }

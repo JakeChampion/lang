@@ -84,10 +84,8 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
     },
     ast.ExprLambda(lm) => {
       let lb = bound;
-      let lp = 0;
-      while (lp < lm.params.len()) {
+      for lp in 0..lm.params.len() {
         lb = lb.append(lm.params[lp].name);
-        lp += 1;
       }
       let caps = lm.captures;
       if (lm.captures_known) {
@@ -115,14 +113,12 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
     },
     ast.ExprFString(f) => {
       let exprs: ast.Expr[] = [];
-      let i = 0;
-      while (i < f.exprs.len()) {
+      for i in 0..f.exprs.len() {
         if (f.is_expr[i]) {
           exprs = exprs.append(box_rewrite_expr(f.exprs[i], boxed, btypes, bsites, bound));
         } else {
           exprs = exprs.append(f.exprs[i]);
         }
-        i += 1;
       }
       return ast.ExprFString { ...f, exprs: exprs };
     },
@@ -196,12 +192,10 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
         if let ast.PatLiteral(literal) = pattern {
           pattern = ast.PatLiteral { ...literal, scalar_cells: cells };
         }
-        let bxj = 0;
-        while (bxj < boxed.len()) {
+        for bxj in 0..boxed.len() {
           if (util.has_str(astwalk.pattern_binders(arm.pattern, []), boxed[bxj]) && !util.has_str(cells, boxed[bxj])) {
             ab = ab.append(boxed[bxj]);
           }
-          bxj += 1;
         }
         let ng = arm.guard;
         if (arm.has_guard) {

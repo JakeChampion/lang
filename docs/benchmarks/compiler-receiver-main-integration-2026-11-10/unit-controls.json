@@ -1,0 +1,41 @@
+{
+  "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "purpose": "Actual main changes the Go parser and Paper emulator runner. Validate these integrated owner changes without a timing or Android-device claim.",
+  "runs": [
+    {
+      "label": "go-units",
+      "args": [
+        "go",
+        "test",
+        "./internal/syntax/parser",
+        "./internal/check/checker",
+        "-count=1",
+        "-json"
+      ],
+      "started": "2026-11-10T18:41:46.281022+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:44:00.743163+00:00",
+      "test_subtest_passes": 2867,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "go-syntax-units",
+      "args": [
+        "go",
+        "test",
+        "./internal/syntax/grammar",
+        "./internal/syntax/printer",
+        "-run",
+        "Owned|OwnResult|OwnFunc",
+        "-count=1",
+        "-json"
+      ],
+      "started": "2026-11-10T18:44:00.808625+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:44:03.279281+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T18:44:03.279638+00:00"
+}

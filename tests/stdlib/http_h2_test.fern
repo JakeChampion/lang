@@ -660,6 +660,35 @@ function test_client_goaway_and_push(): test.TestOutcome {
   return test.assert_eq(got, "goaway 0\ngoing_away 1\nrefused -1\nanswered 1 200 content-type=- body=late trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nclosed 1\nrequest 1 GET /four host=example.test body= trailer=-\nreset 1 8\nopen 0");
 }
 
+// A client with one request sent, and what it reports when it reads `wire`.
+function client_reads(wire: u8[]): string {
+  let p = paired();
+  let (sent, stream) = p.client.request(outgoing("GET", "/one", "", headers.new()));
+  let step = sent.conn.read(wire);
+  return events_text(step.events) + "open " + step.conn.streams_open().to_string();
+}
+
+function status_only(status: string): u8[] {
+  let block = hpack.encoder(4096).encode([hpack.field(":status", status)]);
+  return frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: false, end_headers: true, priority: None, block: block.bytes, padding: 0 }));
+}
+
+// RFC 9113 sections 8.1, 8.6 and 6.8.
+function test_client_rules(): test.TestOutcome {
+  let data_first = frame.encode(frame.Data(frame.DataFrame { stream: 1, end_stream: true, data: "x".bytes(), padding: 0 }));
+  if (client_reads(data_first) != "reset 1 1\nopen 0") {
+    return test.fail("DATA before HEADERS: " + client_reads(data_first));
+  }
+  if (client_reads(status_only("101")) != "reset 1 1\nopen 0") {
+    return test.fail("a 101 response: " + client_reads(status_only("101")));
+  }
+  let p = paired();
+  let (first, one) = p.client.request(outgoing("GET", "/one", "", headers.new()));
+  let (second, three) = first.conn.request(outgoing("GET", "/three", "", headers.new()));
+  let gone = second.conn.read(frame.encode(frame.GoAway(frame.GoAwayFrame { last_stream: one, code: frame.NO_ERROR, debug: [] })));
+  return test.assert_eq(events_text(gone.events) + "open " + gone.conn.streams_open().to_string(), "goaway 0\nreset " + three.to_string() + " 7\nopen 1");
+}
+
 function with_pseudo(method: string, scheme: string, path: string, authority: string, more: hpack.Field[]): hpack.Field[] {
   let out: hpack.Field[] = [hpack.field(":method", method), hpack.field(":scheme", scheme), hpack.field(":path", path), hpack.field(":authority", authority)];
   for f in more {
@@ -741,5 +770,6 @@ function main(): i32 {
   r = r.it("a client's body, trailers and an interim response", test_client_body_and_interim);
   r = r.it("a client reads a body larger than one window", test_client_reads_a_body_past_one_window);
   r = r.it("a client under GOAWAY, PUSH_PROMISE and RST_STREAM", test_client_goaway_and_push);
+  r = r.it("a client refuses DATA before HEADERS and a 101, and ends the requests that a GOAWAY leaves out", test_client_rules);
   return r.finish();
 }

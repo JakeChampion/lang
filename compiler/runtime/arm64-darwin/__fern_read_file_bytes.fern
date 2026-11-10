@@ -1,4 +1,7 @@
 function __fern_read_file_bytes(path: string): Result[i32[], IoError] {
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let plen: i32 = path.len();
   let pathz: usize = __raw_alloc(plen + 1);
   let i: i32 = 0;
@@ -63,7 +66,7 @@ function __fern_read_file_bytes(path: string): Result[i32[], IoError] {
         }
       }
     } else {
-      let n: i32 = __syscall3(3, fd as i64, (buf + got) as i64, (cap - got) as i64) as i32;
+      let n: i32 = __syscall3(3, fd as i64, (buf + got as usize) as i64, (cap - got) as i64) as i32;
       if (n < 0 && (n != 0 - 4 || got == 0)) {
         bad = n;
         done = 1;

@@ -1,0 +1,57 @@
+{
+  "baseline": "bcd223bae6ab2d8dc14b3b152027fa7be90e6779",
+  "retained": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "purpose": "Fresh main and retained-source normal images must match byte for byte after rejection. No performance comparison.",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "runs": [
+    {
+      "label": "main",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/main-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1845",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T18:41:50.187797+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:44:04.709531+00:00",
+      "sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c"
+    },
+    {
+      "label": "retained",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-checker-union-retained-20261110-1845",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T18:44:04.899661+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:45:21.370735+00:00",
+      "sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c"
+    }
+  ],
+  "exit_code": 0,
+  "identical_normal_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+  "finished": "2026-11-10T18:45:21.402333+00:00"
+}

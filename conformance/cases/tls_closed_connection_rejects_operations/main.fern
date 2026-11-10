@@ -33,7 +33,7 @@ function main(): i32 {
   unsafe {
     let client_open = cell_new(true);
     let server_open = cell_new(true);
-    let c = client.Connection { sock: __socket_from_fd(-1), session: cs.session, tickets: [], open: client_open };
+    let c = client.Connection { sock: __socket_from_fd(-1), session: cs.session, tickets: [], pending: [], ended: false, open: client_open };
     let s = server.Connection { sock: __socket_from_fd(-1), session: ss.session, pending: [1u8], ended: false, open: server_open };
     let client_alias = c;
     let server_alias = s;

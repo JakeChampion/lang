@@ -39,13 +39,11 @@ pub function sanitize_label(name: string): string {
 pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
   let refs = astwalk.collect_lambda_idents(lm, []);
   let caps: string[] = [];
-  let ri = 0;
-  while (ri < refs.len()) {
+  for ri in 0..refs.len() {
     let nm = refs[ri];
     if (!util.has_str(caps, nm) && outer.has_local(nm)) {
       caps = caps.append(nm);
     }
-    ri += 1;
   }
   return caps;
 }
@@ -189,13 +187,11 @@ function record_syscall(t: EmitState, nr: i32): EmitState {
     return t;
   }
   let out: i32[] = [];
-  let i = 0;
-  while (i < t.syscalls.len()) {
+  for i in 0..t.syscalls.len() {
     if (i == at) {
       out = out.append(nr);
     }
     out = out.append(t.syscalls[i]);
-    i += 1;
   }
   if (at == t.syscalls.len()) {
     out = out.append(nr);
@@ -419,17 +415,13 @@ pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
 
 pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): string[] {
   let out: string[] = [];
-  let fi = lo;
-  while (fi < hi) {
+  for fi in lo..hi {
     if (cache.len() == 0 || !cache[fi].superseded) {
       out = out.append(sanitize_label(parser.decl_key(mod.funcs[fi])));
     }
-    fi += 1;
   }
-  let xi = mod.funcs.len();
-  while (xi < cache.len()) {
+  for xi in mod.funcs.len()..cache.len() {
     out = out.append(sanitize_label(cache[xi].name));
-    xi += 1;
   }
   return out;
 }
@@ -446,8 +438,7 @@ pub struct FloatAbi { names: irtables.SigReg, masks: string[] }
 pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): FloatAbi {
   let names: string[] = [];
   let masks: string[] = [];
-  let fi = 0;
-  while (fi < cache.len()) {
+  for fi in 0..cache.len() {
     let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (inside && !cache[fi].superseded && cache[fi].ok) {
       let name = cache[fi].name;
@@ -460,17 +451,14 @@ pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtable
         masks = masks.append(mask);
       }
     }
-    fi += 1;
   }
   return FloatAbi { names: irtables.sig_reg_of(names), masks: masks };
 }
 
 function float_mask_of(r: irtables.LowerResult): string {
   let mask = "";
-  let p = 0;
-  while (p < r.n_params) {
+  for p in 0..r.n_params {
     mask += slot_class(r, p);
-    p += 1;
   }
   let res = "x";
   if (r.result_kind == irtables.result_f64()) {
@@ -532,8 +520,7 @@ pub function lane_result(mask: string): boolean {
 pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[], kt: ssa_lift.KindTable): UnitLeaves {
   let out: ssa.Leaf[] = [];
   let pre: Prelift[] = [];
-  let fi = 0;
-  while (fi < cache.len()) {
+  for fi in 0..cache.len() {
     let p = no_prelift();
     let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (fi < mod.funcs.len() && mod.funcs[fi].no_inline) {
@@ -553,7 +540,6 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
     }
     pre = pre.append(p);
-    fi += 1;
   }
   let leaves = ssa.leaves_of(out);
   return UnitLeaves { leaves: leaves, pre: unformed_callers(pre, leaves) };
@@ -797,12 +783,10 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
 }
 
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
-  let i = 0;
-  while (i < s.shape_lits.len()) {
+  for i in 0..s.shape_lits.len() {
     if (s.shape_lits[i] == name) {
       return s;
     }
-    i += 1;
   }
   return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
 }
@@ -832,7 +816,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
     while (j < n && asm_text[j] != b'\n') {
       j += 1;
     }
-    let line = slice_unchecked(asm_text, i, j) + "";
+    let line = slice_unchecked(asm_text, i, j).to_owned();
     let drop = false;
     if (state == 1) {
       drop = true;
@@ -842,7 +826,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) {
         k += 1;
       }
-      let body = slice_unchecked(line, k, line.len()) + "";
+      let body = slice_unchecked(line, k, line.len()).to_owned();
       if (body.len() == 0) {
         drop = true;
       } else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") {
@@ -854,7 +838,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       }
     }
     if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
-      let sym = slice_unchecked(line, 6, line.len()) + "";
+      let sym = slice_unchecked(line, 6, line.len()).to_owned();
       if (util.has_str(seen, sym)) {
         drop = true;
         state = 1;
@@ -1084,896 +1068,316 @@ pub function sysno(t: string, name: string): string {
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_x86_64(name: string): string {
-  if (name == "read") {
-    return "0";
-  }
-  if (name == "write") {
-    return "1";
-  }
-  if (name == "writev") {
-    return "20";
-  }
-  if (name == "close") {
-    return "3";
-  }
-  if (name == "lseek") {
-    return "8";
-  }
-  if (name == "fstat") {
-    return "5";
-  }
-  if (name == "openat") {
-    return "257";
-  }
-  if (name == "fcntl") {
-    return "72";
-  }
-  if (name == "fchmod") {
-    return "91";
-  }
-  if (name == "unlinkat") {
-    return "263";
-  }
-  if (name == "mkdirat") {
-    return "258";
-  }
-  if (name == "fstatat") {
-    return "262";
-  }
-  if (name == "statx") {
-    return "332";
-  }
-  if (name == "getrandom") {
-    return "318";
-  }
-  if (name == "exit") {
-    return "60";
-  }
-  if (name == "clock_gettime") {
-    return "228";
-  }
-  if (name == "clock_settime") {
-    return "227";
-  }
-  if (name == "clock_getres") {
-    return "229";
-  }
-  if (name == "getdents") {
-    return "217";
-  }
-  if (name == "accept") {
-    return "43";
-  }
-  if (name == "nanosleep") {
-    return "35";
-  }
-  if (name == "poll") {
-    return "7";
-  }
-  if (name == "epoll_create1") {
-    return "291";
-  }
-  if (name == "epoll_ctl") {
-    return "233";
-  }
-  if (name == "epoll_pwait") {
-    return "281";
-  }
-  if (name == "io_uring_setup") {
-    return "425";
-  }
-  if (name == "io_uring_enter") {
-    return "426";
-  }
-  if (name == "io_uring_register") {
-    return "427";
-  }
-  if (name == "prlimit64") {
-    return "302";
-  }
-  if (name == "sendmsg") {
-    return "46";
-  }
-  if (name == "recvmsg") {
-    return "47";
-  }
-  if (name == "signalfd4") {
-    return "289";
-  }
-  if (name == "rt_sigprocmask") {
-    return "14";
-  }
-  if (name == "wait4") {
-    return "61";
-  }
-  if (name == "socket") {
-    return "41";
-  }
-  if (name == "bind") {
-    return "49";
-  }
-  if (name == "listen") {
-    return "50";
-  }
-  if (name == "connect") {
-    return "42";
-  }
-  if (name == "setsockopt") {
-    return "54";
-  }
-  if (name == "shutdown") {
-    return "48";
-  }
-  if (name == "sendto") {
-    return "44";
-  }
-  if (name == "recvfrom") {
-    return "45";
-  }
-  if (name == "getsockname") {
-    return "51";
-  }
-  if (name == "getpeername") {
-    return "52";
-  }
-  if (name == "getsockopt") {
-    return "55";
-  }
-  if (name == "execve") {
-    return "59";
-  }
-  if (name == "fork") {
-    return "57";
-  }
-  if (name == "pipe2") {
-    return "293";
-  }
-  if (name == "dup3") {
-    return "292";
-  }
-  if (name == "splice") {
-    return "275";
-  }
-  if (name == "vmsplice") {
-    return "278";
-  }
-  if (name == "mmap") {
-    return "9";
-  }
-  if (name == "munmap") {
-    return "11";
-  }
-  if (name == "copy_file_range") {
-    return "326";
-  }
-  if (name == "sendfile") {
-    return "40";
-  }
-  if (name == "timerfd_create") {
-    return "283";
-  }
-  if (name == "timerfd_settime") {
-    return "286";
-  }
-  if (name == "ioctl") {
-    return "16";
-  }
-  if (name == "faccessat") {
-    return "439";
-  }
-  if (name == "geteuid") {
-    return "107";
-  }
-  if (name == "getegid") {
-    return "108";
-  }
-  if (name == "getuid") {
-    return "102";
-  }
-  if (name == "getgid") {
-    return "104";
-  }
-  if (name == "getgroups") {
-    return "115";
-  }
-  if (name == "uname") {
-    return "63";
-  }
-  if (name == "getcwd") {
-    return "79";
-  }
-  if (name == "sched_getaffinity") {
-    return "204";
-  }
-  if (name == "sigaction") {
-    return "13";
-  }
-  if (name == "sigprocmask") {
-    return "14";
-  }
-  if (name == "chdir") {
-    return "80";
-  }
-  if (name == "chroot") {
-    return "161";
-  }
-  if (name == "setuid") {
-    return "105";
-  }
-  if (name == "setgid") {
-    return "106";
-  }
-  if (name == "setgroups") {
-    return "116";
-  }
-  if (name == "linkat") {
-    return "265";
-  }
-  if (name == "symlinkat") {
-    return "266";
-  }
-  if (name == "readlinkat") {
-    return "267";
-  }
-  if (name == "renameat") {
-    return "264";
-  }
-  if (name == "renameat2") {
-    return "316";
-  }
-  if (name == "getxattr") {
-    return "191";
-  }
-  if (name == "lgetxattr") {
-    return "192";
-  }
-  if (name == "setxattr") {
-    return "188";
-  }
-  if (name == "lsetxattr") {
-    return "189";
-  }
-  if (name == "fchmodat") {
-    return "268";
-  }
-  if (name == "fchmodat2") {
-    return "452";
-  }
-  if (name == "truncate") {
-    return "76";
-  }
-  if (name == "ftruncate") {
-    return "77";
-  }
-  if (name == "fsync") {
-    return "74";
-  }
-  if (name == "fdatasync") {
-    return "75";
-  }
-  if (name == "fadvise64") {
-    return "221";
-  }
-  if (name == "sync") {
-    return "162";
-  }
-  if (name == "syncfs") {
-    return "306";
-  }
-  if (name == "mknodat") {
-    return "259";
-  }
-  if (name == "fchownat") {
-    return "260";
-  }
-  if (name == "utimensat") {
-    return "280";
-  }
-  if (name == "umask") {
-    return "95";
-  }
-  if (name == "getpriority") {
-    return "140";
-  }
-  if (name == "setpriority") {
-    return "141";
-  }
-  if (name == "kill") {
-    return "62";
-  }
-  if (name == "prctl") {
-    return "157";
-  }
-  if (name == "getppid") {
-    return "110";
-  }
-  if (name == "getpid") {
-    return "39";
-  }
-  if (name == "setpgid") {
-    return "109";
-  }
-  if (name == "getrlimit") {
-    return "97";
-  }
-  if (name == "setrlimit") {
-    return "160";
-  }
-  if (name == "statfs") {
-    return "137";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "0",
+    "write" => "1",
+    "writev" => "20",
+    "close" => "3",
+    "lseek" => "8",
+    "fstat" => "5",
+    "openat" => "257",
+    "fcntl" => "72",
+    "fchmod" => "91",
+    "unlinkat" => "263",
+    "mkdirat" => "258",
+    "fstatat" => "262",
+    "statx" => "332",
+    "getrandom" => "318",
+    "exit" => "60",
+    "clock_gettime" => "228",
+    "clock_settime" => "227",
+    "clock_getres" => "229",
+    "getdents" => "217",
+    "accept" => "43",
+    "nanosleep" => "35",
+    "poll" => "7",
+    "epoll_create1" => "291",
+    "epoll_ctl" => "233",
+    "epoll_pwait" => "281",
+    "io_uring_setup" => "425",
+    "io_uring_enter" => "426",
+    "io_uring_register" => "427",
+    "prlimit64" => "302",
+    "sendmsg" => "46",
+    "recvmsg" => "47",
+    "signalfd4" => "289",
+    "rt_sigprocmask" => "14",
+    "wait4" => "61",
+    "socket" => "41",
+    "bind" => "49",
+    "listen" => "50",
+    "connect" => "42",
+    "setsockopt" => "54",
+    "shutdown" => "48",
+    "sendto" => "44",
+    "recvfrom" => "45",
+    "getsockname" => "51",
+    "getpeername" => "52",
+    "getsockopt" => "55",
+    "execve" => "59",
+    "fork" => "57",
+    "pipe2" => "293",
+    "dup3" => "292",
+    "splice" => "275",
+    "vmsplice" => "278",
+    "mmap" => "9",
+    "munmap" => "11",
+    "copy_file_range" => "326",
+    "sendfile" => "40",
+    "timerfd_create" => "283",
+    "timerfd_settime" => "286",
+    "ioctl" => "16",
+    "faccessat" => "439",
+    "geteuid" => "107",
+    "getegid" => "108",
+    "getuid" => "102",
+    "getgid" => "104",
+    "getgroups" => "115",
+    "uname" => "63",
+    "getcwd" => "79",
+    "sched_getaffinity" => "204",
+    "sigaction" => "13",
+    "sigprocmask" => "14",
+    "chdir" => "80",
+    "chroot" => "161",
+    "setuid" => "105",
+    "setgid" => "106",
+    "setgroups" => "116",
+    "linkat" => "265",
+    "symlinkat" => "266",
+    "readlinkat" => "267",
+    "renameat" => "264",
+    "renameat2" => "316",
+    "getxattr" => "191",
+    "lgetxattr" => "192",
+    "setxattr" => "188",
+    "lsetxattr" => "189",
+    "fchmodat" => "268",
+    "fchmodat2" => "452",
+    "truncate" => "76",
+    "ftruncate" => "77",
+    "fsync" => "74",
+    "fdatasync" => "75",
+    "fadvise64" => "221",
+    "sync" => "162",
+    "syncfs" => "306",
+    "mknodat" => "259",
+    "fchownat" => "260",
+    "utimensat" => "280",
+    "umask" => "95",
+    "getpriority" => "140",
+    "setpriority" => "141",
+    "kill" => "62",
+    "prctl" => "157",
+    "getppid" => "110",
+    "getpid" => "39",
+    "setpgid" => "109",
+    "getrlimit" => "97",
+    "setrlimit" => "160",
+    "statfs" => "137",
+    _ => "-1",
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_arm64_darwin(name: string): string {
-  if (name == "read") {
-    return "3";
-  }
-  if (name == "write") {
-    return "4";
-  }
-  if (name == "writev") {
-    return "121";
-  }
-  if (name == "close") {
-    return "6";
-  }
-  if (name == "lseek") {
-    return "199";
-  }
-  if (name == "sendfile") {
-    return "337";
-  }
-  if (name == "fstat") {
-    return "339";
-  }
-  if (name == "openat") {
-    return "463";
-  }
-  if (name == "fcntl") {
-    return "92";
-  }
-  if (name == "fchmod") {
-    return "124";
-  }
-  if (name == "unlinkat") {
-    return "472";
-  }
-  if (name == "mkdirat") {
-    return "475";
-  }
-  if (name == "fstatat") {
-    return "470";
-  }
-  if (name == "getrandom") {
-    return "500";
-  }
-  if (name == "exit") {
-    return "1";
-  }
-  if (name == "gettimeofday") {
-    return "116";
-  }
-  if (name == "settimeofday") {
-    return "122";
-  }
-  if (name == "getdents") {
-    return "344";
-  }
-  if (name == "accept") {
-    return "30";
-  }
-  if (name == "select") {
-    return "93";
-  }
-  if (name == "kqueue") {
-    return "362";
-  }
-  if (name == "kevent") {
-    return "363";
-  }
-  if (name == "wait4") {
-    return "7";
-  }
-  if (name == "socket") {
-    return "97";
-  }
-  if (name == "bind") {
-    return "104";
-  }
-  if (name == "listen") {
-    return "106";
-  }
-  if (name == "connect") {
-    return "98";
-  }
-  if (name == "setsockopt") {
-    return "105";
-  }
-  if (name == "shutdown") {
-    return "134";
-  }
-  if (name == "sendto") {
-    return "133";
-  }
-  if (name == "recvfrom") {
-    return "29";
-  }
-  if (name == "getsockname") {
-    return "32";
-  }
-  if (name == "getpeername") {
-    return "31";
-  }
-  if (name == "getsockopt") {
-    return "118";
-  }
-  if (name == "execve") {
-    return "59";
-  }
-  if (name == "ioctl") {
-    return "54";
-  }
-  if (name == "faccessat") {
-    return "466";
-  }
-  if (name == "fchmodat") {
-    return "467";
-  }
-  if (name == "truncate") {
-    return "200";
-  }
-  if (name == "ftruncate") {
-    return "201";
-  }
-  if (name == "fsync") {
-    return "95";
-  }
-  if (name == "fdatasync") {
-    return "187";
-  }
-  if (name == "sync") {
-    return "36";
-  }
-  if (name == "dup3") {
-    return "90";
-  }
-  if (name == "mknodat") {
-    return "14";
-  }
-  if (name == "fchownat") {
-    return "468";
-  }
-  if (name == "setattrlist") {
-    return "221";
-  }
-  if (name == "renameat") {
-    return "465";
-  }
-  if (name == "renameat2") {
-    return "488";
-  }
-  if (name == "getxattr") {
-    return "234";
-  }
-  if (name == "lgetxattr") {
-    return "234";
-  }
-  if (name == "setxattr") {
-    return "236";
-  }
-  if (name == "lsetxattr") {
-    return "236";
-  }
-  if (name == "geteuid") {
-    return "25";
-  }
-  if (name == "getegid") {
-    return "43";
-  }
-  if (name == "getuid") {
-    return "24";
-  }
-  if (name == "getgid") {
-    return "47";
-  }
-  if (name == "getgroups") {
-    return "79";
-  }
-  if (name == "sigaction") {
-    return "46";
-  }
-  if (name == "sigprocmask") {
-    return "48";
-  }
-  if (name == "chdir") {
-    return "12";
-  }
-  if (name == "chroot") {
-    return "61";
-  }
-  if (name == "setuid") {
-    return "23";
-  }
-  if (name == "setgid") {
-    return "181";
-  }
-  if (name == "setgroups") {
-    return "80";
-  }
-  if (name == "linkat") {
-    return "471";
-  }
-  if (name == "symlinkat") {
-    return "474";
-  }
-  if (name == "readlinkat") {
-    return "473";
-  }
-  if (name == "umask") {
-    return "60";
-  }
-  if (name == "getpriority") {
-    return "100";
-  }
-  if (name == "setpriority") {
-    return "96";
-  }
-  if (name == "kill") {
-    return "37";
-  }
-  if (name == "getppid") {
-    return "39";
-  }
-  if (name == "getpid") {
-    return "20";
-  }
-  if (name == "setpgid") {
-    return "82";
-  }
-  if (name == "getrlimit") {
-    return "194";
-  }
-  if (name == "setrlimit") {
-    return "195";
-  }
-  if (name == "statfs") {
-    return "345";
-  }
-  if (name == "getfsstat") {
-    return "347";
-  }
-  if (name == "sysctl") {
-    return "202";
-  }
-  if (name == "pathconf") {
-    return "191";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "3",
+    "write" => "4",
+    "writev" => "121",
+    "close" => "6",
+    "lseek" => "199",
+    "sendfile" => "337",
+    "fstat" => "339",
+    "openat" => "463",
+    "fcntl" => "92",
+    "fchmod" => "124",
+    "unlinkat" => "472",
+    "mkdirat" => "475",
+    "fstatat" => "470",
+    "getrandom" => "500",
+    "exit" => "1",
+    "gettimeofday" => "116",
+    "settimeofday" => "122",
+    "getdents" => "344",
+    "accept" => "30",
+    "select" => "93",
+    "kqueue" => "362",
+    "kevent" => "363",
+    "wait4" => "7",
+    "socket" => "97",
+    "bind" => "104",
+    "listen" => "106",
+    "connect" => "98",
+    "setsockopt" => "105",
+    "shutdown" => "134",
+    "sendto" => "133",
+    "recvfrom" => "29",
+    "getsockname" => "32",
+    "getpeername" => "31",
+    "getsockopt" => "118",
+    "execve" => "59",
+    "ioctl" => "54",
+    "faccessat" => "466",
+    "fchmodat" => "467",
+    "truncate" => "200",
+    "ftruncate" => "201",
+    "fsync" => "95",
+    "fdatasync" => "187",
+    "sync" => "36",
+    "dup3" => "90",
+    "mknodat" => "14",
+    "fchownat" => "468",
+    "setattrlist" => "221",
+    "renameat" => "465",
+    "renameat2" => "488",
+    "getxattr" => "234",
+    "lgetxattr" => "234",
+    "setxattr" => "236",
+    "lsetxattr" => "236",
+    "geteuid" => "25",
+    "getegid" => "43",
+    "getuid" => "24",
+    "getgid" => "47",
+    "getgroups" => "79",
+    "sigaction" => "46",
+    "sigprocmask" => "48",
+    "chdir" => "12",
+    "chroot" => "61",
+    "setuid" => "23",
+    "setgid" => "181",
+    "setgroups" => "80",
+    "linkat" => "471",
+    "symlinkat" => "474",
+    "readlinkat" => "473",
+    "umask" => "60",
+    "getpriority" => "100",
+    "setpriority" => "96",
+    "kill" => "37",
+    "getppid" => "39",
+    "getpid" => "20",
+    "setpgid" => "82",
+    "getrlimit" => "194",
+    "setrlimit" => "195",
+    "statfs" => "345",
+    "getfsstat" => "347",
+    "sysctl" => "202",
+    "pathconf" => "191",
+    _ => "-1",
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_arm64_linux(name: string): string {
-  if (name == "read") {
-    return "63";
-  }
-  if (name == "write") {
-    return "64";
-  }
-  if (name == "writev") {
-    return "66";
-  }
-  if (name == "close") {
-    return "57";
-  }
-  if (name == "lseek") {
-    return "62";
-  }
-  if (name == "fstat") {
-    return "80";
-  }
-  if (name == "openat") {
-    return "56";
-  }
-  if (name == "fcntl") {
-    return "25";
-  }
-  if (name == "fchmod") {
-    return "52";
-  }
-  if (name == "unlinkat") {
-    return "35";
-  }
-  if (name == "mkdirat") {
-    return "34";
-  }
-  if (name == "fstatat") {
-    return "79";
-  }
-  if (name == "statx") {
-    return "291";
-  }
-  if (name == "getrandom") {
-    return "278";
-  }
-  if (name == "exit") {
-    return "93";
-  }
-  if (name == "clock_gettime") {
-    return "113";
-  }
-  if (name == "clock_settime") {
-    return "112";
-  }
-  if (name == "clock_getres") {
-    return "114";
-  }
-  if (name == "getdents") {
-    return "61";
-  }
-  if (name == "accept") {
-    return "202";
-  }
-  if (name == "nanosleep") {
-    return "101";
-  }
-  if (name == "ppoll") {
-    return "73";
-  }
-  if (name == "epoll_create1") {
-    return "20";
-  }
-  if (name == "epoll_ctl") {
-    return "21";
-  }
-  if (name == "epoll_pwait") {
-    return "22";
-  }
-  if (name == "io_uring_setup") {
-    return "425";
-  }
-  if (name == "io_uring_enter") {
-    return "426";
-  }
-  if (name == "io_uring_register") {
-    return "427";
-  }
-  if (name == "prlimit64") {
-    return "261";
-  }
-  if (name == "sendmsg") {
-    return "211";
-  }
-  if (name == "recvmsg") {
-    return "212";
-  }
-  if (name == "signalfd4") {
-    return "74";
-  }
-  if (name == "rt_sigprocmask") {
-    return "135";
-  }
-  if (name == "wait4") {
-    return "260";
-  }
-  if (name == "socket") {
-    return "198";
-  }
-  if (name == "bind") {
-    return "200";
-  }
-  if (name == "listen") {
-    return "201";
-  }
-  if (name == "connect") {
-    return "203";
-  }
-  if (name == "setsockopt") {
-    return "208";
-  }
-  if (name == "shutdown") {
-    return "210";
-  }
-  if (name == "sendto") {
-    return "206";
-  }
-  if (name == "recvfrom") {
-    return "207";
-  }
-  if (name == "getsockname") {
-    return "204";
-  }
-  if (name == "getpeername") {
-    return "205";
-  }
-  if (name == "getsockopt") {
-    return "209";
-  }
-  if (name == "execve") {
-    return "221";
-  }
-  if (name == "clone") {
-    return "220";
-  }
-  if (name == "pipe2") {
-    return "59";
-  }
-  if (name == "dup3") {
-    return "24";
-  }
-  if (name == "splice") {
-    return "76";
-  }
-  if (name == "vmsplice") {
-    return "75";
-  }
-  if (name == "mmap") {
-    return "222";
-  }
-  if (name == "munmap") {
-    return "215";
-  }
-  if (name == "copy_file_range") {
-    return "285";
-  }
-  if (name == "sendfile") {
-    return "71";
-  }
-  if (name == "timerfd_create") {
-    return "85";
-  }
-  if (name == "timerfd_settime") {
-    return "86";
-  }
-  if (name == "ioctl") {
-    return "29";
-  }
-  if (name == "faccessat") {
-    return "439";
-  }
-  if (name == "fchmodat") {
-    return "53";
-  }
-  if (name == "fchmodat2") {
-    return "452";
-  }
-  if (name == "truncate") {
-    return "45";
-  }
-  if (name == "ftruncate") {
-    return "46";
-  }
-  if (name == "fsync") {
-    return "82";
-  }
-  if (name == "fdatasync") {
-    return "83";
-  }
-  if (name == "fadvise64") {
-    return "223";
-  }
-  if (name == "sync") {
-    return "81";
-  }
-  if (name == "syncfs") {
-    return "267";
-  }
-  if (name == "mknodat") {
-    return "33";
-  }
-  if (name == "fchownat") {
-    return "54";
-  }
-  if (name == "renameat") {
-    return "38";
-  }
-  if (name == "renameat2") {
-    return "276";
-  }
-  if (name == "getxattr") {
-    return "8";
-  }
-  if (name == "lgetxattr") {
-    return "9";
-  }
-  if (name == "setxattr") {
-    return "5";
-  }
-  if (name == "lsetxattr") {
-    return "6";
-  }
-  if (name == "utimensat") {
-    return "88";
-  }
-  if (name == "geteuid") {
-    return "175";
-  }
-  if (name == "getegid") {
-    return "177";
-  }
-  if (name == "getuid") {
-    return "174";
-  }
-  if (name == "getgid") {
-    return "176";
-  }
-  if (name == "getgroups") {
-    return "158";
-  }
-  if (name == "linkat") {
-    return "37";
-  }
-  if (name == "symlinkat") {
-    return "36";
-  }
-  if (name == "readlinkat") {
-    return "78";
-  }
-  if (name == "umask") {
-    return "166";
-  }
-  if (name == "setpriority") {
-    return "140";
-  }
-  if (name == "getpriority") {
-    return "141";
-  }
-  if (name == "kill") {
-    return "129";
-  }
-  if (name == "prctl") {
-    return "167";
-  }
-  if (name == "getppid") {
-    return "173";
-  }
-  if (name == "getpid") {
-    return "172";
-  }
-  if (name == "setpgid") {
-    return "154";
-  }
-  if (name == "getrlimit") {
-    return "163";
-  }
-  if (name == "setrlimit") {
-    return "164";
-  }
-  if (name == "statfs") {
-    return "43";
-  }
-  if (name == "uname") {
-    return "160";
-  }
-  if (name == "getcwd") {
-    return "17";
-  }
-  if (name == "sched_getaffinity") {
-    return "123";
-  }
-  if (name == "sigaction") {
-    return "134";
-  }
-  if (name == "sigprocmask") {
-    return "135";
-  }
-  if (name == "chdir") {
-    return "49";
-  }
-  if (name == "chroot") {
-    return "51";
-  }
-  if (name == "setuid") {
-    return "146";
-  }
-  if (name == "setgid") {
-    return "144";
-  }
-  if (name == "setgroups") {
-    return "159";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "63",
+    "write" => "64",
+    "writev" => "66",
+    "close" => "57",
+    "lseek" => "62",
+    "fstat" => "80",
+    "openat" => "56",
+    "fcntl" => "25",
+    "fchmod" => "52",
+    "unlinkat" => "35",
+    "mkdirat" => "34",
+    "fstatat" => "79",
+    "statx" => "291",
+    "getrandom" => "278",
+    "exit" => "93",
+    "clock_gettime" => "113",
+    "clock_settime" => "112",
+    "clock_getres" => "114",
+    "getdents" => "61",
+    "accept" => "202",
+    "nanosleep" => "101",
+    "ppoll" => "73",
+    "epoll_create1" => "20",
+    "epoll_ctl" => "21",
+    "epoll_pwait" => "22",
+    "io_uring_setup" => "425",
+    "io_uring_enter" => "426",
+    "io_uring_register" => "427",
+    "prlimit64" => "261",
+    "sendmsg" => "211",
+    "recvmsg" => "212",
+    "signalfd4" => "74",
+    "rt_sigprocmask" => "135",
+    "wait4" => "260",
+    "socket" => "198",
+    "bind" => "200",
+    "listen" => "201",
+    "connect" => "203",
+    "setsockopt" => "208",
+    "shutdown" => "210",
+    "sendto" => "206",
+    "recvfrom" => "207",
+    "getsockname" => "204",
+    "getpeername" => "205",
+    "getsockopt" => "209",
+    "execve" => "221",
+    "clone" => "220",
+    "pipe2" => "59",
+    "dup3" => "24",
+    "splice" => "76",
+    "vmsplice" => "75",
+    "mmap" => "222",
+    "munmap" => "215",
+    "copy_file_range" => "285",
+    "sendfile" => "71",
+    "timerfd_create" => "85",
+    "timerfd_settime" => "86",
+    "ioctl" => "29",
+    "faccessat" => "439",
+    "fchmodat" => "53",
+    "fchmodat2" => "452",
+    "truncate" => "45",
+    "ftruncate" => "46",
+    "fsync" => "82",
+    "fdatasync" => "83",
+    "fadvise64" => "223",
+    "sync" => "81",
+    "syncfs" => "267",
+    "mknodat" => "33",
+    "fchownat" => "54",
+    "renameat" => "38",
+    "renameat2" => "276",
+    "getxattr" => "8",
+    "lgetxattr" => "9",
+    "setxattr" => "5",
+    "lsetxattr" => "6",
+    "utimensat" => "88",
+    "geteuid" => "175",
+    "getegid" => "177",
+    "getuid" => "174",
+    "getgid" => "176",
+    "getgroups" => "158",
+    "linkat" => "37",
+    "symlinkat" => "36",
+    "readlinkat" => "78",
+    "umask" => "166",
+    "setpriority" => "140",
+    "getpriority" => "141",
+    "kill" => "129",
+    "prctl" => "167",
+    "getppid" => "173",
+    "getpid" => "172",
+    "setpgid" => "154",
+    "getrlimit" => "163",
+    "setrlimit" => "164",
+    "statfs" => "43",
+    "uname" => "160",
+    "getcwd" => "17",
+    "sched_getaffinity" => "123",
+    "sigaction" => "134",
+    "sigprocmask" => "135",
+    "chdir" => "49",
+    "chroot" => "51",
+    "setuid" => "146",
+    "setgid" => "144",
+    "setgroups" => "159",
+    _ => "-1",
+  };
 }
 
 pub function at_eaccess(t: string): string {
@@ -2015,61 +1419,27 @@ pub function statoff(t: string, name: string): string {
 }
 
 function statoff_darwin(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "mode") {
-    return "4";
-  }
-  if (name == "nlink") {
-    return "6";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "uid") {
-    return "16";
-  }
-  if (name == "gid") {
-    return "20";
-  }
-  if (name == "rdev") {
-    return "24";
-  }
-  if (name == "atime") {
-    return "32";
-  }
-  if (name == "atime_nsec") {
-    return "40";
-  }
-  if (name == "mtime") {
-    return "48";
-  }
-  if (name == "mtime_nsec") {
-    return "56";
-  }
-  if (name == "ctime") {
-    return "64";
-  }
-  if (name == "ctime_nsec") {
-    return "72";
-  }
-  if (name == "btime") {
-    return "80";
-  }
-  if (name == "btime_nsec") {
-    return "88";
-  }
-  if (name == "size") {
-    return "96";
-  }
-  if (name == "blocks") {
-    return "104";
-  }
-  if (name == "blksize") {
-    return "112";
-  }
-  return "0";
+  return match (name) {
+    "dev" => "0",
+    "mode" => "4",
+    "nlink" => "6",
+    "ino" => "8",
+    "uid" => "16",
+    "gid" => "20",
+    "rdev" => "24",
+    "atime" => "32",
+    "atime_nsec" => "40",
+    "mtime" => "48",
+    "mtime_nsec" => "56",
+    "ctime" => "64",
+    "ctime_nsec" => "72",
+    "btime" => "80",
+    "btime_nsec" => "88",
+    "size" => "96",
+    "blocks" => "104",
+    "blksize" => "112",
+    _ => "0",
+  };
 }
 
 pub function statkind(t: string, name: string): string {
@@ -2108,156 +1478,68 @@ function unknown_rt_key(t: string): void {
 }
 
 function oflag_darwin(name: string): string {
-  if (name == "slash_write") {
-    return "515";
-  }
-  if (name == "append") {
-    return "8";
-  }
-  if (name == "wr_creat_trunc") {
-    return "1537";
-  }
-  if (name == "wr_creat_append") {
-    return "521";
-  }
-  if (name == "wr_creat_excl") {
-    return "2561";
-  }
-  if (name == "rd_directory") {
-    return "1048576";
-  }
-  if (name == "creat") {
-    return "512";
-  }
-  if (name == "nonblock") {
-    return "4";
-  }
-  if (name == "excl") {
-    return "2048";
-  }
-  if (name == "directory") {
-    return "1048576";
-  }
-  if (name == "dsync") {
-    return "4194304";
-  }
-  if (name == "sync") {
-    return "128";
-  }
-  if (name == "noctty") {
-    return "131072";
-  }
-  if (name == "nofollow") {
-    return "256";
-  }
-  if (name == "cloexec") {
-    return "16777216";
-  }
-  return "0";
+  return match (name) {
+    "slash_write" => "515",
+    "append" => "8",
+    "wr_creat_trunc" => "1537",
+    "wr_creat_append" => "521",
+    "wr_creat_excl" => "2561",
+    "rd_directory" => "1048576",
+    "creat" => "512",
+    "nonblock" => "4",
+    "excl" => "2048",
+    "directory" => "1048576",
+    "dsync" => "4194304",
+    "sync" => "128",
+    "noctty" => "131072",
+    "nofollow" => "256",
+    "cloexec" => "16777216",
+    _ => "0",
+  };
 }
 
 function oflag_x86_64(name: string): string {
-  if (name == "append") {
-    return "1024";
-  }
-  if (name == "wr_creat_trunc") {
-    return "577";
-  }
-  if (name == "wr_creat_append") {
-    return "1089";
-  }
-  if (name == "wr_creat_excl") {
-    return "193";
-  }
-  if (name == "rd_directory") {
-    return "65536";
-  }
-  if (name == "creat") {
-    return "64";
-  }
-  if (name == "nonblock") {
-    return "2048";
-  }
-  if (name == "excl") {
-    return "128";
-  }
-  if (name == "direct") {
-    return "16384";
-  }
-  if (name == "directory") {
-    return "65536";
-  }
-  if (name == "dsync") {
-    return "4096";
-  }
-  if (name == "sync") {
-    return "1052672";
-  }
-  if (name == "noatime") {
-    return "262144";
-  }
-  if (name == "noctty") {
-    return "256";
-  }
-  if (name == "nofollow") {
-    return "131072";
-  }
-  if (name == "cloexec") {
-    return "524288";
-  }
-  return "0";
+  return match (name) {
+    "append" => "1024",
+    "wr_creat_trunc" => "577",
+    "wr_creat_append" => "1089",
+    "wr_creat_excl" => "193",
+    "rd_directory" => "65536",
+    "creat" => "64",
+    "nonblock" => "2048",
+    "excl" => "128",
+    "direct" => "16384",
+    "directory" => "65536",
+    "dsync" => "4096",
+    "sync" => "1052672",
+    "noatime" => "262144",
+    "noctty" => "256",
+    "nofollow" => "131072",
+    "cloexec" => "524288",
+    _ => "0",
+  };
 }
 
 function oflag_arm64(name: string): string {
-  if (name == "append") {
-    return "1024";
-  }
-  if (name == "wr_creat_trunc") {
-    return "577";
-  }
-  if (name == "wr_creat_append") {
-    return "1089";
-  }
-  if (name == "wr_creat_excl") {
-    return "193";
-  }
-  if (name == "rd_directory") {
-    return "16384";
-  }
-  if (name == "creat") {
-    return "64";
-  }
-  if (name == "nonblock") {
-    return "2048";
-  }
-  if (name == "excl") {
-    return "128";
-  }
-  if (name == "direct") {
-    return "65536";
-  }
-  if (name == "directory") {
-    return "16384";
-  }
-  if (name == "dsync") {
-    return "4096";
-  }
-  if (name == "sync") {
-    return "1052672";
-  }
-  if (name == "noatime") {
-    return "262144";
-  }
-  if (name == "noctty") {
-    return "256";
-  }
-  if (name == "nofollow") {
-    return "32768";
-  }
-  if (name == "cloexec") {
-    return "524288";
-  }
-  return "0";
+  return match (name) {
+    "append" => "1024",
+    "wr_creat_trunc" => "577",
+    "wr_creat_append" => "1089",
+    "wr_creat_excl" => "193",
+    "rd_directory" => "16384",
+    "creat" => "64",
+    "nonblock" => "2048",
+    "excl" => "128",
+    "direct" => "65536",
+    "directory" => "16384",
+    "dsync" => "4096",
+    "sync" => "1052672",
+    "noatime" => "262144",
+    "noctty" => "256",
+    "nofollow" => "32768",
+    "cloexec" => "524288",
+    _ => "0",
+  };
 }
 
 pub function atflag(t: string, name: string): string {
@@ -2457,93 +1739,47 @@ pub function statfsoff(t: string, name: string): string {
 }
 
 function statfsoff_linux(name: string): string {
-  if (name == "block_size") {
-    return "8";
-  }
-  if (name == "blocks") {
-    return "16";
-  }
-  if (name == "blocks_free") {
-    return "24";
-  }
-  if (name == "blocks_avail") {
-    return "32";
-  }
-  if (name == "files") {
-    return "40";
-  }
-  if (name == "files_free") {
-    return "48";
-  }
-  if (name == "name_max") {
-    return "64";
-  }
-  if (name == "fsid") {
-    return "56";
-  }
-  if (name == "frag_size") {
-    return "72";
-  }
-  return "0";
+  return match (name) {
+    "block_size" => "8",
+    "blocks" => "16",
+    "blocks_free" => "24",
+    "blocks_avail" => "32",
+    "files" => "40",
+    "files_free" => "48",
+    "name_max" => "64",
+    "fsid" => "56",
+    "frag_size" => "72",
+    _ => "0",
+  };
 }
 
 function statfsoff_darwin(name: string): string {
-  if (name == "block_size") {
-    return "0";
-  }
-  if (name == "blocks") {
-    return "8";
-  }
-  if (name == "blocks_free") {
-    return "16";
-  }
-  if (name == "blocks_avail") {
-    return "24";
-  }
-  if (name == "files") {
-    return "32";
-  }
-  if (name == "files_free") {
-    return "40";
-  }
-  if (name == "fsid") {
-    return "48";
-  }
-  if (name == "fs_type") {
-    return "60";
-  }
-  if (name == "fs_type_name") {
-    return "72";
-  }
-  return "0";
+  return match (name) {
+    "block_size" => "0",
+    "blocks" => "8",
+    "blocks_free" => "16",
+    "blocks_avail" => "24",
+    "files" => "32",
+    "files_free" => "40",
+    "fsid" => "48",
+    "fs_type" => "60",
+    "fs_type_name" => "72",
+    _ => "0",
+  };
 }
 
 pub function (s: EmitState) need_array_helper(name: string): EmitState {
-  if (name == "__fern_bytes_append_range") {
-    return s.need("byte_append");
-  }
-  if (name == "__fern_bytes_write_range") {
-    return s.need("byte_write");
-  }
-  if (name == "__fern_bytes_append_back") {
-    return s.need("byte_back");
-  }
-  if (name == "__fern_arr_str_join") {
-    return s.need("arr_str_join");
-  }
-  if (name == "__fern_arr_concat") {
-    return s.need("arr_concat");
-  }
-  if (name == "__fern_bytes_owned") {
-    return s.need("bytes_owned");
-  }
-  if (name == "__fern_bytes_range") {
-    return s.need("bytes_range");
-  }
-  if (name == "__fern_bytes_into") {
-    return s.need("bytes_into");
-  }
-  return s;
+  return match (name) {
+    "__fern_bytes_append_range" => s.need("byte_append"),
+    "__fern_bytes_write_range" => s.need("byte_write"),
+    "__fern_bytes_append_back" => s.need("byte_back"),
+    "__fern_arr_str_join" => s.need("arr_str_join"),
+    "__fern_arr_concat" => s.need("arr_concat"),
+    "__fern_bytes_owned" => s.need("bytes_owned"),
+    "__fern_bytes_range" => s.need("bytes_range"),
+    "__fern_bytes_into" => s.need("bytes_into"),
+    _ => s,
+  };
 }
 
 function array_helper_need(name: string): boolean {
@@ -2651,8 +1887,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
             return ty_i32();
           }
           if (!ty_is_unknown(rcv)) {
-            let fi = 0;
-            while (fi < s.funcs.len()) {
+            for fi in 0..s.funcs.len() {
               if (s.funcs[fi].name == fa.field && ty_eq(struct_local_tag(s.funcs[fi].receiver_type, s), rcv)) {
                 let rt = s.funcs[fi].ret_type;
                 if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
@@ -2664,7 +1899,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                 }
                 return ty_unknown();
               }
-              fi += 1;
             }
           }
           return ty_unknown();
@@ -2715,24 +1949,20 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
   let di = irtables.stab_first(s.struct_decls, struct_name);
   if (di >= 0) {
     let sd = s.struct_decls.decls[di];
-    let fi = 0;
-    while (fi < sd.fields.len()) {
+    for fi in 0..sd.fields.len() {
       if (sd.fields[fi].name == field) {
         return struct_local_tag(sd.fields[fi].type_name, s);
       }
-      fi += 1;
     }
   }
   return ty_unknown();
 }
 
 pub function struct_local_tag(type_name: string, s: EmitState): Ty {
-  let bi = 0;
-  while (bi < type_name.len()) {
+  for bi in 0..type_name.len() {
     if (type_name[bi] == b'[') {
       return ty_from_name(type_name);
     }
-    bi += 1;
   }
   if (is_struct_decl_name(type_name, s)) {
     return ty_named(type_name);
@@ -3581,10 +2811,8 @@ pub function split_tuple_ret(tt: string): TwoTags {
     return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_ref(t.args[1]) };
   }
   let rest = parser.render_type_ref(t.args[1]);
-  let k = 2;
-  while (k < t.args.len()) {
+  for k in 2..t.args.len() {
     rest = rest + ", " + parser.render_type_ref(t.args[k]);
-    k += 1;
   }
   return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_name(rest) };
 }
@@ -4435,12 +3663,10 @@ pub function (s: EmitState) reset_locals(): EmitState {
 }
 
 pub function (s: EmitState) has_local(name: string): boolean {
-  let i = 0;
-  while (i < s.local_names.len()) {
+  for i in 0..s.local_names.len() {
     if (s.local_names[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4569,15 +3795,13 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   s = shp.state;
   let text = shp.label + "|";
   let vals = ir.const_struct_values(packed);
-  let i = 0;
-  while (i < vals.len()) {
+  for i in 0..vals.len() {
     if (i > 0) {
       text += ",";
     }
     let w = const_agg_word(s, vals[i], entry);
     s = w.state;
     text += w.text;
-    i += 1;
   }
   return ConstAggPack { state: s, text: text };
 }
@@ -4649,12 +3873,10 @@ pub function (s: EmitState) need(name: string): EmitState {
   let cur = EmitState { ...s, needed: s.needed.append(name) };
   while (i < cur.needed.len()) {
     let deps = runtime_need_deps(cur.needed[i]);
-    let j = 0;
-    while (j < deps.len()) {
+    for j in 0..deps.len() {
       if (!cur.holds(deps[j])) {
         cur = EmitState { ...cur, needed: cur.needed.append(deps[j]) };
       }
-      j += 1;
     }
     i += 1;
   }
@@ -4762,12 +3984,10 @@ function direct_need_deps(name: string): string[] {
 }
 
 function (s: EmitState) holds(name: string): boolean {
-  let i = 0;
-  while (i < s.needed.len()) {
+  for i in 0..s.needed.len() {
     if (s.needed[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4787,23 +4007,19 @@ pub function (s: EmitState) has_need(name: string): boolean {
 pub function settles(t: EmitState, before: i32, missed: usize): boolean {
   let names = "\n" + buf_take(missed);
   buf_free(missed);
-  let i = before;
-  while (i < t.needed.len()) {
+  for i in before..t.needed.len() {
     if (util.contains(names, "\n" + t.needed[i] + "\n")) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 pub function (s: EmitState) any_need(names: string[]): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (s.has_need(names[i])) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4834,8 +4050,7 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
   let lo = 0;
   let span: i32 = -1;
   let run = 0;
-  let b = 0;
-  while (b < 256) {
+  for b in 0..256 {
     if (members[b] == mark) {
       marked = marked.append(b);
       run += 1;
@@ -4846,7 +4061,6 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
     } else {
       run = 0;
     }
-    b += 1;
   }
   let n = marked.len();
   let nibble = ScanShape { nibble: true, invert: false, range: false, bytes: [] };
@@ -4875,10 +4089,8 @@ pub function utf8_tables(label: string): string {
   o += "    .byte 1, 1, 1, 1, 1, 1, 1, 1, 230, 174, 186, 186, 1, 1, 1, 1\n";
   for c in [15, 96, 112, 128] {
     let r = "    .byte " + util.i32_to_string(c);
-    let k = 1;
-    while (k < 16) {
+    for k in 1..16 {
       r = r + ", " + util.i32_to_string(c);
-      k += 1;
     }
     o = o + r + "\n";
   }
@@ -4887,22 +4099,16 @@ pub function utf8_tables(label: string): string {
 
 pub function scan_set_tables(members: string): string {
   let out: u8[] = [];
-  let half = 0;
-  while (half < 2) {
-    let lo = 0;
-    while (lo < 16) {
+  for half in 0..2 {
+    for lo in 0..16 {
       let bits = 0;
-      let h = 0;
-      while (h < 8) {
+      for h in 0..8 {
         if (members[(half * 8 + h) * 16 + lo] == b'1') {
           bits = bits | 1 << h;
         }
-        h += 1;
       }
       out = out.append(bits as u8);
-      lo += 1;
     }
-    half += 1;
   }
   let k = 0;
   while (k < 16) {
@@ -4916,14 +4122,12 @@ pub function scan_set_tables(members: string): string {
       k += 1;
     }
   }
-  k = 0;
-  while (k < 256) {
+  for k in 0..256 {
     if (members[k] == b'1') {
       out = out.append(1 as u8);
     } else {
       out = out.append(0 as u8);
     }
-    k += 1;
   }
   for c in scan_set_shape(members).bytes {
     out = out.append(c as u8);
@@ -4935,8 +4139,7 @@ pub function scan_set_tables(members: string): string {
 
 pub function escape_for_ascii(s: string): string {
   let out: u8[] = [];
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
@@ -4964,7 +4167,6 @@ pub function escape_for_ascii(s: string): string {
     } else {
       out = out.append(s[i] as u8);
     }
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(out);
@@ -5014,7 +4216,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     bound_modules: [], is_unsafe: false,
     stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
-    params: [], ret_type: "i32", body: body, line: 0, col: 0,
+    params: [], ret_own: false, ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", import_weak: false, all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
@@ -5062,13 +4264,13 @@ pub function assignable(want: Ty, got: Ty): boolean {
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
   let lex = kind;
   if (lex.starts_with("stmt: ")) {
-    lex = slice_unchecked(lex, 6, lex.len()) + "";
+    lex = slice_unchecked(lex, 6, lex.len()).to_owned();
   }
   if (lex.starts_with("lex:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8).to_owned(), message: slice_unchecked(lex, 9, lex.len()).to_owned(), line: line, col: col, fix: None };
   }
   if (lex.starts_with("code:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9) + "", message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9).to_owned(), message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
   }
   if (util.is_f64_range_kind(kind)) {
     return util.Diag { related: [], length: 0, code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
@@ -5089,7 +4291,7 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
 function sentinel_message(kind: string): string {
   let k = kind;
   if (k.starts_with("stmt: ")) {
-    k = slice_unchecked(k, 6, k.len()) + "";
+    k = slice_unchecked(k, 6, k.len()).to_owned();
   }
   if (k.starts_with("punct:")) {
     return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
@@ -5098,84 +4300,46 @@ function sentinel_message(kind: string): string {
     return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
   }
   if (k.starts_with("missing ")) {
-    return missing_message(slice_unchecked(k, 8, k.len()) + "");
+    return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
   }
-  if (k == "eof") {
-    return "expected an expression, got the end of the file";
-  }
-  if (k == "primary") {
-    return "expected an expression";
-  }
-  if (k == "lambda: bad destructuring param") {
-    return "expected a parameter name or a destructuring pattern";
-  }
-  if (k == "bad tuple pattern") {
-    return "expected a tuple pattern";
-  }
-  return k;
+  return match (k) {
+    "eof" => "expected an expression, got the end of the file",
+    "primary" => "expected an expression",
+    "lambda: bad destructuring param" => "expected a parameter name or a destructuring pattern",
+    "bad tuple pattern" => "expected a tuple pattern",
+    _ => k,
+  };
 }
 
 function missing_message(what: string): string {
-  if (what == "= in let") {
-    return "expected \"=\" after the name in this declaration";
-  }
-  if (what == "`in` in for") {
-    return "expected \"in\" after the `for` pattern";
-  }
-  if (what == "for-let name") {
-    return "expected a name after \"let\" in this `for` loop";
-  }
-  if (what == "binding name") {
-    return "expected a name to bind";
-  }
-  if (what == "statement in braceless body") {
-    return "expected a statement";
-  }
-  if (what == "{ in block") {
-    return "expected \"{\" to open a block";
-  }
-  if (what == "{ in lambda body") {
-    return "expected \"{\" to open the lambda body";
-  }
-  if (what == "{ in branch body") {
-    return "expected \"{\" to open the branch body";
-  }
-  if (what == "field name in struct lit") {
-    return "expected a field name in this struct literal";
-  }
-  if (what == ": in struct lit") {
-    return "expected \":\" after the field name in this struct literal";
-  }
-  if (what == "} in struct lit") {
-    return "expected \"}\" to close this struct literal";
-  }
-  if (what == "} in struct update") {
-    return "expected \"}\" to close this struct update";
-  }
-  if (what == ") in call") {
-    return "expected \")\" to close this call";
-  }
-  if (what == "] in slice") {
-    return "expected \"]\" to close this slice";
-  }
-  if (what == "] in index") {
-    return "expected \"]\" to close this index";
-  }
-  if (what == "] in array literal") {
-    return "expected \"]\" to close this array literal";
-  }
-  if (what == "field name after .") {
-    return "expected a field or method name after \".\"";
-  }
-  return "expected " + what;
+  return match (what) {
+    "= in let" => "expected \"=\" after the name in this declaration",
+    "`in` in for" => "expected \"in\" after the `for` pattern",
+    "for-let name" => "expected a name after \"let\" in this `for` loop",
+    "binding name" => "expected a name to bind",
+    "statement in braceless body" => "expected a statement",
+    "{ in block" => "expected \"{\" to open a block",
+    "{ in lambda body" => "expected \"{\" to open the lambda body",
+    "{ in branch body" => "expected \"{\" to open the branch body",
+    "field name in struct lit" => "expected a field name in this struct literal",
+    ": in struct lit" => "expected \":\" after the field name in this struct literal",
+    "} in struct lit" => "expected \"}\" to close this struct literal",
+    "} in struct update" => "expected \"}\" to close this struct update",
+    ") in call" => "expected \")\" to close this call",
+    "] in slice" => "expected \"]\" to close this slice",
+    "] in index" => "expected \"]\" to close this index",
+    "] in array literal" => "expected \"]\" to close this array literal",
+    "field name after ." => "expected a field or method name after \".\"",
+    _ => "expected " + what,
+  };
 }
 
 function decl_sentinel_text(kind: string): string {
   if (kind.starts_with("decl:")) {
-    return slice_unchecked(kind, 5, kind.len()) + "";
+    return slice_unchecked(kind, 5, kind.len()).to_owned();
   }
   if (kind.starts_with("stmt: decl:")) {
-    return slice_unchecked(kind, 11, kind.len()) + "";
+    return slice_unchecked(kind, 11, kind.len()).to_owned();
   }
   return "";
 }
@@ -5307,8 +4471,7 @@ function unknown_errors_expr(e: ast.Expr, where: string, errs: util.Diag[]): uti
 
 pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let where = "in fn '" + mod.funcs[fi].name + "'";
     if (mod.funcs[fi].name.len() == 0) {
       where = "in malformed function declaration";
@@ -5321,7 +4484,6 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
       pi += 1;
     }
     errs = unknown_errors_stmts(mod.funcs[fi].body, where, errs);
-    fi += 1;
   }
   return unknown_errors_stmts(mod.top_stmts, "at top level", errs);
 }
@@ -5334,12 +4496,10 @@ function display_named(label: string): boolean {
   if (label.len() == 0) {
     return false;
   }
-  let i = 0;
-  while (i < label.len()) {
+  for i in 0..label.len() {
     if (!lexer.is_alphanumeric(label[i] as i32)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -5393,23 +4553,17 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
 
 pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] {
   let out: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let ctx = DisplayCtx { st: s, fname: fd.name, diags: [] };
-    let si = 0;
-    while (si < fd.body.len()) {
+    for si in 0..fd.body.len() {
       ctx = astwalk.fold_stmt(fd.body[si], ctx, display_fold);
-      si += 1;
     }
     out = util.append_diags(out, ctx.diags);
-    fi += 1;
   }
   let tctx = DisplayCtx { st: s, fname: "main", diags: [] };
-  let ti = 0;
-  while (ti < mod.top_stmts.len()) {
+  for ti in 0..mod.top_stmts.len() {
     tctx = astwalk.fold_stmt(mod.top_stmts[ti], tctx, display_fold);
-    ti += 1;
   }
   return util.append_diags(out, tctx.diags);
 }
@@ -5523,8 +4677,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return check_stmts(fo.body, want, fname, ctx);
     },
     ast.StmtMatch(m) => {
-      let ai = 0;
-      while (ai < m.arms.len()) {
+      for ai in 0..m.arms.len() {
         let actx = ctx;
         match (m.arms[ai].pattern) {
           ast.PatLiteral(literal) => {
@@ -5556,7 +4709,6 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
         }
         actx = check_stmts(m.arms[ai].body, want, fname, actx);
         ctx = CheckCtx { st: ctx.st, diags: actx.diags };
-        ai += 1;
       }
       return ctx;
     },
@@ -5571,8 +4723,8 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
   let owner = "";
   let dot = util.index_of_sub(name, ".");
   if (dot >= 0) {
-    owner = slice_unchecked(name, 0, dot) + "";
-    name = slice_unchecked(name, dot + 1, name.len()) + "";
+    owner = slice_unchecked(name, 0, dot).to_owned();
+    name = slice_unchecked(name, dot + 1, name.len()).to_owned();
   }
   let di: i32 = -1;
   if (owner.len() > 0) {
@@ -5607,23 +4759,19 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
     }
     return out;
   }
-  let k = 0;
-  while (k < names.len()) {
+  for k in 0..names.len() {
     if (names.len() == sd.fields.len()) {
       out = out.bind_local_typed(names[k], struct_local_tag(sd.fields[k].type_name, st));
     } else {
       out = out.bind_local_typed(names[k], ty_unknown());
     }
-    k += 1;
   }
   return out;
 }
 
 pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     ctx = check_stmt(stmts[i], want, fname, ctx);
-    i += 1;
   }
   return ctx;
 }
@@ -5634,10 +4782,8 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
   if (fd.receiver_type.len() > 0) {
     s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
-    pi += 1;
   }
   let ctx = CheckCtx { st: s2, diags: [] };
   ctx = check_stmts(fd.body, want, fd.name, ctx);
@@ -5660,10 +4806,8 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
   if (errs.len() > 0) {
     return errs;
   }
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
-    fi += 1;
   }
   errs = util.append_diags(errs, check_map_new_chain(mod));
   errs = util.append_diags(errs, check_undefined_calls(mod));
@@ -5785,10 +4929,8 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
       return out;
     },
     ast.ExprTuple(t) => {
-      let i = 0;
-      while (i < t.elements.len()) {
+      for i in 0..t.elements.len() {
         out = map_chain_check_expr(t.elements[i], fname, out);
-        i += 1;
       }
       return out;
     },
@@ -5800,8 +4942,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
 
 function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
   let out = errs;
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     match (stmts[i]) {
       ast.StmtVar(v) => {
         out = map_chain_check_expr(v.init, fname, out);
@@ -5830,13 +4971,11 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       ast.StmtMatch(m) => {
         out = map_chain_check_expr(m.scrutinee, fname, out);
-        let ai = 0;
-        while (ai < m.arms.len()) {
+        for ai in 0..m.arms.len() {
           if (m.arms[ai].has_guard) {
             out = map_chain_check_expr(m.arms[ai].guard, fname, out);
           }
           out = map_chain_check_stmts(m.arms[ai].body, fname, out);
-          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -5844,17 +4983,14 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       _ => {}
     }
-    i += 1;
   }
   return out;
 }
 
 pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
-    fi += 1;
   }
   return errs;
 }
@@ -5862,12 +4998,10 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (names[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -5893,17 +5027,13 @@ function callgate_known_names(mod: parser.Module): string[] {
   out = out.append("Ok");
   out = out.append("Err");
   let sd = parser.inject_builtin_enums(mod.structs);
-  let si = 0;
-  while (si < sd.len()) {
+  for si in 0..sd.len() {
     out = out.append(sd[si].name);
-    si += 1;
   }
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() > 0) {
       out = out.append(mod.funcs[fi].name);
     }
-    fi += 1;
   }
   out = astwalk.collect_bound_stmts(mod.top_stmts, out);
   return out;
@@ -5913,7 +5043,7 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      let ns = slice_unchecked(name, 0, i) + "";
+      let ns = slice_unchecked(name, 0, i).to_owned();
       let pfx = ns + "__";
       if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) {
         return "";
@@ -5926,13 +5056,11 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
 }
 
 function callgate_ns_present(pfx: string, names: string[]): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let nm = names[i];
     if (nm.len() > pfx.len() && nm.starts_with(pfx)) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -6013,10 +5141,8 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return errs;
     },
     ast.ExprStructLit(sl) => {
-      let i = 0;
-      while (i < sl.field_values.len()) {
+      for i in 0..sl.field_values.len() {
         errs = callgate_expr(sl.field_values[i], g, where, bound, errs);
-        i += 1;
       }
       if (sl.has_base) {
         errs = callgate_expr(sl.base, g, where, bound, errs);
@@ -6028,10 +5154,8 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
     },
     ast.ExprLambda(lm) => {
       let lb = bound;
-      let pi = 0;
-      while (pi < lm.params.len()) {
+      for pi in 0..lm.params.len() {
         lb = lb.append(lm.params[pi].name);
-        pi += 1;
       }
       lb = astwalk.collect_bound_stmts(lm.body, lb);
       return callgate_stmts(lm.body, g, where, lb, errs);
@@ -6053,8 +5177,7 @@ function callgate_known_callee(name: string, known: string[]): boolean {
 }
 
 function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     match (stmts[i]) {
       ast.StmtVar(v) => {
         errs = callgate_expr(v.init, g, where, bound, errs);
@@ -6083,13 +5206,11 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       ast.StmtMatch(m) => {
         errs = callgate_expr(m.scrutinee, g, where, bound, errs);
-        let ai = 0;
-        while (ai < m.arms.len()) {
+        for ai in 0..m.arms.len() {
           if (m.arms[ai].has_guard) {
             errs = callgate_expr(m.arms[ai].guard, g, where, bound, errs);
           }
           errs = callgate_stmts(m.arms[ai].body, g, where, bound, errs);
-          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -6097,52 +5218,43 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       _ => {}
     }
-    i += 1;
   }
   return errs;
 }
 
 function callgate_free_names(mod: parser.Module): string[] {
   let names: string[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       names = names.append(mod.funcs[fi].name);
     }
-    fi += 1;
   }
   return names;
 }
 
 function callgate_free_argc(mod: parser.Module): i32[] {
   let argc: i32[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       argc = argc.append(mod.funcs[fi].params.len());
     }
-    fi += 1;
   }
   return argc;
 }
 
 function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let bound: string[] = [];
     if (fd.receiver_type.len() > 0) {
       bound = bound.append(fd.receiver_name);
     }
-    let pi = 0;
-    while (pi < fd.params.len()) {
+    for pi in 0..fd.params.len() {
       bound = bound.append(fd.params[pi].name);
-      pi += 1;
     }
     bound = astwalk.collect_bound_stmts(fd.body, bound);
     errs = callgate_stmts(fd.body, g, "in fn '" + fd.name + "'", bound, errs);
-    fi += 1;
   }
   if (g.check_undef) {
     let tb = astwalk.collect_bound_stmts(mod.top_stmts, []);
@@ -6161,8 +5273,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 
 pub function check_decl_names(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     if (mod.funcs[i].name.len() == 0 && mod.funcs[i].is_const) {
       errs = errs.append(util.Diag {
         length: 0,
@@ -6181,7 +5292,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    i += 1;
   }
   for td in mod.trait_decls {
     if (td.name.len() == 0) {
@@ -6193,8 +5303,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       }
     }
   }
-  let si = 0;
-  while (si < mod.structs.len()) {
+  for si in 0..mod.structs.len() {
     if (mod.structs[si].name.len() == 0) {
       errs = errs.append(util.Diag {
         length: 0,
@@ -6204,7 +5313,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    si += 1;
   }
   for en in mod.enums {
     if (en.name.len() == 0) {
@@ -6277,12 +5385,10 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
     return errs;
   }
   let has_main = false;
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0 && mod.funcs[fi].name == "main") {
       has_main = true;
     }
-    fi += 1;
   }
   if (!has_main) {
     return errs;
@@ -6437,7 +5543,7 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   while (bar < e.len() && e[bar] != 124) {
     bar += 1;
   }
-  let shp = slice_unchecked(e, 0, bar) + "";
+  let shp = slice_unchecked(e, 0, bar).to_owned();
   if (shp == "8") {
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
@@ -6454,10 +5560,8 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   st = st.write("    .quad -1\n");
   st = st.write(const_agg_label(st, i) + ":\n");
   st = st.write("    .quad " + shp + "\n");
-  let vi = 0;
-  while (vi < vals.len()) {
+  for vi in 0..vals.len() {
     st = emit_const_agg_field(st, i, vi, vals[vi]);
-    vi += 1;
   }
   return st;
 }
@@ -6483,12 +5587,10 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
     let e = s.const_aggs[i];
     if (const_agg_kind(e) == 2 || ir.const_struct_type(e) == "0") {
       let vals = ir.const_struct_values(e);
-      let vi = 0;
-      while (vi < vals.len()) {
+      for vi in 0..vals.len() {
         if (const_agg_holds_box(vals[vi])) {
           s = s.write("    .quad " + const_agg_field_label(s, i, vi) + "\n");
         }
-        vi += 1;
       }
     }
     i += 1;
@@ -6582,10 +5684,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_arr_dec.u", "__fn___fern_str_free.u",
     "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
   ];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     s = s.write(".globl " + names[i] + "\n");
-    i += 1;
   }
   return s;
 }
@@ -6597,10 +5697,8 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
     return DbgVars { at: [], rows: [] };
   }
   let d = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
-  let i = 0;
-  while (i < r.dbg_slots.len()) {
+  for i in 0..r.dbg_slots.len() {
     d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
-    i += 1;
   }
   return d;
 }
@@ -6632,7 +5730,7 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
     if (j < 0 || j > end) {
       j = end;
     }
-    let shape = slice_unchecked(t, i, j) + "";
+    let shape = slice_unchecked(t, i, j).to_owned();
     let label = dbg_shape_label(s, shape);
     if (label != "") {
       if (out != "") {
@@ -6667,8 +5765,7 @@ function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered
     param = "1";
   }
   let done: i32[] = [];
-  let j = 0;
-  while (j < seen_slots.len()) {
+  for j in 0..seen_slots.len() {
     let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
     if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
       done = done.append(v);
@@ -6679,7 +5776,6 @@ function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered
         rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
       };
     }
-    j += 1;
   }
   return d;
 }
@@ -6709,10 +5805,8 @@ pub function dbg_label(s: EmitState, d: DbgVars, fn_label: string, pos: i32): Em
 }
 
 pub function dbg_labels(s: EmitState, d: DbgVars, fn_label: string, lo: i32, hi: i32): EmitState {
-  let pos = lo;
-  while (pos < hi) {
+  for pos in lo..hi {
     s = dbg_label(s, d, fn_label, pos);
-    pos += 1;
   }
   return s;
 }
@@ -6743,7 +5837,7 @@ function emit_debug_row(own s: EmitState, row: string): EmitState {
   let a = __memchr(row, 124, 0);
   let b = __memchr(row, 124, a + 1);
   let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c) + "");
+  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
   return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
 }
 
@@ -6865,10 +5959,8 @@ pub function ssa_funary_known(what: string): boolean {
 }
 
 pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {
-  let mi = begin;
-  while (mi < blk.insts.len()) {
+  for mi in begin..blk.insts.len() {
     s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
-    mi += 1;
   }
   if (!tailed) {
     s = ssa_prepared_loc(source.terms, blk.id, s);
@@ -6917,20 +6009,17 @@ pub function ssa_join(lp: string, blk: i32): string {
 }
 
 pub function ssa_lane_index(what: string): i32 {
-  let k = 0;
-  while (k < what.len()) {
+  for k in 0..what.len() {
     if (what[k] == b':') {
       return what[k + 1] as i32 - 48;
     }
-    k += 1;
   }
   return 0;
 }
 
 pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
   let units: boolean[] = [];
-  let v = 0;
-  while (v < lanes.len()) {
+  for v in 0..lanes.len() {
     if (lanes[v] && reg_of[v] < -1) {
       let u = ssa.spill_slot(reg_of[v]);
       while (units.len() <= u + 1) {
@@ -6938,7 +6027,6 @@ pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
       }
       units = units.with(u, true).with(u + 1, true);
     }
-    v += 1;
   }
   return units;
 }
@@ -6965,12 +6053,10 @@ pub function ssa_line_loc(ins: ssa.SInst, s: EmitState): EmitState {
 }
 
 pub function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
-  let k = 0;
-  while (k < srcs.len()) {
+  for k in 0..srcs.len() {
     if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) {
       return true;
     }
-    k += 1;
   }
   return false;
 }
@@ -6992,12 +6078,10 @@ pub function ssa_shift_tag(tag: i32): boolean {
 }
 
 pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
-  let j = 0;
-  while (j < srcs.len()) {
+  for j in 0..srcs.len() {
     if (j != self && !done[j] && srcs[j] == reg) {
       return true;
     }
-    j += 1;
   }
   return false;
 }

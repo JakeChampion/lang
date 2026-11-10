@@ -6,10 +6,8 @@ pub struct Op { kind: i32, a: string, b: string, target: string }
 pub function registers(arm: boolean, width: i32): string[] {
   if (arm) {
     let out: string[] = [];
-    let i = 0;
-    while (i < 31) {
+    for i in 0..31 {
       out = out.append((if (width == 64) { "x" } else { "w" }) + i.to_string());
-      i += 1;
     }
     return out;
   }
@@ -37,8 +35,7 @@ function operands(text: string): string[] {
   let out: string[] = [];
   let depth = 0;
   let start = 0;
-  let i = 0;
-  while (i < text.len()) {
+  for i in 0..text.len() {
     let c = text[i];
     if (c == b'[' || c == b'(') {
       depth += 1;
@@ -50,15 +47,14 @@ function operands(text: string): string[] {
       return [];
     }
     if (c == b',' && depth == 0) {
-      out = out.append((slice_unchecked(text, start, i) + "").trim());
+      out = out.append(slice_unchecked(text, start, i).to_owned().trim());
       start = i + 1;
     }
-    i += 1;
   }
   if (depth != 0) {
     return [];
   }
-  return out.append((slice_unchecked(text, start, text.len()) + "").trim());
+  return out.append(slice_unchecked(text, start, text.len()).to_owned().trim());
 }
 
 function op(kind: i32, a: string, b: string): Op {
@@ -207,8 +203,8 @@ pub function decode(line: string, arm: boolean): Op {
   } else {
     return op(0, "", "");
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let args = operands(slice_unchecked(line, at + 1, line.len()) + "");
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let args = operands(slice_unchecked(line, at + 1, line.len()).to_owned());
   if (args.len() == 1) {
     let kind = branch_kind(name, arm);
     if (kind > 0) {

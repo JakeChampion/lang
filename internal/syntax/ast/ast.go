@@ -75,9 +75,10 @@ type TupleType struct {
 	Elems []Type
 }
 type FuncType struct {
-	Params   []Type
-	ParamOwn []bool
-	Result   Type
+	Params    []Type
+	ParamOwn  []bool
+	Result    Type
+	ResultOwn bool
 }
 
 func (f *FuncType) OwnAt(i int) bool {
@@ -437,7 +438,7 @@ func SubstSelf(t Type, self Type) Type {
 		for i, pt := range tt.Params {
 			params[i] = SubstSelf(pt, self)
 		}
-		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self)}
+		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self), ResultOwn: tt.ResultOwn}
 	case ProjType:
 		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
@@ -767,10 +768,22 @@ func (f *FuncType) String() string {
 		out += p.String()
 	}
 	out += ") => "
+	out += OwnedResultPrefix(f.Result, f.ResultOwn)
 	if f.Result == nil {
 		return out + "<unknown>"
 	}
 	return out + f.Result.String()
+}
+
+// OwnedResultPrefix avoids repeating the owned WIT handle qualifier.
+func OwnedResultPrefix(t Type, own bool) string {
+	if h, ok := t.(HandleType); ok && !h.Borrowed {
+		return ""
+	}
+	if own {
+		return "own "
+	}
+	return ""
 }
 
 func (n NumberType) NormalWidth() int {
@@ -972,7 +985,7 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		y, ok := b.(*FuncType)
-		if !ok || len(x.Params) != len(y.Params) || !Equal(x.Result, y.Result) {
+		if !ok || len(x.Params) != len(y.Params) || x.ResultOwn != y.ResultOwn || !Equal(x.Result, y.Result) {
 			return false
 		}
 		for i := range x.Params {
@@ -1313,6 +1326,7 @@ type Lambda struct {
 	P                 Position
 	Params            []Param
 	ReturnType        Type
+	ReturnOwn         bool
 	ReturnUnannotated bool
 	Body              *Block
 	Captures          []Param
@@ -1938,8 +1952,9 @@ const (
 )
 
 type ImplSig struct {
-	Params []Type
-	Result Type
+	Params    []Type
+	Result    Type
+	ResultOwn bool
 }
 
 type FuncDecl struct {
@@ -1952,6 +1967,7 @@ type FuncDecl struct {
 	BoundArgs         map[string][][]Type
 	Params            []Param
 	ReturnType        Type
+	ReturnOwn         bool
 	ReturnUnannotated bool
 	Body              *Block
 	// ImportIface is CallbackIface for @callback(ImportWITName).
@@ -2033,6 +2049,7 @@ type StructDecl struct {
 	Opaque        bool
 	Derives       []string
 	MustConsume   bool
+	ValueType     bool
 	SourceModule  string
 }
 
@@ -2103,6 +2120,7 @@ type TraitMethod struct {
 	Name       string
 	Params     []Param
 	Result     Type
+	ResultOwn  bool
 	Assoc      bool
 	Const      bool
 	Unsafe     bool

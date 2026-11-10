@@ -1,5 +1,5 @@
-// The interpreter's self-checks. Each check returns 0, or the number of
-// the assertion that failed.
+// The interpreter's self-checks. Each check is a std/test case. A failed
+// case names the condition that did not hold.
 
 import "../aborts";
 import "../aesref";
@@ -19,20 +19,19 @@ import "std/f64";
 import "std/rand";
 import "std/string";
 import "std/utf8";
+import "std/test";
 
 function eval_program(prog: ast.Stmt[]): interp.Value {
   let heap = interpheap.create();
   let env = interp.new_env(heap);
   let preassigned = interp.body_assign_names(prog, []);
-  let i = 0;
-  while (i < prog.len()) {
+  for i in 0..prog.len() {
     env = interp.cellify_captures(env, prog[i], preassigned);
     let r = interp.eval_stmt(prog[i], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
     }
-    i += 1;
   }
   return interp.v_err("program reached end without `return`");
 }
@@ -50,118 +49,57 @@ function run_module(src: string): interp.Value {
 }
 
 function main(): i32 {
-  let rc = check_arithmetic_and_idents();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_conditionals_and_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_while_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_functions_and_recursion();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_arrays();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_string_indexing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_slicing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_compound_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structs_and_fields();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_match_statements();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_receiver_methods();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_floats();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_for_in_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_tuples();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_break_and_continue();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_primitive_receivers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structural_equality();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_union_receiver_method();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_lambdas_and_closures();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_maps();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_numeric_widths();
-  if (rc != 0) {
-    return rc;
-  }
-  return check_string_ordering();
+  let r = test.new("interp");
+  r = r.it("arithmetic and idents", check_arithmetic_and_idents);
+  r = r.it("conditionals and assignment", check_conditionals_and_assignment);
+  r = r.it("while loops", check_while_loops);
+  r = r.it("functions and recursion", check_functions_and_recursion);
+  r = r.it("arrays", check_arrays);
+  r = r.it("string indexing", check_string_indexing);
+  r = r.it("slicing", check_slicing);
+  r = r.it("compound assignment", check_compound_assignment);
+  r = r.it("structs and fields", check_structs_and_fields);
+  r = r.it("match statements", check_match_statements);
+  r = r.it("receiver methods", check_receiver_methods);
+  r = r.it("floats", check_floats);
+  r = r.it("for in loops", check_for_in_loops);
+  r = r.it("tuples", check_tuples);
+  r = r.it("break and continue", check_break_and_continue);
+  r = r.it("primitive receivers", check_primitive_receivers);
+  r = r.it("structural equality", check_structural_equality);
+  r = r.it("union receiver method", check_union_receiver_method);
+  r = r.it("lambdas and closures", check_lambdas_and_closures);
+  r = r.it("maps", check_maps);
+  r = r.it("numeric widths", check_numeric_widths);
+  r = r.it("string ordering", check_string_ordering);
+  return r.finish();
 }
 
-function check_string_ordering(): i32 {
+function check_string_ordering(): test.TestOutcome {
   let r = run_source("let n = 0; if (\"apple\" < \"pear\") { n = n + 1; } if (\"b\" <= \"b\") { n = n + 2; } if (\"ab\" > \"a\") { n = n + 4; } if (\"a\" >= \"b\") { n = n + 8; } return n;");
   match (r) {
     interp.VInt(i) => {
       if (i.v != 7) {
-        return 940;
+        return test.fail("i.v != 7");
       }
     },
     _ => {
-      return 941;
+      return test.fail("unexpected variant of r");
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function check_arithmetic_and_idents(): i32 {
+function check_arithmetic_and_idents(): test.TestOutcome {
   let r1 = run_source("let x = 1 + 2 * 3; let y = (1 + 2) * 3; return x + y;");
   match (r1) {
     interp.VInt(i) => {
       if (i.v != 16) {
-        return 10;
+        return test.fail("i.v != 16");
       }
     },
     _ => {
-      return 11;
+      return test.fail("unexpected variant of r1");
     }
   }
 
@@ -169,11 +107,11 @@ function check_arithmetic_and_idents(): i32 {
   match (r2) {
     interp.VInt(i) => {
       if (i.v != -1) {
-        return 20;
+        return test.fail("i.v != -1");
       }
     },
     _ => {
-      return 21;
+      return test.fail("unexpected variant of r2");
     }
   }
 
@@ -181,11 +119,11 @@ function check_arithmetic_and_idents(): i32 {
   match (r3) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 30;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 31;
+      return test.fail("unexpected variant of r3");
     }
   }
 
@@ -193,11 +131,11 @@ function check_arithmetic_and_idents(): i32 {
   match (r4) {
     interp.VInt(i) => {
       if (i.v != -5) {
-        return 40;
+        return test.fail("i.v != -5");
       }
     },
     _ => {
-      return 41;
+      return test.fail("unexpected variant of r4");
     }
   }
 
@@ -205,11 +143,11 @@ function check_arithmetic_and_idents(): i32 {
   match (r5) {
     interp.VInt(i) => {
       if (i.v != 5) {
-        return 50;
+        return test.fail("i.v != 5");
       }
     },
     _ => {
-      return 51;
+      return test.fail("unexpected variant of r5");
     }
   }
 
@@ -217,22 +155,22 @@ function check_arithmetic_and_idents(): i32 {
   match (r6) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 60;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 61;
+      return test.fail("unexpected variant of r6");
     }
   }
   let r6b = run_source("return 7 % 0;");
   match (r6b) {
     interp.VInt(i) => {
       if (i.v != 7) {
-        return 62;
+        return test.fail("i.v != 7");
       }
     },
     _ => {
-      return 63;
+      return test.fail("unexpected variant of r6b");
     }
   }
 
@@ -240,23 +178,23 @@ function check_arithmetic_and_idents(): i32 {
   match (r7) {
     interp.VErr(_) => {},
     _ => {
-      return 70;
+      return test.fail("unexpected variant of r7");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_conditionals_and_assignment(): i32 {
+function check_conditionals_and_assignment(): test.TestOutcome {
   let r8 = run_source("let x = 5; if (x < 10) { return 1; } else { return 2; }");
   match (r8) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 80;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 81;
+      return test.fail("unexpected variant of r8");
     }
   }
 
@@ -264,11 +202,11 @@ function check_conditionals_and_assignment(): i32 {
   match (r9) {
     interp.VInt(i) => {
       if (i.v != 2) {
-        return 90;
+        return test.fail("i.v != 2");
       }
     },
     _ => {
-      return 91;
+      return test.fail("unexpected variant of r9");
     }
   }
 
@@ -276,11 +214,11 @@ function check_conditionals_and_assignment(): i32 {
   match (r10) {
     interp.VInt(i) => {
       if (i.v != 11) {
-        return 100;
+        return test.fail("i.v != 11");
       }
     },
     _ => {
-      return 101;
+      return test.fail("unexpected variant of r10");
     }
   }
 
@@ -288,11 +226,11 @@ function check_conditionals_and_assignment(): i32 {
   match (r11) {
     interp.VInt(i) => {
       if (i.v != 20) {
-        return 110;
+        return test.fail("i.v != 20");
       }
     },
     _ => {
-      return 111;
+      return test.fail("unexpected variant of r11");
     }
   }
 
@@ -300,29 +238,29 @@ function check_conditionals_and_assignment(): i32 {
   match (r12) {
     interp.VInt(i) => {
       if (i.v != 7) {
-        return 120;
+        return test.fail("i.v != 7");
       }
     },
     _ => {
-      return 121;
+      return test.fail("unexpected variant of r12");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_while_loops(): i32 {
+function check_while_loops(): test.TestOutcome {
   let r13: interp.Value = run_source(
     "let i = 1; let s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;",
   );
   match (r13) {
     interp.VInt(i) => {
       if (i.v != 15) {
-        return 130;
+        return test.fail("i.v != 15");
       }
     },
     _ => {
-      return 131;
+      return test.fail("unexpected variant of r13");
     }
   }
 
@@ -332,11 +270,11 @@ function check_while_loops(): i32 {
   match (r14) {
     interp.VInt(i) => {
       if (i.v != 3) {
-        return 140;
+        return test.fail("i.v != 3");
       }
     },
     _ => {
-      return 141;
+      return test.fail("unexpected variant of r14");
     }
   }
 
@@ -344,29 +282,29 @@ function check_while_loops(): i32 {
   match (r15) {
     interp.VInt(i) => {
       if (i.v != 5) {
-        return 150;
+        return test.fail("i.v != 5");
       }
     },
     _ => {
-      return 151;
+      return test.fail("unexpected variant of r15");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_functions_and_recursion(): i32 {
+function check_functions_and_recursion(): test.TestOutcome {
   let r16: interp.Value = run_module(
     "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }",
   );
   match (r16) {
     interp.VInt(i) => {
       if (i.v != 5) {
-        return 160;
+        return test.fail("i.v != 5");
       }
     },
     _ => {
-      return 161;
+      return test.fail("unexpected variant of r16");
     }
   }
 
@@ -376,11 +314,11 @@ function check_functions_and_recursion(): i32 {
   match (r17) {
     interp.VInt(i) => {
       if (i.v != 120) {
-        return 170;
+        return test.fail("i.v != 120");
       }
     },
     _ => {
-      return 171;
+      return test.fail("unexpected variant of r17");
     }
   }
 
@@ -392,11 +330,11 @@ function check_functions_and_recursion(): i32 {
   match (r18) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 180;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 181;
+      return test.fail("unexpected variant of r18");
     }
   }
 
@@ -406,7 +344,7 @@ function check_functions_and_recursion(): i32 {
   match (r19) {
     interp.VErr(_) => {},
     _ => {
-      return 190;
+      return test.fail("unexpected variant of r19");
     }
   }
 
@@ -416,25 +354,25 @@ function check_functions_and_recursion(): i32 {
   match (r20) {
     interp.VErr(_) => {},
     _ => {
-      return 200;
+      return test.fail("unexpected variant of r20");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_arrays(): i32 {
+function check_arrays(): test.TestOutcome {
   let r21: interp.Value = run_source(
     "let a = [10, 20, 30]; return a[2];",
   );
   match (r21) {
     interp.VInt(i) => {
       if (i.v != 30) {
-        return 210;
+        return test.fail("i.v != 30");
       }
     },
     _ => {
-      return 211;
+      return test.fail("unexpected variant of r21");
     }
   }
 
@@ -442,11 +380,11 @@ function check_arrays(): i32 {
   match (r22) {
     interp.VInt(i) => {
       if (i.v != 4) {
-        return 220;
+        return test.fail("i.v != 4");
       }
     },
     _ => {
-      return 221;
+      return test.fail("unexpected variant of r22");
     }
   }
 
@@ -456,11 +394,11 @@ function check_arrays(): i32 {
   match (r23) {
     interp.VInt(i) => {
       if (i.v != 24) {
-        return 230;
+        return test.fail("i.v != 24");
       }
     },
     _ => {
-      return 231;
+      return test.fail("unexpected variant of r23");
     }
   }
 
@@ -468,7 +406,7 @@ function check_arrays(): i32 {
   match (r24) {
     interp.VErr(_) => {},
     _ => {
-      return 240;
+      return test.fail("unexpected variant of r24");
     }
   }
 
@@ -476,27 +414,27 @@ function check_arrays(): i32 {
   match (r25) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 250;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 251;
+      return test.fail("unexpected variant of r25");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_string_indexing(): i32 {
+function check_string_indexing(): test.TestOutcome {
   let r26 = run_source("let s = \"hello\"; return s[0];");
   match (r26) {
     interp.VInt(i) => {
       if (i.v != 104) {
-        return 260;
+        return test.fail("i.v != 104");
       }
     },
     _ => {
-      return 261;
+      return test.fail("unexpected variant of r26");
     }
   }
 
@@ -504,11 +442,11 @@ function check_string_indexing(): i32 {
   match (r27) {
     interp.VInt(i) => {
       if (i.v != 198) {
-        return 270;
+        return test.fail("i.v != 198");
       }
     },
     _ => {
-      return 271;
+      return test.fail("unexpected variant of r27");
     }
   }
 
@@ -516,33 +454,33 @@ function check_string_indexing(): i32 {
   match (r28) {
     interp.VErr(_) => {},
     _ => {
-      return 280;
+      return test.fail("unexpected variant of r28");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_slicing(): i32 {
+function check_slicing(): test.TestOutcome {
   let r29 = run_source("let s = \"hello\"; return s[1:4];");
   match (r29) {
     interp.VStruct(sv29) => {
       if (sv29.type_name != "Some") {
-        return 290;
+        return test.fail("sv29.type_name != \"Some\"");
       }
       match (sv29.field_values[0]) {
         interp.VString(s29) => {
           if (s29.v != "ell") {
-            return 292;
+            return test.fail("s29.v != \"ell\"");
           }
         },
         _ => {
-          return 293;
+          return test.fail("unexpected variant of sv29.field_values[0]");
         }
       }
     },
     _ => {
-      return 291;
+      return test.fail("unexpected variant of r29");
     }
   }
 
@@ -550,11 +488,11 @@ function check_slicing(): i32 {
   match (r30) {
     interp.VInt(i) => {
       if (i.v != 108) {
-        return 300;
+        return test.fail("i.v != 108");
       }
     },
     _ => {
-      return 301;
+      return test.fail("unexpected variant of r30");
     }
   }
 
@@ -562,11 +500,11 @@ function check_slicing(): i32 {
   match (r31) {
     interp.VInt(i) => {
       if (i.v != 20) {
-        return 310;
+        return test.fail("i.v != 20");
       }
     },
     _ => {
-      return 311;
+      return test.fail("unexpected variant of r31");
     }
   }
 
@@ -574,11 +512,11 @@ function check_slicing(): i32 {
   match (r32) {
     interp.VStruct(sv32) => {
       if (sv32.type_name != "None") {
-        return 320;
+        return test.fail("sv32.type_name != \"None\"");
       }
     },
     _ => {
-      return 321;
+      return test.fail("unexpected variant of r32");
     }
   }
 
@@ -586,11 +524,11 @@ function check_slicing(): i32 {
   match (r32b) {
     interp.VStruct(sv32b) => {
       if (sv32b.type_name != "None") {
-        return 322;
+        return test.fail("sv32b.type_name != \"None\"");
       }
     },
     _ => {
-      return 323;
+      return test.fail("unexpected variant of r32b");
     }
   }
 
@@ -598,25 +536,25 @@ function check_slicing(): i32 {
   match (r32u) {
     interp.VErr(_) => {},
     _ => {
-      return 324;
+      return test.fail("unexpected variant of r32u");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_compound_assignment(): i32 {
+function check_compound_assignment(): test.TestOutcome {
   let r33: interp.Value = run_source(
     "let i = 1; let s = 0; while (i <= 10) { s += i; i += 1; } return s;",
   );
   match (r33) {
     interp.VInt(i) => {
       if (i.v != 55) {
-        return 330;
+        return test.fail("i.v != 55");
       }
     },
     _ => {
-      return 331;
+      return test.fail("unexpected variant of r33");
     }
   }
 
@@ -624,27 +562,27 @@ function check_compound_assignment(): i32 {
   match (r34) {
     interp.VInt(i) => {
       if (i.v != 6) {
-        return 340;
+        return test.fail("i.v != 6");
       }
     },
     _ => {
-      return 341;
+      return test.fail("unexpected variant of r34");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_structs_and_fields(): i32 {
+function check_structs_and_fields(): test.TestOutcome {
   let r35 = run_source("return Point { x: 3, y: 4 }.x;");
   match (r35) {
     interp.VInt(i) => {
       if (i.v != 3) {
-        return 350;
+        return test.fail("i.v != 3");
       }
     },
     _ => {
-      return 351;
+      return test.fail("unexpected variant of r35");
     }
   }
 
@@ -654,11 +592,11 @@ function check_structs_and_fields(): i32 {
   match (r36) {
     interp.VInt(i) => {
       if (i.v != 18) {
-        return 360;
+        return test.fail("i.v != 18");
       }
     },
     _ => {
-      return 361;
+      return test.fail("unexpected variant of r36");
     }
   }
 
@@ -668,11 +606,11 @@ function check_structs_and_fields(): i32 {
   match (r37) {
     interp.VInt(i) => {
       if (i.v != 5) {
-        return 370;
+        return test.fail("i.v != 5");
       }
     },
     _ => {
-      return 371;
+      return test.fail("unexpected variant of r37");
     }
   }
 
@@ -680,24 +618,24 @@ function check_structs_and_fields(): i32 {
   match (r38) {
     interp.VErr(_) => {},
     _ => {
-      return 380;
+      return test.fail("unexpected variant of r38");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_match_statements(): i32 {
+function check_match_statements(): test.TestOutcome {
   let src39: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
   let r39 = run_module(src39);
   match (r39) {
     interp.VInt(i) => {
       if (i.v != 5) {
-        return 390;
+        return test.fail("i.v != 5");
       }
     },
     _ => {
-      return 391;
+      return test.fail("unexpected variant of r39");
     }
   }
 
@@ -706,11 +644,11 @@ function check_match_statements(): i32 {
   match (r40) {
     interp.VInt(i) => {
       if (i.v != 7) {
-        return 400;
+        return test.fail("i.v != 7");
       }
     },
     _ => {
-      return 401;
+      return test.fail("unexpected variant of r40");
     }
   }
 
@@ -719,11 +657,11 @@ function check_match_statements(): i32 {
   match (r41) {
     interp.VInt(i) => {
       if (i.v != 99) {
-        return 410;
+        return test.fail("i.v != 99");
       }
     },
     _ => {
-      return 411;
+      return test.fail("unexpected variant of r41");
     }
   }
 
@@ -732,11 +670,11 @@ function check_match_statements(): i32 {
   match (r42) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 420;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 421;
+      return test.fail("unexpected variant of r42");
     }
   }
 
@@ -745,7 +683,7 @@ function check_match_statements(): i32 {
   match (r43) {
     interp.VErr(_) => {},
     _ => {
-      return 430;
+      return test.fail("unexpected variant of r43");
     }
   }
 
@@ -754,11 +692,11 @@ function check_match_statements(): i32 {
   match (r44) {
     interp.VInt(i) => {
       if (i.v != 8) {
-        return 440;
+        return test.fail("i.v != 8");
       }
     },
     _ => {
-      return 441;
+      return test.fail("unexpected variant of r44");
     }
   }
 
@@ -767,28 +705,28 @@ function check_match_statements(): i32 {
   match (r45) {
     interp.VInt(i) => {
       if (i.v != 77) {
-        return 450;
+        return test.fail("i.v != 77");
       }
     },
     _ => {
-      return 451;
+      return test.fail("unexpected variant of r45");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_receiver_methods(): i32 {
+function check_receiver_methods(): test.TestOutcome {
   let src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { let k = Circle { r: 5 }; return k.area(); }";
   let r46 = run_module(src46);
   match (r46) {
     interp.VInt(i) => {
       if (i.v != 25) {
-        return 460;
+        return test.fail("i.v != 25");
       }
     },
     _ => {
-      return 461;
+      return test.fail("unexpected variant of r46");
     }
   }
 
@@ -797,11 +735,11 @@ function check_receiver_methods(): i32 {
   match (r47) {
     interp.VInt(i) => {
       if (i.v != 12) {
-        return 470;
+        return test.fail("i.v != 12");
       }
     },
     _ => {
-      return 471;
+      return test.fail("unexpected variant of r47");
     }
   }
 
@@ -810,11 +748,11 @@ function check_receiver_methods(): i32 {
   match (r48) {
     interp.VInt(i) => {
       if (i.v != 125) {
-        return 480;
+        return test.fail("i.v != 125");
       }
     },
     _ => {
-      return 481;
+      return test.fail("unexpected variant of r48");
     }
   }
 
@@ -823,23 +761,23 @@ function check_receiver_methods(): i32 {
   match (r49) {
     interp.VErr(_) => {},
     _ => {
-      return 490;
+      return test.fail("unexpected variant of r49");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_floats(): i32 {
+function check_floats(): test.TestOutcome {
   let r50 = run_source("return 3.14;");
   match (r50) {
     interp.VFloat(f) => {
       if (f.v < 3.13 || f.v > 3.15) {
-        return 500;
+        return test.fail("f.v < 3.13 || f.v > 3.15");
       }
     },
     _ => {
-      return 501;
+      return test.fail("unexpected variant of r50");
     }
   }
 
@@ -847,11 +785,11 @@ function check_floats(): i32 {
   match (r51) {
     interp.VFloat(f) => {
       if (f.v < 3.99 || f.v > 4.01) {
-        return 510;
+        return test.fail("f.v < 3.99 || f.v > 4.01");
       }
     },
     _ => {
-      return 511;
+      return test.fail("unexpected variant of r51");
     }
   }
 
@@ -859,11 +797,11 @@ function check_floats(): i32 {
   match (r52) {
     interp.VFloat(f) => {
       if (f.v < 9.99 || f.v > 10.01) {
-        return 520;
+        return test.fail("f.v < 9.99 || f.v > 10.01");
       }
     },
     _ => {
-      return 521;
+      return test.fail("unexpected variant of r52");
     }
   }
 
@@ -871,11 +809,11 @@ function check_floats(): i32 {
   match (r53) {
     interp.VBool(b) => {
       if (!b.v) {
-        return 530;
+        return test.fail("!b.v");
       }
     },
     _ => {
-      return 531;
+      return test.fail("unexpected variant of r53");
     }
   }
 
@@ -883,11 +821,11 @@ function check_floats(): i32 {
   match (r54) {
     interp.VBool(b) => {
       if (!b.v) {
-        return 540;
+        return test.fail("!b.v");
       }
     },
     _ => {
-      return 541;
+      return test.fail("unexpected variant of r54");
     }
   }
 
@@ -895,7 +833,7 @@ function check_floats(): i32 {
   match (r55) {
     interp.VErr(_) => {},
     _ => {
-      return 550;
+      return test.fail("unexpected variant of r55");
     }
   }
 
@@ -903,7 +841,7 @@ function check_floats(): i32 {
   match (r55b) {
     interp.VErr(_) => {},
     _ => {
-      return 551;
+      return test.fail("unexpected variant of r55b");
     }
   }
 
@@ -911,11 +849,11 @@ function check_floats(): i32 {
   match (r55c) {
     interp.VFloat(f) => {
       if (f.v < 1.99 || f.v > 2.01) {
-        return 552;
+        return test.fail("f.v < 1.99 || f.v > 2.01");
       }
     },
     _ => {
-      return 553;
+      return test.fail("unexpected variant of r55c");
     }
   }
 
@@ -923,11 +861,11 @@ function check_floats(): i32 {
   match (r56) {
     interp.VFloat(f) => {
       if (f.v < 2.49 || f.v > 2.51) {
-        return 560;
+        return test.fail("f.v < 2.49 || f.v > 2.51");
       }
     },
     _ => {
-      return 561;
+      return test.fail("unexpected variant of r56");
     }
   }
 
@@ -935,28 +873,28 @@ function check_floats(): i32 {
   match (r57) {
     interp.VFloat(f) => {
       if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) {
-        return 570;
+        return test.fail("f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51");
       }
     },
     _ => {
-      return 571;
+      return test.fail("unexpected variant of r57");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_for_in_loops(): i32 {
+function check_for_in_loops(): test.TestOutcome {
   let src58 = "function main(): i32 { let arr = [1, 2, 3]; let s: i32 = 0; for n in arr { s = s + n; } return s; }";
   let r58 = run_module(src58);
   match (r58) {
     interp.VInt(i) => {
       if (i.v != 6) {
-        return 580;
+        return test.fail("i.v != 6");
       }
     },
     _ => {
-      return 581;
+      return test.fail("unexpected variant of r58");
     }
   }
 
@@ -965,11 +903,11 @@ function check_for_in_loops(): i32 {
   match (r59) {
     interp.VInt(i) => {
       if (i.v != 10) {
-        return 590;
+        return test.fail("i.v != 10");
       }
     },
     _ => {
-      return 591;
+      return test.fail("unexpected variant of r59");
     }
   }
 
@@ -978,13 +916,13 @@ function check_for_in_loops(): i32 {
   match (r60) {
     interp.VErr(_) => {},
     _ => {
-      return 600;
+      return test.fail("unexpected variant of r60");
     }
   }
   return check_for_in_subjects();
 }
 
-function check_for_in_subjects(): i32 {
+function check_for_in_subjects(): test.TestOutcome {
   let srcs: string[] = [
     "function main(): i32 { let n: i32 = 0; for b in \"ab\" { n = n + (b as i32); } return n; }",
     "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"bc\", 2); let n: i32 = 0; for (k, v) in m { n = n + k.len() * 10 + v; } return n; }",
@@ -993,34 +931,28 @@ function check_for_in_subjects(): i32 {
     "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
   ];
   let wants: i32[] = [195, 33, 14, 8, 6];
-  let i = 0;
-  while (i < srcs.len()) {
+  for i in 0..srcs.len() {
     let r = run_module(srcs[i]);
-    match (r) {
-      interp.VInt(got) => {
-        if (got.v != wants[i]) {
-          return 920 + i;
-        }
-      },
-      _ => {
-        return 930 + i;
-      }
+    let interp.VInt(got) = r else {
+      return test.fail(f"source {i} does not give an integer");
+    };
+    if (got.v != wants[i]) {
+      return test.assert_eq(got.v, wants[i]);
     }
-    i += 1;
   }
-  return 0;
+  return test.pass();
 }
 
-function check_tuples(): i32 {
+function check_tuples(): test.TestOutcome {
   let r61 = run_source("let t = (1, 2, 3); return 0;");
   match (r61) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 610;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 611;
+      return test.fail("unexpected variant of r61");
     }
   }
 
@@ -1028,11 +960,11 @@ function check_tuples(): i32 {
   match (r62) {
     interp.VInt(i) => {
       if (i.v != 10) {
-        return 620;
+        return test.fail("i.v != 10");
       }
     },
     _ => {
-      return 621;
+      return test.fail("unexpected variant of r62");
     }
   }
 
@@ -1040,11 +972,11 @@ function check_tuples(): i32 {
   match (r63) {
     interp.VInt(i) => {
       if (i.v != 20) {
-        return 630;
+        return test.fail("i.v != 20");
       }
     },
     _ => {
-      return 631;
+      return test.fail("unexpected variant of r63");
     }
   }
 
@@ -1052,7 +984,7 @@ function check_tuples(): i32 {
   match (r64) {
     interp.VErr(_) => {},
     _ => {
-      return 640;
+      return test.fail("unexpected variant of r64");
     }
   }
 
@@ -1060,28 +992,28 @@ function check_tuples(): i32 {
   match (r65) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 650;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 651;
+      return test.fail("unexpected variant of r65");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_break_and_continue(): i32 {
+function check_break_and_continue(): test.TestOutcome {
   let src66 = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
   let r66 = run_module(src66);
   match (r66) {
     interp.VInt(i) => {
       if (i.v != 3) {
-        return 660;
+        return test.fail("i.v != 3");
       }
     },
     _ => {
-      return 661;
+      return test.fail("unexpected variant of r66");
     }
   }
 
@@ -1090,11 +1022,11 @@ function check_break_and_continue(): i32 {
   match (r67) {
     interp.VInt(i) => {
       if (i.v != 6) {
-        return 670;
+        return test.fail("i.v != 6");
       }
     },
     _ => {
-      return 671;
+      return test.fail("unexpected variant of r67");
     }
   }
 
@@ -1103,11 +1035,11 @@ function check_break_and_continue(): i32 {
   match (r68) {
     interp.VInt(i) => {
       if (i.v != 3) {
-        return 680;
+        return test.fail("i.v != 3");
       }
     },
     _ => {
-      return 681;
+      return test.fail("unexpected variant of r68");
     }
   }
 
@@ -1116,28 +1048,28 @@ function check_break_and_continue(): i32 {
   match (r69) {
     interp.VInt(i) => {
       if (i.v != 12) {
-        return 690;
+        return test.fail("i.v != 12");
       }
     },
     _ => {
-      return 691;
+      return test.fail("unexpected variant of r69");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_primitive_receivers(): i32 {
+function check_primitive_receivers(): test.TestOutcome {
   let src70 = "function (s: string) doubled(): string { return s + s; } function main(): i32 { let v: string = \"ab\"; let w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
   let r70 = run_module(src70);
   match (r70) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 700;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 701;
+      return test.fail("unexpected variant of r70");
     }
   }
 
@@ -1146,27 +1078,27 @@ function check_primitive_receivers(): i32 {
   match (r71) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 710;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 711;
+      return test.fail("unexpected variant of r71");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_structural_equality(): i32 {
+function check_structural_equality(): test.TestOutcome {
   let r72 = run_source("return (1, 2, 3) == (1, 2, 3);");
   match (r72) {
     interp.VBool(b) => {
       if (!b.v) {
-        return 720;
+        return test.fail("!b.v");
       }
     },
     _ => {
-      return 721;
+      return test.fail("unexpected variant of r72");
     }
   }
 
@@ -1174,11 +1106,11 @@ function check_structural_equality(): i32 {
   match (r73) {
     interp.VBool(b) => {
       if (b.v) {
-        return 730;
+        return test.fail("b.v");
       }
     },
     _ => {
-      return 731;
+      return test.fail("unexpected variant of r73");
     }
   }
 
@@ -1186,11 +1118,11 @@ function check_structural_equality(): i32 {
   match (r74) {
     interp.VBool(b) => {
       if (!b.v) {
-        return 740;
+        return test.fail("!b.v");
       }
     },
     _ => {
-      return 741;
+      return test.fail("unexpected variant of r74");
     }
   }
 
@@ -1198,11 +1130,11 @@ function check_structural_equality(): i32 {
   match (r75) {
     interp.VBool(b) => {
       if (!b.v) {
-        return 750;
+        return test.fail("!b.v");
       }
     },
     _ => {
-      return 751;
+      return test.fail("unexpected variant of r75");
     }
   }
 
@@ -1210,11 +1142,11 @@ function check_structural_equality(): i32 {
   match (r76) {
     interp.VBool(b) => {
       if (b.v) {
-        return 760;
+        return test.fail("b.v");
       }
     },
     _ => {
-      return 761;
+      return test.fail("unexpected variant of r76");
     }
   }
 
@@ -1222,11 +1154,11 @@ function check_structural_equality(): i32 {
   match (r77) {
     interp.VBool(b) => {
       if (b.v) {
-        return 770;
+        return test.fail("b.v");
       }
     },
     _ => {
-      return 771;
+      return test.fail("unexpected variant of r77");
     }
   }
 
@@ -1235,11 +1167,11 @@ function check_structural_equality(): i32 {
   match (r78) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 780;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 781;
+      return test.fail("unexpected variant of r78");
     }
   }
 
@@ -1248,45 +1180,45 @@ function check_structural_equality(): i32 {
   match (r79) {
     interp.VInt(i) => {
       if (i.v != 0) {
-        return 790;
+        return test.fail("i.v != 0");
       }
     },
     _ => {
-      return 791;
+      return test.fail("unexpected variant of r79");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_union_receiver_method(): i32 {
+function check_union_receiver_method(): test.TestOutcome {
   let src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { let c = Circle { r: 3 }; return c.tag(); }";
   let r80 = run_module(src80);
   match (r80) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 800;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 801;
+      return test.fail("unexpected variant of r80");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_lambdas_and_closures(): i32 {
+function check_lambdas_and_closures(): test.TestOutcome {
   let src81 = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
   let r81 = run_module(src81);
   match (r81) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 810;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 811;
+      return test.fail("unexpected variant of r81");
     }
   }
 
@@ -1295,11 +1227,11 @@ function check_lambdas_and_closures(): i32 {
   match (r82) {
     interp.VInt(i) => {
       if (i.v != 15) {
-        return 820;
+        return test.fail("i.v != 15");
       }
     },
     _ => {
-      return 821;
+      return test.fail("unexpected variant of r82");
     }
   }
 
@@ -1308,28 +1240,28 @@ function check_lambdas_and_closures(): i32 {
   match (r83) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 830;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 831;
+      return test.fail("unexpected variant of r83");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_maps(): i32 {
+function check_maps(): test.TestOutcome {
   let src84: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); let got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
   let r84 = run_module(src84);
   match (r84) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 840;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 841;
+      return test.fail("unexpected variant of r84");
     }
   }
 
@@ -1338,11 +1270,11 @@ function check_maps(): i32 {
   match (r85) {
     interp.VInt(i) => {
       if (i.v != 99) {
-        return 850;
+        return test.fail("i.v != 99");
       }
     },
     _ => {
-      return 851;
+      return test.fail("unexpected variant of r85");
     }
   }
 
@@ -1351,11 +1283,11 @@ function check_maps(): i32 {
   match (r86) {
     interp.VInt(i) => {
       if (i.v != 3) {
-        return 860;
+        return test.fail("i.v != 3");
       }
     },
     _ => {
-      return 861;
+      return test.fail("unexpected variant of r86");
     }
   }
 
@@ -1364,11 +1296,11 @@ function check_maps(): i32 {
   match (r87) {
     interp.VInt(i) => {
       if (i.v != 99) {
-        return 870;
+        return test.fail("i.v != 99");
       }
     },
     _ => {
-      return 871;
+      return test.fail("unexpected variant of r87");
     }
   }
 
@@ -1381,28 +1313,28 @@ function check_maps(): i32 {
   match (r88) {
     interp.VInt(i) => {
       if (i.v != 42) {
-        return 880;
+        return test.fail("i.v != 42");
       }
     },
     _ => {
-      return 881;
+      return test.fail("unexpected variant of r88");
     }
   }
 
-  return 0;
+  return test.pass();
 }
 
-function check_numeric_widths(): i32 {
+function check_numeric_widths(): test.TestOutcome {
   let src89 = "function main(): i32 { let x: u32 = 4294967288 as u32; let y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
   let r89 = run_module(src89);
   match (r89) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 890;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 891;
+      return test.fail("unexpected variant of r89");
     }
   }
   let src90 = "function main(): i32 { let x: u32 = 4294967290 as u32; let y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
@@ -1410,11 +1342,11 @@ function check_numeric_widths(): i32 {
   match (r90) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 900;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 901;
+      return test.fail("unexpected variant of r90");
     }
   }
 
@@ -1423,13 +1355,13 @@ function check_numeric_widths(): i32 {
   match (r91) {
     interp.VInt(i) => {
       if (i.v != 1) {
-        return 910;
+        return test.fail("i.v != 1");
       }
     },
     _ => {
-      return 911;
+      return test.fail("unexpected variant of r91");
     }
   }
 
-  return 0;
+  return test.pass();
 }

@@ -1,5 +1,6 @@
 import "./ast";
 import "./util";
+import "std/string";
 
 pub function fold_expr[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_expr_pruned(e, acc, visit, descend_all);
@@ -84,12 +85,10 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
       return acc;
     },
     ast.ExprFString(fs) => {
-      let i = 0;
-      while (i < fs.exprs.len()) {
+      for i in 0..fs.exprs.len() {
         if (fs.is_expr[i]) {
           acc = fold_expr_nodes(fs.exprs[i], acc, visit_stmt, visit_expr, descend);
         }
-        i += 1;
       }
       return acc;
     },
@@ -397,14 +396,12 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
     },
     ast.ExprFString(fs) => {
       let xs: ast.Expr[] = [];
-      let q = 0;
-      while (q < fs.exprs.len()) {
+      for q in 0..fs.exprs.len() {
         if (fs.is_expr[q]) {
           xs = xs.append(map_expr(fs.exprs[q], visit));
         } else {
           xs = xs.append(fs.exprs[q]);
         }
-        q += 1;
       }
       return visit(ast.ExprFString { ...fs, exprs: xs });
     }
@@ -594,8 +591,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
     },
     ast.ExprFString(fs) => {
       let xs: ast.Expr[] = [];
-      let q = 0;
-      while (q < fs.exprs.len()) {
+      for q in 0..fs.exprs.len() {
         if (fs.is_expr[q]) {
           let (pe, pa, ph) = map_expr_where(fs.exprs[q], a, visit_stmt, visit, applies);
           a = pa;
@@ -604,7 +600,6 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
         } else {
           xs = xs.append(fs.exprs[q]);
         }
-        q += 1;
       }
       if (changed) {
         out = ast.ExprFString { ...fs, exprs: xs };
@@ -618,22 +613,18 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
 function map_exprs_where[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr[], T, boolean) {
   let out: ast.Expr[] = [];
   let changed = false;
-  let i = 0;
-  while (i < es.len()) {
+  for i in 0..es.len() {
     let (ne, na, nh) = map_expr_where(es[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
-      let j = 0;
-      while (j < i) {
+      for j in 0..i {
         out = out.append(es[j]);
-        j += 1;
       }
     }
     if (changed) {
       out = out.append(ne);
     }
-    i += 1;
   }
   if (!changed) {
     return (es, acc, false);
@@ -753,22 +744,18 @@ pub function map_stmts_where[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt
 function map_stmts_where_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Stmt[], T, boolean) {
   let out: ast.Stmt[] = [];
   let changed = false;
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     let (ns, na, nh) = map_stmt_where(stmts[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
-      let j = 0;
-      while (j < i) {
+      for j in 0..i {
         out = out.append(stmts[j]);
-        j += 1;
       }
     }
     if (changed) {
       out = out.append(ns);
     }
-    i += 1;
   }
   if (!changed) {
     return (stmts, acc, false);
@@ -1075,12 +1062,11 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
 pub function append_bound_name(own acc: string[], name: string): string[] {
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i <= name.len()) {
+  for i in 0..=name.len() {
     if (i == name.len() || name[i] == b',' && depth == 0) {
-      let piece = slice_unchecked(name, start, i) + "";
+      let piece = slice_unchecked(name, start, i).to_owned();
       if (util.is_tuple_type_name(piece)) {
-        acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1) + "");
+        acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1).to_owned());
       } else if (piece.len() > 0 && piece != "_") {
         acc = acc.append(piece);
       }
@@ -1090,7 +1076,6 @@ pub function append_bound_name(own acc: string[], name: string): string[] {
     } else if (name[i] == b')') {
       depth -= 1;
     }
-    i += 1;
   }
   return acc;
 }

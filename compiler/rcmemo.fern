@@ -69,7 +69,7 @@ function build_stamp(dir: string): Option[string] {
   let lines = lines_of(file);
   for line in lines {
     if (line.len() > meta.len() + 1 && line.starts_with(meta + " ")) {
-      return Some(slice_unchecked(line, meta.len() + 1, line.len()) + "");
+      return Some(slice_unchecked(line, meta.len() + 1, line.len()).to_owned());
     }
   }
   let Ok(raw) = read_file_bytes(path) else {
@@ -100,7 +100,7 @@ function record_stamp(file: string, lines: string[], line: string): void {
   while (cut > 0 && file[cut - 1] != b'/') {
     cut -= 1;
   }
-  let Ok(made) = create_dir_all(slice_unchecked(file, 0, cut) + "") else {
+  let Ok(made) = create_dir_all(slice_unchecked(file, 0, cut).to_owned()) else {
     return;
   };
   let written = write_file(file, util.str_join_chunks(chunks));
@@ -140,18 +140,16 @@ function lines_of(path: string): string[] {
 function split_lines(text: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i < text.len()) {
+  for i in 0..text.len() {
     if (text[i] == b'\n') {
       if (i > start) {
-        out = out.append(slice_unchecked(text, start, i) + "");
+        out = out.append(slice_unchecked(text, start, i).to_owned());
       }
       start = i + 1;
     }
-    i += 1;
   }
   if (text.len() > start) {
-    out = out.append(slice_unchecked(text, start, text.len()) + "");
+    out = out.append(slice_unchecked(text, start, text.len()).to_owned());
   }
   return out;
 }
@@ -161,10 +159,8 @@ function newest(lines: string[]): string[] {
     return lines;
   }
   let out: string[] = [];
-  let i = lines.len() - keep();
-  while (i < lines.len()) {
+  for i in lines.len() - keep()..lines.len() {
     out = out.append(lines[i]);
-    i += 1;
   }
   return out;
 }
@@ -228,7 +224,7 @@ function write(m: Memo, adds: string): void {
   while (cut > 0 && m.path[cut - 1] != b'/') {
     cut -= 1;
   }
-  match (create_dir_all(slice_unchecked(m.path, 0, cut) + "")) {
+  match (create_dir_all(slice_unchecked(m.path, 0, cut).to_owned())) {
     Ok(made) => {},
     Err(e) => {
       return;

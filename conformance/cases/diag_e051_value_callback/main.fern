@@ -1,0 +1,7 @@
+// spec: VT-03
+@value
+struct Bad { data: () => i32 }
+
+function main(): i32 {
+  return 0;
+}

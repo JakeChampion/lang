@@ -1,0 +1,63 @@
+{
+  "resolved": "2026-11-10T08:44:07.407128+00:00",
+  "main": "e23f590d1e523a2a90c7b202c7631b80aa4635da",
+  "strategy": "Keep all incoming numerical rows and tolerances. Preserve older measurement notes as explicitly archived values. Compiler and standard library exactly match incoming main.",
+  "conflicts": [
+    {
+      "file": ".github/perf-baseline.txt",
+      "historical_notes": [
+        "# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.",
+        "# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.",
+        "# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.",
+        "# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions."
+      ],
+      "incoming_rows": [
+        "x86_64/http_hello.text\t15691",
+        "x86_64/http_hello.ir\t22124422"
+      ]
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "historical_notes": [
+        "# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.",
+        "# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.",
+        "# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.",
+        "# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions."
+      ],
+      "incoming_rows": [
+        "selfhost/arm64-linux/http_hello.emit\t16619"
+      ]
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "historical_notes": [
+        "# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.",
+        "# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.",
+        "# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.",
+        "# 2026-11-10: The archived profile/arm64-linux/http_hello.diagnostic.bytes value at c9547605 is 134872 bytes.",
+        "# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions."
+      ],
+      "incoming_rows": [
+        "profile/arm64-linux/http_hello.diagnostic.bytes\t129376",
+        "profile/arm64-linux/http_hello.diagnostic.emit\t16571",
+        "profile/arm64-linux/http_hello.hardened.bytes\t81480",
+        "profile/arm64-linux/http_hello.hardened.emit\t18195",
+        "profile/arm64-linux/http_hello.minimal.bytes\t63816",
+        "profile/arm64-linux/http_hello.minimal.emit\t13723",
+        "profile/arm64-linux/http_hello.safe.bytes\t75240",
+        "profile/arm64-linux/http_hello.safe.emit\t16619"
+      ]
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "historical_notes": [
+        "# 2026-11-10: The archived profile/x86-64-linux/http_hello.diagnostic.bytes value at c9547605 is 124320 bytes.",
+        "# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions."
+      ],
+      "incoming_rows": [
+        "profile/x86-64-linux/http_hello.diagnostic.bytes\t118752",
+        "profile/x86-64-linux/http_hello.diagnostic.emit\t15390"
+      ]
+    }
+  ]
+}

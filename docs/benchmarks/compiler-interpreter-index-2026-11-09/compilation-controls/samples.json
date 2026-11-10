@@ -1,0 +1,467 @@
+{
+  "note": "Complete native compilation control for an interpreter-only change. Same fixed checker source and imports. Normal certification, no debug variables, CPU/allocation profiles off. Three alternating pairs per mode. A guest-instruction collector and other controls can overlap. No speedup claim from this control.",
+  "baseline_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "runs": [
+    {
+      "label": "base-prime",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-base"
+      },
+      "started": "2026-11-09T23:03:43.201558+00:00",
+      "exit_code": 0,
+      "wall_ns": 19231642839,
+      "cpu_user": 17.095788,
+      "cpu_system": 1.206823,
+      "peak_rss_kib": 617476,
+      "finished": "2026-11-09T23:04:02.433554+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "base-probe",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-base",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-09T23:04:02.440116+00:00",
+      "exit_code": 0,
+      "wall_ns": 12788113202,
+      "cpu_user": 12.314672,
+      "cpu_system": 0.46951099999999996,
+      "peak_rss_kib": 582788,
+      "finished": "2026-11-09T23:04:15.228998+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068",
+      "cache_hits": 2410,
+      "cache_misses": 0
+    },
+    {
+      "label": "cand-prime",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-cand"
+      },
+      "started": "2026-11-09T23:04:15.235293+00:00",
+      "exit_code": 0,
+      "wall_ns": 15264653059,
+      "cpu_user": 14.792563,
+      "cpu_system": 0.470557,
+      "peak_rss_kib": 617608,
+      "finished": "2026-11-09T23:04:30.500479+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cand-probe",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-cand",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-09T23:04:30.505386+00:00",
+      "exit_code": 0,
+      "wall_ns": 11649134317,
+      "cpu_user": 11.235043,
+      "cpu_system": 0.41314599999999996,
+      "peak_rss_kib": 582792,
+      "finished": "2026-11-09T23:04:42.154999+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068",
+      "cache_hits": 2410,
+      "cache_misses": 0
+    },
+    {
+      "label": "cold-0-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:04:42.160819+00:00",
+      "exit_code": 0,
+      "wall_ns": 15039303504,
+      "cpu_user": 14.546653,
+      "cpu_system": 0.490425,
+      "peak_rss_kib": 585604,
+      "finished": "2026-11-09T23:04:57.200570+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cold-0-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:04:57.207071+00:00",
+      "exit_code": 0,
+      "wall_ns": 14176383716,
+      "cpu_user": 13.675374,
+      "cpu_system": 0.49945,
+      "peak_rss_kib": 585480,
+      "finished": "2026-11-09T23:05:11.383967+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cold-1-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:05:11.389238+00:00",
+      "exit_code": 0,
+      "wall_ns": 13787340586,
+      "cpu_user": 13.345533,
+      "cpu_system": 0.42660299999999995,
+      "peak_rss_kib": 585480,
+      "finished": "2026-11-09T23:05:25.177204+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cold-1-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:05:25.182325+00:00",
+      "exit_code": 0,
+      "wall_ns": 15538241930,
+      "cpu_user": 14.920682,
+      "cpu_system": 0.573201,
+      "peak_rss_kib": 585604,
+      "finished": "2026-11-09T23:05:40.721026+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cold-2-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:05:40.727598+00:00",
+      "exit_code": 0,
+      "wall_ns": 14906041274,
+      "cpu_user": 14.458431,
+      "cpu_system": 0.4458,
+      "peak_rss_kib": 585604,
+      "finished": "2026-11-09T23:05:55.634123+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "cold-2-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T23:05:55.639456+00:00",
+      "exit_code": 0,
+      "wall_ns": 14742470354,
+      "cpu_user": 14.344894,
+      "cpu_system": 0.395623,
+      "peak_rss_kib": 585480,
+      "finished": "2026-11-09T23:06:10.383157+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-0-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-base"
+      },
+      "started": "2026-11-09T23:06:10.388258+00:00",
+      "exit_code": 0,
+      "wall_ns": 10826896589,
+      "cpu_user": 10.377724,
+      "cpu_system": 0.43744299999999997,
+      "peak_rss_kib": 582788,
+      "finished": "2026-11-09T23:06:21.215738+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-0-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-cand"
+      },
+      "started": "2026-11-09T23:06:21.223660+00:00",
+      "exit_code": 0,
+      "wall_ns": 11401592027,
+      "cpu_user": 10.957407,
+      "cpu_system": 0.427377,
+      "peak_rss_kib": 582664,
+      "finished": "2026-11-09T23:06:32.626673+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-1-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-cand"
+      },
+      "started": "2026-11-09T23:06:32.633142+00:00",
+      "exit_code": 0,
+      "wall_ns": 11589937346,
+      "cpu_user": 10.977035,
+      "cpu_system": 0.611309,
+      "peak_rss_kib": 582792,
+      "finished": "2026-11-09T23:06:44.223988+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-1-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-base"
+      },
+      "started": "2026-11-09T23:06:44.232162+00:00",
+      "exit_code": 0,
+      "wall_ns": 12600782931,
+      "cpu_user": 11.909732,
+      "cpu_system": 0.672585,
+      "peak_rss_kib": 582788,
+      "finished": "2026-11-09T23:06:56.837068+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-2-base",
+      "compiler": "base",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-base"
+      },
+      "started": "2026-11-09T23:06:56.848957+00:00",
+      "exit_code": 0,
+      "wall_ns": 11514601125,
+      "cpu_user": 11.043298,
+      "cpu_system": 0.470062,
+      "peak_rss_kib": 582788,
+      "finished": "2026-11-09T23:07:08.364980+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    },
+    {
+      "label": "warm-2-cand",
+      "compiler": "cand",
+      "args": [
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/checker",
+        "/workspace/lang-interpreter-timeout-20261109/compiler/checker.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-index-20261109/build/interpreter-index-compile-controls-20261109/memo-cand"
+      },
+      "started": "2026-11-09T23:07:08.369800+00:00",
+      "exit_code": 0,
+      "wall_ns": 11257115651,
+      "cpu_user": 10.895685,
+      "cpu_system": 0.358996,
+      "peak_rss_kib": 582792,
+      "finished": "2026-11-09T23:07:19.628138+00:00",
+      "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068"
+    }
+  ],
+  "binary_sha256": {
+    "base": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+    "cand": "cdc5289233e4fe4dc6f3f2da8c9cd5eaf6400ae35e9f7520ad963eb7a7b05be0"
+  },
+  "finished": "2026-11-09T23:07:19.634424+00:00"
+}

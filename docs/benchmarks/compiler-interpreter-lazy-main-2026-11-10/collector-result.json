@@ -1,0 +1,50 @@
+{
+  "started": "2026-11-10T07:16:04.261740+00:00",
+  "phase": "complete",
+  "runs": [
+    {
+      "label": "subsets",
+      "args": [
+        "python3",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/measure.py",
+        "subsets"
+      ],
+      "started": "2026-11-10T07:22:45.911615+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T07:24:34.942016+00:00"
+    },
+    {
+      "label": "compilation",
+      "args": [
+        "python3",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compile-controls.py"
+      ],
+      "started": "2026-11-10T07:24:34.942584+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T07:25:50.816258+00:00"
+    },
+    {
+      "label": "full",
+      "args": [
+        "python3",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/measure.py",
+        "full"
+      ],
+      "started": "2026-11-10T07:25:50.817169+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T07:28:17.995830+00:00"
+    },
+    {
+      "label": "instructions",
+      "args": [
+        "python3",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions.py"
+      ],
+      "started": "2026-11-10T07:28:17.999337+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T07:35:03.355654+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T07:35:03.360174+00:00"
+}

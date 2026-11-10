@@ -36,8 +36,7 @@ function indexed_pair(addr: string, value: string, suffix: string, i: i32, width
 
 function addresses(): void {
   let regs = registers.registers(false, 64);
-  let i = 0;
-  while (i < regs.len()) {
+  for i in 0..regs.len() {
     for width in [32, 64] {
       let values = registers.registers(false, width);
       let suffix = if (width == 32) { "l" } else { "q" };
@@ -49,7 +48,6 @@ function addresses(): void {
       }
     }
     global_address(regs[i], i);
-    i += 1;
   }
   let default_scale = sample("movq 2147483647(%r15,%r12), %rax");
   require(default_scale.kind == 3 && exact_address(default_scale, 64, 15, 12, 1, 2147483647), "default scale");
@@ -59,8 +57,7 @@ function shifts(): void {
   for width in [32, 64] {
     let regs = registers.registers(false, width);
     let suffix = if (width == 32) { "l" } else { "q" };
-    let i = 0;
-    while (i < regs.len()) {
+    for i in 0..regs.len() {
       for count in [0, 1, 2, 31, 32, 63, 64, 255] {
         for direction in ["shl", "shr"] {
           let line = direction + suffix + " $" + count.to_string() + ", " + regs[i];
@@ -68,7 +65,6 @@ function shifts(): void {
           require(op.kind == (if (direction == "shl") { 20 } else { 21 }) && op.width == width && op.destination == i && op.immediate == count, line);
         }
       }
-      i += 1;
     }
   }
 }

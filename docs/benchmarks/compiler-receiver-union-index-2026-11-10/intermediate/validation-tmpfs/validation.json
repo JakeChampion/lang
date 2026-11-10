@@ -1,0 +1,71 @@
+{
+  "source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "selected_suites": [
+    "TestSelfHostReceiverUnionMembership",
+    "TestSelfHostCheckerDriverX86_64",
+    "TestSelfHostCheckerDriverArm64",
+    "TestSelfHostImportedMethodCollisionX86_64",
+    "TestSelfHostImportedMethodCollisionArm64",
+    "TestSelfHostImportedMethodCollisionWasm",
+    "TestSelfHostAmbiguousMethodRankedByImports",
+    "TestSelfHostCheckedValueTypes",
+    "TestSelfHostMethodEnumScrutineeIRX86_64",
+    "TestSelfHostUnionIRPathX86_64",
+    "TestSelfHostRepoComplexityRatchet",
+    "TestSelfHostFeatureCensus",
+    "TestSelfHostInterpCallableValues",
+    "TestSelfHostInterpCallCostIgnoresFunctionCount",
+    "TestSelfHostInterpScopeFrames"
+  ],
+  "runs": [
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(ReceiverUnionMembership|CheckerDriverX86_64|CheckerDriverArm64|ImportedMethodCollisionX86_64|ImportedMethodCollisionArm64|ImportedMethodCollisionWasm|AmbiguousMethodRankedByImports|CheckedValueTypes|MethodEnumScrutineeIRX86_64|UnionIRPathX86_64|RepoComplexityRatchet|FeatureCensus|InterpCallableValues|InterpCallCostIgnoresFunctionCount|InterpScopeFrames)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-10T16:40:41.034524+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:47:23.177498+00:00",
+      "passes": 146,
+      "skips": 0,
+      "failures": [],
+      "completed_suites": [
+        "TestSelfHostAmbiguousMethodRankedByImports",
+        "TestSelfHostCheckedValueTypes",
+        "TestSelfHostCheckerDriverX86_64",
+        "TestSelfHostCheckerDriverArm64",
+        "TestSelfHostFeatureCensus",
+        "TestSelfHostImportedMethodCollisionX86_64",
+        "TestSelfHostImportedMethodCollisionArm64",
+        "TestSelfHostImportedMethodCollisionWasm",
+        "TestSelfHostInterpCallCostIgnoresFunctionCount",
+        "TestSelfHostInterpCallableValues",
+        "TestSelfHostInterpScopeFrames",
+        "TestSelfHostRepoComplexityRatchet",
+        "TestSelfHostMethodEnumScrutineeIRX86_64",
+        "TestSelfHostReceiverUnionMembership",
+        "TestSelfHostUnionIRPathX86_64"
+      ]
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-10T16:47:23.183307+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:47:29.988871+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T16:47:29.989500+00:00"
+}

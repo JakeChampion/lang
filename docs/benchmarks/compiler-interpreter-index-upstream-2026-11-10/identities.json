@@ -1,0 +1,30 @@
+{
+  "created": "2026-11-10T02:39:04.071178+00:00",
+  "fixed_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+  "baseline_source": "f9904974a77249949607f3b6196e489bf53c3602",
+  "input_files": {
+    "tests/stdlib/opus_delimited_test.fern": {
+      "sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+      "bytes": 3333
+    },
+    "tests/stdlib/opus_delimited_vectors.fern": {
+      "sha256": "4577a0d43b7363681bb0fae8cf8f876dafd02a896cb61fc4d03853bbac33fc4e",
+      "bytes": 185410
+    },
+    "build/interpreter-profile-20261109/first-group.fern": {
+      "sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "bytes": 3293
+    },
+    "build/interpreter-profile-20261109/second-group.fern": {
+      "sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "bytes": 3296
+    }
+  },
+  "source_trees": {
+    "206df7eeb094f5540ce1bd25cc2bd8090dae5df2": "8e4296d56212ae8e24d447039b4d5038ffb99778",
+    "f9904974a77249949607f3b6196e489bf53c3602": "4ecd75acd6cb78e30b4429ff1cd5a2da1cf86191",
+    "3b9ed9c54ccc8e12b21847597eca5bdc49db53b8": "8e4296d56212ae8e24d447039b4d5038ffb99778"
+  },
+  "validation_note": "Pinned source check and 387 targeted results ran on the merged working source before commit 3b9. Final candidate 206 retains that entire tree byte for byte."
+}

@@ -1,0 +1,10 @@
+{
+  "args": [
+    "make",
+    "ci-selftest"
+  ],
+  "source": "99fda7a649924cdc341f014f52e1d4ab9a6ad0f4",
+  "started": "2026-11-10T16:16:44.348289+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T16:17:42.265804+00:00"
+}

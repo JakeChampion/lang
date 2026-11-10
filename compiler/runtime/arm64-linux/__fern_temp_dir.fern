@@ -1,4 +1,7 @@
 function __fern_temp_dir(prefix: string): Result[string, IoError] {
+  if (__count_byte(prefix, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(prefix, prefix.len())));
+  }
   let plen = prefix.len();
   let si = 0;
   while (si < plen) {

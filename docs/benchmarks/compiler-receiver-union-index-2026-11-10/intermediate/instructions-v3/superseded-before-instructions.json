@@ -1,0 +1,12 @@
+{
+  "reason": "Actual main added E098 diagnostic code after normal timing sweep started. Complete every fixed timing/count sample on the frozen515d/3d51 pair, but defer this unstarted instruction matrix to the forthcoming integrated production source. No instruction command executed or discarded.",
+  "pid": 108027,
+  "prior_state": {
+    "baseline_source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+    "candidate_source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+    "fixed_input_source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+    "started": "2026-11-10T17:00:14.130005+00:00",
+    "runs": [],
+    "note": "One normal guest-instruction pair per workload/cache mode after normal timings, allocation controls and all local correctness jobs finish. No instrumented time claim. Same retained equal-length compiler paths as timings. Child/cache/branch simulation off."
+  }
+}

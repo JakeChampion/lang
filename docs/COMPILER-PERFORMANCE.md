@@ -1,6 +1,6 @@
 # Compiler performance
 
-Status: [plan] measurement process and priorities, updated 2026-11-09.
+Status: [plan] measurement process and priorities, updated 2026-11-10.
 
 Fern aims to have one of the fastest parsers and self-hosted compilers in the world.
 Correct diagnostics, ownership proofs, and generated code remain requirements.
@@ -8,6 +8,135 @@ The [parser record](PARSER-PERFORMANCE.md) describes the first article-based cha
 The [profiling reference](PROFILING.md) describes the native CPU and allocation profilers.
 
 ## Measurements
+
+The [receiver membership experiment](benchmarks/compiler-receiver-union-index-2026-11-10/README.md) rejects an existing-index shortcut in two receiver queries.
+Eight fixed balanced pairs per workload and proof-cache mode retain every sample.
+Cold checker CPU medians increase from 11.8509315 to 13.118910 seconds, or 10.7%, with seven of eight candidate pairs slower.
+The other three combinations have lower medians, with substantial paired variation.
+The physical timing cause remains unknown.
+
+All 84 normal and counter commands succeed, with identical emitted programs within each workload.
+Allocation counts and median peak RSS remain equal in all four combinations.
+The other gains do not justify the unresolved cold checker cost.
+The incomplete instruction matrix stops after rejection, with its failed partial trace intact.
+The earlier instruction reduction remains a separate historical result for the rejected source.
+
+The final source retains main `e4494347` compiler code, receiver-query regression tests, and a kernel scheduler fixture repair.
+Fresh main and retained compiler images match byte for byte.
+All 20 targeted suites report 150 test and subtest passes, with zero skips.
+Current native and interpreter Opus controls match the full reference output.
+These retained correctness controls establish no compiler speedup or external rank.
+
+The [receiver test integration](benchmarks/compiler-receiver-main-integration-2026-11-10/README.md) retains main `bcd223ba` owned-result contracts and compiler code.
+Fresh main and retained normal compiler images match byte for byte.
+All 23 targeted suites report 248 test and subtest passes without skips.
+The separate entropy fixture control reproduces two stale negative-length expectations and then reports 58 passes after repair.
+It preserves runtime refusal and every original valid-capacity check.
+These source-specific correctness controls add no compiler performance claim.
+
+The [interpreter target-search experiment](benchmarks/compiler-interpreter-targets-2026-11-09/README.md) avoids declaration searches whose result argument evaluation does not use.
+Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
+Both binaries produce identical TAP output.
+Both full-corpus controls reach their 33-minute diagnostic limit without completion.
+
+The shortcut does not repair that timeout.
+Complete cold and warm compilation controls produce identical native output, with variable timings that establish no performance change.
+The candidate diagnostic profile still attributes 49.43% of exclusive samples to `call_target`.
+
+The [function-name index experiment](benchmarks/compiler-interpreter-index-2026-11-09/README.md) shares an immutable declaration index across interpreter calls.
+Five pairs reduce CPU time by 16.83% to 25.60% on the first 32-record diagnostic subset, relative to the shortcut version.
+All eight targeted suites pass, including a same-count REPL replacement on three targets.
+Three further pairs reduce CPU time by 60.72% to 61.93% on the larger 32-record group.
+
+The indexed normal interpreter completes all 1,896 reference records in 527.217 seconds with exit zero.
+The original Go oracle/native `opus_delimited` subtest also passes in 439.89 seconds under its unchanged 33-minute package timeout.
+The index removes 22.56% of guest instructions on the first diagnostic group, relative to the shortcut version.
+Exact-head CI remains the merge gate.
+
+Main now supplies the broader `Funcs` Map index from PR #15080.
+This index replaces the earlier `NameIndex` alternative.
+The earlier archives retain their original code and source identities.
+
+The [fixed timing control](benchmarks/compiler-interpreter-path-control-2026-11-10/README.md) rejects the remaining lazy argument-target shortcut.
+Eight balanced pairs per proof-cache mode retain higher candidate compilation medians, with substantial paired variation.
+The instruction and allocation reductions do not justify the unresolved compilation cost.
+The timing cause remains unknown.
+The final source retains eager lookup and the upstream Map index.
+
+The two regression files still cover generic calls and same-count REPL replacement.
+Fresh validation reports 413 test and subtest passes with zero skips.
+The production rebuild matches main `c9547605` byte for byte and completes the full 1,896-record correctness control.
+The lazy lookup records below remain historical comparisons of their exact rejected candidates.
+
+The [later main integration](benchmarks/compiler-interpreter-main-sync-2026-11-10/README.md) retains the compiler and standard library from `e23f590d`.
+Fresh main and retained production builds are byte-identical.
+The current controls report 413 targeted test and subtest passes and 14 TLS interoperability passes, without skips.
+The rebuilt normal compiler also completes all 1,896 reference records.
+These correctness controls add no compiler performance claim.
+
+The [argument prepass comparison](benchmarks/compiler-interpreter-map-shortcut-2026-11-10/README.md) tests the remaining unused-search shortcut against that Map index.
+Four of five first-group pairs increase CPU time, despite fewer allocation events.
+The extra argument prepass is rejected as the final implementation.
+
+The [lazy lookup comparison](benchmarks/compiler-interpreter-lazy-targets-2026-11-10/README.md) compares main `da3282d0` with candidate `597b6e78`.
+It removes 152,552,787 guest instructions, or 0.8709%, from the first 32-record diagnostic group.
+This control uses one instruction sample per normal compiler executable.
+The two allocation subsets remove 514,178 and 13,363,285 events, with balanced frees and zero live bytes.
+All 388 targeted test and subtest results pass, with no skips.
+
+The normal candidate completes all 1,896 records in 130.320 seconds with identical compiled-program output.
+There is no paired full-corpus baseline timing.
+Median peak RSS increases by 7,472 KiB on both subsets.
+Identical baseline compiler bytes exhibit different RSS medians at two retained paths, which limits memory attribution.
+Complete cold and warm compilation retains identical native output without an established general compiler performance gain.
+Exact-head complete CI remains the merge gate.
+
+The [updated lazy lookup comparison](benchmarks/compiler-interpreter-lazy-main-2026-11-10/README.md) uses main `c9547605` and candidate `c05b5ce8`.
+It removes 152,552,927 guest instructions, or 0.8709%, from the first diagnostic group.
+The two subsets retain allocation reductions of 514,178 and 13,363,285 events, with balanced frees and zero live bytes.
+All 413 targeted test and subtest results pass without skips.
+The separate TLS integration control reports 14 passes and zero skips.
+
+The normal candidate completes all 1,896 records in 147.092 seconds with identical compiled-program output.
+There is no paired full-corpus baseline timing.
+Subset median peak RSS is equal within each pair.
+CPU changes include positive and negative values.
+Complete cold and warm compilation medians are slower for the candidate, with more CPU time in every cold pair.
+
+A separate complete-compilation count pair records 18,663,497,232 versus 18,663,497,396 guest instructions.
+This difference does not establish the timing cause.
+The archive retains every sample, the failed tool preflight, source identities, and raw controls.
+These results establish no general compiler speedup or external rank.
+
+The [fresh main comparison](benchmarks/compiler-interpreter-index-main-2026-11-09/README.md) compares main `4a044282` with merged source `6f6bddfc`.
+The original oracle/native Opus subtest passes in 634.93 seconds under the unchanged package timeout.
+Ten targeted suites report 387 passes and zero skips.
+The combined shortcut and index remove 648,690 allocation events on the first group and 20,027,874 on the second group.
+All allocation controls balance their frees and report zero live bytes.
+The separate cold and warm compilation controls retain identical native output and establish no compiler timing gain.
+
+The [later CI controls](benchmarks/compiler-interpreter-ci-2026-11-10/README.md) include two complete interpreter shards.
+The current Opus shard passes all 72 selected subtests in 814.060 seconds under the unchanged 33-minute package budget.
+The complete source gate also passes.
+The archive records an inherited ARM64 assembly-size decrease and the separately owned Plex ownership diagnostic.
+
+The [HTTP baseline controls](benchmarks/compiler-interpreter-http-ci-2026-11-10/README.md) retain 24 exact CI row updates after main `da3282d0`.
+Nine target and profile pairs produce identical assembly between main and candidate `597b6e78`.
+Eight native pairs also produce identical executables.
+The archive retains the higher costs, two diagnostic-size differences from CI, and a failed controller assumption about hardened instruction counts.
+These inherited HTTP costs establish no interpreter gain.
+
+The [upstream qualification](benchmarks/compiler-interpreter-index-upstream-2026-11-10/README.md) compares main `f9904974` with candidate `206df7ee` after the callback repair.
+Five alternating pairs reduce CPU time by 17.89% to 43.64% on the first interpreter subset.
+Three pairs reduce CPU time by 81.08% to 83.87% on the second subset.
+All outputs agree, and the allocation controls free every allocation with zero live bytes.
+
+Median peak RSS increases by 7,472 KiB on both subsets.
+The full candidate completes all 1,896 records in 364.440 seconds with identical compiled-program output.
+This full control has no paired baseline timing.
+Complete cold and warm compilation produces identical native output without a consistent timing gain.
+The archive retains the higher memory costs and every sample.
+Exact-head CI remains the merge gate.
 
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |

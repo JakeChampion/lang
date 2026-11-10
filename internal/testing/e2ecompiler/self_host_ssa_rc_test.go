@@ -1045,11 +1045,11 @@ function main(): i32 {
     if (!ssaunits.plan(arrMapFunc, [3], ssaunits.no_view()).ok) { eprint(ssaunits.plan(arrMapFunc, [3], ssaunits.no_view()).why); return 146; }
     // A column of function values is a column of environment boxes: the map
     // owns a unit of each, and the column's release walks their captures.
-    let fnMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true } };
+    let fnMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_own: false, ret_type: i32ty, params_known: true } };
     let fnMapFunc = ssasem.Func { ...mapFunc, values: [fnMapTy], params: [fnMapTy], result: fnMapTy };
     if (!ssaunits.plan(fnMapFunc, [3], ssaunits.no_view()).ok) { eprint(ssaunits.plan(fnMapFunc, [3], ssaunits.no_view()).why); return 147; }
     // A function-typed KEY stays refused: nothing hashes or compares one.
-    let fnKeyTy: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true }, value: i32ty };
+    let fnKeyTy: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_own: false, ret_type: i32ty, params_known: true }, value: i32ty };
     let fnKeyFunc = ssasem.Func { ...mapFunc, values: [fnKeyTy], params: [fnKeyTy], result: fnKeyTy };
     if (ssaunits.plan(fnKeyFunc, [3], ssaunits.no_view()).why != "function value is not an element") { return 235; }
     // A map over 32-bit integer or boolean columns runs on core/map: it is

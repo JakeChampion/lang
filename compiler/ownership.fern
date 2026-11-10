@@ -56,10 +56,8 @@ pub function address_taken(f: ssasem.Func, seen: string[]): string[] {
 
 function all_true(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(true);
-    i += 1;
   }
   return out;
 }
@@ -109,8 +107,7 @@ pub function cycles(succ: i32[][]): i32[] {
   let stack: i32[] = [];
   let work: i32[] = [];
   let edge: i32[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     order = order.append(-1);
     low = low.append(0);
     on = on.append(false);
@@ -118,14 +115,12 @@ pub function cycles(succ: i32[][]): i32[] {
     stack = stack.append(0);
     work = work.append(0);
     edge = edge.append(0);
-    i += 1;
   }
   let slen = 0;
   let wlen = 0;
   let counter = 0;
   let ncomp = 0;
-  let s = 0;
-  while (s < n) {
+  for s in 0..n {
     if (order[s] < 0) {
       order = order.with(s, counter);
       low = low.with(s, counter);
@@ -167,13 +162,11 @@ pub function cycles(succ: i32[][]): i32[] {
               first -= 1;
             }
             let cyclic = slen - first > 1 || util.index_of_i32(succ[v], v) >= 0;
-            let k = first;
-            while (k < slen) {
+            for k in first..slen {
               on = on.with(stack[k], false);
               if (cyclic) {
                 comp = comp.with(stack[k], ncomp);
               }
-              k += 1;
             }
             if (cyclic) {
               ncomp += 1;
@@ -183,7 +176,6 @@ pub function cycles(succ: i32[][]): i32[] {
         }
       }
     }
-    s += 1;
   }
   return comp;
 }
@@ -194,13 +186,11 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   }
   let row = find(rows, ix, ins.str);
   let cycle = same_cycle(rows, fr.me, row);
-  let i = 0;
-  while (i < ins.args.len()) {
+  for i in 0..ins.args.len() {
     let unchanged = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
     if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -234,12 +224,10 @@ function only_forwards(ins: ssa.SInst): boolean {
 
 function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
   let callee = f.values[ins.args[0]];
-  let i = 1;
-  while (i < ins.args.len()) {
+  for i in 1..ins.args.len() {
     if (ssasem.func_param_own(callee, i - 1) && ssasem.reference(f.values[ins.args[i]])) {
       out = carry(out, a, ins.args[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -249,12 +237,10 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   if (same_cycle(rows, fr.me, row) && quiet_slot(rows, row, ins.imm) || !consumed_at(rows, row, ins.imm)) {
     return out;
   }
-  let i = 1;
-  while (i < ins.args.len()) {
+  for i in 1..ins.args.len() {
     if (ins.args[i] != ins.result && ssasem.reference(f.values[ins.args[i]])) {
       out = carry(out, a, ins.args[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -283,14 +269,12 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
       if (slot_phi(ins)) {
         n = 1;
       }
-      let i = 0;
-      while (i < n) {
+      for i in 0..n {
         let arg = ins.args[i];
         if (arg >= 0 && arg < out.len() && !out[arg] && ssasem.reference(f.values[arg])) {
           out = carry(out, a, arg);
           changed = true;
         }
-        i += 1;
       }
     }
   }
@@ -319,12 +303,10 @@ function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analy
     return out;
   }
   if (stores_after_receiver(ins.kind_tag)) {
-    let i = 1;
-    while (i < ins.args.len()) {
+    for i in 1..ins.args.len() {
       if (ssasem.reference(f.values[ins.args[i]])) {
         out = carry(out, a, ins.args[i]);
       }
-      i += 1;
     }
   }
   return out;
@@ -335,12 +317,10 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
   if (at >= 0 && !rows[at].lends) {
     return out;
   }
-  let i = 0;
-  while (i < ins.args.len()) {
+  for i in 0..ins.args.len() {
     if (ssasem.reference(f.values[ins.args[i]]) && !consumed_at(rows, at, i)) {
       out = carry(out, a, ins.args[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -406,10 +386,8 @@ pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: I
 
 function escaping_from(f: ssasem.Func, carried: boolean[], lent: boolean[]): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < f.params.len()) {
+  for i in 0..f.params.len() {
     out = out.append(i < carried.len() && carried[i] && !(i < lent.len() && lent[i]));
-    i += 1;
   }
   return out;
 }

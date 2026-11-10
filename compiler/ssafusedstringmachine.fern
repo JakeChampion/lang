@@ -84,10 +84,8 @@ function initial(r: value.Interval, register_entry: boolean, grown: boolean): St
   let length = if (grown) { identity(5, 4) } else { numeric(r, value.length(r)) };
   let shape = if (grown) { 1196576599 } else { 1934589965 };
   let cells = [numeric_half(value.number(r, 1 as i64)), numeric_half(value.number(r, shape as i64)), token(5, 2, 0), token(5, 3, 0), length.low, length.high];
-  i = 6;
-  while (i < 16) {
+  for i in 6..16 {
     cells = cells.append(token(5, i, 0));
-    i += 1;
   }
   cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1));
   let argument = if (register_entry) { identity(5, 18) } else { identity(6, 0) };
@@ -209,19 +207,13 @@ function stack_step(s: State, r: value.Interval, op: isa.Op): State {
 }
 
 function movement(s: State, r: value.Interval, op: isa.Op): State {
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return write(s, op.destination, read(s, r, address(s, r, op), op.width));
-  }
-  if (op.kind == 4) {
-    return store(s, r, address(s, r, op), op.width, s.regs[op.source]);
-  }
-  if (op.kind == 5) {
-    return write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width));
-  }
-  return stack_step(s, r, op);
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    _ => stack_step(s, r, op),
+  };
 }
 
 function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
@@ -467,16 +459,12 @@ function expected_register(r: value.Interval, reg: i32, grown: boolean): Word {
   if (class == -3) {
     return small_register(r, reg, grown);
   }
-  if (reg == 0) {
-    return if (class >= 0) { numeric(r, value.number(r, class as i64)) } else { identity(6, 0) };
-  }
-  if (reg == 1) {
-    return if (class >= 0) { identity(8, 0) } else { identity(6, base_at(grown)) };
-  }
-  if (reg == 2) {
-    return if (class >= 0) { identity(10, 0) } else { numeric(r, words(r, grown)) };
-  }
-  return large_register(r, reg, grown);
+  return match (reg) {
+    0 => if (class >= 0) { numeric(r, value.number(r, class as i64)) } else { identity(6, 0) },
+    1 => if (class >= 0) { identity(8, 0) } else { identity(6, base_at(grown)) },
+    2 => if (class >= 0) { identity(10, 0) } else { numeric(r, words(r, grown)) },
+    _ => large_register(r, reg, grown),
+  };
 }
 
 function large_register(r: value.Interval, reg: i32, grown: boolean): Word {
@@ -490,25 +478,15 @@ function large_register(r: value.Interval, reg: i32, grown: boolean): Word {
 }
 
 function small_register(r: value.Interval, reg: i32, grown: boolean): Word {
-  if (reg == 0) {
-    return identity(6, 0);
-  }
-  if (reg == 1) {
-    return identity(6, base_at(grown));
-  }
-  if (reg == 2) {
-    return numeric(r, value.expected_small(r, !grown));
-  }
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 6) {
-    return identity(8, 0);
-  }
-  if (reg == 8) {
-    return identity(7, 0);
-  }
-  return identity(2, reg);
+  return match (reg) {
+    0 => identity(6, 0),
+    1 => identity(6, base_at(grown)),
+    2 => numeric(r, value.expected_small(r, !grown)),
+    4 => identity(3, 0),
+    6 => identity(8, 0),
+    8 => identity(7, 0),
+    _ => identity(2, reg),
+  };
 }
 
 function expected_scratch(s: State, r: value.Interval): Half[] {
@@ -531,12 +509,10 @@ function big(r: value.Interval, grown: boolean): boolean {
 }
 
 function final_registers(s: State, r: value.Interval): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     if (!same_word(s.regs[i], expected_register(r, i, s.grown))) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -558,13 +534,11 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     expected = put(expected, 20, 64, identity(6, base_at(s.grown)));
   }
   let scratch = expected_scratch(s, r);
-  let i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     let wanted = if (i >= 6 && i < 16) { scratch[i] } else { expected.cells[i] };
     if (!same_half(s.cells[i], wanted)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -585,12 +559,10 @@ function unguarded(s: State, original: State, r: value.Interval): State {
     }
     i += 1;
   }
-  i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }

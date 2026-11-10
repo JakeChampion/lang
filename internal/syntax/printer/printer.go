@@ -40,6 +40,9 @@ func printConstDecl(b *strings.Builder, cd *ast.ConstDecl) {
 }
 
 func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
+	if sd.ValueType {
+		b.WriteString("@value\n")
+	}
 	if len(sd.Derives) > 0 {
 		b.WriteString("@derive(")
 		for i, d := range sd.Derives {
@@ -137,6 +140,7 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 	b.WriteByte(')')
 	if fn.ReturnType != nil {
 		b.WriteString(": ")
+		b.WriteString(ast.OwnedResultPrefix(fn.ReturnType, fn.ReturnOwn))
 		b.WriteString(printType(fn.ReturnType))
 	}
 	if fn.ImportIface != "" {
@@ -265,6 +269,7 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		b.WriteByte(')')
 		if x.ReturnType != nil {
 			b.WriteString(": ")
+			b.WriteString(ast.OwnedResultPrefix(x.ReturnType, x.ReturnOwn))
 			b.WriteString(printType(x.ReturnType))
 		}
 		b.WriteByte(' ')
@@ -597,7 +602,8 @@ func printType(t ast.Type) string {
 			}
 			out += printType(p)
 		}
-		return out + ") => " + printType(x.Result)
+		out += ") => " + ast.OwnedResultPrefix(x.Result, x.ResultOwn)
+		return out + printType(x.Result)
 	}
 	return ""
 }

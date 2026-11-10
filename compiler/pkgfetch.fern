@@ -7,6 +7,7 @@ import "./fern";
 import "./modloader";
 import "./pkgarchive";
 import "./util";
+import "std/string";
 
 const MAX_ARCHIVE: i32 = 67108864;
 
@@ -22,7 +23,7 @@ pub function fetch(url: string, hash: string): fern.Fetched {
   let dir = "";
   match (modloader.store_dir(got)) {
     Some(d) => {
-      dir = slice_unchecked(d, 0, d.len() - 1) + "";
+      dir = slice_unchecked(d, 0, d.len() - 1).to_owned();
     },
     None => {
       return failed("fetch " + url + ": no cache directory for the package store: set FERN_CACHE_DIR, XDG_CACHE_HOME or HOME");

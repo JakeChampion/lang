@@ -1,0 +1,6 @@
+{
+  "time": "2026-11-10T16:50:38.181203+00:00",
+  "reason": "CI exposes kernel scheduler failure. Hold normal timing sweep before first workload, to diagnose/fix without local heavy overlap. No timing sample executed or discarded.",
+  "pid": 101241,
+  "timed_commands": 0
+}

@@ -28,6 +28,8 @@ which ones.
 | --- | --- | --- |
 | `ARRAY-ALGEBRA.md` | [policy] | Normative answers to the seven array-algebra semantics questions of #9729 (pairing truncation, float reduction order, shape mismatch, views) that fusion must obey. |
 | `ARRAY-BOUNDS.md` | [policy] | Bounds-checking semantics: an out-of-range index or `.with` write aborts the program on every backend. |
+| `OWNED-RESULTS.md` | [reference] | Checked ownership promises on function and callback results. |
+| `VALUE-TYPES.md` | [policy] | Checked immutable value records, COW cleanup, and resource-field refusals. |
 | `CLOSURE-CAPTURE.md` | [policy] | Closures capture enclosing variables by reference through a shared cell, with E049 governing write-back. |
 | `EVALUATION-ORDER.md` | [policy] | Observable order for calls, operands, aggregates, named arguments, and selected branches. |
 | `FLOAT-SEMANTICS.md` | [policy] | IEEE 754 for ordinary arithmetic, with NaN bit patterns, the sign of zero and denormals left unspecified across backends. |

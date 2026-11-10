@@ -1,403 +1,403 @@
-// The lexer's self-checks. Each check returns 0, or the number of the
-// assertion that failed.
+// The lexer's self-checks. Each check is a std/test case. A failed case
+// names the condition that did not hold.
 
 import "../lexer";
 import "../util";
 import "std/unicode";
 import "std/utf8";
+import "std/test";
 
-function test_mixed(): i32 {
+function test_mixed(): test.TestOutcome {
   let src = "let x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
   let toks = lexer.tokenize(src);
 
   if (toks.len() != 13) {
-    return 1;
+    return test.fail("toks.len() != 13");
   }
 
   match (toks[0]) {
     lexer.TokKeyword(t) => {
       if (t.name != "let") {
-        return 100;
+        return test.fail("t.name != \"let\"");
       }
     },
     _ => {
-      return 101;
+      return test.fail("unexpected variant of toks[0]");
     }
   }
   match (toks[1]) {
     lexer.TokIdent(t) => {
       if (t.name != "x") {
-        return 200;
+        return test.fail("t.name != \"x\"");
       }
     },
     _ => {
-      return 201;
+      return test.fail("unexpected variant of toks[1]");
     }
   }
   match (toks[2]) {
     lexer.TokPunct(t) => {
       if (t.text != ":") {
-        return 300;
+        return test.fail("t.text != \":\"");
       }
     },
     _ => {
-      return 301;
+      return test.fail("unexpected variant of toks[2]");
     }
   }
   match (toks[3]) {
     lexer.TokKeyword(t) => {
       if (t.name != "i32") {
-        return 400;
+        return test.fail("t.name != \"i32\"");
       }
     },
     _ => {
-      return 401;
+      return test.fail("unexpected variant of toks[3]");
     }
   }
   match (toks[4]) {
     lexer.TokPunct(t) => {
       if (t.text != "=") {
-        return 500;
+        return test.fail("t.text != \"=\"");
       }
     },
     _ => {
-      return 501;
+      return test.fail("unexpected variant of toks[4]");
     }
   }
   match (toks[5]) {
     lexer.TokNumber(t) => {
       if (t.text != "42") {
-        return 600;
+        return test.fail("t.text != \"42\"");
       }
       if (t.suffix() != "i64") {
-        return 601;
+        return test.fail("t.suffix() != \"i64\"");
       }
       if (t.is_float()) {
-        return 602;
+        return test.fail("t.is_float()");
       }
     },
     _ => {
-      return 603;
+      return test.fail("unexpected variant of toks[5]");
     }
   }
   match (toks[6]) {
     lexer.TokPunct(t) => {
       if (t.text != ";") {
-        return 700;
+        return test.fail("t.text != \";\"");
       }
     },
     _ => {
-      return 701;
+      return test.fail("unexpected variant of toks[6]");
     }
   }
   match (toks[7]) {
     lexer.TokKeyword(t) => {
       if (t.name != "return") {
-        return 800;
+        return test.fail("t.name != \"return\"");
       }
       if (t.line != 2) {
-        return 801;
+        return test.fail("t.line != 2");
       }
     },
     _ => {
-      return 802;
+      return test.fail("unexpected variant of toks[7]");
     }
   }
   match (toks[8]) {
     lexer.TokIdent(t) => {
       if (t.name != "x") {
-        return 900;
+        return test.fail("t.name != \"x\"");
       }
     },
     _ => {
-      return 901;
+      return test.fail("unexpected variant of toks[8]");
     }
   }
   match (toks[9]) {
     lexer.TokPunct(t) => {
       if (t.text != "+") {
-        return 1000;
+        return test.fail("t.text != \"+\"");
       }
     },
     _ => {
-      return 1001;
+      return test.fail("unexpected variant of toks[9]");
     }
   }
   match (toks[10]) {
     lexer.TokNumber(t) => {
       if (t.text != "1.5") {
-        return 1100;
+        return test.fail("t.text != \"1.5\"");
       }
       if (t.suffix() != "f64") {
-        return 1101;
+        return test.fail("t.suffix() != \"f64\"");
       }
       if (!t.is_float()) {
-        return 1102;
+        return test.fail("!t.is_float()");
       }
     },
     _ => {
-      return 1103;
+      return test.fail("unexpected variant of toks[10]");
     }
   }
   match (toks[11]) {
     lexer.TokPunct(t) => {
       if (t.text != ";") {
-        return 1200;
+        return test.fail("t.text != \";\"");
       }
     },
     _ => {
-      return 1201;
+      return test.fail("unexpected variant of toks[11]");
     }
   }
   match (toks[12]) {
     lexer.TokEof(_) => {
-      return 0;
+      return test.pass();
     },
     _ => {
-      return 1300;
+      return test.fail("unexpected variant of toks[12]");
     }
   }
 }
 
-function test_hex(): i32 {
+function test_hex(): test.TestOutcome {
   let toks = lexer.tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
   if (toks.len() != 6) {
-    return 1400;
+    return test.fail("toks.len() != 6");
   }
   match (toks[0]) {
     lexer.TokNumber(t) => {
       if (t.text != "0x2A") {
-        return 1401;
+        return test.fail("t.text != \"0x2A\"");
       }
       if (t.is_float()) {
-        return 1402;
+        return test.fail("t.is_float()");
       }
     },
     _ => {
-      return 1403;
+      return test.fail("unexpected variant of toks[0]");
     }
   }
   match (toks[1]) {
     lexer.TokNumber(t) => {
       if (t.text != "0xff") {
-        return 1404;
+        return test.fail("t.text != \"0xff\"");
       }
     },
     _ => {
-      return 1405;
+      return test.fail("unexpected variant of toks[1]");
     }
   }
   match (toks[2]) {
     lexer.TokNumber(t) => {
       if (t.text != "0X0") {
-        return 1406;
+        return test.fail("t.text != \"0X0\"");
       }
     },
     _ => {
-      return 1407;
+      return test.fail("unexpected variant of toks[2]");
     }
   }
   match (toks[3]) {
     lexer.TokNumber(t) => {
       if (t.text != "0xDEADBEEF") {
-        return 1408;
+        return test.fail("t.text != \"0xDEADBEEF\"");
       }
     },
     _ => {
-      return 1409;
+      return test.fail("unexpected variant of toks[3]");
     }
   }
   match (toks[4]) {
     lexer.TokNumber(t) => {
       if (t.text != "0x10") {
-        return 1410;
+        return test.fail("t.text != \"0x10\"");
       }
       if (t.suffix() != "u8") {
-        return 1411;
+        return test.fail("t.suffix() != \"u8\"");
       }
     },
     _ => {
-      return 1412;
+      return test.fail("unexpected variant of toks[4]");
     }
   }
   match (toks[5]) {
     lexer.TokEof(_) => {
-      return 0;
+      return test.pass();
     },
     _ => {
-      return 1413;
+      return test.fail("unexpected variant of toks[5]");
     }
   }
 }
 
-function test_scientific(): i32 {
+function test_scientific(): test.TestOutcome {
   let toks = lexer.tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
   if (toks.len() != 6) {
-    return 1500;
+    return test.fail("toks.len() != 6");
   }
   match (toks[0]) {
     lexer.TokNumber(t) => {
       if (t.text != "1e3") {
-        return 1501;
+        return test.fail("t.text != \"1e3\"");
       }
       if (!t.is_float()) {
-        return 1502;
+        return test.fail("!t.is_float()");
       }
     },
     _ => {
-      return 1503;
+      return test.fail("unexpected variant of toks[0]");
     }
   }
   match (toks[1]) {
     lexer.TokNumber(t) => {
       if (t.text != "1.5e10") {
-        return 1504;
+        return test.fail("t.text != \"1.5e10\"");
       }
     },
     _ => {
-      return 1505;
+      return test.fail("unexpected variant of toks[1]");
     }
   }
   match (toks[2]) {
     lexer.TokNumber(t) => {
       if (t.text != "1.5E3") {
-        return 1506;
+        return test.fail("t.text != \"1.5E3\"");
       }
     },
     _ => {
-      return 1507;
+      return test.fail("unexpected variant of toks[2]");
     }
   }
   match (toks[3]) {
     lexer.TokNumber(t) => {
       if (t.text != "2.0e-2") {
-        return 1508;
+        return test.fail("t.text != \"2.0e-2\"");
       }
     },
     _ => {
-      return 1509;
+      return test.fail("unexpected variant of toks[3]");
     }
   }
   match (toks[4]) {
     lexer.TokNumber(t) => {
       if (t.text != "6.022e+23") {
-        return 1510;
+        return test.fail("t.text != \"6.022e+23\"");
       }
     },
     _ => {
-      return 1511;
+      return test.fail("unexpected variant of toks[4]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function test_bare_e(): i32 {
+function test_bare_e(): test.TestOutcome {
   let toks = lexer.tokenize("1e foo");
   if (toks.len() != 4) {
-    return 1550;
+    return test.fail("toks.len() != 4");
   }
   match (toks[0]) {
     lexer.TokNumber(t) => {
       if (t.text != "1") {
-        return 1551;
+        return test.fail("t.text != \"1\"");
       }
     },
     _ => {
-      return 1552;
+      return test.fail("unexpected variant of toks[0]");
     }
   }
   match (toks[1]) {
     lexer.TokIdent(t) => {
       if (t.name != "e") {
-        return 1553;
+        return test.fail("t.name != \"e\"");
       }
     },
     _ => {
-      return 1554;
+      return test.fail("unexpected variant of toks[1]");
     }
   }
   match (toks[2]) {
     lexer.TokIdent(t) => {
       if (t.name != "foo") {
-        return 1555;
+        return test.fail("t.name != \"foo\"");
       }
     },
     _ => {
-      return 1556;
+      return test.fail("unexpected variant of toks[2]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function test_chained_tuple(): i32 {
+function test_chained_tuple(): test.TestOutcome {
   let toks = lexer.tokenize("t.1.0");
   if (toks.len() != 6) {
-    return 1600;
+    return test.fail("toks.len() != 6");
   }
   match (toks[0]) {
     lexer.TokIdent(t) => {
       if (t.name != "t") {
-        return 1601;
+        return test.fail("t.name != \"t\"");
       }
     },
     _ => {
-      return 1602;
+      return test.fail("unexpected variant of toks[0]");
     }
   }
   match (toks[1]) {
     lexer.TokPunct(t) => {
       if (t.text != ".") {
-        return 1603;
+        return test.fail("t.text != \".\"");
       }
     },
     _ => {
-      return 1604;
+      return test.fail("unexpected variant of toks[1]");
     }
   }
   match (toks[2]) {
     lexer.TokNumber(t) => {
       if (t.text != "1") {
-        return 1605;
+        return test.fail("t.text != \"1\"");
       }
       if (t.is_float()) {
-        return 1606;
+        return test.fail("t.is_float()");
       }
     },
     _ => {
-      return 1607;
+      return test.fail("unexpected variant of toks[2]");
     }
   }
   match (toks[3]) {
     lexer.TokPunct(t) => {
       if (t.text != ".") {
-        return 1608;
+        return test.fail("t.text != \".\"");
       }
     },
     _ => {
-      return 1609;
+      return test.fail("unexpected variant of toks[3]");
     }
   }
   match (toks[4]) {
     lexer.TokNumber(t) => {
       if (t.text != "0") {
-        return 1610;
+        return test.fail("t.text != \"0\"");
       }
       if (t.is_float()) {
-        return 1611;
+        return test.fail("t.is_float()");
       }
     },
     _ => {
-      return 1612;
+      return test.fail("unexpected variant of toks[4]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function test_float_after_nondot(): i32 {
+function test_float_after_nondot(): test.TestOutcome {
   let toks = lexer.tokenize("let f = 1.5;");
   let floats = 0;
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     match (toks[i]) {
       lexer.TokNumber(t) => {
         if (t.is_float()) {
@@ -406,63 +406,62 @@ function test_float_after_nondot(): i32 {
       },
       _ => {}
     }
-    i += 1;
   }
   if (floats != 1) {
-    return 1650;
+    return test.fail("floats != 1");
   }
-  return 0;
+  return test.pass();
 }
 
-function test_suffix_errors(): i32 {
+function test_suffix_errors(): test.TestOutcome {
   if (!lexer.has_error(lexer.tokenize("42i33"))) {
-    return 1700;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"42i33\"))");
   }
   if (!lexer.has_error(lexer.tokenize("42i"))) {
-    return 1701;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"42i\"))");
   }
   if (!lexer.has_error(lexer.tokenize("1.5i32"))) {
-    return 1702;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"1.5i32\"))");
   }
   if (lexer.has_error(lexer.tokenize("42i64"))) {
-    return 1703;
+    return test.fail("lexer.has_error(lexer.tokenize(\"42i64\"))");
   }
   if (lexer.has_error(lexer.tokenize("7u8"))) {
-    return 1704;
+    return test.fail("lexer.has_error(lexer.tokenize(\"7u8\"))");
   }
   if (lexer.has_error(lexer.tokenize("42f32"))) {
-    return 1705;
+    return test.fail("lexer.has_error(lexer.tokenize(\"42f32\"))");
   }
   if (lexer.has_error(lexer.tokenize("1.5f64"))) {
-    return 1706;
+    return test.fail("lexer.has_error(lexer.tokenize(\"1.5f64\"))");
   }
-  return 0;
+  return test.pass();
 }
 
-function test_hex_needs_digits(): i32 {
+function test_hex_needs_digits(): test.TestOutcome {
   if (!lexer.has_error(lexer.tokenize("0x"))) {
-    return 1800;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"0x\"))");
   }
   if (lexer.has_error(lexer.tokenize("0x1"))) {
-    return 1801;
+    return test.fail("lexer.has_error(lexer.tokenize(\"0x1\"))");
   }
-  return 0;
+  return test.pass();
 }
 
-function test_string_errors(): i32 {
+function test_string_errors(): test.TestOutcome {
   if (!lexer.has_error(lexer.tokenize("\"oops"))) {
-    return 1850;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"\\\"oops\"))");
   }
   if (!lexer.has_error(lexer.tokenize("\"a\\zb\""))) {
-    return 1851;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"\\\"a\\\\zb\\\"\"))");
   }
   if (!lexer.has_error(lexer.tokenize("\"with\nnewline\""))) {
-    return 1852;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"\\\"with\\nnewline\\\"\"))");
   }
   if (lexer.has_error(lexer.tokenize("\"ok\""))) {
-    return 1853;
+    return test.fail("lexer.has_error(lexer.tokenize(\"\\\"ok\\\"\"))");
   }
-  return 0;
+  return test.pass();
 }
 
 function lex_error_is(src: string, msg: string, code: string): boolean {
@@ -473,81 +472,81 @@ function lex_error_is(src: string, msg: string, code: string): boolean {
   return false;
 }
 
-function test_unknown_char(): i32 {
+function test_unknown_char(): test.TestOutcome {
   if (!lex_error_is("$", "unexpected character '$'", "P001")) {
-    return 1900;
+    return test.fail("!lex_error_is(\"$\", \"unexpected character '$'\", \"P001\")");
   }
   if (lexer.has_error(lexer.tokenize("@"))) {
-    return 1901;
+    return test.fail("lexer.has_error(lexer.tokenize(\"@\"))");
   }
   if (!lex_error_is("a # b", "unexpected character '#'", "P001")) {
-    return 1902;
+    return test.fail("!lex_error_is(\"a # b\", \"unexpected character '#'\", \"P001\")");
   }
   if (!lex_error_is("`", "unexpected character '`'", "P001")) {
-    return 1903;
+    return test.fail("!lex_error_is(\"`\", \"unexpected character '`'\", \"P001\")");
   }
   if (lexer.has_error(lexer.tokenize("~x"))) {
-    return 1904;
+    return test.fail("lexer.has_error(lexer.tokenize(\"~x\"))");
   }
   if (!lex_error_is("\\", "unexpected character '\\\\'", "P001")) {
-    return 1905;
+    return test.fail("!lex_error_is(\"\\\\\", \"unexpected character '\\\\\\\\'\", \"P001\")");
   }
   if (!lex_error_is("x §", "unexpected character '§'", "P001")) {
-    return 1906;
+    return test.fail("!lex_error_is(\"x §\", \"unexpected character '§'\", \"P001\")");
   }
   if (!lex_error_is("\x01", "unexpected character '\\x01'", "P001")) {
-    return 1907;
+    return test.fail("!lex_error_is(\"\\x01\", \"unexpected character '\\\\x01'\", \"P001\")");
   }
   let invalid = "";
   unsafe {
     invalid = string_from_bytes_unchecked([97 as u8, 32 as u8, 255 as u8]);
   }
   if (!lex_error_is(invalid, "invalid UTF-8 byte 0xFF", "P001")) {
-    return 1908;
+    return test.fail("!lex_error_is(invalid, \"invalid UTF-8 byte 0xFF\", \"P001\")");
   }
   if (!lex_error_is("é", "identifiers must be ASCII; found 'é'", "P001")) {
-    return 2230;
+    return test.fail("!lex_error_is(\"é\", \"identifiers must be ASCII; found 'é'\", \"P001\")");
   }
   if (!lex_error_is("١", "identifiers must be ASCII; found '١'", "P001")) {
-    return 2231;
+    return test.fail("!lex_error_is(\"١\", \"identifiers must be ASCII; found '١'\", \"P001\")");
   }
   if (!lex_error_is("42i33", "unknown numeric suffix \"i33\" on \"42\"", "P002")) {
-    return 1909;
+    return test.fail("!lex_error_is(\"42i33\", \"unknown numeric suffix \\\"i33\\\" on \\\"42\\\"\", \"P002\")");
   }
   if (!lex_error_is("1.5i32", "integer suffix \"i32\" on float literal \"1.5\"", "P002")) {
-    return 1910;
+    return test.fail("!lex_error_is(\"1.5i32\", \"integer suffix \\\"i32\\\" on float literal \\\"1.5\\\"\", \"P002\")");
   }
   if (!lex_error_is("0o19", "invalid digit '9' in a 0o literal", "P002")) {
-    return 1911;
+    return test.fail("!lex_error_is(\"0o19\", \"invalid digit '9' in a 0o literal\", \"P002\")");
   }
   if (!lex_error_is("\"a\\qb\"", "unknown escape \\q in string literal", "P001")) {
-    return 1912;
+    return test.fail("!lex_error_is(\"\\\"a\\\\qb\\\"\", \"unknown escape \\\\q in string literal\", \"P001\")");
   }
   if (!lex_error_is("f\"a\\qb\"", "unknown escape \\q in f-string literal", "P001")) {
-    return 1913;
+    return test.fail("!lex_error_is(\"f\\\"a\\\\qb\\\"\", \"unknown escape \\\\q in f-string literal\", \"P001\")");
   }
   if (!lex_error_is("'\\xFF'", "\\xFF is above ASCII in a character literal; write \\u{FF} for the scalar", "P001")) {
-    return 1914;
+    return test.fail("!lex_error_is(\"'\\\\xFF'\", \"\\\\xFF is above ASCII in a character literal; write \\\\u{FF} for the scalar\", \"P001\")");
   }
   if (!lex_error_is("\"\\xff\"", "\\xFF is above ASCII in a string literal; write \\u{FF} for the scalar", "P001")) {
-    return 1915;
+    return test.fail("!lex_error_is(\"\\\"\\\\xff\\\"\", \"\\\\xFF is above ASCII in a string literal; write \\\\u{FF} for the scalar\", \"P001\")");
   }
   if (!lex_error_is("f\"\\x80{x}\"", "\\x80 is above ASCII in an f-string literal; write \\u{80} for the scalar", "P001")) {
-    return 1916;
+    return test.fail("!lex_error_is(\"f\\\"\\\\x80{x}\\\"\", \"\\\\x80 is above ASCII in an f-string literal; write \\\\u{80} for the scalar\", \"P001\")");
   }
   if (!lex_error_is("\"\\u{D800}\"", "\\u{D800} is a surrogate, not a Unicode scalar value", "P001")) {
-    return 1917;
+    return test.fail("!lex_error_is(\"\\\"\\\\u{D800}\\\"\", \"\\\\u{D800} is a surrogate, not a Unicode scalar value\", \"P001\")");
   }
   if (!lex_error_is("\"\\u{110000}\"", "\\u{110000} is above the maximum Unicode scalar 10FFFF", "P001")) {
-    return 1918;
+    return test.fail("!lex_error_is(\"\\\"\\\\u{110000}\\\"\", \"\\\\u{110000} is above the maximum Unicode scalar 10FFFF\", \"P001\")");
   }
   if (!lex_error_is("f\"\\u{1F600\"", "unterminated \\u{...} escape", "P001")) {
-    return 1919;
+    return test.fail("!lex_error_is(\"f\\\"\\\\u{1F600\\\"\", \"unterminated \\\\u{...} escape\", \"P001\")");
   }
   if (!lex_error_is("'\\q'", "unknown escape \\q in character literal", "P001")) {
-    return 1920;
+    return test.fail("!lex_error_is(\"'\\\\q'\", \"unknown escape \\\\q in character literal\", \"P001\")");
   }
-  return 0;
+  return test.pass();
 }
 
 function string_is(src: string, want: string): boolean {
@@ -561,36 +560,36 @@ function string_is(src: string, want: string): boolean {
   return false;
 }
 
-function test_string_escapes(): i32 {
+function test_string_escapes(): test.TestOutcome {
   if (!string_is("\"a\\x41\\x7f\"", "aA\x7f")) {
-    return 1930;
+    return test.fail("!string_is(\"\\\"a\\\\x41\\\\x7f\\\"\", \"aA\\x7f\")");
   }
   if (!string_is("\"\\0\\'\\\"\\\\\"", "\x00'\"\\")) {
-    return 1931;
+    return test.fail("!string_is(\"\\\"\\\\0\\\\'\\\\\\\"\\\\\\\\\\\"\", \"\\x00'\\\"\\\\\")");
   }
   let top = "";
   unsafe {
     top = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
   }
   if (!string_is("\"\\u{41}\\u{e9}\\u{20AC}\\u{1F600}\\u{10FFFF}\"", "Aé€😀" + top)) {
-    return 1932;
+    return test.fail("!string_is(\"\\\"\\\\u{41}\\\\u{e9}\\\\u{20AC}\\\\u{1F600}\\\\u{10FFFF}\\\"\", \"Aé€😀\" + top)");
   }
   let edges = "";
   unsafe {
     edges = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
   }
   if (!string_is("\"\\u{D7FF}\\u{E000}\"", edges)) {
-    return 1933;
+    return test.fail("!string_is(\"\\\"\\\\u{D7FF}\\\\u{E000}\\\"\", edges)");
   }
   let ft = lexer.tokenize("f\"\\u{1F600}{x}\\u{7B}\"");
   if let lexer.TokFString(f) = ft[0] {
     if (f.parts.len() != 3 || f.parts[0].lit != "😀" || f.parts[1].expr != "x" || f.parts[2].lit != "{") {
-      return 1934;
+      return test.fail("f.parts.len() != 3 || f.parts[0].lit != \"😀\" || f.parts[1].expr != \"x\" || f.parts[2].lit != \"{\"");
     }
   } else {
-    return 1935;
+    return test.fail("ft[0] is not an f-string token");
   }
-  return 0;
+  return test.pass();
 }
 
 function check_quoted(src: string, want_text: string, want_suffix: string): boolean {
@@ -609,115 +608,115 @@ function check_quoted(src: string, want_text: string, want_suffix: string): bool
   }
 }
 
-function test_quoted_literals(): i32 {
+function test_quoted_literals(): test.TestOutcome {
   if (!check_quoted("'x'", "120", "char")) {
-    return 1950;
+    return test.fail("!check_quoted(\"'x'\", \"120\", \"char\")");
   }
   if (!check_quoted("'['", "91", "char")) {
-    return 1951;
+    return test.fail("!check_quoted(\"'['\", \"91\", \"char\")");
   }
   if (!check_quoted("'\\n'", "10", "char")) {
-    return 1952;
+    return test.fail("!check_quoted(\"'\\\\n'\", \"10\", \"char\")");
   }
   if (!check_quoted("'\\0'", "0", "char")) {
-    return 1953;
+    return test.fail("!check_quoted(\"'\\\\0'\", \"0\", \"char\")");
   }
   if (!check_quoted("'\\''", "39", "char")) {
-    return 1954;
+    return test.fail("!check_quoted(\"'\\\\''\", \"39\", \"char\")");
   }
   if (!check_quoted("'\\\\'", "92", "char")) {
-    return 1955;
+    return test.fail("!check_quoted(\"'\\\\\\\\'\", \"92\", \"char\")");
   }
   if (!check_quoted("'\\x7F'", "127", "char")) {
-    return 1956;
+    return test.fail("!check_quoted(\"'\\\\x7F'\", \"127\", \"char\")");
   }
   if (!check_quoted("'\\u{41}'", "65", "char")) {
-    return 1957;
+    return test.fail("!check_quoted(\"'\\\\u{41}'\", \"65\", \"char\")");
   }
   if (!check_quoted("'\\u{1F600}'", "128512", "char")) {
-    return 1958;
+    return test.fail("!check_quoted(\"'\\\\u{1F600}'\", \"128512\", \"char\")");
   }
   if (!check_quoted("'\\u{10FFFF}'", "1114111", "char")) {
-    return 1959;
+    return test.fail("!check_quoted(\"'\\\\u{10FFFF}'\", \"1114111\", \"char\")");
   }
   if (!check_quoted("'😀'", "128512", "char")) {
-    return 1960;
+    return test.fail("!check_quoted(\"'😀'\", \"128512\", \"char\")");
   }
   if (!check_quoted("'é'", "233", "char")) {
-    return 1961;
+    return test.fail("!check_quoted(\"'é'\", \"233\", \"char\")");
   }
   if (!check_quoted("b'x'", "120", "u8")) {
-    return 1962;
+    return test.fail("!check_quoted(\"b'x'\", \"120\", \"u8\")");
   }
   if (!check_quoted("b'['", "91", "u8")) {
-    return 1963;
+    return test.fail("!check_quoted(\"b'['\", \"91\", \"u8\")");
   }
   if (!check_quoted("b'\\n'", "10", "u8")) {
-    return 1964;
+    return test.fail("!check_quoted(\"b'\\\\n'\", \"10\", \"u8\")");
   }
   if (!check_quoted("b'\\xFF'", "255", "u8")) {
-    return 1965;
+    return test.fail("!check_quoted(\"b'\\\\xFF'\", \"255\", \"u8\")");
   }
 
   if (!lexer.has_error(lexer.tokenize("''"))) {
-    return 1970;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"''\"))");
   }
   if (!lexer.has_error(lexer.tokenize("b''"))) {
-    return 1971;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"b''\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'ab'"))) {
-    return 1972;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'ab'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("b'ab'"))) {
-    return 1973;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"b'ab'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'a"))) {
-    return 1974;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'a\"))");
   }
   if (!lexer.has_error(lexer.tokenize("b'é'"))) {
-    return 1975;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"b'é'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("b'\\u{41}'"))) {
-    return 1976;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"b'\\\\u{41}'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'\\u{D800}'"))) {
-    return 1977;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'\\\\u{D800}'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'\\u{110000}'"))) {
-    return 1978;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'\\\\u{110000}'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'\\xFF'"))) {
-    return 1979;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'\\\\xFF'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'\\q'"))) {
-    return 1980;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'\\\\q'\"))");
   }
   if (!lexer.has_error(lexer.tokenize("'\n'"))) {
-    return 1981;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"'\\n'\"))");
   }
 
   let idt = lexer.tokenize("b bytes");
   match (idt[0]) {
     lexer.TokIdent(x) => {
       if (x.name != "b") {
-        return 1990;
+        return test.fail("x.name != \"b\"");
       }
     },
     _ => {
-      return 1991;
+      return test.fail("unexpected variant of idt[0]");
     }
   }
   match (idt[1]) {
     lexer.TokIdent(x) => {
       if (x.name != "bytes") {
-        return 1992;
+        return test.fail("x.name != \"bytes\"");
       }
     },
     _ => {
-      return 1993;
+      return test.fail("unexpected variant of idt[1]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
 function check_part(p: lexer.FStringPart, want_expr: boolean, want_text: string, want_line: i32, want_col: i32): boolean {
@@ -733,461 +732,408 @@ function check_part(p: lexer.FStringPart, want_expr: boolean, want_text: string,
   return p.lit == want_text;
 }
 
-function test_fstring(): i32 {
+function test_fstring(): test.TestOutcome {
   let t0 = lexer.tokenize("f\"\"");
   if (t0.len() != 2) {
-    return 2000;
+    return test.fail("t0.len() != 2");
   }
   match (t0[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 0) {
-        return 2001;
+        return test.fail("f.parts.len() != 0");
       }
     },
     _ => {
-      return 2002;
+      return test.fail("unexpected variant of t0[0]");
     }
   }
   let t1 = lexer.tokenize("f\"plain\"");
   match (t1[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 1) {
-        return 2010;
+        return test.fail("f.parts.len() != 1");
       }
       if (!check_part(f.parts[0], false, "plain", 0, 0)) {
-        return 2011;
+        return test.fail("!check_part(f.parts[0], false, \"plain\", 0, 0)");
       }
     },
     _ => {
-      return 2012;
+      return test.fail("unexpected variant of t1[0]");
     }
   }
   let t2 = lexer.tokenize("f\"a{x}b\"");
   match (t2[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 3) {
-        return 2020;
+        return test.fail("f.parts.len() != 3");
       }
       if (!check_part(f.parts[0], false, "a", 0, 0)) {
-        return 2021;
+        return test.fail("!check_part(f.parts[0], false, \"a\", 0, 0)");
       }
       if (!check_part(f.parts[1], true, "x", 1, 5)) {
-        return 2022;
+        return test.fail("!check_part(f.parts[1], true, \"x\", 1, 5)");
       }
       if (!check_part(f.parts[2], false, "b", 0, 0)) {
-        return 2023;
+        return test.fail("!check_part(f.parts[2], false, \"b\", 0, 0)");
       }
     },
     _ => {
-      return 2024;
+      return test.fail("unexpected variant of t2[0]");
     }
   }
   let t3 = lexer.tokenize("f\"{{lit}}\"");
   match (t3[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 1) {
-        return 2030;
+        return test.fail("f.parts.len() != 1");
       }
       if (!check_part(f.parts[0], false, "{lit}", 0, 0)) {
-        return 2031;
+        return test.fail("!check_part(f.parts[0], false, \"{lit}\", 0, 0)");
       }
     },
     _ => {
-      return 2032;
+      return test.fail("unexpected variant of t3[0]");
     }
   }
   let t4 = lexer.tokenize("f\"k={\"x\"}\"");
   match (t4[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 2) {
-        return 2040;
+        return test.fail("f.parts.len() != 2");
       }
       if (!check_part(f.parts[0], false, "k=", 0, 0)) {
-        return 2041;
+        return test.fail("!check_part(f.parts[0], false, \"k=\", 0, 0)");
       }
       if (!check_part(f.parts[1], true, "\"x\"", 1, 6)) {
-        return 2042;
+        return test.fail("!check_part(f.parts[1], true, \"\\\"x\\\"\", 1, 6)");
       }
     },
     _ => {
-      return 2043;
+      return test.fail("unexpected variant of t4[0]");
     }
   }
   let t5 = lexer.tokenize("f\"sum {a + b}\"");
   match (t5[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 2) {
-        return 2050;
+        return test.fail("f.parts.len() != 2");
       }
       if (!check_part(f.parts[0], false, "sum ", 0, 0)) {
-        return 2051;
+        return test.fail("!check_part(f.parts[0], false, \"sum \", 0, 0)");
       }
       if (!check_part(f.parts[1], true, "a + b", 1, 8)) {
-        return 2052;
+        return test.fail("!check_part(f.parts[1], true, \"a + b\", 1, 8)");
       }
     },
     _ => {
-      return 2053;
+      return test.fail("unexpected variant of t5[0]");
     }
   }
   let t6 = lexer.tokenize("f\"hi\\nthere\"");
   match (t6[0]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 1) {
-        return 2060;
+        return test.fail("f.parts.len() != 1");
       }
       if (!check_part(f.parts[0], false, "hi\nthere", 0, 0)) {
-        return 2061;
+        return test.fail("!check_part(f.parts[0], false, \"hi\\nthere\", 0, 0)");
       }
     },
     _ => {
-      return 2062;
+      return test.fail("unexpected variant of t6[0]");
     }
   }
   if (!lexer.has_error(lexer.tokenize("f\"unterminated"))) {
-    return 2070;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"f\\\"unterminated\"))");
   }
   if (!lexer.has_error(lexer.tokenize("f\"with\nnewline\""))) {
-    return 2071;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"f\\\"with\\nnewline\\\"\"))");
   }
   if (!lexer.has_error(lexer.tokenize("f\"bare}brace\""))) {
-    return 2072;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"f\\\"bare}brace\\\"\"))");
   }
   if (!lexer.has_error(lexer.tokenize("f\"empty{}\""))) {
-    return 2073;
+    return test.fail("!lexer.has_error(lexer.tokenize(\"f\\\"empty{}\\\"\"))");
   }
-  return 0;
+  return test.pass();
 }
 
-function test_fstring_positions(): i32 {
+function test_fstring_positions(): test.TestOutcome {
   let t = lexer.tokenize("let s = f\"a{aaa} b{bbb}\";");
   match (t[3]) {
     lexer.TokFString(f) => {
       if (f.parts.len() != 4) {
-        return 2080;
+        return test.fail("f.parts.len() != 4");
       }
       if (!check_part(f.parts[1], true, "aaa", 1, 13)) {
-        return 2081;
+        return test.fail("!check_part(f.parts[1], true, \"aaa\", 1, 13)");
       }
       if (!check_part(f.parts[3], true, "bbb", 1, 20)) {
-        return 2082;
+        return test.fail("!check_part(f.parts[3], true, \"bbb\", 1, 20)");
       }
     },
     _ => {
-      return 2083;
+      return test.fail("unexpected variant of t[3]");
     }
   }
   match (lexer.tokenize("let a = 1;\nlet s = f\"x{yy}\";")[8]) {
     lexer.TokFString(f) => {
       if (!check_part(f.parts[1], true, "yy", 2, 13)) {
-        return 2090;
+        return test.fail("!check_part(f.parts[1], true, \"yy\", 2, 13)");
       }
     },
     _ => {
-      return 2091;
+      return test.fail("unexpected variant of lexer.tokenize(\"let a = 1;\\nlet s = f\\\"x{yy}\\\";\")[8]");
     }
   }
   let sub = lexer.rebase_tokens(lexer.tokenize("a\nb"), 4, 10);
   match (sub[0]) {
     lexer.TokIdent(x) => {
       if (x.line != 4 || x.col != 10) {
-        return 2092;
+        return test.fail("x.line != 4 || x.col != 10");
       }
     },
     _ => {
-      return 2093;
+      return test.fail("unexpected variant of sub[0]");
     }
   }
   match (sub[1]) {
     lexer.TokIdent(x) => {
       if (x.line != 5 || x.col != 1) {
-        return 2094;
+        return test.fail("x.line != 5 || x.col != 1");
       }
     },
     _ => {
-      return 2095;
+      return test.fail("unexpected variant of sub[1]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
 function check_comment(c: lexer.Comment, line: i32, col: i32, text: string): boolean {
   return c.line == line && c.col == col && c.text == text;
 }
 
-function test_comments(): i32 {
+function test_comments(): test.TestOutcome {
   let src = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n";
   let r = lexer.tokenize_full(src);
   if (r.comments.len() != 3) {
-    return 2100;
+    return test.fail("r.comments.len() != 3");
   }
   if (!check_comment(r.comments[0], 1, 1, " leading")) {
-    return 2101;
+    return test.fail("!check_comment(r.comments[0], 1, 1, \" leading\")");
   }
   if (!check_comment(r.comments[1], 2, 32, " trailing")) {
-    return 2102;
+    return test.fail("!check_comment(r.comments[1], 2, 32, \" trailing\")");
   }
   if (!check_comment(r.comments[2], 4, 1, ": last")) {
-    return 2103;
+    return test.fail("!check_comment(r.comments[2], 4, 1, \": last\")");
   }
   if (r.tokens.len() != lexer.tokenize(src).len()) {
-    return 2104;
+    return test.fail("r.tokens.len() != lexer.tokenize(src).len()");
   }
   if (lexer.tokenize_full("let x: i32 = 1;\n").comments.len() != 0) {
-    return 2105;
+    return test.fail("lexer.tokenize_full(\"let x: i32 = 1;\\n\").comments.len() != 0");
   }
   if (lexer.tokenize_full("// kept\nlet s: string = \"oops\n").comments.len() != 1) {
-    return 2106;
+    return test.fail("lexer.tokenize_full(\"// kept\\nlet s: string = \\\"oops\\n\").comments.len() != 1");
   }
   let tail = lexer.tokenize_full("let x: i32 = 1; // tail");
   if (tail.comments.len() != 1 || !check_comment(tail.comments[0], 1, 17, " tail")) {
-    return 2107;
+    return test.fail("tail.comments.len() != 1 || !check_comment(tail.comments[0], 1, 17, \" tail\")");
   }
-  return 0;
+  return test.pass();
 }
 
-function test_multibyte(): i32 {
+function test_multibyte(): test.TestOutcome {
   let src = "let s: string = \"héllo wörld\"; s <<= 1; // cömment é\nlet f = f\"pré {s} pöst\";\n";
   let r = lexer.tokenize_full(src);
   let toks = r.tokens;
   if (toks.len() != 17) {
-    return 2200;
+    return test.fail("toks.len() != 17");
   }
   match (toks[5]) {
     lexer.TokString(t) => {
       if (t.value != "héllo wörld") {
-        return 2201;
+        return test.fail("t.value != \"héllo wörld\"");
       }
     },
     _ => {
-      return 2202;
+      return test.fail("unexpected variant of toks[5]");
     }
   }
   match (toks[8]) {
     lexer.TokPunct(t) => {
       if (t.text != "<<=") {
-        return 2203;
+        return test.fail("t.text != \"<<=\"");
       }
     },
     _ => {
-      return 2204;
+      return test.fail("unexpected variant of toks[8]");
     }
   }
   match (toks[14]) {
     lexer.TokFString(t) => {
       if (t.parts.len() != 3) {
-        return 2205;
+        return test.fail("t.parts.len() != 3");
       }
       if (t.parts[0].lit != "pré ") {
-        return 2206;
+        return test.fail("t.parts[0].lit != \"pré \"");
       }
       if (t.parts[1].expr != "s") {
-        return 2207;
+        return test.fail("t.parts[1].expr != \"s\"");
       }
       if (t.parts[2].lit != " pöst") {
-        return 2208;
+        return test.fail("t.parts[2].lit != \" pöst\"");
       }
     },
     _ => {
-      return 2209;
+      return test.fail("unexpected variant of toks[14]");
     }
   }
   if (r.comments.len() != 1) {
-    return 2210;
+    return test.fail("r.comments.len() != 1");
   }
   if (r.comments[0].text != " cömment é") {
-    return 2211;
+    return test.fail("r.comments[0].text != \" cömment é\"");
   }
   let t2 = lexer.tokenize("a<é");
   if (t2.len() != 3) {
-    return 2212;
+    return test.fail("t2.len() != 3");
   }
   match (t2[1]) {
     lexer.TokPunct(t) => {
       if (t.text != "<") {
-        return 2213;
+        return test.fail("t.text != \"<\"");
       }
     },
     _ => {
-      return 2214;
+      return test.fail("unexpected variant of t2[1]");
     }
   }
   match (t2[2]) {
     lexer.TokError(t) => {
       if (t.msg != "identifiers must be ASCII; found 'é'") {
-        return 2215;
+        return test.fail("t.msg != \"identifiers must be ASCII; found 'é'\"");
       }
     },
     _ => {
-      return 2216;
+      return test.fail("unexpected variant of t2[2]");
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function test_numeric_flags(): i32 {
+function test_numeric_flags(): test.TestOutcome {
   let src = "1 1i32 2i64 3u8 4u32 5u64 6usize 7f32 8f64 'A' b'A' 18446744073709551615u64 340282366920938463463374607431768211455";
   let suffixes: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "u8", "u64", ""];
   let toks = lexer.rebase_tokens(lexer.tokenize(src), 4, 10);
   if (toks.len() != suffixes.len() + 1) {
-    return 2247;
+    return test.fail("toks.len() != suffixes.len() + 1");
   }
   for i in 0..suffixes.len() {
     match (toks[i]) {
       lexer.TokNumber(t) => {
         if (t.suffix() != suffixes[i] || t.is_float() != (i == 7 || i == 8) || t.line != 4 || t.col < 10) {
-          return 2248;
+          return test.fail("t.suffix() != suffixes[i] || t.is_float() != (i == 7 || i == 8) || t.line != 4 || t.col < 10");
         }
         if (i == 11 && t.text != "18446744073709551615" || i == 12 && t.text != "340282366920938463463374607431768211455") {
-          return 2250;
+          return test.fail("i == 11 && t.text != \"18446744073709551615\" || i == 12 && t.text != \"340282366920938463463374607431768211455\"");
         }
       },
       _ => {
-        return 2249;
+        return test.fail("unexpected variant of toks[i]");
       }
     }
   }
-  return 0;
+  return test.pass();
 }
 
-function test_string_scan_boundaries(): i32 {
+function test_string_scan_boundaries(): test.TestOutcome {
   let text = "";
   let prefix = "";
   for n in 0..81 {
     let src = prefix + "\"" + text + "é\\n\\\"\\u{1F600}" + text + "\";";
     let toks = lexer.tokenize(src);
     if (toks.len() != 3) {
-      return 2240;
+      return test.fail("toks.len() != 3");
     }
     match (toks[0]) {
       lexer.TokString(t) => {
         if (t.value != text + "é\n\"😀" + text || t.line != 1 || t.col != n + 1) {
-          return 2241;
+          return test.fail("t.value != text + \"é\\n\\\"😀\" + text || t.line != 1 || t.col != n + 1");
         }
       },
       _ => {
-        return 2242;
+        return test.fail("unexpected variant of toks[0]");
       }
     }
     match (toks[1]) {
       lexer.TokPunct(t) => {
         if (t.text != ";" || t.col != src.len()) {
-          return 2243;
+          return test.fail("t.text != \";\" || t.col != src.len()");
         }
       },
       _ => {
-        return 2244;
+        return test.fail("unexpected variant of toks[1]");
       }
     }
     if (!lexer.has_error(lexer.tokenize("\"" + text + "\n"))) {
-      return 2245;
+      return test.fail("!lexer.has_error(lexer.tokenize(\"\\\"\" + text + \"\\n\"))");
     }
     if (!lexer.has_error(lexer.tokenize("\"" + text))) {
-      return 2246;
+      return test.fail("!lexer.has_error(lexer.tokenize(\"\\\"\" + text))");
     }
     text += "x";
     prefix += " ";
   }
-  return 0;
+  return test.pass();
 }
 
-function test_source_decoding(): i32 {
+function test_source_decoding(): test.TestOutcome {
   match (lexer.decode_source([47 as u8, 47 as u8, 10 as u8, 32 as u8, 255 as u8])) {
     Ok(_) => {
-      return 2232;
+      return test.fail("unexpected variant of lexer.decode_source([47 as u8, 47 as u8, 10 as u8, 32 as u8, 255 as u8])");
     },
     Err(e) => {
       if (e.line != 2 || e.col != 2 || e.code != "P001" || e.msg != "invalid UTF-8 byte 0xFF") {
-        return 2233;
+        return test.fail("e.line != 2 || e.col != 2 || e.code != \"P001\" || e.msg != \"invalid UTF-8 byte 0xFF\"");
       }
     }
   }
   match (lexer.decode_source([195 as u8, 169 as u8])) {
     Ok(text) => {
       if (text != "é") {
-        return 2234;
+        return test.fail("text != \"é\"");
       }
     },
     Err(_) => {
-      return 2235;
+      return test.fail("unexpected variant of lexer.decode_source([195 as u8, 169 as u8])");
     }
   }
-  return 0;
+  return test.pass();
 }
 
 function main(): i32 {
-  let c = 0;
-  c = test_numeric_flags();
-  if (c != 0) {
-    return c;
-  }
-  c = test_string_scan_boundaries();
-  if (c != 0) {
-    return c;
-  }
-  c = test_mixed();
-  if (c != 0) {
-    return c;
-  }
-  c = test_hex();
-  if (c != 0) {
-    return c;
-  }
-  c = test_scientific();
-  if (c != 0) {
-    return c;
-  }
-  c = test_bare_e();
-  if (c != 0) {
-    return c;
-  }
-  c = test_chained_tuple();
-  if (c != 0) {
-    return c;
-  }
-  c = test_float_after_nondot();
-  if (c != 0) {
-    return c;
-  }
-  c = test_suffix_errors();
-  if (c != 0) {
-    return c;
-  }
-  c = test_hex_needs_digits();
-  if (c != 0) {
-    return c;
-  }
-  c = test_string_errors();
-  if (c != 0) {
-    return c;
-  }
-  c = test_unknown_char();
-  if (c != 0) {
-    return c;
-  }
-  c = test_quoted_literals();
-  if (c != 0) {
-    return c;
-  }
-  c = test_string_escapes();
-  if (c != 0) {
-    return c;
-  }
-  c = test_fstring();
-  if (c != 0) {
-    return c;
-  }
-  c = test_fstring_positions();
-  if (c != 0) {
-    return c;
-  }
-  c = test_comments();
-  if (c != 0) {
-    return c;
-  }
-  c = test_multibyte();
-  if (c != 0) {
-    return c;
-  }
-  return test_source_decoding();
+  let r = test.new("lexer");
+  r = r.it("numeric flags", test_numeric_flags);
+  r = r.it("string scan boundaries", test_string_scan_boundaries);
+  r = r.it("mixed", test_mixed);
+  r = r.it("hex", test_hex);
+  r = r.it("scientific", test_scientific);
+  r = r.it("bare e", test_bare_e);
+  r = r.it("chained tuple", test_chained_tuple);
+  r = r.it("float after nondot", test_float_after_nondot);
+  r = r.it("suffix errors", test_suffix_errors);
+  r = r.it("hex needs digits", test_hex_needs_digits);
+  r = r.it("string errors", test_string_errors);
+  r = r.it("unknown char", test_unknown_char);
+  r = r.it("quoted literals", test_quoted_literals);
+  r = r.it("string escapes", test_string_escapes);
+  r = r.it("fstring", test_fstring);
+  r = r.it("fstring positions", test_fstring_positions);
+  r = r.it("comments", test_comments);
+  r = r.it("multibyte", test_multibyte);
+  r = r.it("source decoding", test_source_decoding);
+  return r.finish();
 }

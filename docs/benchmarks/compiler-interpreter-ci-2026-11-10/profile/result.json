@@ -1,0 +1,61 @@
+{
+  "source": "7bd045eb04c8ea0b5980f0526e778ae107571d05",
+  "measured_code_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "interp_source_sha256": "5730e0ff5de043de052442e4f72024a1e9ea577ace33e88b9f112afe7b562c4c",
+  "started": "2026-11-10T00:11:26.972616+00:00",
+  "note": "Independent residual CPU diagnosis after the index. Not a speedup comparison. Counter-free diagnostic build, certification enabled, no debug or embedded sources. Build starts only after the full source gate succeeds.",
+  "source_gate": {
+    "command": "make check-sources",
+    "exit_code": 0,
+    "started": "2026-11-10T00:02:59Z",
+    "finished": "2026-11-10T00:13:30.668673+00:00",
+    "note": "Full repository source gate, including runtime, fixture and driver checks. Exact published code matches measured6f6source. No gate changes."
+  },
+  "build": {
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-index-profile-20261110/fern-cpu",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-interpreter-dispatch-20261109",
+    "environment": {
+      "FERN_PROFILE": "cpu",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-10T00:13:31.115615+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-10T00:14:46.579162+00:00"
+  },
+  "binary_sha256": "8a1f7a8442bd1bf1b480efb89408377c4a0f3ba46637bcebb0e58e5553591fe8",
+  "run": {
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-index-profile-20261110/fern-cpu",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-10T00:14:46.622083+00:00",
+    "budget_seconds": 1980,
+    "exit_code": 0,
+    "finished": "2026-11-10T00:14:58.719428+00:00",
+    "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440"
+  }
+}

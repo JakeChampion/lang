@@ -4599,7 +4599,7 @@ function cat2(a: string, b: string): string {
       let lb: i32 = b.len();
       let p: usize = __raw_alloc(la + lb);
       __memcpy(p, __raw_data(a), la);
-      __memcpy(p + la, __raw_data(b), lb);
+      __memcpy(p + la as usize, __raw_data(b), lb);
       return __raw_string(p, la + lb);
   }
 }
@@ -6244,19 +6244,19 @@ struct Region { base: usize }
 function main(): i32 {
     let n: i32 = args().len() + 69;
     let one: usize = (n - 69) as usize;
-    let top: usize = one << (n - 39);
+    let top: usize = one << ((n - 39) as usize);
     let a: usize = top + (n as usize);
     let b: usize = (n - 59) as usize;
     let got: i32 = 0;
     if ((a / b) as i64 == 195225792i64) { got = got + 1; }
     if ((a % b) as i32 == 6) { got = got + 2; }
-    if ((top >> (n - 40)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
+    if ((top >> ((n - 40) as usize)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
     if (top > b && a >= top && b < a && !(a <= b)) { got = got + 8; }
     if (a / (0 as usize) == (0 as usize) && a % (0 as usize) == a) { got = got + 16; }
     let words: usize[] = [top, a];
     let s: Region = Region { base: top };
     let t: Region = Region { base: b };
-    if ((words[0] >> (n - 40)) as i32 == 2 && (words[1] / b) as i64 == 195225792i64 && s.base > t.base) { got = got + 32; }
+    if ((words[0] >> ((n - 40) as usize)) as i32 == 2 && (words[1] / b) as i64 == 195225792i64 && s.base > t.base) { got = got + 32; }
     return got;
 }
 `
@@ -6268,11 +6268,11 @@ function addresses(n: i32): i32 {
     let a: usize = scaled(n);
     let b: usize = scaled(1);
     let one: usize = (n - 69) as usize;
-    let top: usize = one << (n - 7);
+    let top: usize = one << ((n - 7) as usize);
     let got: i32 = 0;
     if ((a / b) as i32 == 70) { got = got + 1; }
     if ((a % (b + (7 as usize))) as i64 == 999999517i64) { got = got + 2; }
-    if (((one << (n - 30)) >> (n - 32)) as i32 == 4) { got = got + 4; }
+    if (((one << ((n - 30) as usize)) >> ((n - 32) as usize)) as i32 == 4) { got = got + 4; }
     if ((top >> 62) as i32 == 2) { got = got + 8; }
     if (top > a && a >= b && b < top && !(a <= b)) { got = got + 16; }
     let words: usize[] = [top, a];

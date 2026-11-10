@@ -81,6 +81,7 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"let @ struct destructure", `function main(): i32 { let w @ P { x, y } = p; return w.x + x + y; }`},
 		{"let @ tuple destructure", `function main(): i32 { let w @ (a, b) = t; return w.0 + a + b; }`},
 
+		{"owned result", `function pass[T](own x: T, f: (own T) => own T): own T { return f(x); }`},
 		{"own as modifier", `function f(own xs: string[]): i32 { return 0; }`},
 		{"own as parameter name", `function f(rl: i32, own: string[]): i32 { return 0; }`},
 		{"own lambda parameter", `function main(): i32 { let g: (own i32[]) => i32 = (own xs: i32[]) => xs.len(); return 0; }`},

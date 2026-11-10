@@ -1,0 +1,22 @@
+{
+  "integration/perf-baseline.txt.conflicted.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0840/perf-baseline.txt.conflicted",
+    "original_sha256": "44ff442429be10d3865876c909fd3a9bbe99c379404d2b4a6de6551ae9274edf",
+    "original_bytes": 45435
+  },
+  "integration/perf-baseline-selfhost.txt.conflicted.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0840/perf-baseline-selfhost.txt.conflicted",
+    "original_sha256": "20490567b360b8a1757ac76db970cedcc22af641a26f5ec6bd30b5f8deef99f6",
+    "original_bytes": 26452
+  },
+  "integration/profile-costs-baseline.txt.conflicted.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0840/profile-costs-baseline.txt.conflicted",
+    "original_sha256": "7186f472eff57ef99ca36520da7ffc8a093efa068d82215f08992201e9fdae4d",
+    "original_bytes": 21511
+  },
+  "integration/publication-failed-diff-check.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0840/publication-diff-check.log",
+    "original_sha256": "9096aaba4a2da88a81cdc8002dfce51ced6515fe3c1aa40f14d4ddd541aa2dcc",
+    "original_bytes": 1629
+  }
+}

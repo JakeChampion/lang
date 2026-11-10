@@ -2230,7 +2230,7 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("random_bytes: expected number arg, got %T", args[0])
 	}
 	if n < 0 {
-		return nil, fmt.Errorf("random_bytes: negative length %d", int(n))
+		return nil, &Abort{CauseAllocSize, fmt.Sprintf("random_bytes length %d", int64(n))}
 	}
 	buf := make([]byte, int(n))
 	if _, err := cryptorand.Read(buf); err != nil {
@@ -7180,6 +7180,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			Name:       "",
 			Params:     x.Params,
 			ReturnType: x.ReturnType,
+			ReturnOwn:  x.ReturnOwn,
 			Body:       x.Body,
 		}
 		captures := x.Captures

@@ -1,0 +1,390 @@
+{
+  "first": {
+    "baseline": {
+      "samples": 5,
+      "wall_median_s": 3.954127808,
+      "wall_range_s": [
+        3.80589384,
+        4.083626059
+      ],
+      "cpu_median_s": 3.9376800000000003,
+      "peak_rss_median_kib": 148420
+    },
+    "candidate": {
+      "samples": 5,
+      "wall_median_s": 3.888582325,
+      "wall_range_s": [
+        3.832552754,
+        4.28891977
+      ],
+      "cpu_median_s": 3.885495,
+      "peak_rss_median_kib": 148420
+    },
+    "paired_cpu_change_percent": [
+      10.748605027589186,
+      0.12326318208120135,
+      -3.2234208975843615,
+      -2.6071391778482944,
+      1.2843407608546409
+    ],
+    "allocations": {
+      "candidate": {
+        "allocs": 28632188,
+        "frees": 28632188,
+        "live_bytes": 0
+      },
+      "baseline": {
+        "allocs": 29146366,
+        "frees": 29146366,
+        "live_bytes": 0
+      }
+    }
+  },
+  "second": {
+    "baseline": {
+      "samples": 3,
+      "wall_median_s": 7.344728302,
+      "wall_range_s": [
+        6.691446286,
+        7.418480127
+      ],
+      "cpu_median_s": 7.3356900000000005,
+      "peak_rss_median_kib": 151236
+    },
+    "candidate": {
+      "samples": 3,
+      "wall_median_s": 6.963385927,
+      "wall_range_s": [
+        6.817709065,
+        7.816885909
+      ],
+      "cpu_median_s": 6.950353,
+      "peak_rss_median_kib": 151236
+    },
+    "paired_cpu_change_percent": [
+      16.83950099672895,
+      -5.252907361134406,
+      -7.936719857765484
+    ],
+    "allocations": {
+      "candidate": {
+        "allocs": 66614993,
+        "frees": 66614993,
+        "live_bytes": 0
+      },
+      "baseline": {
+        "allocs": 79978278,
+        "frees": 79978278,
+        "live_bytes": 0
+      }
+    }
+  },
+  "cold": {
+    "baseline": {
+      "samples": 3,
+      "wall_median_s": 4.620164066,
+      "wall_range_s": [
+        4.404115264,
+        4.983414701
+      ],
+      "cpu_median_s": 4.615265,
+      "peak_rss_median_kib": 163408
+    },
+    "candidate": {
+      "samples": 3,
+      "wall_median_s": 5.11103282,
+      "wall_range_s": [
+        4.449394432,
+        5.305480809
+      ],
+      "cpu_median_s": 5.108573,
+      "peak_rss_median_kib": 163408
+    },
+    "paired_cpu_change_percent": [
+      2.522599904673495,
+      14.931060296646015,
+      0.9183735108024171
+    ]
+  },
+  "warm": {
+    "baseline": {
+      "samples": 3,
+      "wall_median_s": 4.31793522,
+      "wall_range_s": [
+        4.307507506,
+        4.519453084
+      ],
+      "cpu_median_s": 4.313873,
+      "peak_rss_median_kib": 163024
+    },
+    "candidate": {
+      "samples": 3,
+      "wall_median_s": 4.517029757,
+      "wall_range_s": [
+        4.469027077,
+        4.520969962
+      ],
+      "cpu_median_s": 4.515151,
+      "peak_rss_median_kib": 163024
+    },
+    "paired_cpu_change_percent": [
+      -1.117860577833818,
+      4.922891805924023,
+      4.694806731677081
+    ]
+  },
+  "full": {
+    "label": "full-candidate",
+    "compiler": "candidate",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/candidate-normal",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-timeout-20261109",
+    "binary_sha256": "de3713f756e725f27235ce29cf207a66b79830f3fa532c353dc8e7c2103c432d",
+    "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-10T07:25:50.881253+00:00",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_ns": 147091662380,
+    "cpu_user": 146.798298,
+    "cpu_system": 0.255364,
+    "peak_rss_kib": 222788,
+    "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+    "finished": "2026-11-10T07:28:17.974579+00:00"
+  },
+  "program": {
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation/opus-reference"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "cache_probes": [
+    {
+      "label": "baseline-probe",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation/memo-base",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T07:24:39.893471+00:00",
+      "exit_code": 0,
+      "wall_ns": 5244197474,
+      "cpu_user": 5.137422,
+      "cpu_system": 0.10071899999999999,
+      "peak_rss_kib": 163024,
+      "finished": "2026-11-10T07:24:45.137871+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+      "cache_hits": 112,
+      "cache_misses": 0
+    },
+    {
+      "label": "candidate-probe",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation/opus-reference",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation/memo-cand",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T07:24:50.200443+00:00",
+      "exit_code": 0,
+      "wall_ns": 5023466005,
+      "cpu_user": 4.911257,
+      "cpu_system": 0.10925599999999999,
+      "peak_rss_kib": 163024,
+      "finished": "2026-11-10T07:24:55.224125+00:00",
+      "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+      "cache_hits": 112,
+      "cache_misses": 0
+    }
+  ],
+  "instructions": {
+    "baseline_source": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+    "candidate_source": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+    "tool_sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+    "tool_version": "valgrind-3.24.0",
+    "note": "One guest instruction sample per normal binary on the first fixed 32-record group. Compiler children are not traced. Cache and branch simulation are off. All timed and validation controls finish before instruction collection. No timing claim derives from these runs.",
+    "runs": [
+      {
+        "compiler": "baseline",
+        "args": [
+          "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+          "--tool=callgrind",
+          "--cache-sim=no",
+          "--branch-sim=no",
+          "--trace-children=no",
+          "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/baseline.callgrind",
+          "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/baseline.valgrind.log",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/baseline-normal",
+          "-stdlib",
+          "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+          "-interp",
+          "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+        ],
+        "binary_sha256": "bead6a81a9a0d0f31d5b84afc85e907e6cc28cfc9f07e488e0d94d9baf0d62c0",
+        "cwd": "/workspace/lang-interpreter-timeout-20261109",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0",
+          "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+        },
+        "started": "2026-11-10T07:28:18.167072+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T07:31:43.216019+00:00",
+        "guest_instructions": 17517700658,
+        "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+      },
+      {
+        "compiler": "candidate",
+        "args": [
+          "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+          "--tool=callgrind",
+          "--cache-sim=no",
+          "--branch-sim=no",
+          "--trace-children=no",
+          "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/candidate.callgrind",
+          "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/candidate.valgrind.log",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/candidate-normal",
+          "-stdlib",
+          "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+          "-interp",
+          "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+        ],
+        "binary_sha256": "de3713f756e725f27235ce29cf207a66b79830f3fa532c353dc8e7c2103c432d",
+        "cwd": "/workspace/lang-interpreter-timeout-20261109",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0",
+          "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+        },
+        "started": "2026-11-10T07:31:43.440307+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T07:35:03.318492+00:00",
+        "guest_instructions": 17365147731,
+        "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+      }
+    ],
+    "finished": "2026-11-10T07:35:03.334558+00:00"
+  },
+  "compiler_work": {
+    "started": "2026-11-10T07:31:01.837259+00:00",
+    "phase": "complete",
+    "purpose": "Check cold complete-compilation work after all three normal cold CPU pairs were slower. This is a new concern, not a repeated timing comparison.",
+    "note": "One guest instruction sample per compiler. No timing claim. No child tracing, cache simulation, or branch simulation.",
+    "runs": [
+      {
+        "compiler": "candidate",
+        "binary_sha256": "de3713f756e725f27235ce29cf207a66b79830f3fa532c353dc8e7c2103c432d",
+        "args": [
+          "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+          "--tool=callgrind",
+          "--cache-sim=no",
+          "--branch-sim=no",
+          "--trace-children=no",
+          "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/candidate.callgrind",
+          "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/candidate.valgrind.log",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/candidate-normal",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/opus-reference",
+          "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+          "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+        ],
+        "cwd": "/workspace/lang-interpreter-timeout-20261109",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0",
+          "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+        },
+        "started": "2026-11-10T07:39:00.721926+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T07:44:13.237744+00:00",
+        "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+        "guest_instructions": 18663497396
+      },
+      {
+        "compiler": "baseline",
+        "binary_sha256": "bead6a81a9a0d0f31d5b84afc85e907e6cc28cfc9f07e488e0d94d9baf0d62c0",
+        "args": [
+          "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+          "--tool=callgrind",
+          "--cache-sim=no",
+          "--branch-sim=no",
+          "--trace-children=no",
+          "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/baseline.callgrind",
+          "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/baseline.valgrind.log",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/baseline-normal",
+          "-target",
+          "x86-64-linux",
+          "-o",
+          "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/opus-reference",
+          "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern",
+          "/workspace/lang-interpreter-timeout-20261109/internal/stdlib"
+        ],
+        "cwd": "/workspace/lang-interpreter-timeout-20261109",
+        "environment": {
+          "FERN_PROFILE": "0",
+          "FERN_LEAKCHECK": "0",
+          "FERN_RC_CERTIFY": "1",
+          "FERN_RC_CERTIFY_MEMO": "0",
+          "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+        },
+        "started": "2026-11-10T07:44:13.330818+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T07:50:06.783684+00:00",
+        "output_sha256": "e8ddd643bdc9d72008d930fc42ee8f1574d6f39ae3628891ea0f828f3c67b46f",
+        "guest_instructions": 18663497232
+      }
+    ],
+    "baseline_source": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+    "candidate_source": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+    "tool_version": "valgrind-3.24.0",
+    "tool_sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+    "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+    "exit_code": 0,
+    "finished": "2026-11-10T07:50:06.813453+00:00"
+  }
+}

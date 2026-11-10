@@ -1,0 +1,81 @@
+{
+  "source": "c02d2b4c1b2e3232da1dc4f7575383a65c3d9eaa",
+  "selected_suites": [
+    "TestSelfHostReceiverUnionMembership",
+    "TestSelfHostCheckerDriverX86_64",
+    "TestSelfHostCheckerDriverArm64",
+    "TestSelfHostImportedMethodCollisionX86_64",
+    "TestSelfHostImportedMethodCollisionArm64",
+    "TestSelfHostImportedMethodCollisionWasm",
+    "TestSelfHostAmbiguousMethodRankedByImports",
+    "TestSelfHostCheckedValueTypes",
+    "TestSelfHostMethodEnumScrutineeIRX86_64",
+    "TestSelfHostUnionIRPathX86_64",
+    "TestSelfHostRepoComplexityRatchet",
+    "TestSelfHostFeatureCensus",
+    "TestSelfHostInterpCallableValues",
+    "TestSelfHostInterpCallCostIgnoresFunctionCount",
+    "TestSelfHostInterpScopeFrames",
+    "TestSelfHostKernelSchedulerOnQemu",
+    "TestSelfHostKernelTwoCoreSchedulerOnQemu",
+    "TestSelfHostMismatchIRX86_64",
+    "TestSelfHostMismatchIRArm64",
+    "TestSelfHostMismatchIRWasm"
+  ],
+  "runs": [
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(ReceiverUnionMembership|CheckerDriverX86_64|CheckerDriverArm64|ImportedMethodCollisionX86_64|ImportedMethodCollisionArm64|ImportedMethodCollisionWasm|AmbiguousMethodRankedByImports|CheckedValueTypes|MethodEnumScrutineeIRX86_64|UnionIRPathX86_64|RepoComplexityRatchet|FeatureCensus|InterpCallableValues|InterpCallCostIgnoresFunctionCount|InterpScopeFrames|KernelSchedulerOnQemu|KernelTwoCoreSchedulerOnQemu|MismatchIRX86_64|MismatchIRArm64|MismatchIRWasm)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-10T17:55:27.864573+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:03:11.257834+00:00",
+      "passes": 151,
+      "skips": 0,
+      "failures": [],
+      "completed_suites": [
+        "TestSelfHostAmbiguousMethodRankedByImports",
+        "TestSelfHostCheckedValueTypes",
+        "TestSelfHostCheckerDriverX86_64",
+        "TestSelfHostCheckerDriverArm64",
+        "TestSelfHostFeatureCensus",
+        "TestSelfHostImportedMethodCollisionX86_64",
+        "TestSelfHostImportedMethodCollisionArm64",
+        "TestSelfHostImportedMethodCollisionWasm",
+        "TestSelfHostInterpCallCostIgnoresFunctionCount",
+        "TestSelfHostInterpCallableValues",
+        "TestSelfHostInterpScopeFrames",
+        "TestSelfHostKernelSchedulerOnQemu",
+        "TestSelfHostKernelTwoCoreSchedulerOnQemu",
+        "TestSelfHostRepoComplexityRatchet",
+        "TestSelfHostMethodEnumScrutineeIRX86_64",
+        "TestSelfHostMismatchIRX86_64",
+        "TestSelfHostMismatchIRArm64",
+        "TestSelfHostMismatchIRWasm",
+        "TestSelfHostReceiverUnionMembership",
+        "TestSelfHostUnionIRPathX86_64"
+      ]
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-10T18:03:11.265202+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:03:19.115713+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T18:03:19.116863+00:00"
+}

@@ -1,3 +1,18 @@
+# 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
+# 2026-11-10: nul_byte_in_a_program_or_argument_is_refused is clean under RC trace.
+# 2026-11-10: checked_owned_results has zero unpaired allocations under native RC trace.
+# 2026-11-10: explicit_type_argument_names_union_or_option is clean under RC trace.
+# 2026-11-10: dyn_conditional_impl_bound_met is clean under RC trace.
+# 2026-11-10: struct_field_pattern_names_variant is clean under RC trace.
+# 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
+# 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
+# 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
+# 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
+# 2026-11-10: a_match_value_of_owned_arms_is_owned is clean under RC trace.
+# 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
+# 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
+# 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
+# 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
 # 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
 # 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
 # 2026-11-09: lambda_every_path_returns is clean under RC trace.
@@ -57,6 +72,7 @@ a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read 0
 a_map_key_eq_may_take_its_keys_owned                 0
+a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
@@ -69,6 +85,7 @@ a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
+aead_in_place_refuses_overlapping_additional_data    0
 aliased_and_used_twice                               0
 alloc_count_sees_recycling                           0
 alloc_flat_array_push_bound_elem                     0
@@ -205,6 +222,7 @@ cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_constructor_result_ownership                    0
+cell_constructor_shadowed_callbacks                  0
 cell_in_container                                    0
 cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
@@ -217,6 +235,7 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
+checked_owned_results                                0
 closing_a_socket_two_reactors_watch                  0
 closing_a_watched_socket                             0
 closure_adder                                        0
@@ -312,6 +331,7 @@ display_user_type_print                             0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
+dyn_conditional_impl_bound_met                       0
 dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
 dyn_downcast_of_a_scalar_is_none                     0
 dyn_local_trait_shadows_imported                    0
@@ -344,6 +364,7 @@ exit_diverges_let_else_taken                         0
 exit_in_a_callee_whose_record_is_taken_apart         0
 exit_in_a_loop_whose_array_is_kept                   0
 exit_max                                             0
+explicit_type_argument_names_union_or_option         0
 f32_array_element                                    0
 f32_array_param                                      0
 f64_elements                                         0
@@ -446,6 +467,7 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
+handle_nested_fields_close_from_owned_root          0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0
@@ -458,6 +480,7 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
+hkdf_length_past_the_limit_stops                     1
 http_content_type                                    0
 http_cookies                                         0
 hyperbolic_boundaries                                 0
@@ -569,6 +592,7 @@ let_else_variant_binding_outlives_stmt               0
 literal_local_read_at_two_widths                    0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
+literal_local_typed_by_its_uses                      0
 literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
@@ -673,6 +697,8 @@ nested_payloadless_constructor                       0
 nested_value_expr_width                              0
 none_branch                                          0
 none_equal_none                                      0
+nul_byte_in_a_path_is_refused                        0
+nul_byte_in_a_program_or_argument_is_refused         0
 number_parsing                                     0
 numeric_lossless_widening 0
 numeric_module_limits                                0
@@ -758,6 +784,7 @@ param_strarr_elem_shared                             0
 path_join                                            0
 payload_binding_is_a_local                           0
 payload_struct_patterns                              0
+pbkdf2_without_an_iteration_stops                    1
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
 primitive_byte_receiver_identity                     0
@@ -780,6 +807,7 @@ pure_copy                                            0
 qualified_struct_patterns                            0
 question_op                                          0
 radix_literals                                       0
+rand_bytes_negative_count_stops                      0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
@@ -1227,6 +1255,7 @@ string_split                                         0
 string_unicode_escapes                               0
 struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
+struct_field_pattern_names_variant                   0
 struct_field_subpattern                              0
 struct_field_wide_array_append                       0
 struct_literal_parts_move_into_own                   0
@@ -1253,6 +1282,8 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
+task_resumed_after_it_ended                          6
+task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
@@ -1264,6 +1295,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
+totp_period_below_one_stops                          1
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
@@ -1321,6 +1353,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_mixes_through_an_explicit_cast                 0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
@@ -1358,3 +1391,6 @@ worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0
+
+# VT-01: checked value cleanup retains COW aliases.
+value_cleanup_keeps_cow_aliases                    0

@@ -1,0 +1,5 @@
+from pathlib import Path
+import subprocess,json,datetime
+out=Path(__file__).resolve().parent;root='/workspace/lang-checker-union-candidate-20261110-1635';row={'source':'3d51e1880abc5025731f23772f1a343fe9c7fcbf','purpose':'Main integration changes the Go checker for struct-field binder diagnostics. This package checks the updated oracle, without a timing claim.','args':['go','test','./internal/check/checker','-count=1','-json'],'started':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+with(out/'go-checker.jsonl').open('wb')as so,(out/'go-checker.stderr').open('wb')as se:r=subprocess.run(row['args'],cwd=root,stdout=so,stderr=se)
+es=[json.loads(x)for x in(out/'go-checker.jsonl').read_text().splitlines()if x.strip()];row.update(exit_code=r.returncode,finished=datetime.datetime.now(datetime.timezone.utc).isoformat(),test_subtest_passes=sum(x.get('Action')=='pass'and bool(x.get('Test'))for x in es),skips=sum(x.get('Action')=='skip'for x in es),failures=[x for x in es if x.get('Action')=='fail']);(out/'go-checker.json').write_text(json.dumps(row,indent=2)+'\n');assert r.returncode==0 and row['skips']==0

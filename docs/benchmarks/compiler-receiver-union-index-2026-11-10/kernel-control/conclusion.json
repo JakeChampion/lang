@@ -1,0 +1,107 @@
+{
+  "date": "2026-11-10T17:08:45.442768+00:00",
+  "ordinary_current_main": {
+    "source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+    "design": "Six fixed baseline repetitions of the actual failing two-core test. All outcomes retained. This is a correctness diagnosis of an observed CI failure, not a performance comparison or a retry until green.",
+    "args": [
+      "go",
+      "test",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostKernelTwoCoreSchedulerOnQemu$",
+      "-count=6",
+      "-timeout=25m",
+      "-json"
+    ],
+    "started": "2026-11-10T16:52:25.981285+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-10T16:54:33.997016+00:00",
+    "test_passes": 6,
+    "test_failures": 0,
+    "skips": 0
+  },
+  "private_baseline_control": {
+    "source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+    "design": "One negative timing control: change only private board timer period from1ms to1s. Worker computation, concurrency/migration/output/frame assertions and all test budgets remain unchanged. This controlled board differs from the ordinary current-main run, whose six repetitions passed. No claim of natural local reproduction.",
+    "args": [
+      "go",
+      "test",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostKernelTwoCoreSchedulerOnQemu$",
+      "-count=1",
+      "-overlay",
+      "/workspace/lang-checker-union-index-20261110-1540/build/ci-kernel-failure-20261110-1647/slow-timer-baseline-overlay.json",
+      "-timeout=25m",
+      "-json"
+    ],
+    "started": "2026-11-10T16:56:42.256824+00:00",
+    "exit_code": 1,
+    "finished": "2026-11-10T16:57:14.809354+00:00",
+    "test_passes": 0,
+    "test_failures": 1,
+    "skips": 0
+  },
+  "fixed_controls": {
+    "base_source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+    "fixture_sha256": "a2c444559a4dcdd6635aabc3f05a6447aa270e905b991d8f69edc6f1779adfa7",
+    "design": "Six fixed repetitions of both unchanged kernel scheduler assertions, then Go vet. One private one-second timer control checks migration separately and retains every original concurrency/output/frame assertion. A nonzero private-control exit remains a negative result, never a normal test pass. No compiler, stdlib, proof rule, timer or timeout change in product sources.",
+    "runs": [
+      {
+        "label": "normal-schedulers",
+        "args": [
+          "go",
+          "test",
+          "./internal/testing/e2ecompiler",
+          "-run",
+          "^TestSelfHostKernel(SchedulerOnQemu|TwoCoreSchedulerOnQemu)$",
+          "-count=6",
+          "-timeout=25m",
+          "-json"
+        ],
+        "started": "2026-11-10T16:59:02.929033+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T17:00:26.999237+00:00",
+        "test_passes": 12,
+        "test_failures": 0,
+        "skips": 0
+      },
+      {
+        "label": "vet",
+        "args": [
+          "go",
+          "vet",
+          "./internal/testing/e2ecompiler"
+        ],
+        "started": "2026-11-10T17:00:27.007523+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T17:00:36.753077+00:00"
+      },
+      {
+        "label": "private-slow-timer",
+        "args": [
+          "go",
+          "test",
+          "./internal/testing/e2ecompiler",
+          "-run",
+          "^TestSelfHostKernelTwoCoreSchedulerOnQemu$",
+          "-count=1",
+          "-overlay",
+          "/workspace/lang-checker-union-index-20261110-1540/build/ci-kernel-failure-20261110-1647/slow-timer-fixed-overlay.json",
+          "-timeout=25m",
+          "-json"
+        ],
+        "started": "2026-11-10T17:00:36.755042+00:00",
+        "exit_code": 0,
+        "finished": "2026-11-10T17:01:13.835802+00:00",
+        "test_failures": 0,
+        "skips": 0,
+        "note": "The one-second private timer removes the normal concurrency trigger. All original assertion failures remain visible. Only normal unchanged-source test runs supply the product pass gate."
+      }
+    ],
+    "exit_code": 0,
+    "finished": "2026-11-10T17:01:13.836318+00:00"
+  },
+  "conclusion": "Ordinary current main passed all six local repetitions. The CI log remains an actual failure. The private one-second timer exposes dependence on interrupt pacing: old migration/concurrency assertions fail, while the corrected dispatch policy passes every unchanged assertion under that same private timer. This does not prove a unique CI timing cause or any compiler miscompile.",
+  "product_scope": "Only the Go test fixture dispatch eligibility changes. Compiler, stdlib, timer period, worker computation, test assertions and budgets remain unchanged."
+}
