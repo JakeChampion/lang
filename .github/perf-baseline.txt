@@ -1,3 +1,4 @@
+# 2026-11-10: PR #15061, perf-aarch64 job 129516573802 and perf-x86_64 job 129534712785. The video_qtrle rows fall 1-9% on main's tree. This PR changes no codec source. Pinned at the measured values.
 # 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
 # http.serialize_response_to and http.serialize_response_to_bytes refuse a
 # field with CR or LF since #15002, so x86_64/http_hello.text rises 2.34%.
