@@ -6,6 +6,10 @@ Table lengths must agree with their declared entry counts.
 
 Packet ranges must lie inside a declared media-data payload.
 An explicit packet limit bounds arrays before allocation.
+More than 16 ordered, disjoint media ranges use one validation pass and a binary search for each packet.
+The complete-view and seekable-file indexers supply these ordered ranges.
+Direct callers can supply other range orders or overlaps. Those inputs retain a linear search.
+The search does not copy ranges or require packet offsets in ascending order.
 
 ```fern
 <<*>>=
@@ -152,9 +156,41 @@ pub function times(input: [u8], box: boxes.Box, maximum: i32): Result[Time[], pc
   return Ok(out);
 }
 
-function contained(media: [Media], at: i64, bytes: i32): boolean {
+function ordered_media(media: [Media]): boolean {
+  let end = 0i64;
+  for box in media {
+    if (box.start < end || box.end < box.start) {
+      return false;
+    }
+    end = box.end;
+  }
+  return true;
+}
+
+function ordered_contains(media: [Media], at: i64, bytes: i32): boolean {
+  let low = 0;
+  let high = media.len();
+  while (low < high) {
+    let middle = low + (high - low) / 2;
+    if (media[middle].start <= at) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  if (low == 0) {
+    return false;
+  }
+  let box = media[low - 1];
+  return at <= box.end && bytes as i64 <= box.end - at;
+}
+
+function contained(media: [Media], ordered: boolean, at: i64, bytes: i32): boolean {
   if (at < 0i64 || bytes < 1) {
     return false;
+  }
+  if (ordered) {
+    return ordered_contains(media, at, bytes);
   }
   for box in media {
     if (at >= box.start && at <= box.end && bytes as i64 <= box.end - at) {
@@ -175,6 +211,7 @@ pub function packets(sizes: [i32], offsets: [i64], chunks: [Run], times: [Time],
   let time = 0;
   let remaining = times[0].count;
   let position = 0i64;
+  let ordered = media.len() > 16 && ordered_media(media);
   for chunk in 0..offsets.len() {
     if (run + 1 < chunks.len() && chunks[run + 1].first == chunk + 1) {
       run += 1;
@@ -193,7 +230,7 @@ pub function packets(sizes: [i32], offsets: [i64], chunks: [Run], times: [Time],
         remaining = times[time].count;
       }
       let size = sizes[out.len()];
-      if (!contained(media, at, size)) {
+      if (!contained(media, ordered, at, size)) {
         return Err(pcm.Header);
       }
       let duration = times[time].duration;

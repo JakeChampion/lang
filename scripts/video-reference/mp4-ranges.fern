@@ -1,0 +1,56 @@
+// Measure sample-table containment with one frozen compiler and two stdlib trees.
+import "std/audio/mp4/tables";
+import "std/i32";
+
+function run(ranges: i32, count: i32, rounds: i32, scattered: boolean): i32 {
+  let media: tables.Media[] = [];
+  for i in 0..ranges {
+    let at = 8589934592i64 + i as i64 * 16i64;
+    media = media.append(tables.Media { start: at, end: at + 8i64 });
+  }
+  let offsets: i64[] = [];
+  let sizes: i32[] = [];
+  for i in 0..count {
+    let slot = if (scattered) { i * 73 % ranges } else { ranges - 1 };
+    offsets = offsets.append(media[slot].start);
+    sizes = sizes.append(8);
+  }
+  let chunks = [tables.Run { first: 1, count: 1, description: 0 }];
+  let times = [tables.Time { count: count, duration: 7u32 }];
+  let checksum = 0i64;
+  let before = __heap_alloc_count();
+  for _ in 0..rounds {
+    let Ok(packets) = tables.packets(sizes, offsets, chunks, times, media, 1) else {
+      return 3;
+    };
+    for p in packets {
+      checksum += p.offset + p.position;
+    }
+  }
+  print(checksum.to_string() + " " + (__heap_alloc_count() - before).to_string());
+  return 0;
+}
+
+function bounded(ranges: i32, count: i32, rounds: i32): boolean {
+  return ranges >= 1 && ranges <= 65536 && count >= 1 && count <= 1048576 && rounds >= 1 && rounds <= 100;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 5) {
+    return 1;
+  }
+  let Ok(ranges) = i32.parse_i32(argv[1]) else {
+    return 2;
+  };
+  let Ok(count) = i32.parse_i32(argv[2]) else {
+    return 2;
+  };
+  let Ok(rounds) = i32.parse_i32(argv[3]) else {
+    return 2;
+  };
+  if (!bounded(ranges, count, rounds)) {
+    return 2;
+  }
+  return run(ranges, count, rounds, argv[4] == "scattered");
+}
