@@ -2858,10 +2858,9 @@ struct Half { v: f32, n: i32 }
     buf_free(back);
     return n + k;
 }
-// Mixed-width address arithmetic against a real address, which is what the
-// widening is for: the offsets are the differences from the base, so a
-// widening placed on the wrong side or one that dropped a high half moves the
-// answer. Which extension it used is NOT visible here — a difference is taken
+// Mixed-width address arithmetic against a real address, through explicit
+// casts: the offsets are the differences from the base, so a cast placed on
+// the wrong side or one that dropped a high half moves the answer. Which extension it used is NOT visible here — a difference is taken
 // at the low 32 bits, where the signed and the unsigned widening of the same
 // offset agree; addr_order's compare is what reads the sign. The last term is
 // the byte destination, whose mask a truncation alone would not apply: 300
@@ -2881,13 +2880,13 @@ struct Half { v: f32, n: i32 }
 }
 @noinline function addr_walk(n: i32): i32 {
     let base: usize = buf_new(64);
-    let fwd: usize = base + n;
+    let fwd: usize = base + (n as usize);
     let neg: i32 = 0 - 3;
-    let back: usize = base + neg;
-    let wide: usize = base - 5i64;
+    let back: usize = base + (neg as usize);
+    let wide: usize = base - (5i64 as usize);
     let byte: u8 = 7;
     let up: usize = base + byte;
-    let nested: usize = base + n + n * 2;
+    let nested: usize = base + (n as usize) + ((n * 2) as usize);
     let d: i32 = (fwd as i32) - (base as i32);
     d = d + ((back as i32) - (base as i32));
     d = d + ((wide as i32) - (base as i32));
@@ -2898,22 +2897,20 @@ struct Half { v: f32, n: i32 }
     buf_free(base);
     return d;
 }
-// The width comes off an operand here, since the whole expression is the
-// boolean — and off whichever operand carries it, which is why both orders
-// are written.
+// Each compare casts the i32 operand, in both orders.
 //
-// The last compare is the one that reads the SIGN of the widening, which no
+// The last compare is the one that reads the SIGN of the cast, which no
 // difference can: an address is compared unsigned over its whole width, so a
 // sign-extended -3 lands below the base and a zero-extended one lands 4 GiB
 // above it. On wasm both answer true and must, since the address is the i32
-// there and the two widenings are the same value.
+// there and the two extensions are the same value.
 @noinline function addr_order(n: i32): i32 {
     let base: usize = buf_new(16);
     let k: i32 = 0;
-    if (base > n) { k = k + 1; }
-    if (n < base) { k = k + 2; }
+    if (base > (n as usize)) { k = k + 1; }
+    if ((n as usize) < base) { k = k + 2; }
     let neg: i32 = 0 - 3;
-    if (base + neg < base) { k = k + 4; }
+    if (base + (neg as usize) < base) { k = k + 4; }
     buf_free(base);
     return k;
 }

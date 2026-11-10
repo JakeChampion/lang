@@ -9025,9 +9025,9 @@ func TestArm64IfLet(t *testing.T) {
 	}
 }
 
-func TestArm64UsizeAutowiden(t *testing.T) {
+func TestArm64UsizeOffsetKeepsHighBits(t *testing.T) {
 	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
-    return base + idx * stride;
+    return base + (idx * stride) as usize;
 }
 function main(): i32 {
     let heap_ptr: usize = 4294967296 as usize;
