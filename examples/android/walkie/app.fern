@@ -9,6 +9,7 @@
 import "std/android";
 import "std/android/audio";
 import "std/android/focus";
+import "std/android/keyboard";
 import "std/android/p2p";
 import "std/android/service";
 import "std/hex";
@@ -360,6 +361,18 @@ function event(own s: App, e: android.Event): App {
     android.Key(code, action) => {
       return key(s, code, action);
     },
+    android.Text(text) => {
+      if let Some(_) = s.host_edit {
+        return App { ...s, host_edit: Some(screen.host_text(text)), drawn: "" };
+      }
+      return s;
+    },
+    android.TextAction(_) => {
+      if let Some(name) = s.host_edit {
+        return save_host(s, name);
+      }
+      return s;
+    },
     _ => {
       return lifecycle_event(s, e);
     }
@@ -701,14 +714,14 @@ function host_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, n
     return save_host(s, name);
   }
   if (screen.contains(screen.phone_keys_button(w, h), x, y)) {
-    android.show_keyboard(s.ctx, true);
+    keyboard.show(s.ctx, name, android.INPUT_PLAIN, android.ACTION_DONE);
     return s;
   }
   let k: i32 = screen.host_key_at(w, h, x, y);
   if (k < 0) {
     return s;
   }
-  return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
+  return host_typed(s, screen.host_typed(name, k));
 }
 
 // A key of the keyboard of the phone: a letter, a digit, "." or "-" types,
@@ -728,12 +741,18 @@ function host_key(own s: App, code: i32, action: i32, name: string): App {
   if (k < 0) {
     return s;
   }
-  return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
+  return host_typed(s, screen.host_typed(name, k));
+}
+
+// A key changed the name, so the field of the phone keyboard gets it too.
+function host_typed(own s: App, name: string): App {
+  keyboard.set_text(s.ctx, name);
+  return App { ...s, host_edit: Some(name), drawn: "" };
 }
 
 // Closes the keyboard of the server, and the keyboard of the phone.
 function close_host(own s: App): App {
-  android.show_keyboard(s.ctx, false);
+  keyboard.hide(s.ctx);
   return App { ...s, host_edit: None, drawn: "" };
 }
 
@@ -742,7 +761,7 @@ function save_host(own s: App, name: string): App {
     return App { ...s, node: node.noticed(s.node, "that is not a host name"), drawn: "" };
   }
   save_server(s.dir, name);
-  android.show_keyboard(s.ctx, false);
+  keyboard.hide(s.ctx);
   log.info("walkie: server " + name);
   let quiet: node.Node = node.noticed(s.node, "");
   let t: App = App { ...s, server: name, host_edit: None, node: quiet, drawn: "" };

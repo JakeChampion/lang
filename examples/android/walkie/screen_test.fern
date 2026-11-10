@@ -212,6 +212,14 @@ function test_host_key_of_code(): test.TestOutcome {
   return test.assert_eq(typed + " " + screen.host_key_of_code(29).to_string() + " " + screen.host_key_of_code(62).to_string(), "ro.4- 0 -1");
 }
 
+function test_host_text(): test.TestOutcome {
+  let long = "";
+  for i in 0..300 {
+    long += "a";
+  }
+  return test.assert_eq(screen.host_text("Room 4.Example-é_net") + " " + screen.host_text(long).len().to_string(), "room4.example-net " + screen.HOST_MAX.to_string());
+}
+
 function main(): i32 {
   let r = test.new("walkie screen");
   r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
@@ -225,5 +233,6 @@ function main(): i32 {
   r = r.it("the settings fit", test_settings_fit);
   r = r.it("the keyboard of the server fits", test_host_keyboard_fits);
   r = r.it("phone key codes give host keys", test_host_key_of_code);
+  r = r.it("the text of the phone keyboard gives a host name", test_host_text);
   return r.finish();
 }

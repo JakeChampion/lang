@@ -7,6 +7,7 @@
 // bars, and the notification listener of the notification filter.
 import "std/android";
 import "std/android/draw";
+import "std/android/keyboard";
 import "std/android/property";
 import "std/fetch";
 import "std/jni";
@@ -791,7 +792,9 @@ function device(ctx: usize, wall: u8[]): control.Device {
     launch: (key: string, x: i32, y: i32, w: i32, h: i32): boolean => launch(ctx, key, x, y, w, h),
     open: (what: string, arg: string): boolean => open(ctx, what, arg),
     notifications: (): void => expand_notifications(ctx),
-    keyboard: (show: boolean): void => android.show_keyboard(ctx, show),
+    show_field: (text: string, action: i32): void => keyboard.show(ctx, text, android.INPUT_TEXT, action),
+    set_field: (text: string): void => keyboard.set_text(ctx, text),
+    hide_field: (): void => keyboard.hide(ctx),
     bars: (top: boolean, bottom: boolean): void => set_bars(ctx, top, bottom),
     has_location: (): boolean => android.has_permission(ctx, LOCATION),
     ask_location: (): void => android.request_permissions(ctx, [LOCATION]),

@@ -28,6 +28,28 @@ int ANativeWindow_getWidth(void* w) { return 0; }
 int ANativeWindow_getHeight(void* w) { return 0; }
 `
 
+// LibandroidStub is C source for libandroid.so on a Linux host: the
+// functions in `defined`, and from scripts/libandroid-stubs a function that
+// aborts for each other libandroid.so function that `src` or a std/android
+// module imports.
+func LibandroidStub(t *testing.T, defined, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	mock := filepath.Join(dir, "defined.c")
+	source := filepath.Join(dir, "source.fern")
+	if err := os.WriteFile(mock, []byte(defined), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("python3", RepoPath("scripts", "libandroid-stubs"), mock, source).Output()
+	if err != nil {
+		t.Fatalf("scripts/libandroid-stubs: %v", err)
+	}
+	return string(out) + defined
+}
+
 // HostGL gives a directory to put on LD_LIBRARY_PATH so that a Fern shared
 // object for std/android/gl loads on this Linux host, with Mesa's EGL and
 // OpenGL ES 2 under their Android names, and a stub libandroid.so. It skips
@@ -57,7 +79,7 @@ func HostGL(t *testing.T) string {
 		missing = append(missing, "gcc")
 	} else {
 		src := filepath.Join(dir, "android_stub.c")
-		if err := os.WriteFile(src, []byte(hostWindowStub), 0o644); err != nil {
+		if err := os.WriteFile(src, []byte(LibandroidStub(t, hostWindowStub, "")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", filepath.Join(dir, "libandroid.so"), src).CombinedOutput(); err != nil {

@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Prints C source for the libandroid.so functions that a host mock lacks.
+
+Usage: libandroid-stubs [FILE...]
+
+A Fern shared object binds each libandroid.so function that it can reach when
+it loads. A host mock of libandroid.so defines only the functions that its test
+calls. This script prints a function that aborts for each other function that a
+std/android module, or an @import line in FILE, imports. A function that FILE
+defines at the start of a line is not printed.
+"""
+
+from pathlib import Path
+import re
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+IMPORT = re.compile(r'@import\("libandroid\.so", "([A-Za-z0-9_]+)"\)')
+DEFINED = re.compile(r"^[A-Za-z_][\w \*]*?\b([A-Za-z_]\w*)\s*\([^;{]*(?:\)\s*\{|$)", re.M)
+
+
+def main(paths):
+    texts = [Path(p).read_text() for p in paths]
+    defined = {name for text in texts for name in DEFINED.findall(text)}
+    stdlib = ROOT / "internal" / "stdlib" / "std"
+    docs = sorted(stdlib.glob("android*.md")) + sorted((stdlib / "android").glob("*.md"))
+    names = []
+    for text in texts + [d.read_text() for d in docs]:
+        for name in IMPORT.findall(text):
+            if name not in defined and name not in names:
+                names.append(name)
+    print("#include <stdlib.h>")
+    for name in names:
+        print(f"void {name}(void) {{ abort(); }}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

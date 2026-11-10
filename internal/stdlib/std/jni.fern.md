@@ -611,7 +611,11 @@ pub function call_void(env: usize, obj: usize, name: string, sig: string, values
 // from a thread that native code started.
 pub function load_class(env: usize, obj: usize, name: string): usize {
   let loader: usize = call_object(env, obj, "getClassLoader", "()Ljava/lang/ClassLoader;", []);
-  return call_object(env, loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", [new_string(env, name)]);
+  let jname: usize = new_string(env, name);
+  let class: usize = call_object(env, loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", [jname]);
+  let a: usize = delete_local_ref(env, jname);
+  let b: usize = delete_local_ref(env, loader);
+  return class;
 }
 
 // The text of the Java string `jstr`, or "" for null. JNI gives modified
