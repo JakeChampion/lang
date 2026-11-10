@@ -247,9 +247,36 @@ var Ungated = map[string]bool{
 	"share_unchecked":                   true,
 }
 
+// DirectPrivileged names the raw builtins that reach "privileged" when a
+// function of a package calls one. The standard library uses them for its
+// strings, arrays and maps, so a call site in the standard library does not
+// count for the caller. docs/security/UNSAFE-INVENTORY.md lists each one.
+// compiler/caps.fern's direct_privileged holds the same set.
+var DirectPrivileged = map[string]bool{
+	"__alloc": true, "__alloc_reuse": true, "__alloc_u8_uninit": true, "__arr_set_len": true,
+	"__bytes_data": true, "__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true, "__c_call2": true,
+	"__c_call2_f32": true, "__c_call2_f64": true, "__c_call3": true, "__c_call3_f32": true,
+	"__c_call3_f64": true, "__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	"__c_call5": true, "__c_call5_f32": true, "__c_call5_f64": true, "__c_call6": true,
+	"__c_call6_f32": true, "__c_call6_f64": true, "__c_callv": true, "__f32x4_load_ptr": true,
+	"__f32x4_store": true, "__f64x2_load_f32_ptr": true, "__f64x2_load_ptr": true, "__f64x2_store": true,
+	"__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_rc_dec": true,
+	"__fern_rc_inc": true, "__fern_str_dec": true, "__free": true, "__heap_adopt": true,
+	"__heap_mark": true, "__heap_release_to": true, "__load_i32": true, "__load_i64": true,
+	"__load_ptr": true, "__load_u8": true, "__memcpy": true, "__memset": true,
+	"__rc_dec": true, "__rc_get": true, "__rc_inc": true, "__store_i32": true,
+	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__str_bytes": true,
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
+	"__task_cancelled": true, "__task_cur": true, "__task_enter": true, "__task_free": true,
+	"__task_leave": true, "__task_new": true, "__task_park": true, "__task_park_until": true,
+	"__task_set_cancelled": true, "__task_set_ready": true, "__task_timeout": true, "__task_until": true,
+	"__task_wait": true,
+}
+
 // IsBuiltin reports a builtin function of the language: each one is in
-// BuiltinCaps or in Ungated.
+// BuiltinCaps, in DirectPrivileged or in Ungated.
 func IsBuiltin(name string) bool {
 	_, tagged := BuiltinCaps[name]
-	return tagged || Ungated[name]
+	return tagged || DirectPrivileged[name] || Ungated[name]
 }
