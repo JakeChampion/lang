@@ -41,14 +41,35 @@ def paper_part(out, name, top_half=False):
     return width, height, part
 
 
-def keyboard_shown(timeout=5.0):
-    """The keyboard of the system shows within `timeout` seconds."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if re.search(r"mInputShown=true", adb("shell", "dumpsys", "input_method", check=False)):
+def keyboard_state(shown, timeout=5.0):
+    """The keyboard reaches the requested visible state within the timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        visible = bool(re.search(r"mInputShown=true", adb("shell", "dumpsys", "input_method", check=False)))
+        if visible == shown:
             return True
         time.sleep(0.5)
     return False
+
+
+def keyboard_shown(timeout=5.0):
+    return keyboard_state(True, timeout)
+
+
+def close_drawer():
+    """Dismiss the keyboard, then require a new home transition."""
+    adb("logcat", "-c")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    if not keyboard_state(False):
+        fail("the back key did not hide the keyboard before navigation")
+        return False
+    # Android can consume the first Back key while its keyboard is visible.
+    if not wait_for(r"paper: layer 0", timeout=1.5):
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    if not wait_for(r"paper: layer 0"):
+        fail("the back key did not go back to the home screen")
+        return False
+    return True
 
 
 def check_keyboard(width):
@@ -59,7 +80,7 @@ def check_keyboard(width):
         fail("the app list opened without the keyboard")
         return
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    if keyboard_shown(1.5):
+    if not keyboard_state(False, 1.5):
         fail("the back key did not hide the keyboard")
         return
     density = re.findall(r"(\d+)", adb("shell", "wm", "density"))
@@ -129,14 +150,18 @@ def main(apk, out):
     adb("shell", "input", "keyevent", "KEYCODE_HOME")
     time.sleep(1.5)
 
-    adb("shell", "input", "swipe", str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 4), "150")
-    time.sleep(1.0)
     early = logcat()
     adb("logcat", "-c")
-    adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    if not wait_for(r"paper: layer 0"):
-        fail("the back key did not go back to the home screen")
-    paper_part(out, "back")
+    adb("shell", "input", "swipe", str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 4), "150")
+    if not wait_for(r"paper: layer 1"):
+        fail("the second swipe did not open the app list")
+    if not keyboard_shown():
+        fail("the second app list opened without the keyboard")
+    early += logcat()
+    close_drawer()
+    _, _, part = paper_part(out, "back")
+    if part < 0.05 or part > 0.7:
+        fail(f"the back key left {part:.3f} of the paper colour instead of the home screen")
 
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
