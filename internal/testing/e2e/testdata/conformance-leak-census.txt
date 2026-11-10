@@ -1,3 +1,4 @@
+# 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
 # 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
 # 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
 # 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
@@ -1257,6 +1258,8 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
+task_resumed_after_it_ended                          6
+task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
