@@ -581,7 +581,6 @@ function inline_parts(body: string): string[] {
       out = out.append(slice_unchecked(body, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   return out.append(slice_unchecked(body, start, body.len()).to_owned());
 }

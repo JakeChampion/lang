@@ -351,9 +351,18 @@ pub function (h: Md5) finish(): u8[] {
   return out;
 }
 
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __md5_last(own h: Md5): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
+}
+
 // md5 calculates the digest of `s`.
 pub function md5(s: [u8]): u8[] {
-  return md5_new().update(s).finish();
+  let last = md5_new().update(s);
+  return __md5_last(last);
 }
 
 // === SHA-1 (RFC 3174) ===
@@ -736,7 +745,16 @@ pub function (h: Sha1) finish(): u8[] {
 
 // sha1 calculates the digest of `s`.
 pub function sha1(s: [u8]): u8[] {
-  return sha1_new().update(s).finish();
+  let last = sha1_new().update(s);
+  return __sha1_last(last);
+}
+
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __sha1_last(own h: Sha1): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
 }
 
 // === SHA-224 and SHA-256 (FIPS 180-4) ===
@@ -1160,14 +1178,24 @@ pub function (h: Sha256) finish(): u8[] {
   return out;
 }
 
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __sha256_last(own h: Sha256): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
+}
+
 // sha256 calculates the digest of `s`.
 pub function sha256(s: [u8]): u8[] {
-  return sha256_new().update(s).finish();
+  let last = sha256_new().update(s);
+  return __sha256_last(last);
 }
 
 // sha224 calculates the digest of `s`.
 pub function sha224(s: [u8]): u8[] {
-  return sha224_new().update(s).finish();
+  let last = sha224_new().update(s);
+  return __sha256_last(last);
 }
 
 // === SHA-384 and SHA-512 (FIPS 180-4) ===
@@ -1639,14 +1667,24 @@ pub function (h: Sha512) finish(): u8[] {
   return out;
 }
 
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __sha512_last(own h: Sha512): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
+}
+
 // sha512 calculates the digest of `s`.
 pub function sha512(s: [u8]): u8[] {
-  return sha512_new().update(s).finish();
+  let last = sha512_new().update(s);
+  return __sha512_last(last);
 }
 
 // sha384 calculates the digest of `s`.
 pub function sha384(s: [u8]): u8[] {
-  return sha384_new().update(s).finish();
+  let last = sha384_new().update(s);
+  return __sha512_last(last);
 }
 
 // === SM3 (GB/T 32905-2016) ===
@@ -2365,7 +2403,16 @@ pub function (h: Sm3) finish(): u8[] {
 
 // sm3 calculates the digest of `s`.
 pub function sm3(s: [u8]): u8[] {
-  return sm3_new().update(s).finish();
+  let last = sm3_new().update(s);
+  return __sm3_last(last);
+}
+
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __sm3_last(own h: Sm3): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
 }
 
 // === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===
@@ -3300,7 +3347,16 @@ pub function (h: Blake2b) finish(): u8[] {
 
 // blake2b calculates an `out_len`-byte digest of `s`.
 pub function blake2b(s: [u8], out_len: i32): u8[] {
-  return blake2b_new(out_len).update(s).finish();
+  let last = blake2b_new(out_len).update(s);
+  return __blake2b_last(last);
+}
+
+// The buffer of the state holds the tail of the message, so it is zeroed
+// after the digest is made.
+function __blake2b_last(own h: Blake2b): u8[] {
+  let out = h.finish();
+  erase(h.buf);
+  return out;
 }
 
 // <<< generated
@@ -3340,9 +3396,11 @@ function __pad_block(bs: i32, key: [u8], pad: i32): u8[] {
 
 function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
   if (hlen == 48) {
-    return sha384_new().update(a).update(b).finish();
+    let last = sha384_new().update(a).update(b);
+    return __sha512_last(last);
   }
-  return sha256_new().update(a).update(b).finish();
+  let last = sha256_new().update(a).update(b);
+  return __sha256_last(last);
 }
 
 function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
@@ -3552,11 +3610,7 @@ pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
     i += 1;
   }
   let hs = __hmac(32, key, msg);
-  let offset = hs[hs.len() - 1] as i32 & 15;
-  let bin: i32 = (hs[offset] as i32 & 127) << 24
-    | hs[offset + 1] as i32 << 16
-    | hs[offset + 2] as i32 << 8
-    | hs[offset + 3] as i32;
+  let bin = __hotp_window(hs);
   let m: i64 = 1;
   let d = 0;
   while (d < digits && d < 10) {
@@ -3564,6 +3618,25 @@ pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
     d += 1;
   }
   return (bin as i64 % m) as i32;
+}
+
+// The dynamic truncation of RFC 4226 section 5.3. The offset comes from the
+// MAC, so each of the 16 windows is read and a mask keeps the one at the
+// offset. No index and no branch depends on the MAC.
+function __hotp_window(hs: [u8]): i32 {
+  let offset = hs[hs.len() - 1] as i32 & 15;
+  let bin = 0;
+  let at = 0;
+  while (at < 16) {
+    let window: i32 = (hs[at] as i32 & 127) << 24
+      | hs[at + 1] as i32 << 16
+      | hs[at + 2] as i32 << 8
+      | hs[at + 3] as i32;
+    let same = (at ^ offset) - 1 >> 31 & 1;
+    bin = bin | window & 0 - same;
+    at += 1;
+  }
+  return bin;
 }
 
 // A period below 1 second stops the program with status 134.

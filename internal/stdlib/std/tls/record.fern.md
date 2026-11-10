@@ -463,7 +463,7 @@ function __seal_failed(p: Protection, e: aead.AeadError): RecordError {
     aead.Forged => {
       return BadRecordMac;
     },
-    aead.CounterRange => {
+    aead.CounterRange | aead.Overlap => {
       return BadRecordMac;
     }
   }

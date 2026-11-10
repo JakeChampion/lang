@@ -131,6 +131,11 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 	const callsOwnMethod = "pub struct Counter { n: i32 }\nfunction (c: Counter) size(): i32 {\n  return c.n;\n}\npub function save(s: string): i32 {\n  let c: Counter = Counter { n: s.len() };\n  return c.size();\n}\n"
 	const appMethod = "struct Disk { path: string }\nfunction (d: Disk) size(): i32 {\n  write_file(d.path, \"x\");\n  return 0;\n}\n"
 	const deniedSave = "error helper fs write_file save → write_file lib.fern:1:5"
+	// A raw builtin in a package's own function needs the privileged grant.
+	const rawMemory = "pub function save(s: string): i32 {\n  unsafe {\n    let p = __alloc(8);\n    __store_u8(p, 33);\n    return __load_u8(p) as i32 + s.len();\n  }\n}\n"
+	// The standard library uses raw builtins for its strings. That does not count for the caller.
+	const callsStdString = "import \"std/string\";\npub function save(s: string): i32 {\n  return s.trim().repeat(2).len();\n}\n"
+	const deniedRaw = "error helper privileged __alloc save → __alloc lib.fern:1:5"
 
 	for _, c := range []struct {
 		name      string
@@ -147,6 +152,9 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 		{"reaches-nothing", "helper = { path = \"../helper\", capabilities = [] }", reachesNothing, true, "", ""},
 		{"parameter-shadows-function", "helper = { path = \"../helper\", capabilities = [] }", shadowsAppFunction, true, appSource, ""},
 		{"method-of-another-type", "helper = { path = \"../helper\", capabilities = [] }", callsOwnMethod, true, appMethod, ""},
+		{"raw-memory", "helper = { path = \"../helper\", capabilities = [] }", rawMemory, false, "", deniedRaw},
+		{"raw-memory-granted", "helper = { path = \"../helper\", capabilities = [\"privileged\"] }", rawMemory, true, "", ""},
+		{"standard-library-strings", "helper = { path = \"../helper\", capabilities = [] }", callsStdString, true, "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			proj := t.TempDir()
