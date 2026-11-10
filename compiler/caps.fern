@@ -248,6 +248,12 @@ pub function capability_of(name: string): string {
   return "";
 }
 
+// is_builtin reports a builtin function of the language, as IsBuiltin in
+// internal/pkg/caps does: each one is tagged, ungated or directly privileged.
+pub function is_builtin(name: string): boolean {
+  return capability_of(name).len() > 0 || util.has_str(ungated(), name) || util.has_str(direct_privileged(), name);
+}
+
 pub function classified(name: string): boolean {
   if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {
     return true;

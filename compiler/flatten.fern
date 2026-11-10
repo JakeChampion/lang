@@ -5,7 +5,7 @@ import "./parser";
 import "./decltypes";
 import "./astwalk";
 import "./platforms";
-import "./builtinsigs";
+import "./caps";
 import "std/string";
 
 pub struct ImportedEnum { name: string, prefix: string }
@@ -1422,7 +1422,7 @@ function entry_shadow_names(names: string[]): string[] {
 function builtin_shadows(mod: parser.Module): string[] {
   let out: string[] = [];
   for fd in mod.funcs {
-    if (fd.receiver_type.len() == 0 && !fd.is_const && builtinsigs.builtin_row(fd.name).len() > 0 && !util.has_str(out, fd.name)) {
+    if (fd.receiver_type.len() == 0 && !fd.is_const && caps.is_builtin(fd.name) && !util.has_str(out, fd.name)) {
       out = out.append(fd.name);
     }
   }

@@ -1765,6 +1765,31 @@ func TestReservedShadowIsReportedOnce(t *testing.T) {
 	}
 }
 
+// A free function under the name of an unsafe intrinsic is E010 and nothing
+// else (#15203). A display builtin and a name that only has the prefix of an
+// intrinsic family stay ordinary functions.
+func TestRawBuiltinFunctionNameIsReserved(t *testing.T) {
+	for _, name := range []string{"__load_u8", "__memcpy", "__str_bytes", "__bytes_data", "__alloc", "__task_new"} {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, "function "+name+"(x: i32): i32 { return x; }\nfunction main(): i32 { return "+name+"(0); }\n")
+			if err == nil {
+				t.Fatalf("%s: want E010", name)
+			}
+			errs, _ := err.(diag.Errors)
+			if len(errs) != 1 || !hasCode(err, "E010") || !strings.Contains(err.Error(), `function "`+name+`" is a reserved built-in name`) {
+				t.Fatalf("%s: want one E010 that names the function, got %v", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"__primitive_i32_to_string", "__method_boolean_to_string", "__port_text"} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, "function "+name+"(x: i32): string { return \"\"; }\nfunction main(): i32 { let s: string = "+name+"(0); return 0; }\n"); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		})
+	}
+}
+
 func TestBuiltinPutchar(t *testing.T) {
 	if err := checkSource(t, `function f(): void { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)

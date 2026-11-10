@@ -2818,6 +2818,20 @@ function main(): i32 { return 0; }
 		{"written-fn-type-let-array", "function main(): i32 { let fs: fn[] = []; return 0; }\n", []string{"E064"}},
 		{"written-fn-type-nested", "function main(): i32 { let f: Option[fn] = None; return 0; }\n", []string{"E064"}},
 		{"written-arrow-types-clean", "struct S { f: (i32) => void, g: ((i32) => i32)[] }\nfunction ap(f: (i32) => void, o: Option[(i32) => void]): (i32) => void { return f; }\nfunction main(): i32 { let fs: ((i32) => void)[] = []; let w: (string) => void = (s: string): void => { }; return 0; }\n", nil},
+		{"raw-builtin-name-load", "function __load_u8(x: i32): i32 { return x; }\nfunction main(): i32 { return __load_u8(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-memcpy", "function __memcpy(x: i32): i32 { return x; }\nfunction main(): i32 { return __memcpy(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-str-bytes", "function __str_bytes(x: i32): i32 { return x; }\nfunction main(): i32 { return __str_bytes(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-other-result", "function __bytes_data(x: i32): i32 { return x; }\nfunction main(): i32 { return __bytes_data(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-alloc", "function __alloc(x: i32): i32 { return x; }\nfunction main(): i32 { return __alloc(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-task", "function __task_new(x: i32): i32 { return x; }\nfunction main(): i32 { return __task_new(0); }\n", []string{"E010"}},
+		{"shadowed-intrinsic-name", "function __send_copy(x: i32): i32 { return x; }\nfunction main(): i32 { return __send_copy(0); }\n", nil},
+		{"shadowed-kernel-name", "function __aes_ctr32(x: i32): i32 { return x; }\nfunction main(): i32 { return __aes_ctr32(0); }\n", nil},
+		{"display-builtin-method-name", "function __method_boolean_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __method_boolean_to_string(0); }\n", nil},
+		{"builtin-method-name-redeclared", "function __method_string_len(x: i32): i32 { return x; }\nfunction main(): i32 { return __method_string_len(0); }\n", []string{"E006"}},
+		{"public-builtin-name-print", "function print(x: i32): i32 { return x; }\nfunction main(): i32 { return print(0); }\n", nil},
+		{"public-builtin-name-args", "function args(x: i32): i32 { return x; }\nfunction main(): i32 { return args(0); }\n", nil},
+		{"display-builtin-name", "function __primitive_i32_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __primitive_i32_to_string(0); }\n", nil},
+		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

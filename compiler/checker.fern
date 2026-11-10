@@ -4801,8 +4801,9 @@ pub function builtin_sig(name: string): typeinfo.Type {
 }
 
 // Primitive display signatures are completed by private runtime source bodies.
+// isScalarBuiltinMethod in internal/check/checker holds the same set.
 function is_primitive_display_builtin(name: string): boolean {
-  return name.starts_with("__primitive_") && builtinsigs.builtin_row(name).len() > 0;
+  return (name == "__method_boolean_to_string" || name.starts_with("__primitive_")) && builtinsigs.builtin_row(name).len() > 0;
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -18213,9 +18214,10 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-// reserved_name_diags reports each declaration under a built-in type's name.
-// Such a name takes the built-in's place for every module in the bundle, so no
-// later diagnostic can be trusted.
+// reserved_name_diags reports each declaration under a built-in type's name,
+// and each free function under the name of an unsafe intrinsic. Such a name
+// takes the built-in's place for every module in the bundle, so no later
+// diagnostic can be trusted.
 function reserved_name_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for ed in mod.enums {
@@ -18229,7 +18231,24 @@ function reserved_name_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
     }
   }
+  for fd in mod.funcs {
+    let name = written_func_name(fd);
+    if (fd.receiver_type.len() == 0 && is_unsafe_intrinsic(name)) {
+      out = out.append(dg_at("E010", "function \"" + name + "\" is a reserved built-in name and cannot be redeclared", fd.line, fd.col));
+    }
+  }
   return out;
+}
+
+function written_func_name(fd: parser.FuncDecl): string {
+  if (fd.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
+    return slice_unchecked(fd.name, util.ENTRY_SHADOW_PREFIX.len(), fd.name.len()).to_owned();
+  }
+  let prefix = fd.module + "__";
+  if (fd.module.len() > 0 && fd.name.starts_with(prefix)) {
+    return slice_unchecked(fd.name, prefix.len(), fd.name.len()).to_owned();
+  }
+  return fd.name;
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
