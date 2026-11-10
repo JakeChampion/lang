@@ -364,7 +364,7 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
 	pinned(t, c, "arrow lambdas", 18,
 		"Arrow lambdas in the compiler are traversal callbacks in astwalk, checker and parser, and the identity finish hook of the shared AST splicer. A new arrow lambda moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
-	pinned(t, c, "nested named fns", 90,
+	pinned(t, c, "nested named fns", 91,
 		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. A visitor that moves onto the shared folds lowers this row. A new visitor raises it.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")

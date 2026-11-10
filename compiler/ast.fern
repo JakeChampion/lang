@@ -23,7 +23,7 @@ pub struct ExprBytes { value: u8[], line: i32, col: i32 }
 
 pub struct TypedBinding { name: string, ty: typeinfo.Type }
 
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
+pub struct ExprLambda { params: ParamDecl[], ret_own: boolean, ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
 
 pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 

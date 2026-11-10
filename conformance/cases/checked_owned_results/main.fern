@@ -1,0 +1,78 @@
+import "core/map";
+
+// spec: OR-01
+struct Box { values: u8[] }
+
+struct Callbacks { step: (own Box) => own Box }
+
+function fold[T](own seed: T, step: (own T) => own T): own T {
+  return step(seed);
+}
+
+function next(own box: Box): own Box {
+  return Box { ...box, values: box.values.append(9u8) };
+}
+
+struct Data { bytes: u8[] }
+
+function wrap(data: Data): own Data[] {
+  return [data];
+}
+
+function copy_data(data: Data): own Data {
+  return data;
+}
+
+struct Token { n: i32, closed: Cell[i32] }
+
+function (own token: Token) close(): i32 {
+  token.closed.set(token.closed.get() + 1);
+  return token.n;
+}
+
+struct Pair { first: Token, second: Token }
+
+function make_token(n: i32, closed: Cell[i32]): own Token {
+  let token = Token { n: n, closed: closed };
+  return token;
+}
+
+function choose(own pair: Pair): own Token {
+  defer pair.first.close();
+  return pair.second;
+}
+
+function copy_map(m: Map[string, i32]): own Map[string, i32] {
+  return m;
+}
+
+function update_map(m: Map[string, i32]): own Map[string, i32] {
+  return m.insert("k", 2);
+}
+
+function main(): i32 {
+  let calls = Callbacks { step: next };
+  let box = fold(Box { values: [7u8] }, (own x: Box): own Box => calls.step(x));
+  print(box.values.len());
+  print(box.values[1]);
+  let data = Data { bytes: [4u8] };
+  let copies = wrap(data);
+  let changed = Data { bytes: data.bytes.with(0, 8u8) };
+  let snapshot = copy_data(data);
+  print(copies[0].bytes[0]);
+  print(snapshot.bytes[0]);
+  print(changed.bytes[0]);
+  let closed = cell_new(0);
+  let token = choose(Pair { first: make_token(11, closed), second: make_token(12, closed) });
+  print(closed.get());
+  print(token.close());
+  print(closed.get());
+  let empty: Map[string, i32] = map_new(4);
+  let base = empty.insert("k", 1);
+  let saved = copy_map(base);
+  let updated = update_map(base);
+  print(saved.get_or("k", 0));
+  print(updated.get_or("k", 0));
+  print(base.get_or("k", 0));
+  return 0;
+}

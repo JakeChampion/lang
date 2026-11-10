@@ -2657,7 +2657,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			params[i] = p.Type
 			owns[i] = p.Own
 		}
-		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
+		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType, ResultOwn: fn.ReturnOwn}
 		delete(c.builtinFuncs, fn.Name)
 		if fn.AssocConst {
 			c.info.AssocConsts[fn.Name] = true
@@ -2848,7 +2848,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				want[i] = c.cloneSpelling(want[i])
 			}
 			wantRet = c.cloneSpelling(wantRet)
-			if !sigMatches(gotSig, want, wantRet) {
+			if m.ResultOwn && !sig.ResultOwn || !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
 					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
 					demangle(typeName), m.Name, demangle(impl.Trait),
@@ -3194,14 +3194,14 @@ func definitelyScalar(t ast.Type) bool {
 	return false
 }
 
-func paramSig(params []ast.Param, result ast.Type) *ast.FuncType {
+func paramSig(params []ast.Param, result ast.Type, resultOwn bool) *ast.FuncType {
 	types := make([]ast.Type, len(params))
 	owns := make([]bool, len(params))
 	for i, p := range params {
 		types[i] = p.Type
 		owns[i] = p.Own
 	}
-	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result}
+	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result, ResultOwn: resultOwn}
 }
 
 func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string {
@@ -4021,6 +4021,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	}
 	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt, OwnerTrait: ownerTrait}
 	n.DynTrait = ownerTrait
+	c.recordOwnedResult(n, tm.ResultOwn)
 	return ast.SubstSelf(tm.Result, dt)
 }
 
@@ -4530,6 +4531,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				NamePos:        m.P,
 				Name:           m.Name,
 				ReturnType:     m.Result,
+				ReturnOwn:      m.ResultOwn,
 				Body:           ast.CloneBlock(m.Body),
 				SourceModule:   impl.SourceModule,
 				SourceFile:     td.SourceModule,
@@ -5931,10 +5933,12 @@ type checker struct {
 	handleFreeResults map[string]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
-	consumingTypes map[string]bool
-	callOwnFlags   map[*ast.Call][]bool
-	scalarArgs     map[ast.Expr]bool
-	valueArgs      map[ast.Expr]bool
+	consumingTypes  map[string]bool
+	callOwnFlags    map[*ast.Call][]bool
+	callOwnResults  map[*ast.Call]bool
+	resultCopyParts map[ast.Expr]bool
+	scalarArgs      map[ast.Expr]bool
+	valueArgs       map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -7072,7 +7076,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn}
+		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProj(p))
 		}
@@ -7132,7 +7136,7 @@ func (c *checker) resolveProjWithSub(t ast.Type, sub map[string]ast.Type) ast.Ty
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn}
+		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
 		for _, pp := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWithSub(pp, sub))
 		}
@@ -7183,7 +7187,7 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn}
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
 		}
@@ -7344,7 +7348,7 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn}
+		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substByName(p, sub))
 		}
@@ -7593,7 +7597,7 @@ func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
 	case ast.SliceType:
 		return ast.SliceType{Elem: normalizeParamRefs(b.Elem, tpSet)}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: normalizeParamRefs(b.Result, tpSet), ParamOwn: b.ParamOwn}
+		out := &ast.FuncType{Result: normalizeParamRefs(b.Result, tpSet), ParamOwn: b.ParamOwn, ResultOwn: b.ResultOwn}
 		for _, p := range b.Params {
 			out.Params = append(out.Params, normalizeParamRefs(p, tpSet))
 		}
@@ -7720,7 +7724,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -8364,6 +8368,18 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
 		return true
+	}
+	if d, ok := dst.(*ast.FuncType); ok {
+		s, ok := src.(*ast.FuncType)
+		if !ok || len(d.Params) != len(s.Params) || d.ResultOwn && !s.ResultOwn {
+			return false
+		}
+		for i := range d.Params {
+			if d.OwnAt(i) != s.OwnAt(i) || !ast.Equal(d.Params[i], s.Params[i]) {
+				return false
+			}
+		}
+		return c.assignableWith(d.Result, s.Result, false)
 	}
 	if dynBox && losslessNumericWiden(src, dst) {
 		return true
@@ -10682,6 +10698,9 @@ func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field 
 }
 
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
+	if fn.ReturnOwn && c.funcResultBorrowsWith(fn, true) {
+		c.errfCode(fn.Pos(), "E051", "an `own` result must not borrow a parameter")
+	}
 	owned := map[string]bool{}
 	borrowedParam := map[string]bool{}
 	for _, p := range fn.Params {
@@ -10691,7 +10710,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			borrowedParam[p.Name] = true
 		}
 	}
-	if (len(owned) == 0 && len(c.ownFuncs) == 0 && len(c.callOwnFlags) == 0) || fn.Body == nil {
+	if fn.Body == nil {
 		return
 	}
 
@@ -10712,6 +10731,23 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return x.IsStringConcat
 		case *ast.TryOp:
 			return isOwnedExpr(x.Inner)
+		case *ast.IfExpr:
+			return isOwnedExpr(x.Then) && isOwnedExpr(x.Else)
+		case *ast.MatchExpr:
+			payloadOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
+			for _, arm := range x.Arms {
+				saved := shadowOwnedBindings(arm.Binders(), owned, borrowedParam, nil, nil)
+				for _, name := range arm.Binders() {
+					owned[name] = payloadOwned
+					borrowedParam[name] = !payloadOwned
+				}
+				ok := isOwnedExpr(arm.Body)
+				saved.restore()
+				if !ok {
+					return false
+				}
+			}
+			return true
 		case *ast.BlockExpr:
 			return x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil && isOwnedExpr(x.Tail)
 		case *ast.Ident:
@@ -10731,6 +10767,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
+			if c.callOwnResults[x] {
+				return true
+			}
 			// An associated call has no captured environment or receiver.
 			// With no arguments, its result has no source for a loan.
 			if freshAssociatedResult(x) {
@@ -10821,8 +10860,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	updates := UpdateBases(fn.Body)
 	var walkStmt func(st ast.Stmt, moved movedSet)
 	var walkStmts func(stmts []ast.Stmt, moved movedSet)
+	resultOwn := fn.ReturnOwn
+	resultType := fn.ReturnType
 
-	walkNested := func(params []ast.Param, body *ast.Block, moved movedSet) {
+	walkNested := func(params []ast.Param, body *ast.Block, retOwn bool, retType ast.Type, moved movedSet) {
 		if body == nil {
 			return
 		}
@@ -10851,7 +10892,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		outer := loops
 		loops = nil
+		outerOwn, outerType := resultOwn, resultType
+		resultOwn, resultType = retOwn, retType
 		walkStmts(body.Stmts, moved)
+		resultOwn, resultType = outerOwn, outerType
 		loops = outer
 		for name, b := range shadowed {
 			if b.wasOwned {
@@ -11203,7 +11247,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		})
 		for _, lam := range lambdas {
-			walkNested(lam.Params, lam.Body, moved)
+			if lam.ReturnOwn {
+				synth := &ast.FuncDecl{Params: append(append([]ast.Param(nil), lam.Captures...), lam.Params...), ReturnType: lam.ReturnType, Body: lam.Body}
+				if c.funcResultBorrowsWith(synth, true) {
+					c.errfCode(lam.Pos(), "E051", "an `own` result must not borrow a closure capture or parameter")
+				}
+			}
+			walkNested(lam.Params, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
 		}
 	}
 
@@ -11276,7 +11326,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Block:
 			walkStmts(x.Stmts, moved)
 		case *ast.FuncDecl:
-			walkNested(x.Params, x.Body, moved)
+			walkNested(x.Params, x.Body, x.ReturnOwn, x.ReturnType, moved)
 		case *ast.Var:
 			// A for-each over an owned array takes it at its last use, and
 			// borrows it when the array is read again after the loop.
@@ -11345,6 +11395,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		case *ast.Return:
 			admitSupersededFields(x.Value, true)
+			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && !isOwnedExpr(x.Value) {
+				c.errfCode(x.Pos(), "E051", "an `own` result must return an owned value")
+			}
 			recordExprUses(x.Value, moved)
 		case *ast.If:
 			recordExprUses(x.Cond, moved)
@@ -11414,7 +11467,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
 				if fd, ok := n.(*ast.FuncDecl); ok {
-					walkNested(fd.Params, fd.Body, moved)
+					walkNested(fd.Params, fd.Body, fd.ReturnOwn, fd.ReturnType, moved)
 					return false
 				}
 				if e, ok := n.(ast.Expr); ok {
@@ -11483,7 +11536,7 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
 			if c.mutualRecSiblings[fn.Name] {
-				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType))
+				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
 			}
 		}
 	} else {
@@ -13833,6 +13886,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	}
 	if cbSig.Result != nil && !containsParamType(cbSig.Result) {
 		fn.ReturnType = cbSig.Result
+		fn.ReturnOwn = cbSig.ResultOwn
 	}
 }
 
@@ -14176,7 +14230,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	if fn.UseSource != nil {
 		c.inferUseParam(fn, outer)
 	}
-	sig := paramSig(fn.Params, fn.ReturnType)
+	sig := paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn)
 	outer.set(fn.Name, sig)
 
 	root := newScope(nil)
@@ -14239,6 +14293,13 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
 	}
 	c.restampLitCaptures(fn.Captures, outer)
+	if fn.ReturnOwn {
+		checked := *fn
+		checked.Params = append(append([]ast.Param(nil), fn.Captures...), fn.Params...)
+		if c.funcResultBorrowsWith(&checked, true) {
+			c.errfCode(fn.Pos(), "E051", "an `own` result must not borrow a closure capture or parameter")
+		}
+	}
 }
 
 // checkConsts type-checks the initializers constfold left in prog.Consts,
@@ -14304,6 +14365,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	if c.current != nil && c.current.ReturnOwn {
+		if t != nil && c.holdsNoHandle(t) {
+			if c.resultCopyParts == nil {
+				c.resultCopyParts = map[ast.Expr]bool{}
+			}
+			c.resultCopyParts[e] = true
+		}
+		if definitelyScalar(t) {
+			if c.scalarArgs == nil {
+				c.scalarArgs = map[ast.Expr]bool{}
+			}
+			c.scalarArgs[e] = true
+		}
+		if st, ok := t.(ast.StructType); ok && c.valueType(st.Name) && c.valueData(t, map[string]bool{}) {
+			if c.valueArgs == nil {
+				c.valueArgs = map[ast.Expr]bool{}
+			}
+			c.valueArgs[e] = true
+		}
+	}
 	if sl, ok := e.(*ast.StructLit); ok && t != nil {
 		if c.litTypes == nil {
 			c.litTypes = map[*ast.StructLit]ast.Type{}
@@ -14883,6 +14964,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 							return nil
 						}
 						if found && tm.Assoc {
+							c.recordOwnedResult(n, tm.ResultOwn)
 							if !c.assocConstReadOK(n, tid.Name, fa.Field, tm.Const) {
 								return nil
 							}
@@ -15263,8 +15345,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 					ft = &ast.FuncType{
 						Params:   substitutedParams,
-						ParamOwn: ft.ParamOwn,
-						Result:   substituteType(ft.Result, sub),
+						ParamOwn: ft.ParamOwn, ResultOwn: ft.ResultOwn,
+						Result: substituteType(ft.Result, sub),
 					}
 					methodSubResult = ft.Result
 				}
@@ -15350,6 +15432,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if len(calleeOwnFlags) == 0 && ft != nil {
 			calleeOwnFlags = ft.ParamOwn
+		}
+		if ft != nil {
+			c.recordOwnedResult(n, ft.ResultOwn)
 		}
 		if (len(calleeOwnFlags) > 0 || calleeIsValue) && !recvIsArg0 && n.Method == nil {
 			if c.callOwnFlags == nil {
@@ -16023,6 +16108,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			P:                 n.P,
 			Params:            n.Params,
 			ReturnType:        n.ReturnType,
+			ReturnOwn:         n.ReturnOwn,
 			ReturnUnannotated: n.ReturnUnannotated,
 			Body:              n.Body,
 		}
@@ -16077,7 +16163,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if lanesSignature(n.Params, n.ReturnType) {
 			c.errfCode(n.P, "E085", "a lambda cannot take or return a lane value; a lane value crosses only a direct call")
 		}
-		return paramSig(n.Params, n.ReturnType)
+		return paramSig(n.Params, n.ReturnType, n.ReturnOwn)
 	case *ast.BlockExpr:
 		if n.Unsafe {
 			c.unsafeDepth++
