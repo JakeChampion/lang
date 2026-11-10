@@ -35,15 +35,36 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 			c.resultAnalysed[fn.Name] = true
 		}
 	}
-	for changed := true; changed; {
-		changed = false
-		for _, fn := range prog.Funcs {
-			if fn.Body == nil || c.resultBorrows[fn.Name] {
-				continue
+	callers := map[string][]int{}
+	queue := make([]int, 0, len(prog.Funcs))
+	queued := make([]bool, len(prog.Funcs))
+	for i, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		queue = append(queue, i)
+		queued[i] = true
+		seen := map[string]bool{}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && c.resultAnalysed[id.Name] && !seen[id.Name] {
+				seen[id.Name] = true
+				callers[id.Name] = append(callers[id.Name], i)
 			}
-			if c.funcResultBorrows(fn) {
-				c.resultBorrows[fn.Name] = true
-				changed = true
+			return true
+		})
+	}
+	for head := 0; head < len(queue); head++ {
+		i := queue[head]
+		queued[i] = false
+		fn := prog.Funcs[i]
+		if c.resultBorrows[fn.Name] || !c.funcResultBorrows(fn) {
+			continue
+		}
+		c.resultBorrows[fn.Name] = true
+		for _, caller := range callers[fn.Name] {
+			if !queued[caller] && !c.resultBorrows[prog.Funcs[caller].Name] {
+				queue = append(queue, caller)
+				queued[caller] = true
 			}
 		}
 	}
@@ -602,7 +623,43 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 // receiver. A function cannot consume what it captures, so it cannot close
 // a handle.
 func (c *checker) holdsNoHandle(t ast.Type) bool {
-	return c.noHandleIn(t, nil, map[string]bool{})
+	if c.handleFreeTypes == nil {
+		return c.noHandleIn(t, nil, map[string]bool{})
+	}
+	var key handleTypeKey
+	var args []ast.Type
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return c.holdsNoHandle(x.Elem)
+	case ast.SliceType:
+		return c.holdsNoHandle(x.Elem)
+	case ast.TupleType:
+		return !slices.ContainsFunc(x.Elems, func(t ast.Type) bool { return !c.holdsNoHandle(t) })
+	case ast.StructType:
+		key, args = handleTypeKey{name: x.Name}, x.Args
+	case ast.EnumType:
+		key, args = handleTypeKey{name: x.Name, enum: true}, x.Args
+	default:
+		return c.noHandleIn(t, nil, map[string]bool{})
+	}
+	for _, arg := range args {
+		if !c.holdsNoHandle(arg) {
+			return false
+		}
+	}
+	if result, ok := c.handleFreeTypes[key]; ok {
+		return result
+	}
+	// Cache only a complete root traversal. A recursive child can depend on
+	// an ancestor whose remaining fields have not been checked yet.
+	result := c.noHandleIn(t, nil, map[string]bool{})
+	c.handleFreeTypes[key] = result
+	return result
+}
+
+type handleTypeKey struct {
+	name string
+	enum bool
 }
 
 // structLitOwned says a struct literal owns what it holds: each
