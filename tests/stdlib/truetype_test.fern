@@ -9,7 +9,7 @@ function font(): truetype.Font {
   if let Some(f) = truetype.parse(image_vectors.font()) {
     return f;
   }
-  return truetype.Font { data: [], cmap: 0, cmap_format: 0, loca: 0, glyf: 0, hmtx: 0, hmetrics: 1, glyphs: 0, long_loca: false, units_per_em: 1000, ascender: 0, descender: 0, line_gap: 0, pairs: [] };
+  return truetype.Font { data: [], cmap: 0, cmap_format: 0, loca: 0, glyf: 0, hmtx: 0, hmetrics: 1, glyphs: 0, long_loca: false, units_per_em: 1000, ascender: 0, descender: 0, line_gap: 0, pairs: [], fvar: -1, avar: -1, gvar: -1, hvar: -1, coords: [] };
 }
 
 function test_metrics(): test.TestOutcome {

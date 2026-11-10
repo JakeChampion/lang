@@ -1,0 +1,107 @@
+import "std/test";
+import "std/truetype";
+import "./truetype_var_vectors";
+
+function parsed(data: u8[]): truetype.Font {
+  if let Some(f) = truetype.parse(data) {
+    return f;
+  }
+  return truetype.Font { data: [], cmap: 0, cmap_format: 0, loca: 0, glyf: 0, hmtx: 0, hmetrics: 1, glyphs: 0, long_loca: false, units_per_em: 1000, ascender: 0, descender: 0, line_gap: 0, pairs: [], fvar: -1, avar: -1, gvar: -1, hvar: -1, coords: [] };
+}
+
+function same_pixels(a: truetype.Bitmap, b: truetype.Bitmap): boolean {
+  if (a.width != b.width || a.height != b.height || a.left != b.left || a.top != b.top) {
+    return false;
+  }
+  for i in 0..a.coverage.len() {
+    if (a.coverage[i] != b.coverage[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The first glyph of `got` whose advance or pixels differ from `want`, or
+// "" when each glyph agrees: the glyph of a missing character, the space,
+// two simple glyphs and a composite glyph.
+function difference(got: truetype.Font, want: truetype.Font): string {
+  for g in 0..5 {
+    if (got.advance(g) != want.advance(g)) {
+      return "advance of glyph " + g.to_string() + ": " + got.advance(g).to_string() + ", want " + want.advance(g).to_string();
+    }
+    if (!same_pixels(got.render(g, 100.0, 0.25), want.render(g, 100.0, 0.25))) {
+      return "pixels of glyph " + g.to_string();
+    }
+  }
+  return "";
+}
+
+function statics(): truetype.Font[] {
+  return [parsed(truetype_var_vectors.static_250()), parsed(truetype_var_vectors.static_525()), parsed(truetype_var_vectors.static_650()), parsed(truetype_var_vectors.static_900())];
+}
+
+function weights(): f64[] {
+  return [250.0, 525.0, 650.0, 900.0];
+}
+
+// Each weight of the variable font against the static font of fontTools.
+function each_weight(variable: truetype.Font): string {
+  let want = statics();
+  let ws = weights();
+  for i in 0..ws.len() {
+    let bad = difference(variable.at_axis("wght", ws[i]), want[i]);
+    if (bad.len() > 0) {
+      return "weight " + ws[i].to_string() + ": " + bad;
+    }
+  }
+  return "";
+}
+
+function test_weights(): test.TestOutcome {
+  return test.assert_eq(each_weight(parsed(truetype_var_vectors.variable())), "");
+}
+
+function test_weights_from_points(): test.TestOutcome {
+  // With no HVAR table the advances come from the points of gvar.
+  return test.assert_eq(each_weight(parsed(truetype_var_vectors.variable_no_hvar())), "");
+}
+
+function test_weights_differ(): test.TestOutcome {
+  let f = parsed(truetype_var_vectors.variable());
+  let a = f.glyph(65);
+  let got = f.at_axis("wght", 100.0).advance(a).to_string() + " " + f.advance(a).to_string() + " " + f.at_axis("wght", 900.0).advance(a).to_string();
+  return test.assert_eq(got, "256 320 448");
+}
+
+function test_default_weight(): test.TestOutcome {
+  let f = parsed(truetype_var_vectors.variable());
+  return test.assert_eq(difference(f.at_axis("wght", 400.0), f), "");
+}
+
+function test_weight_limits(): test.TestOutcome {
+  let f = parsed(truetype_var_vectors.variable());
+  let want = statics();
+  return test.assert_eq(difference(f.at_axis("wght", 2000.0), want[3]), "");
+}
+
+function test_axes(): test.TestOutcome {
+  let f = parsed(truetype_var_vectors.variable());
+  let fixed = want_static();
+  let got = f.has_axis("wght").to_string() + " " + f.has_axis("wdth").to_string() + " " + fixed.has_axis("wght").to_string();
+  return test.assert_eq(got + " " + difference(f.at_axis("wdth", 50.0), f) + difference(fixed.at_axis("wght", 900.0), fixed), "true false false ");
+}
+
+function want_static(): truetype.Font {
+  return parsed(truetype_var_vectors.static_650());
+}
+
+function main(): i32 {
+  let r = test.new("std/truetype variable fonts");
+  r = r.it("each weight has the outlines and the advances of its static font", test_weights);
+  r = r.it("the advances come from the points with no HVAR table", test_weights_from_points);
+  r = r.it("the weights differ", test_weights_differ);
+  r = r.it("the default weight changes nothing", test_default_weight);
+  r = r.it("a weight outside the axis takes its limit", test_weight_limits);
+  r = r.it("a font with no such axis stays as it is", test_axes);
+  return r.finish();
+}
