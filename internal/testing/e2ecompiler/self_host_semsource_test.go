@@ -2860,9 +2860,10 @@ struct Half { v: f32, n: i32 }
 }
 // Mixed-width address arithmetic against a real address, through explicit
 // casts: the offsets are the differences from the base, so a cast placed on
-// the wrong side or one that dropped a high half moves the answer. Which extension it used is NOT visible here — a difference is taken
-// at the low 32 bits, where the signed and the unsigned widening of the same
-// offset agree; addr_order's compare is what reads the sign. The last term is
+// the wrong side or one that dropped a high half moves the answer. Which
+// extension it used is NOT visible here — a difference is taken at the low 32
+// bits, where the signed and the unsigned extension of the same offset agree;
+// addr_order's compare is what reads the sign. The last term is
 // the byte destination, whose mask a truncation alone would not apply: 300
 // leaves the address as 44.
 // Reading an address back as the box it names reinterprets rather than

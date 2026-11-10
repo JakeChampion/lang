@@ -126,7 +126,7 @@ function same_descriptions(x: mp4.Track, y: mp4.Track): boolean {
   for j in 0..x.descriptions.len() {
     let p = x.descriptions[j];
     let q = y.descriptions[j];
-    if (p.codec != q.codec || p.format != q.format || p.config.length_size != q.config.length_size || !bytes_equal(p.config.csd0, q.config.csd0) || !bytes_equal(p.config.csd1, q.config.csd1)) {
+    if (p.codec != q.codec || p.format != q.format || p.depth != q.depth || p.config.length_size != q.config.length_size || !bytes_equal(p.config.csd0, q.config.csd0) || !bytes_equal(p.config.csd1, q.config.csd1)) {
       return false;
     }
   }

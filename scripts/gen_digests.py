@@ -235,8 +235,6 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
 
 
 def emit_last(p, tag, struct):
-    """__{tag}_last finishes a one-shot digest and zeroes the tail of the
-    message that the buffer of the state holds."""
     p("// The buffer of the state holds the tail of the message, so it is zeroed")
     p("// after the digest is made.")
     p(f"function __{tag}_last(own h: {struct}): u8[] {{")

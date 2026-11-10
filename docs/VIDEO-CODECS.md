@@ -53,7 +53,7 @@ Seek requests use the closest-frame mode and reject values above Android's signe
 
 ## Native MP4 video packets
 
-`std/video/mp4` indexes self-contained AVC and HEVC video tracks without Android or an external codec library.
+`std/video/mp4` indexes self-contained AVC, HEVC, and QTRLE video tracks without Android or an external codec library.
 It reuses the existing ISO box, sample-table, clock, and data-reference readers.
 It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
 Each packet range refers to the original byte view, without a payload copy.
@@ -61,6 +61,16 @@ Each packet range refers to the original byte view, without a payload copy.
 AVC and HEVC descriptions use the existing NAL configuration readers.
 The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
 The native decode and encode columns above remain unchanged.
+
+QuickTime Animation MOV descriptions support 24-bit RGB and 32-bit ARGB packets through the existing native QTRLE codec.
+The description supplies packed depth, dimensions, and an empty NAL configuration.
+AVC and HEVC descriptions report zero packed depth, without a component-precision claim.
+The same bounded complete-view and seekable-file indexers preserve QTRLE packet ranges, times, and sync flags.
+Decode must start at a sync packet and retain previous pixels for delta packets.
+Palette depths, RGB555, nonzero sample-description versions, and multiple frames per sample remain unsupported.
+
+Legacy MOV files without `ftyp` are accepted only when every indexed video description is QTRLE.
+The AVC and HEVC file-type requirements remain unchanged.
 
 `std/video/avc` reads an ordinary H.264 SPS NAL without a platform codec.
 It reports coded and visible dimensions, crop margins, chroma format, bit depth, and VUI metadata.
@@ -267,7 +277,7 @@ IVF support does not establish VP8, VP9, or AV1 software decode support.
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
-Other MOV tracks, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
+Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
 
@@ -335,6 +345,11 @@ AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels
 
 `scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
+
+`scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
+Native and real WASI input preserve every packet field and decoded ARGB sample.
+Fixtures cover RGB24, ARGB32, delta and unchanged frames, fast-start metadata, two video tracks, interleaved AAC, and legacy file headers.
+Normal tests use checked-in references and verify all sync-sample starts and bounded file reads without media payload access during indexing.
 
 `scripts/check-video-avc-interop` compares 30 native and WASI SPS fields with independent FFmpeg readers.
 Eight fresh streams cover profile, precision, chroma, crop, interlace, color metadata, and HRD cases.

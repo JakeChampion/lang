@@ -1,6 +1,6 @@
-# Native MP4 video packet index
+# Native MP4 and QuickTime video packet index
 
-This module indexes self-contained AVC and HEVC video tracks in a complete MP4 byte view.
+This module indexes self-contained AVC, HEVC, and QTRLE video tracks in a complete MP4 or MOV byte view.
 It reuses the bounded ISO box, sample-table, clock, and data-reference readers of the audio library.
 Packet ranges refer to media-data payloads in the caller's original view. The index does not copy packet payloads.
 
@@ -15,6 +15,18 @@ The index does not expose container color, HDR, or sample-group metadata.
 The configuration parser does not validate coded parameter-set syntax or establish decoder support.
 This module does not decode compressed pixels. Fragmented media, encrypted descriptions, and external references return `Unsupported`.
 
+QuickTime `rle ` descriptions support RGB24 and ARGB32 packets through `std/video/qtrle`.
+Their `depth` is 24 or 32. Their NAL configuration is empty, with `length_size` zero.
+
+AVC and HEVC descriptions retain their NAL configuration and report `depth` zero.
+That zero does not describe their component precision. The NAL configuration parser does not infer precision.
+
+QTRLE descriptions require version zero, one frame per sample, and the default color-table identifier.
+Palette depths, RGB555, and other sample-description versions return `Unsupported`.
+The caller must start QTRLE decode from a sync packet and preserve previous pixels for delta packets.
+Legacy files without `ftyp` are accepted only when every indexed video description is QTRLE.
+AVC and HEVC still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
+
 Limits bound input bytes, boxes, tracks, packets, descriptions, edits, dimensions, and each packet.
 The packet budget is cumulative across video tracks. The track budget includes non-video tracks.
 These limits bound retained entries, not exact process memory.
@@ -22,7 +34,7 @@ The complete byte view uses signed 32-bit indices. This API does not stream a la
 
 ```fern
 <<*>>=
-// This module indexes bounded AVC and HEVC packets in a complete MP4 byte view.
+// This module indexes bounded AVC, HEVC, and QTRLE packets in a complete byte view.
 import "std/video/frame";
 import "std/video/nal";
 import "std/video/mp4/timing";
@@ -35,11 +47,11 @@ import "std/audio/wire";
 import "core/cmp";
 
 @derive(cmp.Eq, cmp.Debug)
-pub enum Codec { AVC, HEVC }
+pub enum Codec { AVC, HEVC, QTRLE }
 
 pub struct Limits { video: frame.Limits, max_input_bytes: i32, max_boxes: i32, max_tracks: i32, max_packets: i32, max_descriptions: i32, max_edits: i32 }
 
-pub struct Description { codec: Codec, format: frame.Format, config: nal.Config }
+pub struct Description { codec: Codec, format: frame.Format, config: nal.Config, depth: i32 }
 
 pub struct Packet { offset: i64, bytes: i32, description: i32, decode_time: i64, presentation_time: i64, duration: u32, sync: boolean }
 
@@ -74,6 +86,9 @@ function codec(kind: u32): Result[Codec, pcm.AudioError] {
   if (kind == boxes.tag("hvc1") || kind == boxes.tag("hev1")) {
     return Ok(HEVC);
   }
+  if (kind == boxes.tag("rle ")) {
+    return Ok(QTRLE);
+  }
   return Err(pcm.Unsupported);
 }
 
@@ -81,9 +96,26 @@ function configuration(input: [u8], children: [boxes.Box], codec: Codec, limits:
   if let Some(_) = boxes.one(children, "sinf")? {
     return Err(pcm.Unsupported);
   }
+  if (codec == QTRLE) {
+    return Ok(nal.Config { length_size: 0, csd0: [], csd1: [] });
+  }
   let box = boxes.required(children, if (codec == AVC) { "avcC" } else { "hvcC" })?;
   let value = if (codec == AVC) { nal.avc_config(input[box.data:box.end], limits) } else { nal.hevc_config(input[box.data:box.end], limits) };
   return match (value) { Ok(value) => Ok(value), Err(error) => Err(audio_error(error)) };
+}
+
+function animation_depth(input: [u8], entry: boxes.Box, kind: Codec): Result[i32, pcm.AudioError] {
+  if (kind != QTRLE) {
+    return Ok(0);
+  }
+  if (wire.be(input, entry.data + 8, 2) != 0u64 || wire.be(input, entry.data + 40, 2) != 1u64 || wire.be(input, entry.data + 76, 2) != 65535u64) {
+    return Err(pcm.Unsupported);
+  }
+  let depth = wire.be(input, entry.data + 74, 2) as i32;
+  if (depth != 24 && depth != 32) {
+    return Err(pcm.Unsupported);
+  }
+  return Ok(depth);
 }
 
 function description(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits: frame.Limits): Result[(boxes.Budget, Description), pcm.AudioError] {
@@ -94,6 +126,7 @@ function description(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits
   if (wire.be(input, entry.data + 6, 2) != 1u64) {
     return Err(pcm.Unsupported);
   }
+  let depth = animation_depth(input, entry, kind)?;
   let format = frame.Format { width: wire.be(input, entry.data + 24, 2) as i32, height: wire.be(input, entry.data + 26, 2) as i32 };
   match (frame.pixel_count(format, limits)) {
     Err(error) => {
@@ -103,7 +136,7 @@ function description(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits
   }
   let (next, children) = boxes.children(input, entry.data + 78, entry.end, budget)?;
   let value = configuration(input, children, kind, limits)?;
-  return Ok((next, Description { codec: kind, format: format, config: value }));
+  return Ok((next, Description { codec: kind, format: format, config: value, depth: depth }));
 }
 
 function descriptions(input: [u8], box: boxes.Box, budget: boxes.Budget, limits: Limits): Result[(boxes.Budget, Description[]), pcm.AudioError] {
@@ -251,24 +284,27 @@ function add_track(input: [u8], box: boxes.Box, scan: Scan, own previous: Track[
   return Ok((next, previous));
 }
 
-function headers(input: [u8], configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
+function headers(input: [u8], configured: Limits): Result[(Scan, time.Clock, boxes.Box[], boolean), pcm.AudioError] {
   validate_limits(input, configured)?;
   let (budget, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: configured.max_boxes })?;
-  file_type(input, top)?;
+  let typed = file_type(input, top)?;
   let moov = boxes.required(top, "moov")?;
   let (next, children) = boxes.children(input, moov.data, moov.end, budget)?;
   if let Some(_) = boxes.one(children, "mvex")? {
     return Err(pcm.Unsupported);
   }
-  return movie_header(input, top, children, next, configured);
+  let (scan, movie, values) = movie_header(input, top, children, next, configured)?;
+  return Ok((scan, movie, values, typed));
 }
 
-function file_type(input: [u8], top: [boxes.Box]): Result[void, pcm.AudioError] {
-  let ftyp = boxes.required(top, "ftyp")?;
+function file_type(input: [u8], top: [boxes.Box]): Result[boolean, pcm.AudioError] {
+  let Some(ftyp) = boxes.one(top, "ftyp")? else {
+    return Ok(false);
+  };
   if (ftyp.end - ftyp.data < 8 || (ftyp.end - ftyp.data) % 4 != 0) {
     return Err(pcm.Header);
   }
-  return Ok(());
+  return Ok(true);
 }
 
 function movie_header(input: [u8], top: [boxes.Box], children: boxes.Box[], budget: boxes.Budget, configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
@@ -277,8 +313,23 @@ function movie_header(input: [u8], top: [boxes.Box], children: boxes.Box[], budg
 }
 
 function index(input: [u8], configured: Limits): Result[Index, pcm.AudioError] {
-  let (scan, movie, children) = headers(input, configured)?;
-  return collect_tracks(input, scan, movie, children);
+  let (scan, movie, children, typed) = headers(input, configured)?;
+  let result = collect_tracks(input, scan, movie, children)?;
+  return match (check_file_type(result, typed)) { Ok(value) => Ok(value), Err(error) => Err(audio_error(error)) };
+}
+
+// Legacy QuickTime files can omit ftyp. Keep that exception specific to QTRLE.
+pub(package) function check_file_type(index: Index, typed: boolean): Result[Index, frame.VideoError] {
+  if (!typed) {
+    for track in index.tracks {
+      for description in track.descriptions {
+        if (description.codec != QTRLE) {
+          return Err(frame.Header);
+        }
+      }
+    }
+  }
+  return Ok(index);
 }
 
 function collect_tracks(input: [u8], scan: Scan, movie: time.Clock, children: [boxes.Box]): Result[Index, pcm.AudioError] {

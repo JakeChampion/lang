@@ -3633,7 +3633,7 @@ function __hotp_window(hs: [u8]): i32 {
       | hs[at + 2] as i32 << 8
       | hs[at + 3] as i32;
     let same = (at ^ offset) - 1 >> 31 & 1;
-    bin = bin | window & 0 - same;
+    bin |= window & -same;
     at += 1;
   }
   return bin;

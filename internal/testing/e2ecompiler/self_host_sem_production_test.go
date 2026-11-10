@@ -4599,7 +4599,7 @@ function cat2(a: string, b: string): string {
       let lb: i32 = b.len();
       let p: usize = __raw_alloc(la + lb);
       __memcpy(p, __raw_data(a), la);
-      __memcpy(p + (la as usize), __raw_data(b), lb);
+      __memcpy(p + la as usize, __raw_data(b), lb);
       return __raw_string(p, la + lb);
   }
 }

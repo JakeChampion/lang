@@ -300,7 +300,9 @@ x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8488
 x86_64/map_int.ir	24563319
 x86_64/map_probe_chain.text	8492
-x86_64/map_probe_chain.ir	241010587
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this count.
+# Bank the measured reduction after main 5d6c692eb2. Keep the tolerance unchanged.
+x86_64/map_probe_chain.ir	238091314
 x86_64/map_string.text	9311
 x86_64/map_string.ir	53037751	2
 x86_64/ordmap_insert.text	5394
