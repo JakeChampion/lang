@@ -1,0 +1,7 @@
+{
+  "source": "99fda7a649924cdc341f014f52e1d4ab9a6ad0f4",
+  "fixed_input": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "phase": "wait-for-instruction-pair",
+  "runs": [],
+  "reason": "Receiver checks also serve checker.annotate_module in the interpreter. Preserve the upstream function-count guard and session/callable behavior. Run its timing guard after local instrumented compilation finishes."
+}

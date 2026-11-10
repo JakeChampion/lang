@@ -1,0 +1,6 @@
+from pathlib import Path
+import subprocess,json,datetime,os,hashlib
+out=Path(__file__).resolve().parent;root=Path('/workspace/lang-compiler-main-20261110-1635');r={'source':'515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909','design':'Six fixed baseline repetitions of the actual failing two-core test. All outcomes retained. This is a correctness diagnosis of an observed CI failure, not a performance comparison or a retry until green.','args':['go','test','./internal/testing/e2ecompiler','-run','^TestSelfHostKernelTwoCoreSchedulerOnQemu$','-count=6','-timeout=25m','-json'],'started':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+(out/'reproduction.json').write_text(json.dumps(r,indent=2)+'\n')
+with(out/'baseline-six.jsonl').open('wb')as so,(out/'baseline-six.stderr').open('wb')as se:p=subprocess.run(r['args'],cwd=root,stdout=so,stderr=se)
+es=[json.loads(x)for x in(out/'baseline-six.jsonl').read_text().splitlines()if x.strip()];r.update(exit_code=p.returncode,finished=datetime.datetime.now(datetime.timezone.utc).isoformat(),test_passes=sum(x.get('Action')=='pass'and bool(x.get('Test'))for x in es),test_failures=sum(x.get('Action')=='fail'and bool(x.get('Test'))for x in es),skips=sum(x.get('Action')=='skip'for x in es));(out/'reproduction.json').write_text(json.dumps(r,indent=2)+'\n');assert r['skips']==0

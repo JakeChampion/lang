@@ -1,0 +1,14 @@
+{
+  "started": "2026-11-10T16:35:09.359228+00:00",
+  "baseline_source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+  "candidate_source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "fixed_input_source": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+  "design": "Eight fixed pairs per workload and proof-cache mode. Four each order. No sample extension. Equal-length compiler paths. Separate caches per compiler/workload. Actual normal verifier defaults. All samples retained.",
+  "limits": "Shared host. No CPU/frequency isolation. Small read-only Git/CI requests can overlap. Instrumented allocation/instruction runs follow normal timings.",
+  "runs": [],
+  "binary_identities": {},
+  "outputs": {},
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T16:39:33.784652+00:00"
+}

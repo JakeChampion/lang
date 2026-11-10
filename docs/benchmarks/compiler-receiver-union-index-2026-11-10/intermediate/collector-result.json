@@ -1,0 +1,27 @@
+{
+  "baseline": "515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+  "candidate": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "runs": [
+    {
+      "label": "quick.py",
+      "started": "2026-11-10T16:33:14.598317+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:33:34.675241+00:00"
+    },
+    {
+      "label": "prepare.py",
+      "started": "2026-11-10T16:33:34.675892+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:38:49.872754+00:00"
+    },
+    {
+      "label": "validate.py",
+      "started": "2026-11-10T16:38:49.875382+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T16:39:31.670489+00:00"
+    }
+  ],
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T16:39:31.671258+00:00"
+}

@@ -9,6 +9,24 @@ The [profiling reference](PROFILING.md) describes the native CPU and allocation 
 
 ## Measurements
 
+The [receiver membership experiment](benchmarks/compiler-receiver-union-index-2026-11-10/README.md) rejects an existing-index shortcut in two receiver queries.
+Eight fixed balanced pairs per workload and proof-cache mode retain every sample.
+Cold checker CPU medians increase from 11.8509315 to 13.118910 seconds, or 10.7%, with seven of eight candidate pairs slower.
+The other three combinations have lower medians, with substantial paired variation.
+The physical timing cause remains unknown.
+
+All 84 normal and counter commands succeed, with identical emitted programs within each workload.
+Allocation counts and median peak RSS remain equal in all four combinations.
+The other gains do not justify the unresolved cold checker cost.
+The incomplete instruction matrix stops after rejection, with its failed partial trace intact.
+The earlier instruction reduction remains a separate historical result for the rejected source.
+
+The final source retains main `e4494347` compiler code, receiver-query regression tests, and a kernel scheduler fixture repair.
+Fresh main and retained compiler images match byte for byte.
+All 20 targeted suites report 150 test and subtest passes, with zero skips.
+Current native and interpreter Opus controls match the full reference output.
+These retained correctness controls establish no compiler speedup or external rank.
+
 The [interpreter target-search experiment](benchmarks/compiler-interpreter-targets-2026-11-09/README.md) avoids declaration searches whose result argument evaluation does not use.
 Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
 Both binaries produce identical TAP output.

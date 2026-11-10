@@ -1,0 +1,67 @@
+{
+  "original_results_sha256": "454d1cf549da245b2cc1889b4047bdea5d5e0e3e35d3d3ea651dd55e8273fa39",
+  "original_results": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/results.json",
+  "reason": "Baseline copy mode0600 caused exit126 before baseline compilation. Candidate run is retained and reused without rerun. Correct only baseline execute bits, bytes unchanged.",
+  "runs": [
+    {
+      "label": "baseline",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions-resume/baseline.callgrind",
+        "--log-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions-resume/baseline.valgrind.log",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/base/opus",
+        "/workspace/lang-compiler-main-20261110-1540/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1540/internal/stdlib"
+      ],
+      "started": "2026-11-10T16:29:14.943398+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-10T16:36:06.010429+00:00",
+      "guest_instructions": 16923232536,
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "candidate-program",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/cand/opus"
+      ],
+      "started": "2026-11-10T16:36:06.054182+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-10T16:36:06.121394+00:00"
+    }
+  ],
+  "mode_before": "0o600",
+  "mode_after": "0o755",
+  "binary_sha256": {
+    "baseline": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+    "candidate": "6e466f52606ef08df19795c11c43419d9970481114d42eab3ac3b0fde831023f"
+  },
+  "guest_instructions": {
+    "baseline": 16923232536,
+    "candidate": 16150097649
+  },
+  "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+  "exit_code": 0,
+  "finished": "2026-11-10T16:36:06.122609+00:00"
+}

@@ -1,0 +1,18 @@
+{
+  "purpose": "Free regenerable Go object cache outside all repositories. Preserve every worktree, compiler executable, ignored measurement archive, toolchain download and raw failure. Wait until Go validation and CI self-tests finish before cache cleanup.",
+  "runs": [],
+  "cache_path": "/home/agent/.cache/go-build",
+  "disk_before": {
+    "total": 33770192896,
+    "used": 31980662784,
+    "free": 54767616
+  },
+  "started": "2026-11-10T16:48:25.345441+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T16:48:26.032186+00:00",
+  "disk_after": {
+    "total": 33770192896,
+    "used": 28764606464,
+    "free": 3270823936
+  }
+}

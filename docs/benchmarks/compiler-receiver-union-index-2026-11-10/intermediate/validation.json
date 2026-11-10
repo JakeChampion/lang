@@ -1,0 +1,208 @@
+{
+  "source": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "selected_suites": [
+    "TestSelfHostReceiverUnionMembership",
+    "TestSelfHostCheckerDriverX86_64",
+    "TestSelfHostCheckerDriverArm64",
+    "TestSelfHostImportedMethodCollisionX86_64",
+    "TestSelfHostImportedMethodCollisionArm64",
+    "TestSelfHostImportedMethodCollisionWasm",
+    "TestSelfHostAmbiguousMethodRankedByImports",
+    "TestSelfHostCheckedValueTypes",
+    "TestSelfHostMethodEnumScrutineeIRX86_64",
+    "TestSelfHostUnionIRPathX86_64",
+    "TestSelfHostRepoComplexityRatchet",
+    "TestSelfHostFeatureCensus",
+    "TestSelfHostInterpCallableValues",
+    "TestSelfHostInterpCallCostIgnoresFunctionCount",
+    "TestSelfHostInterpScopeFrames"
+  ],
+  "runs": [
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(ReceiverUnionMembership|CheckerDriverX86_64|CheckerDriverArm64|ImportedMethodCollisionX86_64|ImportedMethodCollisionArm64|ImportedMethodCollisionWasm|AmbiguousMethodRankedByImports|CheckedValueTypes|MethodEnumScrutineeIRX86_64|UnionIRPathX86_64|RepoComplexityRatchet|FeatureCensus|InterpCallableValues|InterpCallCostIgnoresFunctionCount|InterpScopeFrames)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-10T16:38:50.029425+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T16:39:31.657710+00:00",
+      "passes": 1,
+      "skips": 0,
+      "failures": [
+        {
+          "Time": "2026-11-10T16:39:29.168672962Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostAmbiguousMethodRankedByImports",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:29.169478296Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostCheckedValueTypes/x86-64-linux",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:29.169587765Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostCheckedValueTypes/wasm32-wasi",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:29.169611785Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostCheckedValueTypes",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:29.169738976Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostCheckerDriverX86_64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:29.169890655Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostCheckerDriverArm64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:30.151123937Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostImportedMethodCollisionX86_64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:30.151159548Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostImportedMethodCollisionArm64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:30.151318494Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostImportedMethodCollisionWasm",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:30.151652905Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpCallCostIgnoresFunctionCount",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.602262182Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpCallableValues",
+          "Elapsed": 1.45
+        },
+        {
+          "Time": "2026-11-10T16:39:31.602706136Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/typed-shadow",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.602800022Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/labeled-unwind",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.602852749Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/iteration-captures",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.603015582Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/outer-array-alias",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.603039885Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/match-shadow",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.603072615Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames/oracle/escaped-block-capture",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.60312014Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostInterpScopeFrames",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.60335628Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostRepoComplexityRatchet",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.604113886Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostMethodEnumScrutineeIRX86_64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.605201642Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostReceiverUnionMembership",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.606330784Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Test": "TestSelfHostUnionIRPathX86_64",
+          "Elapsed": 0
+        },
+        {
+          "Time": "2026-11-10T16:39:31.611703966Z",
+          "Action": "fail",
+          "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+          "Elapsed": 2.463
+        }
+      ],
+      "completed_suites": [
+        "TestSelfHostFeatureCensus"
+      ]
+    }
+  ],
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T16:39:31.660600+00:00"
+}

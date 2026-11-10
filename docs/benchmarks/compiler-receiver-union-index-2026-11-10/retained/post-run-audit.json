@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-10T18:17:25.266917+00:00",
+  "sources": {
+    "main": {
+      "path": "/workspace/lang-compiler-main-20261110-1750",
+      "head": "e4494347c2f16a96727563c4495bd9826fdfadd0",
+      "status": ""
+    },
+    "retained": {
+      "path": "/workspace/lang-checker-union-retained-20261110-1750",
+      "head": "c02d2b4c1b2e3232da1dc4f7575383a65c3d9eaa",
+      "status": ""
+    },
+    "rejected-baseline": {
+      "path": "/workspace/lang-compiler-main-20261110-1705",
+      "head": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+      "status": ""
+    },
+    "rejected-candidate": {
+      "path": "/workspace/lang-checker-union-candidate-20261110-1705",
+      "head": "67b216378af4117cde0de6dc92a373a7636cccd2",
+      "status": ""
+    }
+  },
+  "binary_identities": {
+    "main": {
+      "sha256": "68e415467a0d3b40323959c689318c918d9a2adc8415d58e834dde17de914a83",
+      "file_bytes": 16530128
+    },
+    "retained": {
+      "sha256": "68e415467a0d3b40323959c689318c918d9a2adc8415d58e834dde17de914a83",
+      "file_bytes": 16530128
+    }
+  },
+  "scope": "Final compiler and standard library equal main. All performance comparisons concern rejected historical candidates."
+}

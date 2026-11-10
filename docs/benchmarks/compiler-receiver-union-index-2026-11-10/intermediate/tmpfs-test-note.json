@@ -1,0 +1,5 @@
+{
+  "initial_failure": "All reached TempDir allocations except the pure feature census failed with ENOSPC. Original validation logs remain.",
+  "retry": "Same immutable source, same pinned tools, same suite selection and budgets. Only TMPDIR moves to dedicated shared memory. Completed normal/count builds and source checks are not repeated.",
+  "tmpdir": "/dev/shm/fern-union-validation-20261110-1640"
+}
