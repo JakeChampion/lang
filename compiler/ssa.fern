@@ -4145,7 +4145,7 @@ pub function register_form(f: SFunc): Formed {
   let merged = merge_duplicates(folded.f);
   let plain = fold_identities(merged.f);
   let shared = share_shape_loads(plain.f);
-  let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(double_lanes(shared.f)))));
+  let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(shared.f)))));
   let extended = fold_extensions(unwrapped.f);
   let g = extended.f;
   let bytes = fold_byte_access(g);
@@ -4277,30 +4277,63 @@ pub function zero_extended_indices(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks };
 }
 
-pub function double_lanes(f: SFunc): SFunc {
-  let has_two = false;
-  let has_multiply = false;
-  for blk in f.blocks {
-    for ins in blk.insts {
-      has_two = has_two || ins.kind_tag == CONST_FLOAT && ins.str == "4611686018427387904";
-      has_multiply = has_multiply || ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul");
+function lane_constant_fact(ins: SInst): i32 {
+  if (ins.kind_tag != CONST_FLOAT) {
+    return 0;
+  }
+  if (ins.str == "0") {
+    return 1;
+  }
+  return if (ins.str == "4611686018427387904") { 2 } else { 0 };
+}
+
+function lane_identity(ins: SInst, facts: i32[]): SInst {
+  if (ins.kind_tag == LANE3 && ins.str == "vselect" && ins.args.len() == 3) {
+    if (facts[ins.args[1]] == 1) {
+      return SInst { ...ins, kind_tag: BINARY, str: "vand", args: [ins.args[0], ins.args[2]] };
+    }
+    if (facts[ins.args[0]] == 1) {
+      return SInst { ...ins, kind_tag: BINARY, str: "vandnot", args: [ins.args[1], ins.args[2]] };
     }
   }
-  if (!has_two || !has_multiply) {
-    return f;
+  if (ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul") && (facts[ins.args[0]] == 2 || facts[ins.args[1]] == 2)) {
+    let a = if (facts[ins.args[0]] == 2) { ins.args[1] } else { ins.args[0] };
+    let op = if (ins.str == "fmul") { "fadd" } else { "vadd" };
+    return SInst { ...ins, str: op, args: [a, a] };
   }
-  let two = __alloc_bool(f.nvals);
+  return ins;
+}
+
+pub function fold_lane_identities(f: SFunc): SFunc {
+  let has_two = false;
+  let has_zero = false;
+  let has_multiply = false;
+  let has_select = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == CONST_FLOAT && ins.str == "4611686018427387904") {
-        two = two.with(ins.result, true);
+      let fact = lane_constant_fact(ins);
+      has_two = has_two || fact == 2;
+      has_zero = has_zero || fact == 1;
+      has_multiply = has_multiply || ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul");
+      has_select = has_select || ins.kind_tag == LANE3 && ins.str == "vselect";
+    }
+  }
+  if (!(has_two && has_multiply || has_zero && has_select)) {
+    return f;
+  }
+  let facts = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let fact = lane_constant_fact(ins);
+      if (fact != 0) {
+        facts = facts.with(ins.result, fact);
       }
     }
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == UNARY && ins.str == "vsplat" && two[ins.args[0]]) {
-        two = two.with(ins.result, true);
+      if (ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "vsplat" || facts[ins.args[0]] == 1 && (ins.str == "f32_bits" || ins.str == "f32_from_bits"))) {
+        facts = facts.with(ins.result, facts[ins.args[0]]);
       }
     }
   }
@@ -4308,19 +4341,7 @@ pub function double_lanes(f: SFunc): SFunc {
   for blk in f.blocks {
     let insts: SInst[] = [];
     for ins in blk.insts {
-      if (ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul") && (two[ins.args[0]] || two[ins.args[1]])) {
-        let a = ins.args[0];
-        if (two[a]) {
-          a = ins.args[1];
-        }
-        let op = "vadd";
-        if (ins.str == "fmul") {
-          op = "fadd";
-        }
-        insts = insts.append(SInst { ...ins, str: op, args: [a, a] });
-      } else {
-        insts = insts.append(ins);
-      }
+      insts = insts.append(lane_identity(ins, facts));
     }
     blocks = blocks.append(SBlock { ...blk, insts: insts });
   }
