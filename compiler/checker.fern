@@ -10082,14 +10082,40 @@ function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
     }
   }
   for arg in c.args {
-    acc = astwalk.fold_expr_pruned(arg, acc, unsafe_visit, unsafe_descend);
+    acc = unsafe_argument(arg, acc);
   }
   return acc;
+}
+
+// An argument of a call. The address from __bytes_data is valid for the
+// call that takes it as an argument, so that place is the only one it has.
+function unsafe_argument(arg: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
+  if let ast.ExprCall(inner) = arg {
+    if (bytes_data_call(inner, acc.scope)) {
+      return unsafe_call(inner, acc);
+    }
+  }
+  return astwalk.fold_expr_pruned(arg, acc, unsafe_visit, unsafe_descend);
+}
+
+function bytes_data_call(c: ast.ExprCall, s: Scope): boolean {
+  if let ast.ExprIdent(id) = c.callee {
+    return id.name == "__bytes_data" && !s.defines(id.name);
+  }
+  return false;
+}
+
+function kept_address_diag(line: i32, col: i32): util.Diag {
+  return dg_at("E095", "the address from \"__bytes_data\" is kept after its call; write the call as an argument of the call that uses the address", line, col);
 }
 
 function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
   match (e) {
     ast.ExprCall(c) => {
+      // Outside an unsafe block the call has its own diagnostic.
+      if (acc.inside && bytes_data_call(c, acc.scope)) {
+        acc = unsafe_note(acc, kept_address_diag(c.line, c.col));
+      }
       return unsafe_call(c, acc);
     },
     ast.ExprLambda(lm) => {
