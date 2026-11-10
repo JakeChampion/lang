@@ -1,4 +1,5 @@
 # 2026-11-10: checked_owned_results has zero unpaired allocations under native RC trace.
+# 2026-11-10: dyn_conditional_impl_bound_met is clean under RC trace.
 # 2026-11-10: struct_field_pattern_names_variant is clean under RC trace.
 # 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
 # 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
@@ -327,6 +328,7 @@ display_user_type_print                             0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
+dyn_conditional_impl_bound_met                       0
 dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
 dyn_downcast_of_a_scalar_is_none                     0
 dyn_local_trait_shadows_imported                    0

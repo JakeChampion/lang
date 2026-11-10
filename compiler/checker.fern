@@ -2816,11 +2816,11 @@ function derives_trait(s: Scope, tyname: string, tr: string): boolean {
   return false;
 }
 
-function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
+function conforms_to_dyn_trait(s: Scope, from: typeinfo.Type, tyname: string, tr: string): boolean {
   let key = util.base_type_name(tr);
   for imp in s.impls {
     if (parser.impl_trait_key(imp) == key && parser.receiver_base(imp.impl_type) == parser.receiver_base(tyname)) {
-      return true;
+      return impl_bounds_hold(s, imp, from);
     }
   }
   return derives_trait(s, tyname, parser.derive_simple_name(key));
@@ -4352,7 +4352,7 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
     return true;
   }
   for tr in parser.dyn_trait_set("dyn " + traits) {
-    if (!conforms_to_dyn_trait(s, tn, tr)) {
+    if (!conforms_to_dyn_trait(s, from, tn, tr)) {
       return false;
     }
   }
@@ -15035,7 +15035,7 @@ function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): str
   let tn = util.base_type_name(type_label(src));
   let missing = "";
   for tr in set {
-    if (!conforms_to_dyn_trait(s, tn, tr)) {
+    if (!conforms_to_dyn_trait(s, src, tn, tr)) {
       if (missing.len() > 0) {
         missing += " + ";
       }
