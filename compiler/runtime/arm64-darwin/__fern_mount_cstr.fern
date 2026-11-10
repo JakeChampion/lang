@@ -4,6 +4,6 @@ function __fern_mount_cstr(buf: usize, off: i32, max: i32): string {
     n += 1;
   }
   let p = __raw_alloc(n);
-  __memcpy(p, buf + off, n);
+  __memcpy(p, buf + off as usize, n);
   return __raw_string(p, n);
 }

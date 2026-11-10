@@ -1,3 +1,5 @@
+# 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
+# 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
 # 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops is removed with the stop in rand.bytes.
 # 2026-11-10: a_match_value_of_owned_arms_is_owned is clean under RC trace.
@@ -793,6 +795,7 @@ pure_copy                                            0
 qualified_struct_patterns                            0
 question_op                                          0
 radix_literals                                       0
+rand_bytes_negative_count_stops                      0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
@@ -1337,6 +1340,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_mixes_through_an_explicit_cast                 0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0

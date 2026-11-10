@@ -1245,9 +1245,18 @@ function int_operands_agree(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, 
     return true;
   }
   if (is_usize(lt) || is_usize(rt)) {
-    return true;
+    return usize_holds(lt) && usize_holds(rt);
   }
   return int_is_unsigned(lt) == int_is_unsigned(rt) || !is_unknown(typeinfo.mixed_integer_join(lt, rt));
+}
+
+// `usize` holds each value of `t` on each target: `usize` itself, or an
+// unsigned type of 32 bits or less.
+function usize_holds(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return is_usize(t) || i.unsigned && i.width <= 32;
+  }
+  return false;
 }
 
 function int_is_unsigned(t: typeinfo.Type): boolean {

@@ -3132,11 +3132,7 @@ function __kernel_record_on(found: Option[Socket], s: client.Session, now: time.
 }
 
 function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): __Record {
-  return __kernel_read(sock, s, now, ktls.read_now(sock));
-}
-
-function __kernel_read(sock: Socket, s: client.Session, now: time.Timestamp, read: ktls.Read): __Record {
-  match (read) {
+  match (ktls.read_now(sock)) {
     ktls.Opened(t, content) => {
       match (s.read(ktls.framed(t, content), now)) {
         Ok(step) => {
@@ -3830,7 +3826,7 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
   match (conn.tls) {
     Some(s) => {
       if (s.offloaded()) {
-        return __recv_kernel(tr, conn, s, timeouts, started);
+        return __recv_kernel(tr, conn, s, timeouts, started, size);
       }
       return __recv_records(tr, conn, s, timeouts, started, size);
     },
@@ -3861,28 +3857,29 @@ function __recv_records[T: Transport](tr: T, conn: __Conn, s: client.Session, ti
   return Ok(__Got { conn: conn, bytes: [] });
 }
 
-function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64): Result[__Got, FetchError] {
-  let Some(sock) = tr.socket(conn.fd) else {
-    return Err(Tls(tls.KernelReadFailed(9)));
-  };
+// A read of a kernel TLS socket fails with EIO when the next record is not
+// application data. An empty answer sends the caller to the record path.
+function __kernel_data(got: Result[u8[], FetchError]): Result[u8[], FetchError] {
+  if let Err(Io(e)) = got {
+    if (e.eq(net.error_from_host(5))) {
+      return Ok([]);
+    }
+  }
+  return got;
+}
+
+function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
   let session = s;
   while (true) {
-    let (wait, bound) = __recv_limit(tr, timeouts, started)?;
-    let read = ktls.read(sock, wait);
-    match (read) {
-      ktls.NothingYet => {
-        return Err(Timeout(bound));
-      },
-      ktls.WaitCancelled => {
-        return Err(FetchError.Cancelled);
-      },
-      _ => {}
+    let raw = __kernel_data(__recv_raw(tr, conn.fd, timeouts, started, size))?;
+    if (raw.len() > 0) {
+      return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
-    match (__kernel_read(sock, session, tr.wall(), read)) {
+    match (__kernel_record_on(tr.socket(conn.fd), session, tr.wall())) {
       RecordTaken(step) => {
         session = step.session;
-        if (step.data.len() > 0 || step.closed) {
-          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: step.closed }, bytes: step.data });
+        if (step.closed) {
+          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: true }, bytes: [] });
         }
       },
       RecordsEnded => {
@@ -3898,22 +3895,6 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
 }
 
 function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64, size: i32): Result[u8[], FetchError] {
-  let (wait, bound) = __recv_limit(tr, timeouts, started)?;
-  match (__io(tr.read(conn, size, wait))?) {
-    Chunk(chunk) => {
-      return Ok(chunk);
-    },
-    Elapsed => {
-      return Err(Timeout(bound));
-    },
-    Abandoned => {
-      return Err(FetchError.Cancelled);
-    }
-  }
-  return Err(Timeout(bound));
-}
-
-function __recv_limit[T: Transport](tr: T, timeouts: Timeouts, started: i64): Result[(Duration, Phase), FetchError] {
   let ns_per_ms = 1000000;
   let left_ms = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
   if (left_ms <= 0) {
@@ -3925,7 +3906,18 @@ function __recv_limit[T: Transport](tr: T, timeouts: Timeouts, started: i64): Re
     wait_ms = left_ms;
     bound = Total;
   }
-  return Ok((time.duration_millis(wait_ms), bound));
+  match (__io(tr.read(conn, size, time.duration_millis(wait_ms)))?) {
+    Chunk(chunk) => {
+      return Ok(chunk);
+    },
+    Elapsed => {
+      return Err(Timeout(bound));
+    },
+    Abandoned => {
+      return Err(FetchError.Cancelled);
+    }
+  }
+  return Err(Timeout(bound));
 }
 
 function __rejected(code: i32): FetchError {

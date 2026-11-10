@@ -3758,21 +3758,36 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 	}
 }
 
-func TestUsizeAutowidensWithSignedInt(t *testing.T) {
+func TestUsizeJoinsOnlyWithATypeItHolds(t *testing.T) {
 	for _, src := range []string{
-		`function f(base: usize, idx: i32): usize {
-    return base + idx;
-}`,
 		`function f(p: usize): usize {
     return p + 4;
 }`,
-		`function f(idx: i32, stride: i32): usize {
-    let base: usize = 100;
-    return base + idx * stride;
+		`function f(base: usize, idx: u32): usize {
+    return base + idx;
+}`,
+		`function f(base: usize, idx: i32, stride: i32): usize {
+    return base + (idx * stride) as usize;
 }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: expected to type-check, got: %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(base: usize, idx: i32): usize {
+    return base + idx;
+}`,
+		`function f(base: usize, wide: u64): boolean {
+    return base < wide;
+}`,
+		`function f(base: usize, mask: i64): usize {
+    return base & mask;
+}`,
+	} {
+		err := checkSource(t, src)
+		if err == nil || !strings.Contains(err.Error(), "share an integer type") {
+			t.Errorf("%q: want the mixed-integer refusal, got: %v", src, err)
 		}
 	}
 }

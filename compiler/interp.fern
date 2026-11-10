@@ -2738,6 +2738,9 @@ function call_host_process(heap: interpheap.Heap, name: string, vals: Value[]): 
     return v_string(hostname());
   }
   if (name == "random_bytes") {
+    if (arg_i32(vals, 0) < 0) {
+      return v_abort(aborts.alloc_size(), "random_bytes length " + util.i32_to_string(arg_i32(vals, 0)));
+    }
     return byte_array_value(heap, rand.bytes(arg_i32(vals, 0)));
   }
   if (name == "random_i32") {

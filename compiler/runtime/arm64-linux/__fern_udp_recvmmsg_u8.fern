@@ -21,11 +21,11 @@ function __fern_udp_recvmmsg_u8(fd: i32, buf: i32[], froms: i32[], lens: i32[]):
     z += 1;
   }
   let bytes = __raw_arr_ptr(buf) + 8;
-  let extra = base + 64 * n;
+  let extra = base + (64 * n) as usize;
   let i = 0;
   while (i < n) {
-    let hdr = base + 64 * i;
-    let iov = extra + 96 * i;
+    let hdr = base + (64 * i) as usize;
+    let iov = extra + (96 * i) as usize;
     __raw_store_ptr(iov, 0, bytes + (stride * i) as usize);
     __raw_store_ptr(iov, 1, stride as usize);
     __raw_store_ptr(hdr, 0, iov + 16);
@@ -42,8 +42,8 @@ function __fern_udp_recvmmsg_u8(fd: i32, buf: i32[], froms: i32[], lens: i32[]):
   let lp = __raw_arr_ptr(lens);
   i = 0;
   while (i < rc) {
-    let hdr = base + 64 * i;
-    let sa = extra + 96 * i + 16;
+    let hdr = base + (64 * i) as usize;
+    let sa = extra + (96 * i) as usize + 16;
     let cm = sa + 32;
     let seg = 0;
     let tos = 0;
