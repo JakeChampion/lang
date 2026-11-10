@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -29,44 +28,26 @@ int ANativeWindow_getWidth(void* w) { return 0; }
 int ANativeWindow_getHeight(void* w) { return 0; }
 `
 
-var libandroidImport = regexp.MustCompile(`@import\("libandroid\.so", "([A-Za-z0-9_]+)"\)`)
-
 // LibandroidStub is C source for libandroid.so on a Linux host: the
-// functions in `defined`, and a function that aborts for each other
-// libandroid.so function that `src` or a std/android module imports. A
-// shared object binds each function that it can reach when it loads.
+// functions in `defined`, and from scripts/libandroid-stubs a function that
+// aborts for each other libandroid.so function that `src` or a std/android
+// module imports.
 func LibandroidStub(t *testing.T, defined, src string) string {
 	t.Helper()
-	stub := "#include <stdlib.h>\n" + defined
-	seen := map[string]bool{}
-	for _, m := range regexp.MustCompile(`\b(A[A-Za-z]+_[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(defined, -1) {
-		seen[m[1]] = true
-	}
-	docs, err := filepath.Glob(RepoPath("internal", "stdlib", "std", "android*.md"))
-	if err != nil {
+	dir := t.TempDir()
+	mock := filepath.Join(dir, "defined.c")
+	source := filepath.Join(dir, "source.fern")
+	if err := os.WriteFile(mock, []byte(defined), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	more, err := filepath.Glob(RepoPath("internal", "stdlib", "std", "android", "*.md"))
-	if err != nil {
+	if err := os.WriteFile(source, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	texts := []string{src}
-	for _, path := range append(docs, more...) {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		texts = append(texts, string(raw))
+	out, err := exec.Command("python3", RepoPath("scripts", "libandroid-stubs"), mock, source).Output()
+	if err != nil {
+		t.Fatalf("scripts/libandroid-stubs: %v", err)
 	}
-	for _, text := range texts {
-		for _, m := range libandroidImport.FindAllStringSubmatch(text, -1) {
-			if !seen[m[1]] {
-				seen[m[1]] = true
-				stub += "void " + m[1] + "(void) { abort(); }\n"
-			}
-		}
-	}
-	return stub
+	return string(out) + defined
 }
 
 // HostGL gives a directory to put on LD_LIBRARY_PATH so that a Fern shared
