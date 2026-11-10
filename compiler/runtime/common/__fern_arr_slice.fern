@@ -26,7 +26,7 @@ function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] {
     if (cs > 134217728) {
       cs = 134217728;
     }
-    src = src + cs * 8;
+    src = src + (cs * 8) as usize;
     skip -= cs;
   }
   let left = m;
@@ -36,8 +36,8 @@ function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] {
       cc = 134217728;
     }
     __memcpy(dst, src, cc * 8);
-    dst = dst + cc * 8;
-    src = src + cc * 8;
+    dst = dst + (cc * 8) as usize;
+    src = src + (cc * 8) as usize;
     left -= cc;
   }
   return __raw_array(p);

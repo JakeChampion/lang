@@ -20,7 +20,7 @@ function __fern_bsd_sum(s: usize, seed: i32): i32 {
   let i = 0;
   while (i < n) {
     sum = sum >> 1 | sum << 15;
-    sum = sum + __load_u8(p + i) as u32;
+    sum = sum + __load_u8(p + i as usize) as u32;
     sum = sum & 65535;
     i += 1;
   }

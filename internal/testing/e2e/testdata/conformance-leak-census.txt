@@ -1,5 +1,6 @@
+# 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
+# 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
 # 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
-# 2026-11-10: rand_bytes_negative_count_stops is removed with the stop in rand.bytes.
 # 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
 # 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
 # 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
@@ -791,6 +792,7 @@ pure_copy                                            0
 qualified_struct_patterns                            0
 question_op                                          0
 radix_literals                                       0
+rand_bytes_negative_count_stops                      0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
@@ -1335,6 +1337,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_mixes_through_an_explicit_cast                 0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0

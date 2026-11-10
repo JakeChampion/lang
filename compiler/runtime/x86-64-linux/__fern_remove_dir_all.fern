@@ -37,7 +37,7 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
         let room = reclen - 19;
         let scan = 1;
         while (scan == 1 && nlen + 8 <= room) {
-          let w = __load_i64(buf + pos + 19 + nlen);
+          let w = __load_i64(buf + pos as usize + 19 + nlen as usize);
           let z = w - 72340172838076673 as i64 & (w ^ (-1) as i64) & (-9187201950435737472) as i64;
           if (z != 0 as i64) {
             nlen += __ctz64(z as u64) >> 3;
@@ -69,7 +69,7 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
           let cb = __raw_alloc(cl);
           __memcpy(cb, __raw_data(path), plen);
           __raw_store8(cb, plen, 47);
-          __memcpy(cb + plen + 1, buf + pos + 19, nlen);
+          __memcpy(cb + plen as usize + 1, buf + pos as usize + 19, nlen);
           match (__fern_remove_dir_all(__raw_string(cb, cl))) {
             Ok(_) => {},
             Err(_) => {}
