@@ -1,0 +1,10 @@
+// spec: VT-05
+@must_consume
+struct Part { bytes: u8[] }
+
+@value
+struct Bad { part: Part }
+
+function main(): i32 {
+  return 0;
+}

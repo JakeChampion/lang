@@ -517,6 +517,7 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.PackageScoped = isPackage
 				sd.Derives = derives
 				sd.MustConsume = mustConsume
+				sd.ValueType = attrName == "value"
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
 			}
@@ -1192,6 +1193,8 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, derives: derives}, nil
 	case "must_consume":
 		return declAttr{name: attr, mustConsume: true}, nil
+	case "value":
+		return declAttr{name: attr}, nil
 	case "try":
 		return declAttr{name: attr, tryMarker: true}, nil
 	case "inline":
@@ -1238,12 +1241,14 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{name: attr, interrupt: slot}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
 func attrFits(name, kind string) bool {
 	switch name {
+	case "value":
+		return kind == "struct"
 	case "":
 		return true
 	case "derive", "must_consume":
@@ -1258,6 +1263,8 @@ func attrFits(name, kind string) bool {
 
 func attrMisplaced(name string) string {
 	switch name {
+	case "value":
+		return "@value only applies to a `struct` declaration"
 	case "derive", "must_consume":
 		return "@" + name + " only applies to a `struct` or `enum` declaration"
 	case "try":

@@ -839,7 +839,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     }
     fields = fields.append(parser.bare_field(fname, ""));
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
