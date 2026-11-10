@@ -114,10 +114,8 @@ pub function read_slots(reads: ssa.SInst[]): Slots {
 
 pub function identity(n: i32): i32[] {
   let out = __alloc_i32(n);
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     out = out.with(k, k);
-    k += 1;
   }
   return out;
 }
@@ -176,13 +174,11 @@ function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinf
 
 function renamed(args: i32[], same: i32[]): i32[] {
   let out = args;
-  let i = 0;
-  while (i < args.len()) {
+  for i in 0..args.len() {
     let v = stand_in(same, args[i]);
     if (v != args[i]) {
       out = out.with(i, v);
     }
-    i += 1;
   }
   return out;
 }

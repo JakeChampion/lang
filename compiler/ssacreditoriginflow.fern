@@ -33,11 +33,9 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
   }
   let empty: Value[] = [];
   let credits: i32[] = [1, 1];
-  let i = 0;
-  while (i < checked.values.len()) {
+  for i in 0..checked.values.len() {
     empty = empty.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
-    i += 1;
   }
   for input in [0, 1] {
     let rows: Value[][] = [];

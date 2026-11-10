@@ -11,12 +11,10 @@ function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index, dpkg: st
   let st = mvs.begin(roots, bans, ix);
   while (st.err.len() == 0 && !mvs.done(st)) {
     let deps: mvs.Req[] = [];
-    let i = 0;
-    while (i < dpkg.len()) {
+    for i in 0..dpkg.len() {
       if (dpkg[i] == st.need_pkg && dver[i] == st.need_ver) {
         deps = deps.append(mvs.Req { pkg: ddep[i], min: dmin[i] });
       }
-      i += 1;
     }
     st = mvs.supply(st, deps);
   }
@@ -25,13 +23,11 @@ function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index, dpkg: st
   }
   let out = "";
   let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { return Outcome { text: "", err: message }; } };
-  let k = 0;
-  while (k < sel.len()) {
+  for k in 0..sel.len() {
     if (k > 0) {
       out += "; ";
     }
     out = out + sel[k].name + " " + sel[k].ver;
-    k += 1;
   }
   return Outcome { text: out, err: "" };
 }
@@ -284,8 +280,7 @@ function main(): i32 {
     "blake3:" + hex64(),
     hex64(),
   ];
-  let bi = 0;
-  while (bi < bad.len()) {
+  for bi in 0..bad.len() {
     rc = check(
       26, "index rejects " + bad[bi], index_hash_err(bad[bi]),
       "line 2: 1.0.0: hash " + bad_hash(bad[bi]),
@@ -300,7 +295,6 @@ function main(): i32 {
     if (rc != 0) {
       return rc;
     }
-    bi += 1;
   }
   rc = check(
     28, "traversal message", lock_hash_err("sha256:../../outside/evil"),

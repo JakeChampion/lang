@@ -52,14 +52,12 @@ function prefix(s: string, entry: string, lines: string): string {
 function registers_preserved(s: string, entry: string): void {
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 2;
-  while (i < regs.len()) {
+  for i in 2..regs.len() {
     check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
     check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
     check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
     let other = if (i == 15) { 2 } else { i + 1 };
     check(prefix(s, entry, "movq " + regs[other] + ", " + regs[i]), entry, false);
-    i += 1;
   }
 }
 

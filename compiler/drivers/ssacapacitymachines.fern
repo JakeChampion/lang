@@ -66,13 +66,11 @@ function memory(s: string): void {
 function preserved(s: string): void {
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 0;
-  while (i < regs.len()) {
+  for i in 0..regs.len() {
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     let other = (i + 1) % regs.len();
     mutation(s, "    ret\n", "movq " + regs[other] + ", " + regs[i] + "\nret\n", false);
-    i += 1;
   }
   mutation(s, "pushq %rax", "pushq %rsp", false);
   mutation(s, "pushq %rax", "pushq %rcx", false);

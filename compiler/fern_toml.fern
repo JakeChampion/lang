@@ -413,15 +413,13 @@ function tagged_hex(text: string, prefix: string, bad: string): Result[string, s
   if (hex.len() != 64) {
     return Err(bad);
   }
-  let i = 0;
-  while (i < hex.len()) {
+  for i in 0..hex.len() {
     let c = hex[i];
     let digit = c >= b'0' && c <= b'9';
     let lower = c >= b'a' && c <= b'f';
     if (!digit && !lower) {
       return Err(bad);
     }
-    i += 1;
   }
   return Ok(hex);
 }
@@ -571,8 +569,7 @@ function inline_parts(body: string): string[] {
   let start = 0;
   let depth = 0;
   let quoted = false;
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     let c = body[i];
     if (c == b'"') {
       quoted = !quoted;
@@ -902,7 +899,6 @@ pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
     if (entries[i].name == name && entries[i].hash.len() > 0) {
       return Some(entries[i].hash + "");
     }
-    i += 1;
   }
   return None;
 }

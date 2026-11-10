@@ -17,13 +17,11 @@ pub function problem_str(p: Problem): string {
 
 pub function format_problems(ps: Problem[], max: i32): string {
   let out = "";
-  let i = 0;
-  while (i < ps.len()) {
+  for i in 0..ps.len() {
     if (i == max) {
       return out + "\n    ... and " + util.i32_to_string(ps.len() - max) + " more";
     }
     out = out + "\n    " + problem_str(ps[i]);
-    i += 1;
   }
   return out;
 }
@@ -68,10 +66,8 @@ pub function index_row(ix: NameIndex, name: string): i32 {
 
 pub function name_index(names: string[]): NameIndex {
   let params: i32[] = [];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     params = params.append(-1);
-    i += 1;
   }
   return chain_names(names, params);
 }
@@ -79,11 +75,9 @@ pub function name_index(names: string[]): NameIndex {
 pub function sig_index(sigs: FnSig[]): NameIndex {
   let names: string[] = [];
   let params: i32[] = [];
-  let i = 0;
-  while (i < sigs.len()) {
+  for i in 0..sigs.len() {
     names = names.append(sigs[i].name);
     params = params.append(sigs[i].n_params);
-    i += 1;
   }
   return chain_names(names, params);
 }
@@ -122,8 +116,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
   let st_else: i32[] = [];
   let depth = 0;
 
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let op = ops[i];
     let kt = op.kind_tag;
 
@@ -206,16 +199,13 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
         });
       }
     }
-    i += 1;
   }
 
-  let d = 0;
-  while (d < depth) {
+  for d in 0..depth {
     out = out.append(Problem {
       fn_name: fn_name, op: st_at[d], kind: ir.kind_name(st_kind[d]),
       msg: "scope is never closed - the function ends with it still open",
     });
-    d += 1;
   }
   return out;
 }

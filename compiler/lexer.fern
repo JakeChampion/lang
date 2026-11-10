@@ -573,8 +573,7 @@ function offset_col(base_col: i32, line: i32, col: i32): i32 {
 
 function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStringPart[] {
   let out: FStringPart[] = [];
-  let i = 0;
-  while (i < parts.len()) {
+  for i in 0..parts.len() {
     let p = parts[i];
     if (p.is_expr) {
       out = out.append(FStringPart {
@@ -584,15 +583,13 @@ function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStr
     } else {
       out = out.append(p);
     }
-    i += 1;
   }
   return out;
 }
 
 pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[] {
   let out: Token[] = [];
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     let t = toks[i];
     match (t) {
       TokEof(x) => {
@@ -620,18 +617,15 @@ pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[
         out = out.append(fstring_tok(rebase_parts(x.parts, base_line, base_col), offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
       }
     }
-    i += 1;
   }
   return out;
 }
 
 function is_blank_range(s: string): boolean {
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (!is_space(s[i] as i32)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -648,12 +642,10 @@ pub function is_error_tok(t: Token): boolean {
 }
 
 pub function has_error(toks: Token[]): boolean {
-  let i = 0;
-  while (i < toks.len()) {
+  for i in 0..toks.len() {
     if (is_error_tok(toks[i])) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -893,14 +885,12 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
   if (i + need >= n) {
     return Utf8 { val: 0, len: 0 };
   }
-  let k = 1;
-  while (k <= need) {
+  for k in 1..=need {
     let c = src[i + k] as i32;
     if (c < 128 || c >= 192) {
       return Utf8 { val: 0, len: 0 };
     }
     val = val << 6 | c & 63;
-    k += 1;
   }
   if (val > 1114111 || val >= 55296 && val <= 57343
     || need == 1 && val < 128 || need == 2 && val < 2048

@@ -92,14 +92,12 @@ function child(c: Context, v: phi.Value): Context {
     out = calc(out, 0, total, path);
     total = out.temp;
     let count = out.state.children[root - 3];
-    let slot = 0;
-    while (slot < 4) {
+    for slot in 0..4 {
       out = literal(out, root);
       out = calc(out, 2, out.state.contents[slot], out.temp);
       out = calc(out, 4, out.temp, out.state.credits[slot]);
       out = calc(out, 0, count, out.temp);
       count = out.temp;
-      slot += 1;
     }
     out = positive(out, path, count, "child used after final credit or anchor");
     root += 1;
@@ -618,13 +616,11 @@ struct Numbers { arena: guard.Arena, values: i32[], error: string }
 function joined(a: guard.Arena, old: i32[], current: i32[], path: i32): Numbers {
   let arena = a;
   let values = old;
-  let i = 0;
-  while (i < old.len()) {
+  for i in 0..old.len() {
     let masked: guard.Built = match (guard.combine(arena, 4, path, current[i])) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
     let sum: guard.Built = match (guard.combine(masked.arena, 0, old[i], masked.id)) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
     arena = sum.arena;
     values = values.with(i, sum.id);
-    i += 1;
   }
   return Numbers { arena: arena, values: values, error: "" };
 }
@@ -683,10 +679,8 @@ function returned(c: Context, value: i32, composed: boolean): Context {
     let path = c.temp;
     c = equal(c, path, c.state.parents[p], 1, "result parent credit mismatch");
     c = equal(c, path, c.state.shapes[p], 1, "result shape not initialized");
-    let slot = p * 2;
-    while (slot < p * 2 + 2) {
+    for slot in p * 2..p * 2 + 2 {
       c = equal(c, path, c.state.credits[slot], 1, "result has stale or uninitialized slot");
-      slot += 1;
     }
     c = calc(c, 1, c.state.parents[p], path);
     c = Context { ...c, state: State { ...c.state, parents: c.state.parents.with(p, c.temp) } };

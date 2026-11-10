@@ -792,12 +792,10 @@ function check_enums(): i32 {
   if (rtEnum.structs[rri].fields.len() != 0) {
     return 219;
   }
-  let esi = 0;
-  while (esi < rtEnum.structs.len()) {
+  for esi in 0..rtEnum.structs.len() {
     if (rtEnum.structs[esi].enum_owner.len() == 0) {
       return 220;
     }
-    esi += 1;
   }
   if (rtEnum.structs[rgi].derives.len() != 1) {
     return 221;
@@ -954,12 +952,10 @@ function check_const_and_for_sugar(): i32 {
     return 250;
   }
   let limit_i: i32 = -1;
-  let ci = 0;
-  while (ci < rtConst.funcs.len()) {
+  for ci in 0..rtConst.funcs.len() {
     if (rtConst.funcs[ci].name == "LIMIT") {
       limit_i = ci;
     }
-    ci += 1;
   }
   if (limit_i < 0) {
     return 251;
@@ -1292,47 +1288,39 @@ function check_traits_and_impls(): i32 {
 }
 
 function struct_index(structs: parser.StructDecl[], name: string): i32 {
-  let i = 0;
-  while (i < structs.len()) {
+  for i in 0..structs.len() {
     if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 function func_index(funcs: parser.FuncDecl[], name: string): i32 {
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     if (funcs[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 function diff_replay(sc: printer.DiffScript, keep: i32): string {
   let out = "";
-  let i = 0;
-  while (i < sc.kinds.len()) {
+  for i in 0..sc.kinds.len() {
     if (sc.kinds[i] == 0 || sc.kinds[i] == keep) {
       out += sc.lines[i];
     }
-    i += 1;
   }
   return out;
 }
 
 function diff_edits(sc: printer.DiffScript): i32 {
   let n = 0;
-  let i = 0;
-  while (i < sc.kinds.len()) {
+  for i in 0..sc.kinds.len() {
     if (sc.kinds[i] != 0) {
       n += 1;
     }
-    i += 1;
   }
   return n;
 }
@@ -1342,11 +1330,9 @@ function diff_lcs_edits(a: string[], b: string[]): i32 {
   let n = b.len();
   let prev: i32[] = [];
   let cur: i32[] = [];
-  let z = 0;
-  while (z <= n) {
+  for z in 0..=n {
     prev = prev.append(0);
     cur = cur.append(0);
-    z += 1;
   }
   let i = m - 1;
   while (i >= 0) {
@@ -1375,19 +1361,16 @@ function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
   let vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
   let out: string[] = [];
   let s = seed;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     s = diff_rand(s);
     out = out.append(vocab[(s % (alphabet as i64)) as i32]);
-    i += 1;
   }
   return out;
 }
 
 function diff_selftest(): i32 {
   let s: i64 = 12345i64;
-  let iter = 0;
-  while (iter < 300) {
+  for iter in 0..300 {
     s = diff_rand(s);
     let alphabet = 2 + (s % 4i64) as i32;
     s = diff_rand(s);
@@ -1408,7 +1391,6 @@ function diff_selftest(): i32 {
     if (diff_edits(sc) != diff_lcs_edits(a, b)) {
       return 352;
     }
-    iter += 1;
   }
 
   let la = diff_lines_from(777i64, 400, 3);

@@ -29,12 +29,10 @@ function mentions(r: irtables.LowerResult, name: string): boolean {
 }
 
 function referenced(all: irtables.LowerResult[], at: i32): boolean {
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     if (i != at && all[i].ok && !all[i].superseded && mentions(all[i], all[at].name)) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -88,12 +86,10 @@ function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extr
     while (i < all.len()) {
       let r = all[i];
       if (candidates[i] && ordinary_candidate(mod, r) && !referenced(all, i)) {
-        let j = 0;
-        while (j < all.len()) {
+        for j in 0..all.len() {
           if (ordinary_candidate(mod, all[j]) && mentions(r, all[j].name)) {
             candidates = candidates.with(j, true);
           }
-          j += 1;
         }
         all = all.with(i, irtables.LowerResult { ...r, superseded: true });
         changed = true;
@@ -103,8 +99,7 @@ function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extr
   }
   let kept: irtables.LowerResult[] = [];
   let indices: i32[] = [];
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     if (i < bodies.len()) {
       bodies = bodies.with(i, irtables.LowerResult { ...all[i], name: bodies[i].name });
     } else if (!all[i].superseded) {
@@ -113,7 +108,6 @@ function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extr
         indices = indices.append(i - bodies.len());
       }
     }
-    i += 1;
   }
   return MappedResult { result: Result { bodies: bodies, extra: kept }, extra_indices: indices };
 }

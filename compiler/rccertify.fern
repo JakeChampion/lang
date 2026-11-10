@@ -303,8 +303,7 @@ function scalar_lane(irops: ir.Op[], ins: ssa.SInst): boolean {
 }
 
 function paired_call(w: Walk, b: ssa.SBlock, pos: i32): boolean {
-  let at = pos + 1;
-  while (at < b.insts.len()) {
+  for at in pos + 1..b.insts.len() {
     let next = b.insts[at];
     if (next.kind_tag != ssa.FLAT_OP || next.str != "call_word") {
       return false;
@@ -312,7 +311,6 @@ function paired_call(w: Walk, b: ssa.SBlock, pos: i32): boolean {
     if (!scalar_lane(w.irops, next)) {
       return true;
     }
-    at += 1;
   }
   return false;
 }
@@ -385,10 +383,8 @@ function roots(f: ssa.SFunc, defs: ssa.DefSites, sigs: rcsigs.Table): Roots {
 
 function own_roots(n: i32): Roots {
   let root = __alloc_i32(n);
-  let v = 0;
-  while (v < n) {
+  for v in 0..n {
     root = root.with(v, v);
-    v += 1;
   }
   return Roots { root: root, derived: __alloc_bool(n) };
 }
@@ -444,8 +440,7 @@ function unique_word(w: Walk, v: i32, depth: i32): Unique {
     return no_unique();
   }
   let out = no_unique();
-  let i = 0;
-  while (i < ins.args.len()) {
+  for i in 0..ins.args.len() {
     let a = ins.args[i];
     if (a < 0) {
       return no_unique();
@@ -456,7 +451,6 @@ function unique_word(w: Walk, v: i32, depth: i32): Unique {
         return no_unique();
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -598,8 +592,7 @@ function open_region(own rg: Regions, dom: ssadeps.Dom, reach: boolean[], arm: i
 }
 
 function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolean[], with_tokens: boolean): Regions {
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
+  for bi in 0..w.f.blocks.len() {
     let t = w.f.blocks[bi].term;
     if (reach[bi] && t.kind_tag == ssa.TERM_BRIF && t.t != t.f) {
       let c = cond_of(w, rg.roots, t.cond, with_tokens);
@@ -614,7 +607,6 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
         }
       }
     }
-    bi += 1;
   }
   return rg;
 }
@@ -658,11 +650,9 @@ struct Shells { base: i32[], phi: i32[], block: i32[], at: i32[] }
 
 function shells_of(w: Walk): Shells {
   let out = Shells { base: [], phi: [], block: [], at: [] };
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
+  for bi in 0..w.f.blocks.len() {
     let insts = w.f.blocks[bi].insts;
-    let i = 0;
-    while (i < insts.len()) {
+    for i in 0..insts.len() {
       let ins = insts[i];
       let base = -1;
       let phi = -1;
@@ -678,9 +668,7 @@ function shells_of(w: Walk): Shells {
       if (base >= 0 || phi >= 0) {
         out = Shells { base: out.base.append(base), phi: out.phi.append(phi), block: out.block.append(bi), at: out.at.append(i) };
       }
-      i += 1;
     }
-    bi += 1;
   }
   return out;
 }
@@ -753,8 +741,7 @@ function reuses(w: Walk, ins: ssa.SInst, base: i32, boxed: boolean[]): boolean {
 function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
   let insts = w.f.blocks[mb].insts;
   let key = load_key(w, ld);
-  let j = i + 1;
-  while (j < insts.len()) {
+  for j in i + 1..insts.len() {
     let d = insts[j];
     if (d.args.len() > 0 && w.root[d.args[0]] == w.root[r]) {
       if (is_load(d) && load_key(w, d) == key && d.kind_tag == ssa.LD_AT == (ld.kind_tag == ssa.LD_AT)) {
@@ -764,7 +751,6 @@ function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
         return true;
       }
     }
-    j += 1;
   }
   return false;
 }
@@ -788,8 +774,7 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
     return false;
   }
   let reach: boolean[] = [];
-  k = 0;
-  while (k < sh.base.len()) {
+  for k in 0..sh.base.len() {
     if (sh.base[k] == base || sh.phi[k] >= 0 && sh.phi[k] < es.boxed.len() && es.boxed[sh.phi[k]]) {
       let after = before(dom, bi, pos, sh.block[k], sh.at[k]);
       if (!after) {
@@ -802,7 +787,6 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
         return true;
       }
     }
-    k += 1;
   }
   return false;
 }
@@ -815,8 +799,7 @@ function before(dom: ssadeps.Dom, bi: i32, pos: i32, sb: i32, at: i32): boolean 
 }
 
 function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, ins: ssa.SInst): boolean {
-  let i = 0;
-  while (i < ins.args.len()) {
+  for i in 0..ins.args.len() {
     let a = ins.args[i];
     if (a < 0) {
       return false;
@@ -826,7 +809,6 @@ function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, 
     if (!out[r] && (pb < 0 || util.index_of_i32(regions[pb], r) < 0)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -1157,11 +1139,9 @@ function stores_of(w: Walk): Stores {
   while (out.by_base.len() < f.nvals) {
     out = Stores { ...out, by_base: out.by_base.append([]) };
   }
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
-    let i = 0;
-    while (i < insts.len()) {
+    for i in 0..insts.len() {
       let st = insts[i];
       if ((st.kind_tag == ssa.ST_AT && st.args.len() == 2 || st.kind_tag == ssa.ARR_ST && st.args.len() == 3) && st.args[0] >= 0) {
         let base = w.root[st.args[0]];
@@ -1176,9 +1156,7 @@ function stores_of(w: Walk): Stores {
           by_base: out.by_base.with(base, out.by_base[base].append(n)),
         };
       }
-      i += 1;
     }
-    bi += 1;
   }
   return out;
 }
@@ -1280,8 +1258,7 @@ function firsts_of(f: ssa.SFunc, root: i32[]): i32[][] {
   while (out.len() < f.nvals) {
     out = out.append([]);
   }
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     for ins in f.blocks[bi].insts {
       if (ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < root.len()) {
         let r = root[ins.args[0]];
@@ -1291,7 +1268,6 @@ function firsts_of(f: ssa.SFunc, root: i32[]): i32[][] {
         }
       }
     }
-    bi += 1;
   }
   return out;
 }
@@ -1328,8 +1304,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
   while (top > 0) {
     top -= 1;
     let b = stack[top];
-    let e = 0;
-    while (e < 2) {
+    for e in 0..2 {
       let sid = ssa.successor_id(w.f.blocks[b].term, e);
       let si = -1;
       if (sid >= 0 && sid < w.at.len()) {
@@ -1354,7 +1329,6 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
           top += 1;
         }
       }
-      e += 1;
     }
   }
   return Paths { escapes: false, edge: edge };
@@ -1485,12 +1459,10 @@ function box_on_edges(w: Walk, p: i32, base: i32, boxed: boolean[], edge: boolea
 }
 
 function edge_taken(w: Walk, edge: boolean[], pb: i32, sid: i32): boolean {
-  let e = 0;
-  while (e < 2) {
+  for e in 0..2 {
     if (ssa.successor_id(w.f.blocks[pb].term, e) == sid && edge[pb * 2 + e]) {
       return true;
     }
-    e += 1;
   }
   return false;
 }
@@ -1542,8 +1514,7 @@ function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb:
   while (top > 0) {
     top -= 1;
     let b = stack[top];
-    let e = 0;
-    while (e < 2) {
+    for e in 0..2 {
       let sid = ssa.successor_id(w.f.blocks[b].term, e);
       let si = -1;
       if (sid >= 0) {
@@ -1560,7 +1531,6 @@ function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb:
           top += 1;
         }
       }
-      e += 1;
     }
   }
   return true;
@@ -1747,8 +1717,7 @@ struct Picked { used: i32, any: i32 }
 function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
   let after = after0;
   let avoided = !after0[lb];
-  let li = 0;
-  while (li < stop) {
+  for li in 0..stop {
     let ld = w.f.blocks[lb].insts[li];
     if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
@@ -1760,7 +1729,6 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
         pick = Picked { ...pick, used: nearer(w, dom, sb, pick.used, ld.result) };
       }
     }
-    li += 1;
   }
   return pick;
 }
@@ -1784,8 +1752,7 @@ function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
 }
 
 function used_after(w: Walk, after: boolean[], root: i32, sb: i32, si: i32): boolean {
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
+  for bi in 0..w.f.blocks.len() {
     if (bi == sb || after[bi]) {
       let from = 0;
       if (bi == sb && !after[bi]) {
@@ -1795,21 +1762,18 @@ function used_after(w: Walk, after: boolean[], root: i32, sb: i32, si: i32): boo
         return true;
       }
     }
-    bi += 1;
   }
   return false;
 }
 
 function reads_root(w: Walk, bi: i32, from: i32, root: i32): boolean {
   let insts = w.f.blocks[bi].insts;
-  let i = from;
-  while (i < insts.len()) {
+  for i in from..insts.len() {
     for a in insts[i].args {
       if (a >= 0 && w.root[a] == root) {
         return true;
       }
     }
-    i += 1;
   }
   let t = w.f.blocks[bi].term;
   return t.value >= 0 && w.root[t.value] == root;
@@ -1830,14 +1794,12 @@ function reached_in(f: ssa.SFunc, at: i32[], sb: i32, avoid: i32): boolean[] {
   let i = 0;
   while (i < work.len()) {
     let t = f.blocks[work[i]].term;
-    let e = 0;
-    while (e < 2) {
+    for e in 0..2 {
       let sid = ssa.successor_id(t, e);
       if (sid >= 0 && at[sid] >= 0 && at[sid] != avoid && !seen[at[sid]]) {
         seen = seen.with(at[sid], true);
         work = work.append(at[sid]);
       }
-      e += 1;
     }
     i += 1;
   }
@@ -1891,13 +1853,11 @@ function indexes(w: Walk, touched: boolean[]): i32[] {
   on = grow_phis(w, on);
   let idx = util.minus_ones(f.nvals);
   let n = 0;
-  v = 0;
-  while (v < f.nvals) {
+  for v in 0..f.nvals {
     if (on[v]) {
       idx = idx.with(v, n);
       n += 1;
     }
-    v += 1;
   }
   return idx;
 }
@@ -1918,14 +1878,12 @@ struct Live {
 
 function alias_deps(w: Walk): i32[][] {
   let deps: i32[][] = [];
-  let v = 0;
-  while (v < w.f.nvals) {
+  for v in 0..w.f.nvals {
     if (w.root[v] != v) {
       deps = deps.append([w.root[v]]);
     } else {
       deps = deps.append([]);
     }
-    v += 1;
   }
   return deps;
 }
@@ -1964,10 +1922,8 @@ function in_slots(w: Walk, fl: ssalive.Flow, own m: Marked, bi: i32): Marked {
 function row_slots(w: Walk, takes: Takes, own m: Marked, bi: i32): Marked {
   let b = w.f.blocks[bi];
   if (bi == w.at[w.f.entry]) {
-    let v = 0;
-    while (v < w.f.nparams) {
+    for v in 0..w.f.nparams {
       m = add_value(m, w, v);
-      v += 1;
     }
   }
   for ins in b.insts {
@@ -2025,14 +1981,12 @@ function live_rows(w: Walk, fl: ssalive.Flow, takes: Takes): Live {
   let m = Marked { mark: __alloc_bool(w.tracked), list: [] };
   let ins = Spans { slots: [], at: [], n: [] };
   let rows = Spans { slots: [], at: [], n: [] };
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
+  for bi in 0..w.f.blocks.len() {
     m = in_slots(w, fl, m, bi);
     ins = push_span(ins, m.list);
     m = row_slots(w, takes, m, bi);
     rows = push_span(rows, m.list);
     m = clear_marks(m);
-    bi += 1;
   }
   let slots = ins.slots;
   let shift = slots.len();
@@ -2052,10 +2006,8 @@ function live_edges(w: Walk, own lv: Live): Live {
   let out_at: i32[] = [];
   let nout = 0;
   let doomed = doomed_blocks(w);
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
-    let e = 0;
-    while (e < 2) {
+  for bi in 0..w.f.blocks.len() {
+    for e in 0..2 {
       let sid = ssa.successor_id(w.f.blocks[bi].term, e);
       let si = -1;
       if (sid >= 0) {
@@ -2074,9 +2026,7 @@ function live_edges(w: Walk, own lv: Live): Live {
         dies = push_span(dies, []);
         out_at = out_at.append(-1);
       }
-      e += 1;
     }
-    bi += 1;
   }
   return Live { ...lv, slots: dies.slots, die_at: dies.at, die_n: dies.n, out_at: out_at, nout: nout };
 }
@@ -2123,8 +2073,7 @@ function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
   if (w.debt.len() == 0) {
     return deps;
   }
-  let k = 0;
-  while (k < takes.block.len()) {
+  for k in 0..takes.block.len() {
     let st = w.f.blocks[takes.block[k]].insts[takes.at[k]];
     let zero = st.args[st.args.len() - 1];
     for r in takes.roots[k] {
@@ -2132,7 +2081,6 @@ function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
         deps = deps.with(zero, deps[zero].append(r));
       }
     }
-    k += 1;
   }
   return deps;
 }
@@ -2177,10 +2125,8 @@ function filled(n: i32, v: i32): i32[] {
   if (v == 0) {
     return out;
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(i, v);
-    i += 1;
   }
   return out;
 }
@@ -2452,8 +2398,7 @@ function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
   }
   let out = __alloc_bool(w.f.nvals);
   let refused = __alloc_bool(w.f.nvals);
-  let k = 0;
-  while (k < st.base.len()) {
+  for k in 0..st.base.len() {
     let ins = w.f.blocks[st.block[k]].insts[st.at[k]];
     if (st.base[k] == w.held && ins.kind_tag == ssa.ST_AT && !st.zero[k]) {
       let val = w.root[ins.args[ins.args.len() - 1]];
@@ -2468,7 +2413,6 @@ function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
         }
       }
     }
-    k += 1;
   }
   let v = 0;
   while (v < out.len()) {
@@ -2506,10 +2450,8 @@ function no_takes(): Takes {
 
 function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
   let out = Takes { block: [], at: [], roots: [], first: util.minus_ones(w.f.blocks.len()) };
-  let sb = 0;
-  while (sb < w.f.blocks.len()) {
+  for sb in 0..w.f.blocks.len() {
     out = block_takes(out, w, dom, sb);
-    sb += 1;
   }
   return out;
 }
@@ -2517,8 +2459,7 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
 function block_takes(own out: Takes, w: Walk, dom: ssadeps.Dom, sb: i32): Takes {
   let insts = w.f.blocks[sb].insts;
   let after: boolean[] = [];
-  let si = 0;
-  while (si < insts.len()) {
+  for si in 0..insts.len() {
     let st = insts[si];
     if (is_take(w, st)) {
       if (after.len() == 0) {
@@ -2535,7 +2476,6 @@ function block_takes(own out: Takes, w: Walk, dom: ssadeps.Dom, sb: i32): Takes 
       }
       out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs), first: first };
     }
-    si += 1;
   }
   return out;
 }
@@ -2648,10 +2588,8 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
     }
     let at = p.phi_at[ins.result];
     let s = absent();
-    let i = 0;
-    while (i < b.preds.len()) {
+    for i in 0..b.preds.len() {
       s = meet(s, p.phin[at + i]);
-      i += 1;
     }
     if (s == maybe()) {
       p = met_maybe(p, k, bi);
@@ -2745,13 +2683,11 @@ function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progres
 
 function excluded_tags(w: Walk, bi: i32, word: i32): i32 {
   let out = 0;
-  let d = 0;
-  while (d < w.f.blocks.len()) {
+  for d in 0..w.f.blocks.len() {
     let t = w.f.blocks[d].term;
     if (d != bi && t.kind_tag == ssa.TERM_BRIF && t.t != t.f && ssadeps.dom_holds(w.dom, bi, d)) {
       out = out | excluded_on(w, bi, d, t.t, word) | excluded_on(w, bi, d, t.f, word);
     }
-    d += 1;
   }
   return out;
 }
@@ -2833,8 +2769,7 @@ function apply_return(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
 }
 
 function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32, kind: string): Progress {
-  let j = 0;
-  while (j < n) {
+  for j in 0..n {
     let k = lv.slots[at + j];
     let held = p.state[k];
     if (held > 0) {
@@ -2844,7 +2779,6 @@ function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32,
     } else if (held == maybe()) {
       p = Progress { ...p, unproved: p.unproved.with(k, true), ulog: p.ulog.append(k) };
     }
-    j += 1;
   }
   return p;
 }
@@ -2853,8 +2787,7 @@ function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
   let t = w.f.blocks[bi].term;
   let saved = row_values(p, lv, bi);
   let changed = false;
-  let e = 0;
-  while (e < 2) {
+  for e in 0..2 {
     if (lv.out_at[bi * 2 + e] >= 0 && (e == 0 || ssa.successor_id(t, 1) != ssa.successor_id(t, 0))) {
       if (e == 1) {
         p = restore_row(p, lv, bi, saved);
@@ -2863,7 +2796,6 @@ function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
       p = r.p;
       changed = changed || r.changed;
     }
-    e += 1;
   }
   return RoundResult { p: p, changed: changed };
 }
@@ -2939,15 +2871,12 @@ function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress 
   let f = w.f;
   let b = f.blocks[bi];
   if (w.params_at_entry && bi == w.at[f.entry]) {
-    let v = 0;
-    while (v < f.nparams) {
+    for v in 0..f.nparams {
       p = define(p, w, v, b.id);
-      v += 1;
     }
   }
   p = enter_phis(p, w, bi);
-  let i = 0;
-  while (i < b.insts.len()) {
+  for i in 0..b.insts.len() {
     let ins = b.insts[i];
     if (ins.kind_tag != ssa.PHI && ins.kind_tag != ssa.PARAM) {
       p = apply(p, w, ins, b.id, taken_at(takes, bi, i));
@@ -2955,18 +2884,15 @@ function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress 
     if (is_exit(ins)) {
       return p;
     }
-    i += 1;
   }
   return p;
 }
 
 function root_at(w: Walk, k: i32): i32 {
-  let v = 0;
-  while (v < w.idx.len()) {
+  for v in 0..w.idx.len() {
     if (w.idx[v] == k) {
       return v;
     }
-    v += 1;
   }
   return -1;
 }
@@ -3132,8 +3058,7 @@ function inherited_regions(own rg: Regions, f: ssa.SFunc, reach: boolean[], base
   if (!base.on) {
     return rg;
   }
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let bb = base.at[f.blocks[bi].id];
     if (reach[bi] && bb >= 0) {
       let k = 0;
@@ -3145,7 +3070,6 @@ function inherited_regions(own rg: Regions, f: ssa.SFunc, reach: boolean[], base
         k += 1;
       }
     }
-    bi += 1;
   }
   return rg;
 }
@@ -3233,15 +3157,13 @@ function debts(w: Walk, taken: boolean[], from_id: i32): boolean[] {
   }
   let from = w.at[from_id];
   let out = __alloc_bool(w.f.nvals);
-  let v = 0;
-  while (v < taken.len()) {
+  for v in 0..taken.len() {
     if (taken[v] && w.defs.block[v] >= 0 && ssadeps.dom_holds(w.dom, w.defs.block[v], from)) {
       let d = def_of(w.f, w.defs, v);
       if (is_load(d) && d.args.len() > 0 && w.root[d.args[0]] == w.held) {
         out = out.with(v, true);
       }
     }
-    v += 1;
   }
   return out;
 }
@@ -3315,10 +3237,8 @@ function memo_count(n: i32, once: boolean): i32 {
 
 function no_memos(n: i32): Memo[] {
   let out: Memo[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(Memo { ran: false, inputs: [], findings: [], opaque: [], unproved: [], maybe: [] });
-    i += 1;
   }
   return out;
 }
@@ -3343,10 +3263,8 @@ function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
   for ins in b.insts {
     if (ins.kind_tag == ssa.PHI && ins.result >= 0 && w.idx[ins.result] >= 0) {
       let at = p.phi_at[ins.result];
-      let i = 0;
-      while (i < b.preds.len()) {
+      for i in 0..b.preds.len() {
         out = out.append(p.phin[at + i]);
-        i += 1;
       }
     }
   }
@@ -3373,20 +3291,16 @@ function replayed(own p: Progress, m: Memo, bi: i32): Progress {
 
 function findings_from(xs: Finding[], at: i32): Finding[] {
   let out: Finding[] = [];
-  let i = at;
-  while (i < xs.len()) {
+  for i in at..xs.len() {
     out = out.append(xs[i]);
-    i += 1;
   }
   return out;
 }
 
 function strings_from(xs: string[], at: i32): string[] {
   let out: string[] = [];
-  let i = at;
-  while (i < xs.len()) {
+  for i in at..xs.len() {
     out = out.append(xs[i]);
-    i += 1;
   }
   return out;
 }
@@ -3416,13 +3330,11 @@ function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): bool
   for ins in b.insts {
     if (ins.kind_tag == ssa.PHI && ins.result >= 0 && w.idx[ins.result] >= 0) {
       let ph = p.phi_at[ins.result];
-      let i = 0;
-      while (i < b.preds.len()) {
+      for i in 0..b.preds.len() {
         if (at >= old.len() || old[at] != p.phin[ph + i]) {
           return false;
         }
         at += 1;
-        i += 1;
       }
     }
   }
@@ -3431,20 +3343,16 @@ function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): bool
 
 function acyclic(w: Walk, order: i32[]): boolean {
   let rank = util.minus_ones(w.f.blocks.len());
-  let i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     rank = rank.with(order[i], i);
-    i += 1;
   }
   for bi in order {
     let t = w.f.blocks[bi].term;
-    let e = 0;
-    while (e < 2) {
+    for e in 0..2 {
       let sid = ssa.successor_id(t, e);
       if (sid >= 0 && w.at[sid] >= 0 && rank[w.at[sid]] <= rank[bi]) {
         return false;
       }
-      e += 1;
     }
   }
   return true;
@@ -3463,15 +3371,13 @@ function token_word(w: Walk, t: ssa.STerm): i32 {
 
 function tested_tokens(w: Walk, reach: boolean[]): i32[] {
   let out: i32[] = [];
-  let bi = 0;
-  while (bi < w.f.blocks.len()) {
+  for bi in 0..w.f.blocks.len() {
     if (reach[bi]) {
       let tok = token_word(w, w.f.blocks[bi].term);
       if (tok >= 0 && util.index_of_i32(out, tok) < 0) {
         out = out.append(tok);
       }
     }
-    bi += 1;
   }
   return out;
 }
@@ -3529,23 +3435,19 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
   if (hold) {
     want = 1;
   }
-  let v = 0;
-  while (v < fixed.len()) {
+  for v in 0..fixed.len() {
     if (fixed[v] == want && util.index_of_i32(rew, v) < 0) {
       rew = rew.append(v);
     }
-    v += 1;
   }
   let out: ssa.SBlock[] = [];
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let term = pr.terms[bi];
     if (!reach[bi]) {
       term = ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: -1 };
     }
     let b = ssa.SBlock { ...f.blocks[bi], term: term };
     out = out.append(token_phis(without_dropped_preds(w, b, pr.dropped, reach), rew, box, hold));
-    bi += 1;
   }
   let fa = ssa.SFunc { ...f, blocks: out };
   if (!hold) {
@@ -3625,12 +3527,10 @@ function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SB
 function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
   let root = roots(f, w.defs, w.sigs).root;
   let ops = BoxOps { f: f, reused: __alloc_bool(f.nvals) };
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     if (calls_on_box(f.blocks[bi], root, box)) {
       ops = box_ops_in(ops, bi, root, box, util.index_of_i32(w.regions[bi], box) >= 0);
     }
-    bi += 1;
   }
   return ops;
 }
@@ -3747,15 +3647,13 @@ function reached_over(w: Walk, terms: ssa.STerm[]): boolean[] {
   while (sp > 0) {
     sp -= 1;
     let bi = stack[sp];
-    let e = 0;
-    while (e < 2) {
+    for e in 0..2 {
       let sid = ssa.successor_id(terms[bi], e);
       if (sid >= 0 && w.at[sid] >= 0 && !out[w.at[sid]]) {
         out = out.with(w.at[sid], true);
         stack = pushed(stack, sp, w.at[sid]);
         sp += 1;
       }
-      e += 1;
     }
   }
   return out;
@@ -3776,23 +3674,19 @@ function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: bo
     return b;
   }
   let preds: i32[] = [];
-  let i = 0;
-  while (i < b.preds.len()) {
+  for i in 0..b.preds.len() {
     if (keep[i]) {
       preds = preds.append(b.preds[i]);
     }
-    i += 1;
   }
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
     if (ins.kind_tag == ssa.PHI) {
       let args: i32[] = [];
-      let j = 0;
-      while (j < ins.args.len()) {
+      for j in 0..ins.args.len() {
         if (j >= keep.len() || keep[j]) {
           args = args.append(ins.args[j]);
         }
-        j += 1;
       }
       if (args.len() == 1 && ins.args.len() > 1 && args[0] >= 0) {
         insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: args, imm: 0, str: "" });
@@ -3839,8 +3733,7 @@ function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
     }
     bi += 1;
   }
-  bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     if (region[bi]) {
       for pid in f.blocks[bi].preds {
         let pb = at[pid];
@@ -3850,7 +3743,6 @@ function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
         }
       }
     }
-    bi += 1;
   }
   return ssa.SFunc { ...f, blocks: blocks, entry: f.blocks[from].id };
 }
@@ -3870,21 +3762,17 @@ function into_region(t: ssa.STerm, at: i32[], region: boolean[]): ssa.STerm {
 
 function seeded(own pa: Progress, wa: Walk, lva: Live, region: boolean[], w: Walk, lv: Live, p0: Progress): Progress {
   let roots = slot_roots(wa);
-  let bi = 0;
-  while (bi < wa.f.blocks.len()) {
+  for bi in 0..wa.f.blocks.len() {
     if (region[bi]) {
       let b = wa.f.blocks[bi];
-      let pi = 0;
-      while (pi < b.preds.len()) {
+      for pi in 0..b.preds.len() {
         let pb = wa.at[b.preds[pi]];
         if (pb >= 0 && !region[pb]) {
           pa = Progress { ...pa, done: pa.done.with(pb, true) };
           pa = seed_edge(pa, wa, lva, roots, bi, pi, w, lv, p0);
         }
-        pi += 1;
       }
     }
-    bi += 1;
   }
   return pa;
 }
@@ -3972,13 +3860,11 @@ function add_counts(a: i32, b: i32): i32 {
 function with_findings(own out: Finding[], more: Finding[]): Finding[] {
   for x in more {
     let seen = false;
-    let j = 0;
-    while (j < out.len()) {
+    for j in 0..out.len() {
       let y = out[j];
       if (y.kind == x.kind && y.value == x.value && y.block == x.block) {
         seen = true;
       }
-      j += 1;
     }
     if (!seen) {
       out = out.append(x);
@@ -3989,12 +3875,10 @@ function with_findings(own out: Finding[], more: Finding[]): Finding[] {
 
 function slot_roots(w: Walk): i32[] {
   let out = util.minus_ones(w.tracked);
-  let v = 0;
-  while (v < w.idx.len()) {
+  for v in 0..w.idx.len() {
     if (w.idx[v] >= 0) {
       out = out.with(w.idx[v], v);
     }
-    v += 1;
   }
   return out;
 }
@@ -4022,12 +3906,10 @@ function decided_by(w: Walk, tok: i32, unproved: boolean[], maybe_at: i32[]): bo
     return out;
   }
   let infl = reached_from(w, from);
-  let k = 0;
-  while (k < unproved.len()) {
+  for k in 0..unproved.len() {
     if (unproved[k] && maybe_at[k] >= 0 && (maybe_at[k] == from || infl[maybe_at[k]])) {
       out = out.with(k, true);
     }
-    k += 1;
   }
   return out;
 }

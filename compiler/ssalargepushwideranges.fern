@@ -73,10 +73,8 @@ pub function rounded(r: Interval): i64 {
     return -(1 as i64);
   }
   let quantum = 131072 as i64;
-  let at = 19;
-  while (at < bit) {
+  for at in 19..bit {
     quantum *= 2 as i64;
-    at += 1;
   }
   let a = ((low - 1 as i64) / quantum + 1 as i64) * quantum;
   let b = ((high - 1 as i64) / quantum + 1 as i64) * quantum;

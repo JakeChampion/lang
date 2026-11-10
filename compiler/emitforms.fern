@@ -80,12 +80,10 @@ pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_comp
 }
 
 function declares_extern(full: parser.Module): boolean {
-  let i = 0;
-  while (i < full.funcs.len()) {
+  for i in 0..full.funcs.len() {
     if (full.funcs[i].import_iface.len() > 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -140,10 +138,8 @@ function async_type(t: string, mem: boolean): i32[] {
   if (wasm_ir.extern_tuple_param_supported(t)) {
     let n = wasm_ir.tuple_type_elem_count(t);
     let out: i32[] = [111, n];
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       out = out.append(wasm_ir.async_lift_valtype(wasm_ir.nth_tuple_type_elem(t, i)));
-      i += 1;
     }
     return out;
   }

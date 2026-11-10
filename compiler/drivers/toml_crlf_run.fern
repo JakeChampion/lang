@@ -5,15 +5,11 @@ function render_manifest(label: string, src: string): string {
   let m = fern_toml.parse(src);
   let out = label + " name=" + m.name + "\n";
   out = out + label + " deps=" + util.i32_to_string(m.deps.len()) + "\n";
-  let i = 0;
-  while (i < m.deps.len()) {
+  for i in 0..m.deps.len() {
     out = out + label + " dep " + m.deps[i].name + " kind=" + m.deps[i].kind + " version=" + m.deps[i].version + " path=" + m.deps[i].path + "\n";
-    i += 1;
   }
-  let j = 0;
-  while (j < m.members.len()) {
+  for j in 0..m.members.len() {
     out = out + label + " member " + m.members[j] + "\n";
-    j += 1;
   }
   return out;
 }
@@ -21,24 +17,20 @@ function render_manifest(label: string, src: string): string {
 function render_lock(label: string, src: string): string {
   let es: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(lock) => lock.entries, Err(message) => { return label + " error " + message + "\n"; } };
   let out = label + " entries=" + util.i32_to_string(es.len()) + "\n";
-  let i = 0;
-  while (i < es.len()) {
+  for i in 0..es.len() {
     out = out + label + " entry " + es[i].name + " version=" + es[i].version + " path=" + es[i].path + " hash=" + es[i].hash + "\n";
-    i += 1;
   }
   return out;
 }
 
 function crlf(s: string): string {
   let out = "";
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == b'\n') {
       out += "\r\n";
     } else {
       out += slice_unchecked(s, i, i + 1);
     }
-    i += 1;
   }
   return out;
 }

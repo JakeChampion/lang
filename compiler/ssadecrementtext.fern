@@ -153,8 +153,7 @@ function ambiguous_syntax(tail: string): boolean {
 }
 
 function raw_line(raw: string): boolean {
-  let at = 0;
-  while (at < raw.len()) {
+  for at in 0..raw.len() {
     let c = raw[at];
     if (c < 32 && c != b'\t') {
       if (c != b'\r' || at != raw.len() - 1) {
@@ -164,7 +163,6 @@ function raw_line(raw: string): boolean {
     if (c == 127) {
       return false;
     }
-    at += 1;
   }
   return true;
 }
@@ -554,8 +552,7 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
   let code: string[] = [s.lines[start]];
   let reg = -1;
   let ended = false;
-  let at = start + 1;
-  while (at < s.lines.len()) {
+  for at in start + 1..s.lines.len() {
     let line = s.lines[at];
     let name = definition(line);
     if (ends_body(line, name, entry) || line.starts_with(".globl ")) {
@@ -570,7 +567,6 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
     }
     ended = line == ".cfi_endproc";
     code = code.append(line);
-    at += 1;
   }
   if (!ended || code.len() < 3 || code[1] != ".cfi_startproc") {
     return failure("missing retained function frame");

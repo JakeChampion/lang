@@ -14,8 +14,7 @@ function main(): i32 {
   let failures = 0;
   let ok = 0;
   let retired = 0;
-  let id = 1;
-  while (id <= n) {
+  for id in 1..=n {
     let name = ir.kind_name(id);
     let back = ir.kind_id(name);
     if (ir.kind_retired(id)) {
@@ -29,7 +28,6 @@ function main(): i32 {
     } else {
       ok += 1;
     }
-    id += 1;
   }
 
   let ext_names: string[] = [
@@ -79,8 +77,7 @@ function main(): i32 {
   let ext_max = n;
   let ext_ok = 0;
   let ext_failures = 0;
-  let ei = 0;
-  while (ei < ext_names.len()) {
+  for ei in 0..ext_names.len() {
     let eid = ir.kind_id(ext_names[ei]);
     if (eid > ext_max) {
       ext_max = eid;
@@ -90,7 +87,6 @@ function main(): i32 {
     } else {
       ext_ok += 1;
     }
-    ei += 1;
   }
 
   let out = "";
@@ -108,14 +104,12 @@ function main(): i32 {
   ];
   let neg_ok = 0;
   let neg_failures = 0;
-  let ni = 0;
-  while (ni < neg_names.len()) {
+  for ni in 0..neg_names.len() {
     if (ir.kind_id(neg_names[ni]) == 0) {
       neg_ok += 1;
     } else {
       neg_failures += 1;
     }
-    ni += 1;
   }
   out = out + "neg_ok=" + util.i32_to_string(neg_ok) + "\n";
   out = out + "neg_failures=" + util.i32_to_string(neg_failures) + "\n";
@@ -235,25 +229,21 @@ function main(): i32 {
   ];
   let tag_ok = 0;
   let tag_bad = 0;
-  let j = 0;
-  while (j < probe.len()) {
+  for j in 0..probe.len() {
     if (probe[j].kind_tag == ir.kind_id(names[j])) {
       tag_ok += 1;
     } else {
       tag_bad += 1;
     }
-    j += 1;
   }
   out = out + "tag_consistency ok=" + util.i32_to_string(tag_ok)
     + " bad=" + util.i32_to_string(tag_bad) + "\n";
 
-  let tid = 1;
-  while (tid <= ext_max) {
+  for tid in 1..=ext_max {
     let tname = ir.kind_name(tid);
     if (tname != "invalid") {
       out = out + tname + "=" + util.i32_to_string(ir.kind_id(tname)) + "\n";
     }
-    tid += 1;
   }
 
   write(out);

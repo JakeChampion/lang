@@ -21,10 +21,8 @@ function probe(op: string, fixed: boolean, regs: i32): i32 {
   }
   let f = ssa.SFunc { name: "probe", nparams: 0, nvals: 24, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } }] };
   let nh: boolean[] = [false, false];
-  i = 2;
-  while (i < 24) {
+  for i in 2..24 {
     nh = nh.append(true);
-    i += 1;
   }
   let a = ssa.regalloc_linear(f, regs, 0, 0, fixed, nh, [], [], 0, 0);
   return a.reg_of[1];
