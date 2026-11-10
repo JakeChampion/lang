@@ -1116,6 +1116,9 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.TryOp:
 		return freshInit(info, init.Inner)
 	case *ast.Call:
+		if freshAssociatedResult(init) {
+			return true
+		}
 		if info != nil {
 			// A variant construction from another module has a qualified
 			// callee. It is fresh on the same terms as an unqualified one.

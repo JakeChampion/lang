@@ -13,6 +13,9 @@ import (
 func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir string) {
 	t.Helper()
 	for _, name := range []string{
+		"associated_factory_result_is_owned",
+		"diag_e051_associated_factory_borrowed_argument",
+		"diag_e051_associated_factory_shadowed_type",
 		"diag_e051_generic_result_identity",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
