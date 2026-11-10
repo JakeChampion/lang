@@ -33,10 +33,9 @@ pub function reread_before_spends(f: ssasem.Func, facts: ssadeps.Facts): Late {
   let cands = candidates(f, gr);
   while (cands.len() > 0) {
     let out = applied(f, gr, cands);
-    let bad = first_still_live(out, cands);
-    if (bad < 0) {
+    let Some(bad) = first_still_live(out, cands) else {
       return Late { f: out, reread: cands.len() };
-    }
+    };
     cands = without(cands, bad);
   }
   return Late { f: f, reread: 0 };
@@ -310,20 +309,20 @@ function renamed(gr: Graph, cands: Cand[], fresh: i32[], bi: i32, at: i32, v: i3
 
 // first_still_live is the first candidate whose value is still live past its
 // call, which a use that the call does not dominate makes so, or -1.
-function first_still_live(f: ssasem.Func, cands: Cand[]): i32 {
+function first_still_live(f: ssasem.Func, cands: Cand[]): Option[i32] {
   let live = ssalive.compute_checked(f.graph, no_chains(f.graph.nvals));
   if (!live.ok) {
-    return 0;
+    return Some(0);
   }
   for i in 0..cands.len() {
     let c = cands[i];
     let v = c.chain[c.chain.len() - 1];
     let call_at = c.at + c.chain.len() - 1;
     if (ssalive.live_out_has(live, c.block, v) || used_after(f.graph.blocks[c.block], call_at, v)) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function without(cands: Cand[], i: i32): Cand[] {

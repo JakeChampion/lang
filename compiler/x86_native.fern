@@ -2,6 +2,7 @@ import "./sysreg";
 import "./util";
 import "./gas";
 import "std/string";
+import "std/option";
 
 function x86_rax(): i32 {
   return 0;
@@ -1186,10 +1187,9 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   if (direct >= 0) {
     return direct;
   }
-  let split = x86_symbol_addend_at(name);
-  if (split < 0) {
+  let Some(split) = x86_symbol_addend_at(name) else {
     return -1;
-  }
+  };
   let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split).to_owned()) + "";
   let target = x86_final_off(a, symbol, padded_text, bss_base);
   let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()).to_owned());
@@ -1206,7 +1206,7 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   return value as i32;
 }
 
-function x86_symbol_addend_at(name: string): i32 {
+function x86_symbol_addend_at(name: string): Option[i32] {
   let quoted = false;
   let escaped = false;
   for i in 0..name.len() {
@@ -1218,10 +1218,10 @@ function x86_symbol_addend_at(name: string): i32 {
     } else if (c == 34) {
       quoted = !quoted;
     } else if (!quoted && i > 0 && (c == 43 || c == 45)) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function x86_addend_digit(c: i32): i32 {
@@ -2200,25 +2200,25 @@ function x86_gas_top_comma(s: string): i32 {
 }
 
 // BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.
-function x86_gas_rep_pfx(mnem: string): i32 {
+function x86_gas_rep_pfx(mnem: string): Option[i32] {
   match (mnem) {
     "rep" => {
-      return 243;
+      return Some(243);
     },
     "repe" => {
-      return 243;
+      return Some(243);
     },
     "repz" => {
-      return 243;
+      return Some(243);
     },
     "repne" => {
-      return 242;
+      return Some(242);
     },
     "repnz" => {
-      return 242;
+      return Some(242);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2235,19 +2235,19 @@ function x86_gas_is_pushpop(mnem: string): boolean {
   return mnem == "pushq" || mnem == "popq";
 }
 
-function x86_gas_lea_size(mnem: string): i32 {
+function x86_gas_lea_size(mnem: string): Option[i32] {
   match (mnem) {
     "leaq" => {
-      return 64;
+      return Some(64);
     },
     "leal" => {
-      return 32;
+      return Some(32);
     },
     "leaw" => {
-      return 16;
+      return Some(16);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2278,40 +2278,40 @@ function x86_gas_is_movabs(mnem: string): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_extend_op(mnem: string): i32 {
+function x86_gas_extend_op(mnem: string): Option[i32] {
   match (mnem) {
     "movzbw" => {
-      return 46594;
+      return Some(46594);
     },
     "movzbl" => {
-      return 46596;
+      return Some(46596);
     },
     "movzbq" => {
-      return 46600;
+      return Some(46600);
     },
     "movzwl" => {
-      return 46852;
+      return Some(46852);
     },
     "movzwq" => {
-      return 46856;
+      return Some(46856);
     },
     "movsbw" => {
-      return 48642;
+      return Some(48642);
     },
     "movsbl" => {
-      return 48644;
+      return Some(48644);
     },
     "movsbq" => {
-      return 48648;
+      return Some(48648);
     },
     "movswl" => {
-      return 48900;
+      return Some(48900);
     },
     "movswq" => {
-      return 48904;
+      return Some(48904);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2330,54 +2330,54 @@ function x86_gas_is_imul(mnem: string): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_bitscan_op(mnem: string): i32 {
+function x86_gas_bitscan_op(mnem: string): Option[i32] {
   match (mnem) {
     "bsfl" => {
-      return 48128;
+      return Some(48128);
     },
     "bsfq" => {
-      return 48129;
+      return Some(48129);
     },
     "bsrl" => {
-      return 48384;
+      return Some(48384);
     },
     "bsrq" => {
-      return 48385;
+      return Some(48385);
     },
     "lzcntl" => {
-      return 15973632;
+      return Some(15973632);
     },
     "lzcntq" => {
-      return 15973633;
+      return Some(15973633);
     },
     "tzcntl" => {
-      return 15973376;
+      return Some(15973376);
     },
     "tzcntq" => {
-      return 15973377;
+      return Some(15973377);
     },
     "popcntl" => {
-      return 15972352;
+      return Some(15972352);
     },
     "popcntq" => {
-      return 15972353;
+      return Some(15972353);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_shld_op(mnem: string): i32 {
+function x86_gas_shld_op(mnem: string): Option[i32] {
   match (mnem) {
     "shld" => {
-      return 164;
+      return Some(164);
     },
     "shrd" => {
-      return 172;
+      return Some(172);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2386,16 +2386,16 @@ function x86_gas_is_bswap(mnem: string): boolean {
   return mnem == "bswap";
 }
 
-function x86_gas_rmw_op(mnem: string): i32 {
+function x86_gas_rmw_op(mnem: string): Option[i32] {
   match (mnem) {
     "xadd" => {
-      return 192;
+      return Some(192);
     },
     "cmpxchg" => {
-      return 176;
+      return Some(176);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2408,45 +2408,45 @@ function x86_gas_is_crc32(mnem: string): boolean {
   return mnem == "crc32";
 }
 
-function x86_gas_port_op(mnem: string): i32 {
+function x86_gas_port_op(mnem: string): Option[i32] {
   match (mnem) {
     "inb" => {
-      return 236;
+      return Some(236);
     },
     "inw" => {
-      return 26349;
+      return Some(26349);
     },
     "inl" => {
-      return 237;
+      return Some(237);
     },
     "outb" => {
-      return 238;
+      return Some(238);
     },
     "outw" => {
-      return 26351;
+      return Some(26351);
     },
     "outl" => {
-      return 239;
+      return Some(239);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_memext_op(mnem: string): i32 {
+function x86_gas_memext_op(mnem: string): Option[i32] {
   match (mnem) {
     "clflush" => {
-      return 1966;
+      return Some(1966);
     },
     "invlpg" => {
-      return 1793;
+      return Some(1793);
     },
     "lidt" => {
-      return 769;
+      return Some(769);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2455,22 +2455,22 @@ function x86_gas_is_movqd(mnem: string): boolean {
   return mnem == "movd";
 }
 
-function x86_gas_mov10_pfx(mnem: string): i32 {
+function x86_gas_mov10_pfx(mnem: string): Option[i32] {
   match (mnem) {
     "movsd" => {
-      return 242;
+      return Some(242);
     },
     "movss" => {
-      return 243;
+      return Some(243);
     },
     "movups" => {
-      return 0;
+      return Some(0);
     },
     "movupd" => {
-      return 102;
+      return Some(102);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2489,109 +2489,109 @@ function x86_gas_movdq_pfx(mnem: string): i32 {
   }
 }
 
-function x86_gas_cvt2s_op(mnem: string): i32 {
+function x86_gas_cvt2s_op(mnem: string): Option[i32] {
   match (mnem) {
     "cvtsi2sd" => {
-      return 61953;
+      return Some(61953);
     },
     "cvtsi2sdq" => {
-      return 61953;
+      return Some(61953);
     },
     "cvtsi2sdl" => {
-      return 61952;
+      return Some(61952);
     },
     "cvtsi2ss" => {
-      return 62209;
+      return Some(62209);
     },
     "cvtsi2ssq" => {
-      return 62209;
+      return Some(62209);
     },
     "cvtsi2ssl" => {
-      return 62208;
+      return Some(62208);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_cvt2si(mnem: string): i32 {
+function x86_gas_cvt2si(mnem: string): Option[i32] {
   match (mnem) {
     "cvttsd2si" => {
-      return 61996;
+      return Some(61996);
     },
     "cvttsd2sil" => {
-      return 61996;
+      return Some(61996);
     },
     "cvttsd2siq" => {
-      return 61996;
+      return Some(61996);
     },
     "cvtsd2si" => {
-      return 61997;
+      return Some(61997);
     },
     "cvtsd2sil" => {
-      return 61997;
+      return Some(61997);
     },
     "cvtsd2siq" => {
-      return 61997;
+      return Some(61997);
     },
     "cvttss2si" => {
-      return 62252;
+      return Some(62252);
     },
     "cvttss2sil" => {
-      return 62252;
+      return Some(62252);
     },
     "cvttss2siq" => {
-      return 62252;
+      return Some(62252);
     },
     "cvtss2si" => {
-      return 62253;
+      return Some(62253);
     },
     "cvtss2sil" => {
-      return 62253;
+      return Some(62253);
     },
     "cvtss2siq" => {
-      return 62253;
+      return Some(62253);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_imm3a_op(mnem: string): i32 {
+function x86_gas_imm3a_op(mnem: string): Option[i32] {
   match (mnem) {
     "roundss" => {
-      return 10;
+      return Some(10);
     },
     "roundsd" => {
-      return 11;
+      return Some(11);
     },
     "roundps" => {
-      return 8;
+      return Some(8);
     },
     "roundpd" => {
-      return 9;
+      return Some(9);
     },
     "pcmpestri" => {
-      return 97;
+      return Some(97);
     },
     "pcmpistri" => {
-      return 99;
+      return Some(99);
     },
     "pclmulqdq" => {
-      return 68;
+      return Some(68);
     },
     "aeskeygenassist" => {
-      return 223;
+      return Some(223);
     },
     "palignr" => {
-      return 15;
+      return Some(15);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2627,19 +2627,19 @@ function x86_gas_is_pinsr(mnem: string): boolean {
   return mnem == "pinsrb" || mnem == "pinsrw" || mnem == "pinsrd" || mnem == "pinsrq";
 }
 
-function x86_gas_movmsk_op(mnem: string): i32 {
+function x86_gas_movmsk_op(mnem: string): Option[i32] {
   match (mnem) {
     "pmovmskb" => {
-      return 26327;
+      return Some(26327);
     },
     "movmskps" => {
-      return 80;
+      return Some(80);
     },
     "movmskpd" => {
-      return 26192;
+      return Some(26192);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -2686,49 +2686,49 @@ function x86_gas_vshift_op(mnem: string): i32 {
 
 // fern-lint: allow cyclomatic-complexity
 // Each table row has one match arm.
-function x86_gas_sse38_op(mnem: string): i32 {
+function x86_gas_sse38_op(mnem: string): Option[i32] {
   match (mnem) {
     "pshufb" => {
-      return 0;
+      return Some(0);
     },
     "ptest" => {
-      return 23;
+      return Some(23);
     },
     "pmulld" => {
-      return 64;
+      return Some(64);
     },
     "pminsb" => {
-      return 56;
+      return Some(56);
     },
     "pminsd" => {
-      return 57;
+      return Some(57);
     },
     "pminuw" => {
-      return 58;
+      return Some(58);
     },
     "pminud" => {
-      return 59;
+      return Some(59);
     },
     "pmaxsb" => {
-      return 60;
+      return Some(60);
     },
     "pmaxsd" => {
-      return 61;
+      return Some(61);
     },
     "pmaxuw" => {
-      return 62;
+      return Some(62);
     },
     "pmaxud" => {
-      return 63;
+      return Some(63);
     },
     "aesenc" => {
-      return 220;
+      return Some(220);
     },
     "aesenclast" => {
-      return 221;
+      return Some(221);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -3131,126 +3131,126 @@ function x86_gas_split_ops(rest: string): string[] {
 }
 
 // BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.
-function x86_gas_alu_ext(mnem: string): i32 {
+function x86_gas_alu_ext(mnem: string): Option[i32] {
   match (mnem) {
     "add" => {
-      return 0;
+      return Some(0);
     },
     "or" => {
-      return 1;
+      return Some(1);
     },
     "adc" => {
-      return 2;
+      return Some(2);
     },
     "sbb" => {
-      return 3;
+      return Some(3);
     },
     "and" => {
-      return 4;
+      return Some(4);
     },
     "sub" => {
-      return 5;
+      return Some(5);
     },
     "xor" => {
-      return 6;
+      return Some(6);
     },
     "cmp" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_unary_ext(mnem: string): i32 {
+function x86_gas_unary_ext(mnem: string): Option[i32] {
   match (mnem) {
     "not" => {
-      return 2;
+      return Some(2);
     },
     "neg" => {
-      return 3;
+      return Some(3);
     },
     "mul" => {
-      return 4;
+      return Some(4);
     },
     "imul" => {
-      return 5;
+      return Some(5);
     },
     "div" => {
-      return 6;
+      return Some(6);
     },
     "idiv" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_incdec_ext(mnem: string): i32 {
+function x86_gas_incdec_ext(mnem: string): Option[i32] {
   match (mnem) {
     "inc" => {
-      return 0;
+      return Some(0);
     },
     "dec" => {
-      return 1;
+      return Some(1);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_shift_ext(mnem: string): i32 {
+function x86_gas_shift_ext(mnem: string): Option[i32] {
   match (mnem) {
     "rol" => {
-      return 0;
+      return Some(0);
     },
     "ror" => {
-      return 1;
+      return Some(1);
     },
     "rcl" => {
-      return 2;
+      return Some(2);
     },
     "rcr" => {
-      return 3;
+      return Some(3);
     },
     "shl" => {
-      return 4;
+      return Some(4);
     },
     "sal" => {
-      return 4;
+      return Some(4);
     },
     "shr" => {
-      return 5;
+      return Some(5);
     },
     "sar" => {
-      return 7;
+      return Some(7);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
 
-function x86_gas_bt_idx(mnem: string): i32 {
+function x86_gas_bt_idx(mnem: string): Option[i32] {
   match (mnem) {
     "bt" => {
-      return 0;
+      return Some(0);
     },
     "bts" => {
-      return 1;
+      return Some(1);
     },
     "btr" => {
-      return 2;
+      return Some(2);
     },
     "btc" => {
-      return 3;
+      return Some(3);
     },
     _ => {
-      return -1;
+      return None;
     }
   }
 }
@@ -5076,8 +5076,7 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (xs < 0 || xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op3a = x86_gas_imm3a_op(mnem);
-  if (op3a >= 0) {
+  if let Some(op3a) = x86_gas_imm3a_op(mnem) {
     util.push_bytes(a.code, x86_sse_3a_imm([], 0, op3a, xd, xs, imm));
     return a;
   }
@@ -6430,19 +6429,16 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
 
 // The rep and lock prefixes, port I/O, and clflush and invlpg.
 function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdict] {
-  let rpfx = x86_gas_rep_pfx(mnem);
-  if (rpfx >= 0) {
+  if let Some(rpfx) = x86_gas_rep_pfx(mnem) {
     return Some(MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx });
   }
   if (x86_gas_is_lock(mnem)) {
     return Some(MnemVerdict { ...v, a_kind: GK_LOCK });
   }
-  let port = x86_gas_port_op(mnem);
-  if (port >= 0) {
+  if let Some(port) = x86_gas_port_op(mnem) {
     return Some(MnemVerdict { ...v, b_kind: GK_PORT, b_ext: port });
   }
-  let memext = x86_gas_memext_op(mnem);
-  if (memext >= 0) {
+  if let Some(memext) = x86_gas_memext_op(mnem) {
     return Some(MnemVerdict { ...v, a_kind: GK_MEMEXT, a_ext: memext });
   }
   return None;
@@ -6493,26 +6489,23 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     if (x86_gas_is_imul(bse)) {
       return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
-    let ue = x86_gas_unary_ext(bse);
-    if (ue >= 0) {
+    if let Some(ue) = x86_gas_unary_ext(bse) {
       return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
-    let ide = x86_gas_incdec_ext(bse);
-    if (ide >= 0) {
+    if let Some(ide) = x86_gas_incdec_ext(bse) {
       return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
       return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
-    let sho = x86_gas_shld_op(bse);
-    if (sho >= 0) {
+    if let Some(sho) = x86_gas_shld_op(bse) {
       return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
   }
   if (x86_gas_is_bswap(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_BSWAP };
   }
-  if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
+  if (x86_gas_imm3a_op(mnem).is_some() || x86_gas_shuf_op(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_SSE_IMM3 };
   }
   if (x86_gas_is_pextr(mnem)) {
@@ -6521,8 +6514,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pinsr(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
-  let lsz = x86_gas_lea_size(mnem);
-  if (lsz >= 0) {
+  if let Some(lsz) = x86_gas_lea_size(mnem) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
   }
   let msz = x86_gas_mov_size(mnem);
@@ -6541,51 +6533,41 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_movdq_pfx(mnem) >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVDQ };
   }
-  let m10 = x86_gas_mov10_pfx(mnem);
-  if (m10 >= 0) {
+  if let Some(m10) = x86_gas_mov10_pfx(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
   }
-  let mmk = x86_gas_movmsk_op(mnem);
-  if (mmk >= 0) {
+  if let Some(mmk) = x86_gas_movmsk_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
   }
-  let bsc = x86_gas_bitscan_op(mnem);
-  if (bsc >= 0) {
+  if let Some(bsc) = x86_gas_bitscan_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
   }
   if (x86_gas_is_movqd(mnem)) {
     return MnemVerdict { ...v, b_kind: GK_MOVQD };
   }
-  let mx = x86_gas_extend_op(mnem);
-  if (mx >= 0) {
+  if let Some(mx) = x86_gas_extend_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
   }
-  let f2i = x86_gas_cvt2si(mnem);
-  if (f2i >= 0) {
+  if let Some(f2i) = x86_gas_cvt2si(mnem) {
     return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
   }
-  let c2s = x86_gas_cvt2s_op(mnem);
-  if (c2s >= 0) {
+  if let Some(c2s) = x86_gas_cvt2s_op(mnem) {
     return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
   }
   if (sfx > 0) {
-    let ae = x86_gas_alu_ext(bse);
-    if (ae >= 0) {
+    if let Some(ae) = x86_gas_alu_ext(bse) {
       return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
     }
     if (x86_gas_is_test(bse)) {
       return MnemVerdict { ...v, b_kind: GK_TEST };
     }
-    let she = x86_gas_shift_ext(bse);
-    if (she >= 0) {
+    if let Some(she) = x86_gas_shift_ext(bse) {
       return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
     }
-    let bti = x86_gas_bt_idx(bse);
-    if (bti >= 0) {
+    if let Some(bti) = x86_gas_bt_idx(bse) {
       return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
     }
-    let rmw = x86_gas_rmw_op(bse);
-    if (rmw >= 0) {
+    if let Some(rmw) = x86_gas_rmw_op(bse) {
       return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
     }
     if (x86_gas_is_xchg(bse)) {
@@ -6602,8 +6584,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (sse >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
   }
-  let s38 = x86_gas_sse38_op(mnem);
-  if (s38 >= 0) {
+  if let Some(s38) = x86_gas_sse38_op(mnem) {
     return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
   }
   if (x86_gas_is_movsxd(mnem)) {

@@ -25,10 +25,9 @@ pub function unroll(f: ssasem.Func): Unrolled {
   let cur = f;
   let loops = 0;
   while (loops < 8) {
-    let at = first_counted(cur);
-    if (at < 0) {
+    let Some(at) = first_counted(cur) else {
       break;
-    }
+    };
     cur = unrolled_at(cur, at);
     loops += 1;
   }
@@ -103,14 +102,14 @@ function has_loop_head(g: ssa.SFunc): boolean {
   return false;
 }
 
-function first_counted(f: ssasem.Func): i32 {
+function first_counted(f: ssasem.Func): Option[i32] {
   let d = ssa.def_sites_of(f.graph);
   for bi in 0..f.graph.blocks.len() {
     if (counted_at(f, d, bi).trips >= 0) {
-      return bi;
+      return Some(bi);
     }
   }
-  return -1;
+  return None;
 }
 
 function no_loop(): Counted {

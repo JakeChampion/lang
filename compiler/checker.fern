@@ -6054,18 +6054,18 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
   return "";
 }
 
-function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): i32 {
+function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): Option[i32] {
   for i in 0..sl.field_names.len() {
     let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
     if (fi >= 0) {
       let ft = lit_field_type(ssig, fi, args, s);
       let vt = check_expr(sl.field_values[i], s);
       if (!type_contains_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[i], ft, s) && !coercible(vt, ft, s)) {
-        return i;
+        return Some(i);
       }
     }
   }
-  return -1;
+  return None;
 }
 
 function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: Scope): typeinfo.Type {
@@ -6598,7 +6598,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
   if (lit_uninferable_param(sl, ssig, largs, s).len() > 0) {
     return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
   }
-  if (lit_field_clash(sl, ssig, largs, s) >= 0) {
+  if (lit_field_clash(sl, ssig, largs, s).is_some()) {
     return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
   }
   return typeinfo.TypeStruct { name: sl.type_name, args: largs };
@@ -13970,8 +13970,7 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
 }
 
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
-  let want = map_builtin_arity(method);
-  if (want < 0) {
+  let Some(want) = map_builtin_arity(method) else {
     if let Some(msig) = s.lookup_method(method, "Map") {
       let recv: typeinfo.Type = mt;
       if (map_source_receiver_missing(recv, msig)) {
@@ -13985,7 +13984,7 @@ function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s:
       return util.append_diags(out, uninferred_method_diags(c, "Map", method, msig, s));
     }
     return out;
-  }
+  };
   if (want >= 0 && c.args.len() != want) {
     return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", want, c.args.len(), "argument"), c.line, c.col));
   }
@@ -14009,17 +14008,17 @@ function map_arg_slots(method: string, mt: typeinfo.TypeMap): typeinfo.Type[] {
   return [];
 }
 
-function map_builtin_arity(method: string): i32 {
+function map_builtin_arity(method: string): Option[i32] {
   if (method == "insert" || method == "get_or") {
-    return 2;
+    return Some(2);
   }
   if (method == "get" || method == "contains" || method == "remove") {
-    return 1;
+    return Some(1);
   }
   if (method == "len" || method == "cleared" || method == "keys" || method == "values") {
-    return 0;
+    return Some(0);
   }
-  return -1;
+  return None;
 }
 
 function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {

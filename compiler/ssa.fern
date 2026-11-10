@@ -1740,8 +1740,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (phi_side.len() == 0) {
         phi_side = phi_values(f);
       }
-      let lend = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos);
-      if (lend >= 0) {
+      if let Some(lend) = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos) {
         let top = later_interval_end(act_hi[lend], hi[v]);
         let lent = act_reg[lend];
         let holder = act_val[lend];
@@ -2540,18 +2539,18 @@ function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_sta
 
 // A caller-saved register whose values do not interfere with v: none is live
 // at v's definition, and v is live at none of theirs.
-function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): i32 {
+function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
   if (ln.phi[v]) {
-    return -1;
+    return None;
   }
   for ai in 0..act_val.len() {
     let hr = act_reg[ai];
     let open = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
     if (open && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, ln.reads, ln.phi, lo, hi, def_blk, def_pos)) {
-      return ai;
+      return Some(ai);
     }
   }
-  return -1;
+  return None;
 }
 
 function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: i32[], phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {

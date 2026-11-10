@@ -1,5 +1,6 @@
 import "./util";
 import "./watbin";
+import "std/option";
 
 pub struct UlebRead { value: i32, next: i32 }
 
@@ -672,8 +673,7 @@ pub function wit_import_plan(tbody: i32[], ifaces: string[], names: string[]): W
     decl_keep: __alloc_bool(d.kind.len()),
   };
   for u in 0..ifaces.len() {
-    let j = wit_names_index(d.imp_names, ifaces[u]);
-    if (j >= 0) {
+    if let Some(j) = wit_names_index(d.imp_names, ifaces[u]) {
       n = wit_needs_ask(n, j, names[u]);
     }
   }
@@ -773,17 +773,17 @@ function wit_numbering(kept: boolean[]): (i32[], i32) {
   return (map, count);
 }
 
-function wit_names_index(names: string[], s: string): i32 {
+function wit_names_index(names: string[], s: string): Option[i32] {
   for i in 0..names.len() {
     if (names[i] == s) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function wit_names_has(names: string[], s: string): boolean {
-  return wit_names_index(names, s) >= 0;
+  return wit_names_index(names, s).is_some();
 }
 
 function wit_world_def_refs(tbody: i32[], q: i32, whole: boolean, names: string[]): i32[] {
@@ -1573,14 +1573,13 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
 }
 
 pub function wit_world_declares(tbody: i32[], iface: string): boolean {
-  return wit_names_index(wit_world_decls(tbody).imp_names, iface) >= 0;
+  return wit_names_index(wit_world_decls(tbody).imp_names, iface).is_some();
 }
 
 pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
-  let j = wit_names_index(wit_world_decls(tbody).imp_names, iface);
-  if (j < 0) {
+  let Some(j) = wit_names_index(wit_world_decls(tbody).imp_names, iface) else {
     return -1;
-  }
+  };
   return plan.index[j];
 }
 

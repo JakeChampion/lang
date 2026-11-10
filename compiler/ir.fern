@@ -3721,32 +3721,32 @@ function pops3(t: i32): boolean {
     || t == 433;
 }
 
-function pops_buf(t: i32): i32 {
+function pops_buf(t: i32): Option[i32] {
   if (t >= 487 && t <= 489) {
-    return 5;
+    return Some(5);
   }
   if (t == 351) {
-    return 4;
+    return Some(4);
   }
   if (t == 347 || t == 386) {
-    return 1;
+    return Some(1);
   }
   if (t == 306 || t == 485) {
-    return 2;
+    return Some(2);
   }
   if (t == 325 || t == 326 || t == 328 || t == 370 || t == 371 || t == 372) {
-    return 3;
+    return Some(3);
   }
   if (t < 291 || t > 297) {
-    return -1;
+    return None;
   }
   if (t == 293) {
-    return 4;
+    return Some(4);
   }
   if (t == 292 || t == 294) {
-    return 2;
+    return Some(2);
   }
-  return 1;
+  return Some(1);
 }
 
 function pops_dir(t: i32): i32 {
@@ -3812,8 +3812,7 @@ function kind_pops(t: i32): i32 {
   if (is_lane_kind(t)) {
     return lane_kind_pops()[t - LANE_KIND_FIRST];
   }
-  let bufn = pops_buf(t);
-  if (bufn >= 0) {
+  if let Some(bufn) = pops_buf(t) {
     return bufn;
   }
   if (t >= 420 && t <= 428) {
@@ -5048,10 +5047,9 @@ struct SlotUse { stores: i32[], first_load: i32[], last_load: i32[] }
 // later in the same loop. A local that it stores counts as invariant after it.
 // Every slot of `ops` is below `nslots`.
 function licm_hoist_pure(ops: Op[], loop_idx: i32, nslots: i32): PureHoist {
-  let end = licm_scope_end(ops, loop_idx);
-  if (end < 0) {
+  let Some(end) = licm_scope_end(ops, loop_idx) else {
     return PureHoist { ops: ops, at: loop_idx };
-  }
+  };
   let uses = SlotUse { stores: [], first_load: [], last_load: [] };
   let stored = __alloc_bool(nslots);
   for j in loop_idx + 1..end {
@@ -5151,10 +5149,9 @@ function licm_slot_use(ops: Op[], n: i32): SlotUse {
 
 function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own stored: i32[]): Hoisted {
   let ops = cur.ops;
-  let end = licm_scope_end(ops, loop_idx);
-  if (end < 0) {
+  let Some(end) = licm_scope_end(ops, loop_idx) else {
     return Hoisted { cur: cur, stored: stored };
-  }
+  };
   let hdr_end = licm_header_end(ops, loop_idx);
   let mark = loop_idx + 1;
   stored = licm_stored_locals(ops, loop_idx + 1, end, stored, mark);
@@ -5282,7 +5279,7 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
   return j;
 }
 
-function licm_scope_end(ops: Op[], open: i32): i32 {
+function licm_scope_end(ops: Op[], open: i32): Option[i32] {
   let k_block = K_BLOCK;
   let k_loop = K_LOOP;
   let k_if = K_IF;
@@ -5295,11 +5292,11 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
     } else if (t == k_end) {
       depth -= 1;
       if (depth == 0) {
-        return j;
+        return Some(j);
       }
     }
   }
-  return -1;
+  return None;
 }
 
 function licm_stored_locals(ops: Op[], lo: i32, hi: i32, own stored: i32[], mark: i32): i32[] {

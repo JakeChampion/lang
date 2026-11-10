@@ -9,23 +9,23 @@ import "./typeinfo";
 import "./byteconst";
 import "std/string";
 import "./lexer";
+import "std/option";
 
 // writes is false only for a finalizer that cannot write a cell
 // (mark_cell_writers).
 pub struct Finalizer { receiver: string, symbol: string, writes: boolean }
 
-pub function finalizer_index(rows: Finalizer[], receiver: string): i32 {
+pub function finalizer_index(rows: Finalizer[], receiver: string): Option[i32] {
   for i in 0..rows.len() {
     if (rows[i].receiver == receiver) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function finalizer_named(rows: Finalizer[], receiver: string): string {
-  let i = finalizer_index(rows, receiver);
-  if (i >= 0) {
+  if let Some(i) = finalizer_index(rows, receiver) {
     return rows[i].symbol;
   }
   return "";
@@ -63,10 +63,10 @@ pub struct Anchor { name: string, params: i32[] }
 
 pub function has_finalizer(f: Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(r) = t {
-    return finalizer_index(f.finalizers, r.name) >= 0;
+    return finalizer_index(f.finalizers, r.name).is_some();
   }
   if let typeinfo.TypeUnion(u) = t {
-    return finalizer_index(f.finalizers, u.name) >= 0;
+    return finalizer_index(f.finalizers, u.name).is_some();
   }
   return false;
 }

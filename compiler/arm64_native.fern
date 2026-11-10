@@ -3,6 +3,7 @@ import "./util";
 import "./gas";
 import "std/crypto";
 import "std/string";
+import "std/option";
 
 function arm64_x0(): i32 {
   return 0;
@@ -2315,14 +2316,14 @@ function arm64_vecaes(buf: i32[], rd: i32, rn: i32, opcode: i32): i32[] {
   return arm64_le32(buf, word);
 }
 
-function arm64_aes_opcode(mnem: string): i32 {
+function arm64_aes_opcode(mnem: string): Option[i32] {
   if (mnem == "aese") {
-    return 4;
+    return Some(4);
   }
   if (mnem == "aesmc") {
-    return 6;
+    return Some(6);
   }
-  return -1;
+  return None;
 }
 
 function arm64_vecsha(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32): i32[] {
@@ -2816,8 +2817,7 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     ));
     return a;
   }
-  let aes = arm64_aes_opcode(mnem);
-  if (aes >= 0) {
+  if let Some(aes) = arm64_aes_opcode(mnem) {
     if (ops.len() != 2) {
       return a;
     }
@@ -3175,8 +3175,7 @@ function arm64_gas_imm64(tok: string): i64 {
 function arm64_gas_reg(tok: string): i32 {
   let i = arm64_gas_trim_lo(tok, 0, tok.len());
   let j = arm64_gas_trim_hi(tok, i, tok.len());
-  let alias = arm64_gas_reg_alias(tok, i, j);
-  if (alias >= 0) {
+  if let Some(alias) = arm64_gas_reg_alias(tok, i, j) {
     return alias;
   }
   if (j - i < 2 || !(tok[i] == b'x' || tok[i] == b'w' || tok[i] == b'd' || tok[i] == b's')) {
@@ -3202,23 +3201,23 @@ function arm64_gas_reg(tok: string): i32 {
   return n;
 }
 
-function arm64_gas_reg_alias(tok: string, i: i32, j: i32): i32 {
+function arm64_gas_reg_alias(tok: string, i: i32, j: i32): Option[i32] {
   let len = j - i;
   if (len == 2) {
     if (tok[i] == b's' && tok[i + 1] == b'p') {
-      return 31;
+      return Some(31);
     }
     if (tok[i] == b'l' && tok[i + 1] == b'r') {
-      return 30;
+      return Some(30);
     }
     if (tok[i] == b'f' && tok[i + 1] == b'p') {
-      return 29;
+      return Some(29);
     }
   }
   if (len == 3 && (tok[i] == b'x' || tok[i] == b'w') && tok[i + 1] == b'z' && tok[i + 2] == b'r') {
-    return 31;
+    return Some(31);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_bad_reg_token(ops: string[]): string {
@@ -3520,19 +3519,19 @@ function arm64_gas_pow2(n: i32): i32 {
   return v;
 }
 
-function arm64_gas_cond_operand(mnem: string): i32 {
+function arm64_gas_cond_operand(mnem: string): Option[i32] {
   if (mnem == "cset" || mnem == "csetm") {
-    return 1;
+    return Some(1);
   }
   if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") {
-    return 2;
+    return Some(2);
   }
   if (mnem == "csel" || mnem == "csinc" || mnem == "csinv" || mnem == "csneg"
     || mnem == "ccmp" || mnem == "ccmn"
     || mnem == "fcsel" || mnem == "fccmp") {
-    return 3;
+    return Some(3);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_cond_inverts(mnem: string): boolean {
@@ -3541,10 +3540,9 @@ function arm64_gas_cond_inverts(mnem: string): boolean {
 }
 
 function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
-  let idx = arm64_gas_cond_operand(mnem);
-  if (idx < 0) {
+  let Some(idx) = arm64_gas_cond_operand(mnem) else {
     return "";
-  }
+  };
   if (ops.len() <= idx) {
     return mnem + ":arity";
   }
@@ -3873,7 +3871,7 @@ function arm64_gas_bad_pmull(mnem: string, ops: string[]): string {
 }
 
 function arm64_gas_bad_aes(mnem: string, ops: string[]): string {
-  if (arm64_aes_opcode(mnem) < 0) {
+  if (arm64_aes_opcode(mnem).is_none()) {
     return "-";
   }
   if (ops.len() != 2) {
@@ -4301,33 +4299,33 @@ function arm64_gas_shift_type(tok: string): i32 {
   return -1;
 }
 
-function arm64_gas_extend_option(tok: string): i32 {
+function arm64_gas_extend_option(tok: string): Option[i32] {
   let s = arm64_gas_trim(tok);
   if (util.index_of_sub(s, "uxtb") == 0) {
-    return 0;
+    return Some(0);
   }
   if (util.index_of_sub(s, "uxth") == 0) {
-    return 1;
+    return Some(1);
   }
   if (util.index_of_sub(s, "uxtw") == 0) {
-    return 2;
+    return Some(2);
   }
   if (util.index_of_sub(s, "uxtx") == 0) {
-    return 3;
+    return Some(3);
   }
   if (util.index_of_sub(s, "sxtb") == 0) {
-    return 4;
+    return Some(4);
   }
   if (util.index_of_sub(s, "sxth") == 0) {
-    return 5;
+    return Some(5);
   }
   if (util.index_of_sub(s, "sxtw") == 0) {
-    return 6;
+    return Some(6);
   }
   if (util.index_of_sub(s, "sxtx") == 0) {
-    return 7;
+    return Some(7);
   }
-  return -1;
+  return None;
 }
 
 function arm64_gas_addsub_imm_unsupported(mnem: string, ops: string[]): boolean {
@@ -4367,7 +4365,7 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): bool
   if (arm64_gas_shift_type(ops[3]) >= 0) {
     return false;
   }
-  if (arm64_gas_extend_option(ops[3]) >= 0) {
+  if (arm64_gas_extend_option(ops[3]).is_some()) {
     return false;
   }
   return true;
@@ -7471,8 +7469,7 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   }
   let am = arm64_gas_reg(src[2]);
   if (src.len() >= 4) {
-    let ext = arm64_gas_extend_option(src[3]);
-    if (ext >= 0) {
+    if let Some(ext) = arm64_gas_extend_option(src[3]) {
       util.push_bytes(a.code, arm64_addsub_ext([], is_sub, ad, an, am, ext, arm64_gas_lsl_amount(src[3])));
       return a;
     }
@@ -8019,21 +8016,21 @@ function arm64_gas_is_digits(s: string): boolean {
   return true;
 }
 
-function arm64_gas_numref_dir(s: string): i32 {
+function arm64_gas_numref_dir(s: string): Option[i32] {
   if (s.len() < 2) {
-    return -1;
+    return None;
   }
   let last = s[s.len() - 1] as i32;
   if (last != 102 && last != 98) {
-    return -1;
+    return None;
   }
   if (!arm64_gas_is_digits(slice_unchecked(s, 0, s.len() - 1).to_owned())) {
-    return -1;
+    return None;
   }
   if (last == 102) {
-    return 1;
+    return Some(1);
   }
-  return 0;
+  return Some(0);
 }
 
 function arm64_gas_dec(n: i32): string {
@@ -8085,10 +8082,9 @@ function arm64_gas_nl_define(own c: Arm64NumericLabels, name: string): (Arm64Num
 
 function arm64_gas_nl_ref(cnt: Arm64NumericLabels, tok: string): string {
   let s = arm64_gas_trim(tok);
-  let dir = arm64_gas_numref_dir(s);
-  if (dir < 0) {
+  let Some(dir) = arm64_gas_numref_dir(s) else {
     return s;
-  }
+  };
   let n = arm64_gas_nl_number(slice_unchecked(s, 0, s.len() - 1).to_owned());
   let i = arm64_gas_nl_index(cnt, n);
   let k = 0;
