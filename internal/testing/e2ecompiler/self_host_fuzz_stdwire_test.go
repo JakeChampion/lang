@@ -104,6 +104,7 @@ func dnsSeeds(testing.TB) [][]byte {
 		dnsMessage(7, 0x0100, 9, 0, 0, 0, q),
 		dnsMessage(8, 0x8180, 1, 1, 0, 0, q, dnsRR(ptr, 1, 1, 1, []byte{1, 2, 3})),
 		dnsMessage(9, 0xffff, 0, 0, 0, 0),
+		dnsMessage(0x1234, 0x0100, 1, 0, 0, 0, []byte{7, 'e', '^', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', '.', 0, 0, 1, 0, 1}),
 		[]byte{0x12, 0x34},
 		{},
 	}

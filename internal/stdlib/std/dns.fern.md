@@ -214,7 +214,6 @@ import "std/i32";
 import "std/string";
 import "std/array";
 import "core/error";
-import "std/utf8" as utf8;
 import "core/cmp";
 ```
 
@@ -404,37 +403,86 @@ function put32(b: u8[], v: i32): u8[] {
 
 ### `10 pub function encode_name(name: string): Result[u8[], DnsError]`
 
+Names use DNS presentation syntax. A backslash quotes the next character.
+A backslash with three decimal digits represents one byte from 0 through 255.
+The label and name limits apply to wire bytes, after escape conversion.
+
 ```fern
 <<10 pub function encode_name(name: string): Result[u8[], DnsError]>>=
 pub function encode_name(name: string): Result[u8[], DnsError] {
   let out: u8[] = [];
-  let n = name;
-  if (n.ends_with(".")) {
-    n = slice_unchecked(n, 0, n.len() - 1) + "";
+  if (name.len() == 0 || name == ".") {
+    return Ok(out.append(0u8));
   }
-  if (n.len() == 0) {
-    return Ok(out.append(0 as u8));
-  }
-  let labels = n.split(".");
-  let i = 0;
-  while (i < labels.len()) {
-    let l = labels[i];
-    if (l.len() == 0 || l.len() > 63) {
+  let at = 0;
+  while (at < name.len()) {
+    let label = encode_label(name, at)?;
+    out = out.append(label.bytes.len() as u8).concat(label.bytes);
+    if (out.len() > 254) {
       return Err(Malformed);
     }
-    out = out.append(l.len() as u8);
-    let j = 0;
-    while (j < l.len()) {
-      out = out.append(l[j]);
-      j += 1;
-    }
-    i += 1;
+    at = label.next;
   }
-  out = out.append(0 as u8);
-  if (out.len() > 255) {
+  return Ok(out.append(0u8));
+}
+
+struct LabelAt { bytes: u8[], next: i32 }
+
+function encode_label(name: string, at: i32): Result[LabelAt, DnsError] {
+  let out: u8[] = [];
+  let i = at;
+  while (i < name.len()) {
+    let byte = name[i];
+    i += 1;
+    if (byte == 46u8) {
+      break;
+    }
+    if (byte == 92u8) {
+      let escaped = escaped_byte(name, i)?;
+      byte = escaped.value;
+      i = escaped.next;
+    }
+    if (out.len() == 63) {
+      return Err(Malformed);
+    }
+    out = out.append(byte);
+  }
+  if (out.len() == 0) {
     return Err(Malformed);
   }
-  return Ok(out);
+  return Ok(LabelAt { bytes: out, next: i });
+}
+
+struct EscapedByte { value: u8, next: i32 }
+
+function escaped_byte(name: string, at: i32): Result[EscapedByte, DnsError] {
+  if (at >= name.len()) {
+    return Err(Malformed);
+  }
+  let byte = name[at];
+  let next = at + 1;
+  if (byte >= 48u8 && byte <= 57u8) {
+    byte = decimal_escape(name, at)?;
+    next += 2;
+  }
+  return Ok(EscapedByte { value: byte, next: next });
+}
+
+function decimal_escape(name: string, at: i32): Result[u8, DnsError] {
+  if (name.len() - at < 3) {
+    return Err(Malformed);
+  }
+  let hundreds = name[at] as i32 - 48;
+  let tens = name[at + 1] as i32 - 48;
+  let ones = name[at + 2] as i32 - 48;
+  if (hundreds as u32 > 9u32 || tens as u32 > 9u32 || ones as u32 > 9u32) {
+    return Err(Malformed);
+  }
+  let value = hundreds * 100 + tens * 10 + ones;
+  if (value > 255) {
+    return Err(Malformed);
+  }
+  return Ok(value as u8);
 }
 ```
 
@@ -574,6 +622,10 @@ pub struct NameAt { name: string, next: i32 }
 
 ### `15 pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError]`
 
+Decoded names quote dots and backslashes within labels.
+Bytes outside printable ASCII use three-digit decimal escapes.
+These escapes preserve every label byte across an encode and decode.
+
 ```fern
 <<15 pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError]>>=
 pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
@@ -597,14 +649,7 @@ pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
     if ((l & 192) != 0 || p + 1 + l > msg.len() || total > 254) {
       return Err(Malformed);
     }
-    match (join_label(out, msg, p + 1, l)) {
-      Some(joined) => {
-        out = joined;
-      },
-      None => {
-        return Err(Malformed);
-      }
-    }
+    out = join_label(out, msg, p + 1, l);
     p = p + 1 + l;
   }
   return Err(Malformed);
@@ -633,25 +678,29 @@ function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
   return Ok(target);
 }
 
-function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
+function join_label(out: string, msg: u8[], at: i32, len: i32): string {
   let label: u8[] = [];
   let k = 0;
   while (k < len) {
-    label = label.append(msg[at + k]);
+    let byte = msg[at + k];
+    if (byte == 46u8 || byte == 92u8) {
+      label = label.append(92u8).append(byte);
+    } else if (byte < 33u8 || byte > 126u8) {
+      let value = byte as i32;
+      label = label.append(92u8).append((48 + value / 100) as u8).append((48 + value / 10 % 10) as u8).append((48 + value % 10) as u8);
+    } else {
+      label = label.append(byte);
+    }
     k += 1;
   }
-  match (utf8.from_bytes(label)) {
-    Ok(text) => {
-      if (out.len() > 0) {
-        return Some(out + "." + text);
-      }
-      return Some(text);
-    },
-    Err(_) => {
-      return None;
-    }
+  let text = "";
+  unsafe {
+    text = string_from_bytes_unchecked(label);
   }
-  return None;
+  if (out.len() > 0) {
+    return out + "." + text;
+  }
+  return text;
 }
 ```
 
