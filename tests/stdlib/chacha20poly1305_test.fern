@@ -253,6 +253,26 @@ function round_trip(seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.
   return chacha20poly1305.key(key_seq(128))?.open_in_place(rfc_iv(), open_seq, sealed, n + 16, 12, 0, n);
 }
 
+function test_in_place_refuses_an_overlap(): test.TestOutcome {
+  let n = sunscreen().len();
+  let overlap = "aead: the additional data overlaps the text or its tag";
+  match (chacha20poly1305.key(key_seq(128))) {
+    Ok(k) => {
+      if (shown(k.seal_in_place(rfc_iv(), rfc_seq(), laid(), n - 4, 12, 0, n)) != overlap) {
+        return test.fail("seal: the additional data starts in the text");
+      }
+      if (shown(k.seal_in_place(rfc_iv(), rfc_seq(), laid(), n + 8, 12, 0, n)) != overlap) {
+        return test.fail("seal: the additional data starts in the tag");
+      }
+      return test.assert_eq(shown(k.open_in_place(rfc_iv(), rfc_seq(), laid(), 0, 12, 4, n - 4)), overlap);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function opened(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
@@ -320,6 +340,7 @@ function main(): i32 {
   r = r.it("the block counter does not wrap", test_counter_range);
   r = r.it("a key built once", test_key_built_once);
   r = r.it("seal and open in place, RFC 8439 under a sequence number", test_in_place);
+  r = r.it("the in-place calls refuse additional data that overlaps the text", test_in_place_refuses_an_overlap);
   return r.finish();
 }
 

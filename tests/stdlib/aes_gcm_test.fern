@@ -319,6 +319,16 @@ function test_in_place_refuses(): test.TestOutcome {
   if (opened4(round_trip4(k, seq4(), 3, seq4())) != forged) {
     return test.fail("changed aad");
   }
+  let overlap = "aead: the additional data overlaps the text or its tag";
+  if (shown(k.seal_in_place(iv4(), seq4(), laid4(), 0, 32, 20, 60)) != overlap) {
+    return test.fail("seal: the additional data reaches the text");
+  }
+  if (shown(k.seal_in_place(iv4(), seq4(), laid4(), 70, 4, 0, 60)) != overlap) {
+    return test.fail("seal: the additional data is in the tag");
+  }
+  if (shown(k.open_in_place(iv4(), seq4(), laid4(), 30, 8, 20, 44)) != overlap) {
+    return test.fail("open: the additional data is in the text");
+  }
   return test.assert_eq(shown(k.seal_in_place(zeros(8), seq4(), laid4(), 0, 20, 20, 60)), "aead: the nonce is 8 bytes, want 12");
 }
 
