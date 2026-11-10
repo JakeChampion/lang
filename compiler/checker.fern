@@ -27559,7 +27559,8 @@ function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, 
               let set = e060_set_of_name(dyns, id.name);
               if (set.len() > 0) {
                 let tgt = slice_unchecked(u.op, 4, u.op.len());
-                if (e060_is_primitive_name(tgt)) {
+                // The type tag of a trait object names the declaration, not its type arguments.
+                if (e060_is_primitive_name(tgt) || util.contains(tgt, "[")) {
                   return out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
                 }
                 if (e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt)) {
