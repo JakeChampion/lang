@@ -1,0 +1,91 @@
+import "std/audio/wire";
+import "std/base64";
+import "std/deflate";
+import "std/hash/crc32";
+import "std/opus/packet";
+import "std/test";
+import "../../tests/stdlib/opus_delimited_vectors";
+
+function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+function compare_frames(actual: packet.Packet, reference: [u8], at: i32, count: i32): test.TestOutcome {
+  let checksum = crc32.new();
+  for i in 0..count {
+    if (actual.frames[i].len() != word(reference, at + 20 + i * 4)) {
+      return test.fail("frame length");
+    }
+    checksum = checksum.update(actual.frames[i]);
+  }
+  return test.assert_eq(checksum.finish(), word(reference, at + 16) as u32);
+}
+
+function compare(actual: packet.Delimited, reference: [u8], at: i32, count: i32): test.TestOutcome {
+  if (actual.consumed != word(reference, at)) {
+    return test.fail("consumed self-delimited packet bytes");
+  }
+  let parsed = match (packet.parse(actual.packet)) { Ok(value) => value, Err(_) => { return test.fail("normalized packet framing"); } };
+  if (parsed.toc != word(reference, at + 12) as u8 || parsed.frames.len() != count || parsed.padding != word(reference, at + 8)) {
+    return test.fail("normalized packet TOC, count, or padding");
+  }
+  let size_bytes = if (word(reference, at + 20 + (count - 1) * 4) < 252) { 1 } else { 2 };
+  if (parsed.offset != word(reference, at + 4) - size_bytes || actual.packet.len() != actual.consumed - size_bytes) {
+    return test.fail("removed only the last frame size");
+  }
+  return compare_frames(parsed, reference, at, count);
+}
+
+function group(bytes: [u8]): test.TestOutcome {
+  let at = 4;
+  for index in 0..word(bytes, 0) {
+    let size = word(bytes, at);
+    at += 4;
+    let result = packet.parse_delimited(bytes[at:at + size]);
+    at += size;
+    let count = word(bytes, at);
+    at += 4;
+    if (count < 0) {
+      match (result) {
+        Err(error) => {
+          if (error.code() != count) {
+            return test.fail("reference error code");
+          }
+        },
+        Ok(_) => {
+          return test.fail("invalid self-delimited packet accepted");
+        }
+      }
+    } else {
+      let parsed = match (result) { Ok(value) => value, Err(_) => { return test.fail("reference packet rejected at " + index.to_string()); } };
+      match (compare(parsed, bytes, at, count)) {
+        test.Pass => {},
+        test.Fail(message) => {
+          return test.fail("packet " + index.to_string() + ": " + message);
+        }
+      }
+      at += 20 + count * 4;
+    }
+  }
+  return test.assert_eq(at, bytes.len());
+}
+
+function references(): test.TestOutcome {
+  for i in 0..1 {
+    let packed = match (base64.decode(opus_delimited_vectors.CASES[i])) { Ok(value) => value, Err(_) => { return test.fail("reference base64"); } };
+    let bytes = match (deflate.zlib_decode(packed, 8388608)) { Ok(value) => value, Err(_) => { return test.fail("reference zlib"); } };
+    match (group(bytes)) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail("group " + i.to_string() + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("self-delimited Opus packets against libopus");
+  runner = runner.it("diagnostic first reference group", references);
+  return runner.finish();
+}

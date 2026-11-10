@@ -1,0 +1,26 @@
+{
+  "instructions/baseline.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/baseline.callgrind",
+    "original_sha256": "611025e96e102ab3ba18d8529a93c0f4271ab422ac804d084926999bf1ee0eab",
+    "original_bytes": 1559095
+  },
+  "instructions/baseline.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/baseline.valgrind.log",
+    "original_sha256": "93f150c5a4daf0fb69686f642e70dcd730c97f0ae2d8cf7d213416dda2d3a149",
+    "original_bytes": 745
+  },
+  "instructions/candidate.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/candidate.callgrind",
+    "original_sha256": "18d260d63e8491cd457927a672fa682fa5dd2402eb5fa99be0199601f23849b1",
+    "original_bytes": 1559216
+  },
+  "instructions/candidate.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/candidate.valgrind.log",
+    "original_sha256": "87a2e536c03946fa964600d84436665e49dad0fbda69fbbf565582554d7a6450",
+    "original_bytes": 746
+  },
+  "implementation.patch.gz": {
+    "original_sha256": "54655c61afd05d429eb78f92fa7a166bca867205608d7a558365ecf5cc571a71",
+    "original_bytes": 6210
+  }
+}

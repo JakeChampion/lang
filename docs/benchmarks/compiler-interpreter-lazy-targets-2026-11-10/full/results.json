@@ -1,0 +1,40 @@
+{
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate_source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "mode": "full",
+  "note": "Lazy argument-target trial against upstream Map main da3282d0. Same producer, input, stdlib, no debug variables, no embedded sources. Certification on. Subset timings finish before compilation and full-corpus controls start. Earlier NameIndex results do not measure this implementation.",
+  "runs": [
+    {
+      "label": "full-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "ed8d1f643ae1bd38f7d106d93a6b322dc3156f12fca98515b4813ac2dace7a64",
+      "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T04:01:28.330673+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 130319683735,
+      "cpu_user": 129.921877,
+      "cpu_system": 0.36726,
+      "peak_rss_kib": 222912,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+      "finished": "2026-11-10T04:03:38.651202+00:00"
+    }
+  ],
+  "finished": "2026-11-10T04:03:38.653827+00:00"
+}

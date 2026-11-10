@@ -35,7 +35,19 @@ The earlier archives retain their original code and source identities.
 The [argument prepass comparison](benchmarks/compiler-interpreter-map-shortcut-2026-11-10/README.md) tests the remaining unused-search shortcut against that Map index.
 Four of five first-group pairs increase CPU time, despite fewer allocation events.
 The extra argument prepass is rejected as the final implementation.
-A separate lazy-lookup trial needs its own measurements and correctness controls.
+
+The [lazy lookup comparison](benchmarks/compiler-interpreter-lazy-targets-2026-11-10/README.md) compares main `da3282d0` with candidate `597b6e78`.
+It removes 152,552,787 guest instructions, or 0.8709%, from the first 32-record diagnostic group.
+This control uses one instruction sample per normal compiler executable.
+The two allocation subsets remove 514,178 and 13,363,285 events, with balanced frees and zero live bytes.
+All 388 targeted test and subtest results pass, with no skips.
+
+The normal candidate completes all 1,896 records in 130.320 seconds with identical compiled-program output.
+There is no paired full-corpus baseline timing.
+Median peak RSS increases by 7,472 KiB on both subsets.
+Identical baseline compiler bytes exhibit different RSS medians at two retained paths, which limits memory attribution.
+Complete cold and warm compilation retains identical native output without an established general compiler performance gain.
+Exact-head complete CI remains the merge gate.
 
 The [fresh main comparison](benchmarks/compiler-interpreter-index-main-2026-11-09/README.md) compares main `4a044282` with merged source `6f6bddfc`.
 The original oracle/native Opus subtest passes in 634.93 seconds under the unchanged package timeout.
