@@ -446,7 +446,7 @@ pub function base_type_name(t: string): string {
   let i = 0;
   while (i < t.len()) {
     if (t[i] == b'[') {
-      return slice_unchecked(t, 0, i) + "";
+      return slice_unchecked(t, 0, i).to_owned();
     }
     i += 1;
   }
@@ -461,7 +461,7 @@ pub function mangled_module(name: string): string {
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      return slice_unchecked(name, 0, i) + "";
+      return slice_unchecked(name, 0, i).to_owned();
     }
     i += 1;
   }
@@ -472,7 +472,7 @@ pub function mangled_name(name: string): string {
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      return slice_unchecked(name, i + 2, name.len()) + "";
+      return slice_unchecked(name, i + 2, name.len()).to_owned();
     }
     i += 1;
   }
@@ -618,7 +618,7 @@ pub function path_base(path: string): string {
     }
     i += 1;
   }
-  return slice_unchecked(path, start, path.len()) + "";
+  return slice_unchecked(path, start, path.len()).to_owned();
 }
 
 pub function same_i32s(a: i32[], b: i32[]): boolean {
@@ -1251,7 +1251,7 @@ pub function show_type_vars(text: string): string {
 pub function ident_from(line: string, col: i32, name: string): i32 {
   let at = col - 1;
   while (at >= 0 && at + name.len() <= line.len()) {
-    let i = index_of_sub(slice_unchecked(line, at, line.len()) + "", name);
+    let i = index_of_sub(slice_unchecked(line, at, line.len()).to_owned(), name);
     if (i < 0) {
       return 0;
     }
@@ -1291,7 +1291,7 @@ pub const ENTRY_SHADOW_PREFIX: string = "__entry__";
 
 pub function demangle(name: string): string {
   if (name.starts_with(ENTRY_SHADOW_PREFIX)) {
-    return slice_unchecked(name, ENTRY_SHADOW_PREFIX.len(), name.len()) + "";
+    return slice_unchecked(name, ENTRY_SHADOW_PREFIX.len(), name.len()).to_owned();
   }
   let cut = dunder_at(name);
   if (cut < 0) {
@@ -1315,7 +1315,7 @@ pub function demangle_named(text: string, mangled: NameIndex): string {
     while (ident_byte_at(text, j)) {
       j += 1;
     }
-    let word = slice_unchecked(text, i, j) + "";
+    let word = slice_unchecked(text, i, j).to_owned();
     if (mangled.find(word) >= 0) {
       out = out + slice_unchecked(text, kept, i) + demangle(word);
       kept = j;
@@ -1362,24 +1362,24 @@ pub function dir_of(p: string): string {
   if (ls < 0) {
     return "";
   }
-  return slice_unchecked(p, 0, ls) + "";
+  return slice_unchecked(p, 0, ls).to_owned();
 }
 
 pub function module_name(import_path: string): string {
   let path = without_fern_ext(import_path);
   let ls = last_slash(path);
   if (ls >= 0) {
-    return slice_unchecked(path, ls + 1, path.len()) + "";
+    return slice_unchecked(path, ls + 1, path.len()).to_owned();
   }
   return path;
 }
 
 pub function without_fern_ext(path: string): string {
   if (path.ends_with(".fern.md")) {
-    return slice_unchecked(path, 0, path.len() - 8) + "";
+    return slice_unchecked(path, 0, path.len() - 8).to_owned();
   }
   if (path.ends_with(".fern")) {
-    return slice_unchecked(path, 0, path.len() - 5) + "";
+    return slice_unchecked(path, 0, path.len() - 5).to_owned();
   }
   return path;
 }
@@ -1388,7 +1388,7 @@ pub function dep_name(import_path: string): string {
   let i = 0;
   while (i < import_path.len()) {
     if (import_path[i] == b'/') {
-      return slice_unchecked(import_path, 0, i) + "";
+      return slice_unchecked(import_path, 0, i).to_owned();
     }
     i += 1;
   }
@@ -1400,7 +1400,7 @@ pub function dep_subpath(import_path: string): string {
   if (n.len() >= import_path.len()) {
     return "";
   }
-  return slice_unchecked(import_path, n.len() + 1, import_path.len()) + "";
+  return slice_unchecked(import_path, n.len() + 1, import_path.len()).to_owned();
 }
 
 pub function import_qualifier(path: string): string {
@@ -1469,7 +1469,7 @@ pub function clean_path(p: string): string {
   let i = p.len() - 1;
   while (i >= -1) {
     if (i < 0 || p[i] == b'/') {
-      let seg = slice_unchecked(p, i + 1, end) + "";
+      let seg = slice_unchecked(p, i + 1, end).to_owned();
       if (seg == "..") {
         skip += 1;
       } else if (seg.len() > 0 && seg != ".") {
@@ -1546,7 +1546,7 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
   }
   let rel = without_fern_ext(import_path);
   if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
-    rel = slice_unchecked(rel, 2, rel.len()) + "";
+    rel = slice_unchecked(rel, 2, rel.len()).to_owned();
   }
   return clean_path(module_path_join(entry_dir, rel));
 }
@@ -1692,12 +1692,12 @@ pub function split_char(s: string, c: u8): string[] {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == c) {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
-  out = out.append(slice_unchecked(s, start, s.len()) + "");
+  out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   return out;
 }
 

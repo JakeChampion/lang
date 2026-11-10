@@ -92,8 +92,8 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   if (dot < 0) {
     return (c, "lint option \"" + dotted + "\" must be spelled <rule>.<key>");
   }
-  let rule = slice_unchecked(dotted, 0, dot) + "";
-  let key = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
+  let rule = slice_unchecked(dotted, 0, dot).to_owned();
+  let key = slice_unchecked(dotted, dot + 1, dotted.len()).to_owned();
   let bad_rule = option_rule_error(dotted, rule);
   if (bad_rule.len() > 0) {
     return (c, bad_rule);
@@ -358,7 +358,7 @@ function split_src(src: string): string[] {
   let i = 0;
   while (i <= src.len()) {
     if (i == src.len() || src[i] == b'\n') {
-      out = out.append(slice_unchecked(src, start, i) + "");
+      out = out.append(slice_unchecked(src, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
@@ -405,7 +405,7 @@ function directive_finding(c: lexer.Comment, msg: string, help: string): Finding
 function comment_body(text: string): string {
   let t = text.trim();
   if (t.starts_with("//")) {
-    t = (slice_unchecked(t, 2, t.len()) + "").trim();
+    t = slice_unchecked(t, 2, t.len()).to_owned().trim();
   }
   return t;
 }
@@ -418,13 +418,13 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     if (!text.starts_with("fern-lint:")) {
       continue;
     }
-    let body = (slice_unchecked(text, 10, text.len()) + "").trim();
+    let body = slice_unchecked(text, 10, text.len()).to_owned().trim();
     let sp = util.index_of_sub(body, " ");
     let verb = body;
     let rest = "";
     if (sp >= 0) {
-      verb = slice_unchecked(body, 0, sp) + "";
-      rest = slice_unchecked(body, sp + 1, body.len()) + "";
+      verb = slice_unchecked(body, 0, sp).to_owned();
+      rest = slice_unchecked(body, sp + 1, body.len()).to_owned();
     }
     if (verb != "allow" && verb != "allow-file") {
       sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "unknown lint directive \"" + verb + "\" (want `fern-lint: allow RULE` or `fern-lint: allow-file RULE`)", "")) };
@@ -435,7 +435,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
     let i = 0;
     while (i <= rest.len()) {
       if (i == rest.len() || rest[i] == b',') {
-        let r = (slice_unchecked(rest, start, i) + "").trim();
+        let r = slice_unchecked(rest, start, i).to_owned().trim();
         if (r.len() > 0) {
           names = names.append(r);
         }
@@ -734,7 +734,7 @@ function evident_type(e: ast.Expr): string {
     },
     ast.ExprUnary(u) => {
       if (u.op.starts_with("as_")) {
-        return slice_unchecked(u.op, 3, u.op.len()) + "";
+        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
       }
     },
     _ => {}

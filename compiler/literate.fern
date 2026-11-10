@@ -28,7 +28,7 @@ pub function leading_ws(s: string): string {
   while (k < n && (s[k] == b' ' || s[k] == b'\t')) {
     k += 1;
   }
-  return slice_unchecked(s, 0, k) + "";
+  return slice_unchecked(s, 0, k).to_owned();
 }
 
 pub function split_lines(src: string): string[] {
@@ -38,12 +38,12 @@ pub function split_lines(src: string): string[] {
   let n = src.len();
   while (i < n) {
     if (src[i] == b'\n') {
-      lines = lines.append(slice_unchecked(src, start, i) + "");
+      lines = lines.append(slice_unchecked(src, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
-  lines = lines.append(slice_unchecked(src, start, n) + "");
+  lines = lines.append(slice_unchecked(src, start, n).to_owned());
   return lines;
 }
 
@@ -88,7 +88,7 @@ function fence_lang(line: string): string {
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
     j += 1;
   }
-  return ascii_lower(slice_unchecked(info, 0, j) + "");
+  return ascii_lower(slice_unchecked(info, 0, j).to_owned());
 }
 
 function ascii_lower(s: string): string {
@@ -130,7 +130,7 @@ function split_ws(s: string): string[] {
       i += 1;
     }
     if (i > start) {
-      words = words.append(slice_unchecked(s, start, i) + "");
+      words = words.append(slice_unchecked(s, start, i).to_owned());
     }
   }
   return words;
@@ -142,9 +142,9 @@ function directives(line: string): Directives {
   let d = Directives { file: "", name: "", entry: false, test: false };
   for w in split_ws(fence_info(line)) {
     if (starts_with(w, "file=")) {
-      d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+      d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
     } else if (starts_with(w, "name=")) {
-      d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+      d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
     } else if (w == "entry") {
       d = Directives { ...d, entry: true };
     } else if (w == "test") {
@@ -163,7 +163,7 @@ function trim_quotes(s: string): string {
   while (b > a && s[b - 1] == b'"') {
     b -= 1;
   }
-  return slice_unchecked(s, a, b) + "";
+  return slice_unchecked(s, a, b).to_owned();
 }
 
 function is_fence_close(line: string, open_len: i32): boolean {
@@ -217,7 +217,7 @@ pub function ref_name(t: string): string {
 
 pub function de_escape(text: string): string {
   let ws = leading_ws(text);
-  if (starts_with(slice_unchecked(text, ws.len(), text.len()) + "", "\\<<")) {
+  if (starts_with(slice_unchecked(text, ws.len(), text.len()).to_owned(), "\\<<")) {
     return ws + slice_unchecked(text, ws.len() + 1, text.len());
   }
   return text;

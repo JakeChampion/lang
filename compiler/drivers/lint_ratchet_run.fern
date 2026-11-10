@@ -16,7 +16,7 @@ function fern_files(dir: string): string[] {
           out = out.append(f);
         }
       } else if (n.ends_with(".fern") || n.ends_with(".fern.md")) {
-        if (n.ends_with(".fern.md") && util.has_str(names, slice_unchecked(n, 0, n.len() - 3) + "")) {
+        if (n.ends_with(".fern.md") && util.has_str(names, slice_unchecked(n, 0, n.len() - 3).to_owned())) {
           continue;
         }
         out = out.append(p);

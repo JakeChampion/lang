@@ -3772,14 +3772,14 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
       out += ",";
     }
     if (w.len() > 0 && w[0] == b'@') {
-      let v = util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "");
+      let v = util.lit_to_i32(slice_unchecked(w, 1, w.len()).to_owned());
       let payload = p.defs[v].str;
       if (p.defs[v].kind_tag != ssasem.bytes_new()) {
         payload = static_values(f, p, p.constants[v]);
       }
       out = out + "{" + static_name(f, p.defs[v]) + "|" + payload + "}";
     } else if (w.len() > 0 && w[0] == b'$') {
-      out += ir.const_str_word(p.defs[util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "")].str);
+      out += ir.const_str_word(p.defs[util.lit_to_i32(slice_unchecked(w, 1, w.len()).to_owned())].str);
     } else {
       out += w;
     }
@@ -6442,10 +6442,10 @@ function device_op(name: string): ir.Op {
     return ir.op_privileged(privileged_kind(name));
   }
   if (name.starts_with("__port_in")) {
-    return ir.op_port_in(util.digits_to_i32(slice_unchecked(name, 9, name.len()) + ""));
+    return ir.op_port_in(util.digits_to_i32(slice_unchecked(name, 9, name.len()).to_owned()));
   }
   if (name.starts_with("__port_out")) {
-    return ir.op_port_out(util.digits_to_i32(slice_unchecked(name, 10, name.len()) + ""));
+    return ir.op_port_out(util.digits_to_i32(slice_unchecked(name, 10, name.len()).to_owned()));
   }
   if (builtinsigs.access_store(name)) {
     return ir.op_mmio_store(builtinsigs.access_width(name));
@@ -6458,7 +6458,7 @@ function privileged_kind(name: string): i32 {
   if (!name.starts_with("__")) {
     return 0;
   }
-  let k = ir.kind_id(slice_unchecked(name, 2, name.len()) + "");
+  let k = ir.kind_id(slice_unchecked(name, 2, name.len()).to_owned());
   if (!ir.is_privileged_kind(k)) {
     return 0;
   }

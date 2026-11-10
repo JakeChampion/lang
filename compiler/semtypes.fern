@@ -1,4 +1,5 @@
 import "./typeinfo";
+import "std/string";
 
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   match (a) {
@@ -295,7 +296,7 @@ pub function env_captures(t: typeinfo.Type): typeinfo.Type[] {
 
 pub function env_body(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
-    return slice_unchecked(s.name, env_prefix().len(), s.name.len()) + "";
+    return slice_unchecked(s.name, env_prefix().len(), s.name.len()).to_owned();
   }
   return "";
 }

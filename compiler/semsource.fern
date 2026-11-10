@@ -264,7 +264,7 @@ function spelled_typevar(spelling: string): boolean {
     i = ident_end(spelling, i);
     if (i > start && slice_unchecked(spelling, start, i) == "dyn") {
       i = dyn_set_end(spelling, i);
-    } else if (i > start && parser.looks_type_var(slice_unchecked(spelling, start, i) + "")) {
+    } else if (i > start && parser.looks_type_var(slice_unchecked(spelling, start, i).to_owned())) {
       return true;
     }
     if (i == start) {
@@ -774,7 +774,7 @@ function decimal_text(t: string): string {
   while (i + 1 < t.len() && t[i] == b'0') {
     i += 1;
   }
-  return slice_unchecked(t, i, t.len()) + "";
+  return slice_unchecked(t, i, t.len()).to_owned();
 }
 
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
@@ -2173,7 +2173,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (!typeinfo.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
-  let target = slice_unchecked(u.op, 4, u.op.len()) + "";
+  let target = slice_unchecked(u.op, 4, u.op.len()).to_owned();
   let concrete = resolved(s.scope.resolve_type(target), s.template, s.binding, s.scope);
   if (struct_name(concrete) != target && typeinfo.union_name(concrete) != target) {
     return refused(s, "downcast target: " + target);
@@ -2209,7 +2209,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
 
 function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
   let source = s.values[v.id];
-  let target = resolved(s.scope.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + ""), s.template, s.binding, s.scope);
+  let target = resolved(s.scope.resolve_type(slice_unchecked(u.op, 4, u.op.len()).to_owned()), s.template, s.binding, s.scope);
   if (!ssasem.is_integer(target)) {
     return refused(s, "checked conversion to " + typeinfo.spelling(target));
   }
@@ -4103,7 +4103,7 @@ function clone_base(name: string): string {
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      return slice_unchecked(name, 0, i) + "";
+      return slice_unchecked(name, 0, i).to_owned();
     }
     i += 1;
   }
@@ -4255,7 +4255,7 @@ function destructure_tuple(encoded: string, whole: i32, s: State, after: checker
     let part = define(s, ssasem.tuple_get(), [whole], i, "", elem);
     s = part.s;
     if (names[i].len() > 0 && names[i][0] == b'(') {
-      s = destructure_tuple(slice_unchecked(names[i], 1, names[i].len() - 1) + "", part.id, s, after);
+      s = destructure_tuple(slice_unchecked(names[i], 1, names[i].len() - 1).to_owned(), part.id, s, after);
     } else {
       s = bind_projection(s, names[i], part.id, after);
     }
@@ -4268,13 +4268,13 @@ function destructure_tuple(encoded: string, whole: i32, s: State, after: checker
 }
 
 function destructure_record(encoded: string, tag: string, whole: i32, s: State, after: checker.Scope): State {
-  let rest = slice_unchecked(tag, 4, tag.len()) + "";
+  let rest = slice_unchecked(tag, 4, tag.len()).to_owned();
   let colon = util.index_of_sub(rest, ":");
   if (colon < 0) {
     return fail(s, "unsupported destructuring declaration");
   }
   let names = pattern_names(encoded);
-  let fields = pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
+  let fields = pattern_names(slice_unchecked(rest, colon + 1, rest.len()).to_owned());
   let Some(sig) = record_sig(s.values[whole], s) else {
     return fail(s, "unsupported destructuring declaration");
   };
@@ -4317,12 +4317,12 @@ function pattern_names(encoded: string): string[] {
       depth -= 1;
     }
     if (encoded[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(encoded, start, i) + "");
+      out = out.append(slice_unchecked(encoded, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
-  return out.append(slice_unchecked(encoded, start, encoded.len()) + "");
+  return out.append(slice_unchecked(encoded, start, encoded.len()).to_owned());
 }
 
 function mismatch(name: string, declared: typeinfo.Type, value: typeinfo.Type): string {
@@ -4771,7 +4771,7 @@ function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
   if (slice_unchecked(pv.type_name, 0, dot) != owner) {
     return pv;
   }
-  return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()) + "" };
+  return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()).to_owned() };
 }
 
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, layout: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
@@ -5398,7 +5398,7 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
 
 function bind_position(s: State, name: string, id: i32, after: checker.Scope): State {
   if (name.len() > 0 && name[0] == b'(') {
-    return destructure_tuple(slice_unchecked(name, 1, name.len() - 1) + "", id, s, after);
+    return destructure_tuple(slice_unchecked(name, 1, name.len() - 1).to_owned(), id, s, after);
   }
   return bind_var(s, name, id);
 }
@@ -6003,7 +6003,7 @@ function header_names(encoded: string): string[] {
   let out: string[] = [];
   for n in checker.split_pattern_names(encoded) {
     if (n.len() > 1 && n[0] == b'(') {
-      for m in header_names(slice_unchecked(n, 1, n.len() - 1) + "") {
+      for m in header_names(slice_unchecked(n, 1, n.len() - 1).to_owned()) {
         out = out.append(m);
       }
     } else {
@@ -6082,7 +6082,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
     if (d.len() < 2 || d[0] != b'=') {
       continue;
     }
-    let n = slice_unchecked(d, 1, d.len()) + "";
+    let n = slice_unchecked(d, 1, d.len()).to_owned();
     if (util.index_of_str(out, n) < 0 && util.count_str(all, n) > util.count_str(local, n)) {
       out = out.append(n);
     }
@@ -6815,7 +6815,7 @@ function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
     let eq = util.index_of_sub(entry, "=");
     if (eq < 0) {
       positional = positional.append(entry);
-    } else if (!pins_assoc(imp, (slice_unchecked(entry, 0, eq) + "").trim(), slice_unchecked(entry, eq + 1, entry.len()) + "")) {
+    } else if (!pins_assoc(imp, slice_unchecked(entry, 0, eq).to_owned().trim(), slice_unchecked(entry, eq + 1, entry.len()).to_owned())) {
       return false;
     }
   }
@@ -6847,7 +6847,7 @@ function bracket_entries(t: string): string[] {
   if (lb < 0 || t[t.len() - 1] != b']') {
     return none;
   }
-  return parser.split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1) + "");
+  return parser.split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1).to_owned());
 }
 
 function same_modulo_spaces(a: string, b: string): boolean {
@@ -7012,7 +7012,7 @@ function method_name_of(key: string): string {
   if (at < 0) {
     return "";
   }
-  return slice_unchecked(key, at + 1, key.len()) + "";
+  return slice_unchecked(key, at + 1, key.len()).to_owned();
 }
 
 struct Handers { keys: util.NameIndex, methods: util.NameIndex }
@@ -9326,7 +9326,7 @@ function arm_receiver_implements(impls: parser.ImplInfo[], n: string, traits: st
   while (at + 1 < n.len() && !(n[at] == b'_' && n[at + 1] == b'_')) {
     at += 1;
   }
-  return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at) + "", traits);
+  return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at).to_owned(), traits);
 }
 
 // The names that the lowering calls after the splice plan is decided: the

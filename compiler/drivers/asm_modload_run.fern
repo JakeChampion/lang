@@ -19,6 +19,7 @@ import "../constfold";
 import "../platforms";
 import "../semlower";
 import "../rtmodule";
+import "std/string";
 
 function verify_provided_module(merged: parser.Module, target: string): i32 {
   let d = semlower.driven(merged, target);
@@ -354,7 +355,7 @@ function nth_field_i32(s: string, n: i32): i32 {
     }
     i += 1;
   }
-  return util.digits_to_i32(slice_unchecked(s, i, s.len()) + "");
+  return util.digits_to_i32(slice_unchecked(s, i, s.len()).to_owned());
 }
 
 function flat_unit_list(entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], func_budget: i32): string[] {

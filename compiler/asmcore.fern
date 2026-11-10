@@ -830,7 +830,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
     while (j < n && asm_text[j] != b'\n') {
       j += 1;
     }
-    let line = slice_unchecked(asm_text, i, j) + "";
+    let line = slice_unchecked(asm_text, i, j).to_owned();
     let drop = false;
     if (state == 1) {
       drop = true;
@@ -840,7 +840,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) {
         k += 1;
       }
-      let body = slice_unchecked(line, k, line.len()) + "";
+      let body = slice_unchecked(line, k, line.len()).to_owned();
       if (body.len() == 0) {
         drop = true;
       } else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") {
@@ -852,7 +852,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       }
     }
     if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
-      let sym = slice_unchecked(line, 6, line.len()) + "";
+      let sym = slice_unchecked(line, 6, line.len()).to_owned();
       if (util.has_str(seen, sym)) {
         drop = true;
         state = 1;
@@ -5060,13 +5060,13 @@ pub function assignable(want: Ty, got: Ty): boolean {
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
   let lex = kind;
   if (lex.starts_with("stmt: ")) {
-    lex = slice_unchecked(lex, 6, lex.len()) + "";
+    lex = slice_unchecked(lex, 6, lex.len()).to_owned();
   }
   if (lex.starts_with("lex:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8).to_owned(), message: slice_unchecked(lex, 9, lex.len()).to_owned(), line: line, col: col, fix: None };
   }
   if (lex.starts_with("code:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9) + "", message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9).to_owned(), message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
   }
   if (util.is_f64_range_kind(kind)) {
     return util.Diag { related: [], length: 0, code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
@@ -5087,7 +5087,7 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
 function sentinel_message(kind: string): string {
   let k = kind;
   if (k.starts_with("stmt: ")) {
-    k = slice_unchecked(k, 6, k.len()) + "";
+    k = slice_unchecked(k, 6, k.len()).to_owned();
   }
   if (k.starts_with("punct:")) {
     return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
@@ -5096,7 +5096,7 @@ function sentinel_message(kind: string): string {
     return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
   }
   if (k.starts_with("missing ")) {
-    return missing_message(slice_unchecked(k, 8, k.len()) + "");
+    return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
   }
   if (k == "eof") {
     return "expected an expression, got the end of the file";
@@ -5170,10 +5170,10 @@ function missing_message(what: string): string {
 
 function decl_sentinel_text(kind: string): string {
   if (kind.starts_with("decl:")) {
-    return slice_unchecked(kind, 5, kind.len()) + "";
+    return slice_unchecked(kind, 5, kind.len()).to_owned();
   }
   if (kind.starts_with("stmt: decl:")) {
-    return slice_unchecked(kind, 11, kind.len()) + "";
+    return slice_unchecked(kind, 11, kind.len()).to_owned();
   }
   return "";
 }
@@ -5569,8 +5569,8 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
   let owner = "";
   let dot = util.index_of_sub(name, ".");
   if (dot >= 0) {
-    owner = slice_unchecked(name, 0, dot) + "";
-    name = slice_unchecked(name, dot + 1, name.len()) + "";
+    owner = slice_unchecked(name, 0, dot).to_owned();
+    name = slice_unchecked(name, dot + 1, name.len()).to_owned();
   }
   let di: i32 = -1;
   if (owner.len() > 0) {
@@ -5911,7 +5911,7 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      let ns = slice_unchecked(name, 0, i) + "";
+      let ns = slice_unchecked(name, 0, i).to_owned();
       let pfx = ns + "__";
       if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) {
         return "";
@@ -6435,7 +6435,7 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   while (bar < e.len() && e[bar] != 124) {
     bar += 1;
   }
-  let shp = slice_unchecked(e, 0, bar) + "";
+  let shp = slice_unchecked(e, 0, bar).to_owned();
   if (shp == "8") {
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
@@ -6630,7 +6630,7 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
     if (j < 0 || j > end) {
       j = end;
     }
-    let shape = slice_unchecked(t, i, j) + "";
+    let shape = slice_unchecked(t, i, j).to_owned();
     let label = dbg_shape_label(s, shape);
     if (label != "") {
       if (out != "") {
@@ -6741,7 +6741,7 @@ function emit_debug_row(own s: EmitState, row: string): EmitState {
   let a = __memchr(row, 124, 0);
   let b = __memchr(row, 124, a + 1);
   let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c) + "");
+  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
   return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
 }
 

@@ -2496,7 +2496,7 @@ function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
 
 function strip_semi(s: string): string {
   if (s.len() > 0 && s[s.len() - 1] == b';') {
-    return slice_unchecked(s, 0, s.len() - 1) + "";
+    return slice_unchecked(s, 0, s.len() - 1).to_owned();
   }
   return s;
 }
@@ -2621,7 +2621,7 @@ function split_commas(csv: string): string[] {
   let i = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',') {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
@@ -2645,7 +2645,7 @@ function written_part(part: string): string {
   while (trail > lead && part[trail - 1] == b')') {
     trail -= 1;
   }
-  return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail) + "") + slice_unchecked(part, trail, part.len());
+  return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail).to_owned()) + slice_unchecked(part, trail, part.len());
 }
 
 function join_csv(csv: string): string {
@@ -3756,13 +3756,13 @@ pub function diff_split_lines(s: string): string[] {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'\n') {
-      out = out.append(slice_unchecked(s, start, i + 1) + "");
+      out = out.append(slice_unchecked(s, start, i + 1).to_owned());
       start = i + 1;
     }
     i += 1;
   }
   if (start < s.len()) {
-    out = out.append(slice_unchecked(s, start, s.len()) + "");
+    out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   }
   return out;
 }

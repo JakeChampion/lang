@@ -55,7 +55,7 @@ function program(input: string[], name: string, arm: boolean): Program {
     if (line != "") {
       let label = "";
       if (line.ends_with(":")) {
-        label = slice_unchecked(line, 0, line.len() - 1) + "";
+        label = slice_unchecked(line, 0, line.len() - 1).to_owned();
         if (!symbol(label)) {
           ok = false;
         }

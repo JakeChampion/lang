@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 function elf_eh_size(): i32 {
   return 64;
@@ -1282,7 +1283,7 @@ function dw_token(s: string, i: i32): string {
   while (j < s.len() && s[j] != b'@' && s[j] != b'{' && s[j] != b'}' && s[j] != b',' && s[j] != b':' && s[j] != b'=') {
     j += 1;
   }
-  return slice_unchecked(s, i, j) + "";
+  return slice_unchecked(s, i, j).to_owned();
 }
 
 function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
@@ -1377,14 +1378,14 @@ function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
     return DwEmit { ...e, die: elf_str_bytes(dw_uleb(e.die, 4), key).append(bt[0]).append(bt[1]) };
   }
   if (t.kinds[k] == 1) {
-    return dw_type_ref(DwEmit { ...e, die: dw_uleb(e.die, 7).append(8) }, slice_unchecked(key, 1, key.len()) + "");
+    return dw_type_ref(DwEmit { ...e, die: dw_uleb(e.die, 7).append(8) }, slice_unchecked(key, 1, key.len()).to_owned());
   }
   if (t.kinds[k] == 3) {
     return dw_enum_emit(e, t, k);
   }
   let name = key;
   if (t.kinds[k] == 4) {
-    name = slice_unchecked(key, 1, key.len()) + "";
+    name = slice_unchecked(key, 1, key.len()).to_owned();
   }
   e = DwEmit { ...e, die: dw_uleb(elf_str_bytes(dw_uleb(e.die, 8), name), t.sizes[k]) };
   let m = 0;
@@ -1652,7 +1653,7 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
     let d = 0;
     let name = path;
     if (slash > 0) {
-      let dir = slice_unchecked(path, 0, slash) + "";
+      let dir = slice_unchecked(path, 0, slash).to_owned();
       if (dir != ".") {
         d = dw_dir_index(dirs, dir);
         if (d > dirs.len()) {
@@ -1661,7 +1662,7 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
       }
     }
     if (slash >= 0) {
-      name = slice_unchecked(path, slash + 1, path.len()) + "";
+      name = slice_unchecked(path, slash + 1, path.len()).to_owned();
     }
     file_dir = file_dir.append(d);
     file_name = file_name.append(name);

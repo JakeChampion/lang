@@ -242,9 +242,9 @@ function ts_widened(names: string[], open: util.NameIndex, fd: parser.FuncDecl):
   for n in names {
     let bar = util.index_of_sub(n, "|");
     if (bar > 0) {
-      let tag = slice_unchecked(n, 0, bar) + "";
+      let tag = slice_unchecked(n, 0, bar).to_owned();
       if (open.has(tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || tag.starts_with("impl ")) {
-        out = out.append(slice_unchecked(n, bar + 1, n.len()) + "");
+        out = out.append(slice_unchecked(n, bar + 1, n.len()).to_owned());
       }
     }
   }
@@ -318,7 +318,7 @@ function ts_interposed_method_name(name: string): string {
   if (last_dot < 0) {
     return "";
   }
-  return slice_unchecked(name, last_dot + 1, name.len()) + "";
+  return slice_unchecked(name, last_dot + 1, name.len()).to_owned();
 }
 
 function ts_recv_keys(fd: parser.FuncDecl): string[] {
@@ -527,7 +527,7 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalType
     if (k >= 0) {
       let spelled = lt.types[k];
       if (spelled.starts_with("impl ")) {
-        for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
+        for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()).to_owned()) {
           acc = acc.append(ts_qualified_root(ts_impl_tag(b), m));
         }
         return acc;
@@ -546,7 +546,7 @@ pub function free_names(br: BodyRefs): string[] {
   let root = ts_free_root("");
   for n in br.any.names {
     if (n.starts_with(root)) {
-      out = out.append(slice_unchecked(n, root.len(), n.len()) + "");
+      out = out.append(slice_unchecked(n, root.len(), n.len()).to_owned());
     }
   }
   return out;
@@ -605,7 +605,7 @@ function ts_kept_keys(fd: parser.FuncDecl): string[] {
   // Primitive method syntax can dispatch to a private free runtime body.
   // Unknown generic receivers contribute the bare method root until bound.
   if (fd.receiver_type.len() == 0 && fd.name.starts_with("__primitive_") && fd.name.ends_with("_to_string")) {
-    let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
+    let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10).to_owned();
     keys = keys.append(ts_arity_root("to_string", 0)).append(ts_qualified_root(owner, ts_arity_root("to_string", 0)));
   }
   return util.append_all(util.append_all(keys, ts_interposed_keys(fd)), ts_recv_keys(fd));
@@ -766,7 +766,7 @@ function ts_add_type_words(names: util.NameIndex, t: string): util.NameIndex {
     while (j < t.len() && lexer.is_alphanumeric(t[j] as i32)) {
       j += 1;
     }
-    let w = slice_unchecked(t, i, j) + "";
+    let w = slice_unchecked(t, i, j).to_owned();
     if (!names.has(w)) {
       names = names.added(w);
     }

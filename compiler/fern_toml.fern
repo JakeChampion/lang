@@ -40,7 +40,7 @@ pub function parse_quoted(s: string): Result[string, string] {
   if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
     return Err("expected a quoted string, got " + docsummary.quote(s));
   }
-  let inner = slice_unchecked(s, 1, s.len() - 1) + "";
+  let inner = slice_unchecked(s, 1, s.len() - 1).to_owned();
   if (util.index_of_byte(inner, b'"', 0) >= 0 || util.index_of_byte(inner, b'\\', 0) >= 0) {
     return Err("escapes unsupported in " + docsummary.quote(s));
   }
@@ -323,7 +323,7 @@ function parse_string(val: string): Result[string, string] {
   if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
     return Err("expected a double-quoted string, got " + docsummary.quote(val));
   }
-  let s = slice_unchecked(val, 1, val.len() - 1) + "";
+  let s = slice_unchecked(val, 1, val.len() - 1).to_owned();
   if (util.index_of_byte(s, b'"', 0) >= 0 || util.index_of_byte(s, b'\\', 0) >= 0) {
     return Err("escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)");
   }
@@ -348,7 +348,7 @@ function parse_str_array(val: string): Result[string[], string] {
     return Err("expected an array like [\"a\", \"b\"], got " + docsummary.quote(val));
   }
   let out: string[] = [];
-  for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
+  for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1).to_owned(), b',') {
     let part = raw.trim();
     if (part.len() > 0) {
       match (parse_string(part)) {
@@ -409,7 +409,7 @@ function tagged_hex(text: string, prefix: string, bad: string): Result[string, s
   if (text.len() < prefix.len() || slice_unchecked(text, 0, prefix.len()) != prefix) {
     return Err(bad);
   }
-  let hex = slice_unchecked(text, prefix.len(), text.len()) + "";
+  let hex = slice_unchecked(text, prefix.len(), text.len()).to_owned();
   if (hex.len() != 64) {
     return Err(bad);
   }
@@ -581,12 +581,12 @@ function inline_parts(body: string): string[] {
     } else if (!quoted && c == b']') {
       depth -= 1;
     } else if (!quoted && c == b',' && depth == 0) {
-      out = out.append(slice_unchecked(body, start, i) + "");
+      out = out.append(slice_unchecked(body, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
-  return out.append(slice_unchecked(body, start, body.len()) + "");
+  return out.append(slice_unchecked(body, start, body.len()).to_owned());
 }
 
 pub function parse_capabilities(val: string): Result[string[], string] {

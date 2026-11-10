@@ -923,7 +923,7 @@ pub function dyn_call_arms(name: string): string[] {
   while (k <= name.len()) {
     if (k == name.len() || name[k] == b',') {
       if (k > start) {
-        out = out.append(slice_unchecked(name, start, k) + "");
+        out = out.append(slice_unchecked(name, start, k).to_owned());
       }
       start = k + 1;
     }

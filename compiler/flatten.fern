@@ -146,7 +146,7 @@ function match_ivar(name: string, ctx: RewriteCtx): IvarMatch {
 }
 
 function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
-  return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2) + "");
+  return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2).to_owned());
 }
 
 struct ImportGraph { starts: i32[], edges: i32[] }
@@ -375,8 +375,8 @@ pub function mod_names(mod: parser.Module): string[] {
 
 pub function module_ident(mpath: string): string {
   if (mpath.len() > 5) {
-    if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()) + "" == ".fern") {
-      return slice_unchecked(mpath, 0, mpath.len() - 5) + "";
+    if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()).to_owned() == ".fern") {
+      return slice_unchecked(mpath, 0, mpath.len() - 5).to_owned();
     }
   }
   return mpath;
@@ -385,7 +385,7 @@ pub function module_ident(mpath: string): string {
 pub function resolve_imports(mod: parser.Module, dir: string, root: string): parser.Module {
   let d = dir;
   if (d.len() > 1 && d[d.len() - 1] == b'/') {
-    d = slice_unchecked(d, 0, d.len() - 1) + "";
+    d = slice_unchecked(d, 0, d.len() - 1).to_owned();
   }
   let out: parser.Import[] = [];
   let i = 0;
@@ -579,12 +579,12 @@ function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): s
 }
 
 function path_is(p: string, want: string): boolean {
-  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want;
+  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()).to_owned() == "/" + want;
 }
 
 function result_of_response(t: string): boolean {
   let s = parser.strip_type_spaces(t);
-  return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
+  return s.len() > 20 && slice_unchecked(s, 0, 20).to_owned() == "Result[HttpResponse,";
 }
 
 function tuple_halves(t: string): (string, string) {
@@ -603,7 +603,7 @@ function tuple_halves(t: string): (string, string) {
       depth -= 1;
     }
     if (ch == b',' && depth == 0) {
-      return (slice_unchecked(s, 1, i) + "", slice_unchecked(s, i + 1, s.len() - 1) + "");
+      return (slice_unchecked(s, 1, i).to_owned(), slice_unchecked(s, i + 1, s.len() - 1).to_owned());
     }
     i += 1;
   }
@@ -838,7 +838,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
         let en = lookup_reexport(prefix + "__" + slice_unchecked(rest, 0, member_dot), ctx);
         let owner = imported_enum_prefix(en, ctx);
         if (owner.len() > 0) {
-          return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()) + "");
+          return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()).to_owned());
         }
       }
       let rb = parser.first_bracket(rest);
@@ -849,7 +849,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
     }
     if (is_in(qual, ctx.enumnames)) {
-      return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()) + "", ctx);
+      return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()).to_owned(), ctx);
     }
     return tn;
   }
@@ -1055,12 +1055,12 @@ function rewrite_var_type(tn: string, ctx: RewriteCtx): string {
     return rewrite_type_name(tn, ctx);
   }
   let at = util.index_of_sub(tn, "@sd:") + 4;
-  let rest = slice_unchecked(tn, at, tn.len()) + "";
+  let rest = slice_unchecked(tn, at, tn.len()).to_owned();
   let colon = util.index_of_sub(rest, ":");
   if (colon < 0) {
     return tn;
   }
-  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon) + "", ctx) + slice_unchecked(rest, colon, rest.len());
+  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon).to_owned(), ctx) + slice_unchecked(rest, colon, rest.len());
 }
 
 function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
@@ -1202,11 +1202,11 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     }
     return ctx.prefix + "." + d;
   }
-  let k = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+  let k = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot).to_owned());
   if (k < 0) {
     return d;
   }
-  let name = slice_unchecked(d, dot + 1, d.len()) + "";
+  let name = slice_unchecked(d, dot + 1, d.len()).to_owned();
   return canonical_imported_trait(ctx.modprefixes[k], name, ctx.reexport_keys, ctx.reexport_targets);
 }
 
@@ -1235,7 +1235,7 @@ function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
   if (dot < 0) {
     return "";
   }
-  return slice_unchecked(canon, 0, dot) + "";
+  return slice_unchecked(canon, 0, dot).to_owned();
 }
 
 function canon_dyn(set: string, ctx: RewriteCtx): string {
@@ -1986,7 +1986,7 @@ function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pf
   let targets = rx.targets;
   for k in 0..rx.keys.len() {
     let enum_name = decltypes.follow_reexports(rx.targets[k], rx.keys, rx.targets);
-    let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2) + "";
+    let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2).to_owned();
     for i in 0..imports.len() {
       for sd in imports[i].mod.structs {
         if (sd.enum_owner.len() > 0 && pfxs[i] + "__" + sd.enum_owner == enum_name) {
@@ -2005,7 +2005,7 @@ function mangled_tail(mangled: string): string {
   while (at > 0 && slice_unchecked(mangled, at, at + 2) != "__") {
     at -= 1;
   }
-  return slice_unchecked(mangled, at, mangled.len()) + "";
+  return slice_unchecked(mangled, at, mangled.len()).to_owned();
 }
 
 pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }

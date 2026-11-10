@@ -92,12 +92,12 @@ pub function dirname(path: string): string {
     }
     i += 1;
   }
-  return slice_unchecked(path, 0, cut) + "";
+  return slice_unchecked(path, 0, cut).to_owned();
 }
 
 function rel_path(path: string): string {
   if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
-    return util.without_fern_ext(slice_unchecked(path, 2, path.len()) + "");
+    return util.without_fern_ext(slice_unchecked(path, 2, path.len()).to_owned());
   }
   return util.without_fern_ext(path);
 }
@@ -845,7 +845,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   if (!parts[idx].is_entry) {
     let id = parts[idx].ident;
     if (id.starts_with("stdlib://")) {
-      let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
+      let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()).to_owned());
       if (!source.ok) {
         return None;
       }
@@ -854,7 +854,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
     path = id + ".fern";
   }
   if (path.ends_with(".fern.md")) {
-    path = slice_unchecked(path, 0, path.len() - 3) + "";
+    path = slice_unchecked(path, 0, path.len() - 3).to_owned();
   }
   let source = read_module(ov.files, path);
   if (source.ok) {
@@ -927,7 +927,7 @@ function ident_tokens(s: string): string[] {
       start = i;
     }
     if (!word && start >= 0) {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       start = -1;
     }
     i += 1;

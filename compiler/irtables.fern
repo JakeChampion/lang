@@ -7,6 +7,7 @@ import "./util";
 import "./astwalk";
 import "./typeinfo";
 import "./capturebox";
+import "std/string";
 
 pub struct SigReg {
   rows: string[],
@@ -87,7 +88,7 @@ pub function csv_nth(enc: string, n: i32): string {
   while (k <= enc.len()) {
     if (k == enc.len() || depth == 0 && enc[k] == b',') {
       if (idx == n) {
-        return slice_unchecked(enc, start, k) + "";
+        return slice_unchecked(enc, start, k).to_owned();
       }
       idx += 1;
       start = k + 1;
