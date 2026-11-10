@@ -1,0 +1,178 @@
+{
+  "feature": "1fa7bfb82326371ba958ede43f651daa406d41a1",
+  "compiler_source_main": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+  "revised_repair": "449ddc4ac13dc83e7c006abe9022a988d951ae4c",
+  "root_compiler_sha256": "98a5a17c4e31477324bd7f2cf87aa9f1f84ad723c49c3a04cb7ed0af7381376c",
+  "stage1_compiler_sha256": "bead6a81a9a0d0f31d5b84afc85e907e6cc28cfc9f07e488e0d94d9baf0d62c0",
+  "valgrind": "3.24.0",
+  "changes": [
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/http_hello.text",
+      "before": 16696,
+      "measured": 15691,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "aarch64/http_hello.text",
+      "before": 17566,
+      "measured": 16619,
+      "tolerance_percent": 1.0,
+      "source": "cross-emitted ARM assembly"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/arm64-linux/http_hello.emit",
+      "before": 17566,
+      "measured": 16619,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/wasm32-wasi/http_hello.emit",
+      "before": 20294,
+      "measured": 19039,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/x86-64-linux/http_hello.emit",
+      "before": 16696,
+      "measured": 15691,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.diagnostic.bytes",
+      "before": 134872,
+      "measured": 129376,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.diagnostic.emit",
+      "before": 17398,
+      "measured": 16571,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.hardened.bytes",
+      "before": 86328,
+      "measured": 81480,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.hardened.emit",
+      "before": 19405,
+      "measured": 18195,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.minimal.bytes",
+      "before": 65160,
+      "measured": 63816,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.minimal.emit",
+      "before": 14069,
+      "measured": 13723,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.safe.bytes",
+      "before": 79096,
+      "measured": 75240,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.safe.emit",
+      "before": 17566,
+      "measured": 16619,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.diagnostic.bytes",
+      "before": 124320,
+      "measured": 118752,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.diagnostic.emit",
+      "before": 16283,
+      "measured": 15390,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.hardened.bytes",
+      "before": 75808,
+      "measured": 71952,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.hardened.emit",
+      "before": 17267,
+      "measured": 16234,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.minimal.bytes",
+      "before": 57744,
+      "measured": 56864,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.minimal.emit",
+      "before": 13655,
+      "measured": 13297,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.safe.bytes",
+      "before": 70032,
+      "measured": 66528,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.safe.emit",
+      "before": 16696,
+      "measured": 15691,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-/* Use FFmpeg's independent coded-bitstream reader for one SPS NAL. */
+/* Trace H.264 parameter sets with FFmpeg's independent reader. */
 #include <stdio.h>
 #include <libavcodec/bsf.h>
 #include <libavcodec/packet.h>

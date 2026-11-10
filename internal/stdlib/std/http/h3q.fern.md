@@ -517,9 +517,6 @@ function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): 
   if (authority.len() > 0 && !hs.has("host")) {
     hs = hs.append("host", authority);
   }
-  if (method != "CONNECT") {
-    path = http.request_target(method, path).unwrap_or(path);
-  }
   return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: hs, trailers: __map(trailers) };
 }
 
