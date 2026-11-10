@@ -28226,7 +28226,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   }
   let env = admission_env(mod, entry_file, raw_floor);
   mod = qualify_variants_in(mod, env, whole_focus(mod));
-  let typed = annotate_module(mod);
+  let typed = annotate_prepared(mod, module_env(mod), whole_focus(mod));
   let mt = ModuleTypes { ...check_module_pass(mod, env, fda_diags, [], typed.funcs), typed: typed };
   if (mt.diags.len() > 0) {
     return mt;
@@ -30534,7 +30534,11 @@ function whole_focus(mod: parser.Module): Focus {
 }
 
 function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
-  let rmod = pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus);
+  return annotate_prepared(pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus), env, focus);
+}
+
+// rmod is qualified, its literal locals are settled, and it is pretyped.
+function annotate_prepared(rmod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
   let nfuncs: parser.FuncDecl[] = [];
   let i = 0;
   while (i < rmod.funcs.len()) {
