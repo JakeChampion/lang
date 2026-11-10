@@ -1596,7 +1596,12 @@ function __agree(c: Client, h: message.ServerHello): Result[u8[], HandshakeError
   return Err(MissingExtension("key_share"));
 }
 
-function __hello_only(k: i32): boolean {
+// RFC 8446 section 4.2: the extensions of this client that a server must
+// not put in EncryptedExtensions.
+function __not_encrypted(k: i32): boolean {
+  if (k == message.EXT_PSK_KEY_EXCHANGE_MODES || k == message.EXT_COOKIE) {
+    return true;
+  }
   return k == message.EXT_KEY_SHARE || k == message.EXT_SUPPORTED_VERSIONS || k == message.EXT_PRE_SHARED_KEY || k == message.EXT_SIGNATURE_ALGORITHMS;
 }
 
@@ -1619,7 +1624,7 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   let i = 0;
   while (i < exts.len()) {
     let k = exts[i].kind;
-    if (__hello_only(k)) {
+    if (__not_encrypted(k) || k == message.EXT_SERVER_NAME && exts[i].data.len() > 0) {
       return Err(Illegal("extension in EncryptedExtensions"));
     }
     if (!__has(offered, k)) {
