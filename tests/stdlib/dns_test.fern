@@ -229,13 +229,6 @@ function test_decode_rejects(): test.TestOutcome {
     },
     None => {}
   }
-  let bad_label: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 2, 255, 109, 0, 0, 1, 0, 1];
-  match (decoded(bytes(bad_label))) {
-    Some(_) => {
-      return test.fail("a label that is not UTF-8");
-    },
-    None => {}
-  }
   match (decoded(encoded(dns.query(7, "vm.example.com", dns.TYPE_A)))) {
     Some(m) => {
       if (m.response) {
@@ -245,6 +238,17 @@ function test_decode_rejects(): test.TestOutcome {
     None => {
       return test.fail("a query decodes");
     }
+  }
+  return test.pass();
+}
+
+function test_binary_labels(): test.TestOutcome {
+  let wire = bytes([0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 2, 255, 109, 0, 0, 1, 0, 1]);
+  let Some(message) = decoded(wire) else {
+    return test.fail("DNS labels accept arbitrary bytes");
+  };
+  if (message.questions[0].name != "\\255m" || encoded(message) != wire) {
+    return test.fail("decimal escapes preserve binary labels");
   }
   return test.pass();
 }
@@ -1126,6 +1130,7 @@ function main(): i32 {
   r = r.it("EDNS0: the OPT record", test_edns_opt_record);
   r = r.it("a reply with compression pointers decodes", test_decode_reply);
   r = r.it("what decode refuses", test_decode_rejects);
+  r = r.it("binary labels survive text conversion", test_binary_labels);
   r = r.it("encode then decode is the message", test_round_trip);
   r = r.it("answer: the records behind a CNAME", test_records_after_cname);
   r = r.it("answer: the rcodes, and NOERROR without the record", test_answer_statuses);
