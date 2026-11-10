@@ -25,6 +25,7 @@ func TestGenericCallbackResultBorrows(t *testing.T) {
 	}
 	for name, body := range map[string]string{
 		"owned_state":          `function advance[T](own state: T, step: (own T) => T): T { return step(state); } function g(own h: Handle): i32 { return keep(advance(h, (own s: Handle): Handle => s)); }`,
+		"scalar_field_factory": `function fresh_from(h: Handle): Handle { return call((): Handle => Handle { fd: h.fd }); } function g(h: Handle): i32 { return keep(fresh_from(h)); }`,
 		"fresh_callback":       `function main(): i32 { return keep(call((): Handle => Handle { fd: 7 })); }`,
 		"handle_free_callback": `function result(f: () => Result[i32, string]): Result[i32, string] { return f(); } function g(h: Handle): i32 { let value = result((): Result[i32, string] => Ok(h.fd)); return 1; }`,
 		"scalar":               `function g(h: Handle): i32 { return call(() => h.fd); }`,
