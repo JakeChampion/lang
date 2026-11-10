@@ -1235,12 +1235,12 @@ function __background_run(work: () => void): i32 {
   return 0;
 }
 
-function __serve_count(own c: __Conns, at: i32, method: string, status: i32): __Conns {
+function __serve_count(own c: __Conns, at: i32, method: string, status: i32): own __Conns {
   let since = c.rate_since[at];
   return __serve_count_from(c, method, status, since);
 }
 
-function __serve_count_from(own c: __Conns, method: string, status: i32, since: i64): __Conns {
+function __serve_count_from(own c: __Conns, method: string, status: i32, since: i64): own __Conns {
   let m = c.metrics;
   let grown = m.request(method, status, time.duration_nanos(monotonic_ns() - since));
   if (grown.methods.len() == m.methods.len()) {
@@ -1353,8 +1353,9 @@ function __conns_add(own c: __Conns, own sock: Socket, deadline: i64, peer: i32,
   return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), socks: c.socks.append(sock), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), request_host: c.request_host, addresses: c.addresses.append(addr), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date, peer_counts: __peer_raise(c.peer_counts, peer) };
 }
 
-function __with_connection_host(own c: __Conns, at: i32): __Conns {
-  return __Conns { ...c, request_host: c.request_host.with_peer(c.addresses[at]) };
+function __with_connection_host(own c: __Conns, at: i32): own __Conns {
+  c = __Conns { ...c, request_host: c.request_host.with_peer(c.addresses[at]) };
+  return c;
 }
 
 function __peer_home(peer: i32, size: i32): i32 {
@@ -3458,7 +3459,7 @@ function __sent_range[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option
   return (c, Failed, true);
 }
 
-function __drain_deadline(own c: __Conns, at: i32, opts: Config, first: boolean): __Conns {
+function __drain_deadline(own c: __Conns, at: i32, opts: Config, first: boolean): own __Conns {
   let now = monotonic_ns();
   let since = c.send_since[at];
   let base = c.send_base[at];
