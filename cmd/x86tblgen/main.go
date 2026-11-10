@@ -50,13 +50,27 @@ func allowLongTable(b *strings.Builder, rows int) {
 	}
 }
 
-func lookup(b *strings.Builder, fn, param string, rows []string) {
+type row struct {
+	key, value string
+}
+
+func lookup(b *strings.Builder, fn, param string, rows []row) {
 	allowLongTable(b, len(rows))
 	fmt.Fprintf(b, "function %s(%s: string): i32 {\n    match (%s) {\n", fn, param, param)
 	for _, r := range rows {
-		fmt.Fprintf(b, "        %s,\n", r)
+		fmt.Fprintf(b, "        %q => { return %s; },\n", r.key, r.value)
 	}
 	b.WriteString("        _ => { return -1; }\n    }\n}\n")
+}
+
+// lookupOption writes a table that returns None for an unknown key.
+func lookupOption(b *strings.Builder, fn string, rows []row) {
+	allowLongTable(b, len(rows))
+	fmt.Fprintf(b, "function %s(mnem: string): Option[i32] {\n    match (mnem) {\n", fn)
+	for _, r := range rows {
+		fmt.Fprintf(b, "        %q => { return Some(%s); },\n", r.key, r.value)
+	}
+	b.WriteString("        _ => { return None; }\n    }\n}\n")
 }
 
 func genNamedTables() string {
@@ -72,14 +86,18 @@ func genNamedTables() string {
 			continue
 		}
 		if f.FernFn != "" {
-			var rows []string
+			var rows []row
 			for _, o := range f.Ops {
 				if o.ATT == "" {
 					continue
 				}
-				rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.ATT, f.Pack(o)))
+				rows = append(rows, row{o.ATT, fmt.Sprint(f.Pack(o))})
 			}
-			lookup(&b, f.FernFn, "mnem", rows)
+			if f.Sentinel {
+				lookup(&b, f.FernFn, "mnem", rows)
+			} else {
+				lookupOption(&b, f.FernFn, rows)
+			}
 			continue
 		}
 		allowLongTable(&b, len(spellings))
@@ -102,13 +120,13 @@ func genNamedTables() string {
 func genGPRTables() string {
 	var b strings.Builder
 	group := func(fn string, g x86tbl.Group) {
-		var rows []string
+		var rows []row
 		for _, op := range g.Ops {
 			for _, sp := range op.Spellings {
-				rows = append(rows, fmt.Sprintf("%q => { return %d; }", sp, op.Ext))
+				rows = append(rows, row{sp, fmt.Sprint(op.Ext)})
 			}
 		}
-		lookup(&b, fn, "mnem", rows)
+		lookupOption(&b, fn, rows)
 		b.WriteString("\n")
 	}
 	group("x86_gas_alu_ext", x86tbl.ALU)
@@ -138,14 +156,14 @@ func genFixedTable() string {
 	b.WriteString(`// x86_gas_fixed_op returns instruction bytes in little-endian order.
 // The high byte stores the byte count. An unknown mnemonic returns -1.
 `)
-	var rows []string
+	var rows []row
 	for _, f := range x86tbl.FixedOps {
 		args := make([]string, 0, 3)
 		for _, by := range f.Bytes {
 			args = append(args, fmt.Sprint(by))
 		}
 		for _, s := range f.Spellings {
-			rows = append(rows, fmt.Sprintf("%q => { return x86_pack%d(%s); }", s, len(f.Bytes), strings.Join(args, ", ")))
+			rows = append(rows, row{s, fmt.Sprintf("x86_pack%d(%s)", len(f.Bytes), strings.Join(args, ", "))})
 		}
 	}
 	lookup(&b, "x86_gas_fixed_op", "mnem", rows)
@@ -180,13 +198,13 @@ func genSSETables() string {
 }
 
 func writeSSEHalf(b *strings.Builder, fn string, half x86tbl.SSEHalf) {
-	var rows []string
+	var rows []row
 	for _, o := range x86tbl.SSEHalfOps(half) {
 		if o.Prefix == 0 {
-			rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.Mnemonic, o.Op))
+			rows = append(rows, row{o.Mnemonic, fmt.Sprint(o.Op)})
 			continue
 		}
-		rows = append(rows, fmt.Sprintf("%q => { return %d * 256 + %d; }", o.Mnemonic, o.Prefix, o.Op))
+		rows = append(rows, row{o.Mnemonic, fmt.Sprintf("%d * 256 + %d", o.Prefix, o.Op)})
 	}
 	lookup(b, fn, "mnem", rows)
 }
@@ -195,10 +213,10 @@ func genCondTable() string {
 	var b strings.Builder
 	b.WriteString(`// x86_gas_cc_code returns the four-bit condition code, or -1 for an unknown suffix.
 `)
-	var rows []string
+	var rows []row
 	for _, c := range x86tbl.Conds {
 		for _, s := range c.Spellings {
-			rows = append(rows, fmt.Sprintf("%q => { return %d; }", s, c.Code))
+			rows = append(rows, row{s, fmt.Sprint(c.Code)})
 		}
 	}
 	lookup(&b, "x86_gas_cc_code", "cond", rows)

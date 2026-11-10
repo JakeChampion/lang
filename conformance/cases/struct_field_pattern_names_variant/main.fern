@@ -1,0 +1,29 @@
+enum Colour { Red, Green }
+
+struct Pixel { c: Colour, n: i32 }
+
+function f(p: Pixel): i32 {
+    return match (p) {
+        Pixel { c: Red(), n } => n,
+        Pixel { c: shade, n } => n + shade_cost(shade),
+    };
+}
+
+function shade_cost(c: Colour): i32 {
+    return match (c) { Red => 1, Green => 2 };
+}
+
+function g(p: Pixel): i32 {
+    if let Pixel { c: Green(), n } = p {
+        return n;
+    }
+    return 0;
+}
+
+function main(): i32 {
+    print(f(Pixel { c: Colour.Red, n: 40 }));
+    print(f(Pixel { c: Colour.Green, n: 40 }));
+    print(g(Pixel { c: Colour.Green, n: 7 }));
+    print(g(Pixel { c: Colour.Red, n: 7 }));
+    return 0;
+}
