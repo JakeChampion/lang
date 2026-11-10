@@ -31,6 +31,14 @@ function main(): i32 {
 }
 `, "allocation size out of range")
 	})
+	t.Run("random_bytes_negative_count", func(t *testing.T) {
+		assertAbortsWithCause(t, `import "std/rand";
+function main(): i32 {
+  let n: i32 = 0 - 3;
+  return rand.bytes(n).len();
+}
+`, "allocation size out of range")
+	})
 }
 
 func TestAllocSizeWrappingToZeroStillAborts(t *testing.T) {

@@ -8,12 +8,12 @@ function __fern_str_cmp(a: string, b: string): i32 {
   let dl = la - lb;
   let p = __raw_data(a);
   let q = __raw_data(b);
-  let end = p + n;
+  let end = p + n as usize;
   while (p + 8 <= end) {
     let x = __load_i64(p) ^ __load_i64(q);
     if (x != 0 as i64) {
       let k = __ctz64(x as u64) >> 3;
-      return __load_u8(p + k) - __load_u8(q + k);
+      return __load_u8(p + k as usize) - __load_u8(q + k as usize);
     }
     p += 8;
     q += 8;

@@ -4,7 +4,7 @@ function __fern_count_byte_bytes(a: usize, byte: i32): i32 {
     let i: i32 = 0;
     let count: i32 = 0;
     while (i < n) {
-      if (__load_u8(a + (8 + i)) as i32 == byte) {
+      if (__load_u8(a + (8 + i) as usize) as i32 == byte) {
         count = count + 1;
       }
       i = i + 1;

@@ -99,6 +99,13 @@ interpreter is 32-bit.
 The conformance cases `usize_wraps_at_64_bits` and
 `usize_wraps_at_32_bits` pin both widths.
 
+An operator joins `usize` only with a type that `usize` holds on each
+target: `usize` itself, or an unsigned type of 32 bits or less. Each
+other mix is E009 and needs a cast, as `u64 + i32` does. A pointer
+offset is written `p + off as usize`. The conformance cases
+`diag_e009_usize_mixed_with_another_integer` and
+`usize_mixes_through_an_explicit_cast` pin the rule.
+
 ## Division and remainder never trap
 
 `/` and `%` are **total** — defined for every pair of operands,

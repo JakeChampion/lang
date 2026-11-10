@@ -18,6 +18,6 @@ function __fern_string_from_bytes_range_u8(a: i32[], from: i32, end: i32): strin
   }
   let m = end - from;
   let p = __raw_alloc(m);
-  __memcpy(p, __raw_arr_ptr(a) + 8 + from, m);
+  __memcpy(p, __raw_arr_ptr(a) + 8 + from as usize, m);
   return __raw_string(p, m);
 }

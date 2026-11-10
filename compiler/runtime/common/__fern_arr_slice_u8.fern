@@ -19,6 +19,6 @@ function __fern_arr_slice_u8(a: i32[], start: i32, end: i32): i32[] {
   let m = end - start;
   let p = __raw_arr_box((m + 7) / 8);
   __store_i64(p, m as i64);
-  __memcpy(p + 8, __raw_arr_ptr(a) + 8 + start, m);
+  __memcpy(p + 8, __raw_arr_ptr(a) + 8 + start as usize, m);
   return __raw_array(p);
 }

@@ -17899,7 +17899,8 @@ func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) 
 
 // commonIntegerWidth selects the smallest integer type that holds both
 // operand ranges. Literals take the concrete operand's type first.
-// Pointer arithmetic retains its separate conversion rules.
+// usize joins only with a type that it holds on each target: usize, or an
+// unsigned type of 32 bits or less.
 func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	ln, lOk := lt.(ast.NumberType)
 	rn, rOk := rt.(ast.NumberType)
@@ -17913,10 +17914,15 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 		return ln, true
 	}
 	if ln.IsPointerWidth() || rn.IsPointerWidth() {
-		if ln.IsPointerWidth() {
-			return ln, true
+		other := rn
+		pointer := ln
+		if !ln.IsPointerWidth() {
+			other, pointer = ln, rn
 		}
-		return rn, true
+		if other.IsPointerWidth() || !other.IsSigned() && other.NormalWidth() <= 32 {
+			return pointer, true
+		}
+		return ast.NumberType{}, false
 	}
 	if ln.IsSigned() != rn.IsSigned() {
 		for _, candidate := range []ast.NumberType{{Width: 32, Signed: true}, {Width: 64, Signed: true}} {
