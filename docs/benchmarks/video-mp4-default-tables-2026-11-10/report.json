@@ -1,0 +1,1010 @@
+{
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "compiler_sha256": "26418c31efc483a6234e425b42475804134a0b1d7dddbfb3218ba88d2101aeaf",
+  "source_sha256": "179302b922102bc0b07ad1b97976c077ee3977b9a71548d7a0246866c4f9eefc",
+  "template_sha256": "997f52a5abda9aa417a52519e5edb1ee0960543e54562174236875a529a696a8",
+  "modules_sha256": {
+    "before": {
+      "std/video/mp4.fern.md": "fcd0dce7bf01c2b8f99de80a156429f3a5c36cf9146a12f39a6e5f64c0eabf73",
+      "std/video/mp4/timing.fern.md": "266c329a939ead75c9a00e960e4cd880bdf29b157249183bdaef34c0bd65a2af"
+    },
+    "after": {
+      "std/video/mp4.fern.md": "97e147fa0289ab3114b87e9e0ee1fc97daf435f46cb7823b4d4e99198368472d",
+      "std/video/mp4/timing.fern.md": "7afae7308f4d923792b0bd8cf1d272ab2fdb92e3c66fe159c1f72d67737c6c8d"
+    }
+  },
+  "workloads": [
+    {
+      "packets": 65536,
+      "composition_table": false,
+      "sync_table": false,
+      "input_sha256": "673cd30dd4f47dd97acd97d50508a8549449d38e4404dd89c80a3c9b699a0f27",
+      "input_bytes": 66329,
+      "expected_checksum": 6445170688,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 6070000,
+            "process_system_ns": 3000000,
+            "elapsed_seconds": 0.014997291999861773,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3636000,
+            "process_system_ns": 3069000,
+            "elapsed_seconds": 0.008386857000004966,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 7208000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008933893999710563,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 7769000,
+            "elapsed_seconds": 0.01372261799951957,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 8032000,
+            "process_system_ns": 4526000,
+            "elapsed_seconds": 0.015143818000069587,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 7987000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.013082553000458574,
+            "allocations": 131197
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 4255000,
+            "process_system_ns": 4749000,
+            "elapsed_seconds": 0.01100545300050726,
+            "allocations": 131197
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 0,
+            "process_system_ns": 6326000,
+            "elapsed_seconds": 0.007970853000188072,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 3217000,
+            "process_system_ns": 7084000,
+            "elapsed_seconds": 0.012640903999454167,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 0,
+            "process_system_ns": 3761000,
+            "elapsed_seconds": 0.00804218299981585,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 0,
+            "process_system_ns": 5416000,
+            "elapsed_seconds": 0.007265309999638703,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 0,
+            "process_system_ns": 6697000,
+            "elapsed_seconds": 0.008517489999576355,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 3965000,
+            "process_system_ns": 4629000,
+            "elapsed_seconds": 0.010475586999746156,
+            "allocations": 131195
+          },
+          {
+            "peak_rss_bytes": 12189696,
+            "process_user_ns": 0,
+            "process_system_ns": 5123000,
+            "elapsed_seconds": 0.007568873000309395,
+            "allocations": 131195
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 131197,
+          "median_peak_rss_bytes": 13238272,
+          "median_elapsed_seconds": 0.013082553000458574
+        },
+        "after": {
+          "allocations": 131195,
+          "median_peak_rss_bytes": 12189696,
+          "median_elapsed_seconds": 0.00804218299981585
+        }
+      }
+    },
+    {
+      "packets": 65536,
+      "composition_table": false,
+      "sync_table": true,
+      "input_sha256": "2219efc95c1ebbf7410384bcb2630d2bdc2ff2fab6a7883cc9529fcb437100f0",
+      "input_bytes": 66349,
+      "expected_checksum": 6445105153,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 4517000,
+            "process_system_ns": 6794000,
+            "elapsed_seconds": 0.013143834000402421,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 7357000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008812186999421101,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3639000,
+            "process_system_ns": 4148000,
+            "elapsed_seconds": 0.009343873000034364,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 7042000,
+            "elapsed_seconds": 0.009631394000280125,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 6146000,
+            "elapsed_seconds": 0.008211084000322444,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 2745000,
+            "process_system_ns": 2724000,
+            "elapsed_seconds": 0.010582113999589637,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3449000,
+            "process_system_ns": 3406000,
+            "elapsed_seconds": 0.008868290999998862,
+            "allocations": 131213
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 4262000,
+            "process_system_ns": 4290000,
+            "elapsed_seconds": 0.01059391200033133,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 6940000,
+            "elapsed_seconds": 0.008945487000346475,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 5843000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008631001000139804,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 8684000,
+            "elapsed_seconds": 0.011223161999623699,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 4746000,
+            "process_system_ns": 4706000,
+            "elapsed_seconds": 0.011993995000011637,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 6963000,
+            "elapsed_seconds": 0.012262043999726302,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 6011000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008604122999713582,
+            "allocations": 131212
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 131213,
+          "median_peak_rss_bytes": 13238272,
+          "median_elapsed_seconds": 0.009343873000034364
+        },
+        "after": {
+          "allocations": 131212,
+          "median_peak_rss_bytes": 12713984,
+          "median_elapsed_seconds": 0.01059391200033133
+        }
+      }
+    },
+    {
+      "packets": 65536,
+      "composition_table": true,
+      "sync_table": false,
+      "input_sha256": "c6fade0c3afa674be986a51fee40585892b43fe5f65b4e3e387137212df25892",
+      "input_bytes": 66353,
+      "expected_checksum": 6445301760,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 5817000,
+            "elapsed_seconds": 0.007452208999893628,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3470000,
+            "process_system_ns": 3646000,
+            "elapsed_seconds": 0.00895046799996635,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 6625000,
+            "elapsed_seconds": 0.008644024000204809,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 5890000,
+            "elapsed_seconds": 0.00848895299986907,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3411000,
+            "process_system_ns": 6988000,
+            "elapsed_seconds": 0.013205320000452048,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 2747000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.007213852999484516,
+            "allocations": 131213
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 5974000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.007663066000532126,
+            "allocations": 131213
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 3288000,
+            "process_system_ns": 2961000,
+            "elapsed_seconds": 0.008246866000263253,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 4472000,
+            "process_system_ns": 3582000,
+            "elapsed_seconds": 0.009698176999336283,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 7383000,
+            "elapsed_seconds": 0.00885624700003973,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 7486000,
+            "elapsed_seconds": 0.008954503000495606,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 5774000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.007494265999412164,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 5057000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.00662762499996461,
+            "allocations": 131212
+          },
+          {
+            "peak_rss_bytes": 12713984,
+            "process_user_ns": 0,
+            "process_system_ns": 7093000,
+            "elapsed_seconds": 0.008839516000080039,
+            "allocations": 131212
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 131213,
+          "median_peak_rss_bytes": 13238272,
+          "median_elapsed_seconds": 0.00848895299986907
+        },
+        "after": {
+          "allocations": 131212,
+          "median_peak_rss_bytes": 12713984,
+          "median_elapsed_seconds": 0.008839516000080039
+        }
+      }
+    },
+    {
+      "packets": 65536,
+      "composition_table": true,
+      "sync_table": true,
+      "input_sha256": "0ea788572b7a407959cb469871087a95239c33e88b9848125a9d2449da5382d0",
+      "input_bytes": 66373,
+      "expected_checksum": 6445236225,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3430000,
+            "process_system_ns": 3012000,
+            "elapsed_seconds": 0.008606307000263769,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3486000,
+            "process_system_ns": 3019000,
+            "elapsed_seconds": 0.008419402999606973,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 7458000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.00932076900062384,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 7044000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008691211000041221,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 75639000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.0787248090000503,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 5629000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.007089853000252333,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3036000,
+            "process_system_ns": 6204000,
+            "elapsed_seconds": 0.010673918000065896,
+            "allocations": 131229
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 6419000,
+            "elapsed_seconds": 0.008000204999916605,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3020000,
+            "process_system_ns": 3231000,
+            "elapsed_seconds": 0.007866943999943032,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 4362000,
+            "process_system_ns": 4030000,
+            "elapsed_seconds": 0.0102967990005709,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 0,
+            "process_system_ns": 5958000,
+            "elapsed_seconds": 0.007580579999739712,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3032000,
+            "process_system_ns": 4024000,
+            "elapsed_seconds": 0.009057632999429188,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 6624000,
+            "process_system_ns": 0,
+            "elapsed_seconds": 0.008294451999972807,
+            "allocations": 131229
+          },
+          {
+            "peak_rss_bytes": 13238272,
+            "process_user_ns": 3232000,
+            "process_system_ns": 3015000,
+            "elapsed_seconds": 0.007734390999758034,
+            "allocations": 131229
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 131229,
+          "median_peak_rss_bytes": 13238272,
+          "median_elapsed_seconds": 0.008691211000041221
+        },
+        "after": {
+          "allocations": 131229,
+          "median_peak_rss_bytes": 13238272,
+          "median_elapsed_seconds": 0.008000204999916605
+        }
+      }
+    },
+    {
+      "packets": 262144,
+      "composition_table": false,
+      "sync_table": false,
+      "input_sha256": "15f3728cbcb96b0235db1b9d64e71f1206fc76a12b5d8adbe3afdf8273b30691",
+      "input_bytes": 262937,
+      "expected_checksum": 103090094080,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 14754000,
+            "process_system_ns": 22097000,
+            "elapsed_seconds": 0.038816692999716906,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 15078000,
+            "process_system_ns": 31981000,
+            "elapsed_seconds": 0.048749472000054084,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 35308000,
+            "process_system_ns": 27644000,
+            "elapsed_seconds": 0.0656971579992387,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 43853000,
+            "process_system_ns": 20485000,
+            "elapsed_seconds": 0.11751650600035646,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 23941000,
+            "process_system_ns": 20392000,
+            "elapsed_seconds": 0.0486228290001236,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 15286000,
+            "process_system_ns": 12265000,
+            "elapsed_seconds": 0.03116042199962976,
+            "allocations": 524419
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 7868000,
+            "process_system_ns": 26437000,
+            "elapsed_seconds": 0.036214702000506804,
+            "allocations": 524419
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 17431000,
+            "process_system_ns": 33094000,
+            "elapsed_seconds": 0.0520995770002628,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 18388000,
+            "process_system_ns": 24755000,
+            "elapsed_seconds": 0.044790437999836286,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 31585000,
+            "process_system_ns": 58062000,
+            "elapsed_seconds": 0.09352798199961398,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 21099000,
+            "process_system_ns": 45174000,
+            "elapsed_seconds": 0.08634061599968845,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 22210000,
+            "process_system_ns": 19736000,
+            "elapsed_seconds": 0.043983795000713144,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 4171000,
+            "process_system_ns": 23922000,
+            "elapsed_seconds": 0.031182423000245763,
+            "allocations": 524417
+          },
+          {
+            "peak_rss_bytes": 48496640,
+            "process_user_ns": 17352000,
+            "process_system_ns": 29449000,
+            "elapsed_seconds": 0.04859371499969711,
+            "allocations": 524417
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 524419,
+          "median_peak_rss_bytes": 52690944,
+          "median_elapsed_seconds": 0.0486228290001236
+        },
+        "after": {
+          "allocations": 524417,
+          "median_peak_rss_bytes": 48496640,
+          "median_elapsed_seconds": 0.04859371499969711
+        }
+      }
+    },
+    {
+      "packets": 262144,
+      "composition_table": false,
+      "sync_table": true,
+      "input_sha256": "13d76cc6bf56cd27a215bd1a999c585d7f3f77c6723b159b99b676c526862cae",
+      "input_bytes": 262957,
+      "expected_checksum": 103089831937,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 8263000,
+            "process_system_ns": 19915000,
+            "elapsed_seconds": 0.03013887999986764,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 12228000,
+            "process_system_ns": 20130000,
+            "elapsed_seconds": 0.034725184999842895,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 17358000,
+            "process_system_ns": 7905000,
+            "elapsed_seconds": 0.026946478000354546,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 8424000,
+            "process_system_ns": 17584000,
+            "elapsed_seconds": 0.027673630000208504,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 16791000,
+            "process_system_ns": 14364000,
+            "elapsed_seconds": 0.03298266199999489,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 11721000,
+            "process_system_ns": 20987000,
+            "elapsed_seconds": 0.03483028800019383,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 16765000,
+            "process_system_ns": 8825000,
+            "elapsed_seconds": 0.02776080700004968,
+            "allocations": 524437
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 11954000,
+            "process_system_ns": 26814000,
+            "elapsed_seconds": 0.040675558000657475,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 15271000,
+            "process_system_ns": 15267000,
+            "elapsed_seconds": 0.03303589799998008,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 16430000,
+            "process_system_ns": 20839000,
+            "elapsed_seconds": 0.039283823000005214,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 15511000,
+            "process_system_ns": 19190000,
+            "elapsed_seconds": 0.03738563500064629,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 3632000,
+            "process_system_ns": 22744000,
+            "elapsed_seconds": 0.02846477699949901,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 18260000,
+            "process_system_ns": 19152000,
+            "elapsed_seconds": 0.03932724799960852,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 14119000,
+            "process_system_ns": 11583000,
+            "elapsed_seconds": 0.028027762000419898,
+            "allocations": 524436
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 524437,
+          "median_peak_rss_bytes": 52690944,
+          "median_elapsed_seconds": 0.03013887999986764
+        },
+        "after": {
+          "allocations": 524436,
+          "median_peak_rss_bytes": 50593792,
+          "median_elapsed_seconds": 0.03738563500064629
+        }
+      }
+    },
+    {
+      "packets": 262144,
+      "composition_table": true,
+      "sync_table": false,
+      "input_sha256": "78c75fc600257773d4d971ac9c4bc9c5aa3f64cd3dcbe6ef08636bde360f3d89",
+      "input_bytes": 262961,
+      "expected_checksum": 103090618368,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 23731000,
+            "process_system_ns": 23462000,
+            "elapsed_seconds": 0.04889385799924639,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 21340000,
+            "process_system_ns": 12219000,
+            "elapsed_seconds": 0.03533053000046493,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 8560000,
+            "process_system_ns": 16771000,
+            "elapsed_seconds": 0.027136251999763772,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 23242000,
+            "process_system_ns": 11643000,
+            "elapsed_seconds": 0.03637952999997651,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 4376000,
+            "process_system_ns": 23583000,
+            "elapsed_seconds": 0.02948265699978947,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 24433000,
+            "process_system_ns": 11764000,
+            "elapsed_seconds": 0.037725897999735025,
+            "allocations": 524437
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 13035000,
+            "process_system_ns": 18207000,
+            "elapsed_seconds": 0.03389435299959587,
+            "allocations": 524437
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 8619000,
+            "process_system_ns": 22435000,
+            "elapsed_seconds": 0.033694617999572074,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 16849000,
+            "process_system_ns": 20364000,
+            "elapsed_seconds": 0.03897319899988361,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 9937000,
+            "process_system_ns": 15320000,
+            "elapsed_seconds": 0.02657074500075396,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 22444000,
+            "process_system_ns": 10050000,
+            "elapsed_seconds": 0.03437313799986441,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 11519000,
+            "process_system_ns": 18996000,
+            "elapsed_seconds": 0.032430295000267506,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 26595000,
+            "process_system_ns": 24822000,
+            "elapsed_seconds": 0.05550154100001237,
+            "allocations": 524436
+          },
+          {
+            "peak_rss_bytes": 50593792,
+            "process_user_ns": 10996000,
+            "process_system_ns": 28245000,
+            "elapsed_seconds": 0.04157244799989712,
+            "allocations": 524436
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 524437,
+          "median_peak_rss_bytes": 52690944,
+          "median_elapsed_seconds": 0.03533053000046493
+        },
+        "after": {
+          "allocations": 524436,
+          "median_peak_rss_bytes": 50593792,
+          "median_elapsed_seconds": 0.03437313799986441
+        }
+      }
+    },
+    {
+      "packets": 262144,
+      "composition_table": true,
+      "sync_table": true,
+      "input_sha256": "593c502ee6ba2dba7b6898b57350d4be0a6f17dfd8da11166ef28a80e183af74",
+      "input_bytes": 262981,
+      "expected_checksum": 103090356225,
+      "trials": {
+        "before": [
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 19928000,
+            "process_system_ns": 18518000,
+            "elapsed_seconds": 0.04095550199963327,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 16986000,
+            "process_system_ns": 16308000,
+            "elapsed_seconds": 0.03565311000056681,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 4067000,
+            "process_system_ns": 22729000,
+            "elapsed_seconds": 0.028925190000336443,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 19803000,
+            "process_system_ns": 7893000,
+            "elapsed_seconds": 0.030488909999803582,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 3948000,
+            "process_system_ns": 20683000,
+            "elapsed_seconds": 0.02735324299919739,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 29617000,
+            "process_system_ns": 3973000,
+            "elapsed_seconds": 0.03527980200033198,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 19188000,
+            "process_system_ns": 12281000,
+            "elapsed_seconds": 0.03326526699947863,
+            "allocations": 524455
+          }
+        ],
+        "after": [
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 15104000,
+            "process_system_ns": 27602000,
+            "elapsed_seconds": 0.047714094999719237,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 15661000,
+            "process_system_ns": 20756000,
+            "elapsed_seconds": 0.037956686000143236,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 11943000,
+            "process_system_ns": 19592000,
+            "elapsed_seconds": 0.03329891499924997,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 23753000,
+            "process_system_ns": 13725000,
+            "elapsed_seconds": 0.039019359999656444,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 18347000,
+            "process_system_ns": 23951000,
+            "elapsed_seconds": 0.0437590800001999,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 9021000,
+            "process_system_ns": 22040000,
+            "elapsed_seconds": 0.0332960349996938,
+            "allocations": 524455
+          },
+          {
+            "peak_rss_bytes": 52690944,
+            "process_user_ns": 12081000,
+            "process_system_ns": 22357000,
+            "elapsed_seconds": 0.036853088000498246,
+            "allocations": 524455
+          }
+        ]
+      },
+      "summary": {
+        "before": {
+          "allocations": 524455,
+          "median_peak_rss_bytes": 52690944,
+          "median_elapsed_seconds": 0.03326526699947863
+        },
+        "after": {
+          "allocations": 524455,
+          "median_peak_rss_bytes": 52690944,
+          "median_elapsed_seconds": 0.037956686000143236
+        }
+      }
+    }
+  ]
+}

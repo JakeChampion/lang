@@ -1,0 +1,28 @@
+// Measure complete-view packet index memory with matched compiler and source trees.
+import "std/video/mp4";
+import "std/io";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let before = __heap_alloc_count();
+  let Ok(index) = mp4.inspect(input, mp4.default_limits()) else {
+    return 3;
+  };
+  let allocations = __heap_alloc_count() - before;
+  let checksum = 0i64;
+  let count = 0;
+  for track in index.tracks {
+    for p in track.packets {
+      checksum += p.offset + p.bytes as i64 + p.decode_time + p.presentation_time + p.duration as i64 + p.description as i64 + (if (p.sync) { 1i64 } else { 0i64 });
+      count += 1;
+    }
+  }
+  print(count.to_string() + " " + checksum.to_string() + " " + allocations.to_string());
+  return 0;
+}

@@ -99,6 +99,8 @@ def generate(directory):
         ("avc-signed-faststart", "libx264", ["-movflags", "+negative_cts_offsets+faststart"]),
         ("hevc-bframes", "libx265", ["-tag:v", "hvc1"]),
         ("avc-audio", "libx264", ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]),
+        ("avc-no-bframes", "libx264", ["-bf", "0"]),
+        ("avc-all-intra", "libx264", ["-bf", "0", "-g", "1"]),
     ):
         path = directory / (name + ".mp4")
         args = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=32x32:rate=6"]

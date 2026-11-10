@@ -5,6 +5,8 @@ Version-zero composition offsets are unsigned. Version-one offsets are signed.
 Run counts must cover exactly the declared samples.
 A missing sync table means that every sample is a sync sample.
 An empty sync table means that no sample is a sync sample.
+The public readers return one value for each sample.
+The packet indexer uses empty internal arrays for absent tables and applies their defaults directly.
 
 ```fern
 <<*>>=
@@ -26,6 +28,18 @@ function rows(input: [u8], box: boxes.Box, width: i32, maximum: i32): Result[(i3
 }
 
 pub function composition(input: [u8], children: [boxes.Box], samples: i32): Result[i64[], pcm.AudioError] {
+  let output = indexed_composition(input, children, samples)?;
+  if (output.len() != 0) {
+    return Ok(output);
+  }
+  for _ in 0..samples {
+    output = output.append(0i64);
+  }
+  return Ok(output);
+}
+
+// An empty array denotes the absent table for a nonempty packet index.
+pub(package) function indexed_composition(input: [u8], children: [boxes.Box], samples: i32): Result[i64[], pcm.AudioError] {
   if (samples < 0) {
     return Err(pcm.Limit);
   }
@@ -33,11 +47,7 @@ pub function composition(input: [u8], children: [boxes.Box], samples: i32): Resu
   if let Some(box) = found {
     return offsets(input, box, samples);
   }
-  let output: i64[] = [];
-  for _ in 0..samples {
-    output = output.append(0i64);
-  }
-  return Ok(output);
+  return Ok([]);
 }
 
 function offsets(input: [u8], box: boxes.Box, samples: i32): Result[i64[], pcm.AudioError] {
@@ -65,15 +75,23 @@ function offsets(input: [u8], box: boxes.Box, samples: i32): Result[i64[], pcm.A
 }
 
 pub function sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[boolean[], pcm.AudioError] {
+  let output = indexed_sync_samples(input, children, samples)?;
+  if (output.len() != 0) {
+    return Ok(output);
+  }
+  for _ in 0..samples {
+    output = output.append(true);
+  }
+  return Ok(output);
+}
+
+// An explicit empty sync table still expands to false for every sample.
+pub(package) function indexed_sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[boolean[], pcm.AudioError] {
   if (samples < 0) {
     return Err(pcm.Limit);
   }
   let Some(box) = boxes.one(children, "stss")? else {
-    let output: boolean[] = [];
-    for _ in 0..samples {
-      output = output.append(true);
-    }
-    return Ok(output);
+    return Ok([]);
   };
   return sync_table(input, box, samples);
 }
