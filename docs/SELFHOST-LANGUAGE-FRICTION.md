@@ -63,7 +63,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **2,068** loops, **2,288** `x = x + 1` — includes the bounded, variable-step store-group search (#15085) | ceiling on the increments |
+| `while` + manual index | — | **2,069** loops, **2,288** `x = x + 1` — includes the bounded, variable-step store-group search (#15085) and the worklist cursor of the immutable-data proof (#15162) | ceiling on the increments |
 | `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |

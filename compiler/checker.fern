@@ -18353,7 +18353,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { result_body: ast.Stmt[], ret_own: boolean, owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
+struct OwnCtx { result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18621,7 +18621,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { result_body: lm.body, ret_own: lm.ret_own, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
+  let nested = OwnCtx { result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
   return nested;
 }
 
@@ -19089,7 +19089,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ret_own && parser.is_value_block(c)) {
         return !ow_result_loan(e, ctx);
       }
-      if (ow_call_checked_result(c, ctx.scope)) {
+      if (ow_copyable_result(ty, ctx) || ow_call_checked_result(c, ctx.scope)) {
         return true;
       }
       if let Some(tail) = ow_unsafe_value(c) {
@@ -20085,6 +20085,9 @@ function lu_call_site_borrows(fx: LuFn, c: ast.ExprCall): boolean {
 // it. Only a parameter that can lend a handle counts, when the callee is
 // declared.
 function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): boolean {
+  if (fx.lenders.decls.copy_results.has(c.ty)) {
+    return false;
+  }
   if (!ow_call_may_borrow(c, fx.ofuncs, fx.borrows, fx.builtins)) {
     return false;
   }
@@ -23712,7 +23715,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // The struct declarations a type name resolves against, and the types with
 // a method that consumes its receiver.
 // no_handle and handle hold the current declaration classification.
-struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex }
+struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex, copy_results: util.NameIndex }
 
 function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
   let names: string[] = [];
@@ -23750,7 +23753,7 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
     decl_names = decl_names.append(al.name);
   }
   let no: string[] = [];
-  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations) };
+  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations), copy_results: util.name_index([]) };
   return ow_classify_decls(dx, decl_names);
 }
 
@@ -23765,65 +23768,117 @@ function ow_value_decl(name: string, structs: parser.StructDecl[], snames: util.
   return false;
 }
 
-function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
-  if (!ow_holds_no_handle(tn, dx) || tn == "str" || tn == "fn" || parser.top_arrow_at(tn) >= 0 || tn.starts_with("[")) {
-    return false;
-  }
-  if (tn.ends_with("[]")) {
-    return ow_value_data(slice_unchecked(tn, 0, tn.len() - 2).to_owned(), dx, seen);
-  }
-  if (tn.starts_with("(") && tn.ends_with(")")) {
-    return ow_value_parts(parser.split_top_commas(slice_unchecked(tn, 1, tn.len() - 1).to_owned()), dx, seen);
-  }
-  let name = util.base_type_name(tn);
-  if (name == "Cell" || dx.obligations.has(name)) {
-    return false;
-  }
-  let args: string[] = [];
-  let open = util.index_of_sub(tn, "[");
-  if (open > 0 && tn.ends_with("]")) {
-    args = parser.split_top_commas(slice_unchecked(tn, open + 1, tn.len() - 1).to_owned());
-    if (!ow_value_parts(args, dx, seen)) {
-      return false;
+function ow_copy_type_at(e: ast.Expr, own types: string[]): string[] {
+  if let ast.ExprCall(call) = e {
+    if (call.ty.len() > 0 && !util.has_str(types, call.ty)) {
+      return types.append(call.ty);
     }
   }
-  if (util.has_str(seen, name)) {
-    return true;
-  }
-  for alias in dx.aliases {
-    if (alias.name != name) {
-      continue;
-    }
-    for i in 0..alias.variants.len() {
-      let member = alias.variants[i];
-      if (i < alias.variant_args.len() && alias.variant_args[i].len() > 0) {
-        member = member + "[" + alias.variant_args[i] + "]";
-      }
-      if (!ow_value_data(parser.subst_ty(member, alias.type_params, args), dx, seen.append(name))) {
-        return false;
-      }
-    }
-  }
-  for sd in dx.structs {
-    if (sd.name != name && sd.enum_owner != name) {
-      continue;
-    }
-    if (sd.must_consume) {
-      return false;
-    }
-    for field in sd.fields {
-      if (!ow_value_data(parser.subst_ty(field.type_name, sd.type_params, args), dx, seen.append(name))) {
-        return false;
-      }
-    }
-  }
-  return true;
+  return types;
 }
 
-function ow_value_parts(parts: string[], dx: OwnDecls, seen: string[]): boolean {
-  for part in parts {
-    if (!ow_value_data(part.trim(), dx, seen)) {
+// Borrow and last-use summaries share immutable certificates for the checked
+// call annotations. Erased generic tags fail the same complete-type proof.
+function ow_copy_results(typed: parser.FuncDecl[], dx: OwnDecls): util.NameIndex {
+  let types: string[] = [];
+  for fn in typed {
+    for st in fn.body {
+      types = astwalk.fold_stmt(st, types, ow_copy_type_at);
+    }
+  }
+  let copyable: string[] = [];
+  for spelling in types {
+    if (ow_value_data(spelling, dx, [])) {
+      copyable = copyable.append(spelling);
+    }
+  }
+  return util.name_index(copyable);
+}
+
+struct OwnDataProofs { types: string[], copyable: boolean[] }
+
+// The declarations stay fixed during this walk. A complete spelling retains
+// generic arguments; an erased or unresolved type has no copy contract.
+function ow_copyable_result(ty: typeinfo.Type, ctx: OwnCtx): boolean {
+  let spelling = typeinfo.spelling(ty);
+  let proofs = ctx.value_proofs.get();
+  let i = util.index_of_str(proofs.types, spelling);
+  if (i >= 0) {
+    return proofs.copyable[i];
+  }
+  let copyable = spelling.len() > 0 && ow_value_data(spelling, ctx.decls, []);
+  ctx.value_proofs.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
+  return copyable;
+}
+
+// A nominal declaration is checked once per proof. Every instantiation still
+// checks all of its arguments, including when the declaration is recursive.
+function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
+  let pending = [tn];
+  let checked: string[] = [];
+  let arities: i32[] = [];
+  let at = 0;
+  while (at < pending.len()) {
+    let part = pending[at].trim();
+    at += 1;
+    if (!ow_holds_no_handle(part, dx) || part == "str" || part == "fn" || parser.top_arrow_at(part) >= 0 || part.starts_with("[")) {
       return false;
+    }
+    if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "void"], part) || typeinfo.lanes_width(part) > 0) {
+      continue;
+    }
+    if (part.ends_with("[]")) {
+      pending = pending.append(slice_unchecked(part, 0, part.len() - 2).to_owned());
+      continue;
+    }
+    if (part.starts_with("(") && part.ends_with(")")) {
+      pending = util.append_all(pending, parser.split_top_commas(slice_unchecked(part, 1, part.len() - 1).to_owned()));
+      continue;
+    }
+    let name = util.base_type_name(part);
+    if (name == "Cell" || dx.obligations.has(name)) {
+      return false;
+    }
+    let args: string[] = [];
+    let open = util.index_of_sub(part, "[");
+    if (open > 0 && part.ends_with("]")) {
+      args = parser.split_top_commas(slice_unchecked(part, open + 1, part.len() - 1).to_owned());
+      pending = util.append_all(pending, args);
+    }
+    let prior = util.index_of_str(checked, name);
+    if (prior >= 0) {
+      if (arities[prior] != args.len()) {
+        return false;
+      }
+      continue;
+    }
+    checked = checked.append(name);
+    arities = arities.append(args.len());
+    for alias in dx.aliases {
+      if (alias.name != name) {
+        continue;
+      }
+      if (alias.type_params.len() != args.len()) {
+        return false;
+      }
+      for i in 0..alias.variants.len() {
+        let member = alias.variants[i];
+        if (i < alias.variant_args.len() && alias.variant_args[i].len() > 0) {
+          member = member + "[" + alias.variant_args[i] + "]";
+        }
+        pending = pending.append(parser.subst_ty(member, alias.type_params, args));
+      }
+    }
+    for sd in dx.structs {
+      if (sd.name != name && sd.enum_owner != name) {
+        continue;
+      }
+      if (sd.type_params.len() != args.len() || sd.must_consume) {
+        return false;
+      }
+      for field in sd.fields {
+        pending = pending.append(parser.subst_ty(field.type_name, sd.type_params, args));
+      }
     }
   }
   return true;
@@ -24422,6 +24477,9 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 }
 
 function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  if (lenders.lenders.decls.copy_results.has(c.ty)) {
+    return false;
+  }
   if let ast.ExprFieldAccess(fa) = c.callee {
     // Cell.get returns an independent snapshot for data without handles.
     if (ast.receiver_tag(fa.obj) == "Cell" && fa.field == "get" && c.ty.len() > 0 && ow_holds_no_handle(c.ty, lenders.lenders.decls)) {
@@ -24861,6 +24919,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let builtins = util.name_index(ow_fresh_builtins());
   let snames = util.name_index(ow_struct_names(mod.structs));
   let decls = ow_decls(mod, snames);
+  decls = OwnDecls { ...decls, copy_results: ow_copy_results(typed, decls) };
   let result_mod = ow_result_module(mod, env, decls, typed);
   let result_funcs = collect_own_funcs(result_mod);
   let result_lenders = ow_lenders(result_mod, result_funcs, decls);
@@ -24872,6 +24931,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = ow_value_diags(decls);
+  let value_proofs = cell_new(OwnDataProofs { types: [], copyable: [] });
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
       continue;
@@ -24891,7 +24951,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { result_body: fn.body, ret_own: fn.ret_own, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);

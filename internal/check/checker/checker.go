@@ -14374,6 +14374,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	// A call returns its own reference to immutable data, even when the
+	// returned value shares storage with a borrowed input.
+	if call, ok := e.(*ast.Call); ok && c.valueData(t, map[string]bool{}) {
+		c.recordOwnedResult(call, true)
+	}
 	if c.current != nil && c.current.ReturnOwn {
 		if t != nil && c.holdsNoHandle(t) {
 			if c.resultCopyParts == nil {

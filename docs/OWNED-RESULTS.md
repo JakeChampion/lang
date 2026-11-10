@@ -36,6 +36,10 @@ This rule also applies to an outer owned parameter.
 The closure cannot return such a capture as an owned result.
 
 The caller can copy immutable data results.
+This also applies to a call with an ordinary result type.
+The call supplies an independent reference; COW preserves the borrowed source.
+A local holding this result can transfer that reference at its last use.
+This value-level copy rule does not strengthen a function type's result promise.
 The checker validates their full type.
 This rule includes maps when their keys and values contain only immutable data.
 A cleanup type needs `@value` to retain this copy contract.

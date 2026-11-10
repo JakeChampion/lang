@@ -73,7 +73,8 @@ function consume(own item: Box): i32 { return item.data.len(); }
 }
 
 func TestOwnedBranchJoinsPreserveErrors(t *testing.T) {
-	const prefix = `struct Box { data: i32[] }
+	const prefix = `function (own box: Box) close(): void {}
+struct Box { data: i32[] }
 struct Wrap { state: Box }
 struct Pair { first: Box, second: Box }
 function consume(own box: Box): i32 { return box.data[0]; }

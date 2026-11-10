@@ -422,12 +422,7 @@ function f(c: boolean): i32 {
 }`},
 		// The helper gives back the array of its parameter, which the
 		// caller still holds (#14104).
-		{"helper-result-is-the-parameter-array", `
-struct Wv { v: i32[] }
-function inner(w: Wv): i32[] { return w.v; }
-function f(w: Wv): i32 {
-    return consume(inner(w));
-}`},
+
 		// An alias of a handle type moves only when it takes its source at
 		// the last use and is given only owned values (#14109).
 		{"alias-whose-source-is-read-again", ownHandle + `
@@ -619,11 +614,11 @@ function f(): i32 {
 }`)
 }
 
-func TestOwnGuardRejectsBorrowedPtrParamCallResult(t *testing.T) {
-	wantE051(t, "borrowed-ptr-param-result", ownConsumer+`
+func TestOwnGuardCopiesBorrowedPtrParamCallResult(t *testing.T) {
+	wantOK(t, "borrowed-ptr-param-result", ownConsumer+`
 function pick(a: i32[], b: i32[]): i32[] { return a; }
 function f(): i32 {
-    return consume(pick([1, 2], [3, 4]));   // pick may return a borrowed input → E051
+    return consume(pick([1, 2], [3, 4]));   // the immutable result holds an independent RC reference
 }`)
 }
 
@@ -1504,14 +1499,14 @@ function sized(xs: i32[]): i32[] { return [xs.len()]; }
 function main(): i32 { return consume(sized([1, 2])); }`)
 }
 
-func TestOwnGuardRejectsAResultThatIsTheBorrowedParameter(t *testing.T) {
-	wantE051(t, "result-is-the-parameter", ownConsumer+`
+func TestOwnGuardCopiesAResultThatIsTheBorrowedParameter(t *testing.T) {
+	wantOK(t, "result-is-the-parameter", ownConsumer+`
 function passthru(xs: i32[]): i32[] { return xs; }
 function main(): i32 { return consume(passthru([1, 2])); }`)
 }
 
-func TestOwnGuardRejectsAResultBorrowedThroughALocal(t *testing.T) {
-	wantE051(t, "result-borrowed-through-a-local", ownConsumer+`
+func TestOwnGuardCopiesAResultBorrowedThroughALocal(t *testing.T) {
+	wantOK(t, "result-borrowed-through-a-local", ownConsumer+`
 function hop(xs: i32[]): i32[] {
     let y: i32[] = xs;
     return y;
@@ -1519,14 +1514,14 @@ function hop(xs: i32[]): i32[] {
 function main(): i32 { return consume(hop([1, 2])); }`)
 }
 
-func TestOwnGuardRejectsAResultBorrowedThroughAField(t *testing.T) {
-	wantE051(t, "result-borrowed-through-a-field", ownConsumer+`
+func TestOwnGuardCopiesAResultBorrowedThroughAField(t *testing.T) {
+	wantOK(t, "result-borrowed-through-a-field", ownConsumer+`
 function inner(p: Pair): i32[] { return p.items; }
 function main(): i32 { return consume(inner(Pair { items: [1, 2], n: 2 })); }`)
 }
 
-func TestOwnGuardRejectsAResultBorrowedThroughACallChain(t *testing.T) {
-	wantE051(t, "result-borrowed-through-a-chain", ownConsumer+`
+func TestOwnGuardCopiesAResultBorrowedThroughACallChain(t *testing.T) {
+	wantOK(t, "result-borrowed-through-a-chain", ownConsumer+`
 function passthru(xs: i32[]): i32[] { return xs; }
 function relay(ys: i32[]): i32[] { return passthru(ys); }
 function main(): i32 { return consume(relay([1, 2])); }`)
@@ -1559,8 +1554,8 @@ function bytes(own out: i32[], b: [i32]): i32[] {
 function main(): i32 { let a: i32[] = [1, 2]; return consume(bytes(bytes([], a), a)); }`)
 }
 
-func TestOwnGuardRejectsAResultHoldingAPointerElement(t *testing.T) {
-	wantE051(t, "holding-a-pointer-element", `function keep(own ys: string[]): i32 { return ys.len(); }
+func TestOwnGuardCopiesAResultHoldingAPointerElement(t *testing.T) {
+	wantOK(t, "holding-a-pointer-element", `function keep(own ys: string[]): i32 { return ys.len(); }
 function firsts(xs: string[]): string[] {
     let out: string[] = [];
     out = out.append(xs[0]);
@@ -1578,8 +1573,8 @@ function grow(xs: i32[], k: i32): i32[] {
 function main(): i32 { return consume(grow([1, 2], 3)); }`)
 }
 
-func TestOwnGuardRejectsARecursiveResultThatCanBeTheParameter(t *testing.T) {
-	wantE051(t, "recursive-result-is-the-parameter", ownConsumer+`
+func TestOwnGuardCopiesARecursiveResultThatCanBeTheParameter(t *testing.T) {
+	wantOK(t, "recursive-result-is-the-parameter", ownConsumer+`
 function last(xs: i32[], k: i32): i32[] {
     if (k <= 0) { return xs; }
     return last(xs, k - 1);

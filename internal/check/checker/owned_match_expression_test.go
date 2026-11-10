@@ -21,6 +21,6 @@ func TestOwnedMatchExpressionBorrowedResult(t *testing.T) {
 		"literal arm borrows":     `function pick(box: Box, k: string): Box { return match (k) { "a" => Box { values: [] }, _ => box, }; } function feed(box: Box): Box { return take(pick(box, "a")); }`,
 		"binder of borrowed slot": `function pick(slot: Slot): Box { return match (slot) { Full(inner) => inner, Empty => Box { values: [] }, }; } function feed(slot: Slot): Box { return take(pick(slot)); }`,
 	} {
-		wantE051(t, name, ownedMatchPrelude+fn+` function main(): i32 { return 0; }`)
+		wantE051(t, name, ownedResultPrelude+fn+` function main(): i32 { return 0; }`)
 	}
 }
