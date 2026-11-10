@@ -49,6 +49,23 @@ Identical baseline compiler bytes exhibit different RSS medians at two retained 
 Complete cold and warm compilation retains identical native output without an established general compiler performance gain.
 Exact-head complete CI remains the merge gate.
 
+The [updated lazy lookup comparison](benchmarks/compiler-interpreter-lazy-main-2026-11-10/README.md) uses main `c9547605` and candidate `c05b5ce8`.
+It removes 152,552,927 guest instructions, or 0.8709%, from the first diagnostic group.
+The two subsets retain allocation reductions of 514,178 and 13,363,285 events, with balanced frees and zero live bytes.
+All 413 targeted test and subtest results pass without skips.
+The separate TLS integration control reports 14 passes and zero skips.
+
+The normal candidate completes all 1,896 records in 147.092 seconds with identical compiled-program output.
+There is no paired full-corpus baseline timing.
+Subset median peak RSS is equal within each pair.
+CPU changes include positive and negative values.
+Complete cold and warm compilation medians are slower for the candidate, with more CPU time in every cold pair.
+
+A separate complete-compilation count pair records 18,663,497,232 versus 18,663,497,396 guest instructions.
+This difference does not establish the timing cause.
+The archive retains every sample, the failed tool preflight, source identities, and raw controls.
+These results establish no general compiler speedup or external rank.
+
 The [fresh main comparison](benchmarks/compiler-interpreter-index-main-2026-11-09/README.md) compares main `4a044282` with merged source `6f6bddfc`.
 The original oracle/native Opus subtest passes in 634.93 seconds under the unchanged package timeout.
 Ten targeted suites report 387 passes and zero skips.
