@@ -13,7 +13,7 @@ function definition(line: string): string {
   while (i < line.len()) {
     let c = line[i];
     if (c == b':') {
-      return slice_unchecked(line, 0, i) + "";
+      return slice_unchecked(line, 0, i).to_owned();
     }
     if (!util.is_symbol_byte(c)) {
       return "";
@@ -36,7 +36,7 @@ function assignment(line: string): boolean {
   while (i < line.len() && util.is_symbol_byte(line[i])) {
     i += 1;
   }
-  let rest = (slice_unchecked(line, i, line.len()) + "").trim();
+  let rest = slice_unchecked(line, i, line.len()).to_owned().trim();
   return i > 0 && rest.starts_with("=");
 }
 

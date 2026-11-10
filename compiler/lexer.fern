@@ -1,6 +1,7 @@
 import "std/unicode";
 import "std/utf8";
 import "./util";
+import "std/string";
 
 pub struct TokEof { line: i32, col: i32 }
 
@@ -711,7 +712,7 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     let s_begin = l.i;
     let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
-    suffix = slice_unchecked(l.src, s_begin, l.i) + "";
+    suffix = slice_unchecked(l.src, s_begin, l.i).to_owned();
     suffix_tag = numeric_suffix_tag(suffix);
     if (suffix_tag == 0u8) {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + util.quoted(suffix) + " on " + util.quoted(text + ""), start_line, start_col) };
@@ -726,7 +727,7 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   let spelled = text + "";
   let digits = without_separators(spelled);
   if (digits.len() != spelled.len()) {
-    let raw = slice_unchecked(l.src, begin, l.i) + "";
+    let raw = slice_unchecked(l.src, begin, l.i).to_owned();
     return NumResult { lex: l, tok: TokNumber { text: digits, raw: raw, flags: numeric_flags(suffix_tag, is_float), line: start_line, col: start_col } };
   }
   let tok: Token = TokNumber { text: digits, raw: "", flags: numeric_flags(suffix_tag, is_float), line: start_line, col: start_col };
@@ -750,7 +751,7 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
 function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
   let l = l0;
   let begin = l.i;
-  let prefix = slice_unchecked(l.src, l.i, l.i + 2) + "";
+  let prefix = slice_unchecked(l.src, l.i, l.i + 2).to_owned();
   l = l.skip(2);
   let digits: i32[] = [];
   let e = digit_run_end(l.src, l.i, l.n, base, true);
@@ -776,13 +777,13 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
     let s_begin = l.i;
     let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
-    suffix = slice_unchecked(l.src, s_begin, l.i) + "";
+    suffix = slice_unchecked(l.src, s_begin, l.i).to_owned();
     suffix_tag = numeric_suffix_tag(suffix);
     if (suffix_tag == 0u8 || suffix[0] == b'f') {
-      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + util.quoted(suffix) + " on " + util.quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + util.quoted(suffix) + " on " + util.quoted(slice_unchecked(l.src, begin, s_begin).to_owned()), start_line, start_col) };
     }
   }
-  let raw = slice_unchecked(l.src, begin, l.i) + "";
+  let raw = slice_unchecked(l.src, begin, l.i).to_owned();
   return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), raw: raw, flags: suffix_tag, line: start_line, col: start_col } };
 }
 
@@ -938,7 +939,7 @@ function control_escape(b: i32): string {
 }
 
 function hex_digit(d: i32, digits: string): string {
-  return slice_unchecked(digits, d, d + 1) + "";
+  return slice_unchecked(digits, d, d + 1).to_owned();
 }
 
 function bad_char_message(src: string, i: i32, n: i32): string {
@@ -1166,7 +1167,7 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
     return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
   }
   l = l.advance();
-  let raw = slice_unchecked(l.src, begin, l.i) + "";
+  let raw = slice_unchecked(l.src, begin, l.i).to_owned();
   return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 

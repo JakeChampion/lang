@@ -27,7 +27,7 @@ function literal(operand: string): Option[i64] {
   if (!operand.starts_with("$")) {
     return None;
   }
-  let spelling = slice_unchecked(operand, 1, operand.len()) + "";
+  let spelling = slice_unchecked(operand, 1, operand.len()).to_owned();
   if let Ok(value) = i64.parse_i64(spelling) {
     return if (value.to_string() == spelling) { Some(value) } else { None };
   }
@@ -67,13 +67,13 @@ function extra(line: string): WideOp {
   if (at < 0) {
     return unknown();
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let parts = (slice_unchecked(line, at + 1, line.len()) + "").trim().split(",");
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let parts = slice_unchecked(line, at + 1, line.len()).to_owned().trim().split(",");
   return if (parts.len() == 2) { operands(name, parts[0].trim(), parts[1].trim()) } else { unknown() };
 }
 
 function label(line: string): string {
-  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1) + "" } else { "" };
+  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1).to_owned() } else { "" };
 }
 
 pub function large_program(output: string): WideProgram {
@@ -98,7 +98,7 @@ pub function large_program(output: string): WideProgram {
     }
     if (op.instruction.kind == 17 && op.instruction.target < 0) {
       let instruction = op.instruction;
-      let target = (slice_unchecked(line, instruction.condition.len(), line.len()) + "").trim();
+      let target = slice_unchecked(line, instruction.condition.len(), line.len()).to_owned().trim();
       if (target != ".Lrawfree_double" || instruction.condition != "je" && instruction.condition != "jz") {
         return error("wide large-push branch target outside selected body");
       }

@@ -20,7 +20,7 @@ pub struct Class { name: string, superclass: string, interfaces: string[], metho
 // their java.lang classes.
 pub function descriptor(t: string): string {
   if (t.ends_with("[]")) {
-    return "[" + descriptor(slice_unchecked(t, 0, t.len() - 2) + "");
+    return "[" + descriptor(slice_unchecked(t, 0, t.len() - 2).to_owned());
   }
   let java: string[] = ["void", "boolean", "byte", "char", "short", "int", "long", "float", "double"];
   let dex: string[] = ["V", "Z", "B", "C", "S", "I", "J", "F", "D"];
@@ -38,7 +38,7 @@ function shorty_char(d: string): string {
   if (d[0] == b'L' || d[0] == b'[') {
     return "L";
   }
-  return slice_unchecked(d, 0, 1) + "";
+  return slice_unchecked(d, 0, 1).to_owned();
 }
 
 function shorty(ret: string, params: string[]): string {

@@ -2,6 +2,7 @@ import "./ast";
 import "./astwalk";
 import "./parser";
 import "./util";
+import "std/string";
 
 pub struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 }
 
@@ -20,7 +21,7 @@ pub function source_name(symbol: string): string {
   if (end == 9 || end + 1 >= symbol.len() || symbol[end] != b'$') {
     return symbol;
   }
-  return source_name(slice_unchecked(symbol, end + 1, symbol.len()) + "");
+  return source_name(slice_unchecked(symbol, end + 1, symbol.len()).to_owned());
 }
 
 function lookup(s: Scope, name: string): string {
@@ -62,9 +63,9 @@ function names(s: Scope, packed: string): string {
   let i = 0;
   while (i <= packed.len()) {
     if (i == packed.len() || packed[i] == b',' || packed[i] == b'(' || packed[i] == b')') {
-      out += lookup(s, slice_unchecked(packed, start, i) + "");
+      out += lookup(s, slice_unchecked(packed, start, i).to_owned());
       if (i < packed.len()) {
-        out = out + slice_unchecked(packed, i, i + 1) + "";
+        out = out + slice_unchecked(packed, i, i + 1).to_owned();
       }
       start = i + 1;
     }

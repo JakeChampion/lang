@@ -32,7 +32,7 @@ function last_index(s: string, b: u8): i32 {
 }
 
 function sub(s: string, lo: i32, hi: i32): string {
-  return slice_unchecked(s, lo, hi) + "";
+  return slice_unchecked(s, lo, hi).to_owned();
 }
 
 function parse_count(s: string): i64 {

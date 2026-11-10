@@ -1,4 +1,5 @@
 import "../util";
+import "std/string";
 
 pub struct UnitObj {
   strs: string[],
@@ -37,7 +38,7 @@ pub function is_current(s: string): boolean {
   if (s.len() < magic().len()) {
     return false;
   }
-  return slice_unchecked(s, 0, magic().len()) + "" == magic();
+  return slice_unchecked(s, 0, magic().len()).to_owned() == magic();
 }
 
 pub function encode(u: UnitObj): string {
@@ -71,7 +72,7 @@ function dec_strs(s: string, pos: i32): StrsAt {
   while (i < n) {
     let lh = scan_int(s, p);
     let len = lh.items[0];
-    out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
+    out = out.append(slice_unchecked(s, lh.pos, lh.pos + len).to_owned());
     p = lh.pos + len;
     i += 1;
   }
@@ -92,6 +93,6 @@ pub function decode(s: string): UnitObj {
     fns: fn.items,
     needs: nd.items,
     fn_sigs: ar.items,
-    text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]) + "",
+    text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]).to_owned(),
   };
 }

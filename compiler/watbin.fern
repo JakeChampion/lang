@@ -1,4 +1,5 @@
 import "./util";
+import "std/string";
 
 function leb128_mask25(): i32 {
   return 33554431;
@@ -84,7 +85,7 @@ function wat_tokenize(src: string): WatTok[] {
           j += 1;
         }
       }
-      toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j) + "" });
+      toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j).to_owned() });
       i = j + 1;
     } else {
       let astart = i;
@@ -95,7 +96,7 @@ function wat_tokenize(src: string): WatTok[] {
         }
         i += 1;
       }
-      toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i) + "" });
+      toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i).to_owned() });
     }
   }
   return toks;

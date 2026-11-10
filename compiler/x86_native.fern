@@ -1196,9 +1196,9 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   if (split < 0) {
     return -1;
   }
-  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split) + "") + "";
+  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split).to_owned()) + "";
   let target = x86_final_off(a, symbol, padded_text, bss_base);
-  let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()) + "");
+  let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()).to_owned());
   if (target < 0 || addend < 0) {
     return -1;
   }
@@ -1698,14 +1698,14 @@ function x86_str_split(s: string, sep: string): string[] {
       j += 1;
     }
     if (j == m) {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       i += m;
       start = i;
     } else {
       i += 1;
     }
   }
-  out = out.append(slice_unchecked(s, start, n) + "");
+  out = out.append(slice_unchecked(s, start, n).to_owned());
   return out;
 }
 
@@ -1900,7 +1900,7 @@ function x86_gas_suffix_size(mnem: string): i32 {
 }
 
 function x86_gas_strip_suffix(mnem: string): string {
-  return slice_unchecked(mnem, 0, mnem.len() - 1) + "";
+  return slice_unchecked(mnem, 0, mnem.len() - 1).to_owned();
 }
 
 function x86_gas_is_xmm(tok: string): boolean {
@@ -1914,7 +1914,7 @@ function x86_gas_is_xmm(tok: string): boolean {
 function x86_gas_xmm(tok: string): i32 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   if (s.len() < 4) {
     return -1;
@@ -1937,7 +1937,7 @@ function x86_gas_xmm(tok: string): i32 {
 function x86_gas_ymm(tok: string): i32 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   if (s.len() < 4) {
     return -1;
@@ -2038,7 +2038,7 @@ function x86_gas_atoi(tok: string): i32 {
 function x86_gas_atoi64(tok: string): i64 {
   let s = tok;
   if (s.len() > 0 && s[0] == b'$') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
   }
   let neg = false;
   let i = 0;
@@ -2122,7 +2122,7 @@ function x86_gas_creg(tok: string): i32 {
   if (!tok.starts_with("%cr")) {
     return -1;
   }
-  return sysreg.x86_control(slice_unchecked(tok, 1, tok.len()) + "");
+  return sysreg.x86_control(slice_unchecked(tok, 1, tok.len()).to_owned());
 }
 
 // movq to or from a control register: 0F 20 reads it and 0F 22 writes it. The
@@ -3146,7 +3146,7 @@ function x86_gas_split_ops(rest: string): string[] {
   let c = x86_gas_top_comma(s);
   while (c >= 0) {
     out = out.append(slice_unchecked(s, 0, c).trim());
-    s = slice_unchecked(s, c + 1, s.len()) + "";
+    s = slice_unchecked(s, c + 1, s.len()).to_owned();
     c = x86_gas_top_comma(s);
   }
   return out.append(s.trim());
@@ -3297,12 +3297,10 @@ function x86_gas_lockable(mnem: string): boolean {
     "xchg",
     "xor",
   ];
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (names[i] == mnem) {
+  for name in names {
+    if (name == mnem) {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
@@ -3592,7 +3590,7 @@ function x86_vex_shift_imm(mnem: string): i32 {
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {
-    let name = slice_unchecked(mnem, 1, mnem.len()) + "";
+    let name = slice_unchecked(mnem, 1, mnem.len()).to_owned();
     for packed in [
       "addpd", "subpd", "mulpd", "divpd", "andpd", "orpd", "xorpd", "andnpd", "minpd", "maxpd",
       "addps", "subps", "mulps", "divps", "andps", "orps", "xorps", "andnps", "minps", "maxps",
@@ -4042,8 +4040,8 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 }
 
 function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
-  if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()) + "")) {
-    let name = slice_unchecked(src, 1, src.len()) + "";
+  if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()).to_owned())) {
+    let name = slice_unchecked(src, 1, src.len()).to_owned();
     if (size != 64 && size != 32) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -4457,7 +4455,7 @@ function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string
 }
 
 function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  let cond = slice_unchecked(mnem, 4, mnem.len()) + "";
+  let cond = slice_unchecked(mnem, 4, mnem.len()).to_owned();
   let size = 0;
   let cc = x86_gas_cc_code(cond);
   if (cc >= 0) {
@@ -4473,7 +4471,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
     if (size == 0 || size == 8) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    cc = x86_gas_cc_code(slice_unchecked(cond, 0, cond.len() - 1) + "");
+    cc = x86_gas_cc_code(slice_unchecked(cond, 0, cond.len() - 1).to_owned());
     if (cc < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5313,7 +5311,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     let lm = rest;
     let lr = "";
     if (lsp >= 0) {
-      lm = slice_unchecked(rest, 0, lsp) + "";
+      lm = slice_unchecked(rest, 0, lsp).to_owned();
       lr = slice_unchecked(rest, lsp + 1, rest.len()).trim();
     }
     let lb = lm;
@@ -5633,7 +5631,7 @@ function x86_file_entry(own a: X86Asm, line: string): X86Asm {
   while (files.len() < n) {
     files = files.append("");
   }
-  return X86Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2) + "") };
+  return X86Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2).to_owned()) };
 }
 
 function x86_loc_row(own a: X86Asm, line: string): X86Asm {
@@ -5665,7 +5663,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   if (sp < 0) {
     return x86_gas_bad(a, line);
   }
-  let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
+  let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()).to_owned(), ",");
   let n = x86_gas_atoi(parts[0].trim());
   let align = n;
   if (line.starts_with(".p2align")) {
@@ -6499,7 +6497,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return sys;
   }
   if (mnem.starts_with("set")) {
-    let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+    let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()).to_owned());
     if (scc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
@@ -6512,7 +6510,7 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (mnem.starts_with("j")) {
-    let jcc = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+    let jcc = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()).to_owned());
     if (jcc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
@@ -6730,7 +6728,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       }
       if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
         ops = ops.append(if (src[pos] == 7) { GP_NAMED } else { GP_NAMED_ABS }).append(wi).append(named.len());
-        named = named.append(slice_unchecked(src, pos + 1, nl7) + "");
+        named = named.append(slice_unchecked(src, pos + 1, nl7).to_owned());
         wi = wi + 1 + words[wi] as i32;
       } else {
         ops = ops.append(GP_BYTES).append(-1).append(0);
@@ -6769,7 +6767,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       mark = raw[0];
     }
     if (mark == 3) {
-      line = slice_unchecked(raw, 1, raw.len()) + "";
+      line = slice_unchecked(raw, 1, raw.len()).to_owned();
     } else {
       let mi0 = x86_line_memo_lookup(memo, raw);
       if (mi0 >= 0) {
@@ -6804,7 +6802,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       mnem = line;
       let sp = util.index_of_sub(line, " ");
       if (sp >= 0) {
-        mnem = slice_unchecked(line, 0, sp) + "";
+        mnem = slice_unchecked(line, 0, sp).to_owned();
         rest = slice_unchecked(line, sp + 1, line.len()).trim();
       }
     }
@@ -6978,7 +6976,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       if (line.starts_with(".loc ")) {
         a = x86_loc_row(a, line);
       } else if (line.starts_with(".fern_var ")) {
-        a = X86Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
+        a = X86Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()).to_owned()) };
       } else if (line.starts_with(".file ")) {
         a = x86_file_entry(a, line);
       } else if (line.starts_with(".cfi_")) {

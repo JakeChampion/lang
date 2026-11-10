@@ -6695,7 +6695,7 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
 
 function ssa_dwarf(reg: string): i32 {
   if (ssa_is_xmm(reg)) {
-    return 17 + util.digits_to_i32(slice_unchecked(reg, 4, reg.len()) + "");
+    return 17 + util.digits_to_i32(slice_unchecked(reg, 4, reg.len()).to_owned());
   }
   let m = ssa_xreg(reg);
   if (m < 0) {
@@ -8409,7 +8409,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 
 // One port access, at the width after the colon. in zero-extends the value.
 function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned());
   let sfx = "l";
   let acc = "%eax";
   if (w == 8) {
@@ -8440,7 +8440,7 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // register goes through rdmsr or wrmsr, with the index in %ecx and the value in
 // %edx:%eax.
 function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
+  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned();
   let read = ins.str.starts_with("dev_sysreg_read");
   let cr = sysreg.x86_control(name);
   let msr = sysreg.x86_msr(name);
@@ -8528,7 +8528,7 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   }
   let fixed = x86_no_operand_op(ins.str);
   if (fixed == "") {
-    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
+    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()).to_owned()), "x86-64");
   }
   s = s.write("    " + fixed + "\n    xorl %eax, %eax\n");
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
@@ -8571,7 +8571,7 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   if (!ins.str.starts_with("dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }
-  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned());
   if (ins.str.starts_with("dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "%rcx", s);
     let ld = "movq (%rcx), %rax";
@@ -8706,10 +8706,10 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   for m in moves {
     s = s.write(m);
   }
-  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()).to_owned();
   let result = ssa_trailing_push(body);
   if (result != "") {
-    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()).to_owned());
     return ssa_store(reg_of, ins.result, result, asmcore.ssa_x0_forget(s));
   }
   s = s.write(body + "    popq %rax\n");
@@ -8780,7 +8780,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   if (end >= text.len() || end == at + prefix.len()) {
     return "";
   }
-  return slice_unchecked(text, at + prefix.len() - 1, end) + "";
+  return slice_unchecked(text, at + prefix.len() - 1, end).to_owned();
 }
 
 function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): string[] {
@@ -10526,7 +10526,7 @@ function ssa_resolve_tails(text: string, epilogue: string): string {
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let target = slice_unchecked(text, at + prefix.len(), end) + "";
+    let target = slice_unchecked(text, at + prefix.len(), end).to_owned();
     out = out + slice_unchecked(text, from, at) + ssa_tail_epilogue(epilogue, target);
     from = end + 1;
     at = util.index_of_sub_from(text, prefix, from);
@@ -10589,7 +10589,7 @@ function ssa_needs_frame(text: string): boolean {
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let line = slice_unchecked(text, start, end) + "";
+    let line = slice_unchecked(text, start, end).to_owned();
     if (line.starts_with("    ") && ssa_line_needs_frame(line)) {
       return true;
     }

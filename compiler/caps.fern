@@ -547,7 +547,7 @@ pub function source_chain(mod: parser.Module, chain: string[]): string[] {
     if (fi >= 0) {
       let pre = mod.funcs[fi].module + "__";
       if (mod.funcs[fi].module.len() > 0 && name.starts_with(pre)) {
-        shown = slice_unchecked(name, pre.len(), name.len()) + "";
+        shown = slice_unchecked(name, pre.len(), name.len()).to_owned();
       }
     }
     out = out.append(shown);

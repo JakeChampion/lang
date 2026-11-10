@@ -32,12 +32,10 @@ pub function receiver_params(receiver: string, method: string): string[] {
 }
 
 pub function module_of(receiver: string, method: string): string {
-  let i: i32 = 0;
-  while (i < METHODS.len()) {
+  for i in 0..METHODS.len() {
     if (METHODS[i] == method && RECEIVERS[i] == receiver) {
       return MODULES[MODULE_SLOTS[i] as i32];
     }
-    i = i + 1;
   }
   return "";
 }
@@ -67,12 +65,10 @@ pub function receiver_of(receiver: string, method: string): string {
 
 pub function methods_on(receiver: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
-  while (i < METHODS.len()) {
+  for i in 0..METHODS.len() {
     if (RECEIVERS[i] == receiver) {
       out = out.append(METHODS[i]);
     }
-    i = i + 1;
   }
   return out;
 }

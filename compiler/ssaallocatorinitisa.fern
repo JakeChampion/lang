@@ -15,8 +15,8 @@ function decode(line: string, unknown: isa.Op): isa.Op {
   if (at == line.len()) {
     return unknown;
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let args = (slice_unchecked(line, at + 1, line.len()) + "").trim().split(",");
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let args = slice_unchecked(line, at + 1, line.len()).to_owned().trim().split(",");
   if (args.len() != 2) {
     return unknown;
   }
@@ -30,7 +30,7 @@ function wide_move(a: string, b: string, unknown: isa.Op): isa.Op {
   if (!a.starts_with("$") || dst < 0) {
     return unknown;
   }
-  let literal = slice_unchecked(a, 1, a.len()) + "";
+  let literal = slice_unchecked(a, 1, a.len()).to_owned();
   if (!util.is_decimal_i64(literal)) {
     return unknown;
   }

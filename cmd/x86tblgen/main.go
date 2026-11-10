@@ -124,10 +124,8 @@ func genGPRTables() string {
 		fmt.Fprintf(&b, "        %q,\n", sp)
 	}
 	b.WriteString(`    ];
-    let i: i32 = 0;
-    while (i < names.len()) {
-        if (names[i] == mnem) { return true; }
-        i = i + 1;
+    for name in names {
+        if (name == mnem) { return true; }
     }
     return false;
 }

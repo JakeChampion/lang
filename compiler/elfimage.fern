@@ -2,6 +2,7 @@ import "./arm64_native";
 import "./elf";
 import "./util";
 import "./x86_native";
+import "std/string";
 
 // The last step of a native compile: link the in-process assembler's output
 // at the image's addresses and write the ELF executable.
@@ -311,7 +312,7 @@ function shape_labels(t: string): string[] {
       while (j < t.len() && t[j] != b',' && t[j] != b'}') {
         j += 1;
       }
-      out = out.append(slice_unchecked(t, i + 1, j) + "");
+      out = out.append(slice_unchecked(t, i + 1, j).to_owned());
       i = j;
     } else {
       i += 1;

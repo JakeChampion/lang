@@ -731,7 +731,7 @@ function array_builder_elem(t: string): string {
     }
     i += 1;
   }
-  return slice_unchecked(t, pl, t.len() - 1) + "";
+  return slice_unchecked(t, pl, t.len() - 1).to_owned();
 }
 
 function is_builder_mutation(c: ast.ExprCall, b: string): boolean {
@@ -881,7 +881,7 @@ function map_builder_inner(t: string): string {
     }
     i += 1;
   }
-  return slice_unchecked(t, pl, t.len() - 1) + "";
+  return slice_unchecked(t, pl, t.len() - 1).to_owned();
 }
 
 function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
@@ -2981,7 +2981,7 @@ function if_expr_rt(e: ast.Expr): string {
         return "boolean";
       }
       if (is_cast_op(u.op)) {
-        return slice_unchecked(u.op, 3, u.op.len()) + "";
+        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
       }
       return if_expr_rt(u.operand);
     },
@@ -6488,7 +6488,7 @@ function parse_expression_stmt(p: Par): (ast.Stmt, Par) {
     if (!is_compound) {
       return (assign_to(e_expr, av_expr, aline, acol), p);
     }
-    let bin_op = slice_unchecked(assign_op, 0, assign_op.len() - 1) + "";
+    let bin_op = slice_unchecked(assign_op, 0, assign_op.len() - 1).to_owned();
     let st = assign_to(e_expr, e_binary_at(bin_op, read_back(e_expr), av_expr, aline, acol), aline, acol);
     return (with_compound_op(st, bin_op), p);
   }
@@ -6805,7 +6805,7 @@ function is_nominal_ret_name(n: string): boolean {
   let bi = 0;
   while (bi < n.len()) {
     if (n[bi] == b'[') {
-      base = slice_unchecked(n, 0, bi) + "";
+      base = slice_unchecked(n, 0, bi).to_owned();
       bi = n.len();
     } else {
       bi += 1;
@@ -7104,7 +7104,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
 function unwrap_grouping_parens(s: string): string {
   let t = s;
   while (t.len() > 2 && t[0] == b'(' && t[t.len() - 1] == b')') {
-    t = slice_unchecked(t, 1, t.len() - 1) + "";
+    t = slice_unchecked(t, 1, t.len() - 1).to_owned();
   }
   return t;
 }
@@ -7201,20 +7201,20 @@ pub function canonicalise_type_args(s: string): string {
   if (i >= s.len()) {
     return s;
   }
-  let head = slice_unchecked(s, 0, i) + "";
+  let head = slice_unchecked(s, 0, i).to_owned();
   let close = matching_close(s, i);
   if (close < 0) {
     return s;
   }
-  let inner = slice_unchecked(s, i + 1, close) + "";
+  let inner = slice_unchecked(s, i + 1, close).to_owned();
   let rest_from = close + 1;
   let group_is_tuple = group_has_top_comma(s, i, close);
   let group_is_fn_param = rest_starts_with_arrow(s, rest_from);
   let group_is_fn_arr = !group_is_fn_param && group_inner_is_fn(s, i, close) && rest_starts_with_array_suffix(s, rest_from);
   if (group_is_tuple || group_is_fn_param || group_is_fn_arr) {
-    return head + "(" + canonicalise_type_args(inner) + ")" + canonicalise_type_args(slice_unchecked(s, rest_from, s.len()) + "");
+    return head + "(" + canonicalise_type_args(inner) + ")" + canonicalise_type_args(slice_unchecked(s, rest_from, s.len()).to_owned());
   }
-  return head + canonicalise_type_args(inner) + canonicalise_type_args(slice_unchecked(s, rest_from, s.len()) + "");
+  return head + canonicalise_type_args(inner) + canonicalise_type_args(slice_unchecked(s, rest_from, s.len()).to_owned());
 }
 
 function parse_type_punct_led(p: Par): (string, string, Par) {
@@ -7566,7 +7566,7 @@ pub function strip_pp_marker(marker: string): string {
   if (!marker.starts_with("@pp;")) {
     return marker;
   }
-  return slice_unchecked(marker, 4, marker.len()) + "";
+  return slice_unchecked(marker, 4, marker.len()).to_owned();
 }
 
 pub function destr_marker_split(marker0: string): DestrMarker {
@@ -7574,14 +7574,14 @@ pub function destr_marker_split(marker0: string): DestrMarker {
   let m = strip_pp_marker(marker0);
   let struct_match = m.starts_with("@sm;");
   if (struct_match) {
-    m = slice_unchecked(m, 4, m.len()) + "";
+    m = slice_unchecked(m, 4, m.len()).to_owned();
   }
   if (m.starts_with("@at:")) {
     let i = 4;
     while (i < m.len()) {
       if (m[i] == b';') {
-        at = slice_unchecked(m, 4, i) + "";
-        m = slice_unchecked(m, i + 1, m.len()) + "";
+        at = slice_unchecked(m, 4, i).to_owned();
+        m = slice_unchecked(m, i + 1, m.len()).to_owned();
         break;
       }
       i += 1;
@@ -7590,7 +7590,7 @@ pub function destr_marker_split(marker0: string): DestrMarker {
   let rest_written = false;
   if (m.starts_with("@rest;")) {
     rest_written = true;
-    m = slice_unchecked(m, 6, m.len()) + "";
+    m = slice_unchecked(m, 6, m.len()).to_owned();
   }
   return DestrMarker { at: at, rest_written: rest_written, struct_match: struct_match, tag: m };
 }
@@ -8043,7 +8043,7 @@ function bound_into(recv: string, at: i32, tp: string, bound: string): string {
     k -= 1;
   }
   let end = at + tp.len();
-  let tail = slice_unchecked(recv, end, recv.len()) + "";
+  let tail = slice_unchecked(recv, end, recv.len()).to_owned();
   if (k >= 0 && (recv[k] == b'[' || recv[k] == b'(' || recv[k] == b',')) {
     return slice_unchecked(recv, 0, end) + ": " + bound + tail;
   }
@@ -9240,7 +9240,7 @@ function tp_index(name: string, tparams: string[]): i32 {
 }
 
 pub function elem_spelling(arr: string): string {
-  let el = slice_unchecked(arr, 0, arr.len() - 2) + "";
+  let el = slice_unchecked(arr, 0, arr.len() - 2).to_owned();
   if (el.len() < 2 || el[0] != b'(' || el[el.len() - 1] != b')') {
     return el;
   }
@@ -9257,7 +9257,7 @@ pub function elem_spelling(arr: string): string {
     }
     i += 1;
   }
-  let inner = slice_unchecked(el, 1, el.len() - 1) + "";
+  let inner = slice_unchecked(el, 1, el.len() - 1).to_owned();
   if (parse_type_ref(inner).is_fn) {
     return inner;
   }
@@ -9303,7 +9303,7 @@ pub function split_top_commas(s: string): string[] {
       depth -= 1;
     }
     if (depth == 0 && s[i] == b',') {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       i += 1;
       if (i < s.len() && s[i] == b' ') {
         i += 1;
@@ -9313,7 +9313,7 @@ pub function split_top_commas(s: string): string[] {
     }
     i += 1;
   }
-  out = out.append(slice_unchecked(s, start, s.len()) + "");
+  out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   return out;
 }
 
@@ -9330,7 +9330,7 @@ pub function import_qualifier(im: Import): string {
       start = i + 1;
     }
   }
-  return slice_unchecked(p, start, p.len()) + "";
+  return slice_unchecked(p, start, p.len()).to_owned();
 }
 
 pub function std_qualifier(mod: Module, name: string): string {
@@ -9349,7 +9349,7 @@ pub function module_qualifier(mod: Module, want: string): string {
 
 function library_path_is(path: string, want: string): boolean {
   let p = util.without_fern_ext(path);
-  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want;
+  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()).to_owned() == "/" + want;
 }
 
 pub function is_serve_config_type(t: string, qual: string): boolean {
@@ -9366,7 +9366,7 @@ pub function init_return_kind(rt: string, qual: string): i32 {
     return 2;
   }
   if (s.len() > 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
-    let parts = split_top_commas(slice_unchecked(s, 1, s.len() - 1) + "");
+    let parts = split_top_commas(slice_unchecked(s, 1, s.len() - 1).to_owned());
     if (parts.len() == 2 && is_serve_config_type(parts[0], qual)) {
       return 3;
     }
@@ -9440,16 +9440,16 @@ pub function parse_type_ref(sin: string): TypeRef {
   let depth = 0;
   let arrow = top_arrow_at(s);
   if (arrow > 0) {
-    let lhs = slice_unchecked(s, 0, arrow) + "";
+    let lhs = slice_unchecked(s, 0, arrow).to_owned();
     while (lhs.len() > 0 && lhs[lhs.len() - 1] == b' ') {
-      lhs = slice_unchecked(lhs, 0, lhs.len() - 1) + "";
+      lhs = slice_unchecked(lhs, 0, lhs.len() - 1).to_owned();
     }
-    let rhs = slice_unchecked(s, arrow + 2, s.len()) + "";
+    let rhs = slice_unchecked(s, arrow + 2, s.len()).to_owned();
     while (rhs.len() > 0 && rhs[0] == b' ') {
-      rhs = slice_unchecked(rhs, 1, rhs.len()) + "";
+      rhs = slice_unchecked(rhs, 1, rhs.len()).to_owned();
     }
     if (lhs.len() >= 2 && lhs[0] == b'(' && lhs[lhs.len() - 1] == b')') {
-      let pinner = slice_unchecked(lhs, 1, lhs.len() - 1) + "";
+      let pinner = slice_unchecked(lhs, 1, lhs.len() - 1).to_owned();
       let fargs: TypeRef[] = [];
       if (pinner.len() > 0) {
         let psegs = split_top_commas(pinner);
@@ -9465,10 +9465,10 @@ pub function parse_type_ref(sin: string): TypeRef {
   }
   while (s.len() >= 2 && s[s.len() - 2] == b'[' && s[s.len() - 1] == b']') {
     depth += 1;
-    s = slice_unchecked(s, 0, s.len() - 2) + "";
+    s = slice_unchecked(s, 0, s.len() - 2).to_owned();
   }
   if (s.len() >= 2 && s[0] == b'[' && matching_bracket(s, 0) == s.len() - 1) {
-    return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1) + "")], array_depth: depth, is_tuple: false, is_fn: false, is_view: true };
+    return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1).to_owned())], array_depth: depth, is_tuple: false, is_fn: false, is_view: true };
   }
   if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
     let tsegs = split_top_commas(slice_unchecked(s, 1, s.len() - 1));
@@ -9498,7 +9498,7 @@ pub function parse_type_ref(sin: string): TypeRef {
       gargs = gargs.append(parse_type_ref(gsegs[gi]));
       gi += 1;
     }
-    let gbase = slice_unchecked(s, 0, lb) + "";
+    let gbase = slice_unchecked(s, 0, lb).to_owned();
     let lanes = vec_lanes(gbase, gargs);
     if (lanes.len() > 0) {
       return TypeRef { base: lanes, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
@@ -9684,7 +9684,7 @@ function fn_parameter_type(spelling: string): string {
       depth -= 1;
     }
     if (c == b':' && depth == 0) {
-      return (slice_unchecked(spelling, i + 1, spelling.len()) + "").trim();
+      return slice_unchecked(spelling, i + 1, spelling.len()).to_owned().trim();
     }
     i += 1;
   }
@@ -9722,7 +9722,7 @@ pub function spelling_without_own(spelling: string): string {
   if (!spelling_is_own(t)) {
     return t;
   }
-  return (slice_unchecked(t, 4, t.len()) + "").trim();
+  return slice_unchecked(t, 4, t.len()).to_owned().trim();
 }
 
 pub function ref_is_own(r: TypeRef): boolean {
@@ -9863,14 +9863,14 @@ function split_dunder(s: string): string[] {
   let i = 0;
   while (i + 1 < s.len()) {
     if (slice_unchecked(s, i, i + 2) == "__") {
-      out = out.append(slice_unchecked(s, start, i) + "");
+      out = out.append(slice_unchecked(s, start, i).to_owned());
       i += 2;
       start = i;
       continue;
     }
     i += 1;
   }
-  out = out.append(slice_unchecked(s, start, s.len()) + "");
+  out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   return out;
 }
 
@@ -10315,7 +10315,7 @@ pub function type_str_vars(ty: string, acc: string[]): string[] {
       while (i < n && tv_word_char(ty[i] as i32)) {
         i += 1;
       }
-      let tok = slice_unchecked(ty, start, i) + "";
+      let tok = slice_unchecked(ty, start, i).to_owned();
       if (looks_type_var(tok) && !util.has_str(out, tok)) {
         out = out.append(tok);
       }
@@ -11149,7 +11149,7 @@ function clone_recv_ret_of(funcs: MFns, tyname: string, method: string): string 
   }
   for sd in generic {
     if (is_clone_of(tyname, sd.name)) {
-      let key = slice_unchecked(tyname, sd.name.len() + 2, tyname.len()) + "";
+      let key = slice_unchecked(tyname, sd.name.len() + 2, tyname.len()).to_owned();
       let args = split_key(key, sd.type_params.len(), funcs.structs, funcs.enums);
       if (args.len() != sd.type_params.len()) {
         return "";
@@ -11392,7 +11392,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         return "boolean";
       }
       if (is_cast_op(u.op)) {
-        return slice_unchecked(u.op, 3, u.op.len()) + "";
+        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
       }
       if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
         return "Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]";
@@ -11534,7 +11534,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         return "";
       }
       if (util.is_all_digits(fa.field) && util.is_tuple_type_name(ot)) {
-        let elems = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1) + "");
+        let elems = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1).to_owned());
         let k = util.digits_to_i32(fa.field);
         if (k >= elems.len() || hides_var(elems[k], funcs)) {
           return "";
@@ -12002,12 +12002,12 @@ function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string 
   let n = sty.len();
   if (n >= 8 && slice_unchecked(sty, 0, 7) == "Option[" && sty[n - 1] == b']') {
     if (bare == "Some") {
-      return (slice_unchecked(sty, 7, n - 1) + "").trim();
+      return slice_unchecked(sty, 7, n - 1).to_owned().trim();
     }
     return "";
   }
   if (n >= 8 && slice_unchecked(sty, 0, 7) == "Result[" && sty[n - 1] == b']') {
-    let parts = split_top_commas(slice_unchecked(sty, 7, n - 1) + "");
+    let parts = split_top_commas(slice_unchecked(sty, 7, n - 1).to_owned());
     if (parts.len() != 2) {
       return "";
     }
@@ -12062,7 +12062,7 @@ function pat_variant_bare(vname: string): string {
   let di = 0;
   while (di < vname.len()) {
     if (vname[di] == b'.') {
-      bare = slice_unchecked(vname, di + 1, vname.len()) + "";
+      bare = slice_unchecked(vname, di + 1, vname.len()).to_owned();
     }
     di += 1;
   }
@@ -12152,10 +12152,10 @@ function inst_struct(ot: string, funcs: MFns): InstStruct {
     let k = 1;
     while (k + 2 < ot.len() && si != 0) {
       if (ot[k] == b'_' && ot[k + 1] == b'_') {
-        let gi = first_struct_named(funcs, slice_unchecked(ot, 0, k) + "", true);
+        let gi = first_struct_named(funcs, slice_unchecked(ot, 0, k).to_owned(), true);
         if (gi >= 0 && (si < 0 || gi < si)) {
           si = gi;
-          cts = split_key(slice_unchecked(ot, k + 2, ot.len()) + "", funcs.structs[gi].type_params.len(), funcs.structs, funcs.enums);
+          cts = split_key(slice_unchecked(ot, k + 2, ot.len()).to_owned(), funcs.structs[gi].type_params.len(), funcs.structs, funcs.enums);
         }
       }
       k += 1;
@@ -12197,7 +12197,7 @@ function menv_bind_destructure(env: MEnv, names: string, ty: string): MEnv {
     let nm = parts[i].trim();
     let et = tys[i].trim();
     if (nm.len() > 1 && slice_unchecked(nm, 0, 1) == "(") {
-      e = menv_bind_destructure(e, slice_unchecked(nm, 1, nm.len() - 1) + "", et);
+      e = menv_bind_destructure(e, slice_unchecked(nm, 1, nm.len() - 1).to_owned(), et);
     } else if (nm.len() > 0) {
       e = e.ebind(nm, et);
     }
@@ -12366,10 +12366,10 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     return cts[k];
   }
   if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") {
-    return "own " + subst_ty(slice_unchecked(name, 4, name.len()) + "", tparams, cts);
+    return "own " + subst_ty(slice_unchecked(name, 4, name.len()).to_owned(), tparams, cts);
   }
   if (spelling_is_view(name)) {
-    return "[" + subst_ty(slice_unchecked(name, 1, name.len() - 1) + "", tparams, cts) + "]";
+    return "[" + subst_ty(slice_unchecked(name, 1, name.len() - 1).to_owned(), tparams, cts) + "]";
   }
   if (type_ends_arr(name)) {
     return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
@@ -12414,7 +12414,7 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     ps -= 1;
   }
   if (ps > 1 && ps < name.len() - 1 && name[ps] == b':' && name[ps - 1] == b':') {
-    return subst_ty(slice_unchecked(name, 0, ps - 1) + "", tparams, cts) + slice_unchecked(name, ps - 1, name.len());
+    return subst_ty(slice_unchecked(name, 0, ps - 1).to_owned(), tparams, cts) + slice_unchecked(name, ps - 1, name.len());
   }
   return name;
 }
@@ -12671,7 +12671,7 @@ pub function split_plus_bounds(bound: string): string[] {
       depth -= 1;
     }
     if (i == bound.len() || depth == 0 && bound[i] == b'+') {
-      let entry = (slice_unchecked(bound, start, i) + "").trim();
+      let entry = slice_unchecked(bound, start, i).to_owned().trim();
       if (entry.len() > 0) {
         out = out.append(entry);
       }
@@ -13967,11 +13967,11 @@ function lane_fusable(name: string, types: string[], funcs: MFns, seen: string[]
       return false;
     }
     if (r.starts_with("!")) {
-      if (bg_find(funcs, slice_unchecked(r, 1, r.len()) + "") < 0) {
+      if (bg_find(funcs, slice_unchecked(r, 1, r.len()).to_owned()) < 0) {
         return false;
       }
     } else if (r.starts_with("@")) {
-      if (!std_methods(slice_unchecked(r, 1, r.len()) + "", types, funcs)) {
+      if (!std_methods(slice_unchecked(r, 1, r.len()).to_owned(), types, funcs)) {
         return false;
       }
     } else if (!lane_fusable(r, types, funcs, next)) {
@@ -14140,14 +14140,14 @@ function gstruct_index(gstructs: StructDecl[], base: string): i32 {
 function strip_struct_base(ty: string): string {
   let lb = first_bracket(ty);
   if (lb > 0) {
-    return slice_unchecked(ty, 0, lb) + "";
+    return slice_unchecked(ty, 0, lb).to_owned();
   }
   return ty;
 }
 
 function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
   if (ty.len() > 4 && slice_unchecked(ty, 0, 4) == "own ") {
-    let o = mg_ty(slice_unchecked(ty, 4, ty.len()) + "", gstructs, ins);
+    let o = mg_ty(slice_unchecked(ty, 4, ty.len()).to_owned(), gstructs, ins);
     return TyIns { ty: "own " + o.ty, mins: o.mins };
   }
   if (type_ends_arr(ty)) {
@@ -14325,10 +14325,10 @@ function on_call_request(fa: ast.ExprFieldAccess, env: MEnv, gstructs: StructDec
   let sfx = "." + fa.field;
   for name in funcs.on_call {
     if (name.ends_with(sfx)) {
-      let base = slice_unchecked(name, 0, name.len() - sfx.len()) + "";
+      let base = slice_unchecked(name, 0, name.len() - sfx.len()).to_owned();
       let rt = mg_ty(mono_infer(fa.obj, env, funcs), gstructs, ins);
       if (is_clone_of(rt.ty, base)) {
-        return rt.mins.iadd(name, slice_unchecked(rt.ty, base.len() + 2, rt.ty.len()) + "");
+        return rt.mins.iadd(name, slice_unchecked(rt.ty, base.len() + 2, rt.ty.len()).to_owned());
       }
     }
   }
@@ -14464,7 +14464,7 @@ function member_lit_dest(dest: string, name: string, funcs: MFns): string {
     if (first_bracket(dest) >= 0 && strip_struct_base(dest) == ed.name) {
       cts = type_args_of(dest);
     } else if (dest.starts_with(ed.name + "__")) {
-      cts = split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()) + "", ed.type_params.len(), funcs.structs, funcs.enums);
+      cts = split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()).to_owned(), ed.type_params.len(), funcs.structs, funcs.enums);
     }
     if (cts.len() != ed.type_params.len()) {
       continue;
@@ -14582,7 +14582,7 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
   }
   if let ast.ExprArray(a) = e {
     if (type_ends_arr(dest)) {
-      let el = slice_unchecked(dest, 0, dest.len() - 2) + "";
+      let el = slice_unchecked(dest, 0, dest.len() - 2).to_owned();
       let els: ast.Expr[] = [];
       let cur = ins;
       for x in a.elements {
@@ -14681,7 +14681,7 @@ function ms_call(c: ast.ExprCall, arg_dests: string[], env: MEnv, gstructs: Stru
     if (fa.field == "append" || fa.field == "with") {
       let rt = mono_infer(fa.obj, env, funcs);
       if (type_ends_arr(rt)) {
-        let el = slice_unchecked(rt, 0, rt.len() - 2) + "";
+        let el = slice_unchecked(rt, 0, rt.len() - 2).to_owned();
         if (!mono_ty_mentions_var(el)) {
           let em = mg_ty(el, gstructs, cur);
           cur = em.mins;
@@ -14916,7 +14916,7 @@ function ms_concrete_ty(t: string, gstructs: StructDecl[], funcs: MFns): boolean
       while (i < n && tv_word_char(t[i] as i32)) {
         i += 1;
       }
-      let tok = slice_unchecked(t, start, i) + "";
+      let tok = slice_unchecked(t, start, i).to_owned();
       if (gstruct_index(gstructs, tok) >= 0 && (i >= n || t[i] != b'[')) {
         return false;
       }
@@ -14944,12 +14944,12 @@ function mg_var_type(v: ast.StmtVar, env: MEnv, gstructs: StructDecl[], funcs: M
     return mg_ty(v.type_name, gstructs, ins);
   }
   let start = util.index_of_sub(v.type_name, "@sd:") + 4;
-  let tail = slice_unchecked(v.type_name, start, v.type_name.len()) + "";
+  let tail = slice_unchecked(v.type_name, start, v.type_name.len()).to_owned();
   let colon = util.index_of_sub(tail, ":");
   if (colon < 0) {
     return TyIns { ty: v.type_name, mins: ins };
   }
-  let head = slice_unchecked(tail, 0, colon) + "";
+  let head = slice_unchecked(tail, 0, colon).to_owned();
   let init = mono_infer(v.init, env, funcs);
   if (gstruct_index(gstructs, head) < 0 || parse_type_ref(init).base != head) {
     return TyIns { ty: v.type_name, mins: ins };
@@ -15698,7 +15698,7 @@ function fn_spelling_ret(t: string): string {
   while (j < n && t[j] == b' ') {
     j += 1;
   }
-  return slice_unchecked(t, j, n) + "";
+  return slice_unchecked(t, j, n).to_owned();
 }
 
 function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
@@ -15709,7 +15709,7 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     return fn_key_sanitize(arg);
   }
   if (type_ends_arr(arg)) {
-    let elem = ge_targ_mangle(slice_unchecked(arg, 0, arg.len() - 2) + "", enums);
+    let elem = ge_targ_mangle(slice_unchecked(arg, 0, arg.len() - 2).to_owned(), enums);
     if (elem.len() == 0) {
       return "";
     }
@@ -15738,10 +15738,10 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
 // The key of `arg`, an applied type that is not an instance of a generic
 // enum, such as Option[i32]: its base, then the key of each argument.
 function ge_applied_key(arg: string, lb: i32, enums: EnumDecl[]): string {
-  if (arg[arg.len() - 1] != b']' || util.contains(slice_unchecked(arg, 0, lb) + "", " ")) {
+  if (arg[arg.len() - 1] != b']' || util.contains(slice_unchecked(arg, 0, lb).to_owned(), " ")) {
     return "";
   }
-  let key = slice_unchecked(arg, 0, lb) + "";
+  let key = slice_unchecked(arg, 0, lb).to_owned();
   for p in split_top_commas(slice_unchecked(arg, lb + 1, arg.len() - 1)) {
     let piece = ge_targ_mangle(p, enums);
     if (piece.len() == 0) {
@@ -15777,7 +15777,7 @@ function ge_tuple_mangle(arg: string): string {
 
 function ge_tuple_elem_mangle(e: string): string {
   if (type_ends_arr(e)) {
-    let m = ge_tuple_elem_mangle(slice_unchecked(e, 0, e.len() - 2) + "");
+    let m = ge_tuple_elem_mangle(slice_unchecked(e, 0, e.len() - 2).to_owned());
     if (m.len() == 0) {
       return "";
     }
@@ -16230,7 +16230,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
     ast.ExprArray(a) => {
       let elexp = "";
       if (type_ends_arr(expected)) {
-        elexp = slice_unchecked(expected, 0, expected.len() - 2) + "";
+        elexp = slice_unchecked(expected, 0, expected.len() - 2).to_owned();
       }
       let nels: ast.Expr[] = [];
       let cur = ins;
@@ -16336,7 +16336,7 @@ function me_rewrite_arm_pattern(pat: ast.Pattern, ed: EnumDecl, key: string): as
       let k = 0;
       while (k < pv.type_name.len()) {
         if (pv.type_name[k] == b'.') {
-          simple = slice_unchecked(pv.type_name, k + 1, pv.type_name.len()) + "";
+          simple = slice_unchecked(pv.type_name, k + 1, pv.type_name.len()).to_owned();
         }
         k += 1;
       }
@@ -16431,7 +16431,7 @@ function me_fn_ret_spelling(t: string): string {
   if (last < 0) {
     return "";
   }
-  return slice_unchecked(t, last + 4, t.len()) + "";
+  return slice_unchecked(t, last + 4, t.len()).to_owned();
 }
 
 function me_tuple_elem_type(ty: string, field: string): string {
@@ -16450,7 +16450,7 @@ function me_tuple_elem_type(ty: string, field: string): string {
     idx = idx * 10 + (field[fi] as i32 - 48);
     fi += 1;
   }
-  let inner = slice_unchecked(ty, 1, ty.len() - 1) + "";
+  let inner = slice_unchecked(ty, 1, ty.len() - 1).to_owned();
   let depth = 0;
   let start = 0;
   let cur = 0;
@@ -16458,12 +16458,12 @@ function me_tuple_elem_type(ty: string, field: string): string {
   while (i <= inner.len()) {
     if (i == inner.len() || inner[i] == b',' && depth == 0) {
       if (cur == idx) {
-        let seg = slice_unchecked(inner, start, i) + "";
+        let seg = slice_unchecked(inner, start, i).to_owned();
         let s2 = 0;
         while (s2 < seg.len() && seg[s2] == b' ') {
           s2 += 1;
         }
-        return slice_unchecked(seg, s2, seg.len()) + "";
+        return slice_unchecked(seg, s2, seg.len()).to_owned();
       }
       cur += 1;
       start = i + 1;
@@ -16528,7 +16528,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
     ast.ExprIndex(ix) => {
       let at = me_scrutinee_type(ix.array, env, enums, structs, funcs, ins);
       if (type_ends_arr(at)) {
-        return slice_unchecked(at, 0, at.len() - 2) + "";
+        return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
       return "";
     },
@@ -16566,7 +16566,7 @@ function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, cts: string[], structs
       let k = 0;
       while (k < pv.type_name.len()) {
         if (pv.type_name[k] == b'.') {
-          simple = slice_unchecked(pv.type_name, k + 1, pv.type_name.len()) + "";
+          simple = slice_unchecked(pv.type_name, k + 1, pv.type_name.len()).to_owned();
         }
         k += 1;
       }
@@ -16675,7 +16675,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       let itty = me_scrutinee_type(fr.iter, env, enums, structs, funcs, ins);
       let elty = "";
       if (type_ends_arr(itty)) {
-        elty = slice_unchecked(itty, 0, itty.len() - 2) + "";
+        elty = slice_unchecked(itty, 0, itty.len() - 2).to_owned();
       }
       let benv = env.ebind(fr.var_name, elty);
       let fb = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
@@ -16984,7 +16984,7 @@ function me_use_spelling(ty: string, own u: MeUses): MeUses {
 function me_use_ref(r: TypeRef, own u: MeUses): MeUses {
   if (!r.is_tuple && !r.is_fn && r.args.len() > 0) {
     let t = me_ref_spelling(r);
-    let base = slice_unchecked(t, 0, first_bracket(t)) + "";
+    let base = slice_unchecked(t, 0, first_bracket(t)).to_owned();
     let gi = genum_index(u.enums, base);
     let generic = mono_ty_mentions_var(t) || gi >= 0 && names_const_param(split_top_commas(slice_unchecked(t, first_bracket(t) + 1, t.len() - 1)), u.enums[gi]);
     if (gi >= 0 && !util.has_str(u.bases, base) && !generic && genum_key_from_anno(t, base, u.enums).len() == 0) {
@@ -17309,7 +17309,7 @@ pub function mkclo_body(name: string): string {
   if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) {
     return "";
   }
-  return slice_unchecked(name, marker.len(), name.len()) + "";
+  return slice_unchecked(name, marker.len(), name.len()).to_owned();
 }
 
 pub function is_written_lambda_origin(origin: string): boolean {
@@ -17671,7 +17671,7 @@ pub function defer_flag(name: string): i32 {
   if (name.len() < 6 || slice_unchecked(name, 0, 5) != "__dfa") {
     return -1;
   }
-  let digits = slice_unchecked(name, 5, name.len()) + "";
+  let digits = slice_unchecked(name, 5, name.len()).to_owned();
   if (!util.is_all_digits(digits)) {
     return -1;
   }
@@ -19023,7 +19023,7 @@ function resource_drop_fn_name(res: string): string {
 
 function handle_resource_of(type_name: string, resources: ResourceDecl[]): string {
   if (type_name.len() >= 4 && slice_unchecked(type_name, 0, 4) == "own ") {
-    return slice_unchecked(type_name, 4, type_name.len()) + "";
+    return slice_unchecked(type_name, 4, type_name.len()).to_owned();
   }
   for rd in resources {
     if (rd.name == type_name) {
@@ -19794,7 +19794,7 @@ function variant_field_names_of(structs: StructDecl[], name: string): string[] {
   let c = 0;
   while (c < name.len()) {
     if (name[c] == b'.') {
-      bare = slice_unchecked(name, c + 1, name.len()) + "";
+      bare = slice_unchecked(name, c + 1, name.len()).to_owned();
     }
     c += 1;
   }
@@ -20733,7 +20733,7 @@ function rta_type_names(ty: string, acc: string[]): string[] {
       start = i;
     }
     if (!word && start >= 0) {
-      acc = acc.append(slice_unchecked(ty, start, i) + "");
+      acc = acc.append(slice_unchecked(ty, start, i).to_owned());
       start = -1;
     }
     i += 1;
@@ -20797,7 +20797,7 @@ pub function const_arg_text(text: string): string {
     at += 1;
   }
   if (!hex) {
-    return slice_unchecked(text, at, text.len()) + "";
+    return slice_unchecked(text, at, text.len()).to_owned();
   }
   if (text.len() - at > 15) {
     return "99999999999";
@@ -20964,7 +20964,7 @@ function stamp_lambda_ret(e: ast.Expr, fn_ret: string): ast.Expr {
 
 function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
   if (decl_ty.len() > 2 && slice_unchecked(decl_ty, decl_ty.len() - 2, decl_ty.len()) == "[]") {
-    let elem_ty = slice_unchecked(decl_ty, 0, decl_ty.len() - 2) + "";
+    let elem_ty = slice_unchecked(decl_ty, 0, decl_ty.len() - 2).to_owned();
     match (e) {
       ast.ExprArray(al) => {
         let nels: ast.Expr[] = [];
@@ -21012,7 +21012,7 @@ function irt_method_ret(funcs: FuncDecl[], recv_type: string, name: string): str
   let b = 0;
   while (b < base.len()) {
     if (base[b] == b'[') {
-      base = slice_unchecked(base, 0, b) + "";
+      base = slice_unchecked(base, 0, b).to_owned();
       b = base.len();
     }
     b += 1;
@@ -21024,7 +21024,7 @@ function irt_method_ret(funcs: FuncDecl[], recv_type: string, name: string): str
       let r2 = 0;
       while (r2 < rb.len()) {
         if (rb[r2] == b'[') {
-          rb = slice_unchecked(rb, 0, r2) + "";
+          rb = slice_unchecked(rb, 0, r2).to_owned();
           r2 = rb.len();
         }
         r2 += 1;
@@ -21108,10 +21108,10 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
     ast.ExprIndex(ix) => {
       let at = irt_guess(ix.array, params, funcs, structs);
       if (at.len() >= 3 && slice_unchecked(at, at.len() - 2, at.len()) == "[]") {
-        return slice_unchecked(at, 0, at.len() - 2) + "";
+        return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
       if (at.len() >= 3 && at[0] == b'[' && at[at.len() - 1] == b']') {
-        return slice_unchecked(at, 1, at.len() - 1) + "";
+        return slice_unchecked(at, 1, at.len() - 1).to_owned();
       }
       return "";
     },
@@ -21286,11 +21286,11 @@ function irt_payload_of(scrut_ty: string): string {
   let b = 0;
   while (b < scrut_ty.len()) {
     if (scrut_ty[b] == b'[') {
-      let inner = slice_unchecked(scrut_ty, b + 1, scrut_ty.len() - 1) + "";
+      let inner = slice_unchecked(scrut_ty, b + 1, scrut_ty.len() - 1).to_owned();
       let c = 0;
       while (c < inner.len()) {
         if (inner[c] == b',') {
-          return slice_unchecked(inner, 0, c) + "";
+          return slice_unchecked(inner, 0, c).to_owned();
         }
         c += 1;
       }
@@ -21908,8 +21908,8 @@ function fold_view_spelling(ty: string): string {
       if (close < 0) {
         return ty;
       }
-      let inner = fold_view_spelling(slice_unchecked(ty, i + 1, close) + "");
-      return slice_unchecked(ty, 0, i) + inner + "[]" + fold_view_spelling(slice_unchecked(ty, close + 1, ty.len()) + "");
+      let inner = fold_view_spelling(slice_unchecked(ty, i + 1, close).to_owned());
+      return slice_unchecked(ty, 0, i) + inner + "[]" + fold_view_spelling(slice_unchecked(ty, close + 1, ty.len()).to_owned());
     }
     i += 1;
   }
@@ -22272,10 +22272,10 @@ pub function trait_simple_name(b: string): string {
   let i = base.len();
   while (i > 0) {
     if (base[i - 1] == b'.') {
-      return slice_unchecked(base, i, base.len()) + "";
+      return slice_unchecked(base, i, base.len()).to_owned();
     }
     if (i >= 2 && base[i - 1] == b'_' && base[i - 2] == b'_') {
-      return slice_unchecked(base, i, base.len()) + "";
+      return slice_unchecked(base, i, base.len()).to_owned();
     }
     i -= 1;
   }
@@ -22375,7 +22375,7 @@ function tvar_respellings(vars: string[], written: boolean): string[] {
     if (!written) {
       out = out.append(tvar_spelling(v));
     } else if (looks_type_var(v)) {
-      out = out.append(slice_unchecked(v, 2, v.len()) + "");
+      out = out.append(slice_unchecked(v, 2, v.len()).to_owned());
     } else {
       out = out.append(v);
     }
@@ -22926,7 +22926,7 @@ function trait_req_index(reqs: TraitReq[], tn: string, module: string): i32 {
   let name = derive_simple_name(base);
   let owner = module;
   if (base.len() > name.len()) {
-    owner = slice_unchecked(base, 0, base.len() - name.len() - 1) + "";
+    owner = slice_unchecked(base, 0, base.len() - name.len() - 1).to_owned();
   }
   let any: i32 = -1;
   let i = 0;
@@ -22949,7 +22949,7 @@ pub function dyn_trait_set(ty: string): string[] {
   if (ty.len() <= 4 || slice_unchecked(ty, 0, 4) != "dyn ") {
     return out;
   }
-  for piece in split_plus_bounds(slice_unchecked(ty, 4, ty.len()) + "") {
+  for piece in split_plus_bounds(slice_unchecked(ty, 4, ty.len()).to_owned()) {
     let part = piece.trim();
     if (part.len() > 0) {
       out = out.append(part);
@@ -23056,7 +23056,7 @@ pub function derive_simple_name(name: string): string {
     i += 1;
   }
   if (last_dot >= 0) {
-    return slice_unchecked(name, last_dot + 1, name.len()) + "";
+    return slice_unchecked(name, last_dot + 1, name.len()).to_owned();
   }
   return name;
 }
@@ -23068,7 +23068,7 @@ pub function split_type_list(csv: string): string[] {
   let i = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     } else if (csv[i] == b'(' || csv[i] == b'[') {
       depth += 1;
@@ -23250,10 +23250,10 @@ pub function fromjson_container(t: string): string {
 pub function fromjson_elem(t: string): string {
   let c = fromjson_container(t);
   if (c == "array") {
-    return slice_unchecked(t, 0, t.len() - 2) + "";
+    return slice_unchecked(t, 0, t.len() - 2).to_owned();
   }
   if (c == "option") {
-    return slice_unchecked(t, 7, t.len() - 1) + "";
+    return slice_unchecked(t, 7, t.len() - 1).to_owned();
   }
   return t;
 }
@@ -24443,7 +24443,7 @@ function enclosing_bracket_base(ty: string, pos: i32): string {
         while (st > 0 && ident_byte(ty[st - 1] as i32)) {
           st -= 1;
         }
-        return slice_unchecked(ty, st, i) + "";
+        return slice_unchecked(ty, st, i).to_owned();
       }
       bal -= 1;
     }
@@ -24799,7 +24799,7 @@ function result_two_bare_vars(ret_type: string, unbounded_tps: string[]): boolea
   if (n < 9 || slice_unchecked(ret_type, 0, 7) != "Result[" || ret_type[n - 1] != b']') {
     return false;
   }
-  let inner = slice_unchecked(ret_type, 7, n - 1) + "";
+  let inner = slice_unchecked(ret_type, 7, n - 1).to_owned();
   let depth = 0;
   let ci: i32 = -1;
   let i = 0;
@@ -24817,8 +24817,8 @@ function result_two_bare_vars(ret_type: string, unbounded_tps: string[]): boolea
   if (ci < 0) {
     return false;
   }
-  let a = (slice_unchecked(inner, 0, ci) + "").trim();
-  let b = (slice_unchecked(inner, ci + 1, inner.len()) + "").trim();
+  let a = slice_unchecked(inner, 0, ci).to_owned().trim();
+  let b = slice_unchecked(inner, ci + 1, inner.len()).to_owned().trim();
   let t0 = unbounded_tps[0];
   let t1 = unbounded_tps[1];
   return a == t0 && b == t1 || a == t1 && b == t0;
@@ -24867,7 +24867,7 @@ function token_in_tuple_param(ty: string, name: string): boolean {
   }
   let t = ty;
   while (type_ends_arr(t)) {
-    t = slice_unchecked(t, 0, t.len() - 2) + "";
+    t = slice_unchecked(t, 0, t.len() - 2).to_owned();
   }
   if (t.len() < 2 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, t.len() - 1, t.len()) != ")") {
     return false;
@@ -26632,13 +26632,13 @@ pub function resolve_proj_in_type(t: string, impls: ImplInfo[]): string {
       while (bs > 0 && ident_byte(out[bs - 1] as i32)) {
         bs -= 1;
       }
-      let base = slice_unchecked(out, bs, out.len()) + "";
+      let base = slice_unchecked(out, bs, out.len()).to_owned();
       let ns = i + 2;
       let ne = ns;
       while (ne < t.len() && ident_byte(t[ne] as i32)) {
         ne += 1;
       }
-      let nm = slice_unchecked(t, ns, ne) + "";
+      let nm = slice_unchecked(t, ns, ne).to_owned();
       let bound = assoc_binding_for(impls, base, nm);
       if (base.len() > 0 && nm.len() > 0 && bound.len() > 0) {
         out = slice_unchecked(out, 0, bs) + bound;
@@ -26646,7 +26646,7 @@ pub function resolve_proj_in_type(t: string, impls: ImplInfo[]): string {
         continue;
       }
     }
-    out += slice_unchecked(t, i, i + 1) + "";
+    out += slice_unchecked(t, i, i + 1).to_owned();
     i += 1;
   }
   return out;

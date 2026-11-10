@@ -1,5 +1,6 @@
 import "../irtables";
 import "../util";
+import "std/string";
 
 function ref_trim(s: string): string {
   let a = 0;
@@ -10,7 +11,7 @@ function ref_trim(s: string): string {
   while (b > a && s[b - 1] == b' ') {
     b -= 1;
   }
-  return slice_unchecked(s, a, b) + "";
+  return slice_unchecked(s, a, b).to_owned();
 }
 
 function ref_elem_tag(t: string, n: i32): string {

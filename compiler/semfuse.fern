@@ -109,7 +109,7 @@ function verb_of(name: string): string {
   if (!name.starts_with("__arrm_") && !name.starts_with("array__")) {
     return "";
   }
-  let v = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
+  let v = slice_unchecked(name, 7, suffix_at(name, 7)).to_owned();
   if (util.has_str(["map", "filter", "fold", "reduce", "scan", "zip", "take", "take_while", "drop", "drop_while", "flat_map", "flatten", "chunks", "chunks_exact", "windows", "partition", "enumerate", "reverse"], v)) {
     return v;
   }
@@ -118,19 +118,19 @@ function verb_of(name: string): string {
 
 function iter_verb_of(name: string): string {
   let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "len", "collect", "find", "any", "all"];
-  let n = slice_unchecked(name, 0, dollar_at(name)) + "";
+  let n = slice_unchecked(name, 0, dollar_at(name)).to_owned();
   if (n == "iter__range") {
     return "range";
   }
   if (n.starts_with("iter__of")) {
-    if (n.len() == 8 || (slice_unchecked(n, 8, n.len()) + "").starts_with("__")) {
+    if (n.len() == 8 || slice_unchecked(n, 8, n.len()).to_owned().starts_with("__")) {
       return "of";
     }
     return "";
   }
   let dot = last_dot(n);
   if (dot >= 0) {
-    let m = slice_unchecked(n, dot + 1, n.len()) + "";
+    let m = slice_unchecked(n, dot + 1, n.len()).to_owned();
     if (util.has_str(verbs, m)) {
       return m;
     }

@@ -167,7 +167,7 @@ function zero_value_of(heap: interpheap.Heap, type_name: string): Value {
     return v_view_of(heap, [], parser.array_method_element(type_name));
   }
   if (name_ends_with(type_name, "[]")) {
-    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2).to_owned());
   }
   if (type_name == "f64" || type_name == "f32") {
     return v_float(0.0);
@@ -380,7 +380,7 @@ function split_binding_names(csv: string): string[] {
   let i = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     } else if (csv[i] == b'(') {
       depth += 1;
@@ -409,8 +409,8 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
   }
   let binds = split_binding_names(names);
   if (dm.tag.starts_with("@sd:")) {
-    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()) + "", ":");
-    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()) + "");
+    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()).to_owned(), ":");
+    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()).to_owned());
     if let VStruct(sv) = val {
       let i = 0;
       while (i < binds.len() && i < fields.len()) {
@@ -436,7 +436,7 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     while (i < binds.len()) {
       let b = binds[i];
       if (b.starts_with("(")) {
-        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1) + "", "", tv.elements[i]);
+        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1).to_owned(), "", tv.elements[i]);
         if (is_err(err)) {
           return (env, err);
         }
@@ -987,7 +987,7 @@ function (e: Env) static_type_of(x: ast.Expr): string {
     ast.ExprIndex(ix) => {
       let at = e.static_type_of(ix.array);
       if (name_ends_with(at, "[]")) {
-        return slice_unchecked(at, 0, at.len() - 2) + "";
+        return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
       return "";
     },
@@ -1594,7 +1594,7 @@ function cell_name_value(s: string, at: Cell[i32]): string {
   let n = cell_hex_value(s, at) as i32;
   let i = at.get();
   at.set(i + n);
-  return slice_unchecked(s, i, i + n) + "";
+  return slice_unchecked(s, i, i + n).to_owned();
 }
 
 function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
@@ -2303,7 +2303,7 @@ function lanes_splat(width: i32, x: f64): Value {
 function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
   let bits: i64[] = [];
   for b in l.bits {
-    bits = bits.append((b ^ flip) & (clear ^ 0 - 1));
+    bits = bits.append((b ^ flip) & (clear ^ -1));
   }
   return VLanes { width: l.width, bits: bits };
 }
@@ -2405,7 +2405,7 @@ function lanes_select(ls: VLanes[]): Value {
   let i = 0;
   while (i < ls[0].bits.len()) {
     let m = ls[2].bits[i];
-    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ 0 - 1));
+    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ -1));
     i += 1;
   }
   return VLanes { width: ls[0].width, bits: bits };
@@ -4768,7 +4768,7 @@ function eval_unary(op: string, ov: Value): Value {
     return v_variant("None", none);
   }
   if (is_as_opt) {
-    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()) + "")) {
+    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
       return v_variant("Some", [ov]);
     }
     let none: Value[] = [];
@@ -8636,7 +8636,7 @@ function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scr
   let owner = r.base;
   let simple = parser.derive_simple_name(pattern);
   if (simple.len() < pattern.len()) {
-    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
+    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1).to_owned();
   }
   let only: i32 = -1;
   let many = false;
@@ -8828,7 +8828,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let elem_ty = "";
   let iter_ty = env.static_type_of(f.iter);
   if (name_ends_with(iter_ty, "[]")) {
-    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
+    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2).to_owned();
   }
   if (elem_ty.len() == 0) {
     if let VArr(a) = iv {

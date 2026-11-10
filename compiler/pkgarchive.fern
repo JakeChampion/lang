@@ -212,7 +212,7 @@ function pax_path(t: u8[], at: i32, size: i32): string {
       rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
     }
     if (rec.starts_with("path=")) {
-      return slice_unchecked(rec, 5, rec.len()) + "";
+      return slice_unchecked(rec, 5, rec.len()).to_owned();
     }
     i += len;
   }
@@ -271,7 +271,7 @@ function split(p: string): string[] {
   let i = 0;
   while (i <= p.len()) {
     if (i == p.len() || p[i] == b'/') {
-      out = out.append(slice_unchecked(p, start, i) + "");
+      out = out.append(slice_unchecked(p, start, i).to_owned());
       start = i + 1;
     }
     i += 1;

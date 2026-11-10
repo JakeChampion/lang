@@ -843,7 +843,7 @@ pub function written(q: flatten.Qualifiers, label: string): string {
     if (j == i) {
       j = i + 1;
     }
-    out += written_name(q, slice_unchecked(label, i, j) + "");
+    out += written_name(q, slice_unchecked(label, i, j).to_owned());
     i = j;
   }
   return out;
@@ -868,7 +868,7 @@ function word_byte(b: u8): boolean {
 pub function unprefixed(name: string, prefix: string): string {
   let p = prefix + "__";
   if (prefix.len() > 0 && name.starts_with(p)) {
-    return slice_unchecked(name, p.len(), name.len()) + "";
+    return slice_unchecked(name, p.len(), name.len()).to_owned();
   }
   return name;
 }

@@ -1,5 +1,6 @@
 import "./util";
 import "./rtbytecopy";
+import "std/string";
 
 pub struct Op {
   kind_tag: i32,
@@ -1846,7 +1847,7 @@ pub function const_struct_type(packed: string): string {
   while (i < packed.len() && packed[i] != 124) {
     i += 1;
   }
-  return slice_unchecked(packed, 0, i) + "";
+  return slice_unchecked(packed, 0, i).to_owned();
 }
 
 pub function const_struct_payload(packed: string): string {
@@ -1857,7 +1858,7 @@ pub function const_struct_payload(packed: string): string {
   if (i == packed.len()) {
     return "";
   }
-  return slice_unchecked(packed, i + 1, packed.len()) + "";
+  return slice_unchecked(packed, i + 1, packed.len()).to_owned();
 }
 
 pub function const_struct_values(packed: string): string[] {
@@ -1875,13 +1876,13 @@ pub function const_struct_values(packed: string): string[] {
     } else if (packed[i] == b'}') {
       depth -= 1;
     } else if (packed[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(packed, start, i) + "");
+      out = out.append(slice_unchecked(packed, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
   if (start < packed.len()) {
-    out = out.append(slice_unchecked(packed, start, packed.len()) + "");
+    out = out.append(slice_unchecked(packed, start, packed.len()).to_owned());
   }
   return out;
 }
@@ -1932,7 +1933,7 @@ pub function const_struct_ref(word: string): string {
   if (word.len() < 2 || word[0] != b'{' || word[word.len() - 1] != b'}') {
     return "";
   }
-  return slice_unchecked(word, 1, word.len() - 1) + "";
+  return slice_unchecked(word, 1, word.len() - 1).to_owned();
 }
 
 // A constant closure whose stub carries the signature word `cfi` under -harden.
@@ -1973,7 +1974,7 @@ pub function const_struct_fn_body(packed: string): string {
   if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
     return "";
   }
-  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)) + "";
+  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)).to_owned();
 }
 
 // The signature word of a constant closure.
@@ -1983,7 +1984,7 @@ pub function const_struct_fn_sig(packed: string): i32 {
   if (at >= t.len()) {
     return 0;
   }
-  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()) + "");
+  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()).to_owned());
 }
 
 function const_struct_fn_hash_at(t: string): i32 {
@@ -2069,7 +2070,7 @@ pub function dyn_dispatch_arms(tag: string): string[] {
   while (k <= tag.len()) {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
-        out = out.append(slice_unchecked(tag, start, k) + "");
+        out = out.append(slice_unchecked(tag, start, k).to_owned());
       }
       start = k + 1;
     }

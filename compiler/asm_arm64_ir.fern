@@ -1478,7 +1478,7 @@ function ssa_dwarf(reg: string): i32 {
   if (reg.len() < 2) {
     return 0;
   }
-  let n = util.digits_to_i32(slice_unchecked(reg, 1, reg.len()) + "");
+  let n = util.digits_to_i32(slice_unchecked(reg, 1, reg.len()).to_owned());
   if (ssa_is_d(reg)) {
     return 64 + n;
   }
@@ -1546,7 +1546,7 @@ function ssa_needs_frame(text: string): boolean {
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let line = slice_unchecked(text, start, end) + "";
+    let line = slice_unchecked(text, start, end).to_owned();
     if (line.starts_with("    ") && !line.starts_with(ssa_exit_mark()) && ssa_line_needs_frame(line)) {
       return true;
     }
@@ -1560,7 +1560,7 @@ function ssa_line_needs_frame(line: string): boolean {
   let i = 0;
   while (i <= line.len()) {
     if (i == line.len() || ssa_operand_sep(line[i])) {
-      let tok = slice_unchecked(line, from, i) + "";
+      let tok = slice_unchecked(line, from, i).to_owned();
       if (tok == "bl" || tok == "blr" || tok == "sp" || tok == "wsp" || tok == "x29" || tok == "x30" || tok == "w29" || tok == "w30") {
         return true;
       }
@@ -1586,9 +1586,9 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let line = slice_unchecked(text, start, end) + "";
+    let line = slice_unchecked(text, start, end).to_owned();
     if (line.starts_with(ssa_exit_mark())) {
-      let tail = slice_unchecked(line, ssa_exit_mark().len(), line.len()) + "";
+      let tail = slice_unchecked(line, ssa_exit_mark().len(), line.len()).to_owned();
       if (framed) {
         s = ssa_emit_unwind(saved, 0, s, tail);
       } else if (tail == "") {
@@ -1596,7 +1596,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
       } else {
         s = s.write("    b " + tail + "\n");
       }
-    } else if (!framed && line.starts_with("    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()) + "")) {
+    } else if (!framed && line.starts_with("    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()).to_owned())) {
       s = s.write(line + "_leaf\n");
     } else {
       s = s.write(line + "\n");
@@ -3612,7 +3612,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 // A system-register op. An isb after msr makes the write take effect before the
 // next instruction, as a write to a control register does on x86-64.
 function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
+  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned();
   if (ins.str.starts_with("dev_sysreg_read")) {
     if (sysreg.arm64_encoding(name, sysreg.READ) < 0) {
       ircore.sysreg_refuse(name, "arm64");
@@ -3757,12 +3757,12 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
   }
   if (ins.str.starts_with("dev_port_")) {
-    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, util.index_of_sub(ins.str, ":")) + ""), "arm64");
+    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, util.index_of_sub(ins.str, ":")).to_owned()), "arm64");
   }
   if (!ins.str.starts_with("dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }
-  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned());
   if (ins.str.starts_with("dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "x9", s);
     let ld = "ldr x0";
@@ -5892,10 +5892,10 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   for k in ssa_pop_order(ins, reg_of, pops) {
     s = ssa_load_pushed(reg_of, ins.args[ins.args.len() - 1 - k], pops[k], stacked * 16, s);
   }
-  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()).to_owned();
   let result = ssa_trailing_push(body);
   if (result != "") {
-    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()).to_owned());
     return ssa_store(reg_of, ins.result, result, asmcore.ssa_x0_forget(s));
   }
   s = s.write(body + "    ldr x0, [sp], #16\n");
@@ -12889,7 +12889,7 @@ function darwin_lstrip(s: string): string {
   while (i < s.len() && s[i] == 32) {
     i += 1;
   }
-  return slice_unchecked(s, i, s.len()) + "";
+  return slice_unchecked(s, i, s.len()).to_owned();
 }
 
 function darwin_skip_quoted(s: string, i: i32): i32 {
