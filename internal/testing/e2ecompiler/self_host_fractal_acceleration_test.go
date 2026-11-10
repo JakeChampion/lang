@@ -93,7 +93,7 @@ function main(): i32 {
   }
   match (i64.parse_i64("123x")) { Err(InvalidDigit(3)) => {}, _ => { return 13; }, }
   match (i64.parse_i64("-")) { Err(InvalidDigit(1)) => {}, _ => { return 14; }, }
-  match (i64.parse_i64("9223372036854775808")) { Err(OutOfRange) => {}, _ => { return 15; }, }
+  match (i64.parse_i64("9223372036854775808")) { Err(OutOfRange()) => {}, _ => { return 15; }, }
   if (number_parse.ParseNumberError.OutOfRange.message() != "number is out of range") { return 16; }
   let bytes: u8[] = binary.append_u64_be([], 0xfedcba9876543210 as u64);
   if (binary.read_u64_be(bytes, 0).unwrap_or(0 as u64) != 0xfedcba9876543210 as u64) { return 5; }
