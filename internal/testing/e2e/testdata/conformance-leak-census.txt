@@ -1,3 +1,4 @@
+# 2026-11-10: struct_field_pattern_names_variant is clean under RC trace.
 # 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
 # 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
@@ -1244,6 +1245,7 @@ string_split                                         0
 string_unicode_escapes                               0
 struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
+struct_field_pattern_names_variant                   0
 struct_field_subpattern                              0
 struct_field_wide_array_append                       0
 struct_literal_parts_move_into_own                   0

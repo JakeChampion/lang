@@ -46,7 +46,7 @@ These are correctness controls, with no timing comparison or performance claim.
 Run the committed-data verifier from the repository root:
 
 ```sh
-python3 docs/benchmarks/compiler-main-source-gates-2026-11-10/verify.py --commit HEAD
+python3 docs/benchmarks/compiler-main-source-gates-2026-11-10/verify.py --commit 2907b52ae3c553fb4dd55f20a484c0e8756eb800
 ```
 
 For reproduction, use a clean checkout of the qualified source above.
@@ -55,3 +55,10 @@ Use `scripts/fern-embed-stage` and that compiler to build `compiler/fern_main.fe
 The exact commands are in [build.json](build.json).
 Invoke `scripts/qualify_large_free_wide_classes.py` once for each target, with the current reference from this archive.
 The [qualification record](result.json) retains every original command and its exit status.
+
+Main later contains both source gate repairs through independent owner merges.
+Main `e31c27c971145607f0a4071795b601d985b82b32` uses a gzip container with one different header byte.
+Its decompressed reference exactly matches this archive.
+The live reference retains main's container.
+The [integration record](../compiler-main-source-gates-integration-2026-11-10/README.md) preserves that container and the exact comparison.
+The verifier above checks the original publication commit without a relaxed comparison.

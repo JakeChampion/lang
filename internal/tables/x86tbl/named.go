@@ -11,8 +11,11 @@ type NamedFamily struct {
 	Name   string
 	Doc    string
 	FernFn string
-	Pack   func(NamedOp) int
-	Ops    []NamedOp
+	// Sentinel makes FernFn return an i32 with -1 for an unknown mnemonic.
+	// The default is an Option[i32].
+	Sentinel bool
+	Pack     func(NamedOp) int
+	Ops      []NamedOp
 }
 
 func (f NamedFamily) PredicateName() string { return "x86_gas_is_" + f.Name }
@@ -49,7 +52,7 @@ var Named = []NamedFamily{
 		{ATT: "leal", Ext: 32, ATTProbe: "leal -8(%rbp), %eax"},
 		{ATT: "leaw", Ext: 16, ATTProbe: "leaw -8(%rbp), %ax"},
 	}},
-	{Name: "mov", Doc: "the general-register move at every width; Ext is the operand size. AT&T's movq is also the SSE movq, which x86_gas_movq tells apart by operand", FernFn: "x86_gas_mov_size", Pack: extOnly, Ops: []NamedOp{
+	{Name: "mov", Doc: "the general-register move at every width; Ext is the operand size. AT&T's movq is also the SSE movq, which x86_gas_movq tells apart by operand", FernFn: "x86_gas_mov_size", Sentinel: true, Pack: extOnly, Ops: []NamedOp{
 		{ATT: "movb", Ext: 8, ATTProbe: "movb %cl, (%rax)"},
 		{ATT: "movw", Ext: 16, ATTProbe: "movw %cx, %ax"},
 		{ATT: "movl", Ext: 32, ATTProbe: "movl %ecx, %eax"},
@@ -136,7 +139,7 @@ var Named = []NamedFamily{
 		{ATT: "movups", Prefix: 0x00, ATTProbe: "movups (%rdi), %xmm0"},
 		{ATT: "movupd", Prefix: 0x66, ATTProbe: "movupd %xmm0, (%rdi)"},
 	}},
-	{Name: "movdq", Doc: "the 16-byte moves: 0F 6F load, 0F 7F store, direction from which side is memory", FernFn: "x86_gas_movdq_pfx", Pack: pfxOnly, Ops: []NamedOp{
+	{Name: "movdq", Doc: "the 16-byte moves: 0F 6F load, 0F 7F store, direction from which side is memory", FernFn: "x86_gas_movdq_pfx", Sentinel: true, Pack: pfxOnly, Ops: []NamedOp{
 		{ATT: "movdqu", Prefix: 0xF3, ATTProbe: "movdqu (%rdi), %xmm0"},
 		{ATT: "movdqa", Prefix: 0x66, ATTProbe: "movdqa %xmm0, (%rdi)"},
 	}},
@@ -175,7 +178,7 @@ var Named = []NamedFamily{
 		{ATT: "aeskeygenassist", Op: 0xDF, ATTProbe: "aeskeygenassist $1, %xmm1, %xmm0"},
 		{ATT: "palignr", Op: 0x0F, ATTProbe: "palignr $4, %xmm1, %xmm0"},
 	}},
-	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
+	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Sentinel: true, Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Prefix: 0x66, Op: 0x70, ATTProbe: "pshufd $0, %xmm2, %xmm1"},
 		{ATT: "shufps", Prefix: 0x00, Op: 0xC6, ATTProbe: "shufps $0, %xmm2, %xmm1"},
 		{ATT: "shufpd", Prefix: 0x66, Op: 0xC6, ATTProbe: "shufpd $1, %xmm2, %xmm1"},
@@ -200,7 +203,7 @@ var Named = []NamedFamily{
 		{ATT: "movmskpd", Prefix: 0x66, Op: 0x50, ATTProbe: "movmskpd %xmm0, %eax"},
 	}},
 	{Name: "vshift", Doc: "the vector shifts BY IMMEDIATE, the 66 0F Op /Ext ib groups; the by-register spellings are the SSE table's. pslldq/psrldq exist only here; packed as ext*256 + op",
-		FernFn: "x86_gas_vshift_op", Pack: extOp, Ops: []NamedOp{
+		FernFn: "x86_gas_vshift_op", Sentinel: true, Pack: extOp, Ops: []NamedOp{
 			{ATT: "psrlw", Op: 0x71, Ext: 2, ATTProbe: "psrlw $3, %xmm0"},
 			{ATT: "psraw", Op: 0x71, Ext: 4, ATTProbe: "psraw $3, %xmm0"},
 			{ATT: "psllw", Op: 0x71, Ext: 6, ATTProbe: "psllw $3, %xmm0"},
