@@ -38,6 +38,30 @@ function test_resolve_normal(): test.TestOutcome {
   return test.pass();
 }
 
+// RFC 3986 section 5.2.2: a reference with a scheme is the result as written.
+function test_resolve_keeps_a_reference_with_a_scheme(): test.TestOutcome {
+  if (resolved("http://a/b/c/", "mailto:x@y") != "mailto:x@y") {
+    return test.fail("mailto: " + resolved("http://a/b/c/", "mailto:x@y"));
+  }
+  if (resolved("http://a/b/c/", "https:evil") != "https:evil") {
+    return test.fail("https with no authority: " + resolved("http://a/b/c/", "https:evil"));
+  }
+  return test.assert_eq(resolved("http://a/b/c/", "./x:y"), "http://a/b/c/x:y");
+}
+
+// Each result of resolve is a URL that parse accepts.
+function test_resolve_refuses_what_parse_refuses(): test.TestOutcome {
+  for reference in ["//:99999", "//ev il\r\nX: y/"] {
+    match (url.resolve("http://a/b", reference)) {
+      Ok(text) => {
+        return test.fail("resolved to " + text);
+      },
+      Err(_) => {}
+    }
+  }
+  return test.assert_eq(resolved("http://a/b", "//other.example/x"), "http://other.example/x");
+}
+
 function test_resolve_dots(): test.TestOutcome {
   let base = "http://a/b/c/d;p?q";
   let checks: (string, string)[] = [
@@ -386,6 +410,8 @@ function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/url");
   r = r.it("encode space", test_encode_space);
+  r = r.it("resolve keeps a reference with a scheme", test_resolve_keeps_a_reference_with_a_scheme);
+  r = r.it("resolve refuses what parse refuses", test_resolve_refuses_what_parse_refuses);
   r = r.it("encode unreserved", test_encode_unreserved);
   r = r.it("encode reserved", test_encode_reserved);
   r = r.it("decode space", test_decode_space);
