@@ -29,20 +29,36 @@ func TestServeH3RetryX86_64(t *testing.T) {
 	if o, err := exec.Command(w.fern, "-target", "x86-64-linux", "-o", client, clientSrc).CombinedOutput(); err != nil {
 		t.Fatalf("client build failed: %v\n%s", err, o)
 	}
-	addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(w.qemu, out))
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := runX86Bin(w.qemu, client, port, w.ca).CombinedOutput()
-	if err != nil {
-		t.Fatalf("retry client: %v\n%s", err, got)
-	}
-	want := "spoofed initial: answers 1, all retry true\n" +
-		"bad token: closed remote 11 the token is not one this server issued\n" +
-		"GET /hello -> 200 hello /hello, retried true\n"
-	if string(got) != want {
-		t.Errorf("retry client got:\n%s\nwant:\n%s", got, want)
+	for _, delayed := range []bool{false, true} {
+		name := "immediate"
+		if delayed {
+			name = "delayed_start"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := runX86Bin(w.qemu, out)
+			if delayed {
+				args := append([]string{"-c", "sleep 1.5; exec \"$@\"", "h3-start-delay", server.Path}, server.Args[1:]...)
+				wrapper := exec.Command("sh", args...)
+				wrapper.Env, wrapper.Dir = server.Env, server.Dir
+				server = wrapper
+			}
+			addr, _ := e2eharness.StartInheritedServer(t, server)
+			e2eharness.WaitServerReady(t, addr)
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := runX86Bin(w.qemu, client, port, w.ca).CombinedOutput()
+			if err != nil {
+				t.Fatalf("retry client: %v\n%s", err, got)
+			}
+			want := "spoofed initial: answers 1, all retry true\n" +
+				"bad token: closed remote 11 the token is not one this server issued\n" +
+				"GET /hello -> 200 hello /hello, retried true\n"
+			if string(got) != want {
+				t.Errorf("retry client got:\n%s\nwant:\n%s", got, want)
+			}
+		})
 	}
 }
 
