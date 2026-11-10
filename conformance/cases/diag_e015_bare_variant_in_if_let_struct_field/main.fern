@@ -1,0 +1,12 @@
+enum Colour { Red, Green }
+
+struct Pixel { c: Colour, n: i32 }
+
+function f(p: Pixel): i32 {
+    if let Pixel { c: Red, n } = p {
+        return n;
+    }
+    return 0;
+}
+
+function main(): i32 { return f(Pixel { c: Colour.Green, n: 42 }); }

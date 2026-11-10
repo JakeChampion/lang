@@ -227,7 +227,7 @@ of them.
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through a generic callback and a function-valued field | `checked_owned_results` |
-| `OR-02` | `docs/OWNED-RESULTS.md` | An owned result cannot return a borrowed parameter (`E051`) | `diag_e051_checked_result_borrows` |
+| `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
 | `OR-03` | `docs/OWNED-RESULTS.md` | An ordinary-result function cannot satisfy an owned-result function type (`E003`) | `diag_e003_checked_result_strengthening` |
 
 ## Every gap this index opened with is now closed

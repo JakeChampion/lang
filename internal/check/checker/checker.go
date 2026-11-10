@@ -11395,7 +11395,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		case *ast.Return:
 			admitSupersededFields(x.Value, true)
-			if resultOwn && x.Value != nil && !definitelyScalar(resultType) && !isOwnedExpr(x.Value) {
+			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && !isOwnedExpr(x.Value) {
 				c.errfCode(x.Pos(), "E051", "an `own` result must return an owned value")
 			}
 			recordExprUses(x.Value, moved)
@@ -12666,6 +12666,9 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 			*el.VariantPayloads[i] = slot[0]
 			continue
 		}
+		if en, clash := c.payloadlessVariantNamed(b, ft); clash {
+			c.errPayloadlessVariantBinder(pos, b, en, "a struct field")
+		}
 		if b == "" {
 			continue
 		}
@@ -13339,6 +13342,9 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 				*arm.Payloads[k] = slot[0]
 				continue
 			}
+			if en, clash := c.payloadlessVariantNamed(b, ft); clash {
+				c.errPayloadlessVariantBinder(arm.P, b, en, "a struct field")
+			}
 			if seen[b] {
 				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
 				continue
@@ -13686,6 +13692,9 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 				c.checkTuplePatElem(arm.P, slot, st, 0, ft, s, armScope, seen)
 				*arm.Payloads[k] = slot[0]
 				continue
+			}
+			if en, clash := c.payloadlessVariantNamed(b, ft); clash {
+				c.errPayloadlessVariantBinder(arm.P, b, en, "a struct field")
 			}
 			if seen[b] {
 				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)

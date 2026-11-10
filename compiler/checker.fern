@@ -11978,6 +11978,93 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
   return out;
 }
 
+function binder_names_variant(nm: string, en: string, s: Scope): boolean {
+  if (nm.len() == 0 || nm == "_" || variant_payload_count(nm, s.structs) >= 0) {
+    return false;
+  }
+  if (union_lists_variant(s.unions, en, nm)) {
+    return true;
+  }
+  let owner = scope_variant_owner(nm, s);
+  if (owner.len() == 0) {
+    owner = parser.builtin_enum_of(nm);
+  }
+  return owner == en;
+}
+
+function payloadless_binder_diag(nm: string, en: string, place: string, line: i32, col: i32): util.Diag {
+  return dg_at("E015", nm + " is a payload-less variant of enum " + en + ", but a bare name in " + place + " is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col);
+}
+
+function struct_binder_diags(a: ast.StructArm, t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let typeinfo.TypeStruct(st) = t else {
+    return out;
+  };
+  for j in 0..a.fields.len() {
+    if (j < a.field_kinds.len() && j < a.binds.len() && a.field_kinds[j] == 0) {
+      if let typeinfo.TypeUnion(u) = struct_field_type(st, a.fields[j], s) {
+        if (binder_names_variant(a.binds[j], u.name, s)) {
+          out = out.append(payloadless_binder_diag(a.binds[j], u.name, "a struct field", a.line, a.col));
+        }
+      }
+    }
+    if (j < a.field_kinds.len() && j < a.field_pats.len() && a.field_kinds[j] == 3) {
+      out = util.append_diags(out, nested_binder_diags(a.field_pats[j], struct_field_type(st, a.fields[j], s), s, a.line, a.col));
+    }
+  }
+  return out;
+}
+
+function sugar_struct_binder_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (sg.strct.len() == 0) {
+    return out;
+  }
+  let t = check_expr(sg.scrut, s);
+  for arm in sg.strct {
+    if (!arm.is_wild) {
+      out = util.append_diags(out, struct_binder_diags(arm, t, s));
+    }
+  }
+  return out;
+}
+
+function record_binder_diags(pv: ast.PatVariant, st: typeinfo.TypeStruct, s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  for i in 0..pv.field_names.len() {
+    let ft = struct_field_type(st, pv.field_names[i], s);
+    if (i < pv.nested.len() && nested_tests(pv.nested[i])) {
+      out = util.append_diags(out, nested_binder_diags(pv.nested[i], ft, s, line, col));
+    } else if let typeinfo.TypeUnion(u) = ft {
+      let nm = parser.payload_binder(pv, i);
+      if (binder_names_variant(nm, u.name, s)) {
+        out = out.append(payloadless_binder_diag(nm, u.name, "a struct field", line, col));
+      }
+    }
+  }
+  return out;
+}
+
+function nested_binder_diags(p: ast.Pattern, t: typeinfo.Type, s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let ast.PatVariant(pv) = p else {
+    return out;
+  };
+  if let typeinfo.TypeStruct(st) = t {
+    if (parser.is_record_pattern(pv) && pv.type_name == st.name) {
+      return record_binder_diags(pv, st, s, line, col);
+    }
+  }
+  let types = cover_arg_types(t, pattern_cover(p).ctor, pv.nested.len(), s);
+  let i = 0;
+  while (i < pv.nested.len() && i < types.len()) {
+    out = util.append_diags(out, nested_binder_diags(pv.nested[i], types[i], s, line, col));
+    i += 1;
+  }
+  return out;
+}
+
 function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let typeinfo.TypeTuple(tt) = whole else {
@@ -11987,15 +12074,8 @@ function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], 
   while (i < kinds.len() && i < binds.len() && i < tt.elements.len()) {
     let nm = binds[i];
     if let typeinfo.TypeUnion(u) = tt.elements[i] {
-      let owner = scope_variant_owner(nm, s);
-      if (owner.len() == 0) {
-        owner = parser.builtin_enum_of(nm);
-      }
-      if (union_lists_variant(s.unions, u.name, nm)) {
-        owner = u.name;
-      }
-      if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
-        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      if (kinds[i] == 0 && binder_names_variant(nm, u.name, s)) {
+        out = out.append(payloadless_binder_diag(nm, u.name, "a tuple element", line, col));
       }
     }
     if (kinds[i] == 4 && i < pats.len()) {
@@ -16814,6 +16894,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, sugar_exhaustive_diags(f.sugar, cur));
+        out = util.append_diags(out, sugar_struct_binder_diags(f.sugar, cur));
         if (f.sugar.lits.len() > 0) {
           out = util.append_diags(out, literal_match_diags(f, cur));
         } else {
@@ -16978,6 +17059,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               if (!foreign) {
                 armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
                 out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
+                out = util.append_diags(out, nested_binder_diags(elem.pattern, mst, cur, elem.line, elem.col));
               }
             },
             _ => {}
@@ -19058,7 +19140,7 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
+struct LuFn { ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
@@ -21980,6 +22062,11 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
         acc = lu_root(a.value, site, outer, has_outer, fx, acc);
       },
       ast.StmtReturn(r) => {
+        if (fx.ret_own) {
+          for part in lu_arg_parts(r.value, []) {
+            acc = lu_own_arg(part, r.value, outer, has_outer, site, fx, acc);
+          }
+        }
         acc = lu_root(r.value, site, outer, has_outer, fx, acc);
       },
       ast.StmtExpr(x) => {
@@ -22060,13 +22147,13 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
-  let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
+  let fx0 = LuFn { ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
+    out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, ret_own: lm.ret_own, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
 }
@@ -22839,7 +22926,58 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
   return OwnCtx { ...ctx, admit_fields: fields };
 }
 
+function ow_defer_local_moves(st: ast.Stmt, ctx: OwnCtx): MovedEntry[] {
+  function collect(e: ast.Expr, own acc: MovedEntry[]): MovedEntry[] {
+    if let ast.ExprCall(c) = e {
+      let oc = ow_own_call(c, ctx);
+      for i in 0..oc.args.len() {
+        if (i >= oc.flags.len() || !oc.flags[i]) {
+          continue;
+        }
+        for part in lu_arg_parts(oc.args[i], []) {
+          if let ast.ExprIdent(id) = part {
+            if (!ow_is_owned(ctx, id.name) && ow_local_last_use(id, ctx)) {
+              acc = ow_moved_add(acc, id.name, id.line, id.col);
+            }
+          }
+          if let ast.ExprFieldAccess(fa) = part {
+            if let ast.ExprIdent(id) = fa.obj {
+              if (!ow_is_owned(ctx, id.name) && ow_is_owned_expr(part, ctx)) {
+                acc = ow_moved_add(acc, id.name + "." + fa.field, fa.line, fa.col);
+              }
+            }
+          }
+        }
+      }
+    }
+    return acc;
+  }
+  return astwalk.fold_stmt_pruned(st, [], collect, not_lambda);
+}
+
+function ow_result_pending_cleanup(value: ast.Expr, ctx: OwnCtx): boolean {
+  let seen = ctx.deferred.get();
+  for part in lu_arg_parts(value, []) {
+    let path = ow_ident_name(part);
+    if let ast.ExprFieldAccess(fa) = part {
+      let enclosing = ow_enclosing_field(fa);
+      let base = ow_ident_name(enclosing.obj);
+      if (ow_moved_has(seen, base)) {
+        return true;
+      }
+      path = base + "." + enclosing.field;
+    }
+    if (path.len() > 0 && (ow_moved_has(seen, path) || ow_moved_prefix(seen, path).len() > 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_value_data(typeinfo.spelling(check_expr(value, ctx.scope)), ctx.decls, [])) {
+    return false;
+  }
   let lu = ctx.last_use.get();
   let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope) };
   let borrowed: string[] = [];
@@ -22860,7 +22998,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.StmtReturn(r) => {
       let actx = ow_superseded_ctx(r.value, true, ctx);
       let rw = ru_expr(r.value, moved, actx);
-      if (ctx.ret_own && !parser.bare_return(r.value) && (!ow_is_owned_expr(r.value, actx) || ow_result_loan(r.value, actx))) {
+      let result_copy = ctx.ret_own && ow_value_data(typeinfo.spelling(check_expr(r.value, ctx.scope)), ctx.decls, []);
+      if (ctx.ret_own && !result_copy && !parser.bare_return(r.value) && (!ow_is_owned_expr(r.value, actx) || ow_result_loan(r.value, actx) || ow_result_pending_cleanup(r.value, actx))) {
         rw = OwnWalk { ...rw, diags: rw.diags.append(dg_at("E051", "an `own` result must return an owned value", r.line, r.col)) };
       }
       return ow_record_return(rw, r.line, ctx);
@@ -22946,6 +23085,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
           } else {
             seen = ow_moved_add(seen, elem.mname, elem.mline, elem.mcol);
           }
+        }
+      }
+      for elem in ow_defer_local_moves(dd.action, ctx) {
+        if (!ow_moved_has(seen, elem.mname)) {
+          seen = ow_moved_add(seen, elem.mname, elem.mline, elem.mcol);
         }
       }
       ctx.deferred.set(seen);

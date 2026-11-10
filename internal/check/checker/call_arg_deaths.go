@@ -619,6 +619,13 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 				moveSite(x, x.Init)
 			}
 			return true
+		case *ast.Return:
+			if fn.ReturnOwn {
+				for _, part := range argParts(&ast.Call{Args: []ast.Expr{x.Value}}) {
+					moveSite(x, part)
+				}
+			}
+			return true
 		default:
 			return true
 		}
@@ -1740,7 +1747,7 @@ func lastUseArgsOf(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		// A lambda is decided as a function of its own, so a name it declares
 		// can move at its last use in the lambda's body.
 		if lm, isLambda := n.(*ast.Lambda); isLambda {
-			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
+			inner, ok = &ast.FuncDecl{Params: lm.Params, ReturnOwn: lm.ReturnOwn, Body: lm.Body}, true
 		}
 		if ok && inner != fn {
 			innerOut, innerLoose := lastUseArgsOf(inner, info, handleFree, scalar)

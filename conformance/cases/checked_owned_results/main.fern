@@ -17,6 +17,29 @@ function wrap(data: Data): own Data[] {
   return [data];
 }
 
+function copy_data(data: Data): own Data {
+  return data;
+}
+
+struct Token { n: i32, closed: Cell[i32] }
+
+function (own token: Token) close(): i32 {
+  token.closed.set(token.closed.get() + 1);
+  return token.n;
+}
+
+struct Pair { first: Token, second: Token }
+
+function make_token(n: i32, closed: Cell[i32]): own Token {
+  let token = Token { n: n, closed: closed };
+  return token;
+}
+
+function choose(own pair: Pair): own Token {
+  defer pair.first.close();
+  return pair.second;
+}
+
 function main(): i32 {
   let calls = Callbacks { step: next };
   let box = fold(Box { values: [7u8] }, (own x: Box): own Box => calls.step(x));
@@ -25,7 +48,14 @@ function main(): i32 {
   let data = Data { bytes: [4u8] };
   let copies = wrap(data);
   let changed = Data { bytes: data.bytes.with(0, 8u8) };
+  let snapshot = copy_data(data);
   print(copies[0].bytes[0]);
+  print(snapshot.bytes[0]);
   print(changed.bytes[0]);
+  let closed = cell_new(0);
+  let token = choose(Pair { first: make_token(11, closed), second: make_token(12, closed) });
+  print(closed.get());
+  print(token.close());
+  print(closed.get());
   return 0;
 }

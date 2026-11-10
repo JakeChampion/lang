@@ -37,11 +37,11 @@ func fernSysnoTable(t *testing.T, src, fn string) map[string]int {
 		t.Fatalf("no `%s` in %s: the extraction has gone stale, which would make this test vacuous", head, sysnoSrc)
 	}
 	body := src[i+len(head):]
-	end := strings.Index(body, `return "-1";`)
+	end := strings.Index(body, `_ => "-1",`)
 	if end < 0 {
-		t.Fatalf("`%s` has no `return \"-1\";` miss: the table layout changed", fn)
+		t.Fatalf("`%s` has no `_ => \"-1\",` miss: the table layout changed", fn)
 	}
-	row := regexp.MustCompile(`name == "([a-z0-9_]+)"\)\s*\{\s*return "(-?\d+)";\s*\}`)
+	row := regexp.MustCompile(`(?m)^\s*"([a-z0-9_]+)" => "(-?\d+)",`)
 	out := map[string]int{}
 	for _, m := range row.FindAllStringSubmatch(body[:end], -1) {
 		n, err := strconv.Atoi(m[2])

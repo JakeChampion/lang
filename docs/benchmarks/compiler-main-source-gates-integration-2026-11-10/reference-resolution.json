@@ -1,0 +1,23 @@
+{
+  "head": "2907b52ae3c553fb4dd55f20a484c0e8756eb800",
+  "main": "e31c27c971145607f0a4071795b601d985b82b32",
+  "ours_sha256": "aa59c49eeffa3a085f8e8557774716d1a46cd0d29bf71ff84f593d30013bb64f",
+  "main_sha256": "bf16c14c4fcc7c10a48e01158a84e70feee7a2268785931b6937a13a600431c2",
+  "compressed_equal": false,
+  "raw_equal": true,
+  "catalog_equal": true,
+  "raw_sha256": "48c9963471f8f5400a52f237fe95873b71cbcdb3402b3ea64c745fad84e5e722",
+  "gzip_byte_differences": 1,
+  "compressed_lengths": [
+    91899,
+    91899
+  ],
+  "different_offsets": [
+    {
+      "offset": 9,
+      "ours": 3,
+      "main": 255
+    }
+  ],
+  "resolution": "Retain main compressed bytes in the live reference. Preserve both exact containers and the original source-scoped verifier."
+}

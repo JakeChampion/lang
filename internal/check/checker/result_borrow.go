@@ -58,6 +58,9 @@ func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool
 	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
 		return false
 	}
+	if ownedResult && c.valueData(fn.ReturnType, map[string]bool{}) {
+		return false
+	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType), ownedResult: ownedResult}
 	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {

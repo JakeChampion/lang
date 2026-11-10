@@ -26,7 +26,7 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 		{"is_char:boolean", "width:i32", "unsigned:boolean", "polymorphic:boolean"},
 		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"width:i32"}, {"elem:Type", "view:boolean"},
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
-		{"param_types:Type[]", "param_own:boolean[]", "ret_type:Type", "params_known:boolean"},
+		{"param_types:Type[]", "param_own:boolean[]", "ret_own:boolean", "ret_type:Type", "params_known:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},
 		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string"}, {"name:string"}, {"tag:i32"},
 		{"value:string"},
