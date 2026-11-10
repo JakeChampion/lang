@@ -92,6 +92,25 @@ def split_media(source, target):
     target.write_bytes(output)
 
 
+def explicit_sync(data, count):
+    output = bytearray()
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from(">I4s", data, at)
+        assert 8 <= size <= len(data) - at
+        body = data[at + 8:at + size]
+        if tag in (b"moov", b"trak", b"mdia", b"minf", b"stbl"):
+            if tag == b"stbl":
+                assert b"stss" not in body
+                table = struct.pack(">II", 0, count) + struct.pack(">" + "I" * count, *range(1, count + 1))
+                body += struct.pack(">I4s", len(table) + 8, b"stss") + table
+            else:
+                body = explicit_sync(body, count)
+        output += struct.pack(">I4s", len(body) + 8, tag) + body
+        at += size
+    return bytes(output)
+
+
 def generate(directory):
     cases = []
     for name, encoder, options in (
@@ -128,6 +147,12 @@ def generate(directory):
         target = directory / (name + ".mp4")
         split_media(source, target)
         cases.append((name, target))
+    intra = next(path for name, path in cases if name == "avc-all-intra")
+    original = intra.read_bytes()
+    assert original.rfind(b"moov") > original.find(b"mdat")
+    dense = directory / "avc-explicit-all-sync.mp4"
+    dense.write_bytes(explicit_sync(original, 6))
+    cases.append(("avc-explicit-all-sync", dense))
     return cases
 
 
