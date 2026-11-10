@@ -23873,10 +23873,99 @@ function ow_value_if_origin(origin: string): boolean {
 }
 
 function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (lm.origin == parser.ORIGIN_MATCH_EXPR) {
+    return ow_match_block_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  }
   if (lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 1) {
     return true;
   }
   return ow_value_arm_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+}
+
+// The parser lowers a value match to `[match]`, to `[match, return zero]`,
+// or to `[let t = scrutinee, return inner()]` around one of those.
+function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (body.len() == 0 || body.len() > 2) {
+    return true;
+  }
+  if let ast.StmtVar(v) = body[0] {
+    if (body.len() != 2) {
+      return true;
+    }
+    let ast.StmtReturn(r) = body[1] else {
+      return true;
+    };
+    let lends = ow_expr_borrows(v.init, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+    let inner = ow_without_names(borrowed, [v.name]);
+    if (lends) {
+      inner = inner.append(v.name);
+    }
+    return ow_expr_borrows(r.value, ofuncs, inner, ow_without_names(locals, [v.name]), values, borrows, builtins, lenders, handles_only);
+  }
+  if (body.len() == 2) {
+    let ast.StmtReturn(z) = body[1] else {
+      return true;
+    };
+    if (ow_expr_borrows(z.value, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return match (body[0]) {
+    ast.StmtMatch(m) => ow_value_match_borrows(m, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only),
+    ast.StmtIf(f) => ow_value_lits_borrows(f.sugar, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only),
+    _ => true,
+  };
+}
+
+// A match on literals lowers to an if chain that keeps its arms in the sugar.
+function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (sugar.origin.len() > 0 || sugar.lits.len() == 0 || sugar.tup.len() > 0 || sugar.strct.len() > 0 || sugar.arms.len() > 0) {
+    return true;
+  }
+  let lends = ow_expr_borrows(sugar.scrut, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  for arm in sugar.lits {
+    let names: string[] = [];
+    if (arm.at_binding.len() > 0) {
+      names = [arm.at_binding];
+    }
+    if (ow_value_binder_arm_borrows(arm.body, names, lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A value match borrows when an arm's value borrows.
+function ow_value_match_borrows(m: ast.StmtMatch, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (m.sugar.len() > 0) {
+    return true;
+  }
+  let lends = ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  for arm in m.arms {
+    if (ow_value_binder_arm_borrows(arm.body, astwalk.pattern_binders(arm.pattern, []), lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// An arm's binders come from the scrutinee, so they borrow only when it lends.
+function ow_value_binder_arm_borrows(body: ast.Stmt[], names: string[], lends: boolean, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  let arm_borrowed = ow_without_names(borrowed, names);
+  if (lends) {
+    arm_borrowed = util.append_all(arm_borrowed, names);
+  }
+  return ow_value_arm_borrows(body, ofuncs, arm_borrowed, ow_without_names(locals, names), values, borrows, builtins, lenders, handles_only);
+}
+
+function ow_without_names(names: string[], drop: string[]): string[] {
+  let out: string[] = [];
+  for n in names {
+    if (!util.has_str(drop, n)) {
+      out = out.append(n);
+    }
+  }
+  return out;
 }
 
 function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
