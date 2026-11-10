@@ -438,6 +438,12 @@ function __signer(c: Curve): Signer {
 
 ### `15 pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError]`
 
+The `erase` method consumes one key holder.
+It writes zeroes to uniquely held secret arrays before release.
+Other holders retain their secret arrays through copy-on-write.
+The caller must erase the last holder to clear the last shared secret storage.
+The caller must also erase separate input arrays and secret copies.
+
 ```fern
 <<15 pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError]>>=
 pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] {
@@ -447,7 +453,8 @@ pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] 
   return Ok(PrivateKey { curve: curve, d: __copy(d) });
 }
 
-// Zeroes the scalar before its release. The key is consumed.
+// Consumes this key holder. Zeroes uniquely held secret arrays before release.
+// Other holders retain their secret arrays through copy-on-write.
 pub function (own key: PrivateKey) erase(): void {
   crypto.erase(key.d);
 }

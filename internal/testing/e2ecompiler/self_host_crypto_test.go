@@ -14,7 +14,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "field25519", "x25519", "ed25519", "mlkem768", "montgomery", "p256", "rsa", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_verify", "tls_x509"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "field25519", "x25519", "ed25519", "mlkem768", "montgomery", "p256", "rsa", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, exit := e2eharness.InterpVerdict(t, interp, src)
@@ -78,7 +78,7 @@ func TestSelfHostECDSASuite(t *testing.T) {
 	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 9\n# fail 0\n") {
+		if err != nil || !strings.Contains(string(out), "# pass 10\n# fail 0\n") {
 			t.Fatalf("ecdsa suite: %v\n%s", err, out)
 		}
 	}

@@ -2,6 +2,8 @@
 # Bank measured HTTP and QTRLE shifts in both directions. Parent4a04428264 and
 # feature345f706f emit identical benchmark code with one frozen compiler.
 # All tolerances remain unchanged. See docs/benchmarks/video-avc-ci-2026-11-09.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
 # http.serialize_response_to and http.serialize_response_to_bytes refuse a
 # field with CR or LF since #15002, so 19 http_hello rows rise 1% to 5%.
