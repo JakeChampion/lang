@@ -1,22 +1,22 @@
 // spec: ML-01
 
-struct H { fd: i32 }
+struct Res { xs: i32[] }
 
-function (own h: H) close(): void {}
+function (own r: Res) close(): void {}
 
-function consume(own xs: H[]): i32 {
-  return xs[0].fd;
+function consume(own r: Res): i32 {
+  return r.xs[0];
 }
 
 function same[A](a: A): A {
   return a;
 }
 
-function relay(xs: H[]): H[] {
-  return same(xs);
+function relay(r: Res): Res {
+  return same(r);
 }
 
 function main(): i32 {
-  let xs: H[] = [H { fd: 1 }];
-  return consume(relay(xs)) + xs[0].fd;
+  let r = Res { xs: [1] };
+  return consume(relay(r)) + r.xs[0];
 }
