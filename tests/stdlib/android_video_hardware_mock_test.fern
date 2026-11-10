@@ -42,6 +42,12 @@ function hardware_queries(): i32;
 @import("libmediandk.so", "mock_sample_reads")
 function reads(): i32;
 
+@import("libmediandk.so", "mock_allow_hardware")
+function allow_hardware(): void;
+
+@import("libmediandk.so", "mock_seek_time")
+function seek_time(): i64;
+
 @import("libmediandk.so", "mock_output_format")
 function output_format(width: i32, height: i32, right: i32, bottom: i32): void;
 
@@ -733,6 +739,106 @@ function playback_output_limit(): i32 {
   return 0;
 }
 
+function recovery_source(rendered: boolean, paused: boolean): Result[player.Player, i32] {
+  mode(16);
+  allow_hardware();
+  jni_mode(0);
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  let Ok(p) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+    return Err(901);
+  };
+  if (p.info.implementation != capabilities.Hardware) {
+    let _ = p.close();
+    return Err(902);
+  }
+  for _ in 0..if (rendered) { 4 } else { 0 } {
+    p = p.tick(9876543210i64).player;
+  }
+  if (rendered && p.scheduled_frames != 1i64) {
+    let _ = p.close();
+    return Err(903);
+  }
+  if (paused) {
+    p = p.pause(9876543210i64).player;
+  }
+  return Ok(p);
+}
+
+function recovery_at(value: player.Tick, target_us: i64, paused: boolean): boolean {
+  match (value.event) {
+    player.Recovered(info) => {
+      return info.implementation == capabilities.Software && value.player.target_us == target_us && seek_time() == target_us && value.player.paused == paused;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function check_recovery(own p: player.Player, target_us: i64, paused: boolean, previous_frame: i64): i32 {
+  let recovered = p.recover_software(jni_env(), 29);
+  let valid = recovery_at(recovered, target_us, paused) && recovered.player.last_frame_us == previous_frame;
+  let Ok(_) = recovered.player.close() else {
+    return 904;
+  };
+  if (live() != 0) {
+    return 905;
+  }
+  if (!valid) {
+    return 906;
+  }
+  return 0;
+}
+
+function recovery_seek_case(target_us: i64, rendered: boolean, paused: boolean, discard: boolean): i32 {
+  let Ok(p) = recovery_source(rendered, paused) else {
+    return 908;
+  };
+  let previous_frame = p.last_frame_us;
+  p = p.seek(target_us).player;
+  for _ in 0..if (discard) { 4 } else { 0 } {
+    p = p.tick(9876543210i64).player;
+  }
+  if (discard && p.dropped_frames != 1i64) {
+    let _ = p.close();
+    return 907;
+  }
+  return check_recovery(p, target_us, paused, previous_frame);
+}
+
+function recovery_after_seek(): i32 {
+  for target in [200000i64, 0i64] {
+    for rendered in [false, true] {
+      for paused in [false, true] {
+        let code = recovery_seek_case(target, rendered, paused, false);
+        if (code != 0) {
+          return code;
+        }
+      }
+    }
+  }
+  for rendered in [false, true] {
+    let code = recovery_seek_case(200000i64, rendered, false, true);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
+
+function recovery_after_frame(): i32 {
+  for paused in [false, true] {
+    let Ok(p) = recovery_source(true, paused) else {
+      return 909;
+    };
+    let code = check_recovery(p, 123456i64, paused, 123456i64);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
+
 function main(): i32 {
   let result = discovery();
   if (result != 0) {
@@ -762,5 +868,13 @@ function main(): i32 {
   if (result != 0) {
     return result;
   }
-  return playback_output_limit();
+  result = playback_output_limit();
+  if (result != 0) {
+    return result;
+  }
+  result = recovery_after_seek();
+  if (result != 0) {
+    return result;
+  }
+  return recovery_after_frame();
 }

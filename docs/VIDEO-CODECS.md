@@ -234,7 +234,12 @@ Pause preserves the media position. Seek flushes buffers and restores configurat
 The player discards preroll frames before the target timestamp.
 
 Runtime recovery closes the decoder and retries one software implementation policy.
-It restarts from a sync sample near the last scheduled frame.
+It restarts from a sync sample near the recovery point.
+
+After a seek, recovery uses the requested media time until a new frame is scheduled.
+This prevents recovery from restoring the frame position that preceded the seek.
+Pause preserves this recovery point. Discarded frames do not advance it.
+
 Hardware-only policy refuses software recovery.
 Counters report scheduled and discarded frames, including final frames that also carry EOS.
 
