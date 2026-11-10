@@ -1,0 +1,75 @@
+{
+  "source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "compiler_sha256": "520eacbc68e69ee4b56ff066098b1ecf53953fc094eb959921def624013a42ad",
+  "runs": [
+    {
+      "target": "x86-64-linux",
+      "args": [
+        "python3",
+        "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py",
+        "--compiler",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/shipped-compiler",
+        "--target",
+        "x86-64-linux",
+        "--reference",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/reference-current.json.gz",
+        "--source-commit",
+        "93942727d19bcad77d7aef70da15b36c58056bf8",
+        "--output",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/x86-64-linux.json",
+        "--work",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/x86-64-linux-workers"
+      ],
+      "started": "2026-11-10T10:20:31.466159+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T10:20:39.926050+00:00"
+    },
+    {
+      "target": "arm64-linux",
+      "args": [
+        "python3",
+        "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py",
+        "--compiler",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/shipped-compiler",
+        "--target",
+        "arm64-linux",
+        "--reference",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/reference-current.json.gz",
+        "--source-commit",
+        "93942727d19bcad77d7aef70da15b36c58056bf8",
+        "--output",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/arm64-linux.json",
+        "--work",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/arm64-linux-workers"
+      ],
+      "started": "2026-11-10T10:20:39.936312+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T10:20:50.521248+00:00"
+    },
+    {
+      "target": "wasm32-wasi",
+      "args": [
+        "python3",
+        "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py",
+        "--compiler",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/shipped-compiler",
+        "--target",
+        "wasm32-wasi",
+        "--reference",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/reference-current.json.gz",
+        "--source-commit",
+        "93942727d19bcad77d7aef70da15b36c58056bf8",
+        "--output",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/wasm32-wasi.json",
+        "--work",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1020/wasm32-wasi-workers"
+      ],
+      "started": "2026-11-10T10:20:50.531547+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T10:21:00.309251+00:00"
+    }
+  ],
+  "purpose": "Requalify unchanged exact wide-class outputs after two source provenance hashes move. No proof or negative-control changes.",
+  "exit_code": 0,
+  "finished": "2026-11-10T10:21:00.318636+00:00"
+}

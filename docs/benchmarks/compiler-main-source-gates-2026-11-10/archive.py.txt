@@ -1,0 +1,51 @@
+from pathlib import Path
+import datetime,gzip,hashlib,io,json,shutil,subprocess,tarfile
+root=Path('/workspace/lang-user-net-capability-20261110-1000')
+out=Path(__file__).resolve().parent
+old=root/'build/wide-provenance-20261110-1015'
+dst=root/'docs/benchmarks/compiler-main-source-gates-2026-11-10'
+sha=lambda b:hashlib.sha256(b).hexdigest()
+assert not dst.exists()
+assert json.loads((out/'result.json').read_text())['exit_code']==0
+assert json.loads((out/'build.json').read_text())['exit_code']==0
+assert json.loads((out/'ci-selftest-result.json').read_text())['exit_code']==0
+assert json.loads((old/'protocol-result.json').read_text())['exit_code']==0
+dst.mkdir(parents=True)
+for name in ['reference-before.json.gz','reference-current.json.gz','preflight.json','rebank-decision.json','result.json','build.json','build.py','collect.py','run.sh','assets.stdout','assets.stderr','shipped-cli.stdout','shipped-cli.stderr','ci-selftest.log','ci-selftest-result.json']:
+ shutil.copyfile(out/name,dst/name)
+for name in ['protocol-tests.log','protocol-result.json']:
+ shutil.copyfile(old/name,dst/name)
+raw_hashes={}
+def compressed(source,name):
+ data=source.read_bytes();(dst/name).write_bytes(gzip.compress(data,mtime=0));raw_hashes[name]=sha(data)
+compressed(root/'build/user-net-capability-20261110/lint-failure-129759789520.log','ci-lint.log.gz')
+primary=Path('/workspace/lang-interpreter-dispatch-20261109')
+compressed(primary/'build/compiler-main-ci-watch-20261110-0950/rest-failure-129749416182.log','ci-platforms.log.gz')
+for label,path in [('platforms-before.log',primary/'build/compiler-main-ci-watch-20261110-0950/partition-before.log'),('platforms-after.log',root/'build/user-net-capability-20261110/tests.log')]:
+ compressed(path,label+'.gz')
+for source,name in [(primary/'build/compiler-main-ci-watch-20261110-0950/partition-before.json','platforms-before.json'),(root/'build/user-net-capability-20261110/tests-result.json','platforms-after.json'),(root/'build/user-net-capability-20261110/vet-result.json','platforms-vet.json')]:shutil.copyfile(source,dst/name)
+failure=dst/'initial-compiler-failure';failure.mkdir()
+for name in ['result.json','collect.py','run.sh','controller.log','x86-64-linux.json','x86-64-linux.stderr','x86-64-linux.stdout']:
+ if (old/name).exists():shutil.copyfile(old/name,failure/name)
+for name in ['compile.stderr.log','compile.stdout.log']:
+ shutil.copyfile(old/'x86-64-linux-workers'/name,failure/name)
+worker_manifest={}
+for target in ['x86-64-linux','arm64-linux','wasm32-wasi']:
+ for suffix in ['.json','.stdout','.stderr']:shutil.copyfile(out/(target+suffix),dst/(target+suffix))
+ work=out/(target+'-workers');entries={};binaries={};buffer=io.BytesIO()
+ with tarfile.open(fileobj=buffer,mode='w')as archive:
+  for p in sorted(work.iterdir()):
+   assert p.is_file()and not p.is_symlink()
+   if p.suffix in ['.elf','.wasm']:binaries[p.name]=sha(p.read_bytes());continue
+   entries[p.name]=sha(p.read_bytes());archive.add(p,arcname=p.name,recursive=False)
+ name=target+'-workers.tar.gz';(dst/name).write_bytes(gzip.compress(buffer.getvalue(),mtime=0));worker_manifest[target]={'files':entries,'binary_sha256':binaries}
+(dst/'worker-manifest.json').write_text(json.dumps(worker_manifest,indent=2)+'\n')
+patch=subprocess.check_output(['git','diff','3a824efbaf95d3d7191c96a0050ea6d7d8a84944','4fc43d6a119435babcbd46acbd21600a592c8349','--','compiler/ssacapacityvalue.fern','compiler/ssalargepushranges.fern'],cwd=root)
+(dst/'source-loop-change.patch.gz').write_bytes(gzip.compress(patch,mtime=0));raw_hashes['source-loop-change.patch.gz']=sha(patch)
+assert not subprocess.check_output(['git','diff','4fc43d6a119435babcbd46acbd21600a592c8349','93942727d19bcad77d7aef70da15b36c58056bf8','--','compiler','internal/stdlib'],cwd=root)
+frozen=Path('/workspace/lang-free-wide-requalification-20261110-1015')
+assert not subprocess.check_output(['git','status','--porcelain'],cwd=frozen)
+(dst/'source-audit.json').write_text(json.dumps({'qualified_source':'93942727d19bcad77d7aef70da15b36c58056bf8','main_source':'4fc43d6a119435babcbd46acbd21600a592c8349','compiler_stdlib_diff_empty':True,'frozen_tree_clean':True,'scripts_sha256':{name:sha((frozen/name).read_bytes())for name in ['scripts/gen-large-free-wide-classes.py','scripts/qualify_large_free_wide_classes.py','scripts/test_large_free_wide_classes.py']},'created':datetime.datetime.now(datetime.timezone.utc).isoformat()},indent=2)+'\n')
+for name in ['reference-before.json.gz','reference-current.json.gz']:raw_hashes[name]=sha(gzip.decompress((dst/name).read_bytes()))
+(dst/'raw-identities.json').write_text(json.dumps(raw_hashes,indent=2)+'\n')
+print(json.dumps({'archive':str(dst),'worker_data_files':sum(len(x['files'])for x in worker_manifest.values()),'worker_binary_identities':sum(len(x['binary_sha256'])for x in worker_manifest.values()),'raw_gzip_identities':len(raw_hashes)}))

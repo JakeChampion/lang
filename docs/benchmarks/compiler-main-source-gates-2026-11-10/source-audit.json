@@ -1,0 +1,12 @@
+{
+  "qualified_source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "main_source": "4fc43d6a119435babcbd46acbd21600a592c8349",
+  "compiler_stdlib_diff_empty": true,
+  "frozen_tree_clean": true,
+  "scripts_sha256": {
+    "scripts/gen-large-free-wide-classes.py": "043094a3a46564d08d7d162908173291001709048d92f04a20df99852484f87f",
+    "scripts/qualify_large_free_wide_classes.py": "4302ee801c559495858ee83d60bd89fb933c8591b39819d96904bc99d3c3f272",
+    "scripts/test_large_free_wide_classes.py": "432d356e54699a8b22d154e0aadfe0ce8a538b2138a9f61c78e3710a4aaf7784"
+  },
+  "created": "2026-11-10T10:24:54.187830+00:00"
+}

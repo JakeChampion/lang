@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1015/collect.py", line 17, in <module>
+    row['finished']=datetime.datetime.now(datetime.timezone.utc).isoformat();save();assert row['exit_code']==0
+                                                                                           ^^^^^^^^^^^^^^^^^^^
+AssertionError
