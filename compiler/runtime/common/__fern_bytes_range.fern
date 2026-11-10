@@ -18,6 +18,6 @@ function __fern_bytes_range(to: i32, from: i32, bytes: usize): i32[] {
   }
   let b = __raw_arr_box((m + 7) / 8);
   __store_i64(b, m as i64);
-  __memcpy(b + 8, p + from, m);
+  __memcpy(b + 8, p + from as usize, m);
   return __raw_array(b);
 }

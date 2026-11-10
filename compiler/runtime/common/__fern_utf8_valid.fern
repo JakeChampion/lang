@@ -16,7 +16,7 @@ function __fern_utf8_valid(buf: usize, n: i32): i32 {
     if (i >= retry) {
       let more = 1;
       while (more == 1 && i + 32 <= n) {
-        let w = __load_i64(buf + i) | __load_i64(buf + i + 8) | __load_i64(buf + i + 16) | __load_i64(buf + i + 24);
+        let w = __load_i64(buf + i as usize) | __load_i64(buf + i as usize + 8) | __load_i64(buf + i as usize + 16) | __load_i64(buf + i as usize + 24);
         if ((w & high) == 0 as i64) {
           i += 32;
         } else {
@@ -24,7 +24,7 @@ function __fern_utf8_valid(buf: usize, n: i32): i32 {
         }
       }
       while (more == 1 && i + 8 <= n) {
-        if ((__load_i64(buf + i) & high) == 0 as i64) {
+        if ((__load_i64(buf + i as usize) & high) == 0 as i64) {
           i += 8;
         } else {
           more = 0;

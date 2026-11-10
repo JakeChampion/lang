@@ -22,7 +22,7 @@ function __fern_proc_exec(path: string, args: string[]): i32 {
   while (k < n) {
     let a = args[k];
     let al = a.len();
-    __raw_store_ptr(argv, k + 1, ab + off);
+    __raw_store_ptr(argv, k + 1, ab + off as usize);
     let j: i32 = 0;
     while (j < al) {
       __raw_store8(ab, off + j, a[j] as i32);

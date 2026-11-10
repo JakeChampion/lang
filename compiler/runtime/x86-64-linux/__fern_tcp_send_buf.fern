@@ -4,6 +4,6 @@ function __fern_tcp_send_buf(fd: i32, b: usize, from: i32): i32 {
     return 0;
   }
   let data = __raw_load_ptr(b, 0);
-  let p = data + from;
+  let p = data + from as usize;
   return __syscall6(44, fd as i64, p as i64, (n - from) as i64, 16384, 0, 0) as i32;
 }

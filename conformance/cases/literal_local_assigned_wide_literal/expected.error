@@ -1,0 +1,3 @@
+5:9: error[E047]: literal 5000000000 does not fit in i32
+7:10: error[E047]: literal 5000000000 does not fit in i32
+9:13: error[E047]: literal 5000000000 does not fit in i32

@@ -8,7 +8,7 @@ function __fern_cov_report(): void {
     if (names[i] as i32 == 10) {
       let c: i64 = 0i64;
       if (t != 0 as usize) {
-        c = __load_i64(t + k * 8);
+        c = __load_i64(t + (k * 8) as usize);
       }
       eprint(slice_unchecked(names, from, i) + __fern_cov_count(c));
       k = k + 1;
