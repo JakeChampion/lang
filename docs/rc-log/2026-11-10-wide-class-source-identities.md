@@ -13,3 +13,9 @@ The archive retains the earlier exact reference, complete records, and original 
 The capability inventory also records the intentional kernel socket reach of `std/user_net` and `std/user_process`.
 The complete platforms package passes 375 test and subtest results with zero skips.
 The capability derivation and enforcement checks remain intact.
+
+Main later contains both repairs through the owner's PRs #15115 and #15121.
+Its reference differs from the qualified archive only in one gzip header byte.
+The decompressed catalogs are identical.
+The live reference follows main, and the original exact verifier targets publication commit `2907b52ae3c553fb4dd55f20a484c0e8756eb800`.
+The separate integration record preserves the other container.
