@@ -325,6 +325,30 @@ function priority_rank_tests(): void {
   }
 }
 
+function rank_bit_order_tests(): void {
+  let patterns: u32[] = [0u32, 2147483648u32, 1u32, 2147483649u32, 8388607u32, 2155872255u32, 8388608u32, 2155872256u32, 2139095039u32, 4286578687u32, 2139095040u32, 4286578688u32, 2143289345u32, 4290772993u32];
+  let keys: f64[] = [];
+  for repeat in 0..3 {
+    for b in patterns {
+      keys = keys.append(f32_from_bits(b as i32) as f64);
+    }
+  }
+  let actual = analysis.ranks(keys);
+  for i in 0..keys.len() {
+    let value = f32_bits(keys[i] as f32) as u32;
+    value ^= if ((value & 2147483648u32) != 0u32) { 4294967295u32 } else { 2147483648u32 };
+    let expected = 0;
+    for j in 0..keys.len() {
+      let other = f32_bits(keys[j] as f32) as u32;
+      other ^= if ((other & 2147483648u32) != 0u32) { 4294967295u32 } else { 2147483648u32 };
+      if (other > value || other == value && j > i) {
+        expected += 1;
+      }
+    }
+    require(actual[i] == expected, "rank histograms preserve signed zero, subnormal, infinity, and NaN order");
+  }
+}
+
 function encoder_features(): void {
   let order = analysis.ranks([1.0, -2.0, 8.0, 0.0]);
   require(order[2] == 0 && order[0] == 1 && order[3] == 2 && order[1] == 3, "priority radix order");
@@ -1056,6 +1080,7 @@ pub function run_tests(): i32 {
   encoder_features();
   planar_tests();
   priority_rank_tests();
+  rank_bit_order_tests();
   paired_log_tests();
   print("ok - transient encoder, rate control, and count-only passes");
   containers();

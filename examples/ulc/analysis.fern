@@ -197,44 +197,51 @@ pub function noise_tail(data: [f64], base: i32, band: i32, count: i32, quant: f6
 // Stable radix order gives bounded linear cost for the coefficient priorities.
 pub function ranks(keys: [f64]): i32[] {
   let n = keys.len();
-  let order: i32[] = [];
-  let bits: u32[] = [];
+  let order = ints(n);
+  let bits = ints(n);
+  let counts = ints(1024);
   for i in 0..n {
-    order = order.append(i);
+    order = order.with(i, i);
     let b = f32_bits(keys[i] as f32) as u32;
     if ((b & 2147483648u32) != 0u32) {
       b ^= 4294967295u32;
     } else {
       b ^= 2147483648u32;
     }
-    bits = bits.append(b);
+    bits = bits.with(i, b as i32);
+    let byte0 = (b & 255u32) as i32;
+    let byte1 = 256 + (b >> 8u32 & 255u32) as i32;
+    let byte2 = 512 + (b >> 16u32 & 255u32) as i32;
+    let byte3 = 768 + (b >> 24u32) as i32;
+    counts = counts.with(byte0, counts[byte0] + 1);
+    counts = counts.with(byte1, counts[byte1] + 1);
+    counts = counts.with(byte2, counts[byte2] + 1);
+    counts = counts.with(byte3, counts[byte3] + 1);
   }
+  let next = ints(n);
   for pass in 0..4 {
-    let counts = ints(256);
-    for index in order {
-      let byte = (bits[index] >> (8 * pass) as u32 & 255u32) as i32;
-      counts = counts.with(byte, counts[byte] + 1);
-    }
-    if (n > 0 && counts[(bits[0] >> (8 * pass) as u32 & 255u32) as i32] == n) {
+    let base = 256 * pass;
+    let shift = (8 * pass) as u32;
+    if (n > 0 && counts[base + (bits[0] as u32 >> shift & 255u32) as i32] == n) {
       continue;
     }
     let total = 0;
-    for i in 0..256 {
+    for i in base..base + 256 {
       let count = counts[i];
       counts = counts.with(i, total);
       total += count;
     }
-    let next = ints(n);
     for index in order {
-      let byte = (bits[index] >> (8 * pass) as u32 & 255u32) as i32;
+      let byte = base + (bits[index] as u32 >> shift & 255u32) as i32;
       next = next.with(counts[byte], index);
       counts = counts.with(byte, counts[byte] + 1);
     }
+    let previous = order;
     order = next;
+    next = previous;
   }
-  let result = ints(n);
   for i in 0..n {
-    result = result.with(order[i], n - 1 - i);
+    next = next.with(order[i], n - 1 - i);
   }
-  return result;
+  return next;
 }
