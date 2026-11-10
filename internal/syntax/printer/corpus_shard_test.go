@@ -64,7 +64,7 @@ func TestCorpusShardAssignments(t *testing.T) {
 	for i := range files {
 		files[i] = fmt.Sprintf("source-%04d.fern", i)
 	}
-	for _, count := range []int{1, 2, 3, 4, 7} {
+	for _, count := range []int{1, 2, 3, 4, 6, 7} {
 		seen := map[string]bool{}
 		minimum := 0
 		for index := 0; index < count; index++ {

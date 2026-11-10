@@ -10730,7 +10730,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
-	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle, c.scalarArgs)
+	var lastUse, looseUse map[ast.Expr]bool
+	atLastUse := func(e ast.Expr) bool {
+		if lastUse == nil {
+			lastUse, looseUse = lastUseArgs(fn, c.info, c.holdsNoHandle, c.scalarArgs)
+		}
+		return lastUse[e]
+	}
 	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
@@ -10769,12 +10775,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
 			}
-			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || !borrowedParam[x.Name] && atLastUse(e) && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
-			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
+			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && !borrowedParam[id.Name] && atLastUse(e) {
 				return true
 			}
 			if lit := replaced[x]; lit != nil && isOwnedExpr(lit.Base) {
@@ -11006,9 +11012,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	takesTag := func(tag ast.Expr) bool {
 		switch t := tag.(type) {
 		case *ast.Ident:
-			return lastUse[tag] && !owned[t.Name]
+			return !owned[t.Name] && atLastUse(tag)
 		case *ast.FieldAccess:
-			return lastUse[tag]
+			return atLastUse(tag)
 		}
 		return false
 	}
@@ -11347,7 +11353,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// borrows it when the array is read again after the loop.
 			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
 				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
-					if !lastUse[x.Init] {
+					if !atLastUse(x.Init) {
 						if at, isMoved := moved[id.Name]; isMoved {
 							c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
 						}
