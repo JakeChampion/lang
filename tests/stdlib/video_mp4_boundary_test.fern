@@ -1,5 +1,6 @@
 import "std/video/mp4";
 import "std/video/frame";
+import "std/video/mp4/timing";
 import "std/audio/mp4/boxes";
 import "std/audio/pcm";
 import "std/hex";
@@ -151,6 +152,96 @@ function sync_tables(): test.TestOutcome {
   return test.pass();
 }
 
+function same_timing(actual: mp4.Track, expected: mp4.Track, has_composition: boolean, has_sync: boolean): boolean {
+  if (actual.packets.len() != expected.packets.len()) {
+    return false;
+  }
+  for i in 0..actual.packets.len() {
+    let p = actual.packets[i];
+    let e = expected.packets[i];
+    let pts = if (has_composition) { e.presentation_time } else { e.decode_time };
+    if (p.presentation_time != pts || p.sync != (!has_sync || e.sync) || p.decode_time != e.decode_time || p.duration != e.duration) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function public_timing(input: [u8], children: [boxes.Box], track: mp4.Track): boolean {
+  let Ok(composition) = timing.composition(input, children, track.packets.len()) else {
+    return false;
+  };
+  let Ok(sync) = timing.sync_samples(input, children, track.packets.len()) else {
+    return false;
+  };
+  if (composition.len() != track.packets.len() || sync.len() != track.packets.len()) {
+    return false;
+  }
+  for i in 0..track.packets.len() {
+    let p = track.packets[i];
+    if (p.presentation_time != p.decode_time + composition[i] || p.sync != sync[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function default_case(input: u8[], expected: mp4.Track, has_composition: boolean, has_sync: boolean): boolean {
+  let Ok(ctts) = sample_box(input, "ctts") else {
+    return false;
+  };
+  let Ok(stss) = sample_box(input, "stss") else {
+    return false;
+  };
+  let bytes = word(word(input, ctts.start + 4, boxes.tag(if (has_composition) { "ctts" } else { "free" })), stss.start + 4, boxes.tag(if (has_sync) { "stss" } else { "free" }));
+  let Ok(index) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return false;
+  };
+  let Ok(stbl) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl"]) else {
+    return false;
+  };
+  let Ok((_, children)) = boxes.children(bytes, stbl.data, stbl.end, boxes.Budget { boxes: 0, maximum: 1024 }) else {
+    return false;
+  };
+  return same_timing(index.tracks[0], expected, has_composition, has_sync) && public_timing(bytes, children, index.tracks[0]);
+}
+
+function default_tables(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let Ok(original) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return test.fail("original timing");
+  };
+  for composition in [false, true] {
+    for sync in [false, true] {
+      if (!default_case(bytes, original.tracks[0], composition, sync)) {
+        return test.fail("default combinations or public timing arrays changed");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function timing_limits(): test.TestOutcome {
+  if let Err(pcm.Limit) = timing.composition([], [], -1) {} else {
+    return test.fail("negative composition count");
+  }
+  if let Err(pcm.Limit) = timing.sync_samples([], [], -1) {} else {
+    return test.fail("negative sync count");
+  }
+  let Ok(offsets) = timing.composition([], [], 0) else {
+    return test.fail("zero composition count");
+  };
+  let Ok(sync) = timing.sync_samples([], [], 0) else {
+    return test.fail("zero sync count");
+  };
+  if (offsets.len() != 0 || sync.len() != 0) {
+    return test.fail("zero sample arrays");
+  }
+  return test.pass();
+}
+
 function budgets(): test.TestOutcome {
   let Ok(bytes) = fixture("avc-bframes") else {
     return test.fail("fixture");
@@ -211,5 +302,7 @@ function main(): i32 {
   r = r.it("media containment matches a linear reference", ranges.reference);
   r = r.it("media containment preserves 64-bit boundaries", ranges.wide);
   r = r.it("media search preserves non-monotonic chunk order", ranges.chunk_order);
+  r = r.it("all default-table combinations preserve public timing arrays", default_tables);
+  r = r.it("public timing readers preserve negative and zero counts", timing_limits);
   return r.finish();
 }

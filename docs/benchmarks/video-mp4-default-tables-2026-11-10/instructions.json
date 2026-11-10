@@ -1,0 +1,59 @@
+{
+  "compiler_sha256": "26418c31efc483a6234e425b42475804134a0b1d7dddbfb3218ba88d2101aeaf",
+  "source_sha256": "179302b922102bc0b07ad1b97976c077ee3977b9a71548d7a0246866c4f9eefc",
+  "count": 262144,
+  "cases": [
+    {
+      "composition_table": false,
+      "sync_table": false,
+      "input_sha256": "15f3728cbcb96b0235db1b9d64e71f1206fc76a12b5d8adbe3afdf8273b30691",
+      "before": {
+        "instructions": 94739939,
+        "allocations": 524419
+      },
+      "after": {
+        "instructions": 91331804,
+        "allocations": 524417
+      }
+    },
+    {
+      "composition_table": false,
+      "sync_table": true,
+      "input_sha256": "13d76cc6bf56cd27a215bd1a999c585d7f3f77c6723b159b99b676c526862cae",
+      "before": {
+        "instructions": 95005383,
+        "allocations": 524437
+      },
+      "after": {
+        "instructions": 96315962,
+        "allocations": 524436
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_table": false,
+      "input_sha256": "78c75fc600257773d4d971ac9c4bc9c5aa3f64cd3dcbe6ef08636bde360f3d89",
+      "before": {
+        "instructions": 98413333,
+        "allocations": 524437
+      },
+      "after": {
+        "instructions": 96053907,
+        "allocations": 524436
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_table": true,
+      "input_sha256": "593c502ee6ba2dba7b6898b57350d4be0a6f17dfd8da11166ef28a80e183af74",
+      "before": {
+        "instructions": 98678777,
+        "allocations": 524455
+      },
+      "after": {
+        "instructions": 101038065,
+        "allocations": 524455
+      }
+    }
+  ]
+}
