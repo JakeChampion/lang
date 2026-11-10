@@ -8,8 +8,13 @@ Call it from the Android loop thread with monotonic nanoseconds.
 Pause stops further packet submission and output release.
 A seek flushes outstanding buffers, restores codec configuration, and starts at a sync sample.
 Frames before the requested media timestamp are discarded.
-Runtime fallback reopens a software codec and seeks before the last scheduled frame.
+Runtime fallback reopens a software codec and seeks to a sync sample before its recovery point.
 A strict hardware policy never falls back to software.
+
+A seek sets the recovery point to the requested media time after a successful flush.
+Each scheduled frame updates that point. Discarded frames do not update it.
+Recovery before the first post-seek frame uses the requested time, including while paused.
+The last scheduled frame timestamp remains available separately.
 
 This controller plays one unencrypted video track. It does not play audio.
 The surface and file descriptor must remain valid until `close`.
@@ -25,7 +30,7 @@ import "std/android/video/extractor";
 import "std/video/frame";
 import "std/video/playback_clock";
 
-pub struct Player { reader: extractor.Extractor, decoder: video.Decoder, decoder_live: boolean, format: video.CodecFormat, info: capabilities.CodecInfo, request: capabilities.Request, policy: capabilities.Policy, limits: frame.Limits, window: usize, clock: Option[playback_clock.Clock], pending: Option[video.OutputBuffer], paused: boolean, input_eos: boolean, output_eos: boolean, failed: boolean, config_next: i32, target_us: i64, last_input_us: i64, last_frame_us: i64, fallback_used: boolean, scheduled_frames: i64, dropped_frames: i64 }
+pub struct Player { reader: extractor.Extractor, decoder: video.Decoder, decoder_live: boolean, format: video.CodecFormat, info: capabilities.CodecInfo, request: capabilities.Request, policy: capabilities.Policy, limits: frame.Limits, window: usize, clock: Option[playback_clock.Clock], pending: Option[video.OutputBuffer], paused: boolean, input_eos: boolean, output_eos: boolean, failed: boolean, config_next: i32, target_us: i64, last_input_us: i64, last_frame_us: i64, recovery_us: i64, fallback_used: boolean, scheduled_frames: i64, dropped_frames: i64 }
 
 pub enum Event { Idle, FrameScheduled(i64), FrameDropped(i64), FormatChanged(video.OutputFormat), Recovered(capabilities.CodecInfo), End, Failure(frame.VideoError) }
 
@@ -58,7 +63,7 @@ function open_track(env: usize, api_level: i32, reader: extractor.Extractor, tra
     Ok(_) => {}
   }
   let request = selected.info.request;
-  return Ok(Player { reader: reader, decoder: selected.decoder, decoder_live: true, format: format, info: selected.info, request: request, policy: policy, limits: limits, window: window, clock: None, pending: None, paused: false, input_eos: false, output_eos: false, failed: false, config_next: 2, target_us: 0i64, last_input_us: 0i64, last_frame_us: 0i64, fallback_used: false, scheduled_frames: 0i64, dropped_frames: 0i64 });
+  return Ok(Player { reader: reader, decoder: selected.decoder, decoder_live: true, format: format, info: selected.info, request: request, policy: policy, limits: limits, window: window, clock: None, pending: None, paused: false, input_eos: false, output_eos: false, failed: false, config_next: 2, target_us: 0i64, last_input_us: 0i64, last_frame_us: 0i64, recovery_us: 0i64, fallback_used: false, scheduled_frames: 0i64, dropped_frames: 0i64 });
 }
 
 pub function open(env: usize, api_level: i32, fd: i32, offset: i64, length: i64, window: usize, policy: capabilities.Policy, limits: frame.Limits): Result[Player, frame.VideoError] {
@@ -136,7 +141,7 @@ pub function (own player: Player) seek(target_us: i64): Tick {
     },
     Ok(_) => {}
   }
-  player = Player { ...player, pending: None, clock: None, input_eos: false, output_eos: false, failed: false, target_us: target_us, last_input_us: target_us, config_next: 0 };
+  player = Player { ...player, pending: None, clock: None, input_eos: false, output_eos: false, failed: false, target_us: target_us, last_input_us: target_us, recovery_us: target_us, config_next: 0 };
   match (player.reader.seek(target_us, extractor.PreviousSync)) {
     Err(e) => {
       return failure(player, e);
@@ -194,7 +199,10 @@ function release(own player: Player, buffer: video.OutputBuffer, render: boolean
   }
   let ended = (buffer.flags & video.FLAG_END_OF_STREAM) != 0u32;
   let event = if (ended) { End } else if (render) { FrameScheduled(buffer.presentation_time_us) } else { FrameDropped(buffer.presentation_time_us) };
-  return Tick { player: Player { ...player, pending: None, output_eos: ended, last_frame_us: if (render) { buffer.presentation_time_us } else { player.last_frame_us }, scheduled_frames: player.scheduled_frames + (if (render) { 1i64 } else { 0i64 }), dropped_frames: player.dropped_frames + (if (!render && buffer.size > 0) { 1i64 } else { 0i64 }) }, event: event };
+  if (render) {
+    player = Player { ...player, last_frame_us: buffer.presentation_time_us, recovery_us: buffer.presentation_time_us };
+  }
+  return Tick { player: Player { ...player, pending: None, output_eos: ended, scheduled_frames: player.scheduled_frames + (if (render) { 1i64 } else { 0i64 }), dropped_frames: player.dropped_frames + (if (!render && buffer.size > 0) { 1i64 } else { 0i64 }) }, event: event };
 }
 
 function present(own player: Player, buffer: video.OutputBuffer, now_ns: i64): Tick {
@@ -305,7 +313,7 @@ pub function (own player: Player) recover_software(env: usize, api_level: i32): 
   player = Player { ...player, decoder_live: false, pending: None, clock: None, fallback_used: true };
   let selected = match (video.select_format(player.format, player.window, player.request, candidates, capabilities.SoftwareOnly, player.limits)) { Ok(value) => value, Err(e) => { return failure(player, e.error); } };
   player = Player { ...player, decoder: selected.decoder, decoder_live: true, info: selected.info, failed: false };
-  let target = player.last_frame_us;
+  let target = player.recovery_us;
   let result = player.seek(target);
   return match (result.event) { Failure(_) => result, _ => Tick { player: result.player, event: Recovered(selected.info) } };
 }

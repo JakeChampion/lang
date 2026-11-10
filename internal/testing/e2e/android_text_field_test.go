@@ -23,14 +23,7 @@ func TestAndroidTextFieldRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	src += `
-pub function field_ctx(activity: usize): usize {
-  unsafe {
-    let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0 }.c_store(ctx);
-    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
-    return ctx;
-  }
-}
+pub function field_ctx(activity: usize): usize { return new_context(activity); }
 pub function message_fd(ctx: usize): i32 { unsafe { return Context.c_load_message_read(ctx); } }
 pub function reply_fd(ctx: usize): i32 { unsafe { return Context.c_load_reply_write(ctx); } }
 pub function show(ctx: usize): void { show_field(ctx, "ab", 1, 2); }

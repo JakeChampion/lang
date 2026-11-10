@@ -68,6 +68,12 @@ pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usi
   }
 }
 
+pub function call4(env: usize, index: i32, a0: usize, a1: usize, a2: usize, a3: usize): usize {
+  unsafe {
+    return __c_call5(method_ptr(env, index), env, a0, a1, a2, a3);
+  }
+}
+
 pub function call1_f32(env: usize, index: i32, a0: usize): f32 {
   unsafe {
     return __c_call2_f32(method_ptr(env, index), env, a0);
@@ -157,7 +163,7 @@ pub function cstr(s: string): usize {
     let t = 0;
     let sh = 0;
     while (i < n) {
-      t = t | s[i] as i32 << sh;
+      t |= s[i] as i32 << sh;
       sh += 8;
       i += 1;
     }
@@ -476,6 +482,25 @@ pub function get_array_length(env: usize, array: usize): i32 {
 
 pub function get_object_array_element(env: usize, array: usize, index: i32): usize {
   return call2(env, 173, array, index as usize);
+}
+
+// A new int[] of `n` zeros.
+pub function new_int_array(env: usize, n: i32): usize {
+  return call1(env, 179, n as usize);
+}
+
+// The `n` ints of `array` from the index `start`.
+pub function int_array_region(env: usize, array: usize, start: i32, n: i32): i32[] {
+  unsafe {
+    let buf: usize = alloc_buffer(4 * n + 4);
+    let done: usize = call4(env, 203, array, start as usize, n as usize, buf);
+    let out: i32[] = [];
+    for k in 0..n {
+      out = out.append(__load_i32(buf + (4 * k) as usize));
+    }
+    free_buffer(buf);
+    return out;
+  }
 }
 
 // A jvalue array of `args`. Free it with free_buffer.

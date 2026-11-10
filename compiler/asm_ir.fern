@@ -5074,11 +5074,17 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movzwl (%rsi,%rdi), %eax\n    movzwl (%rcx,%rdi), %r9d\n    xorl %r9d, %eax\n    jz " + lb + "_eq\n");
   s = s.write("    bsfl %eax, %eax\n    shrl $3, %eax\n    addq %rdi, %rax\n    jmp " + lb + "_done\n");
   s = s.write(lb + "_w2l:\n    bsfl %eax, %eax\n    shrl $3, %eax\n    jmp " + lb + "_done\n");
-  s = s.write(lb + "_vec:\n    movq %r8, %rax\n    subq %rdx, %rax\n    cmpq $16, %rax\n    jl " + lb + "_tail\n");
+  s = s.write(lb + "_vec:\n    movq %r8, %rax\n    subq %rdx, %rax\n    cmpq $16, %rax\n    jl " + lb + "_vlast\n");
   s = s.write("    movdqu (%rsi,%rdx), %xmm0\n    movdqu (%rcx,%rdx), %xmm1\n");
   s = s.write("    pcmpeqb %xmm1, %xmm0\n    pmovmskb %xmm0, %eax\n");
   s = s.write("    cmpl $65535, %eax\n    jne " + lb + "_hit\n");
   s = s.write("    addq $16, %rdx\n    jmp " + lb + "_vec\n");
+  // The last 16 bytes end at the end of the range and may overlap bytes
+  // that already compared equal, so no byte is compared on its own.
+  s = s.write(lb + "_vlast:\n    cmpq %r8, %rdx\n    jge " + lb + "_eq\n    movq %r8, %rdx\n    subq $16, %rdx\n");
+  s = s.write("    movdqu (%rsi,%rdx), %xmm0\n    movdqu (%rcx,%rdx), %xmm1\n");
+  s = s.write("    pcmpeqb %xmm1, %xmm0\n    pmovmskb %xmm0, %eax\n");
+  s = s.write("    cmpl $65535, %eax\n    jne " + lb + "_hit\n    jmp " + lb + "_eq\n");
   s = s.write(lb + "_hit:\n    notl %eax\n    bsfl %eax, %eax\n    addq %rdx, %rax\n    jmp " + lb + "_done\n");
   s = s.write(lb + "_tail:\n    cmpq %r8, %rdx\n    jge " + lb + "_eq\n");
   s = s.write("    movzbq (%rsi,%rdx), %rax\n    movzbq (%rcx,%rdx), %rdi\n");

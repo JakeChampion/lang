@@ -1,0 +1,29 @@
+struct A { x: i32 }
+
+struct B { s: string }
+
+type U = A | B;
+
+enum E { P, Q }
+
+function id[T](x: T): T { return x; }
+
+function of_union(u: U): i32 {
+    let v = id[U](u);
+    match (v) {
+        A(a) => { return a.x; },
+        B(b) => { return b.s.len(); }
+    }
+}
+
+function main(): i32 {
+    print(of_union(A { x: 3 }));
+    print(of_union(B { s: "four" }));
+    let o = id[Option[E]](Some(E.Q));
+    print(match (o) { Some(Q()) => "q", Some(P()) => "p", None => "none" });
+    let p = id[Option[A]](Some(A { x: 5 }));
+    print(match (p) { Some(a) => a.x, None => 0 });
+    let r = id[Result[A, string]](Ok(A { x: 6 }));
+    print(match (r) { Ok(a) => a.x, Err(_) => 0 });
+    return 0;
+}
