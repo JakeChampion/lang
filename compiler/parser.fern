@@ -2181,15 +2181,19 @@ function type_shaped_bracket(p: Par): boolean {
   let shaped = false;
   let depth = 1;
   let parens = 0;
+  // Bit d is set when the bracket open at depth d follows a name, as the
+  // arguments of a generic type do.
+  let named_at = 0;
   let j = 0;
   while (p.pos + j < p.toks.len()) {
     let pk = p.peek_punct_at(j);
     if (pk == "[") {
       depth += 1;
+      named_at = bracket_name_bit(p, j, depth, named_at);
       if (is_type_keyword_tok(p, j + 1) || p.peek_punct_at(j + 1) == "]") {
         shaped = true;
       }
-    } else if (pk == "," && depth == 1 && parens == 0 || pk == "=>" && depth == 1) {
+    } else if (pk == "," && parens == 0 && (depth == 1 || (named_at >> depth & 1) == 1) || pk == "=>" && depth == 1) {
       shaped = true;
     } else if (pk == "{") {
       return false;
@@ -2214,6 +2218,17 @@ function type_shaped_bracket(p: Par): boolean {
     j += 1;
   }
   return false;
+}
+
+function bracket_name_bit(p: Par, j: i32, depth: i32, bits: i32): i32 {
+  if (depth > 30) {
+    return bits;
+  }
+  let cleared = bits & ~(1 << depth);
+  if (j > 0 && p.peek_ident_at(j - 1).len() > 0) {
+    return cleared | 1 << depth;
+  }
+  return cleared;
 }
 
 function is_type_keyword_tok(p: Par, k: i32): boolean {
@@ -19976,6 +19991,10 @@ function retag_type_arg_indexes(mod: Module): Module {
   for rd in mod.resources {
     types = types.append(rd.name);
   }
+  for al in mod.aliases {
+    types = types.append(al.name);
+  }
+  types = util.append_all(types, ["Option", "Result"]);
   let consts: string[] = [];
   for fd in mod.funcs {
     if (fd.is_const && fd.receiver_type.len() == 0) {

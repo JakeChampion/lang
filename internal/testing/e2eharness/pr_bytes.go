@@ -34,6 +34,14 @@ func RunPrByteCases(t *testing.T, bin string, runner []string, census func(*test
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU pr")
 	}
+	RunPrByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunPrByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("GNU pr command is empty")
+	}
 	type testCase struct {
 		name, data string
 		args       []string
@@ -117,7 +125,7 @@ func RunPrByteCases(t *testing.T, bin string, runner []string, census func(*test
 			for _, impl := range []struct {
 				name, bin string
 				runner    []string
-			}{{"gnu", oracle, nil}, {"fern", bin, runner}} {
+			}{{"gnu", oracle[len(oracle)-1], oracle[:len(oracle)-1]}, {"fern", bin, runner}} {
 				argv := append(append(append([]string{}, impl.runner...), impl.bin), args...)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()

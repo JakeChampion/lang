@@ -199,6 +199,9 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge packs failed opens out quietly", args: []string{"-m", "-t", "-r", f, missing, missing, other}},
 		{name: "merge in a narrow page", args: []string{"-m", "-t", "-w", "3", f, other}},
 		{name: "merge doubles spaces", args: []string{"-t", "-d", "-m", f, other}},
+		{name: "merge ragged numbered pages", args: []string{"-D", "X", "-m", "-l14", "-n:4", "-o3", s12, s3, empty}},
+		{name: "merge tab and control columns", args: []string{"-D", "X", "-m", "-l14", "-e4", "-i4", "-n:4", "-W31", tabbed, s10, ctrl}},
+		{name: "merge numbered range and form feeds", args: []string{"-D", "X", "-m", "-l14", "-n:3", "+2:3", s12, s3, ff}},
 		{name: "merge with a directory is fatal first", args: []string{"-t", "-m", d, f}},
 
 		{name: "number lines", args: []string{"-t", "-n", s10}},

@@ -47,6 +47,8 @@ function main(): i32 {
             let pa: string = "q" + a;
             let pb: string = "q" + b;
             if (__mismatch(pa, 1, pb, 1, n) != ref(pa, 1, pb, 1, n)) { return 5; }
+            if (__mismatch_bytes_str(pb.bytes(), 1, pa, 1, n) != ref(pb, 1, pa, 1, n)) { return 13; }
+            if (__mismatch_bytes_str(a.bytes(), 0, b, 0, n) != ref(a, 0, b, 0, n)) { return 14; }
             d = d + 1;
         }
         n = n + 1;

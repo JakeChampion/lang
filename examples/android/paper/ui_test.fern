@@ -132,6 +132,35 @@ function test_home_long_press(): test.TestOutcome {
   return test.assert_eq(n.long + " " + beside.is_none().to_string() + " " + ui.group_at(ns, fav.x + 2, fav.y + 2), "menu:com.android.chrome/Main true fav");
 }
 
+// Home for an accessibility service: the clock and the date are buttons
+// named by their text, a home app is a button with a long press, and each
+// text is in one item only.
+function test_home_access(): test.TestOutcome {
+  let v = home_view();
+  let ns = ui.nodes(fonts(), v);
+  let items = ui.access_items(ns);
+  let clock = "";
+  let maps = -1;
+  let texts: string[] = [];
+  let repeated = false;
+  for it in items {
+    if (texts.contains(it.text)) {
+      repeated = true;
+    }
+    texts = texts.append(it.text);
+    if (it.text == v.time) {
+      clock = it.actions.to_string();
+    }
+    if (it.text == "Maps") {
+      maps = it.actions;
+    }
+  }
+  let Some(n) = ui.access_node(ns, items[0].id) else {
+    return test.fail("no node for the first item");
+  };
+  return test.assert_eq(clock + " " + maps.to_string() + " " + repeated.to_string() + " " + (n.act.len() > 0).to_string(), "16 48 false true");
+}
+
 function test_drawer(): test.TestOutcome {
   let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "", typing: true };
   let f = draw_view(v, "drawer");
@@ -346,6 +375,7 @@ function main(): i32 {
   let r = test.new("android paper ui");
   r = r.it("home layout", test_home_layout);
   r = r.it("home app long press", test_home_long_press);
+  r = r.it("home for an accessibility service", test_home_access);
   r = r.it("app list lists Paper", test_drawer);
   r = r.it("the app list in the dark theme", test_dark_drawer);
   r = r.it("the wallpaper in the dark theme", test_dark_wallpaper);

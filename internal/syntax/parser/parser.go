@@ -3343,6 +3343,9 @@ func (p *parser) peekTypeArgs(opener string) bool {
 		return false
 	}
 	depth, parens := 1, 0
+	// named[d] says that the bracket open at depth d follows a name, as the
+	// arguments of a generic type do.
+	named := []bool{false, false}
 	for j := p.i + 1; j < len(p.tokens); j++ {
 		t := p.tokens[j]
 		if t.Kind != lexer.Punct {
@@ -3351,6 +3354,7 @@ func (p *parser) peekTypeArgs(opener string) bool {
 		switch t.Text {
 		case "[":
 			depth++
+			named = append(named[:depth], p.tokens[j-1].Kind == lexer.Ident)
 			if j+1 < len(p.tokens) {
 				nt := p.tokens[j+1]
 				if (nt.Kind == lexer.Keyword && isTypeKeyword(nt.Text)) || (nt.Kind == lexer.Punct && nt.Text == "]") {
@@ -3358,7 +3362,7 @@ func (p *parser) peekTypeArgs(opener string) bool {
 				}
 			}
 		case ",":
-			if depth == 1 && parens == 0 {
+			if parens == 0 && (depth == 1 || named[depth]) {
 				typeShaped = true
 			}
 		case "=>":
