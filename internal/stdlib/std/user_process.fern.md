@@ -39,7 +39,7 @@ A region records the access of a range. `mprotect` adds a region that covers the
 
 The descriptors 0, 1 and 2 are the console. The first file gets descriptor 3, and a closed descriptor is used again.
 
-The process can make directories and files in memory, write them, rename them, change their modes and remove them. The archive stays read-only: a write, a rename or a removal of an entry of the archive gives `EROFS`. A new file in memory can go in a directory of the archive. A file in memory keeps its bytes as a list of chunks, so a long run of writes at the end copies each byte once. `written` gives the kernel the bytes of a file in memory, for example the output of a compile, after the process ends.
+The process can make directories and files in memory, write them, rename them, change their modes and remove them. The archive stays read-only: a write, a rename or a removal of an entry of the archive gives `EROFS`. A new file in memory can go in a directory of the archive. A file in memory keeps its bytes as a list of chunks, so a long run of writes at the end copies each byte once. `written` gives the kernel the bytes of a file in memory, for example the output of a compile, after the process ends. `image` gives the whole root as one `newc` archive: the entries of the archive, then the files and directories in memory. A kernel can write it to a disk, and read it back as the root of a later boot.
 
 | Call | Number | What the kernel does |
 |---|---|---|
@@ -1465,6 +1465,21 @@ pub function (p: Process) written(path: string): Option[u8[]] {
     return None;
   };
   return Some(join_chunks(p.nodes[i].chunks));
+}
+
+// The root of the process as one cpio archive: the entries of the archive,
+// then the files and directories in memory, in the order of their creation.
+pub function (p: Process) image(): u8[] {
+  let items: cpio.Item[] = [];
+  if let Some(a) = p.root {
+    for e in a.entries {
+      items = items.append(cpio.Item { name: cpio.clean(e.name), mode: e.mode, data: a.read(e) });
+    }
+  }
+  for n in p.nodes {
+    items = items.append(cpio.Item { name: cpio.clean(n.path), mode: n.entry.mode, data: join_chunks(n.chunks) });
+  }
+  return cpio.write(items);
 }
 
 function join_chunks(chunks: u8[][]): u8[] {
