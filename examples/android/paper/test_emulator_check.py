@@ -60,7 +60,12 @@ class Device:
         elif args[:3] == ("shell", "atrace", "--async_stop"):
             return "B|12|frame"
         elif args == ("shell", "dumpsys", "input_method") and self.keyboard:
-            return self.editor
+            return ("  mStartInputHistory:\n"
+                    "    inputType=0x0 imeOptions=0x0\n"
+                    "  mCurrentEditorInfo:\n"
+                    f"    {self.editor}\n"
+                    "    packageName=dev.fern.paper\n"
+                    "  mServedInputConnection=connection\n")
         elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
             return self.dump
         return ""
@@ -126,6 +131,51 @@ class BackNavigationTests(unittest.TestCase):
     def test_keyboard_must_type_into_the_text_field(self):
         failures = self.run_device(Device(editor="inputType=0x0 imeOptions=0x0"))
         self.assertIn("the keyboard does not type into the text field: inputType=0x0 imeOptions=0x0", failures)
+
+    def check_editor(self, dump):
+        failures = []
+        with patch.object(check, "adb", return_value=dump), patch.object(check, "fail", side_effect=failures.append):
+            result = check.editor_is_field()
+        return result, failures
+
+    def test_current_editor_wins_over_the_decor_history(self):
+        device = Device()
+        device.keyboard = True
+        dump = device.adb("shell", "dumpsys", "input_method")
+        self.assertEqual(self.check_editor(dump), (True, []))
+
+    def test_old_text_editor_cannot_hide_a_current_decor_editor(self):
+        device = Device(editor="inputType=0x0 imeOptions=0x0")
+        device.keyboard = True
+        dump = device.adb("shell", "dumpsys", "input_method").replace(
+            "  mStartInputHistory:\n    inputType=0x0 imeOptions=0x0",
+            "  mStartInputHistory:\n    inputType=0x1 imeOptions=0x10000002")
+        self.assertFalse(self.check_editor(dump)[0])
+
+    def test_history_cannot_replace_a_missing_current_editor(self):
+        for suffix in ("", "  mCurrentEditorInfo: null\n"):
+            with self.subTest(suffix=suffix):
+                dump = "  mStartInputHistory:\n    inputType=0x1 imeOptions=0x10000002\n" + suffix
+                self.assertFalse(self.check_editor(dump)[0])
+
+    def test_current_editor_must_belong_to_paper(self):
+        device = Device()
+        device.keyboard = True
+        for package in ("dev.fern.paper.other", "another.app"):
+            with self.subTest(package=package):
+                dump = device.adb("shell", "dumpsys", "input_method").replace("packageName=dev.fern.paper", "packageName=" + package)
+                self.assertFalse(self.check_editor(dump)[0])
+
+    def test_current_editor_still_requires_the_go_action(self):
+        device = Device(editor="inputType=0x1 imeOptions=0x10000006")
+        device.keyboard = True
+        self.assertFalse(self.check_editor(device.adb("shell", "dumpsys", "input_method"))[0])
+
+    def test_focused_client_cannot_replace_a_null_current_editor(self):
+        device = Device()
+        device.keyboard = True
+        dump = "  mCurrentEditorInfo: null\n" + device.adb("shell", "dumpsys", "input_method")
+        self.assertFalse(self.check_editor(dump)[0])
 
     def test_clock_must_be_a_button_for_accessibility(self):
         failures = self.run_device(Device(dump='<node text="9:06" class="android.view.View" package="dev.fern.paper" clickable="false" />'))

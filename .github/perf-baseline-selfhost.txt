@@ -353,7 +353,9 @@ selfhost/x86-64-linux/sort_strings.emit	3098
 selfhost/x86-64-linux/string_build.emit	1926
 selfhost/x86-64-linux/string_count_byte.emit	1321
 selfhost/x86-64-linux/string_find_byte.emit	1593
-selfhost/x86-64-linux/string_rfind_byte.emit	1737
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
+# Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
+selfhost/x86-64-linux/string_rfind_byte.emit	1758
 selfhost/x86-64-linux/string_scan.emit	2166
 selfhost/x86-64-linux/string_slice.emit	944
 selfhost/x86-64-linux/struct_drop.emit	2341

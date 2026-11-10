@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Compare bounded native/WASI QTRLE MOV input with FFprobe and FFmpeg."""
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location("qtrle_mov", ROOT / "scripts/gen-video-qtrle-mov-fixtures.py")
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/qtrle-mov-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+source = "scripts/video-reference/qtrle-mov.fern"
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", target,
+                "-sanitize", "-o", str(binary), source], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", "wasm32-wasi",
+                "-o", str(wasm), source], check=True)
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    for name, path, depths in fixtures.generate(directory):
+        result = subprocess.run([str(binary), str(path)], text=True, capture_output=True, check=True)
+        assert "live_bytes=0" in result.stderr, result.stderr
+        wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                       cwd=directory, text=True)
+        assert result.stdout == wasi, name
+        reference = fixtures.metadata(path)
+        track = -1
+        frame = 0
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if fields[0] == "T":
+                if track >= 0:
+                    assert frame == fixtures.COUNT
+                track += 1
+                frame = 0
+                stream = reference["streams"][track]
+                assert [int(v) for v in fields[1:]] == [int(stream["time_base"].split("/")[1]),
+                                                       depths[track], fixtures.WIDTH, fixtures.HEIGHT]
+                packets = [p for p in reference["packets"] if p["stream_index"] == stream["index"]]
+            else:
+                assert fields[0] == "P" and track >= 0
+                expected = packets[frame]
+                assert [int(v) for v in fields[1:6]] == [int(expected[k]) for k in ("pos", "size", "dts", "pts", "duration")]
+                assert (fields[6] == "true") == ("K" in expected["flags"])
+                assert bytes.fromhex(fields[7]) == fixtures.pixels(depths[track])[frame], (name, track, frame)
+                frame += 1
+        assert track + 1 == len(depths) and frame == fixtures.COUNT
+        print(name + ": packet metadata and every decoded ARGB sample match on native/WASI", flush=True)
