@@ -5265,6 +5265,9 @@ function low_half_binary(op: string): boolean {
 }
 
 function reads_low_half(ins: SInst, k: i32): boolean {
+  if (ins.kind_tag == ST_AT && k == 1 && (ins.str == "i32" || ins.str == "u8")) {
+    return true;
+  }
   if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
     return true;
   }
