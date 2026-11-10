@@ -1,3 +1,6 @@
+# 2026-11-10: PR #15089 reuses existing compiler repair #15087.
+# Bank measured rows in both directions. Keep all tolerances.
+# Evidence: docs/benchmarks/video-avc-pps-ci-2026-11-10/.
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
@@ -121,14 +124,14 @@ profile/arm64-linux/closure_call.minimal.emit	1118
 profile/arm64-linux/closure_call.safe.bytes	5624
 profile/arm64-linux/closure_call.safe.emit	1199
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-profile/arm64-linux/deflate_decode.diagnostic.bytes	118168
-profile/arm64-linux/deflate_decode.diagnostic.emit	13870
-profile/arm64-linux/deflate_decode.hardened.bytes	64920
-profile/arm64-linux/deflate_decode.hardened.emit	15177
-profile/arm64-linux/deflate_decode.minimal.bytes	53048
-profile/arm64-linux/deflate_decode.minimal.emit	12103
-profile/arm64-linux/deflate_decode.safe.bytes	58712
-profile/arm64-linux/deflate_decode.safe.emit	13560
+profile/arm64-linux/deflate_decode.diagnostic.bytes	110880
+profile/arm64-linux/deflate_decode.diagnostic.emit	13193
+profile/arm64-linux/deflate_decode.hardened.bytes	60328
+profile/arm64-linux/deflate_decode.hardened.emit	13963
+profile/arm64-linux/deflate_decode.minimal.bytes	48296
+profile/arm64-linux/deflate_decode.minimal.emit	10923
+profile/arm64-linux/deflate_decode.safe.bytes	55640
+profile/arm64-linux/deflate_decode.safe.emit	12796
 profile/arm64-linux/enum_match.diagnostic.bytes	13416
 profile/arm64-linux/enum_match.diagnostic.emit	1700
 profile/arm64-linux/enum_match.hardened.bytes	7528
@@ -141,8 +144,8 @@ profile/arm64-linux/enum_match.safe.emit	1163
 profile/arm64-linux/http_hello.diagnostic.bytes	129160
 profile/arm64-linux/http_hello.diagnostic.emit	16493
 profile/arm64-linux/http_hello.hardened.bytes	81064
-profile/arm64-linux/http_hello.hardened.emit	18088
-profile/arm64-linux/http_hello.minimal.bytes	63432
+profile/arm64-linux/http_hello.hardened.emit	17900
+profile/arm64-linux/http_hello.minimal.bytes	64152
 profile/arm64-linux/http_hello.minimal.emit	13622
 profile/arm64-linux/http_hello.safe.bytes	74936
 profile/arm64-linux/http_hello.safe.emit	16542
@@ -206,19 +209,19 @@ profile/x86-64-linux/closure_call.minimal.ir	41148167
 profile/x86-64-linux/closure_call.safe.bytes	4656
 profile/x86-64-linux/closure_call.safe.emit	959
 profile/x86-64-linux/closure_call.safe.ir	41178167
-profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	103736
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
-profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
-profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
-profile/x86-64-linux/deflate_decode.hardened.bytes	55872
-profile/x86-64-linux/deflate_decode.hardened.emit	13293
-profile/x86-64-linux/deflate_decode.hardened.ir	33840579
-profile/x86-64-linux/deflate_decode.minimal.bytes	46688
-profile/x86-64-linux/deflate_decode.minimal.emit	11402
+profile/x86-64-linux/deflate_decode.diagnostic.emit	11898
+profile/x86-64-linux/deflate_decode.diagnostic.ir	46678023
+profile/x86-64-linux/deflate_decode.hardened.bytes	53392
+profile/x86-64-linux/deflate_decode.hardened.emit	12220
+profile/x86-64-linux/deflate_decode.hardened.ir	34527811
+profile/x86-64-linux/deflate_decode.minimal.bytes	43472
+profile/x86-64-linux/deflate_decode.minimal.emit	10173
 profile/x86-64-linux/deflate_decode.minimal.ir	39191644
-profile/x86-64-linux/deflate_decode.safe.bytes	51376
-profile/x86-64-linux/deflate_decode.safe.emit	12766
-profile/x86-64-linux/deflate_decode.safe.ir	32880607
+profile/x86-64-linux/deflate_decode.safe.bytes	49728
+profile/x86-64-linux/deflate_decode.safe.emit	11723
+profile/x86-64-linux/deflate_decode.safe.ir	33583742
 profile/x86-64-linux/enum_match.diagnostic.bytes	10960
 profile/x86-64-linux/enum_match.diagnostic.emit	1351
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
@@ -236,11 +239,11 @@ profile/x86-64-linux/http_hello.diagnostic.emit	15289
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	40308693
 profile/x86-64-linux/http_hello.hardened.bytes	71648
-profile/x86-64-linux/http_hello.hardened.emit	16123
+profile/x86-64-linux/http_hello.hardened.emit	15946
 profile/x86-64-linux/http_hello.hardened.ir	30101992
 profile/x86-64-linux/http_hello.minimal.bytes	56640
 profile/x86-64-linux/http_hello.minimal.emit	13189
-profile/x86-64-linux/http_hello.minimal.ir	23512415
+profile/x86-64-linux/http_hello.minimal.ir	24164464
 profile/x86-64-linux/http_hello.safe.bytes	66288
 profile/x86-64-linux/http_hello.safe.emit	15591
 profile/x86-64-linux/http_hello.safe.ir	21796408

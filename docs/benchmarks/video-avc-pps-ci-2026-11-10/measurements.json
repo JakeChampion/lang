@@ -1,0 +1,360 @@
+{
+  "feature": "1869b44624ea5aa81346e9d9d0b6a69782036ded",
+  "root_compiler_sha256": "f8fcf4f5e766aaaa7f017596477e5d7fad344d19e9532537d7baee207dd87ff2",
+  "stage1_compiler_sha256": "79a66ab8aa1ba90fccb83341bee6aa60d23c4fbe706755f92177e659064b04f6",
+  "valgrind": "3.24.0",
+  "changes": [
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/deflate_decode.ir",
+      "before": 32877120,
+      "measured": 33583742,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/deflate_decode.text",
+      "before": 12725,
+      "measured": 11723,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/deflate_encode.ir",
+      "before": 41579468,
+      "measured": 42993556,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/deflate_encode.text",
+      "before": 7168,
+      "measured": 6866,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/utf8_ingest_validated.text",
+      "before": 8318,
+      "measured": 8165,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/utf8_ingest_validated.ir",
+      "before": 5207391,
+      "measured": 5323806,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "aarch64/deflate_decode.text",
+      "before": 13575,
+      "measured": 12796,
+      "tolerance_percent": 1.0,
+      "source": "cross-emitted ARM assembly"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "aarch64/deflate_encode.text",
+      "before": 7818,
+      "measured": 7642,
+      "tolerance_percent": 1.0,
+      "source": "cross-emitted ARM assembly"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/video_qtrle.text",
+      "before": 5234,
+      "measured": 4742,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/video_qtrle.ir",
+      "before": 1717224731,
+      "measured": 1746323404,
+      "tolerance_percent": 1.0,
+      "source": "native.tsv"
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "aarch64/video_qtrle.text",
+      "before": 5600,
+      "measured": 5264,
+      "tolerance_percent": 1.0,
+      "source": "cross-emitted ARM assembly"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/arm64-linux/deflate_decode.emit",
+      "before": 13560,
+      "measured": 12796,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/arm64-linux/deflate_encode.emit",
+      "before": 7829,
+      "measured": 7642,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/wasm32-wasi/deflate_decode.emit",
+      "before": 20140,
+      "measured": 19388,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/wasm32-wasi/deflate_encode.emit",
+      "before": 11811,
+      "measured": 11634,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/x86-64-linux/deflate_decode.emit",
+      "before": 12766,
+      "measured": 11723,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/x86-64-linux/deflate_encode.emit",
+      "before": 7206,
+      "measured": 6866,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/x86-64-linux/utf8_ingest_validated.emit",
+      "before": 8318,
+      "measured": 8165,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/x86-64-linux/video_qtrle.emit",
+      "before": 5234,
+      "measured": 4742,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/arm64-linux/video_qtrle.emit",
+      "before": 5600,
+      "measured": 5264,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/perf-baseline-selfhost.txt",
+      "metric": "selfhost/wasm32-wasi/video_qtrle.emit",
+      "before": 6036,
+      "measured": 5586,
+      "tolerance_percent": 1.0,
+      "source": "selfhost.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.diagnostic.bytes",
+      "before": 118168,
+      "measured": 110880,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.diagnostic.emit",
+      "before": 13870,
+      "measured": 13193,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.hardened.bytes",
+      "before": 64920,
+      "measured": 60328,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.hardened.emit",
+      "before": 15177,
+      "measured": 13963,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.minimal.bytes",
+      "before": 53048,
+      "measured": 48296,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.minimal.emit",
+      "before": 12103,
+      "measured": 10923,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.safe.bytes",
+      "before": 58712,
+      "measured": 55640,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/deflate_decode.safe.emit",
+      "before": 13560,
+      "measured": 12796,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.hardened.emit",
+      "before": 18088,
+      "measured": 17900,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/arm64-linux/http_hello.minimal.bytes",
+      "before": 63432,
+      "measured": 64152,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.diagnostic.bytes",
+      "before": 109520,
+      "measured": 103736,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.diagnostic.emit",
+      "before": 12887,
+      "measured": 11898,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.diagnostic.ir",
+      "before": 45857493,
+      "measured": 46678023,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.hardened.bytes",
+      "before": 55872,
+      "measured": 53392,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.hardened.emit",
+      "before": 13293,
+      "measured": 12220,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.hardened.ir",
+      "before": 33840579,
+      "measured": 34527811,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.minimal.bytes",
+      "before": 46688,
+      "measured": 43472,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.minimal.emit",
+      "before": 11402,
+      "measured": 10173,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.safe.bytes",
+      "before": 51376,
+      "measured": 49728,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.safe.emit",
+      "before": 12766,
+      "measured": 11723,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/deflate_decode.safe.ir",
+      "before": 32880607,
+      "measured": 33583742,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.hardened.emit",
+      "before": 16123,
+      "measured": 15946,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    },
+    {
+      "file": ".github/profile-costs-baseline.txt",
+      "metric": "profile/x86-64-linux/http_hello.minimal.ir",
+      "before": 23512415,
+      "measured": 24164464,
+      "tolerance_percent": 1.0,
+      "source": "profile.tsv"
+    }
+  ]
+}
