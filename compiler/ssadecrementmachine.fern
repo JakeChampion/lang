@@ -153,19 +153,13 @@ function signed_branch(f: count.Flags, name: string): i32 {
 }
 
 function status_branch(f: count.Flags, name: string): i32 {
-  if (name == "js") {
-    return f.negative;
-  }
-  if (name == "jns") {
-    return invert(f.negative);
-  }
-  if (name == "jo") {
-    return f.overflow;
-  }
-  if (name == "jno") {
-    return invert(f.overflow);
-  }
-  return signed_branch(f, name);
+  return match (name) {
+    "js" => f.negative,
+    "jns" => invert(f.negative),
+    "jo" => f.overflow,
+    "jno" => invert(f.overflow),
+    _ => signed_branch(f, name),
+  };
 }
 
 function carry_branch(f: count.Flags, name: string): i32 {

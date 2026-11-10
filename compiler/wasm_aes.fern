@@ -440,19 +440,13 @@ function gcm_func(): string {
 }
 
 pub function kernel_name(tag: i32): string {
-  if (tag == 402) {
-    return "$__fern_aes_expand_key";
-  }
-  if (tag == 403) {
-    return "$__fern_aes_ctr32";
-  }
-  if (tag == 444) {
-    return "$__fern_aes_gcm_seal_into";
-  }
-  if (tag == 445) {
-    return "$__fern_aes_gcm_open_into";
-  }
-  return "$__fern_ghash";
+  return match (tag) {
+    402 => "$__fern_aes_expand_key",
+    403 => "$__fern_aes_ctr32",
+    444 => "$__fern_aes_gcm_seal_into",
+    445 => "$__fern_aes_gcm_open_into",
+    _ => "$__fern_ghash",
+  };
 }
 
 pub function funcs(): string {

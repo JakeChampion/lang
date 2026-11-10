@@ -248,6 +248,7 @@ pub function is_zero(a: [i64]): i64 {
   return acc - 1 as i64 >> 63 & 1 as i64;
 }
 
+// `b` is no longer than the modulus. A longer input stops the program at an index.
 pub function in_range(m: Modulus, b: [u8]): i64 {
   let v = __plain(m, b);
   let borrow = 0 as i64;
@@ -259,6 +260,7 @@ pub function in_range(m: Modulus, b: [u8]): i64 {
   return 0 as i64 - borrow & 1 as i64 - is_zero(v);
 }
 
+// `b` is no longer than the modulus. A longer input stops the program at an index.
 pub function from_bytes(m: Modulus, b: [u8]): i64[] {
   return mul(m, __plain(m, b), m.r2);
 }

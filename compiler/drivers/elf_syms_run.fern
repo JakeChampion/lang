@@ -6,52 +6,24 @@ function x86_exit7(): i32[] {
 }
 
 function hex_nibble(v: i32): string {
-  if (v == 0) {
-    return "0";
-  }
-  if (v == 1) {
-    return "1";
-  }
-  if (v == 2) {
-    return "2";
-  }
-  if (v == 3) {
-    return "3";
-  }
-  if (v == 4) {
-    return "4";
-  }
-  if (v == 5) {
-    return "5";
-  }
-  if (v == 6) {
-    return "6";
-  }
-  if (v == 7) {
-    return "7";
-  }
-  if (v == 8) {
-    return "8";
-  }
-  if (v == 9) {
-    return "9";
-  }
-  if (v == 10) {
-    return "a";
-  }
-  if (v == 11) {
-    return "b";
-  }
-  if (v == 12) {
-    return "c";
-  }
-  if (v == 13) {
-    return "d";
-  }
-  if (v == 14) {
-    return "e";
-  }
-  return "f";
+  return match (v) {
+    0 => "0",
+    1 => "1",
+    2 => "2",
+    3 => "3",
+    4 => "4",
+    5 => "5",
+    6 => "6",
+    7 => "7",
+    8 => "8",
+    9 => "9",
+    10 => "a",
+    11 => "b",
+    12 => "c",
+    13 => "d",
+    14 => "e",
+    _ => "f",
+  };
 }
 
 function to_hex(b: i32[]): string {

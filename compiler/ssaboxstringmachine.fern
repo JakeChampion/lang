@@ -131,19 +131,13 @@ function header_store(s: State, width: i32, w: Word): State {
 }
 
 function movement(s: State, op: isa.Op): State {
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return write(s, op.destination, read(s, address(s, op), op.width));
-  }
-  if (op.kind == 4) {
-    return store(s, address(s, op), op.width, s.regs[op.source]);
-  }
-  if (op.kind == 5) {
-    return write(s, op.destination, narrowed(immediate(op.immediate), op.width));
-  }
-  return State { ...s, ok: false };
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, address(s, op), op.width)),
+    4 => store(s, address(s, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(immediate(op.immediate), op.width)),
+    _ => State { ...s, ok: false },
+  };
 }
 
 function lea(s: State, op: isa.Op): State {
@@ -323,25 +317,15 @@ function branch(f: Flags, name: string): i32 {
 }
 
 function expected_register(reg: i32): Word {
-  if (reg == 0) {
-    return identity(6, 0);
-  }
-  if (reg == 1) {
-    return immediate(1);
-  }
-  if (reg == 2) {
-    return identity(6, -8);
-  }
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 6) {
-    return identity(8, 0);
-  }
-  if (reg == 8) {
-    return identity(7, 0);
-  }
-  return identity(2, reg);
+  return match (reg) {
+    0 => identity(6, 0),
+    1 => immediate(1),
+    2 => identity(6, -8),
+    4 => identity(3, 0),
+    6 => identity(8, 0),
+    8 => identity(7, 0),
+    _ => identity(2, reg),
+  };
 }
 
 function finished(s: State, register_entry: boolean): boolean {

@@ -626,15 +626,14 @@ function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
   let from = lspquery.after(toks, s.name_line, s.name_col) + 1;
   let variants: Symbol[] = [];
   for vn in ed.variant_names {
-    let i = variant_tok(toks, from, vn);
-    if (i >= 0) {
+    if let Some(i) = variant_tok(toks, from, vn) {
       variants = variants.append(member_symbol(toks, i, vn, "", SK_ENUM_MEMBER));
     }
   }
   return Symbol { ...s, children: variants };
 }
 
-function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
+function variant_tok(toks: lspquery.Tok[], from: i32, name: string): Option[i32] {
   let depth = 0;
   for i in from..toks.len() {
     let t = punct(toks[i]);
@@ -643,13 +642,13 @@ function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
     } else if (t == ")" || t == "}") {
       depth -= 1;
       if (depth <= 0) {
-        return -1;
+        return None;
       }
     } else if (depth == 1 && toks[i].ident && toks[i].text == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function decl_sig(fd: parser.FuncDecl): string {

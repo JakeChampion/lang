@@ -64,16 +64,12 @@ function unknown_flags(): value.Comparison {
 }
 
 function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 8) {
-    return identity(8, 0);
-  }
-  if (reg == 6) {
-    return if (oversized) { identity(7, 0) } else { numeric(r, value.original(r)) };
-  }
-  return identity(2, reg);
+  return match (reg) {
+    4 => identity(3, 0),
+    8 => identity(8, 0),
+    6 => if (oversized) { identity(7, 0) } else { numeric(r, value.original(r)) },
+    _ => identity(2, reg),
+  };
 }
 
 function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): State {

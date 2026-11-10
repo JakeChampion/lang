@@ -80,22 +80,14 @@ function copy(result: i32, arg: i32): ssa.SInst {
 }
 
 function suffix_instruction(f: ssa.SFunc, call: ssa.SInst, result: i32, mode: i32): ssa.SInst {
-  if (mode == 2) {
-    return ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: "" };
-  }
-  if (mode == 3) {
-    return ssa.SInst { ...call, result: result };
-  }
-  if (mode == 4) {
-    return ssa.SInst { ...call, result: result, str: "parent", args: [parameter(f, 1), parameter(f, 2)] };
-  }
-  if (mode == 5) {
-    return copy(result, call.args[0]);
-  }
-  if (mode == 7) {
-    return ssa.SInst { ...call, result: result, str: "unknown_effect" };
-  }
-  return copy(result, call.result);
+  return match (mode) {
+    2 => ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: "" },
+    3 => ssa.SInst { ...call, result: result },
+    4 => ssa.SInst { ...call, result: result, str: "parent", args: [parameter(f, 1), parameter(f, 2)] },
+    5 => copy(result, call.args[0]),
+    7 => ssa.SInst { ...call, result: result, str: "unknown_effect" },
+    _ => copy(result, call.result),
+  };
 }
 
 function straight(f: ssa.SFunc, mode: i32): ssa.SFunc {

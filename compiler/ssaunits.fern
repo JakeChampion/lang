@@ -5075,13 +5075,13 @@ pub function token_slot_held(k: Keeps, pos: i32): boolean {
   return keep_overlaps(k, pos, pos);
 }
 
-pub function classified_at(k: Keeps, pos: i32): i32 {
+pub function classified_at(k: Keeps, pos: i32): Option[i32] {
   for i in 0..k.donors.len() {
     if (k.built[i] < 0 && !k.lives[i] && k.taken[i] == pos) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function kept_values(k: Keeps): i32[] {

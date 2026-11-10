@@ -356,14 +356,38 @@ function __resolved(b: Url, reference: string): Result[string, UrlError] {
     return Ok(__url_compose(b.scheme, b.host, b.port, b.path, b.query, ""));
   }
   if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
-    return Ok(b.scheme + ":" + reference);
+    return __parsed_text(b.scheme + ":" + reference);
   }
   let r = parse(reference)?;
-  if (r.scheme.len() > 0) {
+  if (r.scheme.len() > 0 || __has_scheme(reference)) {
     return Ok(reference);
   }
   let pq: (string, string) = __merged(b, r, reference);
-  return Ok(__url_compose(b.scheme, b.host, b.port, remove_dot_segments(pq.0), pq.1, r.fragment));
+  return __parsed_text(__url_compose(b.scheme, b.host, b.port, remove_dot_segments(pq.0), pq.1, r.fragment));
+}
+
+// A result of resolve is a URL that parse accepts.
+function __parsed_text(text: string): Result[string, UrlError] {
+  parse(text)?;
+  return Ok(text);
+}
+
+// RFC 3986 section 3.1: a letter, then letters, digits, "+", "-" or ".", then
+// ":". A reference with a scheme is not merged with the base (section 5.2.2).
+function __has_scheme(reference: string): boolean {
+  let i = 0;
+  while (i < reference.len()) {
+    let c = reference[i];
+    let letter = c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
+    if (c == b':') {
+      return i > 0;
+    }
+    if (!letter && (i == 0 || !(c >= b'0' && c <= b'9' || c == b'+' || c == b'-' || c == b'.'))) {
+      return false;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 function __merged(b: Url, r: Url, reference: string): (string, string) {

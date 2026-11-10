@@ -3693,19 +3693,13 @@ function socket_from_fd(c: ast.ExprCall, s: State): Value {
 }
 
 function send_builtin(name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
-  if (name == "__send_copy") {
-    return send_copy(c, s);
-  }
-  if (name == "__send_adopt") {
-    return send_adopt(c, s, expected);
-  }
-  if (name == "__send_root") {
-    return send_root(c, s);
-  }
-  if (name == "__send_release") {
-    return send_release(c, s);
-  }
-  return refused(s, "no lowering for " + name);
+  return match (name) {
+    "__send_copy" => send_copy(c, s),
+    "__send_adopt" => send_adopt(c, s, expected),
+    "__send_root" => send_root(c, s),
+    "__send_release" => send_release(c, s),
+    _ => refused(s, "no lowering for " + name),
+  };
 }
 
 // `__send_release(v)` consumes a value and releases it where it is written.

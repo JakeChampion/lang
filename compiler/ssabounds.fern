@@ -1152,10 +1152,9 @@ function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
     return -1;
   }
-  let c = constant_operand(f, defs, v);
-  if (c < 0) {
+  let Some(c) = constant_operand(f, defs, v) else {
     return v;
-  }
+  };
   return defs[v].args[1 - c];
 }
 
@@ -1163,10 +1162,9 @@ function offset_of(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
     return defs[v].imm;
   }
-  let c = constant_operand(f, defs, v);
-  if (c < 0) {
+  let Some(c) = constant_operand(f, defs, v) else {
     return 0;
-  }
+  };
   return defs[defs[v].args[c]].imm;
 }
 
@@ -1174,18 +1172,18 @@ function constant_index(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return defs[v].kind_tag == ssa.CONST_INT && ssasem.is_i32(f.values[v]);
 }
 
-function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): Option[i32] {
   let d = defs[v];
   if (d.kind_tag != ssa.BINARY || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
-    return -1;
+    return None;
   }
   for k in 0..2 {
     let a = defs[d.args[k]];
     if (a.kind_tag == ssa.CONST_INT && ssasem.is_i32(f.values[d.args[k]])) {
-      return k;
+      return Some(k);
     }
   }
-  return -1;
+  return None;
 }
 
 function scalar(f: ssasem.Func, v: i32): boolean {
