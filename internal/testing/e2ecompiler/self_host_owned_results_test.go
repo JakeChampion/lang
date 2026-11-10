@@ -45,6 +45,8 @@ function (own box: Box) close(): void {}
 		{"lambda result", `function run(): void { let f: (own Box) => own Box = (own x: Box): own Box => x; }`, ""},
 		{"weaken result", `function pass(own x: Box): own Box { return x; } function run(): void { let f: (own Box) => Box = pass; }`, ""},
 		{"nested aggregate capture", `function run(x: Box): void { let f = (): own Box[] => { let xs = [x]; return xs; }; }`, "E051"},
+		{"copied f64 lanes", `function copy(x: f64x2): own f64x2 { return x; }`, ""},
+		{"copied f32 lanes", `function copy(x: f32x4): own f32x4 { return x; }`, ""},
 		{"copied map root", `function copy(m: Map[string, boolean]): own Map[string, boolean] { return m; }`, ""},
 		{"copied map update", `function update(own m: Map[string, boolean]): own Map[string, boolean] { return m.insert("k", true); }`, ""},
 		{"copied nested map", `struct Data { entries: Map[string, boolean] } function copy(d: Data): own Data { return d; }`, ""},

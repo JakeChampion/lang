@@ -16,6 +16,8 @@ func TestCheckedOwnedResults(t *testing.T) {
 		"fresh local":             `function make(): own Box { let box = Box { values: [] }; return box; }`,
 		"fresh lambda local":      `function run(): void { let f = (): own Box => { let box = Box { values: [] }; return box; }; }`,
 		"owned field":             `struct Outer { box: Box } function get(own outer: Outer): own Box { return outer.box; }`,
+		"copied f64 lanes":        `function copy(x: f64x2): own f64x2 { return x; }`,
+		"copied f32 lanes":        `function copy(x: f32x4): own f32x4 { return x; }`,
 		"copied map root":         `function copy(m: Map[string, boolean]): own Map[string, boolean] { return m; }`,
 		"copied map update":       `function update(own m: Map[string, boolean]): own Map[string, boolean] { return m.insert("k", true); }`,
 		"copied nested map":       `struct Data { entries: Map[string, boolean] } function copy(d: Data): own Data { return d; }`,

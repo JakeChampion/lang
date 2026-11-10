@@ -23894,7 +23894,7 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
   if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
     return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1).to_owned()), dx, free, seen);
   }
-  if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || util.has_str(free, tn)) {
+  if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || typeinfo.lanes_width(tn) > 0 || util.has_str(free, tn)) {
     return true;
   }
   let name = tn;
