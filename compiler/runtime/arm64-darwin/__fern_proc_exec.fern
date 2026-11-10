@@ -1,4 +1,14 @@
 function __fern_proc_exec(path: string, args: string[]): i32 {
+  if (__count_byte(path, 0) > 0) {
+    return -22;
+  }
+  let nz = 0;
+  while (nz < args.len()) {
+    if (__count_byte(args[nz], 0) > 0) {
+      return -22;
+    }
+    nz += 1;
+  }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
   let i: i32 = 0;

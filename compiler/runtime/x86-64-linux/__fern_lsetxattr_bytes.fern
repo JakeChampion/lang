@@ -1,4 +1,10 @@
 function __fern_lsetxattr_bytes(path: string, name: string, value: i32[]): Result[void, IoError] {
+  if (__count_byte(name, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(name, name.len())));
+  }
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let vlen: i32 = value.len();
   let raw: usize = __raw_arr_box(vlen / 8 + 1);
   let scratch: i32[] = __raw_array(raw);

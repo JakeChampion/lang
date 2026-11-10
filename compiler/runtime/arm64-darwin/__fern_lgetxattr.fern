@@ -1,4 +1,10 @@
 function __fern_lgetxattr(path: string, name: string): Result[string, IoError] {
+  if (__count_byte(name, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(name, name.len())));
+  }
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let nlen = name.len();
   let namez = __raw_alloc(nlen + 1);
   let j = 0;
