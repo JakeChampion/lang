@@ -907,11 +907,24 @@ function roff_field(h: usize, text: u8[], a: i32, n: i32, pre: u8[], post: u8[])
   buf_push_byte(h, 34);
 }
 
+// Bits 35–38, 92, 95, 123 and 125 mark the TeX special bytes.
+function tex_special(c: i32): boolean {
+  let mask = 515396075520u64;
+  if (c >= 64) {
+    mask = 2882303763933036544u64;
+  }
+  return c < 128 && (mask >> ((c & 63) as u64) & 1u64) != 0u64;
+}
+
 function tex_quote(h: usize, s: u8[], a: i32, n: i32): void {
   let i = a;
   let run = a;
   while (i < n) {
     let c = s[i] as i32;
+    if (!tex_special(c)) {
+      i += 1;
+      continue;
+    }
     let esc = "";
     if (c == 36 || c == 37 || c == 38 || c == 35 || c == 95) {
       esc = "\\";

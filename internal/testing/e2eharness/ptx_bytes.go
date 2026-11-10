@@ -30,6 +30,7 @@ func PtxByteCases() []PtxByteCase {
 	raw := "z\xff alpha\xc3 beta\x00 gamma\xfe\n"
 	cases := []PtxByteCase{
 		{Name: "all bytes", Data: all.String()},
+		{Name: "tex all bytes", Data: all.String(), Args: []string{"-G", "-T"}},
 		{Name: "traditional all bytes", Data: all.String(), Args: []string{"-G"}},
 		{Name: "empty", Data: ""},
 		{Name: "unterminated", Data: raw[:len(raw)-1]},
@@ -66,6 +67,9 @@ func PtxByteCases() []PtxByteCase {
 	for _, n := range []int{262143, 262144, 262145} {
 		cases = append(cases, PtxByteCase{Name: fmt.Sprintf("read boundary %d", n), Data: strings.Repeat("\xff", n) + "é alpha\xc3 beta\x00\n"})
 	}
+	for _, n := range []int{31, 32, 33, 63, 64, 65, 127, 128, 129} {
+		cases = append(cases, PtxByteCase{Name: fmt.Sprintf("tex plain run %d", n), Data: strings.Repeat("a", n) + "$%&#_\\{}\xff\x80 word\n", Args: []string{"-G", "-T"}})
+	}
 	return cases
 }
 
@@ -89,6 +93,14 @@ func RunPtxByteCases(t *testing.T, bin string, runner []string, census func(*tes
 	version, err := exec.Command(oracle, "--version").Output()
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU ptx")
+	}
+	RunPtxByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunPtxByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("GNU ptx command is empty")
 	}
 	for _, tc := range PtxByteCases() {
 		for _, file := range []bool{false, true} {
@@ -134,7 +146,7 @@ func RunPtxByteCases(t *testing.T, bin string, runner []string, census func(*tes
 					}
 					return out.String(), diagnostic.String(), cmd.ProcessState.ExitCode()
 				}
-				want, wantErr, wantCode := run([]string{oracle})
+				want, wantErr, wantCode := run(oracle)
 				got, diagnostic, code := run(append(append([]string{}, runner...), bin))
 				if code != wantCode || got != want {
 					t.Fatalf("exit/stdout differ: exit %d/%d, output bytes %d/%d\n%s", code, wantCode, len(got), len(want), diagnostic)
@@ -154,8 +166,8 @@ func RunPtxByteCases(t *testing.T, bin string, runner []string, census func(*tes
 				}
 				actualErr := strings.ReplaceAll(strings.Join(clean, ""), bin+":", "ptx:")
 				actualErr = strings.ReplaceAll(actualErr, filepath.Base(bin)+":", "ptx:")
-				wantErr = strings.ReplaceAll(wantErr, oracle+":", "ptx:")
-				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracle)+":", "ptx:")
+				wantErr = strings.ReplaceAll(wantErr, oracle[len(oracle)-1]+":", "ptx:")
+				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracle[len(oracle)-1])+":", "ptx:")
 				if actualErr != wantErr {
 					t.Fatalf("stderr differs:\ngot  %q\nwant %q", actualErr, wantErr)
 				}
