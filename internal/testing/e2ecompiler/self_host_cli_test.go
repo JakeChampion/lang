@@ -491,6 +491,16 @@ function main(): i32 {
 		foldCase(t, "foldhex", "function main(): i32 { return 0x10 + 1; }\n", 17)
 	})
 
+	t.Run("fold-through-decided-branches", func(t *testing.T) {
+		foldCase(t, "foldphi", "function step(n: i32): i32 { return n + 1; }\n"+
+			"function main(): i32 {\n"+
+			"    let ok: i32 = 0;\n"+
+			"    if (step(1) == 2) { ok = ok + 1; }\n"+
+			"    if (step(2) == 3) { ok = ok + 1; }\n"+
+			"    return ok + 40;\n"+
+			"}\n", 42, "addq $1,", "addq $40,")
+	})
+
 	assertCase := func(t *testing.T, name, src string, wantDefault, wantOpt int) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")
