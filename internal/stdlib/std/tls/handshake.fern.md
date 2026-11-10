@@ -418,7 +418,9 @@ pub struct Offer { identities: message.PskIdentity[], suite: keyschedule.CipherS
 
 // early says the ticket allows early data, and alpn is the protocol of the
 // session it resumes.
-pub struct Resumed { index: i32, psk: u8[], early: boolean, alpn: string }
+// `client_chain` is the certificate chain that the client proved in the
+// session the ticket came from, empty when it proved none.
+pub struct Resumed { index: i32, psk: u8[], early: boolean, alpn: string, client_chain: u8[][] }
 
 // EARLY_LEVEL is the level of the secret that protects a client's early
 // data: a write secret for the client, a read secret for the server.
@@ -3169,7 +3171,8 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
   match (choice) {
     Some(c) => {
       __check_binder(s, raw, h, n.suite, c)?;
-      let r = __serve_hello(server, raw, h, n, c.psk, c.index, __takes_early(s, c, n.alpn, h), __out())?;
+      let known = Server { ...server, client_chain: c.client_chain };
+      let r = __serve_hello(known, raw, h, n, c.psk, c.index, __takes_early(s, c, n.alpn, h), __out())?;
       return __server_run(r.server, [], r.out);
     },
     None => {

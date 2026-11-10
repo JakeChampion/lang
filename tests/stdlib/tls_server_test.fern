@@ -684,7 +684,7 @@ function test_fixed_entropy(): test.TestOutcome {
   if (short_entropy() != "client: tls handshake: 231 bytes of entropy, want 232; server: tls handshake: 121 bytes of entropy, want 120") {
     return test.fail(short_entropy());
   }
-  return test.assert_eq(first, "949bdaccbec1ed6946f6b9125a0c7099a757579f3a0109ef9e917bfa54080303");
+  return test.assert_eq(first, "e034f5dec6939d0c31b63dd1e0584a50eca776d7ce6a8a1fdd7b7fd582e52855");
 }
 
 function client_identity(leaf: string): identity.Identity {
@@ -867,6 +867,34 @@ function test_client_certificate_resumed(): test.TestOutcome {
     }
   }
   return test.fail("unreachable");
+}
+
+function test_resumption_keeps_the_client_certificate_rule(): test.TestOutcome {
+  let key = rand.bytes(32);
+  let open = server.config(identity_of(ED_LEAF, ED_PKCS8), key);
+  let strict = server.config(identity_of(ED_LEAF, ED_PKCS8), key).with_client_roots(roots());
+  let anonymous = client.config("tls.example", roots());
+  let Ok(first) = connect(anonymous, open) else {
+    return test.fail("no connection to the open server");
+  };
+  if (first.tickets.len() != 1) {
+    return test.fail("no ticket from the open server");
+  }
+  let crossed = how(connect(anonymous.with_ticket(first.tickets[0]), strict));
+  if (crossed.starts_with("resumed") || !crossed.contains("certificate")) {
+    return test.fail("a ticket from a session with no client certificate: " + crossed);
+  }
+  let known = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
+  let Ok(full) = connect(known, strict) else {
+    return test.fail("no connection with a client certificate");
+  };
+  let Ok(again) = connect(known.with_ticket(full.tickets[0]), strict) else {
+    return test.fail("no resumption with a client certificate");
+  };
+  if (!again.server.resumed()) {
+    return test.fail("the session with a client certificate was not resumed");
+  }
+  return test.assert_eq(again.server.client_chain().len(), full.server.client_chain().len());
 }
 
 function test_key_update(): test.TestOutcome {
@@ -1086,6 +1114,7 @@ function main(): i32 {
   r = r.it("client certificate validity, at the given time", test_client_certificate_validity);
   r = r.it("client signature refused", test_client_signature_refused);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
+  r = r.it("resumption keeps the client certificate rule", test_resumption_keeps_the_client_certificate_rule);
   r = r.it("fixed entropy writes the same bytes", test_fixed_entropy);
   return r.finish();
 }

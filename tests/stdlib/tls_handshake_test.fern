@@ -935,7 +935,7 @@ function test_resumption(): test.TestOutcome {
     }
   }
   let offering = handshake.ClientConfig { ...cc, resume: Some(r) };
-  let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "" });
+  let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "", client_chain: [] });
   if (resumed_pair(offering, sc, taken) != "resumed example.com http/1.1 ping pong") {
     return test.fail("resumed: " + resumed_pair(offering, sc, taken));
   }
@@ -948,10 +948,10 @@ function test_resumption(): test.TestOutcome {
   }
   let wrong = r.psk;
   wrong = wrong.with(0, (wrong[0] as i32 ^ 1) as u8);
-  if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "" })) != "51 tls handshake: the peer's Finished does not verify") {
-    return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "" })));
+  if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "", client_chain: [] })) != "51 tls handshake: the peer's Finished does not verify") {
+    return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong, early: false, alpn: "", client_chain: [] })));
   }
-  return test.assert_eq(resumed_pair(offering, sc, Some(handshake.Resumed { index: 1, psk: r.psk, early: false, alpn: "" })), "80 tls handshake: resume called out of turn");
+  return test.assert_eq(resumed_pair(offering, sc, Some(handshake.Resumed { index: 1, psk: r.psk, early: false, alpn: "", client_chain: [] })), "80 tls handshake: resume called out of turn");
 }
 
 function test_resumption_refusals(): test.TestOutcome {
@@ -1088,7 +1088,7 @@ function test_client_certificate_resumed(): test.TestOutcome {
     Ok(t) => {
       match (ticketed(t.pair)) {
         Ok(r) => {
-          return test.assert_eq(resumed_pair(handshake.ClientConfig { ...cc, resume: Some(r) }, sc, Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "" })), "resumed example.com  ping pong");
+          return test.assert_eq(resumed_pair(handshake.ClientConfig { ...cc, resume: Some(r) }, sc, Some(handshake.Resumed { index: 0, psk: r.psk, early: false, alpn: "", client_chain: [] })), "resumed example.com  ping pong");
         },
         Err(e) => {
           return test.fail(e.message());
@@ -1236,7 +1236,7 @@ function test_quic_early_data(): test.TestOutcome {
   };
   let r = handshake.Resumption { identity: t.ticket, psk: psk, suite: ct.client.cipher_suite(), obfuscated_age: 2 as u32 };
   let asking = handshake.ClientConfig { ...cc, resume: Some(r), early_data: true };
-  let allowed = handshake.Resumed { index: 0, psk: psk, early: true, alpn: "h3" };
+  let allowed = handshake.Resumed { index: 0, psk: psk, early: true, alpn: "h3", client_chain: [] };
   let cases: (handshake.ClientConfig, handshake.ServerConfig, handshake.Resumed, string)[] = [(asking, sc, allowed, "taken"), (asking, handshake.ServerConfig { ...sc, early_data: false }, allowed, "server"), (asking, sc, handshake.Resumed { ...allowed, early: false }, "ticket"), (asking, sc, handshake.Resumed { ...allowed, alpn: "h2" }, "alpn"), (handshake.ClientConfig { ...asking, early_data: false }, sc, allowed, "unasked")];
   let line = "";
   for (c, s, answer, name) in cases {

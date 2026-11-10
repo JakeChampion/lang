@@ -1,0 +1,7 @@
+15:3: error[E003]: variable "k": expected Option[U], got Option[A]
+21:6: error[E003]: variable "us": expected U[], got A[]
+26:15: error[E038]: argument 1 to "take": expected U[], got A[]
+30:3: error[E002]: return value: expected U[], got A[]
+34:19: error[E043]: field "us": expected U[], got A[]
+39:3: error[E003]: variable "k": expected Option[U][], got Option[A][]
+44:11: error[E031]: if-expression branches differ: U[] vs A[]

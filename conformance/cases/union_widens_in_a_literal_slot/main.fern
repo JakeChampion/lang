@@ -1,0 +1,37 @@
+// A variant widens to its union where a value takes the type of its slot:
+// a constructor payload, a tuple element and an array element.
+
+struct A { x: i32 }
+struct B { s: string }
+type U = A | B;
+
+function name(u: U): string {
+  match (u) {
+    A(a) => {
+      return "A" + a.x.to_string();
+    },
+    B(b) => {
+      return "B" + b.s;
+    }
+  }
+}
+
+function main(): i32 {
+  let k: Option[U] = Some(A { x: 2 });
+  match (k) {
+    Some(u) => {
+      print(name(u));
+    },
+    None => {
+      print("none");
+    }
+  }
+  let a = A { x: 3 };
+  let t: (U, i32) = (a, 4);
+  print(name(t.0));
+  let us: U[] = [A { x: 5 }, B { s: "b" }];
+  for u in us {
+    print(name(u));
+  }
+  return 0;
+}

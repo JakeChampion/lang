@@ -1,0 +1,81 @@
+import "std/test";
+import "std/hex";
+import "std/crypto";
+import "std/crypto/ecdsa";
+import "std/crypto/ed25519";
+import "std/crypto/sha2";
+import "std/tls/identity";
+
+const P256_LEAF: string = "3082016e30820120a00302010202020202300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c653059301306072a8648ce3d020106082a8648ce3d0301070342000451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341002aa51d9e7ebbabda2407971bedb6799f3b6e56cc126dc876310e47342f19f0d0902e1173373fdb0ba17ebc39f3324667b06162300c7b9873eb31123c89ca500c";
+
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+
+function release_identity(own value: identity.Identity): void {
+  match (value.key) {
+    identity.EcdsaKey(key) => {
+      key.erase();
+    },
+    identity.Ed25519Seed(seed) => {
+      crypto.erase(seed);
+    }
+  }
+}
+
+function test_ecdsa(): test.TestOutcome {
+  let scalar = "33333333333333333333333333333333".as_bytes();
+  let Ok(key) = ecdsa.private_key(ecdsa.P256, scalar) else {
+    return test.fail("private key");
+  };
+  let Ok(public) = ecdsa.public_key(ecdsa.P256, key.public_point()) else {
+    return test.fail("public key");
+  };
+  let Ok(certificate) = hex.decode(P256_LEAF) else {
+    return test.fail("certificate");
+  };
+  let Ok(id) = identity.pair([certificate], identity.EcdsaKey(key)) else {
+    return test.fail("identity");
+  };
+  key.erase();
+  let content = "paired identity".as_bytes();
+  let Ok(signature) = id.key.sign(0x0403, content) else {
+    return test.fail("signature");
+  };
+  let valid = public.verify(sha2.Sha256, content, signature);
+  release_identity(id);
+  return test.assert_true(valid);
+}
+
+function test_ed25519(): test.TestOutcome {
+  let seed: u8[] = __alloc_u8(32);
+  for i in 0..32 {
+    seed = seed.with(i, 0x22 as u8);
+  }
+  let Ok(key) = ed25519.private_key(seed) else {
+    return test.fail("private key");
+  };
+  let Ok(public) = ed25519.public_key(key.public_point()) else {
+    return test.fail("public key");
+  };
+  let Ok(certificate) = hex.decode(ED_LEAF) else {
+    return test.fail("certificate");
+  };
+  let Ok(id) = identity.pair([certificate], identity.Ed25519Seed(seed)) else {
+    return test.fail("identity");
+  };
+  crypto.erase(seed);
+  key.erase();
+  let content = "paired identity".as_bytes();
+  let Ok(signature) = id.key.sign(0x0807, content) else {
+    return test.fail("signature");
+  };
+  let valid = public.verify(content, signature);
+  release_identity(id);
+  return test.assert_true(valid);
+}
+
+function main(): i32 {
+  let runner = test.new("TLS identity shared key");
+  runner = runner.it("ECDSA survives source erase", test_ecdsa);
+  runner = runner.it("Ed25519 survives source erase", test_ed25519);
+  return runner.finish();
+}
