@@ -19191,8 +19191,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_variant_known(ctx, fa.field, ow_ident_name(fa.obj))) {
         return true;
       }
-      if let ast.ExprIdent(oid) = fa.obj {
-        if (lu_has(ctx, lu_field_key(fa, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
+      let enclosing = ow_enclosing_field(fa);
+      if let ast.ExprIdent(oid) = enclosing.obj {
+        if (lu_has(ctx, lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
           return true;
         }
       }
@@ -21849,6 +21850,39 @@ function lu_holds_call(scope: ast.Expr, call: ast.Expr): boolean {
   return h.found;
 }
 
+// No earlier field read or whole-owner read can retain an alias here.
+function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolean {
+  if (!lu_own_param(fx, name)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == name) {
+      return false;
+    }
+  }
+  let reads = 0;
+  for o in fx.facts.occ {
+    if (o.name == name) {
+      let selected = lu_sel_at(fx.facts, o.line, o.col);
+      if (selected.len() == 0) {
+        return false;
+      }
+      if (selected == field) {
+        reads += 1;
+      }
+    }
+  }
+  return reads == 1;
+}
+
+// The last use of an enclosing field also owns a selected descendant.
+function ow_enclosing_field(fa: ast.ExprFieldAccess): ast.ExprFieldAccess {
+  if let ast.ExprFieldAccess(parent) = fa.obj {
+    return ow_enclosing_field(parent);
+  }
+  return fa;
+}
+
 function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
   return lu_key(q.line, q.col) + "." + fa.field;
 }
@@ -21972,8 +22006,10 @@ function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolea
       }
     },
     ast.ExprFieldAccess(fa) => {
+      let nested = ow_ident_name(fa.obj).len() == 0;
+      fa = ow_enclosing_field(fa);
       if let ast.ExprIdent(q) = fa.obj {
-        if (lu_field_dies(fx, e, fa, q, site)) {
+        if ((!nested || lu_exclusive_owned_field(fx, q.name, fa.field)) && lu_field_dies(fx, e, fa, q, site)) {
           acc = acc.append(lu_field_key(fa, q));
         }
       }
@@ -22014,8 +22050,10 @@ function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boo
     }
   }
   if let ast.ExprFieldAccess(fa) = a {
+    let nested = ow_ident_name(fa.obj).len() == 0;
+    fa = ow_enclosing_field(fa);
     if let ast.ExprIdent(q) = fa.obj {
-      if (lu_field_dies(fx, e, fa, q, site)) {
+      if ((!nested || lu_exclusive_owned_field(fx, q.name, fa.field)) && lu_field_dies(fx, e, fa, q, site)) {
         return acc.append(lu_field_key(fa, q));
       }
     }

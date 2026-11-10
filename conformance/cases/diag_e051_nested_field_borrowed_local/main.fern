@@ -1,0 +1,7 @@
+// spec: RH-07
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Box { value: Handle }
+struct Pair { a: Box, b: Box }
+function bad(h: Handle): i32 { let p = Pair { a: Box { value: h }, b: Box { value: Handle { fd: 8 } } }; return p.a.value.close(); }
+function main(): i32 { return 0; }
