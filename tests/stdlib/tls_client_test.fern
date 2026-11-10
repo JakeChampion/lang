@@ -407,7 +407,7 @@ function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsErr
   if (!has_resume(s1.events)) {
     return Err(tls.HandshakeFailed(handshake.Misuse("no ticket offered")));
   }
-  let s2 = srv(s1.server.resume(Some(handshake.Resumed { index: 0, psk: psk, early: false, alpn: "" })))?;
+  let s2 = srv(s1.server.resume(Some(handshake.Resumed { index: 0, psk: psk, early: false, alpn: "", client_chain: [] })))?;
   let c1 = rd(start.session, s2.output)?;
   let s3 = srv(s2.server.read(c1.output))?;
   if (!c1.session.connected() || !s3.server.connected() || !c1.session.resumed()) {
