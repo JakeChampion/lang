@@ -1,0 +1,32 @@
+{
+  "source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "compiler_sha256": "11407d36edde3ce430806655b5f7506e84f32962d671d22777fd14abe9013f61",
+  "runs": [
+    {
+      "target": "x86-64-linux",
+      "args": [
+        "python3",
+        "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py",
+        "--compiler",
+        "/workspace/lang-interpreter-dispatch-20261109/build/compiler-main-validation-20261110-0950/normal",
+        "--target",
+        "x86-64-linux",
+        "--reference",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1015/reference-current.json.gz",
+        "--source-commit",
+        "93942727d19bcad77d7aef70da15b36c58056bf8",
+        "--output",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1015/x86-64-linux.json",
+        "--work",
+        "/workspace/lang-user-net-capability-20261110-1000/build/wide-provenance-20261110-1015/x86-64-linux-workers"
+      ],
+      "started": "2026-11-10T10:17:29.777306+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T10:17:30.571147+00:00"
+    }
+  ],
+  "purpose": "Requalify unchanged exact wide-class outputs after two source provenance hashes move. No proof or negative-control changes.",
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T10:17:30.571733+00:00"
+}

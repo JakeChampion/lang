@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py", line 149, in <module>
+    main()
+  File "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py", line 145, in main
+    run(parser.parse_args())
+  File "/workspace/lang-free-wide-requalification-20261110-1015/scripts/qualify_large_free_wide_classes.py", line 93, in run
+    raise ValueError('worker compile exit ' + str(result.returncode))
+ValueError: worker compile exit 1
