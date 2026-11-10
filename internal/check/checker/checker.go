@@ -5945,6 +5945,7 @@ type checker struct {
 	consumingTypes  map[string]bool
 	callOwnFlags    map[*ast.Call][]bool
 	callOwnResults  map[*ast.Call]bool
+	callCopyTypes   map[string]bool
 	resultCopyParts map[ast.Expr]bool
 	scalarArgs      map[ast.Expr]bool
 	valueArgs       map[ast.Expr]bool
@@ -14376,7 +14377,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	t = c.postNumericType(e, t)
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
-	if call, ok := e.(*ast.Call); ok && c.valueData(t, map[string]bool{}) {
+	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
 		c.recordOwnedResult(call, true)
 	}
 	if c.current != nil && c.current.ReturnOwn {

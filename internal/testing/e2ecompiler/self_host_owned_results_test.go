@@ -136,6 +136,8 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 		{"data function strengthening", `function loan(x: i32[]): i32[] { return x; } function run(): void { let f: (i32[]) => own i32[] = loan; }`, "E003"},
 		{"reused generic cell", `struct Data[T] { value: T } struct Mixed { first: Data[i32], second: Data[Cell[i32]] } function loan(x: Mixed): Mixed { return x; } function consume(own x: Mixed): void {} function run(x: Mixed): void { consume(loan(x)); }`, "E051"},
 		{"shadowed data name", `struct Data { bytes: u8[] } function loan[Data](x: Data): Data { return x; } function consume[Data](own x: Data): void {} function run[Data](x: Data): void { consume(loan(x)); }`, "E051"},
+		{"copy cache concrete first", `struct Data { bytes: u8[] } struct Wrap[T] { value: T } function loan_concrete(x: Wrap[Data]): Wrap[Data] { return x; } function consume_concrete(own x: Wrap[Data]): void {} function concrete(x: Wrap[Data]): void { consume_concrete(loan_concrete(x)); } function loan_generic[Data](x: Wrap[Data]): Wrap[Data] { return x; } function consume_generic[Data](own x: Wrap[Data]): void {} function generic[Data](x: Wrap[Data]): void { consume_generic(loan_generic(x)); } `, "E051"},
+		{"copy cache generic first", `struct Data { bytes: u8[] } struct Wrap[T] { value: T } function loan_generic[Data](x: Wrap[Data]): Wrap[Data] { return x; } function consume_generic[Data](own x: Wrap[Data]): void {} function generic[Data](x: Wrap[Data]): void { consume_generic(loan_generic(x)); } function loan_concrete(x: Wrap[Data]): Wrap[Data] { return x; } function consume_concrete(own x: Wrap[Data]): void {} function concrete(x: Wrap[Data]): void { consume_concrete(loan_concrete(x)); } `, "E051"},
 		{"conditional result", `function pass[T](own x: T, b: boolean): own T { return if (b) { x } else { x }; }`, ""},
 		{"match result", `function pass[T](own x: T, b: boolean): own T { return match (b) { true => x, false => x }; }`, ""},
 		{"local function capture", `function run(own x: Box): void { function f(): own Box { return x; } }`, "E051"},
@@ -205,12 +207,39 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 	}
 }
 
+func checkedOwnedResultBorrowFixtures(t *testing.T, bin string, runner []string, dir string) {
+	t.Helper()
+	for _, name := range []string{"diag_e051_literal_match_arm_returns_a_borrow", "diag_e051_match_binder_of_a_borrowed_scrutinee"} {
+		t.Run(name, func(t *testing.T) {
+			source, err := os.ReadFile(e2eharness.RepoPath("conformance", "cases", name, "main.fern"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bin)
+			if len(runner) > 0 {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			cmd.Stdin = bytes.NewReader(source)
+			for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, string(source)), "Fern": driverDiags(runCheckerDriver(t, cmd, name))} {
+				found := false
+				for _, d := range ds {
+					found = found || d.code == "E051"
+				}
+				if !found {
+					t.Fatalf("%s: want E051, got %v", label, ds)
+				}
+			}
+		})
+	}
+}
+
 func TestSelfHostCheckedOwnedResultsNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/checker_codes_run.fern", "owned_results_checker")
 	checkedOwnedResultCases(t, bin, runner, dir)
+	checkedOwnedResultBorrowFixtures(t, bin, runner, dir)
 }
 
 func TestSelfHostCheckedOwnedResultsWasm(t *testing.T) {
@@ -218,6 +247,7 @@ func TestSelfHostCheckedOwnedResultsWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
 	bin := buildSelfHostBinFor(t, dir, "drivers/checker_codes_run.fern", "owned_results_checker.wasm", e2eharness.TargetWasm32Wasi)
 	checkedOwnedResultCases(t, bin, []string{e2eharness.Wasmtime(t), "run"}, dir)
+	checkedOwnedResultBorrowFixtures(t, bin, []string{e2eharness.Wasmtime(t), "run"}, dir)
 }
 
 func TestSelfHostCheckedOwnedResultsRun(t *testing.T) {
