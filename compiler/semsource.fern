@@ -316,7 +316,7 @@ function runtime_callable_type(t: typeinfo.Type): typeinfo.Type {
   }
   if let typeinfo.TypeFunc(f) = t {
     let params = runtime_callable_types(f.param_types);
-    return typeinfo.TypeFunc { ...f, param_types: params, param_own: typeinfo.own_flags(f.param_own, params), ret_type: runtime_callable_type(f.ret_type) };
+    return typeinfo.TypeFunc { ...f, param_types: params, param_own: typeinfo.own_flags(f.param_own, params), ret_own: false, ret_type: runtime_callable_type(f.ret_type) };
   }
   if let typeinfo.TypeArray(a) = t {
     return typeinfo.TypeArray { ...a, elem: runtime_callable_type(a.elem) };
@@ -339,7 +339,7 @@ function runtime_callable_type(t: typeinfo.Type): typeinfo.Type {
 function runtime_callable_changes(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeFunc(f) => {
-      return runtime_callable_flags_change(f) || runtime_callable_list_changes(f.param_types) || runtime_callable_changes(f.ret_type);
+      return f.ret_own || runtime_callable_flags_change(f) || runtime_callable_list_changes(f.param_types) || runtime_callable_changes(f.ret_type);
     },
     typeinfo.TypeArray(a) => {
       return runtime_callable_changes(a.elem);
@@ -400,7 +400,7 @@ function resolved_within(t: typeinfo.Type, b: ssasem.Binding, scope: checker.Sco
   }
   if let typeinfo.TypeFunc(fn) = t {
     let params = resolved_list(fn.param_types, b, scope);
-    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved_checked(fn.ret_type, true, b, scope) };
+    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_own: false, ret_type: resolved_checked(fn.ret_type, true, b, scope) };
   }
   if let typeinfo.TypeMap(m) = t {
     return typeinfo.TypeMap { key: resolved_checked(m.key, true, b, scope), value: resolved_checked(m.value, true, b, scope) };

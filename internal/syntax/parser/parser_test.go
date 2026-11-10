@@ -2962,7 +2962,7 @@ function take(hs: own Pollable[]): i32 { return 0; }`)
 	if subscribe == nil || ready == nil || take == nil {
 		t.Fatal("functions not parsed")
 	}
-	if h, ok := subscribe.ReturnType.(ast.HandleType); !ok || h.Resource != "Pollable" || h.Borrowed {
+	if h, ok := subscribe.ReturnType.(ast.StructType); !ok || h.Name != "Pollable" || !subscribe.ReturnOwn {
 		t.Errorf("subscribe return = %#v, want own Pollable", subscribe.ReturnType)
 	}
 	if h, ok := ready.Params[0].Type.(ast.HandleType); !ok || h.Resource != "Pollable" || !h.Borrowed {

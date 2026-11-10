@@ -22,6 +22,8 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"checked-owned-results", `function apply[T](own x: T, step: (own T) => own T): own T { return step(x); }
+function main(): i32 { let step = (own x: string): own string => x; return 0; }`},
 	{"norc-marks-the-free-function-not-the-method", `struct Pool { base: usize }
 
 @norc

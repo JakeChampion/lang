@@ -1036,7 +1036,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       let (pats, npre) = param_patterns_for(lm.params, lm.body);
       let out = print_params_with(lm.params, pats, false, depth);
       if (lm.ret_type.len() > 0) {
-        out = out + ": " + arrow_return_type(lm.ret_type);
+        out = out + ": ";
+        if (lm.ret_own) {
+          out += "own ";
+        }
+        out += arrow_return_type(lm.ret_type);
       }
       out += " => ";
       let (text, g) = print_lambda_body(drop_prelude(lm.body, npre), depth, f);
@@ -3029,7 +3033,11 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   }
   out += ")";
   if (fd.ret_type.len() > 0) {
-    out = out + ": " + fd.ret_type;
+    out += ": ";
+    if (fd.ret_own) {
+      out += "own ";
+    }
+    out += fd.ret_type;
   }
   if (fd.import_iface.len() > 0) {
     return (out + ";\n", f);
@@ -3100,7 +3108,11 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
   }
   out = out + "const " + fd.name;
   if (fd.ret_type.len() > 0) {
-    out = out + ": " + fd.ret_type;
+    out += ": ";
+    if (fd.ret_own) {
+      out += "own ";
+    }
+    out += fd.ret_type;
   }
   for i in 0..fd.body.len() {
     match (fd.body[i]) {
@@ -3304,7 +3316,11 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   }
   out += ")";
   if (m.ret_type.len() > 0) {
-    out = out + ": " + m.ret_type;
+    out += ": ";
+    if (m.ret_own) {
+      out += "own ";
+    }
+    out += m.ret_type;
   }
   if (m.body.len() == 0) {
     return (out + ";\n", f);
@@ -3374,7 +3390,11 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   }
   out += ")";
   if (m.ret_type.len() > 0) {
-    out = out + ": " + m.ret_type;
+    out += ": ";
+    if (m.ret_own) {
+      out += "own ";
+    }
+    out += m.ret_type;
   }
   if (m.body.len() == 0) {
     let (tr, g0) = emit_trailing(f, m.line);

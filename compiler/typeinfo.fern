@@ -25,7 +25,7 @@ pub struct TypeStruct { name: string, args: Type[] }
 
 pub struct TypeTuple { elements: Type[] }
 
-pub struct TypeFunc { param_types: Type[], param_own: boolean[], ret_type: Type, params_known: boolean }
+pub struct TypeFunc { param_types: Type[], param_own: boolean[], ret_own: boolean, ret_type: Type, params_known: boolean }
 
 pub function fn_own_at(f: TypeFunc, i: i32): boolean {
   if (i < 0 || i >= f.param_own.len()) {
@@ -591,6 +591,9 @@ pub function spelling(t: Type): string {
       let ret = spelling(f.ret_type);
       if (ret.len() == 0) {
         return "";
+      }
+      if (f.ret_own) {
+        ret = "own " + ret;
       }
       return "((" + params + ") => " + ret + ")";
     },
