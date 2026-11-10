@@ -82,6 +82,6 @@ type Graph struct {
 	fern        map[string][]string
 	fernReverse map[string][]string
 	reverse     map[string][]string
-	special     map[string]bool
+	special     map[string]string
 	platform    sync.Map
 }

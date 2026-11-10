@@ -1,3 +1,4 @@
+# 2026-11-10: PR #15079, a local scripts/profile-costs run on main's tree at da3282d0. Eighteen http_hello rows rise 1.1% to 7.3% with f79f524d of #15076, which reads a request target through a view. This PR changes no emitted code. Pinned at the measured values. A .bytes value can differ from CI by the length of the checkout path, inside the tolerance.
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
@@ -141,7 +142,8 @@ profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
 # Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
 # Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
-profile/arm64-linux/http_hello.diagnostic.bytes	134904
+# 2026-11-10: Retain main c9547605's measured diagnostic image size.
+profile/arm64-linux/http_hello.diagnostic.bytes	134872
 profile/arm64-linux/http_hello.diagnostic.emit	17398
 profile/arm64-linux/http_hello.hardened.bytes	86328
 profile/arm64-linux/http_hello.hardened.emit	19405
@@ -234,7 +236,8 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4544
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	124352
+# 2026-11-10: Retain main c9547605's measured diagnostic image size.
+profile/x86-64-linux/http_hello.diagnostic.bytes	124320
 profile/x86-64-linux/http_hello.diagnostic.emit	16283
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	40308693

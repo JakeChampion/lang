@@ -305,7 +305,7 @@ func (w *tlsServerWorld) clientAuthCases() []tlsServerCase {
 		{"mtls", with([]tls.Certificate{w.client}, true), "[localhost] [fern-echo] mtls closed fresh client 1", "", false},
 		{"nocert", with(nil, false), "refused the peer sent no certificate", "certificate required", false},
 		{"othercert", with([]tls.Certificate{w.otherClient}, false), "refused the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root", "bad certificate", false},
-		{"mtls-resume", with([]tls.Certificate{w.client}, true), "[localhost] [fern-echo] mtls-resume closed resumed", "", true},
+		{"mtls-resume", with([]tls.Certificate{w.client}, true), "[localhost] [fern-echo] mtls-resume closed resumed client 1", "", true},
 	}
 }
 

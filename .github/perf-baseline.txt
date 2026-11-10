@@ -1,3 +1,5 @@
+# 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
+# 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
 # 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
 # 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
 # HTTP and video emitted sizes include changes from main. Keep all tolerances.

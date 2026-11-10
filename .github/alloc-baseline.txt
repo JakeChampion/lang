@@ -1,3 +1,4 @@
+# 2026-11-10: PR #15091, perf-x86_64 job 129644270390 on 7a1541eab3 measured 40824273 allocations and frees for the expanded checker source. Keep the 1% tolerance.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
 # 40405424 balanced checker events after the merge of main d04e79179f.
 # Bank both counts. The combined decrease is not an isolated liveness gain.
@@ -111,5 +112,5 @@
 # assembly under QEMU. Both counts balance with zero live bytes.
 # This lowers the prior branch measurement of 35,915,045. No timing claim.
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/checker.allocs	40405424
-x86_64/checker.frees	40405424
+x86_64/checker.allocs	40824273
+x86_64/checker.frees	40824273

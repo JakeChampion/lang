@@ -177,16 +177,24 @@ func Load(root string) (*Graph, error) {
 			}
 		}
 	}
-	g.special = map[string]bool{}
-	workflow, _ := os.ReadFile(filepath.Join(root, ".github/workflows/test-e2e-selfhost.yml"))
-	for _, line := range strings.Split(string(workflow), "\n") {
-		if strings.Contains(line, "ISOLATED_DRIVER_TESTS:") || strings.Contains(line, "OWN_JOB_TESTS:") {
+	g.special = map[string]string{}
+	for lane := range g.Config.Targets {
+		workflow, _ := os.ReadFile(filepath.Join(root, ".github/workflows/"+lane+".yml"))
+		for _, line := range strings.Split(string(workflow), "\n") {
+			if !strings.Contains(line, "ISOLATED_DRIVER_TESTS:") && !strings.Contains(line, "OWN_JOB_TESTS:") {
+				continue
+			}
 			for _, name := range regexp.MustCompile(`\bTest[A-Za-z0-9_]+`).FindAllString(line, -1) {
-				if name != "TestSelfHostGatherConcurrency" {
-					g.special[name] = true
+				if name == "TestSelfHostGatherConcurrency" {
+					continue
 				}
+				if owner := g.special[name]; owner != "" && owner != lane {
+					return nil, fmt.Errorf("test %s has owners %s and %s", name, owner, lane)
+				}
+				g.special[name] = lane
 			}
 		}
 	}
+
 	return g, nil
 }
