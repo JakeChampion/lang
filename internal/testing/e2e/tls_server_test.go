@@ -287,6 +287,7 @@ func (w *tlsServerWorld) cases() []tlsServerCase {
 		{"resume", trusted(cache), "[localhost] [fern-echo] resume closed resumed", "", true},
 		{"retry", trusted(func(c *tls.Config) { c.CurvePreferences = []tls.CurveID{tls.CurveP256, tls.X25519} }), "[localhost] [fern-echo] retry closed fresh", "", false},
 		{"address", trusted(func(c *tls.Config) { c.ServerName = "127.0.0.1"; c.NextProtos = nil }), "[] [] address closed fresh", "", false},
+		{"cut", trusted(func(c *tls.Config) {}), "[localhost] [fern-echo] cut recv the peer closed the connection with no close_notify", "", false},
 		{"untrusted", trusted(func(c *tls.Config) { c.RootCAs = w.other }), "refused tls handshake: the peer sent alert 42", "certificate signed by unknown authority", false},
 		{"tls12", trusted(func(c *tls.Config) { c.MinVersion = tls.VersionTLS12; c.MaxVersion = tls.VersionTLS12 }), "refused tls handshake: the peer does not speak TLS 1.3", "protocol version not supported", false},
 	}
@@ -374,7 +375,12 @@ func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 		t.Errorf("%s: dial: %v", c.name, err)
 		return
 	}
-	defer conn.Close()
+	if c.name == "cut" {
+		// The TCP close alone, so the server sees no close_notify.
+		defer conn.NetConn().Close()
+	} else {
+		defer conn.Close()
+	}
 	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 	st := conn.ConnectionState()
 	if st.Version != tls.VersionTLS13 {

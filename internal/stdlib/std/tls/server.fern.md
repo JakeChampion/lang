@@ -753,6 +753,8 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
 <<16 pub struct Connection>>=
 pub struct Connection { sock: Socket, session: Session, pending: u8[], ended: boolean, open: Cell[boolean] }
 
+// ended is true after the close_notify of the peer. A stream that ends
+// with no close_notify gives the error Truncated.
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ```
 
@@ -801,9 +803,6 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
     s = step.session;
     pending = __cat(pending, step.data);
     ended = step.closed;
-  }
-  if (!s.connected()) {
-    return Err(tls.ClosedEarly);
   }
   return Ok(Shook { session: s, pending: pending, ended: ended });
 }
@@ -983,7 +982,7 @@ function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsErro
   if (s.held.len() > 0) {
     return Err(tls.RecordCut);
   }
-  return Ok(__received(c, s, [], true));
+  return Err(tls.Truncated);
 }
 
 function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.TlsError] {
