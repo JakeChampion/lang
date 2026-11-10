@@ -1,0 +1,14 @@
+--- a/internal/stdlib/std/audio/mp2/layer.fern.md
++++ b/internal/stdlib/std/audio/mp2/layer.fern.md
+@@ -128 +128,10 @@
+-  if (ba < 17) {
++  if (ba <= 8) {
++    let half = (1 << ba - 1) - 1;
++    let mask = (1 << ba) - 1;
++    let (next, packed) = bits.read(input, b, ba * 3);
++    b = next;
++    for i in 0..3 {
++      let value = packed >> (2 - i) * ba & mask;
++      output = output.with(at + i, (value - half) as f32);
++    }
++  } else if (ba < 17) {
