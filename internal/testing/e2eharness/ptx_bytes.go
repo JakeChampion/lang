@@ -71,6 +71,23 @@ func PtxByteCases() []PtxByteCase {
 	for _, n := range []int{31, 32, 33, 63, 64, 65, 127, 128, 129} {
 		cases = append(cases, PtxByteCase{Name: fmt.Sprintf("tex plain run %d", n), Data: strings.Repeat("a", n) + "$%&#_\\{}\xff\x80 word\n", Args: []string{"-G", "-T"}})
 	}
+	for _, n := range []int{16383, 16384, 16385} {
+		var text strings.Builder
+		words := []string{"abcdefg\x00B", "abcdefg\x00A", "abcdefg\x00\x00", "abcdefg\x00", "abcdefg"}
+		for i := 0; i < n; i++ {
+			text.WriteString(words[i%len(words)])
+			text.WriteByte(' ')
+		}
+		cases = append(cases, PtxByteCase{Name: fmt.Sprintf("radix prefix threshold %d", n), Data: text.String(), Args: []string{"-G", "-f"}})
+	}
+	for _, width := range []string{"1", "5", "24", "72"} {
+		for _, flag := range []string{"//  ", "   "} {
+			cases = append(cases, PtxByteCase{Name: fmt.Sprintf("marker blanks %s %q", width, flag), Data: "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n", Args: []string{"-w", width, "-F", flag}})
+		}
+	}
+	for _, width := range []string{"1", "2", "5", "72"} {
+		cases = append(cases, PtxByteCase{Name: "empty right reference " + width, Data: "REF alpha beta gamma delta epsilon zeta\nLONGER eta theta iota kappa lambda\n  R mu nu xi omicron\n", Args: []string{"-r", "-R", "-w", width}})
+	}
 	return cases
 }
 

@@ -537,14 +537,17 @@ function line_of(l: Lines, p: i32): i32 {
   return best;
 }
 
-function key_less(kbuf: u8[], a_start: i32, a_end: i32, b_start: i32, b_end: i32): boolean {
+function key_less(kbuf: u8[], a_start: i32, a_end: i32, b_start: i32, b_end: i32, prefix: i32): boolean {
   let an = a_end - a_start;
   let bn = b_end - b_start;
   let n = an;
   if (bn < n) {
     n = bn;
   }
-  let i = __mismatch_bytes(kbuf, a_start, kbuf, b_start, n);
+  if (n <= prefix) {
+    return an < bn;
+  }
+  let i = prefix + __mismatch_bytes(kbuf, a_start + prefix, kbuf, b_start + prefix, n - prefix);
   if (i < n) {
     return kbuf[a_start + i] as i32 < kbuf[b_start + i] as i32;
   }
@@ -609,6 +612,10 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
     src = radix.by_word(src, words, n, false, false);
   }
   let dst = scratch64(n);
+  let prefix = 0;
+  if (words.len() > 0) {
+    prefix = 8;
+  }
   let lo = 0;
   while (lo < n) {
     let hi = n;
@@ -625,7 +632,7 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
     while (c0 < hi) {
       let ic = src[c0] as i32;
       let ip = src[c0 - 1] as i32;
-      if (key_less(kbuf, ks[ic], ke[ic], ks[ip], ke[ip])) {
+      if (key_less(kbuf, ks[ic], ke[ic], ks[ip], ke[ip], prefix)) {
         width = 1;
         break;
       }
@@ -648,7 +655,7 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
         while (a < mid && b < end) {
           let ib = src[b] as i32;
           let ia = src[a] as i32;
-          if (key_less(kbuf, ks[ib], ke[ib], ks[ia], ke[ia])) {
+          if (key_less(kbuf, ks[ib], ke[ib], ks[ia], ke[ia], prefix)) {
             dst = dst.with(at, src[b]);
             b += 1;
           } else {
@@ -977,7 +984,75 @@ function spaces(n: i32): string {
 
 const BLANKS: string = "                                                                ";
 
-struct Line { h: usize, width: i32, mode: i32, cursor: i32, pending: i32, emitted: i32, e2: i32, ok: boolean, buf: u8[] }
+struct Stream { cursor: i32, pending: i32 }
+
+struct Positions { base: i32, before: i32, before_mark: i32, keyafter: i32, head: i32, end: i32 }
+
+function positions(f: Fields, g: Geom, right_ref: boolean): Positions {
+  let base = 0;
+  if (g.refs_left) {
+    base = g.refw;
+  } else if (right_ref) {
+    base = 0 - g.gap;
+  }
+  let e = base + g.col_half;
+  let bn = span_len(f.before);
+  let marker = e - bn - g.tlen;
+  let shift = 0;
+  if (bn == 0) {
+    if (f.before_flag) {
+      marker = e + 1 - g.tlen;
+      if (marker < base + g.gap) {
+        marker = base + g.gap;
+      }
+      shift = marker + g.tlen - e;
+    }
+    shift += f.blank_pad;
+  }
+  let p = base + g.col_half + shift + g.gap;
+  let end = p + g.col_half;
+  return Positions { base: base, before: e - bn, before_mark: marker, keyafter: p, head: end - span_len(f.head), end: end };
+}
+
+struct Check { cursor: i32, ok: boolean }
+
+function check_at(c: Check, at: i32, n: i32, width: i32): Check {
+  let p = max0(at);
+  if (p < c.cursor || p + n > width) {
+    return Check { ...c, ok: false };
+  }
+  return Check { ...c, cursor: p + n };
+}
+
+function fits(f: Fields, p: Positions, g: Geom, ref_len: i32, width: i32): boolean {
+  let c = Check { cursor: 0, ok: true };
+  if (g.refs_left) {
+    c = check_at(c, 0, ref_len, width);
+  }
+  c = check_at(c, p.base + g.gap, span_len(f.tail), width);
+  if (f.tail_flag) {
+    c = check_at(c, p.base + g.gap + span_len(f.tail), g.tlen, width);
+  }
+  if (span_len(f.before) > 0) {
+    if (f.before_flag) {
+      c = check_at(c, p.before_mark, g.tlen, width);
+    }
+    c = check_at(c, p.before, span_len(f.before), width);
+  } else if (f.before_flag) {
+    c = check_at(c, p.before_mark, g.tlen, width);
+  }
+  c = check_at(c, p.keyafter, span_len(f.keyafter), width);
+  if (f.keyafter_flag) {
+    c = check_at(c, p.keyafter + span_len(f.keyafter), g.tlen, width);
+  }
+  if (span_len(f.head) > 0) {
+    if (f.head_flag) {
+      c = check_at(c, p.head - g.tlen, g.tlen, width);
+    }
+    c = check_at(c, p.head, span_len(f.head), width);
+  }
+  return c.ok;
+}
 
 function push_spaces(h: usize, count: i32): void {
   let n = count;
@@ -991,118 +1066,159 @@ function push_spaces(h: usize, count: i32): void {
   }
 }
 
-function put(own l: Line, at: i32, s: u8[], a: i32, b: i32): Line {
-  let p = at;
-  if (p < 0) {
-    p = 0;
-  }
+function stream_put(h: usize, l: Stream, at: i32, s: u8[], a: i32, b: i32): Stream {
+  let p = max0(at);
   let n = b - a;
-  if (l.mode == 0) {
-    if (p < l.cursor || p + n > l.width) {
-      return Line { ...l, ok: false };
-    }
-    return Line { ...l, cursor: p + n };
-  }
-  if (l.mode == 2) {
-    return Line { ...l, buf: put_at(l.buf, p, s, a, b) };
-  }
   let pending = l.pending + (p - l.cursor);
   let body = n;
   while (body > 0 && s[a + body - 1] as i32 == 32) {
     body -= 1;
   }
-  let emitted = l.emitted;
   if (body > 0) {
-    push_spaces(l.h, pending);
-    buf_push_bytes_range(l.h, s, a, a + body);
-    emitted = emitted + pending + body;
+    push_spaces(h, pending);
+    buf_push_bytes_range(h, s, a, a + body);
     pending = n - body;
   } else {
     pending += n;
   }
-  return Line { ...l, cursor: p + n, pending: pending, emitted: emitted };
+  return Stream { cursor: p + n, pending: pending };
 }
 
-function put_marked(own l: Line, at: i32, s: u8[], sp: i64, mark_at: i32, mark: u8[], flag: boolean): Line {
-  if (l.mode == 2) {
-    l = put(l, at, s, span_lo(sp), span_hi(sp));
-    if (flag) {
-      l = put(l, mark_at, mark, 0, mark.len());
-    }
-    return l;
-  }
+function stream_marked(h: usize, l0: Stream, at: i32, s: u8[], sp: i64, mark_at: i32, mark: u8[], flag: boolean): Stream {
+  let l = l0;
   if (flag) {
-    l = put(l, mark_at, mark, 0, mark.len());
+    l = stream_flag(h, l, mark_at, mark);
   }
-  return put(l, at, s, span_lo(sp), span_hi(sp));
+  return stream_put(h, l, at, s, span_lo(sp), span_hi(sp));
 }
 
-function layout(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): Line {
+function stream_flag(h: usize, l: Stream, at: i32, mark: u8[]): Stream {
+  if (mark.len() == 0) {
+    return stream_put(h, l, at, mark, 0, 0);
+  }
+  let p = max0(at);
+  push_spaces(h, l.pending + (p - l.cursor));
+  buf_push_bytes_range(h, mark, 0, mark.len());
+  return Stream { cursor: p + mark.len(), pending: 0 };
+}
+
+function stream_layout(h: usize, text: u8[], f: Fields, ref: u8[], p: Positions, g: Geom, opts: Opts): Stream {
   let t = g.tlen;
   let tr = opts.trunc;
-  let l = l0;
-  let base = 0;
+  let l = Stream { cursor: 0, pending: 0 };
   if (g.refs_left) {
-    base = g.refw;
-    l = put(l, 0, ref, 0, ref.len());
-  } else if (opts.right_ref) {
-    base = 0 - g.gap;
+    l = stream_put(h, l, 0, ref, 0, ref.len());
   }
-  l = put(l, base + g.gap, text, span_lo(f.tail), span_hi(f.tail));
+  l = stream_put(h, l, p.base + g.gap, text, span_lo(f.tail), span_hi(f.tail));
   if (f.tail_flag) {
-    l = put(l, base + g.gap + span_len(f.tail), tr, 0, t);
+    l = stream_flag(h, l, p.base + g.gap + span_len(f.tail), tr);
   }
-  let e = base + g.col_half;
-  let shift = 0;
   let bn = span_len(f.before);
   if (bn > 0) {
-    l = put_marked(l, e - bn, text, f.before, e - bn - t, tr, f.before_flag);
+    l = stream_marked(h, l, p.before, text, f.before, p.before_mark, tr, f.before_flag);
   } else {
     if (f.before_flag) {
-      let marker_at = e + 1 - t;
-      if (marker_at < base + g.gap) {
-        marker_at = base + g.gap;
-      }
-      l = put(l, marker_at, tr, 0, t);
-      shift = marker_at + t - e;
+      l = stream_flag(h, l, p.before_mark, tr);
     }
-    shift += f.blank_pad;
   }
-  let p = base + g.col_half + shift + g.gap;
-  l = put(l, p, text, span_lo(f.keyafter), span_hi(f.keyafter));
+  l = stream_put(h, l, p.keyafter, text, span_lo(f.keyafter), span_hi(f.keyafter));
   if (f.keyafter_flag) {
-    l = put(l, p + span_len(f.keyafter), tr, 0, t);
+    l = stream_flag(h, l, p.keyafter + span_len(f.keyafter), tr);
   }
-  let e2 = p + g.col_half;
   let hn = span_len(f.head);
   if (hn > 0) {
-    l = put_marked(l, e2 - hn, text, f.head, e2 - hn - t, tr, f.head_flag);
+    l = stream_marked(h, l, p.head, text, f.head, p.head - t, tr, f.head_flag);
   }
-  return Line { ...l, e2: e2 };
+  return l;
 }
 
-function render_dumb(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): Line {
-  let h = l0.h;
+function fallback_layout(own line: u8[], text: u8[], f: Fields, ref: u8[], p: Positions, g: Geom, opts: Opts): u8[] {
+  let tr = opts.trunc;
+  let t = g.tlen;
+  if (g.refs_left) {
+    line = put_at(line, 0, ref, 0, ref.len());
+  }
+  line = put_at(line, p.base + g.gap, text, span_lo(f.tail), span_hi(f.tail));
+  if (f.tail_flag) {
+    line = put_at(line, p.base + g.gap + span_len(f.tail), tr, 0, t);
+  }
+  if (span_len(f.before) > 0) {
+    line = put_at(line, p.before, text, span_lo(f.before), span_hi(f.before));
+  }
+  if (f.before_flag) {
+    line = put_at(line, p.before_mark, tr, 0, t);
+  }
+  line = put_at(line, p.keyafter, text, span_lo(f.keyafter), span_hi(f.keyafter));
+  if (f.keyafter_flag) {
+    line = put_at(line, p.keyafter + span_len(f.keyafter), tr, 0, t);
+  }
+  if (span_len(f.head) > 0) {
+    line = put_at(line, p.head, text, span_lo(f.head), span_hi(f.head));
+    if (f.head_flag) {
+      line = put_at(line, p.head - t, tr, 0, t);
+    }
+  }
+  return line;
+}
+
+function placed_end(at: i32, n: i32, bound: i32): i32 {
+  let p = max0(at);
+  if (n <= 0 || p >= bound) {
+    return 0;
+  }
+  let count = n;
+  if (count > bound - p) {
+    count = bound - p;
+  }
+  return p + count;
+}
+
+function marker_end(f: Fields, p: Positions, g: Geom, bound: i32): i32 {
+  let end = 0;
+  if (f.tail_flag) {
+    end = placed_end(p.base + g.gap + span_len(f.tail), g.tlen, bound);
+  }
+  if (f.before_flag) {
+    end = max_end(end, placed_end(p.before_mark, g.tlen, bound));
+  }
+  if (f.keyafter_flag) {
+    end = max_end(end, placed_end(p.keyafter + span_len(f.keyafter), g.tlen, bound));
+  }
+  if (span_len(f.head) > 0 && f.head_flag) {
+    end = max_end(end, placed_end(p.head - g.tlen, g.tlen, bound));
+  }
+  return end;
+}
+
+function max_end(a: i32, b: i32): i32 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+function render_dumb(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): void {
   let t = g.tlen;
   let width = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + span_len(f.tail) + span_len(f.before) + span_len(f.keyafter) + span_len(f.head) + ref.len();
-  let l = layout(Line { ...l0, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true }, text, f, ref, g, opts);
-  if (l.ok) {
-    l = layout(Line { ...l, mode: 1, cursor: 0 }, text, f, ref, g, opts);
+  let p = positions(f, g, opts.right_ref);
+  let emitted = 0;
+  if (fits(f, p, g, ref.len(), width)) {
+    let l = stream_layout(h, text, f, ref, p, g, opts);
+    emitted = l.cursor - l.pending;
   } else {
-    l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, text, f, ref, g, opts);
-    let end = rtrim_bytes(l.buf);
-    buf_push_bytes_range(h, l.buf, 0, end);
-    l = Line { ...l, emitted: end };
+    let line = fallback_layout(spaces(width).bytes(), text, f, ref, p, g, opts);
+    emitted = max_end(rtrim_bytes(line), marker_end(f, p, g, line.len()));
+    buf_push_bytes_range(h, line, 0, emitted);
   }
   if (opts.right_ref && g.has_ref) {
-    if (l.emitted < l.e2) {
-      push_spaces(h, l.e2 - l.emitted);
+    let ref_at = p.keyafter + g.half;
+    if (emitted < ref_at) {
+      push_spaces(h, ref_at - emitted);
     }
     push_spaces(h, g.gap);
     buf_push_bytes_range(h, ref, 0, ref.len());
   }
   buf_push_byte(h, 10);
-  return l;
 }
 
 function put_at(own line: u8[], at: i32, s: u8[], a: i32, b: i32): u8[] {
@@ -1518,7 +1634,6 @@ pub function main(): i32 {
   }
   let tex = TexText { bytes: nbuf, plain: plain_tex };
   let h = w.handle();
-  let ln = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
   let j = 0;
   while (j < order.len()) {
     let oc = occs[order[j]];
@@ -1528,7 +1643,7 @@ pub function main(): i32 {
     } else if (o.format == 2) {
       render_tex(h, tex, f, oc.ref, geom, o);
     } else {
-      ln = render_dumb(ln, nbuf, f, oc.ref, geom, o);
+      render_dumb(h, nbuf, f, oc.ref, geom, o);
     }
     w = gnu.settle(w);
     j += 1;
