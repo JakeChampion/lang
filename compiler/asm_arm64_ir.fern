@@ -1215,74 +1215,36 @@ function ssa_reg(k: i32): string {
 }
 
 function ssa_caller_reg(k: i32): string {
-  if (k == 0) {
-    return "x0";
-  }
-  if (k == 1) {
-    return "x9";
-  }
-  if (k == 2) {
-    return "x10";
-  }
-  if (k == 3) {
-    return "x11";
-  }
-  if (k == 4) {
-    return "x12";
-  }
-  if (k == 5) {
-    return "x13";
-  }
-  if (k == 6) {
-    return "x14";
-  }
-  if (k == 7) {
-    return "x15";
-  }
-  if (k == 8) {
-    return "x1";
-  }
-  if (k == 9) {
-    return "x2";
-  }
-  if (k == 10) {
-    return "x3";
-  }
-  if (k == 11) {
-    return "x8";
-  }
-  return "x30";
+  return match (k) {
+    0 => "x0",
+    1 => "x9",
+    2 => "x10",
+    3 => "x11",
+    4 => "x12",
+    5 => "x13",
+    6 => "x14",
+    7 => "x15",
+    8 => "x1",
+    9 => "x2",
+    10 => "x3",
+    11 => "x8",
+    _ => "x30",
+  };
 }
 
 function ssa_saved_reg(k: i32): string {
-  if (k == 0) {
-    return "x19";
-  }
-  if (k == 1) {
-    return "x20";
-  }
-  if (k == 2) {
-    return "x21";
-  }
-  if (k == 3) {
-    return "x22";
-  }
-  if (k == 4) {
-    return "x23";
-  }
-  if (k == 5) {
-    return "x24";
-  }
-  if (k == 6) {
-    return "x25";
-  }
-  if (k == 7) {
-    return "x26";
-  }
-  if (k == 8) {
-    return "x27";
-  }
-  return "x28";
+  return match (k) {
+    0 => "x19",
+    1 => "x20",
+    2 => "x21",
+    3 => "x22",
+    4 => "x23",
+    5 => "x24",
+    6 => "x25",
+    7 => "x26",
+    8 => "x27",
+    _ => "x28",
+  };
 }
 
 function ssa_nregs(): i32 {
@@ -1436,31 +1398,17 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
   if (s.records()) {
     return s.cfi(kind, ssa_dwarf(reg), n);
   }
-  if (kind == 1) {
-    return s.write("    .cfi_startproc\n");
-  }
-  if (kind == 2) {
-    return s.write("    .cfi_endproc\n");
-  }
-  if (kind == 3) {
-    return s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 4) {
-    return s.write("    .cfi_def_cfa_register " + reg + "\n");
-  }
-  if (kind == 5) {
-    return s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 6) {
-    return s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n");
-  }
-  if (kind == 7) {
-    return s.write("    .cfi_remember_state\n");
-  }
-  if (kind == 8) {
-    return s.write("    .cfi_restore_state\n");
-  }
-  return s.write("    .cfi_negate_ra_state\n");
+  return match (kind) {
+    1 => s.write("    .cfi_startproc\n"),
+    2 => s.write("    .cfi_endproc\n"),
+    3 => s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n"),
+    4 => s.write("    .cfi_def_cfa_register " + reg + "\n"),
+    5 => s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n"),
+    6 => s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n"),
+    7 => s.write("    .cfi_remember_state\n"),
+    8 => s.write("    .cfi_restore_state\n"),
+    _ => s.write("    .cfi_negate_ra_state\n"),
+  };
 }
 
 function ssa_dwarf(reg: string): i32 {
@@ -2203,40 +2151,20 @@ function ssa_div_tag(tag: i32): boolean {
 }
 
 function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
-  if (tag == 21) {
-    return "    add " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 22) {
-    return "    sub " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 23) {
-    return "    mul " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 28) {
-    return "    and " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 29) {
-    return "    orr " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 30) {
-    return "    eor " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 430) {
-    return "    umulh " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 484) {
-    return "    smulh " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 31) {
-    return "    lsl " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 32) {
-    return "    asr " + d + ", " + a + ", " + b + "\n";
-  }
-  if (tag == 33) {
-    return "    lsr " + d + ", " + a + ", " + b + "\n";
-  }
-  return "    cmp " + a + ", " + b + "\n    cset " + d + ", " + ir_cmp_cond(tag, true) + "\n";
+  return match (tag) {
+    21 => "    add " + d + ", " + a + ", " + b + "\n",
+    22 => "    sub " + d + ", " + a + ", " + b + "\n",
+    23 => "    mul " + d + ", " + a + ", " + b + "\n",
+    28 => "    and " + d + ", " + a + ", " + b + "\n",
+    29 => "    orr " + d + ", " + a + ", " + b + "\n",
+    30 => "    eor " + d + ", " + a + ", " + b + "\n",
+    430 => "    umulh " + d + ", " + a + ", " + b + "\n",
+    484 => "    smulh " + d + ", " + a + ", " + b + "\n",
+    31 => "    lsl " + d + ", " + a + ", " + b + "\n",
+    32 => "    asr " + d + ", " + a + ", " + b + "\n",
+    33 => "    lsr " + d + ", " + a + ", " + b + "\n",
+    _ => "    cmp " + a + ", " + b + "\n    cset " + d + ", " + ir_cmp_cond(tag, true) + "\n",
+  };
 }
 
 function ssa_imm_right(): string[] {
@@ -2516,54 +2444,30 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
     }
     return "    ror " + w + ", " + ws + ", #" + n + "\n";
   }
-  if (what == "clz:64") {
-    return "    clz " + d + ", " + src + "\n";
-  }
-  if (what == "bswap:64") {
-    return "    rev " + d + ", " + src + "\n";
-  }
-  if (what == "bswap:32") {
-    return "    rev " + w + ", " + ws + "\n    sxtw " + d + ", " + w + "\n";
-  }
-  if (what == "clz:32") {
-    return "    clz " + w + ", " + ws + "\n";
-  }
-  if (what == "ctz:64") {
-    return "    rbit " + d + ", " + src + "\n    clz " + d + ", " + d + "\n";
-  }
-  if (what == "ctz:32") {
-    return "    rbit " + w + ", " + ws + "\n    clz " + w + ", " + w + "\n";
-  }
-  return "";
+  return match (what) {
+    "clz:64" => "    clz " + d + ", " + src + "\n",
+    "bswap:64" => "    rev " + d + ", " + src + "\n",
+    "bswap:32" => "    rev " + w + ", " + ws + "\n    sxtw " + d + ", " + w + "\n",
+    "clz:32" => "    clz " + w + ", " + ws + "\n",
+    "ctz:64" => "    rbit " + d + ", " + src + "\n    clz " + d + ", " + d + "\n",
+    "ctz:32" => "    rbit " + w + ", " + ws + "\n    clz " + w + ", " + w + "\n",
+    _ => "",
+  };
 }
 
 function ssa_bits_asm(what: string, d: string): string {
   let w = ssa_wreg(d);
-  if (what == "clz:64") {
-    return "    clz " + d + ", " + d + "\n";
-  }
-  if (what == "clz:32") {
-    return "    clz " + w + ", " + w + "\n";
-  }
-  if (what == "ctz:64") {
-    return "    rbit " + d + ", " + d + "\n    clz " + d + ", " + d + "\n";
-  }
-  if (what == "ctz:32") {
-    return "    rbit " + w + ", " + w + "\n    clz " + w + ", " + w + "\n";
-  }
-  if (what == "popcount:64") {
-    return "    fmov d0, " + d + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n";
-  }
-  if (what == "popcount:32") {
-    return "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n";
-  }
-  if (what == "bswap:64") {
-    return "    rev " + d + ", " + d + "\n";
-  }
-  if (what == "bswap:32") {
-    return "    rev " + w + ", " + w + "\n    sxtw " + d + ", " + w + "\n";
-  }
-  return "";
+  return match (what) {
+    "clz:64" => "    clz " + d + ", " + d + "\n",
+    "clz:32" => "    clz " + w + ", " + w + "\n",
+    "ctz:64" => "    rbit " + d + ", " + d + "\n    clz " + d + ", " + d + "\n",
+    "ctz:32" => "    rbit " + w + ", " + w + "\n    clz " + w + ", " + w + "\n",
+    "popcount:64" => "    fmov d0, " + d + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n",
+    "popcount:32" => "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n",
+    "bswap:64" => "    rev " + d + ", " + d + "\n",
+    "bswap:32" => "    rev " + w + ", " + w + "\n    sxtw " + d + ", " + w + "\n",
+    _ => "",
+  };
 }
 
 function ssa_fconv_asm(what: string, d: string): string {
@@ -2974,47 +2878,27 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
 }
 
 function ssa_fcc(what: string): string {
-  if (what == "flt") {
-    return "mi";
-  }
-  if (what == "fle") {
-    return "ls";
-  }
-  if (what == "fgt") {
-    return "gt";
-  }
-  if (what == "fge") {
-    return "ge";
-  }
-  if (what == "feq") {
-    return "eq";
-  }
-  return "ne";
+  return match (what) {
+    "flt" => "mi",
+    "fle" => "ls",
+    "fgt" => "gt",
+    "fge" => "ge",
+    "feq" => "eq",
+    _ => "ne",
+  };
 }
 
 function ssa_fmath_op(what: string): string {
-  if (what == "fsqrt") {
-    return "fsqrt";
-  }
-  if (what == "ffloor") {
-    return "frintm";
-  }
-  if (what == "fceil") {
-    return "frintp";
-  }
-  if (what == "ftrunc") {
-    return "frintz";
-  }
-  if (what == "fround") {
-    return "frinta";
-  }
-  if (what == "fneg") {
-    return "fneg";
-  }
-  if (what == "fabs") {
-    return "fabs";
-  }
-  return "";
+  return match (what) {
+    "fsqrt" => "fsqrt",
+    "ffloor" => "frintm",
+    "fceil" => "frintp",
+    "ftrunc" => "frintz",
+    "fround" => "frinta",
+    "fneg" => "fneg",
+    "fabs" => "fabs",
+    _ => "",
+  };
 }
 
 function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -3557,34 +3441,18 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.ssa_host_bare(op)) {
     return s.need(op);
   }
-  if (op == "str_concat") {
-    return s.need("str_concat");
-  }
-  if (op == "str_eq") {
-    return s.need("str_eq");
-  }
-  if (op == "str_cmp") {
-    return s.need("str_cmp");
-  }
-  if (op == "arr_slice") {
-    return s.need("arr_slice");
-  }
-  if (op == "arr_slice_u8") {
-    return s.need("arr_slice_u8");
-  }
-  if (op == "str_from_bytes_u8") {
-    return s.need("str_from_bytes_u8");
-  }
-  if (op == "str_from_bytes_range_u8") {
-    return s.need("str_from_bytes_range_u8");
-  }
-  if (op == "print_str") {
-    return s.need("str_print");
-  }
-  if (op == "eprint_str") {
-    return s.need("eprint");
-  }
-  return s.need("str_from_bytes");
+  return match (op) {
+    "str_concat" => s.need("str_concat"),
+    "str_eq" => s.need("str_eq"),
+    "str_cmp" => s.need("str_cmp"),
+    "arr_slice" => s.need("arr_slice"),
+    "arr_slice_u8" => s.need("arr_slice_u8"),
+    "str_from_bytes_u8" => s.need("str_from_bytes_u8"),
+    "str_from_bytes_range_u8" => s.need("str_from_bytes_range_u8"),
+    "print_str" => s.need("str_print"),
+    "eprint_str" => s.need("eprint"),
+    _ => s.need("str_from_bytes"),
+  };
 }
 
 // A system-register op. An isb after msr makes the write take effect before the
@@ -3647,16 +3515,12 @@ function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 }
 
 function arm64_maintenance_text(op: string): string {
-  if (op == "dev_tlb_flush") {
-    return "    dsb ishst\n    lsr x9, x9, #12\n    tlbi vaae1is, x9\n    dsb ish\n    isb\n";
-  }
-  if (op == "dev_cache_clean") {
-    return "    dc cvac, x9\n";
-  }
-  if (op == "dev_cache_sync_code") {
-    return "    dc cvau, x9\n    dsb ish\n    ic ivau, x9\n    dsb ish\n    isb\n";
-  }
-  return "    dc civac, x9\n";
+  return match (op) {
+    "dev_tlb_flush" => "    dsb ishst\n    lsr x9, x9, #12\n    tlbi vaae1is, x9\n    dsb ish\n    isb\n",
+    "dev_cache_clean" => "    dc cvac, x9\n",
+    "dev_cache_sync_code" => "    dc cvau, x9\n    dsb ish\n    ic ivau, x9\n    dsb ish\n    isb\n",
+    _ => "    dc civac, x9\n",
+  };
 }
 
 // brk takes the sync exception with the class 0x3c, and elr_el1 holds its
@@ -3664,19 +3528,13 @@ function arm64_maintenance_text(op: string): string {
 // IRQs masked: a pending IRQ wakes wfi also when PSTATE masks it, so no wakeup
 // is lost, and the unmask then lets its handler run before the mask returns.
 function arm64_no_operand_op(op: string): string {
-  if (op == "dev_breakpoint") {
-    return "    brk #0\n";
-  }
-  if (op == "dev_irq_mask") {
-    return "    msr daifset, #2\n";
-  }
-  if (op == "dev_irq_unmask") {
-    return "    msr daifclr, #2\n";
-  }
-  if (op == "dev_irq_wait") {
-    return "    wfi\n    msr daifclr, #2\n    msr daifset, #2\n";
-  }
-  return "    wfi\n";
+  return match (op) {
+    "dev_breakpoint" => "    brk #0\n",
+    "dev_irq_mask" => "    msr daifset, #2\n",
+    "dev_irq_unmask" => "    msr daifclr, #2\n",
+    "dev_irq_wait" => "    wfi\n    msr daifclr, #2\n    msr daifset, #2\n",
+    _ => "    wfi\n",
+  };
 }
 
 function arm64_no_operand(op: string): boolean {
@@ -3821,25 +3679,15 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
 }
 
 function sym_addr_need(sym: string): string {
-  if (sym == "__fern_scratch") {
-    return "raw_scratch";
-  }
-  if (sym == "__fern_envp") {
-    return "heap";
-  }
-  if (sym == "__fern_splice_pipe") {
-    return "raw_splice_pipe";
-  }
-  if (sym == "__fern_cov_counters") {
-    return "raw_cover";
-  }
-  if (sym == "__fern_task_state") {
-    return "task";
-  }
-  if (sym == "__fern_vdso") {
-    return "vdso";
-  }
-  return "";
+  return match (sym) {
+    "__fern_scratch" => "raw_scratch",
+    "__fern_envp" => "heap",
+    "__fern_splice_pipe" => "raw_splice_pipe",
+    "__fern_cov_counters" => "raw_cover",
+    "__fern_task_state" => "task",
+    "__fern_vdso" => "vdso",
+    _ => "",
+  };
 }
 
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -12879,70 +12727,30 @@ function darwin_index_of_unquoted(s: string, sub: string): i32 {
 }
 
 function darwin_sysno(n: i32): i32 {
-  if (n == 63) {
-    return 3;
-  }
-  if (n == 64) {
-    return 4;
-  }
-  if (n == 57) {
-    return 6;
-  }
-  if (n == 56) {
-    return 463;
-  }
-  if (n == 61) {
-    return 344;
-  }
-  if (n == 62) {
-    return 199;
-  }
-  if (n == 79) {
-    return 470;
-  }
-  if (n == 35) {
-    return 472;
-  }
-  if (n == 34) {
-    return 475;
-  }
-  if (n == 24) {
-    return 90;
-  }
-  if (n == 221) {
-    return 59;
-  }
-  if (n == 260) {
-    return 7;
-  }
-  if (n == 198) {
-    return 97;
-  }
-  if (n == 200) {
-    return 104;
-  }
-  if (n == 201) {
-    return 106;
-  }
-  if (n == 202) {
-    return 30;
-  }
-  if (n == 206) {
-    return 133;
-  }
-  if (n == 93) {
-    return 1;
-  }
-  if (n == 94) {
-    return 1;
-  }
-  if (n == 222) {
-    return 197;
-  }
-  if (n == 226) {
-    return 74;
-  }
-  return darwin_profile_process_sysno(n);
+  return match (n) {
+    63 => 3,
+    64 => 4,
+    57 => 6,
+    56 => 463,
+    61 => 344,
+    62 => 199,
+    79 => 470,
+    35 => 472,
+    34 => 475,
+    24 => 90,
+    221 => 59,
+    260 => 7,
+    198 => 97,
+    200 => 104,
+    201 => 106,
+    202 => 30,
+    206 => 133,
+    93 => 1,
+    94 => 1,
+    222 => 197,
+    226 => 74,
+    _ => darwin_profile_process_sysno(n),
+  };
 }
 
 function darwin_profile_process_sysno(n: i32): i32 {
@@ -12956,19 +12764,13 @@ function darwin_profile_process_sysno(n: i32): i32 {
 }
 
 function darwin_profile_signal_sysno(n: i32): i32 {
-  if (n == 103) {
-    return 83;
-  }
-  if (n == 134) {
-    return 46;
-  }
-  if (n == 132) {
-    return 53;
-  }
-  if (n == 135) {
-    return 48;
-  }
-  return -1;
+  return match (n) {
+    103 => 83,
+    134 => 46,
+    132 => 53,
+    135 => 48,
+    _ => -1,
+  };
 }
 
 function darwin_retarget_locals(line: string): string {

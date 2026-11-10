@@ -11,6 +11,7 @@ import "./semdead";
 import "./ownership";
 import "./ssabytes";
 import "std/string";
+import "std/option";
 
 function max_leaf_insts(): i32 {
   return 40;
@@ -717,7 +718,7 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
     return true;
   }
   // Pair operations transfer their input dependency without a new memory read.
-  if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0 || ins.str.starts_with(sempair.word_as_prefix()))) {
+  if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str).is_some() || sempair.pair_lane_slot(ins.str).is_some() || ins.str.starts_with(sempair.word_as_prefix()))) {
     return false;
   }
   if (k == ssasem.call() && !util.has_str(f.shadows, ins.str) && copied_scalar_result(ins.str)) {

@@ -1184,16 +1184,12 @@ function jni_fern_type(t: string): string {
 // The expression `e` extended from the width of Java type `t` to 32 bits.
 // The C ABIs do not specify the bits above a narrow argument or result.
 function jni_extend(t: string, e: string): string {
-  if (t == "byte") {
-    return "((" + e + ") << 24) >> 24";
-  }
-  if (t == "short") {
-    return "((" + e + ") << 16) >> 16";
-  }
-  if (t == "char") {
-    return "(" + e + ") & 65535";
-  }
-  return e;
+  return match (t) {
+    "byte" => "((" + e + ") << 24) >> 24",
+    "short" => "((" + e + ") << 16) >> 16",
+    "char" => "(" + e + ") & 65535",
+    _ => e,
+  };
 }
 
 function jni_name_char(c: u8): boolean {
@@ -6044,52 +6040,24 @@ function apk_switch(name: string): boolean {
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
-  if (f.name == "-jni-java") {
-    return ApkOpts { ...o, jni_java: f.value };
-  }
-  if (f.name == "-jni-dex") {
-    return ApkOpts { ...o, jni_dex: f.value };
-  }
-  if (f.name == "-apk") {
-    return ApkOpts { ...o, out: f.value };
-  }
-  if (f.name == "-apk-package") {
-    return ApkOpts { ...o, package: f.value };
-  }
-  if (f.name == "-apk-label") {
-    return ApkOpts { ...o, label: f.value };
-  }
-  if (f.name == "-apk-icon") {
-    return ApkOpts { ...o, icon: f.value };
-  }
-  if (f.name == "-apk-key") {
-    return ApkOpts { ...o, key: f.value };
-  }
-  if (f.name == "-apk-permission") {
-    return ApkOpts { ...o, permissions: f.value };
-  }
-  if (f.name == "-apk-min-sdk") {
-    return ApkOpts { ...o, min_sdk: f.value };
-  }
-  if (f.name == "-apk-compress") {
-    return ApkOpts { ...o, compress: true };
-  }
-  if (f.name == "-apk-cleartext") {
-    return ApkOpts { ...o, cleartext: true };
-  }
-  if (f.name == "-apk-debuggable") {
-    return ApkOpts { ...o, debuggable: true };
-  }
-  if (f.name == "-apk-home") {
-    return ApkOpts { ...o, home: true };
-  }
-  if (f.name == "-apk-asset") {
-    return ApkOpts { ...o, assets: f.value };
-  }
-  if (f.name == "-apk-run") {
-    return ApkOpts { ...o, run: true };
-  }
-  return o;
+  return match (f.name) {
+    "-jni-java" => ApkOpts { ...o, jni_java: f.value },
+    "-jni-dex" => ApkOpts { ...o, jni_dex: f.value },
+    "-apk" => ApkOpts { ...o, out: f.value },
+    "-apk-package" => ApkOpts { ...o, package: f.value },
+    "-apk-label" => ApkOpts { ...o, label: f.value },
+    "-apk-icon" => ApkOpts { ...o, icon: f.value },
+    "-apk-key" => ApkOpts { ...o, key: f.value },
+    "-apk-permission" => ApkOpts { ...o, permissions: f.value },
+    "-apk-min-sdk" => ApkOpts { ...o, min_sdk: f.value },
+    "-apk-compress" => ApkOpts { ...o, compress: true },
+    "-apk-cleartext" => ApkOpts { ...o, cleartext: true },
+    "-apk-debuggable" => ApkOpts { ...o, debuggable: true },
+    "-apk-home" => ApkOpts { ...o, home: true },
+    "-apk-asset" => ApkOpts { ...o, assets: f.value },
+    "-apk-run" => ApkOpts { ...o, run: true },
+    _ => o,
+  };
 }
 
 // The arguments of one -apk build: the command line without the -apk flags.

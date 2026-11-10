@@ -1066,896 +1066,316 @@ pub function sysno(t: string, name: string): string {
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_x86_64(name: string): string {
-  if (name == "read") {
-    return "0";
-  }
-  if (name == "write") {
-    return "1";
-  }
-  if (name == "writev") {
-    return "20";
-  }
-  if (name == "close") {
-    return "3";
-  }
-  if (name == "lseek") {
-    return "8";
-  }
-  if (name == "fstat") {
-    return "5";
-  }
-  if (name == "openat") {
-    return "257";
-  }
-  if (name == "fcntl") {
-    return "72";
-  }
-  if (name == "fchmod") {
-    return "91";
-  }
-  if (name == "unlinkat") {
-    return "263";
-  }
-  if (name == "mkdirat") {
-    return "258";
-  }
-  if (name == "fstatat") {
-    return "262";
-  }
-  if (name == "statx") {
-    return "332";
-  }
-  if (name == "getrandom") {
-    return "318";
-  }
-  if (name == "exit") {
-    return "60";
-  }
-  if (name == "clock_gettime") {
-    return "228";
-  }
-  if (name == "clock_settime") {
-    return "227";
-  }
-  if (name == "clock_getres") {
-    return "229";
-  }
-  if (name == "getdents") {
-    return "217";
-  }
-  if (name == "accept") {
-    return "43";
-  }
-  if (name == "nanosleep") {
-    return "35";
-  }
-  if (name == "poll") {
-    return "7";
-  }
-  if (name == "epoll_create1") {
-    return "291";
-  }
-  if (name == "epoll_ctl") {
-    return "233";
-  }
-  if (name == "epoll_pwait") {
-    return "281";
-  }
-  if (name == "io_uring_setup") {
-    return "425";
-  }
-  if (name == "io_uring_enter") {
-    return "426";
-  }
-  if (name == "io_uring_register") {
-    return "427";
-  }
-  if (name == "prlimit64") {
-    return "302";
-  }
-  if (name == "sendmsg") {
-    return "46";
-  }
-  if (name == "recvmsg") {
-    return "47";
-  }
-  if (name == "signalfd4") {
-    return "289";
-  }
-  if (name == "rt_sigprocmask") {
-    return "14";
-  }
-  if (name == "wait4") {
-    return "61";
-  }
-  if (name == "socket") {
-    return "41";
-  }
-  if (name == "bind") {
-    return "49";
-  }
-  if (name == "listen") {
-    return "50";
-  }
-  if (name == "connect") {
-    return "42";
-  }
-  if (name == "setsockopt") {
-    return "54";
-  }
-  if (name == "shutdown") {
-    return "48";
-  }
-  if (name == "sendto") {
-    return "44";
-  }
-  if (name == "recvfrom") {
-    return "45";
-  }
-  if (name == "getsockname") {
-    return "51";
-  }
-  if (name == "getpeername") {
-    return "52";
-  }
-  if (name == "getsockopt") {
-    return "55";
-  }
-  if (name == "execve") {
-    return "59";
-  }
-  if (name == "fork") {
-    return "57";
-  }
-  if (name == "pipe2") {
-    return "293";
-  }
-  if (name == "dup3") {
-    return "292";
-  }
-  if (name == "splice") {
-    return "275";
-  }
-  if (name == "vmsplice") {
-    return "278";
-  }
-  if (name == "mmap") {
-    return "9";
-  }
-  if (name == "munmap") {
-    return "11";
-  }
-  if (name == "copy_file_range") {
-    return "326";
-  }
-  if (name == "sendfile") {
-    return "40";
-  }
-  if (name == "timerfd_create") {
-    return "283";
-  }
-  if (name == "timerfd_settime") {
-    return "286";
-  }
-  if (name == "ioctl") {
-    return "16";
-  }
-  if (name == "faccessat") {
-    return "439";
-  }
-  if (name == "geteuid") {
-    return "107";
-  }
-  if (name == "getegid") {
-    return "108";
-  }
-  if (name == "getuid") {
-    return "102";
-  }
-  if (name == "getgid") {
-    return "104";
-  }
-  if (name == "getgroups") {
-    return "115";
-  }
-  if (name == "uname") {
-    return "63";
-  }
-  if (name == "getcwd") {
-    return "79";
-  }
-  if (name == "sched_getaffinity") {
-    return "204";
-  }
-  if (name == "sigaction") {
-    return "13";
-  }
-  if (name == "sigprocmask") {
-    return "14";
-  }
-  if (name == "chdir") {
-    return "80";
-  }
-  if (name == "chroot") {
-    return "161";
-  }
-  if (name == "setuid") {
-    return "105";
-  }
-  if (name == "setgid") {
-    return "106";
-  }
-  if (name == "setgroups") {
-    return "116";
-  }
-  if (name == "linkat") {
-    return "265";
-  }
-  if (name == "symlinkat") {
-    return "266";
-  }
-  if (name == "readlinkat") {
-    return "267";
-  }
-  if (name == "renameat") {
-    return "264";
-  }
-  if (name == "renameat2") {
-    return "316";
-  }
-  if (name == "getxattr") {
-    return "191";
-  }
-  if (name == "lgetxattr") {
-    return "192";
-  }
-  if (name == "setxattr") {
-    return "188";
-  }
-  if (name == "lsetxattr") {
-    return "189";
-  }
-  if (name == "fchmodat") {
-    return "268";
-  }
-  if (name == "fchmodat2") {
-    return "452";
-  }
-  if (name == "truncate") {
-    return "76";
-  }
-  if (name == "ftruncate") {
-    return "77";
-  }
-  if (name == "fsync") {
-    return "74";
-  }
-  if (name == "fdatasync") {
-    return "75";
-  }
-  if (name == "fadvise64") {
-    return "221";
-  }
-  if (name == "sync") {
-    return "162";
-  }
-  if (name == "syncfs") {
-    return "306";
-  }
-  if (name == "mknodat") {
-    return "259";
-  }
-  if (name == "fchownat") {
-    return "260";
-  }
-  if (name == "utimensat") {
-    return "280";
-  }
-  if (name == "umask") {
-    return "95";
-  }
-  if (name == "getpriority") {
-    return "140";
-  }
-  if (name == "setpriority") {
-    return "141";
-  }
-  if (name == "kill") {
-    return "62";
-  }
-  if (name == "prctl") {
-    return "157";
-  }
-  if (name == "getppid") {
-    return "110";
-  }
-  if (name == "getpid") {
-    return "39";
-  }
-  if (name == "setpgid") {
-    return "109";
-  }
-  if (name == "getrlimit") {
-    return "97";
-  }
-  if (name == "setrlimit") {
-    return "160";
-  }
-  if (name == "statfs") {
-    return "137";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "0",
+    "write" => "1",
+    "writev" => "20",
+    "close" => "3",
+    "lseek" => "8",
+    "fstat" => "5",
+    "openat" => "257",
+    "fcntl" => "72",
+    "fchmod" => "91",
+    "unlinkat" => "263",
+    "mkdirat" => "258",
+    "fstatat" => "262",
+    "statx" => "332",
+    "getrandom" => "318",
+    "exit" => "60",
+    "clock_gettime" => "228",
+    "clock_settime" => "227",
+    "clock_getres" => "229",
+    "getdents" => "217",
+    "accept" => "43",
+    "nanosleep" => "35",
+    "poll" => "7",
+    "epoll_create1" => "291",
+    "epoll_ctl" => "233",
+    "epoll_pwait" => "281",
+    "io_uring_setup" => "425",
+    "io_uring_enter" => "426",
+    "io_uring_register" => "427",
+    "prlimit64" => "302",
+    "sendmsg" => "46",
+    "recvmsg" => "47",
+    "signalfd4" => "289",
+    "rt_sigprocmask" => "14",
+    "wait4" => "61",
+    "socket" => "41",
+    "bind" => "49",
+    "listen" => "50",
+    "connect" => "42",
+    "setsockopt" => "54",
+    "shutdown" => "48",
+    "sendto" => "44",
+    "recvfrom" => "45",
+    "getsockname" => "51",
+    "getpeername" => "52",
+    "getsockopt" => "55",
+    "execve" => "59",
+    "fork" => "57",
+    "pipe2" => "293",
+    "dup3" => "292",
+    "splice" => "275",
+    "vmsplice" => "278",
+    "mmap" => "9",
+    "munmap" => "11",
+    "copy_file_range" => "326",
+    "sendfile" => "40",
+    "timerfd_create" => "283",
+    "timerfd_settime" => "286",
+    "ioctl" => "16",
+    "faccessat" => "439",
+    "geteuid" => "107",
+    "getegid" => "108",
+    "getuid" => "102",
+    "getgid" => "104",
+    "getgroups" => "115",
+    "uname" => "63",
+    "getcwd" => "79",
+    "sched_getaffinity" => "204",
+    "sigaction" => "13",
+    "sigprocmask" => "14",
+    "chdir" => "80",
+    "chroot" => "161",
+    "setuid" => "105",
+    "setgid" => "106",
+    "setgroups" => "116",
+    "linkat" => "265",
+    "symlinkat" => "266",
+    "readlinkat" => "267",
+    "renameat" => "264",
+    "renameat2" => "316",
+    "getxattr" => "191",
+    "lgetxattr" => "192",
+    "setxattr" => "188",
+    "lsetxattr" => "189",
+    "fchmodat" => "268",
+    "fchmodat2" => "452",
+    "truncate" => "76",
+    "ftruncate" => "77",
+    "fsync" => "74",
+    "fdatasync" => "75",
+    "fadvise64" => "221",
+    "sync" => "162",
+    "syncfs" => "306",
+    "mknodat" => "259",
+    "fchownat" => "260",
+    "utimensat" => "280",
+    "umask" => "95",
+    "getpriority" => "140",
+    "setpriority" => "141",
+    "kill" => "62",
+    "prctl" => "157",
+    "getppid" => "110",
+    "getpid" => "39",
+    "setpgid" => "109",
+    "getrlimit" => "97",
+    "setrlimit" => "160",
+    "statfs" => "137",
+    _ => "-1",
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_arm64_darwin(name: string): string {
-  if (name == "read") {
-    return "3";
-  }
-  if (name == "write") {
-    return "4";
-  }
-  if (name == "writev") {
-    return "121";
-  }
-  if (name == "close") {
-    return "6";
-  }
-  if (name == "lseek") {
-    return "199";
-  }
-  if (name == "sendfile") {
-    return "337";
-  }
-  if (name == "fstat") {
-    return "339";
-  }
-  if (name == "openat") {
-    return "463";
-  }
-  if (name == "fcntl") {
-    return "92";
-  }
-  if (name == "fchmod") {
-    return "124";
-  }
-  if (name == "unlinkat") {
-    return "472";
-  }
-  if (name == "mkdirat") {
-    return "475";
-  }
-  if (name == "fstatat") {
-    return "470";
-  }
-  if (name == "getrandom") {
-    return "500";
-  }
-  if (name == "exit") {
-    return "1";
-  }
-  if (name == "gettimeofday") {
-    return "116";
-  }
-  if (name == "settimeofday") {
-    return "122";
-  }
-  if (name == "getdents") {
-    return "344";
-  }
-  if (name == "accept") {
-    return "30";
-  }
-  if (name == "select") {
-    return "93";
-  }
-  if (name == "kqueue") {
-    return "362";
-  }
-  if (name == "kevent") {
-    return "363";
-  }
-  if (name == "wait4") {
-    return "7";
-  }
-  if (name == "socket") {
-    return "97";
-  }
-  if (name == "bind") {
-    return "104";
-  }
-  if (name == "listen") {
-    return "106";
-  }
-  if (name == "connect") {
-    return "98";
-  }
-  if (name == "setsockopt") {
-    return "105";
-  }
-  if (name == "shutdown") {
-    return "134";
-  }
-  if (name == "sendto") {
-    return "133";
-  }
-  if (name == "recvfrom") {
-    return "29";
-  }
-  if (name == "getsockname") {
-    return "32";
-  }
-  if (name == "getpeername") {
-    return "31";
-  }
-  if (name == "getsockopt") {
-    return "118";
-  }
-  if (name == "execve") {
-    return "59";
-  }
-  if (name == "ioctl") {
-    return "54";
-  }
-  if (name == "faccessat") {
-    return "466";
-  }
-  if (name == "fchmodat") {
-    return "467";
-  }
-  if (name == "truncate") {
-    return "200";
-  }
-  if (name == "ftruncate") {
-    return "201";
-  }
-  if (name == "fsync") {
-    return "95";
-  }
-  if (name == "fdatasync") {
-    return "187";
-  }
-  if (name == "sync") {
-    return "36";
-  }
-  if (name == "dup3") {
-    return "90";
-  }
-  if (name == "mknodat") {
-    return "14";
-  }
-  if (name == "fchownat") {
-    return "468";
-  }
-  if (name == "setattrlist") {
-    return "221";
-  }
-  if (name == "renameat") {
-    return "465";
-  }
-  if (name == "renameat2") {
-    return "488";
-  }
-  if (name == "getxattr") {
-    return "234";
-  }
-  if (name == "lgetxattr") {
-    return "234";
-  }
-  if (name == "setxattr") {
-    return "236";
-  }
-  if (name == "lsetxattr") {
-    return "236";
-  }
-  if (name == "geteuid") {
-    return "25";
-  }
-  if (name == "getegid") {
-    return "43";
-  }
-  if (name == "getuid") {
-    return "24";
-  }
-  if (name == "getgid") {
-    return "47";
-  }
-  if (name == "getgroups") {
-    return "79";
-  }
-  if (name == "sigaction") {
-    return "46";
-  }
-  if (name == "sigprocmask") {
-    return "48";
-  }
-  if (name == "chdir") {
-    return "12";
-  }
-  if (name == "chroot") {
-    return "61";
-  }
-  if (name == "setuid") {
-    return "23";
-  }
-  if (name == "setgid") {
-    return "181";
-  }
-  if (name == "setgroups") {
-    return "80";
-  }
-  if (name == "linkat") {
-    return "471";
-  }
-  if (name == "symlinkat") {
-    return "474";
-  }
-  if (name == "readlinkat") {
-    return "473";
-  }
-  if (name == "umask") {
-    return "60";
-  }
-  if (name == "getpriority") {
-    return "100";
-  }
-  if (name == "setpriority") {
-    return "96";
-  }
-  if (name == "kill") {
-    return "37";
-  }
-  if (name == "getppid") {
-    return "39";
-  }
-  if (name == "getpid") {
-    return "20";
-  }
-  if (name == "setpgid") {
-    return "82";
-  }
-  if (name == "getrlimit") {
-    return "194";
-  }
-  if (name == "setrlimit") {
-    return "195";
-  }
-  if (name == "statfs") {
-    return "345";
-  }
-  if (name == "getfsstat") {
-    return "347";
-  }
-  if (name == "sysctl") {
-    return "202";
-  }
-  if (name == "pathconf") {
-    return "191";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "3",
+    "write" => "4",
+    "writev" => "121",
+    "close" => "6",
+    "lseek" => "199",
+    "sendfile" => "337",
+    "fstat" => "339",
+    "openat" => "463",
+    "fcntl" => "92",
+    "fchmod" => "124",
+    "unlinkat" => "472",
+    "mkdirat" => "475",
+    "fstatat" => "470",
+    "getrandom" => "500",
+    "exit" => "1",
+    "gettimeofday" => "116",
+    "settimeofday" => "122",
+    "getdents" => "344",
+    "accept" => "30",
+    "select" => "93",
+    "kqueue" => "362",
+    "kevent" => "363",
+    "wait4" => "7",
+    "socket" => "97",
+    "bind" => "104",
+    "listen" => "106",
+    "connect" => "98",
+    "setsockopt" => "105",
+    "shutdown" => "134",
+    "sendto" => "133",
+    "recvfrom" => "29",
+    "getsockname" => "32",
+    "getpeername" => "31",
+    "getsockopt" => "118",
+    "execve" => "59",
+    "ioctl" => "54",
+    "faccessat" => "466",
+    "fchmodat" => "467",
+    "truncate" => "200",
+    "ftruncate" => "201",
+    "fsync" => "95",
+    "fdatasync" => "187",
+    "sync" => "36",
+    "dup3" => "90",
+    "mknodat" => "14",
+    "fchownat" => "468",
+    "setattrlist" => "221",
+    "renameat" => "465",
+    "renameat2" => "488",
+    "getxattr" => "234",
+    "lgetxattr" => "234",
+    "setxattr" => "236",
+    "lsetxattr" => "236",
+    "geteuid" => "25",
+    "getegid" => "43",
+    "getuid" => "24",
+    "getgid" => "47",
+    "getgroups" => "79",
+    "sigaction" => "46",
+    "sigprocmask" => "48",
+    "chdir" => "12",
+    "chroot" => "61",
+    "setuid" => "23",
+    "setgid" => "181",
+    "setgroups" => "80",
+    "linkat" => "471",
+    "symlinkat" => "474",
+    "readlinkat" => "473",
+    "umask" => "60",
+    "getpriority" => "100",
+    "setpriority" => "96",
+    "kill" => "37",
+    "getppid" => "39",
+    "getpid" => "20",
+    "setpgid" => "82",
+    "getrlimit" => "194",
+    "setrlimit" => "195",
+    "statfs" => "345",
+    "getfsstat" => "347",
+    "sysctl" => "202",
+    "pathconf" => "191",
+    _ => "-1",
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity
 function sysno_arm64_linux(name: string): string {
-  if (name == "read") {
-    return "63";
-  }
-  if (name == "write") {
-    return "64";
-  }
-  if (name == "writev") {
-    return "66";
-  }
-  if (name == "close") {
-    return "57";
-  }
-  if (name == "lseek") {
-    return "62";
-  }
-  if (name == "fstat") {
-    return "80";
-  }
-  if (name == "openat") {
-    return "56";
-  }
-  if (name == "fcntl") {
-    return "25";
-  }
-  if (name == "fchmod") {
-    return "52";
-  }
-  if (name == "unlinkat") {
-    return "35";
-  }
-  if (name == "mkdirat") {
-    return "34";
-  }
-  if (name == "fstatat") {
-    return "79";
-  }
-  if (name == "statx") {
-    return "291";
-  }
-  if (name == "getrandom") {
-    return "278";
-  }
-  if (name == "exit") {
-    return "93";
-  }
-  if (name == "clock_gettime") {
-    return "113";
-  }
-  if (name == "clock_settime") {
-    return "112";
-  }
-  if (name == "clock_getres") {
-    return "114";
-  }
-  if (name == "getdents") {
-    return "61";
-  }
-  if (name == "accept") {
-    return "202";
-  }
-  if (name == "nanosleep") {
-    return "101";
-  }
-  if (name == "ppoll") {
-    return "73";
-  }
-  if (name == "epoll_create1") {
-    return "20";
-  }
-  if (name == "epoll_ctl") {
-    return "21";
-  }
-  if (name == "epoll_pwait") {
-    return "22";
-  }
-  if (name == "io_uring_setup") {
-    return "425";
-  }
-  if (name == "io_uring_enter") {
-    return "426";
-  }
-  if (name == "io_uring_register") {
-    return "427";
-  }
-  if (name == "prlimit64") {
-    return "261";
-  }
-  if (name == "sendmsg") {
-    return "211";
-  }
-  if (name == "recvmsg") {
-    return "212";
-  }
-  if (name == "signalfd4") {
-    return "74";
-  }
-  if (name == "rt_sigprocmask") {
-    return "135";
-  }
-  if (name == "wait4") {
-    return "260";
-  }
-  if (name == "socket") {
-    return "198";
-  }
-  if (name == "bind") {
-    return "200";
-  }
-  if (name == "listen") {
-    return "201";
-  }
-  if (name == "connect") {
-    return "203";
-  }
-  if (name == "setsockopt") {
-    return "208";
-  }
-  if (name == "shutdown") {
-    return "210";
-  }
-  if (name == "sendto") {
-    return "206";
-  }
-  if (name == "recvfrom") {
-    return "207";
-  }
-  if (name == "getsockname") {
-    return "204";
-  }
-  if (name == "getpeername") {
-    return "205";
-  }
-  if (name == "getsockopt") {
-    return "209";
-  }
-  if (name == "execve") {
-    return "221";
-  }
-  if (name == "clone") {
-    return "220";
-  }
-  if (name == "pipe2") {
-    return "59";
-  }
-  if (name == "dup3") {
-    return "24";
-  }
-  if (name == "splice") {
-    return "76";
-  }
-  if (name == "vmsplice") {
-    return "75";
-  }
-  if (name == "mmap") {
-    return "222";
-  }
-  if (name == "munmap") {
-    return "215";
-  }
-  if (name == "copy_file_range") {
-    return "285";
-  }
-  if (name == "sendfile") {
-    return "71";
-  }
-  if (name == "timerfd_create") {
-    return "85";
-  }
-  if (name == "timerfd_settime") {
-    return "86";
-  }
-  if (name == "ioctl") {
-    return "29";
-  }
-  if (name == "faccessat") {
-    return "439";
-  }
-  if (name == "fchmodat") {
-    return "53";
-  }
-  if (name == "fchmodat2") {
-    return "452";
-  }
-  if (name == "truncate") {
-    return "45";
-  }
-  if (name == "ftruncate") {
-    return "46";
-  }
-  if (name == "fsync") {
-    return "82";
-  }
-  if (name == "fdatasync") {
-    return "83";
-  }
-  if (name == "fadvise64") {
-    return "223";
-  }
-  if (name == "sync") {
-    return "81";
-  }
-  if (name == "syncfs") {
-    return "267";
-  }
-  if (name == "mknodat") {
-    return "33";
-  }
-  if (name == "fchownat") {
-    return "54";
-  }
-  if (name == "renameat") {
-    return "38";
-  }
-  if (name == "renameat2") {
-    return "276";
-  }
-  if (name == "getxattr") {
-    return "8";
-  }
-  if (name == "lgetxattr") {
-    return "9";
-  }
-  if (name == "setxattr") {
-    return "5";
-  }
-  if (name == "lsetxattr") {
-    return "6";
-  }
-  if (name == "utimensat") {
-    return "88";
-  }
-  if (name == "geteuid") {
-    return "175";
-  }
-  if (name == "getegid") {
-    return "177";
-  }
-  if (name == "getuid") {
-    return "174";
-  }
-  if (name == "getgid") {
-    return "176";
-  }
-  if (name == "getgroups") {
-    return "158";
-  }
-  if (name == "linkat") {
-    return "37";
-  }
-  if (name == "symlinkat") {
-    return "36";
-  }
-  if (name == "readlinkat") {
-    return "78";
-  }
-  if (name == "umask") {
-    return "166";
-  }
-  if (name == "setpriority") {
-    return "140";
-  }
-  if (name == "getpriority") {
-    return "141";
-  }
-  if (name == "kill") {
-    return "129";
-  }
-  if (name == "prctl") {
-    return "167";
-  }
-  if (name == "getppid") {
-    return "173";
-  }
-  if (name == "getpid") {
-    return "172";
-  }
-  if (name == "setpgid") {
-    return "154";
-  }
-  if (name == "getrlimit") {
-    return "163";
-  }
-  if (name == "setrlimit") {
-    return "164";
-  }
-  if (name == "statfs") {
-    return "43";
-  }
-  if (name == "uname") {
-    return "160";
-  }
-  if (name == "getcwd") {
-    return "17";
-  }
-  if (name == "sched_getaffinity") {
-    return "123";
-  }
-  if (name == "sigaction") {
-    return "134";
-  }
-  if (name == "sigprocmask") {
-    return "135";
-  }
-  if (name == "chdir") {
-    return "49";
-  }
-  if (name == "chroot") {
-    return "51";
-  }
-  if (name == "setuid") {
-    return "146";
-  }
-  if (name == "setgid") {
-    return "144";
-  }
-  if (name == "setgroups") {
-    return "159";
-  }
-  return "-1";
+  return match (name) {
+    "read" => "63",
+    "write" => "64",
+    "writev" => "66",
+    "close" => "57",
+    "lseek" => "62",
+    "fstat" => "80",
+    "openat" => "56",
+    "fcntl" => "25",
+    "fchmod" => "52",
+    "unlinkat" => "35",
+    "mkdirat" => "34",
+    "fstatat" => "79",
+    "statx" => "291",
+    "getrandom" => "278",
+    "exit" => "93",
+    "clock_gettime" => "113",
+    "clock_settime" => "112",
+    "clock_getres" => "114",
+    "getdents" => "61",
+    "accept" => "202",
+    "nanosleep" => "101",
+    "ppoll" => "73",
+    "epoll_create1" => "20",
+    "epoll_ctl" => "21",
+    "epoll_pwait" => "22",
+    "io_uring_setup" => "425",
+    "io_uring_enter" => "426",
+    "io_uring_register" => "427",
+    "prlimit64" => "261",
+    "sendmsg" => "211",
+    "recvmsg" => "212",
+    "signalfd4" => "74",
+    "rt_sigprocmask" => "135",
+    "wait4" => "260",
+    "socket" => "198",
+    "bind" => "200",
+    "listen" => "201",
+    "connect" => "203",
+    "setsockopt" => "208",
+    "shutdown" => "210",
+    "sendto" => "206",
+    "recvfrom" => "207",
+    "getsockname" => "204",
+    "getpeername" => "205",
+    "getsockopt" => "209",
+    "execve" => "221",
+    "clone" => "220",
+    "pipe2" => "59",
+    "dup3" => "24",
+    "splice" => "76",
+    "vmsplice" => "75",
+    "mmap" => "222",
+    "munmap" => "215",
+    "copy_file_range" => "285",
+    "sendfile" => "71",
+    "timerfd_create" => "85",
+    "timerfd_settime" => "86",
+    "ioctl" => "29",
+    "faccessat" => "439",
+    "fchmodat" => "53",
+    "fchmodat2" => "452",
+    "truncate" => "45",
+    "ftruncate" => "46",
+    "fsync" => "82",
+    "fdatasync" => "83",
+    "fadvise64" => "223",
+    "sync" => "81",
+    "syncfs" => "267",
+    "mknodat" => "33",
+    "fchownat" => "54",
+    "renameat" => "38",
+    "renameat2" => "276",
+    "getxattr" => "8",
+    "lgetxattr" => "9",
+    "setxattr" => "5",
+    "lsetxattr" => "6",
+    "utimensat" => "88",
+    "geteuid" => "175",
+    "getegid" => "177",
+    "getuid" => "174",
+    "getgid" => "176",
+    "getgroups" => "158",
+    "linkat" => "37",
+    "symlinkat" => "36",
+    "readlinkat" => "78",
+    "umask" => "166",
+    "setpriority" => "140",
+    "getpriority" => "141",
+    "kill" => "129",
+    "prctl" => "167",
+    "getppid" => "173",
+    "getpid" => "172",
+    "setpgid" => "154",
+    "getrlimit" => "163",
+    "setrlimit" => "164",
+    "statfs" => "43",
+    "uname" => "160",
+    "getcwd" => "17",
+    "sched_getaffinity" => "123",
+    "sigaction" => "134",
+    "sigprocmask" => "135",
+    "chdir" => "49",
+    "chroot" => "51",
+    "setuid" => "146",
+    "setgid" => "144",
+    "setgroups" => "159",
+    _ => "-1",
+  };
 }
 
 pub function at_eaccess(t: string): string {
@@ -1997,61 +1417,27 @@ pub function statoff(t: string, name: string): string {
 }
 
 function statoff_darwin(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "mode") {
-    return "4";
-  }
-  if (name == "nlink") {
-    return "6";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "uid") {
-    return "16";
-  }
-  if (name == "gid") {
-    return "20";
-  }
-  if (name == "rdev") {
-    return "24";
-  }
-  if (name == "atime") {
-    return "32";
-  }
-  if (name == "atime_nsec") {
-    return "40";
-  }
-  if (name == "mtime") {
-    return "48";
-  }
-  if (name == "mtime_nsec") {
-    return "56";
-  }
-  if (name == "ctime") {
-    return "64";
-  }
-  if (name == "ctime_nsec") {
-    return "72";
-  }
-  if (name == "btime") {
-    return "80";
-  }
-  if (name == "btime_nsec") {
-    return "88";
-  }
-  if (name == "size") {
-    return "96";
-  }
-  if (name == "blocks") {
-    return "104";
-  }
-  if (name == "blksize") {
-    return "112";
-  }
-  return "0";
+  return match (name) {
+    "dev" => "0",
+    "mode" => "4",
+    "nlink" => "6",
+    "ino" => "8",
+    "uid" => "16",
+    "gid" => "20",
+    "rdev" => "24",
+    "atime" => "32",
+    "atime_nsec" => "40",
+    "mtime" => "48",
+    "mtime_nsec" => "56",
+    "ctime" => "64",
+    "ctime_nsec" => "72",
+    "btime" => "80",
+    "btime_nsec" => "88",
+    "size" => "96",
+    "blocks" => "104",
+    "blksize" => "112",
+    _ => "0",
+  };
 }
 
 pub function statkind(t: string, name: string): string {
@@ -2090,156 +1476,68 @@ function unknown_rt_key(t: string): void {
 }
 
 function oflag_darwin(name: string): string {
-  if (name == "slash_write") {
-    return "515";
-  }
-  if (name == "append") {
-    return "8";
-  }
-  if (name == "wr_creat_trunc") {
-    return "1537";
-  }
-  if (name == "wr_creat_append") {
-    return "521";
-  }
-  if (name == "wr_creat_excl") {
-    return "2561";
-  }
-  if (name == "rd_directory") {
-    return "1048576";
-  }
-  if (name == "creat") {
-    return "512";
-  }
-  if (name == "nonblock") {
-    return "4";
-  }
-  if (name == "excl") {
-    return "2048";
-  }
-  if (name == "directory") {
-    return "1048576";
-  }
-  if (name == "dsync") {
-    return "4194304";
-  }
-  if (name == "sync") {
-    return "128";
-  }
-  if (name == "noctty") {
-    return "131072";
-  }
-  if (name == "nofollow") {
-    return "256";
-  }
-  if (name == "cloexec") {
-    return "16777216";
-  }
-  return "0";
+  return match (name) {
+    "slash_write" => "515",
+    "append" => "8",
+    "wr_creat_trunc" => "1537",
+    "wr_creat_append" => "521",
+    "wr_creat_excl" => "2561",
+    "rd_directory" => "1048576",
+    "creat" => "512",
+    "nonblock" => "4",
+    "excl" => "2048",
+    "directory" => "1048576",
+    "dsync" => "4194304",
+    "sync" => "128",
+    "noctty" => "131072",
+    "nofollow" => "256",
+    "cloexec" => "16777216",
+    _ => "0",
+  };
 }
 
 function oflag_x86_64(name: string): string {
-  if (name == "append") {
-    return "1024";
-  }
-  if (name == "wr_creat_trunc") {
-    return "577";
-  }
-  if (name == "wr_creat_append") {
-    return "1089";
-  }
-  if (name == "wr_creat_excl") {
-    return "193";
-  }
-  if (name == "rd_directory") {
-    return "65536";
-  }
-  if (name == "creat") {
-    return "64";
-  }
-  if (name == "nonblock") {
-    return "2048";
-  }
-  if (name == "excl") {
-    return "128";
-  }
-  if (name == "direct") {
-    return "16384";
-  }
-  if (name == "directory") {
-    return "65536";
-  }
-  if (name == "dsync") {
-    return "4096";
-  }
-  if (name == "sync") {
-    return "1052672";
-  }
-  if (name == "noatime") {
-    return "262144";
-  }
-  if (name == "noctty") {
-    return "256";
-  }
-  if (name == "nofollow") {
-    return "131072";
-  }
-  if (name == "cloexec") {
-    return "524288";
-  }
-  return "0";
+  return match (name) {
+    "append" => "1024",
+    "wr_creat_trunc" => "577",
+    "wr_creat_append" => "1089",
+    "wr_creat_excl" => "193",
+    "rd_directory" => "65536",
+    "creat" => "64",
+    "nonblock" => "2048",
+    "excl" => "128",
+    "direct" => "16384",
+    "directory" => "65536",
+    "dsync" => "4096",
+    "sync" => "1052672",
+    "noatime" => "262144",
+    "noctty" => "256",
+    "nofollow" => "131072",
+    "cloexec" => "524288",
+    _ => "0",
+  };
 }
 
 function oflag_arm64(name: string): string {
-  if (name == "append") {
-    return "1024";
-  }
-  if (name == "wr_creat_trunc") {
-    return "577";
-  }
-  if (name == "wr_creat_append") {
-    return "1089";
-  }
-  if (name == "wr_creat_excl") {
-    return "193";
-  }
-  if (name == "rd_directory") {
-    return "16384";
-  }
-  if (name == "creat") {
-    return "64";
-  }
-  if (name == "nonblock") {
-    return "2048";
-  }
-  if (name == "excl") {
-    return "128";
-  }
-  if (name == "direct") {
-    return "65536";
-  }
-  if (name == "directory") {
-    return "16384";
-  }
-  if (name == "dsync") {
-    return "4096";
-  }
-  if (name == "sync") {
-    return "1052672";
-  }
-  if (name == "noatime") {
-    return "262144";
-  }
-  if (name == "noctty") {
-    return "256";
-  }
-  if (name == "nofollow") {
-    return "32768";
-  }
-  if (name == "cloexec") {
-    return "524288";
-  }
-  return "0";
+  return match (name) {
+    "append" => "1024",
+    "wr_creat_trunc" => "577",
+    "wr_creat_append" => "1089",
+    "wr_creat_excl" => "193",
+    "rd_directory" => "16384",
+    "creat" => "64",
+    "nonblock" => "2048",
+    "excl" => "128",
+    "direct" => "65536",
+    "directory" => "16384",
+    "dsync" => "4096",
+    "sync" => "1052672",
+    "noatime" => "262144",
+    "noctty" => "256",
+    "nofollow" => "32768",
+    "cloexec" => "524288",
+    _ => "0",
+  };
 }
 
 pub function atflag(t: string, name: string): string {
@@ -2439,93 +1737,47 @@ pub function statfsoff(t: string, name: string): string {
 }
 
 function statfsoff_linux(name: string): string {
-  if (name == "block_size") {
-    return "8";
-  }
-  if (name == "blocks") {
-    return "16";
-  }
-  if (name == "blocks_free") {
-    return "24";
-  }
-  if (name == "blocks_avail") {
-    return "32";
-  }
-  if (name == "files") {
-    return "40";
-  }
-  if (name == "files_free") {
-    return "48";
-  }
-  if (name == "name_max") {
-    return "64";
-  }
-  if (name == "fsid") {
-    return "56";
-  }
-  if (name == "frag_size") {
-    return "72";
-  }
-  return "0";
+  return match (name) {
+    "block_size" => "8",
+    "blocks" => "16",
+    "blocks_free" => "24",
+    "blocks_avail" => "32",
+    "files" => "40",
+    "files_free" => "48",
+    "name_max" => "64",
+    "fsid" => "56",
+    "frag_size" => "72",
+    _ => "0",
+  };
 }
 
 function statfsoff_darwin(name: string): string {
-  if (name == "block_size") {
-    return "0";
-  }
-  if (name == "blocks") {
-    return "8";
-  }
-  if (name == "blocks_free") {
-    return "16";
-  }
-  if (name == "blocks_avail") {
-    return "24";
-  }
-  if (name == "files") {
-    return "32";
-  }
-  if (name == "files_free") {
-    return "40";
-  }
-  if (name == "fsid") {
-    return "48";
-  }
-  if (name == "fs_type") {
-    return "60";
-  }
-  if (name == "fs_type_name") {
-    return "72";
-  }
-  return "0";
+  return match (name) {
+    "block_size" => "0",
+    "blocks" => "8",
+    "blocks_free" => "16",
+    "blocks_avail" => "24",
+    "files" => "32",
+    "files_free" => "40",
+    "fsid" => "48",
+    "fs_type" => "60",
+    "fs_type_name" => "72",
+    _ => "0",
+  };
 }
 
 pub function (s: EmitState) need_array_helper(name: string): EmitState {
-  if (name == "__fern_bytes_append_range") {
-    return s.need("byte_append");
-  }
-  if (name == "__fern_bytes_write_range") {
-    return s.need("byte_write");
-  }
-  if (name == "__fern_bytes_append_back") {
-    return s.need("byte_back");
-  }
-  if (name == "__fern_arr_str_join") {
-    return s.need("arr_str_join");
-  }
-  if (name == "__fern_arr_concat") {
-    return s.need("arr_concat");
-  }
-  if (name == "__fern_bytes_owned") {
-    return s.need("bytes_owned");
-  }
-  if (name == "__fern_bytes_range") {
-    return s.need("bytes_range");
-  }
-  if (name == "__fern_bytes_into") {
-    return s.need("bytes_into");
-  }
-  return s;
+  return match (name) {
+    "__fern_bytes_append_range" => s.need("byte_append"),
+    "__fern_bytes_write_range" => s.need("byte_write"),
+    "__fern_bytes_append_back" => s.need("byte_back"),
+    "__fern_arr_str_join" => s.need("arr_str_join"),
+    "__fern_arr_concat" => s.need("arr_concat"),
+    "__fern_bytes_owned" => s.need("bytes_owned"),
+    "__fern_bytes_range" => s.need("bytes_range"),
+    "__fern_bytes_into" => s.need("bytes_into"),
+    _ => s,
+  };
 }
 
 function array_helper_need(name: string): boolean {
@@ -5048,74 +4300,36 @@ function sentinel_message(kind: string): string {
   if (k.starts_with("missing ")) {
     return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
   }
-  if (k == "eof") {
-    return "expected an expression, got the end of the file";
-  }
-  if (k == "primary") {
-    return "expected an expression";
-  }
-  if (k == "lambda: bad destructuring param") {
-    return "expected a parameter name or a destructuring pattern";
-  }
-  if (k == "bad tuple pattern") {
-    return "expected a tuple pattern";
-  }
-  return k;
+  return match (k) {
+    "eof" => "expected an expression, got the end of the file",
+    "primary" => "expected an expression",
+    "lambda: bad destructuring param" => "expected a parameter name or a destructuring pattern",
+    "bad tuple pattern" => "expected a tuple pattern",
+    _ => k,
+  };
 }
 
 function missing_message(what: string): string {
-  if (what == "= in let") {
-    return "expected \"=\" after the name in this declaration";
-  }
-  if (what == "`in` in for") {
-    return "expected \"in\" after the `for` pattern";
-  }
-  if (what == "for-let name") {
-    return "expected a name after \"let\" in this `for` loop";
-  }
-  if (what == "binding name") {
-    return "expected a name to bind";
-  }
-  if (what == "statement in braceless body") {
-    return "expected a statement";
-  }
-  if (what == "{ in block") {
-    return "expected \"{\" to open a block";
-  }
-  if (what == "{ in lambda body") {
-    return "expected \"{\" to open the lambda body";
-  }
-  if (what == "{ in branch body") {
-    return "expected \"{\" to open the branch body";
-  }
-  if (what == "field name in struct lit") {
-    return "expected a field name in this struct literal";
-  }
-  if (what == ": in struct lit") {
-    return "expected \":\" after the field name in this struct literal";
-  }
-  if (what == "} in struct lit") {
-    return "expected \"}\" to close this struct literal";
-  }
-  if (what == "} in struct update") {
-    return "expected \"}\" to close this struct update";
-  }
-  if (what == ") in call") {
-    return "expected \")\" to close this call";
-  }
-  if (what == "] in slice") {
-    return "expected \"]\" to close this slice";
-  }
-  if (what == "] in index") {
-    return "expected \"]\" to close this index";
-  }
-  if (what == "] in array literal") {
-    return "expected \"]\" to close this array literal";
-  }
-  if (what == "field name after .") {
-    return "expected a field or method name after \".\"";
-  }
-  return "expected " + what;
+  return match (what) {
+    "= in let" => "expected \"=\" after the name in this declaration",
+    "`in` in for" => "expected \"in\" after the `for` pattern",
+    "for-let name" => "expected a name after \"let\" in this `for` loop",
+    "binding name" => "expected a name to bind",
+    "statement in braceless body" => "expected a statement",
+    "{ in block" => "expected \"{\" to open a block",
+    "{ in lambda body" => "expected \"{\" to open the lambda body",
+    "{ in branch body" => "expected \"{\" to open the branch body",
+    "field name in struct lit" => "expected a field name in this struct literal",
+    ": in struct lit" => "expected \":\" after the field name in this struct literal",
+    "} in struct lit" => "expected \"}\" to close this struct literal",
+    "} in struct update" => "expected \"}\" to close this struct update",
+    ") in call" => "expected \")\" to close this call",
+    "] in slice" => "expected \"]\" to close this slice",
+    "] in index" => "expected \"]\" to close this index",
+    "] in array literal" => "expected \"]\" to close this array literal",
+    "field name after ." => "expected a field or method name after \".\"",
+    _ => "expected " + what,
+  };
 }
 
 function decl_sentinel_text(kind: string): string {

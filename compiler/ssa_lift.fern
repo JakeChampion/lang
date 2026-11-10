@@ -56,82 +56,34 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
 struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
 
 function bin_sym(k: string): string {
-  if (k == "add") {
-    return "+";
-  }
-  if (k == "sub") {
-    return "-";
-  }
-  if (k == "mul") {
-    return "*";
-  }
-  if (k == "div_s") {
-    return "/";
-  }
-  if (k == "div_u") {
-    return "/";
-  }
-  if (k == "rem_s") {
-    return "%";
-  }
-  if (k == "rem_u") {
-    return "%";
-  }
-  if (k == "eq") {
-    return "==";
-  }
-  if (k == "ne") {
-    return "!=";
-  }
-  if (k == "lt_s") {
-    return "<";
-  }
-  if (k == "lt_u") {
-    return "<";
-  }
-  if (k == "le_s") {
-    return "<=";
-  }
-  if (k == "le_u") {
-    return "<=";
-  }
-  if (k == "gt_s") {
-    return ">";
-  }
-  if (k == "gt_u") {
-    return ">";
-  }
-  if (k == "ge_s") {
-    return ">=";
-  }
-  if (k == "ge_u") {
-    return ">=";
-  }
-  if (k == "and") {
-    return "&";
-  }
-  if (k == "or") {
-    return "|";
-  }
-  if (k == "xor") {
-    return "^";
-  }
-  if (k == "shl") {
-    return "<<";
-  }
-  if (k == "shr_s") {
-    return ">>";
-  }
-  if (k == "shr_u") {
-    return ">>";
-  }
-  if (k == "mulhi_u") {
-    return "*hi";
-  }
-  if (k == "mulhi_s") {
-    return "*hs";
-  }
-  return "";
+  return match (k) {
+    "add" => "+",
+    "sub" => "-",
+    "mul" => "*",
+    "div_s" => "/",
+    "div_u" => "/",
+    "rem_s" => "%",
+    "rem_u" => "%",
+    "eq" => "==",
+    "ne" => "!=",
+    "lt_s" => "<",
+    "lt_u" => "<",
+    "le_s" => "<=",
+    "le_u" => "<=",
+    "gt_s" => ">",
+    "gt_u" => ">",
+    "ge_s" => ">=",
+    "ge_u" => ">=",
+    "and" => "&",
+    "or" => "|",
+    "xor" => "^",
+    "shl" => "<<",
+    "shr_s" => ">>",
+    "shr_u" => ">>",
+    "mulhi_u" => "*hi",
+    "mulhi_s" => "*hs",
+    _ => "",
+  };
 }
 
 function drop_n(a: i32[], n: i32): i32[] {
@@ -143,37 +95,19 @@ function drop_n(a: i32[], n: i32): i32[] {
 }
 
 function fbin_sym(k: string): string {
-  if (k == "fadd") {
-    return "+";
-  }
-  if (k == "fsub") {
-    return "-";
-  }
-  if (k == "fmul") {
-    return "*";
-  }
-  if (k == "fdiv") {
-    return "/";
-  }
-  if (k == "feq") {
-    return "==";
-  }
-  if (k == "fne") {
-    return "!=";
-  }
-  if (k == "flt") {
-    return "<";
-  }
-  if (k == "fle") {
-    return "<=";
-  }
-  if (k == "fgt") {
-    return ">";
-  }
-  if (k == "fge") {
-    return ">=";
-  }
-  return "";
+  return match (k) {
+    "fadd" => "+",
+    "fsub" => "-",
+    "fmul" => "*",
+    "fdiv" => "/",
+    "feq" => "==",
+    "fne" => "!=",
+    "flt" => "<",
+    "fle" => "<=",
+    "fgt" => ">",
+    "fge" => ">=",
+    _ => "",
+  };
 }
 
 pub function admits(kt: KindTable, op: ir.Op): boolean {
@@ -610,22 +544,14 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
 }
 
 function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
-  if (k == "struct_set") {
-    return lift_store(lv, 41, (op.i32_imm + 1) * 8);
-  }
-  if (k == "tuple_set") {
-    return lift_store(lv, 41, op.i32_imm * 8);
-  }
-  if (k == "opt_set_payload") {
-    return lift_store(lv, 41, 8);
-  }
-  if (k == "arr_set") {
-    return mark_packed(lift_store(lv, 43, op.i32_imm), op);
-  }
-  if (k == "raw_store_ptr") {
-    return lift_store_keep(lv, 53);
-  }
-  return lift_store_keep(lv, 55);
+  return match (k) {
+    "struct_set" => lift_store(lv, 41, (op.i32_imm + 1) * 8),
+    "tuple_set" => lift_store(lv, 41, op.i32_imm * 8),
+    "opt_set_payload" => lift_store(lv, 41, 8),
+    "arr_set" => mark_packed(lift_store(lv, 43, op.i32_imm), op),
+    "raw_store_ptr" => lift_store_keep(lv, 53),
+    _ => lift_store_keep(lv, 55),
+  };
 }
 
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
@@ -673,25 +599,15 @@ function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (ld_off(k, op) >= 0) {
     return lift_pop_push(lv, 1, 40, ld_off(k, op), counted_mark(op));
   }
-  if (k == "raw_load_ptr") {
-    return lift_pop_push(lv, 2, 52, 0, "");
-  }
-  if (k == "raw_load8") {
-    return lift_pop_push(lv, 2, 54, 0, "");
-  }
-  if (k == "arr_get") {
-    return lift_pop_push(lv, 2, 42, op.i32_imm, packed_mark(op) + counted_mark(op));
-  }
-  if (k == "str_index") {
-    return lift_pop_push(lv, 2, 44, op.i32_imm, "");
-  }
-  if (k == "const_func") {
-    return lift_pop_push(lv, 0, 45, op.i32_imm, op.str);
-  }
-  if (k == "const_struct") {
-    return lift_pop_push(lv, 0, 57, 0, op.str);
-  }
-  return lift_pop_push(lv, 0, 47, 0, op.str);
+  return match (k) {
+    "raw_load_ptr" => lift_pop_push(lv, 2, 52, 0, ""),
+    "raw_load8" => lift_pop_push(lv, 2, 54, 0, ""),
+    "arr_get" => lift_pop_push(lv, 2, 42, op.i32_imm, packed_mark(op) + counted_mark(op)),
+    "str_index" => lift_pop_push(lv, 2, 44, op.i32_imm, ""),
+    "const_func" => lift_pop_push(lv, 0, 45, op.i32_imm, op.str),
+    "const_struct" => lift_pop_push(lv, 0, 57, 0, op.str),
+    _ => lift_pop_push(lv, 0, 47, 0, op.str),
+  };
 }
 
 function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string): LiftVals {

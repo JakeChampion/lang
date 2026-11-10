@@ -597,16 +597,12 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
 }
 
 function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean {
-  if (verb == "len") {
-    return !ssasem.is_integer(f.values[sink.result]);
-  }
-  if (verb == "fold") {
-    return !ssasem.is_scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
-  }
-  if (verb == "scan") {
-    return !ssasem.is_scalar(typeinfo.array_elem(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], typeinfo.array_elem(f.values[sink.result]));
-  }
-  return false;
+  return match (verb) {
+    "len" => !ssasem.is_integer(f.values[sink.result]),
+    "fold" => !ssasem.is_scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]),
+    "scan" => !ssasem.is_scalar(typeinfo.array_elem(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], typeinfo.array_elem(f.values[sink.result])),
+    _ => false,
+  };
 }
 
 function base_element(f: ssasem.Func, c: Chain): typeinfo.Type {

@@ -4505,27 +4505,19 @@ function mmio_wat(o: ir.Op): string {
     return "    unreachable\n";
   }
   if (o.kind_tag == ir.K_MMIO_LOAD) {
-    if (o.width == 8) {
-      return "    i32.load8_u\n";
-    }
-    if (o.width == 16) {
-      return "    i32.load16_u\n";
-    }
-    if (o.width == 64) {
-      return "    i64.load\n";
-    }
-    return "    i32.load\n";
+    return match (o.width) {
+      8 => "    i32.load8_u\n",
+      16 => "    i32.load16_u\n",
+      64 => "    i64.load\n",
+      _ => "    i32.load\n",
+    };
   }
-  if (o.width == 8) {
-    return "    i32.store8\n    i32.const 0\n";
-  }
-  if (o.width == 16) {
-    return "    i32.store16\n    i32.const 0\n";
-  }
-  if (o.width == 64) {
-    return "    i64.store\n    i32.const 0\n";
-  }
-  return "    i32.store\n    i32.const 0\n";
+  return match (o.width) {
+    8 => "    i32.store8\n    i32.const 0\n",
+    16 => "    i32.store16\n    i32.const 0\n",
+    64 => "    i64.store\n    i32.const 0\n",
+    _ => "    i32.store\n    i32.const 0\n",
+  };
 }
 
 // fern-lint: allow cyclomatic-complexity

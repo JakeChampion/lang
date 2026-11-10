@@ -51,22 +51,21 @@ pub function create(): Heap {
   return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()), raw: cell_new(RawBlocks { addrs: [], sizes: [], live: [] }) };
 }
 
-function raw_index(blocks: RawBlocks, addr: i64): i32 {
+function raw_index(blocks: RawBlocks, addr: i64): Option[i32] {
   for i in 0..blocks.addrs.len() {
     if (blocks.addrs[i] == addr) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function raw_record(h: Heap, addr: i64, size: i32): void {
   let blocks = h.raw.get();
-  let i = raw_index(blocks, addr);
-  if (i < 0) {
+  let Some(i) = raw_index(blocks, addr) else {
     h.raw.set(RawBlocks { addrs: blocks.addrs.append(addr), sizes: blocks.sizes.append(size), live: blocks.live.append(true) });
     return;
-  }
+  };
   h.raw.set(RawBlocks { ...blocks, sizes: blocks.sizes.with(i, size), live: blocks.live.with(i, true) });
 }
 
@@ -74,10 +73,9 @@ pub function raw_record(h: Heap, addr: i64, size: i32): void {
 // block from `__alloc`, and -1 when the block was already released.
 pub function raw_release(h: Heap, addr: i64): i32 {
   let blocks = h.raw.get();
-  let i = raw_index(blocks, addr);
-  if (i < 0) {
+  let Some(i) = raw_index(blocks, addr) else {
     return 0;
-  }
+  };
   if (!blocks.live[i]) {
     return -1;
   }

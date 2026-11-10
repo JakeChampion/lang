@@ -595,29 +595,21 @@ function is_worker_builtin(name: string): boolean {
 }
 
 function worker_params(name: string): typeinfo.Type[] {
-  if (name == "__worker_unmap") {
-    return [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_bool()];
-  }
-  if (name == "__heap_adopt") {
-    return [typeinfo.t_i64(), typeinfo.t_i64()];
-  }
-  if (name == "__worker_exit") {
-    return [typeinfo.t_i64(), typeinfo.t_usize()];
-  }
-  return [typeinfo.t_i64()];
+  return match (name) {
+    "__worker_unmap" => [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_bool()],
+    "__heap_adopt" => [typeinfo.t_i64(), typeinfo.t_i64()],
+    "__worker_exit" => [typeinfo.t_i64(), typeinfo.t_usize()],
+    _ => [typeinfo.t_i64()],
+  };
 }
 
 function worker_result(name: string): typeinfo.Type {
-  if (name == "__worker_unmap") {
-    return typeinfo.t_i32();
-  }
-  if (name == "__worker_region") {
-    return typeinfo.t_i64();
-  }
-  if (name == "__worker_reap") {
-    return typeinfo.t_usize();
-  }
-  return typeinfo.t_void();
+  return match (name) {
+    "__worker_unmap" => typeinfo.t_i32(),
+    "__worker_region" => typeinfo.t_i64(),
+    "__worker_reap" => typeinfo.t_usize(),
+    _ => typeinfo.t_void(),
+  };
 }
 
 function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
@@ -3932,22 +3924,14 @@ function (s: Scope) methods_in_namespace(ns: string): string[] {
 }
 
 function preregistered_methods(ns: string): string[] {
-  if (ns == "Array") {
-    return ["append", "len", "truncate", "with"];
-  }
-  if (ns == "slice") {
-    return ["len"];
-  }
-  if (ns == "string") {
-    return ["as_bytes", "len"];
-  }
-  if (ns == "Map") {
-    return ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"];
-  }
-  if (ns == "Cell") {
-    return ["get", "set"];
-  }
-  return [];
+  return match (ns) {
+    "Array" => ["append", "len", "truncate", "with"],
+    "slice" => ["len"],
+    "string" => ["as_bytes", "len"],
+    "Map" => ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"],
+    "Cell" => ["get", "set"],
+    _ => [],
+  };
 }
 
 function map_receiver_type(rt: string): boolean {
@@ -4954,16 +4938,12 @@ pub function receiver_key(t: typeinfo.Type): string {
 // `__send_copy` has its argument's type, `__send_adopt` the type of its
 // binding, and `__send_root` is an address.
 function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
-  if (name == "__send_copy") {
-    return check_expr(c.args[0], s);
-  }
-  if (name == "__send_adopt") {
-    return t_unknown("__send_adopt takes the declared type of its binding");
-  }
-  if (name == "__send_release") {
-    return typeinfo.t_void();
-  }
-  return typeinfo.t_usize();
+  return match (name) {
+    "__send_copy" => check_expr(c.args[0], s),
+    "__send_adopt" => t_unknown("__send_adopt takes the declared type of its binding"),
+    "__send_release" => typeinfo.t_void(),
+    _ => typeinfo.t_usize(),
+  };
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
@@ -6083,18 +6063,18 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
   return "";
 }
 
-function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): i32 {
+function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): Option[i32] {
   for i in 0..sl.field_names.len() {
     let fi = util.index_of_str(ssig.field_names, sl.field_names[i]);
     if (fi >= 0) {
       let ft = lit_field_type(ssig, fi, args, s);
       let vt = check_expr(sl.field_values[i], s);
       if (!type_contains_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[i], ft, s) && !coercible(vt, ft, s)) {
-        return i;
+        return Some(i);
       }
     }
   }
-  return -1;
+  return None;
 }
 
 function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: Scope): typeinfo.Type {
@@ -6627,7 +6607,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
   if (lit_uninferable_param(sl, ssig, largs, s).len() > 0) {
     return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
   }
-  if (lit_field_clash(sl, ssig, largs, s) >= 0) {
+  if (lit_field_clash(sl, ssig, largs, s).is_some()) {
     return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
   }
   return typeinfo.TypeStruct { name: sl.type_name, args: largs };
@@ -13999,8 +13979,7 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
 }
 
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
-  let want = map_builtin_arity(method);
-  if (want < 0) {
+  let Some(want) = map_builtin_arity(method) else {
     if let Some(msig) = s.lookup_method(method, "Map") {
       let recv: typeinfo.Type = mt;
       if (map_source_receiver_missing(recv, msig)) {
@@ -14014,7 +13993,7 @@ function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s:
       return util.append_diags(out, uninferred_method_diags(c, "Map", method, msig, s));
     }
     return out;
-  }
+  };
   if (want >= 0 && c.args.len() != want) {
     return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", want, c.args.len(), "argument"), c.line, c.col));
   }
@@ -14038,17 +14017,17 @@ function map_arg_slots(method: string, mt: typeinfo.TypeMap): typeinfo.Type[] {
   return [];
 }
 
-function map_builtin_arity(method: string): i32 {
+function map_builtin_arity(method: string): Option[i32] {
   if (method == "insert" || method == "get_or") {
-    return 2;
+    return Some(2);
   }
   if (method == "get" || method == "contains" || method == "remove") {
-    return 1;
+    return Some(1);
   }
   if (method == "len" || method == "cleared" || method == "keys" || method == "values") {
-    return 0;
+    return Some(0);
   }
-  return -1;
+  return None;
 }
 
 function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -15916,16 +15895,12 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         }
       }
       if let typeinfo.TypeArray(at) = rt {
-        if (mfa.field == "append") {
-          return [at.elem];
-        }
-        if (mfa.field == "with") {
-          return [typeinfo.t_i32(), at.elem];
-        }
-        if (mfa.field == "truncate") {
-          return [typeinfo.t_i32()];
-        }
-        return s.array_method_param_types(c, rt, mfa.field, at.view);
+        return match (mfa.field) {
+          "append" => [at.elem],
+          "with" => [typeinfo.t_i32(), at.elem],
+          "truncate" => [typeinfo.t_i32()],
+          _ => s.array_method_param_types(c, rt, mfa.field, at.view),
+        };
       }
     },
     _ => {}
@@ -23989,10 +23964,99 @@ function ow_value_if_origin(origin: string): boolean {
 }
 
 function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (lm.origin == parser.ORIGIN_MATCH_EXPR) {
+    return ow_match_block_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  }
   if (lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 1) {
     return true;
   }
   return ow_value_arm_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+}
+
+// The parser lowers a value match to `[match]`, to `[match, return zero]`,
+// or to `[let t = scrutinee, return inner()]` around one of those.
+function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (body.len() == 0 || body.len() > 2) {
+    return true;
+  }
+  if let ast.StmtVar(v) = body[0] {
+    if (body.len() != 2) {
+      return true;
+    }
+    let ast.StmtReturn(r) = body[1] else {
+      return true;
+    };
+    let lends = ow_expr_borrows(v.init, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+    let inner = ow_without_names(borrowed, [v.name]);
+    if (lends) {
+      inner = inner.append(v.name);
+    }
+    return ow_expr_borrows(r.value, ofuncs, inner, ow_without_names(locals, [v.name]), values, borrows, builtins, lenders, handles_only);
+  }
+  if (body.len() == 2) {
+    let ast.StmtReturn(z) = body[1] else {
+      return true;
+    };
+    if (ow_expr_borrows(z.value, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return match (body[0]) {
+    ast.StmtMatch(m) => ow_value_match_borrows(m, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only),
+    ast.StmtIf(f) => ow_value_lits_borrows(f.sugar, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only),
+    _ => true,
+  };
+}
+
+// A match on literals lowers to an if chain that keeps its arms in the sugar.
+function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (sugar.origin.len() > 0 || sugar.lits.len() == 0 || sugar.tup.len() > 0 || sugar.strct.len() > 0 || sugar.arms.len() > 0) {
+    return true;
+  }
+  let lends = ow_expr_borrows(sugar.scrut, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  for arm in sugar.lits {
+    let names: string[] = [];
+    if (arm.at_binding.len() > 0) {
+      names = [arm.at_binding];
+    }
+    if (ow_value_binder_arm_borrows(arm.body, names, lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A value match borrows when an arm's value borrows.
+function ow_value_match_borrows(m: ast.StmtMatch, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  if (m.sugar.len() > 0) {
+    return true;
+  }
+  let lends = ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  for arm in m.arms {
+    if (ow_value_binder_arm_borrows(arm.body, astwalk.pattern_binders(arm.pattern, []), lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// An arm's binders come from the scrutinee, so they borrow only when it lends.
+function ow_value_binder_arm_borrows(body: ast.Stmt[], names: string[], lends: boolean, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
+  let arm_borrowed = ow_without_names(borrowed, names);
+  if (lends) {
+    arm_borrowed = util.append_all(arm_borrowed, names);
+  }
+  return ow_value_arm_borrows(body, ofuncs, arm_borrowed, ow_without_names(locals, names), values, borrows, builtins, lenders, handles_only);
+}
+
+function ow_without_names(names: string[], drop: string[]): string[] {
+  let out: string[] = [];
+  for n in names {
+    if (!util.has_str(drop, n)) {
+      out = out.append(n);
+    }
+  }
+  return out;
 }
 
 function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders, handles_only: boolean): boolean {
@@ -27094,31 +27158,17 @@ function module_imports_std_json(mod: parser.Module): boolean {
 }
 
 function derive_method_name(kind: string): string {
-  if (kind == "Display") {
-    return "to_string";
-  }
-  if (kind == "Debug") {
-    return "to_debug";
-  }
-  if (kind == "Json") {
-    return "to_json";
-  }
-  if (kind == "FromJson") {
-    return "from_json_value";
-  }
-  if (kind == "Eq") {
-    return "eq";
-  }
-  if (kind == "Ord") {
-    return "cmp";
-  }
-  if (kind == "Hash") {
-    return "hash";
-  }
-  if (kind == "Default") {
-    return "default";
-  }
-  return "";
+  return match (kind) {
+    "Display" => "to_string",
+    "Debug" => "to_debug",
+    "Json" => "to_json",
+    "FromJson" => "from_json_value",
+    "Eq" => "eq",
+    "Ord" => "cmp",
+    "Hash" => "hash",
+    "Default" => "default",
+    _ => "",
+  };
 }
 
 function derive_body_suppressed(fn: parser.FuncDecl, keys: string[]): boolean {
@@ -30864,22 +30914,14 @@ function vb_placeholder_decl(v: ast.StmtVar): boolean {
 }
 
 function vb_zero_of(tag: string): ast.Expr {
-  if (tag == "string") {
-    return ast.ExprString { value: "", line: 0, col: 0 };
-  }
-  if (tag == "boolean") {
-    return ast.ExprBool { value: false, line: 0, col: 0 };
-  }
-  if (tag == "f64") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 };
-  }
-  if (tag == "f32") {
-    return ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" };
-  }
-  if (tag == "i32") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
-  }
-  return ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 };
+  return match (tag) {
+    "string" => ast.ExprString { value: "", line: 0, col: 0 },
+    "boolean" => ast.ExprBool { value: false, line: 0, col: 0 },
+    "f64" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 },
+    "f32" => ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" },
+    "i32" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 },
+    _ => ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 },
+  };
 }
 
 function vb_retype(e: ast.Expr, s: Scope): ast.Expr {

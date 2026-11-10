@@ -946,19 +946,13 @@ function compared(op: string, x: i32, y: i32, ordered: boolean): i64 {
   if (!ordered) {
     return any();
   }
-  if (op == "<") {
-    return truth(x < y);
-  }
-  if (op == "<=") {
-    return truth(x <= y);
-  }
-  if (op == ">") {
-    return truth(x > y);
-  }
-  if (op == ">=") {
-    return truth(x >= y);
-  }
-  return any();
+  return match (op) {
+    "<" => truth(x < y),
+    "<=" => truth(x <= y),
+    ">" => truth(x > y),
+    ">=" => truth(x >= y),
+    _ => any(),
+  };
 }
 
 function comparable(a: typeinfo.Type, b: typeinfo.Type): boolean {

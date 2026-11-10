@@ -129,34 +129,18 @@ pub function keywords(): string[] {
 const NUMERIC_SUFFIXES: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char"];
 
 function numeric_suffix_tag(s: string): u8 {
-  if (s == "i32") {
-    return 1u8;
-  }
-  if (s == "i64") {
-    return 2u8;
-  }
-  if (s == "u8") {
-    return 3u8;
-  }
-  if (s == "u32") {
-    return 4u8;
-  }
-  if (s == "u64") {
-    return 5u8;
-  }
-  if (s == "usize") {
-    return 6u8;
-  }
-  if (s == "f32") {
-    return 7u8;
-  }
-  if (s == "f64") {
-    return 8u8;
-  }
-  if (s == "char") {
-    return 9u8;
-  }
-  return 0u8;
+  return match (s) {
+    "i32" => 1u8,
+    "i64" => 2u8,
+    "u8" => 3u8,
+    "u32" => 4u8,
+    "u64" => 5u8,
+    "usize" => 6u8,
+    "f32" => 7u8,
+    "f64" => 8u8,
+    "char" => 9u8,
+    _ => 0u8,
+  };
 }
 
 function numeric_flags(suffix: u8, is_float: boolean): u8 {
@@ -252,19 +236,13 @@ function match_multipunct(src: string, i: i32, n: i32): string {
   if (three.len() > 0) {
     return three;
   }
-  if (b1 == 61) {
-    return punct_assign(b0);
-  }
-  if (b1 == 124) {
-    return punct_bar(b0);
-  }
-  if (b1 == 63) {
-    return punct_try(b0);
-  }
-  if (b1 == 62) {
-    return punct_arrow(b0);
-  }
-  return punct_double(b0, b1);
+  return match (b1) {
+    61 => punct_assign(b0),
+    124 => punct_bar(b0),
+    63 => punct_try(b0),
+    62 => punct_arrow(b0),
+    _ => punct_double(b0, b1),
+  };
 }
 
 function punct3(b0: i32, b1: i32, b2: i32): string {
@@ -297,91 +275,51 @@ function punct3(b0: i32, b1: i32, b2: i32): string {
 }
 
 function punct_assign(b0: i32): string {
-  if (b0 == 61) {
-    return "==";
-  }
-  if (b0 == 33) {
-    return "!=";
-  }
-  if (b0 == 60) {
-    return "<=";
-  }
-  if (b0 == 62) {
-    return ">=";
-  }
-  if (b0 == 43) {
-    return "+=";
-  }
-  if (b0 == 45) {
-    return "-=";
-  }
-  if (b0 == 42) {
-    return "*=";
-  }
-  if (b0 == 47) {
-    return "/=";
-  }
-  if (b0 == 37) {
-    return "%=";
-  }
-  if (b0 == 38) {
-    return "&=";
-  }
-  if (b0 == 124) {
-    return "|=";
-  }
-  if (b0 == 94) {
-    return "^=";
-  }
-  return "";
+  return match (b0) {
+    61 => "==",
+    33 => "!=",
+    60 => "<=",
+    62 => ">=",
+    43 => "+=",
+    45 => "-=",
+    42 => "*=",
+    47 => "/=",
+    37 => "%=",
+    38 => "&=",
+    124 => "|=",
+    94 => "^=",
+    _ => "",
+  };
 }
 
 function punct_bar(b0: i32): string {
-  if (b0 == 43) {
-    return "+|";
-  }
-  if (b0 == 45) {
-    return "-|";
-  }
-  if (b0 == 42) {
-    return "*|";
-  }
-  if (b0 == 124) {
-    return "||";
-  }
-  return "";
+  return match (b0) {
+    43 => "+|",
+    45 => "-|",
+    42 => "*|",
+    124 => "||",
+    _ => "",
+  };
 }
 
 function punct_try(b0: i32): string {
-  if (b0 == 43) {
-    return "+?";
-  }
-  if (b0 == 45) {
-    return "-?";
-  }
-  if (b0 == 42) {
-    return "*?";
-  }
-  if (b0 == 47) {
-    return "/?";
-  }
-  if (b0 == 37) {
-    return "%?";
-  }
-  return "";
+  return match (b0) {
+    43 => "+?",
+    45 => "-?",
+    42 => "*?",
+    47 => "/?",
+    37 => "%?",
+    _ => "",
+  };
 }
 
 function punct_arrow(b0: i32): string {
-  if (b0 == 61) {
-    return "=>";
-  }
-  if (b0 == 124) {
-    return "|>";
-  }
-  if (b0 == 62) {
-    return ">>";
-  }
-  return "";
+  return match (b0) {
+    61 => "=>",
+    124 => "|>",
+    62 => ">>",
+    _ => "",
+  };
 }
 
 function punct_double(b0: i32, b1: i32): string {

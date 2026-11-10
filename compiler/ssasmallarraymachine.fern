@@ -199,19 +199,13 @@ function stack_step(s: State, r: value.Interval, op: isa.Op): State {
 }
 
 function movement(s: State, r: value.Interval, op: isa.Op): State {
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return write(s, op.destination, read(s, r, address(s, r, op), op.width));
-  }
-  if (op.kind == 4) {
-    return store(s, r, address(s, r, op), op.width, s.regs[op.source]);
-  }
-  if (op.kind == 5) {
-    return write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width));
-  }
-  return stack_step(s, r, op);
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    _ => stack_step(s, r, op),
+  };
 }
 
 function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
@@ -379,25 +373,15 @@ function signed_branch(f: Flags, name: string): i32 {
 }
 
 function expected_register(r: value.Interval, reg: i32): Word {
-  if (reg == 0) {
-    return identity(6, 0);
-  }
-  if (reg == 1) {
-    return numeric(r, value.expected(r));
-  }
-  if (reg == 2) {
-    return identity(6, -16);
-  }
-  if (reg == 4) {
-    return identity(3, 0);
-  }
-  if (reg == 7) {
-    return identity(8, 0);
-  }
-  if (reg == 8) {
-    return identity(7, 0);
-  }
-  return identity(2, reg);
+  return match (reg) {
+    0 => identity(6, 0),
+    1 => numeric(r, value.expected(r)),
+    2 => identity(6, -16),
+    4 => identity(3, 0),
+    7 => identity(8, 0),
+    8 => identity(7, 0),
+    _ => identity(2, reg),
+  };
 }
 
 function expected_scratch(s: State, r: value.Interval): Half[] {

@@ -17,9 +17,9 @@ func TestSelfHostParserX86_64(t *testing.T) {
 	dir := writeSelfHostParserProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/parser_check_run.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port parser assertion %d failed", code)
+		t.Errorf("parser self-checks exit %d:\n%s", code, out)
 	}
 }
 
@@ -28,8 +28,8 @@ func TestSelfHostParserArm64(t *testing.T) {
 	dir := writeSelfHostParserProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "drivers/parser_check_run.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)
-	_, _ = cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port parser assertion %d failed", code)
+		t.Errorf("parser self-checks exit %d:\n%s", code, out)
 	}
 }

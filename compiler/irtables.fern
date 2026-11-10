@@ -518,16 +518,12 @@ function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
   if (k != "add" && k != "sub" && k != "mul" && k != "shl") {
     return ops;
   }
-  if (kind == "u32") {
-    return ops.append(ir.op_u32_wrap());
-  }
-  if (kind == "i32") {
-    return ops.append(ir.op_int_cast("i32"));
-  }
-  if (kind == "u8") {
-    return ops.append(ir.op_int_cast("u8"));
-  }
-  return ops;
+  return match (kind) {
+    "u32" => ops.append(ir.op_u32_wrap()),
+    "i32" => ops.append(ir.op_int_cast("i32")),
+    "u8" => ops.append(ir.op_int_cast("u8")),
+    _ => ops,
+  };
 }
 
 function shift_count_oor(kind: string, uns: boolean, w: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
@@ -762,84 +758,44 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
 }
 
 pub function to_unsigned_kind(kind: string): string {
-  if (kind == "lt_s") {
-    return "lt_u";
-  }
-  if (kind == "gt_s") {
-    return "gt_u";
-  }
-  if (kind == "le_s") {
-    return "le_u";
-  }
-  if (kind == "ge_s") {
-    return "ge_u";
-  }
-  if (kind == "shr_s") {
-    return "shr_u";
-  }
-  if (kind == "div_s") {
-    return "div_u";
-  }
-  if (kind == "rem_s") {
-    return "rem_u";
-  }
-  return kind;
+  return match (kind) {
+    "lt_s" => "lt_u",
+    "gt_s" => "gt_u",
+    "le_s" => "le_u",
+    "ge_s" => "ge_u",
+    "shr_s" => "shr_u",
+    "div_s" => "div_u",
+    "rem_s" => "rem_u",
+    _ => kind,
+  };
 }
 
 pub function map_fbinop(op: string): string {
-  if (op == "+") {
-    return "fadd";
-  }
-  if (op == "-") {
-    return "fsub";
-  }
-  if (op == "*") {
-    return "fmul";
-  }
-  if (op == "/") {
-    return "fdiv";
-  }
-  if (op == "==") {
-    return "feq";
-  }
-  if (op == "!=") {
-    return "fne";
-  }
-  if (op == "<") {
-    return "flt";
-  }
-  if (op == "<=") {
-    return "fle";
-  }
-  if (op == ">") {
-    return "fgt";
-  }
-  if (op == ">=") {
-    return "fge";
-  }
-  return "";
+  return match (op) {
+    "+" => "fadd",
+    "-" => "fsub",
+    "*" => "fmul",
+    "/" => "fdiv",
+    "==" => "feq",
+    "!=" => "fne",
+    "<" => "flt",
+    "<=" => "fle",
+    ">" => "fgt",
+    ">=" => "fge",
+    _ => "",
+  };
 }
 
 pub function f64_math_builtin_kind(name: string): string {
-  if (name == "__sqrt_f64") {
-    return "fsqrt";
-  }
-  if (name == "__floor_f64") {
-    return "ffloor";
-  }
-  if (name == "__ceil_f64") {
-    return "fceil";
-  }
-  if (name == "__trunc_f64") {
-    return "ftrunc";
-  }
-  if (name == "__abs_f64") {
-    return "fabs";
-  }
-  if (name == "__round_f64") {
-    return "fround";
-  }
-  return "";
+  return match (name) {
+    "__sqrt_f64" => "fsqrt",
+    "__floor_f64" => "ffloor",
+    "__ceil_f64" => "fceil",
+    "__trunc_f64" => "ftrunc",
+    "__abs_f64" => "fabs",
+    "__round_f64" => "fround",
+    _ => "",
+  };
 }
 
 pub struct LowerResult {
@@ -1023,16 +979,12 @@ pub function lane_operator(kind: i32, op: string): string {
   if (kind == 10) {
     return "vneg";
   }
-  if (op == "+") {
-    return "vadd";
-  }
-  if (op == "-") {
-    return "vsub";
-  }
-  if (op == "*") {
-    return "vmul";
-  }
-  return "vdiv";
+  return match (op) {
+    "+" => "vadd",
+    "-" => "vsub",
+    "*" => "vmul",
+    _ => "vdiv",
+  };
 }
 
 pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
