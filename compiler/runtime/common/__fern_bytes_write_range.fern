@@ -13,6 +13,6 @@ function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, 
   if (!reuse) {
     out = __fern_bytes_clone(out, __load_i64(__raw_arr_ptr(out) - 16) as i32);
   }
-  __memcpy(__raw_arr_ptr(out) + 8 + at, __raw_arr_ptr(src) + 8 + from, n);
+  __memcpy(__raw_arr_ptr(out) + 8 + at as usize, __raw_arr_ptr(src) + 8 + from as usize, n);
   return out;
 }

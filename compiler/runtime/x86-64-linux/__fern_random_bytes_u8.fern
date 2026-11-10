@@ -12,7 +12,7 @@ function __fern_random_bytes_u8(n: i32): i32[] {
     if (want > 256) {
       want = 256;
     }
-    let r = __syscall3(318, (b + 8 + off) as i64, want as i64, 0) as i32;
+    let r = __syscall3(318, (b + 8 + off as usize) as i64, want as i64, 0) as i32;
     if (r == -4) {
       continue;
     }
