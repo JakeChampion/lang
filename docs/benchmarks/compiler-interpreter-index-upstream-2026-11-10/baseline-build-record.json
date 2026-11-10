@@ -1,0 +1,49 @@
+{
+  "source": "f9904974a77249949607f3b6196e489bf53c3602",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "started": "2026-11-10T02:20:36.020555+00:00",
+  "note": "Normal main f990 baseline and Plex correctness probe after upstream callback repair. No index change or paired performance measurement. Concurrent integration tests may run during this build.",
+  "build": {
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-interpreter-main-base-20261110-0220/build/interpreter-main-baseline-20261110-0220/fern-main",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "cwd": "/workspace/lang-interpreter-main-base-20261110-0220",
+    "environment": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "0",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-10T02:20:36.021349+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-10T02:21:50.645428+00:00"
+  },
+  "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+  "plex": {
+    "args": [
+      "/workspace/lang-interpreter-main-base-20261110-0220/build/interpreter-main-baseline-20261110-0220/fern-main",
+      "-target",
+      "arm64-android",
+      "-stdlib",
+      "/workspace/lang-interpreter-main-base-20261110-0220/internal/stdlib",
+      "-check",
+      "/workspace/lang-interpreter-main-base-20261110-0220/examples/android/plex/app.fern"
+    ],
+    "cwd": "/workspace/lang-interpreter-main-base-20261110-0220",
+    "entry_sha256": "e8cc6eedf993cdb610cb91349559936c0414c58a3e29dec02b83cf3ede423410",
+    "started": "2026-11-10T02:21:50.668197+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-10T02:21:57.557212+00:00",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "has_e051": false
+  },
+  "finished": "2026-11-10T02:21:57.558177+00:00"
+}

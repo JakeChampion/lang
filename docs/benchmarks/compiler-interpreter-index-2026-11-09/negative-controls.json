@@ -1,0 +1,142 @@
+[
+  {
+    "name": "negative-nested-type-error.fern",
+    "compiler": "skip",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-nested-type-error.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-nested-type-error.fern:1:74: error[E038]: argument 1 to \"id\": expected i32, got string\n    function id(x: i32): i32 {return x;} function main(): i32 { return id(id(\"bad\")); }\n                                                                             ^\n"
+  },
+  {
+    "name": "negative-nested-type-error.fern",
+    "compiler": "index",
+    "args": [
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-nested-type-error.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-nested-type-error.fern:1:74: error[E038]: argument 1 to \"id\": expected i32, got string\n    function id(x: i32): i32 {return x;} function main(): i32 { return id(id(\"bad\")); }\n                                                                             ^\n"
+  },
+  {
+    "name": "negative-not-callable.fern",
+    "compiler": "skip",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-not-callable.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-not-callable.fern:1:40: error[E038]: calling non-function value of type i32\n    function main(): i32 {let x=7; return x();}\n                                           ^\n"
+  },
+  {
+    "name": "negative-not-callable.fern",
+    "compiler": "index",
+    "args": [
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-not-callable.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-not-callable.fern:1:40: error[E038]: calling non-function value of type i32\n    function main(): i32 {let x=7; return x();}\n                                           ^\n"
+  },
+  {
+    "name": "negative-unknown-free.fern",
+    "compiler": "skip",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-free.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-free.fern:1:31: error[E001]: cannot find \"absent\" in this scope\n    function main(): i32 { return absent(); }\n                                  ^~~~~~\n"
+  },
+  {
+    "name": "negative-unknown-free.fern",
+    "compiler": "index",
+    "args": [
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-free.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-free.fern:1:31: error[E001]: cannot find \"absent\" in this scope\n    function main(): i32 { return absent(); }\n                                  ^~~~~~\n"
+  },
+  {
+    "name": "negative-unknown-method.fern",
+    "compiler": "skip",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-method.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-method.fern:1:70: error[E043]: struct P has no field or method \"absent\"\n    struct P { n: i32 } function main(): i32 { let p=P { n: 7 }; return p.absent(); }\n                                                                         ^\n"
+  },
+  {
+    "name": "negative-unknown-method.fern",
+    "compiler": "index",
+    "args": [
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-method.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-unknown-method.fern:1:70: error[E043]: struct P has no field or method \"absent\"\n    struct P { n: i32 } function main(): i32 { let p=P { n: 7 }; return p.absent(); }\n                                                                         ^\n"
+  },
+  {
+    "name": "negative-wrong-arity.fern",
+    "compiler": "skip",
+    "args": [
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-wrong-arity.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-wrong-arity.fern:1:70: error[E004]: function \"id\" takes 1 argument but was given 0\n    function id(x: i32): i32 {return x;} function main(): i32 { return id(); }\n                                                                         ^\n"
+  },
+  {
+    "name": "negative-wrong-arity.fern",
+    "compiler": "index",
+    "args": [
+      "/workspace/lang-interpreter-index-20261109/build/interpreter-index-qualified-20261109/fern-index",
+      "-stdlib",
+      "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+      "-interp",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-wrong-arity.fern"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/negative-wrong-arity.fern:1:70: error[E004]: function \"id\" takes 1 argument but was given 0\n    function id(x: i32): i32 {return x;} function main(): i32 { return id(); }\n                                                                         ^\n"
+  }
+]

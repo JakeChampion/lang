@@ -1,0 +1,4 @@
+{
+  "at": "2026-11-09T22:05:11.813546+00:00",
+  "note": "Stopped the first test invocation before any test output. Two new control designs did not pass the baseline. Preserved their probe diagnostics, then replaced the controls with supported syntax and baseline exit42."
+}

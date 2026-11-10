@@ -1,0 +1,82 @@
+{
+  "source": "424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2",
+  "build_record": {
+    "name": "candidate",
+    "cwd": "/workspace/lang-interpreter-dispatch-20261109",
+    "args": [
+      "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-count-retry-20261109/fern-count-candidate",
+      "compiler/fern.fern",
+      "internal/stdlib"
+    ],
+    "fern_env": {
+      "FERN_PROFILE": "0",
+      "FERN_LEAKCHECK": "1",
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "started": "2026-11-09T22:16:11.886486+00:00",
+    "interp_source_sha256": "c5b54cb12b1c3eaeaaff1f93659518cd27eac6c17e68aa009eed1beb81d80552",
+    "exit_code": 0,
+    "finished": "2026-11-09T22:17:45.925600+00:00",
+    "binary_sha256": "154d56dea2be8cc0bdcf514594ef95ce4c95b47c386d73c88d530039af94950d"
+  },
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "note": "Reuse the exact qualified shortcut counter binary for two fixed diagnostic inputs. New samples, same compiler/source/flags; no recovered artifacts.",
+  "runs": [
+    {
+      "group": "first",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-count-retry-20261109/fern-count-candidate",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T22:59:42.726198+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T22:59:50.157416+00:00",
+      "allocs": 28676955,
+      "frees": 28676955,
+      "live_bytes": 0,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    },
+    {
+      "group": "second",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-count-retry-20261109/fern-count-candidate",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T22:59:50.160686+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-09T23:00:58.129973+00:00",
+      "allocs": 72175436,
+      "frees": 72175436,
+      "live_bytes": 0,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440"
+    }
+  ],
+  "finished": "2026-11-09T23:00:58.138673+00:00"
+}

@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/workspace/lang-interpreter-dispatch-20261109/build/continuation-20261110-0505/reproduce-http.py", line 100, in <module>
+    compile_pair(target, profile)
+  File "/workspace/lang-interpreter-dispatch-20261109/build/continuation-20261110-0505/reproduce-http.py", line 84, in compile_pair
+    assert irs[0] == irs[1]
+           ^^^^^^^^^^^^^^^^
+AssertionError

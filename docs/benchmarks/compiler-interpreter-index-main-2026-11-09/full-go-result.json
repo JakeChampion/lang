@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-09T23:22:50Z",
+  "finished": "2026-11-09T23:35:36.776010+00:00",
+  "command": "go test ./internal/testing/e2ecompiler -run '^TestSelfHostStdTestInterp$/^opus_delimited$' -count=1 -v -timeout=33m",
+  "scope": "Same original oracle/native Opus subtest after merging currentmain4a. Other subtests filtered. Budget/exclusions/corpus unchanged."
+}

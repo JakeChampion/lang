@@ -1,0 +1,8 @@
+{
+  "baseline_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "candidate_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "note": "Independent qualification after main integration. Earlier source totals remain in their original archives. No result pooling."
+}

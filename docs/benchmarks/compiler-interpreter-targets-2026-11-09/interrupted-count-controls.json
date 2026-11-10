@@ -1,0 +1,28 @@
+{
+  "note": "Separate allocation-counter builds. These are not the production timing binaries. Full-corpus control and targeted tests can overlap.",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "builds": [
+    {
+      "name": "base",
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-count-base",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "fern_env": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-09T22:09:11.795852+00:00",
+      "interp_source_sha256": "e15897c38d3248b77db2b0841b112f08f770b9dcfc82e0dca6bb16c466618d3d"
+    }
+  ],
+  "runs": []
+}

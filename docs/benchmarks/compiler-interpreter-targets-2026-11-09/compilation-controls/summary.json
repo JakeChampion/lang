@@ -1,0 +1,56 @@
+{
+  "output_sha256": "ca913adb4c4164b7b49e1b2c73e62739c178d9bc05978b3ccdc30138fdbca068",
+  "cache_probes": {
+    "base": {
+      "hits": 2410,
+      "misses": 0
+    },
+    "cand": {
+      "hits": 2410,
+      "misses": 0
+    }
+  },
+  "measurements": {
+    "cold": {
+      "base": {
+        "wall_median_s": 19.976808707,
+        "wall_range_s": [
+          19.716516333,
+          36.005140447
+        ],
+        "cpu_median_s": 19.953062,
+        "peak_rss_median_kib": 585412
+      },
+      "cand": {
+        "wall_median_s": 22.338687408,
+        "wall_range_s": [
+          21.385110076,
+          37.518412736
+        ],
+        "cpu_median_s": 22.301942999999998,
+        "peak_rss_median_kib": 585480
+      }
+    },
+    "warm": {
+      "base": {
+        "wall_median_s": 29.515208713,
+        "wall_range_s": [
+          19.021349127,
+          33.884395873
+        ],
+        "cpu_median_s": 29.514153,
+        "peak_rss_median_kib": 582788
+      },
+      "cand": {
+        "wall_median_s": 19.26720821,
+        "wall_range_s": [
+          17.434774872,
+          33.451700101
+        ],
+        "cpu_median_s": 19.249595,
+        "peak_rss_median_kib": 582664
+      }
+    }
+  },
+  "claim": "Complete compilation control only. Three pairs per mode under concurrent interpreter workloads. No complete-compilation speedup established. All samples retained."
+}

@@ -1,0 +1,29 @@
+{
+  "created": "2026-11-10T04:04:19.837225+00:00",
+  "fixed_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "source_trees": {
+    "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2": "748d6f4b2d5d5f538b57549a9c5a07e49b1266d0",
+    "da3282d0f3bc2614d45667b17edad8f844eb6a1b": "08619353a7b6b2ae67704afcc7183f3ca4c8f5b6"
+  },
+  "input_files": {
+    "tests/stdlib/opus_delimited_test.fern": {
+      "sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+      "bytes": 3333
+    },
+    "tests/stdlib/opus_delimited_vectors.fern": {
+      "sha256": "4577a0d43b7363681bb0fae8cf8f876dafd02a896cb61fc4d03853bbac33fc4e",
+      "bytes": 185410
+    },
+    "build/interpreter-profile-20261109/first-group.fern": {
+      "sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "bytes": 3293
+    },
+    "build/interpreter-profile-20261109/second-group.fern": {
+      "sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "bytes": 3296
+    }
+  },
+  "go_version": "go version go1.27.3 linux/amd64"
+}

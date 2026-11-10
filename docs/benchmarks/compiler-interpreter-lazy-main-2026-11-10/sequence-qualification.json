@@ -1,0 +1,15 @@
+{
+  "created": "2026-11-10T07:36:05.198999+00:00",
+  "instruction_note_scope": "The statement about validation in instructions.py and instructions/results.json refers to the 12 targeted suites, source check, format, vet, and CI self-tests. The separate TLS validation follows the original sequence.",
+  "actual_order": [
+    "four builds and targeted validation",
+    "normal subset timings and counter controls",
+    "complete native compilation and cache controls",
+    "normal full-corpus interpretation",
+    "first-group interpreter instruction counts",
+    "both formerly failing TLS selectors",
+    "additional cold complete-compilation instruction counts"
+  ],
+  "reason_for_additional_work": "Every cold compilation CPU pair is slower for the candidate. The later count pair checks complete-compilation work without repeating timing samples.",
+  "preflight_failure": "The first additional waiter was terminated before a measurement after its private Valgrind path preflight failed. Original artifacts remain intact."
+}

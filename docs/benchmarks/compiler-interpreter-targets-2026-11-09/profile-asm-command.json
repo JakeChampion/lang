@@ -1,0 +1,24 @@
+{
+  "args": [
+    "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-cpu.s",
+    "compiler/fern.fern",
+    "internal/stdlib"
+  ],
+  "cwd": "/workspace/lang-interpreter-timeout-20261109",
+  "fern_env": {
+    "FERN_PROFILE": "cpu",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "started": "2026-11-09T21:46:29.768832+00:00",
+  "executed_for_measurement": false,
+  "exit_code": 0,
+  "finished": "2026-11-09T21:48:13.566485+00:00"
+}

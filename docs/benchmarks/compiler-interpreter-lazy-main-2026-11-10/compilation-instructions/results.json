@@ -1,0 +1,7 @@
+{
+  "started": "2026-11-10T07:30:29.761907+00:00",
+  "phase": "wait-for-tls-control",
+  "purpose": "Check cold complete-compilation work after all three normal cold CPU pairs were slower. This is a new concern, not a repeated timing comparison.",
+  "note": "One guest instruction sample per compiler. No timing claim. No child tracing, cache simulation, or branch simulation.",
+  "runs": []
+}

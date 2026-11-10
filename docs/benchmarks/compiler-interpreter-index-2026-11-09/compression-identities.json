@@ -1,0 +1,22 @@
+{
+  "publication_date": "2026-11-10",
+  "note": "Lossless storage correction for raw record whitespace. Measurements and original execution records remain unchanged. Original uncompressed copies also remain in ignored local preservation storage.",
+  "records": [
+    {
+      "original_path": "format.log",
+      "compressed_path": "format.log.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "a68820e3cf18539b7b1ce8ed606b87fbf8aaf2bb338db862f899090b30a9f438",
+      "original_bytes": 357,
+      "gzip_sha256": "b25df9aa136786ad4c995d0564d3786d04b1bab4e9e15dc36079fd29862a8d01"
+    },
+    {
+      "original_path": "implementation.patch",
+      "compressed_path": "implementation.patch.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "260121e16cf6c2cfcadfdea60fa2ff567fd72bdfd4343847f0aca2a3b269bb40",
+      "original_bytes": 21958,
+      "gzip_sha256": "a661e01a2f2401e03b963223fed2e2df2b98ea5637e41aca611e11effec67adf"
+    }
+  ]
+}

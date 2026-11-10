@@ -1,0 +1,142 @@
+{
+  "ci/perf-x86-129627638421.log.gz": {
+    "sha256": "bfe98794a30b386b356ede842646b95f309e12820371891e09e1fc5cddb04473",
+    "bytes": 129051
+  },
+  "ci/perf-arm-129627638638.log.gz": {
+    "sha256": "e9419f926ef3622ebcb7659c0ddbec1b0ee4e3928a01a48c76c4f1b1fe648e5b",
+    "bytes": 78030
+  },
+  "ci/perf-gate-selftest.log.gz": {
+    "sha256": "fac48f8006780271d5443141d3244600227489f67d7b6f6f304e2febe53a00c9",
+    "bytes": 64
+  },
+  "data/arm64-linux-diagnostic-base.s.gz": {
+    "sha256": "4c31579b6a9d7c6f1a35d962c955d7de3cbe59dc0e20ca62ea47c625aadbd81c",
+    "bytes": 462552
+  },
+  "data/arm64-linux-diagnostic-candidate.s.gz": {
+    "sha256": "4c31579b6a9d7c6f1a35d962c955d7de3cbe59dc0e20ca62ea47c625aadbd81c",
+    "bytes": 462552
+  },
+  "data/arm64-linux-hardened-base.s.gz": {
+    "sha256": "c17606b59b1c82e30c7e99bd91b5ade6198fb0fcafe1c2c903960c4a8e829827",
+    "bytes": 533173
+  },
+  "data/arm64-linux-hardened-candidate.s.gz": {
+    "sha256": "c17606b59b1c82e30c7e99bd91b5ade6198fb0fcafe1c2c903960c4a8e829827",
+    "bytes": 533173
+  },
+  "data/arm64-linux-minimal-base.s.gz": {
+    "sha256": "77f478d168a601f63033bf83abd8fb40ae3e10beb6881f071618ea942cc56ee2",
+    "bytes": 379389
+  },
+  "data/arm64-linux-minimal-candidate.s.gz": {
+    "sha256": "77f478d168a601f63033bf83abd8fb40ae3e10beb6881f071618ea942cc56ee2",
+    "bytes": 379389
+  },
+  "data/arm64-linux-safe-base.s.gz": {
+    "sha256": "03db3363ba27f2f5761ab2f19d0e5fbbc77e7b84c6b01ffdb63cd92347d37027",
+    "bytes": 489128
+  },
+  "data/arm64-linux-safe-candidate.s.gz": {
+    "sha256": "03db3363ba27f2f5761ab2f19d0e5fbbc77e7b84c6b01ffdb63cd92347d37027",
+    "bytes": 489128
+  },
+  "data/wasm32-wasi-safe-base.s.gz": {
+    "sha256": "0a23e3f7d6624a2b29b93d5a35e67abe1d1107e1ff101239bf0c71f0638a8b58",
+    "bytes": 401438
+  },
+  "data/wasm32-wasi-safe-candidate.s.gz": {
+    "sha256": "0a23e3f7d6624a2b29b93d5a35e67abe1d1107e1ff101239bf0c71f0638a8b58",
+    "bytes": 401438
+  },
+  "data/x86-64-linux-diagnostic-base.s.gz": {
+    "sha256": "2cc67a726fd30551b5e4cab65c90ce7e4efe4ef187824fc95431210fd74730cc",
+    "bytes": 436706
+  },
+  "data/x86-64-linux-diagnostic-candidate.s.gz": {
+    "sha256": "2cc67a726fd30551b5e4cab65c90ce7e4efe4ef187824fc95431210fd74730cc",
+    "bytes": 436706
+  },
+  "data/x86-64-linux-hardened-base.callgrind.gz": {
+    "sha256": "35113bfcaae3da68c371a508278829a1ddac8c598361a53f3f59494fff9e4462",
+    "bytes": 6341
+  },
+  "data/x86-64-linux-hardened-base.s.gz": {
+    "sha256": "32efb4dca6ffaea81299ebf510d89c5db6846400fe02ec95563843789f2f7e99",
+    "bytes": 489115
+  },
+  "data/x86-64-linux-hardened-base.valgrind.log.gz": {
+    "sha256": "5d76ee80ebfc77ae2d14f376f2203856d58624b4c61331679153259976704155",
+    "bytes": 575
+  },
+  "data/x86-64-linux-hardened-candidate.callgrind.gz": {
+    "sha256": "ea8363e379b43fc6f56411a028e56b94a83f33f9e2c78c6acb4dc423c880a978",
+    "bytes": 6346
+  },
+  "data/x86-64-linux-hardened-candidate.s.gz": {
+    "sha256": "32efb4dca6ffaea81299ebf510d89c5db6846400fe02ec95563843789f2f7e99",
+    "bytes": 489115
+  },
+  "data/x86-64-linux-hardened-candidate.valgrind.log.gz": {
+    "sha256": "157d962dbbf70832b5c9ee3c4c7166e122d77615ab285512647f2dd1b1becd52",
+    "bytes": 580
+  },
+  "data/x86-64-linux-minimal-base.callgrind.gz": {
+    "sha256": "514860db35b76bd8deba33e90a62ecde9a9c7286e8dd0efe857a8b426e4f163c",
+    "bytes": 7164
+  },
+  "data/x86-64-linux-minimal-base.s.gz": {
+    "sha256": "665adfb0e272d01c03a427aac8e3f86383557e6173ab0a501682f9698b4590ac",
+    "bytes": 372542
+  },
+  "data/x86-64-linux-minimal-base.valgrind.log.gz": {
+    "sha256": "bac2185462ab493fa41d8b6254069769c439e2417baae48f1f5e20a9d6e91f2b",
+    "bytes": 574
+  },
+  "data/x86-64-linux-minimal-candidate.callgrind.gz": {
+    "sha256": "27e015d31f0f868a0694e4d65ec46dc5298cf940cc1cd26f06b444cf901c412d",
+    "bytes": 7169
+  },
+  "data/x86-64-linux-minimal-candidate.s.gz": {
+    "sha256": "665adfb0e272d01c03a427aac8e3f86383557e6173ab0a501682f9698b4590ac",
+    "bytes": 372542
+  },
+  "data/x86-64-linux-minimal-candidate.valgrind.log.gz": {
+    "sha256": "cb3824464ce11fd4651bbfc78c42eab81b968c6b10294b73e59372fa219c4d34",
+    "bytes": 579
+  },
+  "data/x86-64-linux-safe-base.callgrind.gz": {
+    "sha256": "758d5676794421b1f4b86f9c6925f4e8a4ee693c1337c33fae5057328b5af953",
+    "bytes": 5727
+  },
+  "data/x86-64-linux-safe-base.s.gz": {
+    "sha256": "aa7bc5e8567c807fb9eacce1724526dd8a03c2211b5b877906cd382a3592a978",
+    "bytes": 474987
+  },
+  "data/x86-64-linux-safe-base.valgrind.log.gz": {
+    "sha256": "607c50af023f2919b2dc35af1f9097a069ab4c882bf4431d025962724553cd11",
+    "bytes": 571
+  },
+  "data/x86-64-linux-safe-candidate.callgrind.gz": {
+    "sha256": "a8f53d0c9a7571af90dd9dcb4c00ef91274015e4224f15553fd2c7686c80871b",
+    "bytes": 5732
+  },
+  "data/x86-64-linux-safe-candidate.s.gz": {
+    "sha256": "aa7bc5e8567c807fb9eacce1724526dd8a03c2211b5b877906cd382a3592a978",
+    "bytes": 474987
+  },
+  "data/x86-64-linux-safe-candidate.valgrind.log.gz": {
+    "sha256": "14bf69285c7878eecb66a4ccccd79a29ca945a758733a7c694767a0e8161c740",
+    "bytes": 576
+  },
+  "controls/baseline-update.patch.gz": {
+    "sha256": "42ce5a4e1cfb0062c3b44c425280401164d8c0cd6e61644f9c17fc3ac2dcaaf9",
+    "bytes": 3526
+  },
+  "controls/baseline-update-v2.patch.gz": {
+    "sha256": "fbffca010f2e9019531b41b4901169a104b33f894e6c73e791e2ad5b15cfd97b",
+    "bytes": 3526
+  }
+}

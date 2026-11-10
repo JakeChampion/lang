@@ -1,0 +1,531 @@
+{
+  "command": "FERN_STDTEST_SHARD=0/4 go test -json ./internal/testing/e2ecompiler -run '^TestSelfHostStdTestInterp$' -count=1 -timeout=33m",
+  "source": "7bd045eb04c8ea0b5980f0526e778ae107571d05",
+  "measured_code_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "exit_code": 0,
+  "started": "2026-11-10T00:39:04Z",
+  "finished": "2026-11-10T00:52:41.092055+00:00",
+  "terminal_counts": {
+    "pass": 74
+  },
+  "terminal_events": [
+    {
+      "Time": "2026-11-10T00:39:21.176193743Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/pvh",
+      "Elapsed": 11.52
+    },
+    {
+      "Time": "2026-11-10T00:39:21.307921979Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/arithmetic",
+      "Elapsed": 11.65
+    },
+    {
+      "Time": "2026-11-10T00:39:31.928855059Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/cli",
+      "Elapsed": 10.75
+    },
+    {
+      "Time": "2026-11-10T00:39:32.174136283Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/path",
+      "Elapsed": 10.87
+    },
+    {
+      "Time": "2026-11-10T00:39:42.244363336Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/string_count_and_dir_listing",
+      "Elapsed": 10.32
+    },
+    {
+      "Time": "2026-11-10T00:39:53.864392573Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/helpers",
+      "Elapsed": 10.88
+    },
+    {
+      "Time": "2026-11-10T00:39:53.864802102Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/ci_string_and_log_kv",
+      "Elapsed": 11.62
+    },
+    {
+      "Time": "2026-11-10T00:39:54.634237464Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/time_calendar",
+      "Elapsed": 11.58
+    },
+    {
+      "Time": "2026-11-10T00:40:04.807467454Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_prefix_suffix_subseq",
+      "Elapsed": 10.94
+    },
+    {
+      "Time": "2026-11-10T00:40:05.876240548Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_batch",
+      "Elapsed": 11.24
+    },
+    {
+      "Time": "2026-11-10T00:40:15.786569404Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/wide_numerics",
+      "Elapsed": 10.98
+    },
+    {
+      "Time": "2026-11-10T00:40:17.680973868Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_none",
+      "Elapsed": 11.8
+    },
+    {
+      "Time": "2026-11-10T00:40:28.119344999Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/sort_wider",
+      "Elapsed": 12.33
+    },
+    {
+      "Time": "2026-11-10T00:40:30.400173745Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_dedup",
+      "Elapsed": 12.72
+    },
+    {
+      "Time": "2026-11-10T00:40:43.056514679Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/batch8",
+      "Elapsed": 14.94
+    },
+    {
+      "Time": "2026-11-10T00:40:53.680339382Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/string_prelude_migrated",
+      "Elapsed": 10.62
+    },
+    {
+      "Time": "2026-11-10T00:40:55.043491563Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/opus_silk_entropy",
+      "Elapsed": 105.39
+    },
+    {
+      "Time": "2026-11-10T00:41:06.332059911Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/json_roundtrip",
+      "Elapsed": 12.65
+    },
+    {
+      "Time": "2026-11-10T00:41:07.576451671Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_request_body_stream",
+      "Elapsed": 12.53
+    },
+    {
+      "Time": "2026-11-10T00:41:16.949319171Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/i64_bit_ops",
+      "Elapsed": 10.62
+    },
+    {
+      "Time": "2026-11-10T00:41:18.339806614Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/i32_to_string_radix",
+      "Elapsed": 10.76
+    },
+    {
+      "Time": "2026-11-10T00:41:28.515962204Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_accesslog",
+      "Elapsed": 10.18
+    },
+    {
+      "Time": "2026-11-10T00:41:30.301272451Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_sse",
+      "Elapsed": 13.35
+    },
+    {
+      "Time": "2026-11-10T00:41:41.073433613Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/result_combinators",
+      "Elapsed": 12.56
+    },
+    {
+      "Time": "2026-11-10T00:41:55.001118486Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/regex",
+      "Elapsed": 73.26
+    },
+    {
+      "Time": "2026-11-10T00:41:55.001253446Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/android_trace",
+      "Elapsed": 11.35
+    },
+    {
+      "Time": "2026-11-10T00:42:29.059891025Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/digest_sm3",
+      "Elapsed": 37.71
+    },
+    {
+      "Time": "2026-11-10T00:42:29.060537562Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/digest_sha256",
+      "Elapsed": 34.06
+    },
+    {
+      "Time": "2026-11-10T00:42:42.109615174Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/crypto",
+      "Elapsed": 13.04
+    },
+    {
+      "Time": "2026-11-10T00:43:04.52540748Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/android_property",
+      "Elapsed": 83.31
+    },
+    {
+      "Time": "2026-11-10T00:43:19.89465807Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/string_swap_case",
+      "Elapsed": 10.92
+    },
+    {
+      "Time": "2026-11-10T00:43:19.89990636Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/string_classify_transform",
+      "Elapsed": 15.37
+    },
+    {
+      "Time": "2026-11-10T00:43:33.085897856Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/float_cbrt_hypot3",
+      "Elapsed": 13.19
+    },
+    {
+      "Time": "2026-11-10T00:43:48.78761695Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_hpack",
+      "Elapsed": 15.7
+    },
+    {
+      "Time": "2026-11-10T00:44:02.433169413Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_json_of",
+      "Elapsed": 13.65
+    },
+    {
+      "Time": "2026-11-10T00:44:14.454947209Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_request_builder",
+      "Elapsed": 12.02
+    },
+    {
+      "Time": "2026-11-10T00:44:26.894045711Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/header_map_migrated",
+      "Elapsed": 12.44
+    },
+    {
+      "Time": "2026-11-10T00:44:37.628928037Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_at_and_f32_range",
+      "Elapsed": 10.73
+    },
+    {
+      "Time": "2026-11-10T00:44:51.035209453Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/u32_roots",
+      "Elapsed": 13.41
+    },
+    {
+      "Time": "2026-11-10T00:45:03.275446541Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_scale_add",
+      "Elapsed": 12.24
+    },
+    {
+      "Time": "2026-11-10T00:45:16.428202895Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/array_median_range",
+      "Elapsed": 13.15
+    },
+    {
+      "Time": "2026-11-10T00:45:29.607368228Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/cmp_traits",
+      "Elapsed": 13.18
+    },
+    {
+      "Time": "2026-11-10T00:45:41.720570823Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/int_width_parity",
+      "Elapsed": 12.11
+    },
+    {
+      "Time": "2026-11-10T00:45:53.199582308Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/float_exp2_exp10",
+      "Elapsed": 11.48
+    },
+    {
+      "Time": "2026-11-10T00:46:06.580649696Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/float_convert",
+      "Elapsed": 13.38
+    },
+    {
+      "Time": "2026-11-10T00:46:20.298256084Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/string_partition",
+      "Elapsed": 13.72
+    },
+    {
+      "Time": "2026-11-10T00:46:33.71285141Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/fuzz_shrink",
+      "Elapsed": 13.41
+    },
+    {
+      "Time": "2026-11-10T00:46:57.682357523Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/ordset",
+      "Elapsed": 23.97
+    },
+    {
+      "Time": "2026-11-10T00:47:10.073533582Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/tz",
+      "Elapsed": 12.39
+    },
+    {
+      "Time": "2026-11-10T00:47:38.185888136Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/option_and_set_ops",
+      "Elapsed": 16.65
+    },
+    {
+      "Time": "2026-11-10T00:47:38.185970215Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/quiet_mode",
+      "Elapsed": 11.46
+    },
+    {
+      "Time": "2026-11-10T00:47:58.655558707Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/mp4_alac_boundary",
+      "Elapsed": 20.47
+    },
+    {
+      "Time": "2026-11-10T00:48:12.327803681Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/flac_file_smoke",
+      "Elapsed": 13.67
+    },
+    {
+      "Time": "2026-11-10T00:48:30.094065527Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/mp3_input_smoke",
+      "Elapsed": 17.77
+    },
+    {
+      "Time": "2026-11-10T00:49:16.16835291Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/mp3_freeformat_smoke",
+      "Elapsed": 32.67
+    },
+    {
+      "Time": "2026-11-10T00:49:16.168585403Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/android_player",
+      "Elapsed": 13.41
+    },
+    {
+      "Time": "2026-11-10T00:49:57.380751549Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/video_mp4_file",
+      "Elapsed": 41.21
+    },
+    {
+      "Time": "2026-11-10T00:50:40.931859204Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/opus_delimited",
+      "Elapsed": 502.15
+    },
+    {
+      "Time": "2026-11-10T00:50:44.730631565Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/opus_silk_loss",
+      "Elapsed": 482.63
+    },
+    {
+      "Time": "2026-11-10T00:51:00.704411057Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/aac_smoke",
+      "Elapsed": 19.77
+    },
+    {
+      "Time": "2026-11-10T00:51:06.633053647Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/mp4_smoke",
+      "Elapsed": 21.9
+    },
+    {
+      "Time": "2026-11-10T00:51:13.354596087Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/csv",
+      "Elapsed": 723.7
+    },
+    {
+      "Time": "2026-11-10T00:51:19.796898405Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/vorbis_codebook",
+      "Elapsed": 13.16
+    },
+    {
+      "Time": "2026-11-10T00:51:31.127294469Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/vorbis_seek_smoke",
+      "Elapsed": 17.77
+    },
+    {
+      "Time": "2026-11-10T00:51:33.143194078Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/video",
+      "Elapsed": 95.77
+    },
+    {
+      "Time": "2026-11-10T00:51:43.683912317Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_static",
+      "Elapsed": 12.56
+    },
+    {
+      "Time": "2026-11-10T00:51:54.908791998Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/quic_streams",
+      "Elapsed": 11.23
+    },
+    {
+      "Time": "2026-11-10T00:52:08.363173758Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/tcp_conn",
+      "Elapsed": 13.45
+    },
+    {
+      "Time": "2026-11-10T00:52:28.665008174Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/wavpack_predict",
+      "Elapsed": 83.03
+    },
+    {
+      "Time": "2026-11-10T00:52:35.152972969Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/linear_audio",
+      "Elapsed": 55.52
+    },
+    {
+      "Time": "2026-11-10T00:52:40.977944764Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/http_h2_frame",
+      "Elapsed": 26.79
+    },
+    {
+      "Time": "2026-11-10T00:52:41.0059258Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp/alac_boundary",
+      "Elapsed": 81.18
+    },
+    {
+      "Time": "2026-11-10T00:52:41.006058738Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Test": "TestSelfHostStdTestInterp",
+      "Elapsed": 2.71
+    },
+    {
+      "Time": "2026-11-10T00:52:41.013628621Z",
+      "Action": "pass",
+      "Package": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+      "Elapsed": 814.06
+    }
+  ],
+  "note": "Full unchanged interpreter shard0/4 (current Opus assignment), same selection and 33-minute test-package budget as CI. Original slow-test exclusions stay unchanged. This local control does not replace complete exact-head CI."
+}

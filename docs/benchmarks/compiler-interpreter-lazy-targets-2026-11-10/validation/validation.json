@@ -1,0 +1,26 @@
+{
+  "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "runs": [
+    {
+      "label": "tests",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHostInterp(X86_64|Arm64|Driver(X86_64|Arm64)|CallableValues|StructOps|AssocConsts|ScopeFrames|DynProvider|MapKeysCompareThroughEq|CallCostIgnoresFunctionCount)$",
+        "-count=1",
+        "-v",
+        "-timeout=25m"
+      ],
+      "cwd": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "started": "2026-11-10T03:54:35.491699+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:58:36.097074+00:00",
+      "passes": 388,
+      "skips": 0
+    }
+  ],
+  "finished": "2026-11-10T03:58:36.105261+00:00"
+}

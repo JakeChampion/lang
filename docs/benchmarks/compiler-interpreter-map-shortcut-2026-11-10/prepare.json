@@ -1,0 +1,116 @@
+{
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate_source": "70171cab7f9b7c0ed80ff26132b3e4d16425c406",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "started": "2026-11-10T03:35:15.490485+00:00",
+  "runs": [
+    {
+      "label": "baseline-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-map-qualification-20261110-0330/baseline-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:35:15.739764+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:36:28.331199+00:00"
+    },
+    {
+      "label": "baseline-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-map-qualification-20261110-0330/baseline-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:36:28.357209+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:37:42.121950+00:00"
+    },
+    {
+      "label": "candidate-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-map-qualification-20261110-0330/candidate-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-qualified-20261110-0330",
+      "source": "70171cab7f9b7c0ed80ff26132b3e4d16425c406",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:37:42.229903+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:39:02.875448+00:00"
+    },
+    {
+      "label": "candidate-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-map-qualification-20261110-0330/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-qualified-20261110-0330",
+      "source": "70171cab7f9b7c0ed80ff26132b3e4d16425c406",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:39:02.913360+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:40:07.549748+00:00"
+    }
+  ],
+  "binaries": {
+    "baseline-normal": {
+      "sha256": "1be868407c58e40bd6f0a56babf5021c708ea421b0fb6cb4f1ff2980f50a3a11"
+    },
+    "baseline-count": {
+      "sha256": "4c4f418402ad755110ded043c51156e9002b542672b9f4b095972c0284a0bb48"
+    },
+    "candidate-normal": {
+      "sha256": "725254cb882bd7a4f741a62ebf7474e5c1a4bc6f469084a263f852a1e26c47a0"
+    },
+    "candidate-count": {
+      "sha256": "8fd5a4b99ad7f73d8f10053016aea1729a45c8533f610995b49b41541aa3750f"
+    }
+  },
+  "finished": "2026-11-10T03:40:07.588009+00:00"
+}

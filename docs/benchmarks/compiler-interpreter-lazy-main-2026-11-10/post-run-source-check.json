@@ -1,0 +1,21 @@
+{
+  "checked": "2026-11-10T07:50:44.767367+00:00",
+  "worktrees": {
+    "baseline": {
+      "path": "/workspace/lang-interpreter-main-base-20261110-0710",
+      "head": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+      "tracked_status": ""
+    },
+    "candidate": {
+      "path": "/workspace/lang-interpreter-qualified-20261110-0710",
+      "head": "c05b5ce874fc4a6ec6b0be45ee71d3ed1bd5f8f1",
+      "tracked_status": ""
+    },
+    "fixed_input": {
+      "path": "/workspace/lang-interpreter-timeout-20261109",
+      "head": "ebb50c78c0ca714180704352881da7e39efb570f",
+      "tracked_status": ""
+    }
+  },
+  "interpreter_matches_original_lazy_source": true
+}
