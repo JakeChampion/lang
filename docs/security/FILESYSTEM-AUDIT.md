@@ -16,6 +16,7 @@ The handle discipline is recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md), and the
 | `io.temp_file(prefix)` | A regular file `<root>/<prefix>-<16 hex digits>` opened exclusively with mode 0600, returned with its path and its writer |
 | `rename_noreplace`, `rename_exchange` | `renameat2` with `RENAME_NOREPLACE` and `RENAME_EXCHANGE`, so a rename cannot overwrite a file that appeared between a check and the move |
 | `pipe`, `reactor_new`, `ring_new` | Created with `O_CLOEXEC` |
+| A path, a program name, an argument or an environment entry | Refused with `EINVAL` when it holds a NUL byte, before a system call sees it. A pathname unix socket follows the same rule. A Linux abstract socket name starts with a NUL byte and can hold more |
 
 ## Changes in this record
 
@@ -78,7 +79,16 @@ The `std/filesystem_ops` suite gains a `temp_file` round trip and the separator 
 go test ./internal/testing/e2ecompiler -run 'TestSelfHostTempFiles' -count=1 -timeout 0
 ```
 
+## NUL bytes
+
+A Fern string can hold a NUL byte. The kernel reads a path, a program name and an argument up to the first NUL.
+The native runtimes copied the bytes and added the terminator, so `write_file("created.txt\0.tmp", ...)` created `created.txt`, while `path.extension` answered `tmp` for the same string.
+`subprocess("/bin/sh\0/nonexistent", ...)` ran `/bin/sh`. The Go oracle and wasm32-wasi refused these already.
+Each native runtime routine that passes a string to the kernel as a C string now refuses a NUL byte with `EINVAL` ([AUD-03](https://github.com/JakeChampion/lang/issues/14970)).
+`subprocess` reports the refusal as a failed start: exit code 127 and `Invalid argument` on the standard error of the child.
+
 ## Remaining limits
 
+- The `subprocess` routine of arm64-darwin is hand-written assembly and does not refuse a NUL byte yet. #14970 tracks it.
 - A plain `open_writer` follows a symbolic link, including a dangling one, and creates its target. A caller that writes into a directory other users can write uses `open_exclusive` or the no-follow bit.
 - Ownership of a descriptor after `close` is the gap recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md).

@@ -1,3 +1,5 @@
+# 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
+# 2026-11-10: nul_byte_in_a_program_or_argument_is_refused is clean under RC trace.
 # 2026-11-10: explicit_type_argument_names_union_or_option is clean under RC trace.
 # 2026-11-10: dyn_conditional_impl_bound_met is clean under RC trace.
 # 2026-11-10: struct_field_pattern_names_variant is clean under RC trace.
@@ -693,6 +695,8 @@ nested_payloadless_constructor                       0
 nested_value_expr_width                              0
 none_branch                                          0
 none_equal_none                                      0
+nul_byte_in_a_path_is_refused                        0
+nul_byte_in_a_program_or_argument_is_refused         0
 number_parsing                                     0
 numeric_lossless_widening 0
 numeric_module_limits                                0

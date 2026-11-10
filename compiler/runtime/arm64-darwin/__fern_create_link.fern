@@ -1,4 +1,10 @@
 function __fern_create_link(target: string, path: string): Result[void, IoError] {
+  if (__count_byte(target, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(target, target.len())));
+  }
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let tlen = target.len();
   let targetz = __raw_alloc(tlen + 1);
   let j = 0;

@@ -1,0 +1,22 @@
+// A path with a NUL byte is refused. The kernel reads a path up to the
+// first NUL, so a path that got through would name a different file from
+// the one that the program tested.
+function verdict[T](what: string, r: Result[T, IoError]): void {
+    match (r) {
+        Ok(_) => { print(what + ": accepted"); },
+        Err(_) => { print(what + ": refused"); }
+    }
+}
+
+function main(): i32 {
+    let p = "nul_case_file\0.tmp";
+    verdict("write_file", write_file(p, "x"));
+    verdict("read_file", read_file(p));
+    verdict("read_file_bytes", read_file_bytes(p));
+    verdict("create_dir", create_dir("nul_case_dir\0x", 493));
+    verdict("remove_file", remove_file(p));
+    verdict("rename from", rename(p, "nul_case_target"));
+    verdict("rename to", rename("nul_case_missing", p));
+    verdict("stat", stat(p));
+    return 0;
+}
