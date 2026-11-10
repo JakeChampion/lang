@@ -41,12 +41,46 @@ const LOCAL_ON: boolean = true;
 func TestSelfHostTypedConstIsItsLiteral(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
-	literal := emitTypedConstProgram(t, cli, stdlib, typedConstUse, "7", "1")
-	if named := emitTypedConstProgram(t, cli, stdlib, typedConstUse, "kinds.COPY", "LOCAL_ONE"); !bytes.Equal(literal, named) {
+	literal := emitTypedConstProgram(t, cli, stdlib, typedConstKinds, typedConstUse, "7", "1")
+	if named := emitTypedConstProgram(t, cli, stdlib, typedConstKinds, typedConstUse, "kinds.COPY", "LOCAL_ONE"); !bytes.Equal(literal, named) {
 		t.Error("naming the typed consts changed the emitted code")
 	}
-	if guarded := emitTypedConstProgram(t, cli, stdlib, typedConstUse, "kinds.COPY", "(if (LOCAL_ON) { 1 } else { 0 })"); len(guarded) == 0 {
+	if guarded := emitTypedConstProgram(t, cli, stdlib, typedConstKinds, typedConstUse, "kinds.COPY", "(if (LOCAL_ON) { 1 } else { 0 })"); len(guarded) == 0 {
 		t.Error("a boolean const did not compile")
+	}
+}
+
+const typedConstKinds = "pub const COPY: i32 = 7;\n\npub struct Inst { kind: i32, a: i32, b: i32 }\n"
+
+const typedStringConstKinds = "pub const SIGNS: string = \"+-*/\";\n"
+
+const typedStringConstUse = `import "./kinds";
+
+@noinline function find(b: i32): i32 {
+  for i in 0..KIND_EXPR.len() {
+    if (KIND_EXPR[i] as i32 == b) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function main(): i32 {
+  print(LOCAL_EXPR);
+  return find(42);
+}
+
+const LOCAL_WORD: string = "local";
+`
+
+// A typed string const reads as its literal too. Before, each read was a
+// call to the const function, and the inliner gives up on a large caller.
+func TestSelfHostTypedStringConstIsItsLiteral(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
+	literal := emitTypedConstProgram(t, cli, stdlib, typedStringConstKinds, typedStringConstUse, `"+-*/"`, `"local"`)
+	if named := emitTypedConstProgram(t, cli, stdlib, typedStringConstKinds, typedStringConstUse, "kinds.SIGNS", "LOCAL_WORD"); !bytes.Equal(literal, named) {
+		t.Error("naming the typed string consts changed the emitted code")
 	}
 }
 
@@ -112,11 +146,11 @@ func TestSelfHostConstInLambdaIsItsLiteral(t *testing.T) {
 	}
 }
 
-func emitTypedConstProgram(t *testing.T, cli, stdlib, program, kind, local string) []byte {
+func emitTypedConstProgram(t *testing.T, cli, stdlib, kinds, program, kind, local string) []byte {
 	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{
-		"kinds.fern": "pub const COPY: i32 = 7;\n\npub struct Inst { kind: i32, a: i32, b: i32 }\n",
+		"kinds.fern": kinds,
 		"main.fern":  strings.NewReplacer("KIND_EXPR", kind, "LOCAL_EXPR", local).Replace(program),
 	}
 	for name, src := range files {

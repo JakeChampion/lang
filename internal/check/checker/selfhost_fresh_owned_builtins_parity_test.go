@@ -24,12 +24,12 @@ func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
 
 	for _, name := range sortedNames(native) {
 		if !fern[name] {
-			t.Errorf("%s has a pointer result and no pointer parameter, so native's isOwnedExpr treats its call as a fresh owner, but ow_fresh_builtins in compiler/checker.fern does not list it: the self-host reports E051 where native accepts", name)
+			t.Errorf("%s has an owned result in the Go builtin contract but is absent from ow_fresh_builtins", name)
 		}
 	}
 	for _, name := range sortedNames(fern) {
 		if !native[name] {
-			t.Errorf("ow_fresh_builtins in compiler/checker.fern lists %s, but the checker's builtin table gives it no pointer result or a pointer parameter, so native's isOwnedExpr does not treat its call as a fresh owner: the self-host accepts where native reports E051", name)
+			t.Errorf("ow_fresh_builtins lists %s, but its Go builtin contract does not guarantee an owned result", name)
 		}
 	}
 }
@@ -80,7 +80,7 @@ func nativeFreshOwnedBuiltins(t *testing.T) map[string]bool {
 		}
 		anyPtrParam := false
 		for _, pt := range sig.Params {
-			if pt != nil && ast.IsPointerType(pt) {
+			if pt != nil && mayRetainBorrow(pt) {
 				anyPtrParam = true
 			}
 		}

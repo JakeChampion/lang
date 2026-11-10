@@ -1,0 +1,295 @@
+{
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate_source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "fixed_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "compiler_sha256": {
+    "base": "1be868407c58e40bd6f0a56babf5021c708ea421b0fb6cb4f1ff2980f50a3a11",
+    "candidate": "ed8d1f643ae1bd38f7d106d93a6b322dc3156f12fca98515b4813ac2dace7a64"
+  },
+  "input_sha256": "25d964569aee162615f34ccf445cc3764fef4dfb96fb02720cb18c9f910b0913",
+  "environment": {
+    "FERN_PROFILE": "0",
+    "FERN_LEAKCHECK": "0",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0",
+    "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+  },
+  "started": "2026-11-10T05:24:32.675427+00:00",
+  "runs": [
+    {
+      "label": "x86-64-linux-safe-base-asm",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "safe",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.s",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:32.675491+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:36.708056+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-base-native",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "safe",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.bin",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:36.722904+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:40.932320+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-candidate-asm",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "safe",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-candidate.s",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:40.933334+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:44.869153+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-candidate-native",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "safe",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-candidate.bin",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:44.882120+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:49.114429+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-normal",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:49.115721+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:24:49.120779+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-base-count",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-base.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:49.121255+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:24:49.336850+00:00"
+    },
+    {
+      "label": "x86-64-linux-safe-candidate-count",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-candidate.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-candidate.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-safe-candidate.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:49.338204+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:24:49.553404+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-base-asm",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "hardened",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.s",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:49.555066+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:53.788317+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-base-native",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "hardened",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.bin",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:53.814788+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:24:58.001909+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-candidate-asm",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "hardened",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-candidate.s",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:24:58.003226+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:25:02.237161+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-candidate-native",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-target",
+        "x86-64-linux",
+        "-profile",
+        "hardened",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-candidate.bin",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/bench/http_hello.fern",
+        "/workspace/lang-interpreter-map-main-base-20261110-0330/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:25:02.248435+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T05:25:06.534241+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-normal",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:25:06.535038+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:25:06.543684+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-base-count",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-base.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:25:06.544360+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:25:06.860150+00:00"
+    },
+    {
+      "label": "x86-64-linux-hardened-candidate-count",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-candidate.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-candidate.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-http-baselines-20261110-0520/x86-64-linux-hardened-candidate.bin"
+      ],
+      "cwd": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "started": "2026-11-10T05:25:06.861085+00:00",
+      "exit_code": 30,
+      "finished": "2026-11-10T05:25:07.178541+00:00"
+    }
+  ],
+  "pairs": [
+    {
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "files": {
+        "base": {
+          "assembly_sha256": "aa7bc5e8567c807fb9eacce1724526dd8a03c2211b5b877906cd382a3592a978",
+          "emit": 16696,
+          "assembly": "x86-64-linux-safe-base.s",
+          "native_sha256": "f51d2f5a3f1adbbf900b53071158d8d72a9dcde5a1a5208216b2e05db5bb7079",
+          "bytes": 70032,
+          "native": "x86-64-linux-safe-base.bin"
+        },
+        "candidate": {
+          "assembly_sha256": "aa7bc5e8567c807fb9eacce1724526dd8a03c2211b5b877906cd382a3592a978",
+          "emit": 16696,
+          "assembly": "x86-64-linux-safe-candidate.s",
+          "native_sha256": "f51d2f5a3f1adbbf900b53071158d8d72a9dcde5a1a5208216b2e05db5bb7079",
+          "bytes": 70032,
+          "native": "x86-64-linux-safe-candidate.bin"
+        }
+      },
+      "guest_instructions": 22212415,
+      "expected_exit": 30
+    }
+  ],
+  "metrics": {
+    "profile/x86-64-linux/http_hello.safe.ir": 22212415,
+    "x86_64/http_hello.ir": 22212415,
+    "profile/x86-64-linux/http_hello.safe.emit": 16696,
+    "profile/x86-64-linux/http_hello.safe.bytes": 70032,
+    "selfhost/x86-64-linux/http_hello.emit": 16696,
+    "x86_64/http_hello.text": 16696
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "checked": "2026-11-10T07:49:27.391301+00:00",
+  "tools": {
+    "go": {
+      "args": [
+        "go",
+        "version"
+      ],
+      "exit_code": 0,
+      "version": "go version go1.27.3 linux/amd64",
+      "resolved_path": "/workspace/scratch/lang-tools-20261109/go/bin/go",
+      "sha256": "5f5eb6d0b2fb6aa0bb5d5f8c5f1c944e0de955c925f0111af92a9d8f79680b5b"
+    },
+    "wasmtime": {
+      "args": [
+        "wasmtime",
+        "--version"
+      ],
+      "exit_code": 0,
+      "version": "wasmtime 50.0.1 (c307ec81d 2026-10-29)",
+      "resolved_path": "/workspace/scratch/lang-tools-20261109/wasmtime-v50.0.1-x86_64-linux/wasmtime",
+      "sha256": "983e57573a320cf44c93ccaa571a25640cf38b15e8e14160aa7bb919336caae8"
+    },
+    "cross-gcc": {
+      "args": [
+        "aarch64-linux-gnu-gcc",
+        "--version"
+      ],
+      "exit_code": 0,
+      "version": "aarch64-linux-gnu-gcc (Debian 14.2.0-19) 14.2.0",
+      "resolved_path": "/workspace/scratch/lang-tools-20261109/cross/usr/bin/aarch64-linux-gnu-gcc-14",
+      "sha256": "fb743ca27a77466c91da66047eec879a615993feaabd860aaf3750e7b222b131"
+    },
+    "qemu": {
+      "args": [
+        "qemu-aarch64",
+        "--version"
+      ],
+      "exit_code": 0,
+      "version": "qemu-aarch64 version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)",
+      "resolved_path": "/workspace/scratch/lang-tools-20261109/cross/usr/bin/qemu-aarch64",
+      "sha256": "73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943"
+    },
+    "node": {
+      "args": [
+        "node",
+        "--version"
+      ],
+      "exit_code": 0,
+      "version": "v24.22.1",
+      "resolved_path": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "sha256": "61ab14cd750fc24d5db53490ec5fc40f756e4b6e136b78cf7004265471d9bd1d"
+    },
+    "valgrind": {
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--version"
+      ],
+      "exit_code": 0,
+      "version": "valgrind-3.24.0",
+      "resolved_path": "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+      "sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9"
+    }
+  },
+  "required_flags": {
+    "FERN_REQUIRE_ARM64_TOOLING": "1",
+    "FERN_REQUIRE_WASMTIME": "1"
+  },
+  "producer": {
+    "path": "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+    "source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+    "sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751"
+  }
+}

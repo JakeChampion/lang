@@ -1,0 +1,8 @@
+{
+  "source": "7bd045eb04c8ea0b5980f0526e778ae107571d05",
+  "measured_code_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "candidate": "eval_expr_call_expect still builds a qualified name and scans every declaration for each identifier field-access callee. The existing immutable name index could serve that query after normal merge and new qualification.",
+  "profile": "eval_expr_call_expect has 393 of 1063 exclusive samples. call_target is present in 1 inclusive sample, resolve_ident_value has 2 exclusive samples. The old lookup hotspot does not dominate this diagnostic run.",
+  "limits": "This does not attribute all 393 samples to the qualified-name scan. Inlined helpers share caller attribution. No causal source change or instruction annotation occurred. Deep stacks omit roots in 663 samples. No additional performance benefit is established.",
+  "status": "No source changes. Current PR remains draft pending complete exact-head CI. Next optimization requires refreshed main and ownership after normal merge."
+}

@@ -6,6 +6,8 @@ A local scalar or array declaration requires an initializer. The binding becomes
 available after the initializer passes the checker. A binding cannot read itself
 during initialization. A prior binding with the same name follows the normal
 shadow rules.
+A local callable or callback parameter can shadow a builtin function name.
+A call uses the resolved binding's parameters and result, including from a nested closure.
 
 Each branch and loop body has its own scope. A declaration inside that scope does
 not become available after the body. An assignment to an initialized outer

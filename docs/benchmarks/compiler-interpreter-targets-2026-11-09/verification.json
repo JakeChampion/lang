@@ -1,0 +1,23 @@
+[
+  {
+    "name": "vet",
+    "args": [
+      "go",
+      "vet",
+      "./internal/testing/e2ecompiler"
+    ],
+    "started": "2026-11-09T22:18:03.241851+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-09T22:18:23.381361+00:00"
+  },
+  {
+    "name": "ci-selftest",
+    "args": [
+      "make",
+      "ci-selftest"
+    ],
+    "started": "2026-11-09T22:18:23.381706+00:00",
+    "exit_code": 0,
+    "finished": "2026-11-09T22:19:51.052762+00:00"
+  }
+]

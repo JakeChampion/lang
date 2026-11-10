@@ -43,9 +43,9 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType)}
 	for _, p := range fn.Params {
-		if !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
+		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
 			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
 				b.values[p.Name] = true
@@ -134,6 +134,7 @@ func valueElementIterable(e ast.Expr, values map[string]bool) bool {
 
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
+	handlesOnly              bool
 }
 
 // A type parameter can hold a handle after substitution.
@@ -157,9 +158,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case nil:
 		return false
 	case *ast.Lambda:
-		// A function value cannot consume its captures. Passing a read
-		// callback does not lend the captured reader to the call's result.
-		return false
+		return c.lambdaResultBorrows(x, b)
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
@@ -190,12 +189,21 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		if !c.calleeResultBorrows(x) {
 			return false
 		}
+		if c.exprBorrows(x.Callee, b) {
+			return true
+		}
 		// Dynamic methods keep the receiver on the callee, outside Args.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.Method != nil && c.exprBorrows(fa.Target, b) {
 			return true
 		}
-		for _, a := range x.Args {
-			if c.exprBorrows(a, b) {
+		var sig *ast.FuncType
+		var flags []bool
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			sig = c.info.FuncSigs[id.Name]
+			flags = c.ownFuncs[id.Name]
+		}
+		for i, a := range x.Args {
+			if (!b.handlesOnly || c.paramCanLend(sig, flags, i)) && c.exprBorrows(a, b) {
 				return true
 			}
 		}
@@ -205,6 +213,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 }
 
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
+	if freshAssociatedResult(x) {
+		return false
+	}
 	id, ok := x.Callee.(*ast.Ident)
 	if !ok || x.Method != nil && c.freshMethodResult(x) {
 		return !c.freshMethodResult(x)
@@ -267,15 +278,116 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 	if sig == nil || i >= len(sig.Params) || sig.Params[i] == nil {
 		return true
 	}
-	if i < len(flags) && flags[i] {
+	if i < len(flags) && flags[i] && !c.callbackCanLend(sig.Params[i]) {
 		return false
 	}
 	pt := sig.Params[i]
-	return mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+	return c.callbackCanLend(pt) || mayRetainBorrow(pt) && !c.holdsNoHandle(pt)
+}
+
+// A callback can return a captured handle without consuming its capture.
+func (c *checker) callbackCanLend(t ast.Type) bool {
+	fn, ok := t.(*ast.FuncType)
+	return ok && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
+}
+
+func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
+	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
+		return false
+	}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType)}
+	for name := range outer.borrowed {
+		b.borrowed[name] = true
+	}
+	for name := range outer.locals {
+		b.borrowed[name] = true
+	}
+	for _, p := range lm.Params {
+		delete(b.borrowed, p.Name)
+	}
+	b.locals = c.borrowedLocals(&ast.FuncDecl{Body: lm.Body}, b)
+	if c.lambdaRetainsCapture(lm, b) {
+		return true
+	}
+	found := false
+	ast.Walk(lm.Body, func(n ast.Node) bool {
+		if _, nested := n.(*ast.Lambda); nested || found {
+			return false
+		}
+		if r, ok := n.(*ast.Return); ok && c.exprBorrows(r.Value, b) {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// Fresh containers can retain captures too. Keep this proof conservative
+// for aggregates, including aliases built before the callback returns.
+func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
+	found := false
+	ast.Walk(lm.Body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda:
+			return false
+		case *ast.StructLit:
+			if !c.structLitOwned(x, func(e ast.Expr) bool { return !c.exprBorrows(e, b) }) {
+				found = true
+			}
+			return !found
+		case *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
+			ast.Walk(n, func(part ast.Node) bool {
+				if id, ok := part.(*ast.Ident); ok && (b.borrowed[id.Name] || b.locals[id.Name]) {
+					found = true
+				}
+				return !found
+			})
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// An actual callback that returns its own input or a fresh value cannot lend
+// a capture. Keep other borrowed arguments conservative at direct own calls.
+func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	sig := c.info.FuncSigs[id.Name]
+	if sig == nil {
+		return false
+	}
+	flags := c.ownFuncs[id.Name]
+	found := false
+	for i, arg := range call.Args {
+		if !c.paramCanLend(sig, flags, i) {
+			continue
+		}
+		if i >= len(sig.Params) {
+			return false
+		}
+		if _, callback := sig.Params[i].(*ast.FuncType); !callback {
+			return false
+		}
+		lm, literal := arg.(*ast.Lambda)
+		if !literal || c.argMayBorrow(lm) {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
 	switch x := e.(type) {
+	case *ast.Lambda:
+		return c.lambdaResultBorrows(x, borrowScope{borrowed: lambdaFreeNames(x)})
 	case *ast.BlockExpr:
 		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
 			return c.argMayBorrow(x.Tail)
@@ -286,12 +398,20 @@ func (c *checker) argMayBorrow(e ast.Expr) bool {
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
 		return false
 	case *ast.Call:
+		if freshAssociatedResult(x) {
+			return false
+		}
 		if _, named := x.Callee.(*ast.Ident); !named || x.Method != nil {
 			return true
 		}
 		return c.callSiteBorrows(x)
 	}
 	return true
+}
+
+// An associated call has no receiver or captured environment that can lend.
+func freshAssociatedResult(call *ast.Call) bool {
+	return call.Method != nil && call.Method.Assoc && len(call.Args) == 0
 }
 
 // freshMethodResult reports a call of a built-in method whose result is a
@@ -331,12 +451,8 @@ func (c *checker) signatureResultBorrows(name string) bool {
 		return true
 	}
 	flags := c.ownFuncs[name]
-	for i, pt := range sig.Params {
-		if pt == nil || !mayRetainBorrow(pt) {
-			continue
-		}
-		// A parameter that cannot hold a handle cannot lend one to the result.
-		if (i >= len(flags) || !flags[i]) && !c.holdsNoHandle(pt) {
+	for i := range sig.Params {
+		if c.paramCanLend(sig, flags, i) {
 			return true
 		}
 	}
@@ -348,6 +464,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 // handle, or a function whose body returns a handle-bearing value with no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
+		if freshAssociatedResult(call) {
+			return true
+		}
 		id, isIdent := call.Callee.(*ast.Ident)
 		if !isIdent {
 			return c.freshMethodResult(call)

@@ -1,0 +1,48 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function keep(own h: Handle): i32 {
+  return h.close();
+}
+
+function call[T](f: () => T): T {
+  return f();
+}
+
+function read(f: () => i32): i32 {
+  return f();
+}
+
+function shared[T](value: T): T {
+  return unsafe { share_unchecked(value) };
+}
+
+function fresh(): Handle {
+  return Handle { fd: 7 };
+}
+
+function scalar(h: Handle): i32 {
+  return call(() => h.fd);
+}
+
+function reader(h: Handle): i32 {
+  return read(() => h.fd);
+}
+
+function asserted(h: Handle): i32 {
+  return keep(shared(call(() => h)));
+}
+
+function main(): i32 {
+  let h = Handle { fd: 3 };
+  print(scalar(h));
+  print(reader(h));
+  print(asserted(h));
+  print(h.close());
+  print(keep(fresh()));
+  return 0;
+}

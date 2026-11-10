@@ -59,15 +59,13 @@ pub function operation(name: string): string {
     while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
       end += 1;
     }
-    return slice_unchecked(name, prefix.len(), end) + "";
+    return slice_unchecked(name, prefix.len(), end).to_owned();
   }
   if (name.starts_with("ndarray__NdArray__")) {
-    let k = 0;
-    while (k < name.len()) {
+    for k in 0..name.len() {
       if (name[k] == b'.') {
-        return slice_unchecked(name, k + 1, name.len()) + "";
+        return slice_unchecked(name, k + 1, name.len()).to_owned();
       }
-      k += 1;
     }
   }
   return "";
@@ -138,8 +136,7 @@ pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], o
   let values: i32[][] = [];
   let params: i32[][] = [];
   let returns: i32[] = [];
-  let i = 0;
-  while (i < funcs.len()) {
+  for i in 0..funcs.len() {
     values = values.append(seed(funcs[i].values, !usable[i]));
     params = params.append(seed(funcs[i].params, !usable[i] || open[i]));
     let result = unknown();
@@ -147,7 +144,6 @@ pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], o
       result = unseen();
     }
     returns = returns.append(result);
-    i += 1;
   }
   let facts = settle(funcs, usable, index, trusted, Facts { values: values, params: params, returns: returns });
   values = [];

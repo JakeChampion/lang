@@ -253,6 +253,23 @@ function test_erase_key(): test.TestOutcome {
   return test.assert_eq(point, P256_POINT);
 }
 
+function test_erase_shared_key(): test.TestOutcome {
+  let Ok(k) = ecdsa.private_key(ecdsa.P256, __codec_bytes(hex.decode(P256_D))) else {
+    return test.fail("the P-256 scalar was refused");
+  };
+  let Ok(public) = ecdsa.public_key(ecdsa.P256, k.public_point()) else {
+    return test.fail("the public point was refused");
+  };
+  let shared = unsafe { share_unchecked(k) };
+  shared.erase();
+  let msg = "shared-key erase".bytes();
+  let Ok(sig) = k.sign(sha2.Sha256, msg) else {
+    return test.fail("the other key holder could not sign");
+  };
+  k.erase();
+  return test.assert_true(public.verify(sha2.Sha256, msg, sig));
+}
+
 function test_ecdh(): test.TestOutcome {
   let gi = "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
   let gr = "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf6356fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
@@ -286,6 +303,7 @@ function main(): i32 {
   r = r.it("signing refusals", test_signing_refusals);
   r = r.it("ECDH", test_ecdh);
   r = r.it("erase consumes a private key", test_erase_key);
+  r = r.it("erase preserves another key holder", test_erase_shared_key);
   return r.finish();
 }
 

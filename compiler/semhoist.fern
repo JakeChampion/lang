@@ -90,23 +90,19 @@ function feeders(insts: ssa.SInst[], p: i32, q: i32): i32[] {
     at -= 1;
   }
   let out: i32[] = [];
-  i = p + 1;
-  while (i <= q) {
+  for i in p + 1..=q {
     if (keep[i]) {
       out = out.append(i);
     }
-    i += 1;
   }
   return out;
 }
 
 function defined_at(insts: ssa.SInst[], p: i32, before: i32, v: i32): i32 {
-  let i = p;
-  while (i < before) {
+  for i in p..before {
     if (insts[i].result == v) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }

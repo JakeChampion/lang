@@ -1,0 +1,29 @@
+// Emit AVC picture metadata for independent parameter-set checks.
+import "std/video/avc";
+import "std/video/frame";
+import "../../tests/stdlib/video_avc_pps_check" as check;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 1;
+  }
+  let Ok(sps_bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let Ok(pps_bytes) = read_file_bytes(argv[2]) else {
+    return 3;
+  };
+  let sequence = match (avc.inspect_sps(sps_bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 4; },
+  };
+  let picture = match (avc.inspect_pps(pps_bytes, sequence, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 5; },
+  };
+  for value in check.values(picture) {
+    print(value.to_string());
+  }
+  return 0;
+}

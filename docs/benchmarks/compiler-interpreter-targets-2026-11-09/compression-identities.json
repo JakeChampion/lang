@@ -1,0 +1,38 @@
+{
+  "publication_date": "2026-11-10",
+  "note": "Lossless storage correction for raw record whitespace. Measurements and original execution records remain unchanged. Original uncompressed copies also remain in ignored local preservation storage.",
+  "records": [
+    {
+      "original_path": "candidate.patch",
+      "compressed_path": "candidate.patch.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "a67dbfb1ab44252cbcf73cdb53e3a3d55a4954b2acc1044a99b42a4ebe7ed669",
+      "original_bytes": 3226,
+      "gzip_sha256": "256745cac546517bc41e991fad23d1456751628b381c3fe91575263b32e2fbc1"
+    },
+    {
+      "original_path": "ci-current-interp3.log",
+      "compressed_path": "ci-current-interp3.log.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "1b17a705620cf669b9ed3d5ce9f518efbdf0cc2ae7e131c9eba03dda7829053d",
+      "original_bytes": 165847,
+      "gzip_sha256": "7876f837479110aa950c64a94238608705e4cc318513aa42db9293d14d252853"
+    },
+    {
+      "original_path": "ci-prior-interp3.log",
+      "compressed_path": "ci-prior-interp3.log.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "572f4d9cd2edd08e9908e54fc081743e61ff94b47e2898483caee9b501053672",
+      "original_bytes": 163681,
+      "gzip_sha256": "d9a72fb01844876678c11f1aee59adad64f05dffaada0223418b273d7b195f2b"
+    },
+    {
+      "original_path": "implementation.patch",
+      "compressed_path": "implementation.patch.gz",
+      "original_commit": "67180afb6c0e21fec268d5704b66cc65f1f09aef",
+      "original_sha256": "090c6e2f682735a375fc4f3a178f10b90bce5473466d68952c464b7c45c79de2",
+      "original_bytes": 5261,
+      "gzip_sha256": "8ceaea091b57a76e0cef1b5b48e8f7f741767b8484e9d28fa5d84bf37fb0ab51"
+    }
+  ]
+}

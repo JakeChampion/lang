@@ -17,8 +17,7 @@ function main(): i32 {
       let changed: ast.Expr = ast.ExprNumber { ...number, text: "0.0", raw: "0.0" };
       let probe = parser.Module { ...mod, top_stmts: [ast.StmtReturn { ...ret, value: changed }] };
       let expected = number.bits;
-      let i = 0;
-      while (i < 16) {
+      for i in 0..16 {
         match (interp.eval_module(probe)) {
           interp.VFloat(value) => {
             if (f64_bits(value.v) != expected) {
@@ -29,7 +28,6 @@ function main(): i32 {
             return 4;
           }
         }
-        i += 1;
       }
       return 7;
     }

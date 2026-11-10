@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**138 of 141** claims are pinned by a conformance case. The remaining
+**139 of 142** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -138,6 +138,7 @@ of them.
 | `DI-11` | `docs/INITIALIZATION.md` | An enum constructor requires every payload argument (`E036`) | `init_variant_payload_missing` |
 | `DI-12` | `docs/INITIALIZATION.md` | Both empty and payload enum variants produce initialized typed values | `init_variant_control` |
 | `DI-13` | `docs/INITIALIZATION.md` | A struct update retains initialized fields from its base | `init_struct_update_control` |
+| `DI-14` | `docs/INITIALIZATION.md` | A local callable or callback parameter shadows a builtin function name, including in a nested closure; calls use the resolved signature | `cell_constructor_shadowed_callbacks` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
@@ -206,7 +207,7 @@ of them.
 | `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
 | `RH-25` | `docs/security/HANDLE-AUDIT.md` | A write to a built-in `Writer` after its close is refused (`E051`) | `diag_e051_builtin_writer_written_after_close` |
 | `RH-26` | `docs/security/HANDLE-AUDIT.md` | A variant constructor carries its payload, so a result that wraps a borrowed value cannot pass to an `own` parameter (`E051`) | `diag_e051_variant_result_borrows_its_payload` |
-| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters and elements retain this borrow | `diag_e051_local_from_borrowing_call` |
+| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`). Generic parameters, elements, and callback results retain this borrow | `diag_e051_local_from_borrowing_call` |
 | `RH-28` | `docs/security/HANDLE-AUDIT.md` | A call to a function that never returns ends the path, so an own parameter it consumes in a loop is not used again | `handle_consumed_before_a_call_that_never_returns` |
 | `RH-29` | `docs/security/HANDLE-AUDIT.md` | A name a match arm binds is declared afresh each round, so a payload taken in a loop closes once each round | `handle_payload_closes_in_loop_from_unpack` |
 | `RH-30` | `docs/security/HANDLE-AUDIT.md` | A field moves to a consuming call while the same call reads other fields of its owner | `handle_field_closes_beside_other_field_reads` |

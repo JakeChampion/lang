@@ -1,0 +1,7 @@
+{
+  "shortcut_guest_instructions": 23717071286,
+  "index_guest_instructions": 18366256684,
+  "saved": 5350814602,
+  "reduction_percent": 22.561025927170625,
+  "note": "One normal-binary guest-instruction sample per compiler on the same first32-recorddiagnostic, Valgrind3.24.0, caches/branches/children off. Additional index benefit, not pooled with earlier snapshots."
+}

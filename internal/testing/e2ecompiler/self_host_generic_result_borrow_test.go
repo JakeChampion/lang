@@ -13,10 +13,22 @@ import (
 func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir string) {
 	t.Helper()
 	for _, name := range []string{
+		"associated_factory_result_is_owned",
+		"diag_e051_associated_factory_borrowed_argument",
+		"diag_e051_associated_factory_shadowed_type",
 		"diag_e051_generic_result_identity",
+		"diag_e051_cell_constructor_borrowed_payload",
+		"diag_e051_cell_constructor_payload_alias",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
+		"diag_e051_generic_callback_capture",
+		"diag_e051_generic_callback_owned",
+		"diag_e051_generic_callback_local",
+		"diag_e051_generic_callback_forward",
+		"diag_e051_generic_callback_capture_helper",
 		"generic_result_owned_and_handle_free",
+		"cell_constructor_result_ownership",
+		"generic_callback_copies_and_shared_results",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := e2eharness.RepoPath("conformance", "cases", name, "main.fern")
@@ -51,6 +63,27 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 			check("self-host", driverDiags(runCheckerDriver(t, command, filepath.Base(name))))
 		})
 	}
+	for name, source := range map[string]string{"diag_builtin_shadow": callbackBuiltinShadowSource, "scalar_builtin_shadow": callbackBuiltinScalarShadowSource, "owned_callback_result": callbackOwnedResultSource, "diag_nested_callback_capture": callbackNestedCaptureSource, "diag_aggregate_callback_capture": callbackAggregateCaptureSource, "diag_array_callback_capture": callbackArrayCaptureSource} {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command(bin)
+			if len(runner) > 0 {
+				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			command.Stdin = strings.NewReader(source)
+			for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, source), "self-host": driverDiags(runCheckerDriver(t, command, name))} {
+				negative := strings.HasPrefix(name, "diag_")
+				if negative != (len(ds) > 0) {
+					t.Fatalf("%s: unexpected diagnostics: %v", label, ds)
+				}
+				for _, d := range ds {
+					if d.code != "E051" {
+						t.Fatalf("%s: expected E051: %v", label, ds)
+					}
+				}
+			}
+		})
+	}
+
 }
 
 func TestSelfHostGenericResultBorrowX86_64(t *testing.T) {

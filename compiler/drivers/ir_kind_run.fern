@@ -14,8 +14,7 @@ function main(): i32 {
   let failures = 0;
   let ok = 0;
   let retired = 0;
-  let id = 1;
-  while (id <= n) {
+  for id in 1..=n {
     let name = ir.kind_name(id);
     let back = ir.kind_id(name);
     if (ir.kind_retired(id)) {
@@ -29,7 +28,6 @@ function main(): i32 {
     } else {
       ok += 1;
     }
-    id += 1;
   }
 
   let ext_names: string[] = [
@@ -65,7 +63,7 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_addr_into", "tcp_ktls", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_sendto_bytes", "udp_sendmmsg", "udp_recvmmsg", "read_dir_ino", "read_dir_ino_all",
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
-    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "port_in", "port_out",
+    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal_into", "aes_gcm_open_into", "mismatch_bytes_str",
     "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
@@ -79,8 +77,7 @@ function main(): i32 {
   let ext_max = n;
   let ext_ok = 0;
   let ext_failures = 0;
-  let ei = 0;
-  while (ei < ext_names.len()) {
+  for ei in 0..ext_names.len() {
     let eid = ir.kind_id(ext_names[ei]);
     if (eid > ext_max) {
       ext_max = eid;
@@ -90,7 +87,6 @@ function main(): i32 {
     } else {
       ext_ok += 1;
     }
-    ei += 1;
   }
 
   let out = "";
@@ -108,14 +104,12 @@ function main(): i32 {
   ];
   let neg_ok = 0;
   let neg_failures = 0;
-  let ni = 0;
-  while (ni < neg_names.len()) {
+  for ni in 0..neg_names.len() {
     if (ir.kind_id(neg_names[ni]) == 0) {
       neg_ok += 1;
     } else {
       neg_failures += 1;
     }
-    ni += 1;
   }
   out = out + "neg_ok=" + util.i32_to_string(neg_ok) + "\n";
   out = out + "neg_failures=" + util.i32_to_string(neg_failures) + "\n";
@@ -188,7 +182,7 @@ function main(): i32 {
     ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_ring_new(), ir.op_ring_ctl(), ir.op_ring_wait(), ir.op_ring_recv(), ir.op_ring_send_zc(), ir.op_tcp_recv_into(), ir.op_tcp_addr_into(), ir.op_tcp_ktls(), ir.op_str_data(), ir.op_tcp_sendfile(), ir.op_tcp_send_bytes(),
     ir.op_udp_sendto_bytes(), ir.op_udp_sendmmsg(), ir.op_udp_recvmmsg(), ir.op_read_dir_ino(), ir.op_read_dir_ino_all(),
     ir.op_disable_core_dumps(), ir.op_proc_waitpid_status(), ir.op_mounts(), ir.op_ct_mark(0), ir.op_vg_request(), ir.op_sysctl(),
-    ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(), ir.op_sha256_hw(), ir.op_sha256_hw_blocks(), ir.op_bswap(32), ir.op_mmio_load(32), ir.op_mmio_store(32), ir.op_fence(), ir.op_privileged(ir.K_WFI), ir.op_privileged(ir.K_HVC), ir.op_privileged(ir.K_SMC), ir.op_privileged(ir.K_BOOT_INFO), ir.op_sysreg(ir.K_SYSREG_READ, "tpidr_el0"), ir.op_sysreg(ir.K_SYSREG_WRITE, "tpidr_el0"), ir.op_privileged(ir.K_CACHE_CLEAN), ir.op_privileged(ir.K_CACHE_FLUSH), ir.op_privileged(ir.K_TLB_FLUSH), ir.op_privileged(ir.K_TLB_FLUSH_ALL), ir.op_privileged(ir.K_BREAKPOINT), ir.op_privileged(ir.K_IRQ_MASK), ir.op_privileged(ir.K_IRQ_UNMASK), ir.op_privileged(ir.K_IRQ_WAIT), ir.op_privileged(ir.K_IRQ_PENDING), ir.op_privileged(ir.K_USER_RUN), ir.op_privileged(ir.K_CACHE_SYNC_CODE), ir.op_privileged(ir.K_ATOMIC_LOAD_ACQUIRE), ir.op_privileged(ir.K_ATOMIC_STORE_RELEASE), ir.op_privileged(ir.K_ATOMIC_FETCH_ADD), ir.op_privileged(ir.K_ATOMIC_CAS), ir.op_port_in(8), ir.op_port_out(8),
+    ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(), ir.op_sha256_hw(), ir.op_sha256_hw_blocks(), ir.op_bswap(32), ir.op_mmio_load(32), ir.op_mmio_store(32), ir.op_fence(), ir.op_privileged(ir.K_WFI), ir.op_privileged(ir.K_HVC), ir.op_privileged(ir.K_SMC), ir.op_privileged(ir.K_BOOT_INFO), ir.op_sysreg(ir.K_SYSREG_READ, "tpidr_el0"), ir.op_sysreg(ir.K_SYSREG_WRITE, "tpidr_el0"), ir.op_privileged(ir.K_CACHE_CLEAN), ir.op_privileged(ir.K_CACHE_FLUSH), ir.op_privileged(ir.K_TLB_FLUSH), ir.op_privileged(ir.K_TLB_FLUSH_ALL), ir.op_privileged(ir.K_BREAKPOINT), ir.op_privileged(ir.K_IRQ_MASK), ir.op_privileged(ir.K_IRQ_UNMASK), ir.op_privileged(ir.K_IRQ_WAIT), ir.op_privileged(ir.K_IRQ_PENDING), ir.op_privileged(ir.K_USER_RUN), ir.op_privileged(ir.K_CACHE_SYNC_CODE), ir.op_privileged(ir.K_ATOMIC_LOAD_ACQUIRE), ir.op_privileged(ir.K_ATOMIC_STORE_RELEASE), ir.op_privileged(ir.K_ATOMIC_FETCH_ADD), ir.op_privileged(ir.K_ATOMIC_CAS), ir.op_privileged(ir.K_SECONDARY_ENTRY), ir.op_port_in(8), ir.op_port_out(8),
     ir.op_open_dir(), ir.op_dir_open(), ir.op_dir_entries(), ir.op_dir_stat(0), ir.op_dir_access(), ir.op_dir_unlink(0), ir.op_dir_chmod(), ir.op_dir_chown(), ir.op_dir_open_file(0),
     ir.op_bin("mulhi_u", 64, true), ir.op_writer_splice_forever(), ir.op_utf8_blocks(), ir.op_sha1_hw(), ir.op_sha1_hw_blocks(), ir.op_aes_gcm_seal_into(), ir.op_aes_gcm_open_into(), ir.op_mismatch_bytes_str(), ir.op_opt_set_payload(), ir.op_lane("vbitmask", 64),
     ir.op_crc32_ieee(), ir.op_crc32_ieee_array(), ir.op_count_below_u64(), ir.op_prctl_query(), ir.op_bin("mulhi_s", 64, false),
@@ -228,32 +222,28 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_addr_into", "tcp_ktls", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_sendto_bytes", "udp_sendmmsg", "udp_recvmmsg", "read_dir_ino", "read_dir_ino_all",
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
-    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "port_in", "port_out",
+    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal_into", "aes_gcm_open_into", "mismatch_bytes_str", "opt_set_payload", "vbitmask",
     "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
   ];
   let tag_ok = 0;
   let tag_bad = 0;
-  let j = 0;
-  while (j < probe.len()) {
+  for j in 0..probe.len() {
     if (probe[j].kind_tag == ir.kind_id(names[j])) {
       tag_ok += 1;
     } else {
       tag_bad += 1;
     }
-    j += 1;
   }
   out = out + "tag_consistency ok=" + util.i32_to_string(tag_ok)
     + " bad=" + util.i32_to_string(tag_bad) + "\n";
 
-  let tid = 1;
-  while (tid <= ext_max) {
+  for tid in 1..=ext_max {
     let tname = ir.kind_name(tid);
     if (tname != "invalid") {
       out = out + tname + "=" + util.i32_to_string(ir.kind_id(tname)) + "\n";
     }
-    tid += 1;
   }
 
   write(out);

@@ -1,5 +1,6 @@
 import "../irtables";
 import "../util";
+import "std/string";
 
 function ref_trim(s: string): string {
   let a = 0;
@@ -10,7 +11,7 @@ function ref_trim(s: string): string {
   while (b > a && s[b - 1] == b' ') {
     b -= 1;
   }
-  return slice_unchecked(s, a, b) + "";
+  return slice_unchecked(s, a, b).to_owned();
 }
 
 function ref_elem_tag(t: string, n: i32): string {
@@ -22,8 +23,7 @@ function ref_elem_tag(t: string, n: i32): string {
   let depth = 0;
   let start = 0;
   let idx = 0;
-  let i = 0;
-  while (i <= inner.len()) {
+  for i in 0..=inner.len() {
     if (i == inner.len() || depth == 0 && inner[i] == b',') {
       if (idx == n) {
         return ref_trim(slice_unchecked(inner, start, i));
@@ -38,7 +38,6 @@ function ref_elem_tag(t: string, n: i32): string {
         depth -= 1;
       }
     }
-    i += 1;
   }
   return "";
 }
@@ -60,11 +59,9 @@ function main(): i32 {
   ];
   let out = "";
   let bad = 0;
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let t = corpus[i];
-    let n: i32 = -1;
-    while (n <= 4) {
+    for n in -1..=4 {
       let real = irtables.tuple_type_elem_tag(t, n);
       let ref = ref_elem_tag(t, n);
       let mark = "ok  ";
@@ -73,9 +70,7 @@ function main(): i32 {
         bad += 1;
       }
       out = out + mark + show(t) + "[" + util.i32_to_string(n) + "]=" + show(real) + "\n";
-      n += 1;
     }
-    i += 1;
   }
   out = out + "mismatches=" + util.i32_to_string(bad) + "\n";
   write(out);

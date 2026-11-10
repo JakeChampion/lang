@@ -1,0 +1,3 @@
+struct Ring[const N: i32, T] { item: T }
+function capacity[const N: i32, T](r: Ring[N, T]): i32 { return N; }
+function main(): i32 { let r: Ring[42, i32] = Ring { item: 7 }; return capacity(r); }

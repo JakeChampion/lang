@@ -271,7 +271,16 @@ func TestSelfHostWorkflowShardCountsMatchVerifyExpectations(t *testing.T) {
 }
 
 func TestSelfHostWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
-	wf, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
+	ownJobTestsEachHaveAJob(t, "test-e2e-selfhost.yml", "selfhost-test-weights.txt")
+}
+
+func TestOtherWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
+	ownJobTestsEachHaveAJob(t, "test-e2e-other.yml", "other-test-weights.txt")
+}
+
+func ownJobTestsEachHaveAJob(t *testing.T, workflow, weightsFile string) {
+	t.Helper()
+	wf, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", workflow))
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
@@ -281,23 +290,36 @@ func TestSelfHostWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
 	if m == nil {
 		t.Fatal("workflow does not define OWN_JOB_TESTS — did the env block change?")
 	}
-	weights, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "selfhost-test-weights.txt"))
+	weights, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", weightsFile))
 	if err != nil {
 		t.Fatalf("read weights: %v", err)
 	}
 
+	// A job of another workflow, such as a nightly, can run an own-job test.
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read workflow: %v", err)
+		}
+		all.Write(b)
+	}
 	for _, name := range strings.Split(m[1], "|") {
 		if name == "" {
 			continue
 		}
-		if !strings.Contains(src, "-test.run '^"+name+"$'") {
+		if !strings.Contains(all.String(), "-test.run '^"+name+"$'") && !strings.Contains(all.String(), "-run '^"+name+"$'") {
 			t.Errorf("OWN_JOB_TESTS names %s but no job runs it with -test.run '^%s$' — "+
 				"it is excluded from the shards and run nowhere", name, name)
 		}
 		weightRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `\s`)
 		if weightRe.Match(weights) {
-			t.Errorf("%s is in OWN_JOB_TESTS and also weighted in selfhost-test-weights.txt — "+
-				"the partition never sees it, so the weight is dead", name)
+			t.Errorf("%s is in OWN_JOB_TESTS and also weighted in %s — "+
+				"the partition never sees it, so the weight is dead", name, weightsFile)
 		}
 	}
 }

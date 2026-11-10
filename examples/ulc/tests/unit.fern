@@ -399,10 +399,34 @@ function encoder_features(): void {
   require(audio.encode_mode(source, encoder.Cbr(0.001), 256).is_err(), "reject impossible CBR budget");
 }
 
+// Compare the packed recurrence with independently evaluated scalar steps.
+function grid_bits_match(cosine: [f64], sine: [f64], offset: i32, count: i32, start: f64, step: f64): boolean {
+  let dc = step.cos();
+  let ds = step.sin();
+  let c = 0.0;
+  let t = 0.0;
+  for i in 0..count {
+    if ((i & 31) == 0) {
+      let angle = start + step * (i as f64);
+      c = angle.cos();
+      t = angle.sin();
+    }
+    if (f64_bits(cosine[offset + i]) != f64_bits(c) || f64_bits(sine[offset + i]) != f64_bits(t)) {
+      return false;
+    }
+    let next = c * dc - t * ds;
+    t = t * dc + c * ds;
+    c = next;
+  }
+  return true;
+}
+
 function plan_grid_tests(): void {
   let n = 16;
   while (n <= 32768) {
     let p = transform.plan(n);
+    require(grid_bits_match(p.pre_cos, p.pre_sin, 0, n / 2, 0.0, 3.141592653589793 / (n as f64)), "pre-rotation matches scalar IEEE steps");
+    require(grid_bits_match(p.post_cos, p.post_sin, 0, n / 2, 3.141592653589793 / (4.0 * (n as f64)), 3.141592653589793 / (n as f64)), "post-rotation matches scalar IEEE steps");
     let bits = 0;
     let length = n / 2;
     while (length > 1) {
@@ -424,6 +448,7 @@ function plan_grid_tests(): void {
     }
     let width = 2;
     while (width <= n / 2) {
+      require(grid_bits_match(p.fft_cos, p.fft_sin, width / 2 - 1, width / 2, 0.0, 2.0 * 3.141592653589793 / (width as f64)), "FFT grid matches scalar IEEE steps");
       for i in 0..width / 2 {
         let angle = 2.0 * 3.141592653589793 * (i as f64) / (width as f64);
         require(near(p.fft_cos[width / 2 - 1 + i], angle.cos(), 0.00000000000002) && near(p.fft_sin[width / 2 - 1 + i], angle.sin(), 0.00000000000002), "FFT recurrence stays within its error bound");
@@ -432,6 +457,7 @@ function plan_grid_tests(): void {
     }
     let overlap = n;
     while (overlap >= 2) {
+      require(grid_bits_match(p.window_cos, p.window_sin, n - overlap, overlap / 2, 3.141592653589793 / (4.0 * (overlap as f64)), 3.141592653589793 / (2.0 * (overlap as f64))), "window grid matches scalar IEEE steps");
       for i in 0..overlap / 2 {
         let angle = 3.141592653589793 * (i as f64 + 0.5) / ((2 * overlap) as f64);
         let at = n - overlap + i;

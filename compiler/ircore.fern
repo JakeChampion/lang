@@ -424,6 +424,7 @@ pub function all_runtime_need_roots(): string[] {
     "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "i64_to_string", "u64_to_string",
     "alloc_count", "relro_protect",
+    "secondary_start",
   ];
 }
 
@@ -523,8 +524,7 @@ pub function gate(mod: parser.Module, sub: Sub): Option[Lowered] {
   let i = 0;
   while (i < mod.funcs.len()) {
     let r = produced(sub.bodies, i, mod.funcs[i]);
-    let j = 0;
-    while (j < r.ops.len()) {
+    for j in 0..r.ops.len() {
       let o = r.ops[j];
       if (o.kind_tag == ir.K_CALL_DIRECT) {
         if (!is_fern_helper(o.str) && !is_c_call(o.str) && !is_task_runtime_fn(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
@@ -541,7 +541,6 @@ pub function gate(mod: parser.Module, sub: Sub): Option[Lowered] {
           return None;
         }
       }
-      j += 1;
     }
     cache = cache.append(r);
     origins = origins.append(physicalbody.origin_at(sub.physical_origins.declarations, i));
@@ -578,8 +577,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
   let mods: parser.Module[] = [];
   let caches: irtables.LowerResult[][] = [];
   let physical: physicalbody.Collection[] = [];
-  let k = 0;
-  while (k < parts.len()) {
+  for k in 0..parts.len() {
     let funcs: parser.FuncDecl[] = [];
     let cache: irtables.LowerResult[] = [];
     let origins: physicalbody.Origin[] = [];
@@ -602,15 +600,12 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
     mods = mods.append(parser.Module { ...g.im, funcs: funcs, imports: parts[k].imports });
     caches = caches.append(cache);
     physical = physical.append(physicalbody.Collection { producers: g.physical.producers, rows: origins });
-    k += 1;
   }
   let loose: parser.FuncDecl[] = [];
-  let i = 0;
-  while (i < declared.len()) {
+  for i in 0..declared.len() {
     if (declared[i] < 0) {
       loose = loose.append(g.im.funcs[i]);
     }
-    i += 1;
   }
   return Units { mods: mods, caches: caches, loose: loose, physical: physical };
 }
@@ -618,8 +613,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
 function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
   let declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
   let types: Map[string, i32] = map_new(64);
-  let p: i32 = 0;
-  while (p < parts.len()) {
+  for p in 0..parts.len() {
     for fd in parts[p].funcs {
       declared = declared.insert(parser.decl_key(fd), p + 1);
     }
@@ -629,7 +623,6 @@ function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
     for ed in parts[p].enums {
       types = types.insert(ed.name, p + 1);
     }
-    p += 1;
   }
   let owner: i32[] = [];
   for fd in g.im.funcs {
@@ -813,8 +806,7 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
     budget = unit / 10;
   }
   let out: irtables.LowerResult[] = [];
-  i = 0;
-  while (i < cache.len()) {
+  for i in 0..cache.len() {
     let r = cache[i];
     let claims = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
     if (r.ok && !r.superseded && !claims && budget > 0) {
@@ -830,7 +822,6 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
       }
     }
     out = out.append(r);
-    i += 1;
   }
   return cull_spliced_leaves(mod, out, names, at);
 }
@@ -862,12 +853,10 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
     }
   }
   let out = cache;
-  k = 0;
-  while (k < names.len()) {
+  for k in 0..names.len() {
     if (dead[k]) {
       out = out.with(at[k], irtables.LowerResult { ...out[at[k]], superseded: true });
     }
-    k += 1;
   }
   return out;
 }
@@ -943,11 +932,9 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
       out = out.append(ir.op_store_local(base + p));
       p -= 1;
     }
-    let z = leaf.n_params;
-    while (z < leaf.n_locals) {
+    for z in leaf.n_params..leaf.n_locals {
       out = out.append(ir.op_const_i32(0));
       out = out.append(ir.op_store_local(base + z));
-      z += 1;
     }
     out = out.append(ir.op_block(0));
     let body = splice_leaf_body(leaf, base, ret, words, scalar_words);

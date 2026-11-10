@@ -30,11 +30,11 @@ function address(s: string): Address {
   if (!s.ends_with(")")) {
     return invalid_address();
   }
-  let displacement = slice_unchecked(s, 0, at) + "";
+  let displacement = slice_unchecked(s, 0, at).to_owned();
   if (displacement != "" && !util.is_decimal_i32(displacement)) {
     return invalid_address();
   }
-  let parts = (slice_unchecked(s, at + 1, s.len() - 1) + "").split(",");
+  let parts = slice_unchecked(s, at + 1, s.len() - 1).to_owned().split(",");
   if (parts.len() < 1 || parts.len() > 3) {
     return invalid_address();
   }
@@ -62,8 +62,7 @@ function operands(s: string): string[] {
   let result: string[] = [];
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == b'(') {
       depth += 1;
     }
@@ -74,22 +73,21 @@ function operands(s: string): string[] {
       return [];
     }
     if (s[i] == b',' && depth == 0) {
-      result = result.append((slice_unchecked(s, start, i) + "").trim());
+      result = result.append(slice_unchecked(s, start, i).to_owned().trim());
       start = i + 1;
     }
-    i += 1;
   }
   if (depth != 0) {
     return [];
   }
-  return result.append((slice_unchecked(s, start, s.len()) + "").trim());
+  return result.append(slice_unchecked(s, start, s.len()).to_owned().trim());
 }
 
 function literal(s: string): string {
   if (!s.starts_with("$")) {
     return "";
   }
-  let n = slice_unchecked(s, 1, s.len()) + "";
+  let n = slice_unchecked(s, 1, s.len()).to_owned();
   return if (util.is_decimal_i32(n)) { n } else { "" };
 }
 
@@ -205,7 +203,7 @@ function branch(name: string): boolean {
 }
 
 function label(line: string): string {
-  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1) + "" } else { "" };
+  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1).to_owned() } else { "" };
 }
 
 function decode(line: string, labels: names.Names): Op {
@@ -222,8 +220,8 @@ function decode(line: string, labels: names.Names): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (branch(name)) {
     return Op { ...empty(17), condition: name, target: names.unique_position(labels, rest) };
   }
@@ -305,7 +303,7 @@ function selected_program(body: text.Body, mode: i32): Program {
     let ordinary = decode(line, labels);
     let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
     if (op.kind == 17 && op.target < 0) {
-      let symbol = (slice_unchecked(line, op.condition.len(), line.len()) + "").trim();
+      let symbol = slice_unchecked(line, op.condition.len(), line.len()).to_owned().trim();
       if (mode != 6 && !(mode == 5 && symbol == "__fern_alloc_size_abort.c")) {
         return Program { ops: [], error: "capacity branch target outside selected body" };
       }
@@ -348,8 +346,8 @@ function allocator_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let args = operands(slice_unchecked(line, at + 1, line.len()).to_owned().trim());
   if (args.len() == 1) {
     return allocator_stack(name, args[0]);
   }
@@ -417,8 +415,8 @@ function array_box_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (name == "call" && rest == "__fern_alloc") {
     return Op { ...empty(25), symbol: rest };
   }
@@ -471,8 +469,8 @@ function constructor_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (name == "call" && rest == "__fern_arr_box") {
     return Op { ...empty(25), symbol: rest };
   }
@@ -486,7 +484,7 @@ function constructor_address(address: string, destination: string): Op {
   if (reg < 0 || !address.ends_with(suffix)) {
     return empty(0);
   }
-  let symbol = slice_unchecked(address, 0, address.len() - suffix.len()) + "";
+  let symbol = slice_unchecked(address, 0, address.len() - suffix.len()).to_owned();
   return if (constructor_symbol(symbol)) { Op { ...empty(19), width: 64, destination: reg, symbol: symbol } } else { empty(0) };
 }
 
@@ -506,8 +504,8 @@ function caller_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (name == "call" && constructor_symbol(rest)) {
     return Op { ...empty(25), symbol: rest };
   }
@@ -533,8 +531,8 @@ function string_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let args = operands(slice_unchecked(line, at + 1, line.len()).to_owned().trim());
   return if (args.len() == 2) { string_operands(name, args[0], args[1]) } else { empty(0) };
 }
 
@@ -589,8 +587,8 @@ function array_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let rest = (slice_unchecked(line, at + 1, line.len()) + "").trim();
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
   if (name == "call" && array_dependency(rest)) {
     return Op { ...empty(25), symbol: rest };
   }
@@ -632,11 +630,11 @@ function index_only_lea(name: string, a: string, b: string): Op {
   if (name != "leaq" || dst < 0 || !a.ends_with(")")) {
     return empty(0);
   }
-  let displacement = slice_unchecked(a, 0, at) + "";
+  let displacement = slice_unchecked(a, 0, at).to_owned();
   if (displacement != "" && !util.is_decimal_i32(displacement)) {
     return empty(0);
   }
-  let parts = (slice_unchecked(a, at + 1, a.len() - 1) + "").split(",");
+  let parts = slice_unchecked(a, at + 1, a.len() - 1).to_owned().split(",");
   return index_only_parts(parts, displacement, dst);
 }
 
@@ -659,8 +657,8 @@ function large_decode(line: string): Op {
   if (at == line.len()) {
     return empty(0);
   }
-  let name = slice_unchecked(line, 0, at) + "";
-  let args = operands((slice_unchecked(line, at + 1, line.len()) + "").trim());
+  let name = slice_unchecked(line, 0, at).to_owned();
+  let args = operands(slice_unchecked(line, at + 1, line.len()).to_owned().trim());
   if (args.len() != 2) {
     return empty(0);
   }
@@ -689,8 +687,7 @@ function large_literal(s: string): string {
     return "";
   }
   let n: i64 = 0;
-  let i = 3;
-  while (i < s.len()) {
+  for i in 3..s.len() {
     let digit = hex_digit(s[i]);
     if (digit < 0) {
       return "";
@@ -699,7 +696,6 @@ function large_literal(s: string): string {
     if (n > 2147483647) {
       return "";
     }
-    i += 1;
   }
   return n.to_string();
 }

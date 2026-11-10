@@ -18,8 +18,7 @@ function main(): i32 {
     "mod.Thing", "",
   ];
   let out = "";
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let n = corpus[i];
     let a = checker.type_from_name_with_structs(n, structs);
     let b = checker.type_from_name_with_struct_names(n, snames);
@@ -27,7 +26,6 @@ function main(): i32 {
     out = out + n + " => structs=" + checker.type_debug(a)
       + " names=" + checker.type_debug(b)
       + " names+unions=" + checker.type_debug(c) + "\n";
-    i += 1;
   }
   write(out);
   return 0;

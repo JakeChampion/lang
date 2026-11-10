@@ -2,6 +2,7 @@ import "./arm64_native";
 import "./elf";
 import "./util";
 import "./x86_native";
+import "std/string";
 
 // The last step of a native compile: link the in-process assembler's output
 // at the image's addresses and write the ELF executable.
@@ -9,13 +10,11 @@ import "./x86_native";
 pub function arm64_refusals(target: string, stage: string, unknown: string[]): string {
   let msg: string = "fern: -target " + target + ": in-process " + stage
     + " refused " + util.i32_to_string(unknown.len()) + ": ";
-  let i = 0;
-  while (i < unknown.len()) {
+  for i in 0..unknown.len() {
     if (i > 0) {
       msg += ", ";
     }
     msg += unknown[i];
-    i += 1;
   }
   eprint(msg);
   return "";
@@ -67,15 +66,22 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
   } else {
     bin = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
   }
+  return arm64_with_debug(bin, p, tv, dv, elf.elf_wx_text_off(harden), emit_syms, cu_name, dir);
+}
+
+// The image with its symbol table and DWARF when emit_syms is set. The text
+// of the image starts at text_off in the file and at tv in memory.
+function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: i64, text_off: i32, emit_syms: boolean, cu_name: string, dir: string): string {
   if (!emit_syms) {
     unsafe {
       return string_from_bytes_unchecked(bin);
     }
   }
+  let pa2 = p.asm;
   let aend = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), tv as i32, elf.elf_wx_text_off(harden), aend,
+    elf.elf_cat_u8([], bin), tv as i32, text_off, aend,
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
@@ -89,7 +95,7 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
   }
 }
 
-pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): string {
+pub function arm64_elf_binary_pie(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean): string {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
@@ -115,9 +121,8 @@ pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): st
   if (eoff >= pa2.text.len()) {
     return arm64_refusals("arm64-android", "linker", ["no code at _start"]);
   }
-  unsafe {
-    return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden));
-  }
+  let bin = elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden);
+  return arm64_with_debug(bin, p, tv, dv, tv as i32, emit_syms, cu_name, dir);
 }
 
 // The startup reads the address and the page-rounded length of the read-only
@@ -238,19 +243,15 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
 }
 
 function reserve_bytes(own data: i32[], n: i32): i32[] {
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     data = data.append(0);
-    i += 1;
   }
   return data;
 }
 
 function store_le64(own data: i32[], at: i32, v: i64): i32[] {
-  let j = 0;
-  while (j < 8) {
+  for j in 0..8 {
     data = data.with(at + j, (v >> 8 * j & 255i64) as i32);
-    j += 1;
   }
   return data;
 }
@@ -266,10 +267,8 @@ function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_a
   }
   let data = a.rodata;
   a = x86_native.X86Asm { ...a, rodata: [] };
-  let i = 0;
-  while (i < a.dfix_offs.len()) {
+  for i in 0..a.dfix_offs.len() {
     data = store_le64(data, reloc_at + 8 * i, (dv + a.dfix_offs[i]) as i64);
-    i += 1;
   }
   data = store_le64(data, list_slot, (dv + reloc_at) as i64);
   data = store_le64(data, count_slot, a.dfix_offs.len() as i64);
@@ -311,7 +310,7 @@ function shape_labels(t: string): string[] {
       while (j < t.len() && t[j] != b',' && t[j] != b'}') {
         j += 1;
       }
-      out = out.append(slice_unchecked(t, i + 1, j) + "");
+      out = out.append(slice_unchecked(t, i + 1, j).to_owned());
       i = j;
     } else {
       i += 1;

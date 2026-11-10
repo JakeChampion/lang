@@ -1,0 +1,27 @@
+{
+  "groups": {
+    "first": {
+      "shortcut_allocs": 28676955,
+      "index_allocs": 28584238,
+      "saved": 92717,
+      "reduction_percent": 0.3233153589702951,
+      "all_frees_balance": true,
+      "live_bytes": [
+        0,
+        0
+      ]
+    },
+    "second": {
+      "shortcut_allocs": 72175436,
+      "index_allocs": 66237759,
+      "saved": 5937677,
+      "reduction_percent": 8.226728273591586,
+      "all_frees_balance": true,
+      "live_bytes": [
+        0,
+        0
+      ]
+    }
+  },
+  "note": "Same qualifieda19producer, fixedebbinputs, separate counter builds. One allocation sample per binary/group. Indexdb4308relative toshortcut424fe; not pooled with earlier results."
+}

@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-10T02:19:17Z",
+  "finished": "2026-11-10T02:19:37.558474+00:00",
+  "note": "Pinned a19 producer checks the main f990 merge source, before the merge commit. No performance sample."
+}

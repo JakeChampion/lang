@@ -1,0 +1,17 @@
+base-prime exit0
+base-probe exit0
+cand-prime exit0
+cand-probe exit0
+cold-0-base exit0
+cold-0-cand exit0
+cold-1-cand exit0
+cold-1-base exit0
+cold-2-base exit0
+cold-2-cand exit0
+warm-0-base exit0
+warm-0-cand exit0
+warm-1-cand exit0
+warm-1-base exit0
+warm-2-base exit0
+warm-2-cand exit0
+complete

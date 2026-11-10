@@ -21,14 +21,12 @@ function pops_cell(id: i32): string {
 }
 
 function main(): i32 {
-  let id = 1;
-  while (id < 1024) {
+  for id in 1..1024 {
     let name = ir.kind_name(id);
     if (name != "invalid") {
       write("| `" + name + "` | " + util.i32_to_string(id) + " | " + pops_cell(id) + " | "
         + util.i32_to_string(ir.op_pushes(op_of(id, 0))) + " |\n");
     }
-    id += 1;
   }
   return 0;
 }

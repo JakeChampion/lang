@@ -1,0 +1,21 @@
+{
+  "checked_at": "2026-11-10T04:06:16.090051+00:00",
+  "scope": "Post-run source state. The controllers use these isolated immutable worktrees. No measurement command edits their tracked sources.",
+  "worktrees": [
+    {
+      "path": "/workspace/lang-interpreter-map-main-base-20261110-0330",
+      "source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+      "tracked_status": ""
+    },
+    {
+      "path": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+      "tracked_status": ""
+    },
+    {
+      "path": "/workspace/lang-interpreter-timeout-20261109",
+      "source": "ebb50c78c0ca714180704352881da7e39efb570f",
+      "tracked_status": ""
+    }
+  ]
+}

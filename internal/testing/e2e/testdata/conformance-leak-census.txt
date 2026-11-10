@@ -1,3 +1,12 @@
+# 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
+# 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
+# 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
+# 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
+# 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
+# 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
+# 2026-11-09: lambda_every_path_returns is clean under RC trace.
+# 2026-11-10: associated_factory_result_is_owned has zero unpaired allocations under native RC trace.
+# 2026-11-09: own_field_moves_beside_a_sibling_branch_read is clean under RC trace.
 # 2026-11-09: own_field_moves_beside_an_if_value is clean under RC trace.
 # 2026-11-09: struct_literal_parts_move_into_own is clean under RC trace.
 # 2026-11-09: share_unchecked_gives_own_a_shared_value is clean under RC trace.
@@ -143,6 +152,7 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 assert_fails_with_shadowing_exit                     0
 assert_todo_ignore_shadowing_names                   0
+associated_factory_result_is_owned                   0
 associated_functions                                 0
 audit_core_builtins                                  0
 audit_env_time_random                                0
@@ -198,6 +208,8 @@ cast_int_arith_to_float                              0
 cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
+cell_constructor_result_ownership                    0
+cell_constructor_shadowed_callbacks                  0
 cell_in_container                                    0
 cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
@@ -398,6 +410,7 @@ generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
 generic_call_typed_by_its_destination                0
+generic_callback_copies_and_shared_results           0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0
 generic_enum_method_at_two_instantiations            0
@@ -438,6 +451,7 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
+handle_nested_fields_close_from_owned_root          0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0
@@ -450,6 +464,7 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
+hkdf_length_past_the_limit_stops                     1
 http_content_type                                    0
 http_cookies                                         0
 hyperbolic_boundaries                                 0
@@ -531,6 +546,7 @@ json_arrays_and_options                              0
 json_error_location                                  0
 json_object                                          0
 labeled_loops                                        0
+lambda_every_path_returns                            0
 lambda_returning_a_capturing_lambda                  0
 lambda_tuple_return                                  0
 lanes_array_memory                                   0
@@ -702,6 +718,7 @@ own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_field_move_in_one_branch                         0
+own_field_moves_beside_a_sibling_branch_read         0
 own_field_moves_beside_an_if_value                   0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
@@ -748,6 +765,7 @@ param_strarr_elem_shared                             0
 path_join                                            0
 payload_binding_is_a_local                           0
 payload_struct_patterns                              0
+pbkdf2_without_an_iteration_stops                    1
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
 primitive_byte_receiver_identity                     0
@@ -770,6 +788,7 @@ pure_copy                                            0
 qualified_struct_patterns                            0
 question_op                                          0
 radix_literals                                       0
+rand_bytes_negative_count_stops                      0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
@@ -1243,6 +1262,8 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
+task_resumed_after_it_ended                          6
+task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
@@ -1254,6 +1275,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
+totp_period_below_one_stops                          1
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
@@ -1295,6 +1317,7 @@ union_eval                                           0
 union_lambda_param                                   0
 union_member_expected_type                           0
 union_member_widens_in_variant_payload               0
+union_widens_in_a_literal_slot                       0
 unit_variant_through_generic_call_settles            0
 unsafe_block_accepts_obligations                     0
 unsafe_block_accepts_pointer_casts                   0

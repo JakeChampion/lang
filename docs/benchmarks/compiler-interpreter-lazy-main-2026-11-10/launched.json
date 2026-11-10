@@ -1,0 +1,29 @@
+{
+  "started": "2026-11-10T07:16:04.214957+00:00",
+  "runs": [
+    {
+      "label": "prepare",
+      "pid": 53855,
+      "args": [
+        "bash",
+        "build/interpreter-lazy-main-qualification-20261110-0710/prepare.sh"
+      ]
+    },
+    {
+      "label": "validate",
+      "pid": 53856,
+      "args": [
+        "bash",
+        "build/interpreter-lazy-main-qualification-20261110-0710/validate.sh"
+      ]
+    },
+    {
+      "label": "collector",
+      "pid": 53857,
+      "args": [
+        "python3",
+        "build/interpreter-lazy-main-qualification-20261110-0710/collect.py"
+      ]
+    }
+  ]
+}

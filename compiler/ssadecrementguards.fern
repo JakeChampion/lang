@@ -38,10 +38,8 @@ function unknown(): flags.Flags {
 
 function initial(family: i32, register_entry: boolean): State {
   let regs: Word[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(if (i == 4) { token(3, 0) } else { token(1, i) });
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, pointer(family));
@@ -194,13 +192,11 @@ function overflow(f: flags.Flags, name: string): i32 {
 }
 
 function finished(s: State, family: i32): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = if (i == 0) { pointer(family) } else { if (i == 4) { token(3, 0) } else { token(1, i) } };
     if (!same_word(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

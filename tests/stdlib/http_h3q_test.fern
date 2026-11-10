@@ -314,6 +314,20 @@ function test_zero_rtt(): test.TestOutcome {
   return test.assert_eq(line + "| " + r6.log + "| replay: " + noticed(replay).log, "true true true | client response 4 425 Too Early; server request 0 GET /early 0b host=tls.example early-data=1; | client response 0 200 early hi; server request 8 POST /late 3b host=tls.example; client response 8 200 late hi; | replay: server request 0 GET /early 0b host=tls.example early-data=1; ");
 }
 
+// The session checks a request's :path once and hands it on in its normal
+// form, as HTTP/1.1 and HTTP/2 do.
+function test_target_normalised(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("did not start");
+  };
+  let e = settled(e0, 12);
+  let Ok(e1) = asked(Ends { ...e, log: "" }, get("/a/./b/../c")) else {
+    return test.fail("no request");
+  };
+  let e2 = settled(e1, 6);
+  return test.assert_eq(e2.log, "server request 0 GET /a/c 0b host=tls.example; ");
+}
+
 function test_get(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -603,6 +617,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
+  r = r.it("a request target reaches the handler in its normal form", test_target_normalised);
   r = r.it("0-RTT takes a GET and answers a POST 425 Too Early", test_zero_rtt);
   r = r.it("a response without a date is sent with the connection's", test_date);
   r = r.it("each response carries the date set when it is sent, and none once it is cleared", test_date_changes);

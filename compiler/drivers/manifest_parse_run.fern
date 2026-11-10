@@ -28,10 +28,8 @@ function data(m: fern_toml.Manifest): string {
     out = out + "|member " + docsummary.quote(member);
   }
   let excludes: string[] = [];
-  let i = 0;
-  while (i < m.excl_pkg.len()) {
+  for i in 0..m.excl_pkg.len() {
     excludes = excludes.append(docsummary.quote(m.excl_pkg[i]) + "=" + docsummary.quote(m.excl_ver[i]));
-    i += 1;
   }
   for row in util.sorted_by(excludes, str_after) {
     out = out + "|exclude " + row;
@@ -58,10 +56,8 @@ function verdict(path: string): string {
 function main(): i32 {
   let av = args();
   let out = "";
-  let i = 1;
-  while (i < av.len()) {
+  for i in 1..av.len() {
     out = out + verdict(av[i]) + "\n";
-    i += 1;
   }
   write(out);
   return 0;

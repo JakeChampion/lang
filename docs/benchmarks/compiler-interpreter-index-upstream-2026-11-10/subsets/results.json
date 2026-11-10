@@ -1,0 +1,603 @@
+{
+  "baseline_source": "f9904974a77249949607f3b6196e489bf53c3602",
+  "candidate_source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+  "fixed_input_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "mode": "subsets",
+  "note": "Fresh qualification after main f990 merge. Same producer, input, stdlib, no debug variables, no embedded sources. Certification on. Subset timings finish before compilation and full-corpus controls start. Old source totals do not transfer.",
+  "runs": [
+    {
+      "label": "first-0-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:24.770448+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 7519366496,
+      "cpu_user": 7.322192,
+      "cpu_system": 0.17765599999999998,
+      "peak_rss_kib": 141008,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:32.290581+00:00"
+    },
+    {
+      "label": "first-0-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:32.319341+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4236144811,
+      "cpu_user": 4.126283,
+      "cpu_system": 0.10096999999999999,
+      "peak_rss_kib": 148352,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:36.556197+00:00"
+    },
+    {
+      "label": "first-1-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:36.594025+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4664741350,
+      "cpu_user": 4.559883,
+      "cpu_system": 0.097758,
+      "peak_rss_kib": 148480,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:41.259577+00:00"
+    },
+    {
+      "label": "first-1-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:41.275926+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 5692393895,
+      "cpu_user": 5.58196,
+      "cpu_system": 0.090263,
+      "peak_rss_kib": 141008,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:46.968928+00:00"
+    },
+    {
+      "label": "first-2-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:46.985569+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 5863722508,
+      "cpu_user": 5.758202,
+      "cpu_system": 0.095146,
+      "peak_rss_kib": 141008,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:52.849993+00:00"
+    },
+    {
+      "label": "first-2-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:52.871055+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4139098686,
+      "cpu_user": 4.002616,
+      "cpu_system": 0.106191,
+      "peak_rss_kib": 148284,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:40:57.010763+00:00"
+    },
+    {
+      "label": "first-3-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:40:57.027600+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4405017894,
+      "cpu_user": 4.301998,
+      "cpu_system": 0.09286499999999999,
+      "peak_rss_kib": 148480,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:41:01.433564+00:00"
+    },
+    {
+      "label": "first-3-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:41:01.458987+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 6022223948,
+      "cpu_user": 5.951102,
+      "cpu_system": 0.066438,
+      "peak_rss_kib": 141008,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:41:07.482599+00:00"
+    },
+    {
+      "label": "first-4-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:41:07.511948+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 6953634770,
+      "cpu_user": 6.869942,
+      "cpu_system": 0.079387,
+      "peak_rss_kib": 141008,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:41:14.466831+00:00"
+    },
+    {
+      "label": "first-4-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:41:14.493305+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4330360434,
+      "cpu_user": 4.240786,
+      "cpu_system": 0.081965,
+      "peak_rss_kib": 148480,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:41:18.824493+00:00"
+    },
+    {
+      "label": "second-0-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:41:18.842168+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 66187300611,
+      "cpu_user": 66.074314,
+      "cpu_system": 0.091899,
+      "peak_rss_kib": 143696,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:42:25.031238+00:00"
+    },
+    {
+      "label": "second-0-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:42:25.056823+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 11546062087,
+      "cpu_user": 11.445343,
+      "cpu_system": 0.09349099999999999,
+      "peak_rss_kib": 151168,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:42:36.604906+00:00"
+    },
+    {
+      "label": "second-1-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:42:36.632423+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 11550514237,
+      "cpu_user": 11.473937,
+      "cpu_system": 0.056753,
+      "peak_rss_kib": 151168,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:42:48.184317+00:00"
+    },
+    {
+      "label": "second-1-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:42:48.221820+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 60948457820,
+      "cpu_user": 60.839646,
+      "cpu_system": 0.092946,
+      "peak_rss_kib": 143696,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:43:49.171643+00:00"
+    },
+    {
+      "label": "second-2-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "49abc86d4c39c18b64d6fa8411869ffdf06e225dd5bf828b2944c133eb2dcef8",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:43:49.226512+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 67258952347,
+      "cpu_user": 67.123013,
+      "cpu_system": 0.126167,
+      "peak_rss_kib": 143696,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:44:56.486461+00:00"
+    },
+    {
+      "label": "second-2-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "b2cc2b999173d0cf2dab98b04b18b4c6494b5f3a130309eb52cc2a6481f49764",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:44:56.523496+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 10851962638,
+      "cpu_user": 10.770027,
+      "cpu_system": 0.07600799999999999,
+      "peak_rss_kib": 151168,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:45:07.376437+00:00"
+    },
+    {
+      "label": "first-count-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "07ecf0a49169066664e76044bd8e243a84bf9727f2097fc57a9b180026be67db",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:45:07.404347+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 4590851741,
+      "cpu_user": 4.519803,
+      "cpu_system": 0.060783,
+      "peak_rss_kib": 148492,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:45:11.996690+00:00",
+      "allocs": 28687281,
+      "frees": 28687281,
+      "live_bytes": 0
+    },
+    {
+      "label": "first-count-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "63a9cd51615691e5b2fdbc1ae8c66a6d0e2ae9c00f813452d761b9518a9690bf",
+      "input_sha256": "018c03b8a3d530d81cc1f1f1e2b971642210c8278028d467be9f15194193ec96",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:45:12.025691+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 6594842133,
+      "cpu_user": 6.515286,
+      "cpu_system": 0.068918,
+      "peak_rss_kib": 148364,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+      "finished": "2026-11-10T02:45:18.621388+00:00",
+      "allocs": 29335971,
+      "frees": 29335971,
+      "live_bytes": 0
+    },
+    {
+      "label": "second-count-candidate",
+      "compiler": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/candidate-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "07ecf0a49169066664e76044bd8e243a84bf9727f2097fc57a9b180026be67db",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:45:18.645703+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 11438566994,
+      "cpu_user": 11.368509,
+      "cpu_system": 0.059306,
+      "peak_rss_kib": 151180,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:45:30.085204+00:00",
+      "allocs": 66340802,
+      "frees": 66340802,
+      "live_bytes": 0
+    },
+    {
+      "label": "second-count-baseline",
+      "compiler": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261110-0230/baseline-count",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/second-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "63a9cd51615691e5b2fdbc1ae8c66a6d0e2ae9c00f813452d761b9518a9690bf",
+      "input_sha256": "467def481df6810f889057be8f612c87d32232e1f04a23be84790caee8d88527",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T02:45:30.110628+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ns": 65798483534,
+      "cpu_user": 65.643658,
+      "cpu_system": 0.118777,
+      "peak_rss_kib": 151052,
+      "stdout_sha256": "167bd52f35259ba66dda6608ad7fc1a390787c5203ed1db1da7be9c3a7b47440",
+      "finished": "2026-11-10T02:46:35.909964+00:00",
+      "allocs": 86368676,
+      "frees": 86368676,
+      "live_bytes": 0
+    }
+  ],
+  "finished": "2026-11-10T02:46:35.911852+00:00"
+}

@@ -40,12 +40,10 @@ pub function consume(capacity: i32, h: Heap, address: i64, generation: i32): Tra
 }
 
 function find(blocks: Block[], address: i64): i32 {
-  let i = 0;
-  while (i < blocks.len()) {
+  for i in 0..blocks.len() {
     if (blocks[i].address == address) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -70,21 +68,17 @@ function block_valid(b: Block, capacity: i32, h: Heap): boolean {
 
 function separated(capacity: i32, h: Heap): boolean {
   let size = 8 as i64 * ((capacity + 3) as i64);
-  let i = 0;
-  while (i < h.blocks.len()) {
+  for i in 0..h.blocks.len() {
     let b = h.blocks[i];
     if (!block_valid(b, capacity, h)) {
       return false;
     }
-    let j = 0;
-    while (j < i) {
+    for j in 0..i {
       let other = h.blocks[j];
       if (b.address < other.address + size && other.address < b.address + size) {
         return false;
       }
-      j += 1;
     }
-    i += 1;
   }
   return true;
 }
@@ -103,12 +97,10 @@ function members(h: Heap): boolean {
     seen = seen.with(i, true);
     next = h.blocks[i].header;
   }
-  let i = 0;
-  while (i < h.blocks.len()) {
+  for i in 0..h.blocks.len() {
     if (seen[i] == h.blocks[i].live) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

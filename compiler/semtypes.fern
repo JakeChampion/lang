@@ -1,4 +1,5 @@
 import "./typeinfo";
+import "std/string";
 
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   match (a) {
@@ -166,12 +167,10 @@ function shaped_payloads(ts: typeinfo.Type[]): boolean {
 }
 
 function own_masks_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
-  let i = 0;
-  while (i < a.param_types.len()) {
+  for i in 0..a.param_types.len() {
     if (typeinfo.fn_own_at(a, i) != typeinfo.fn_own_at(b, i)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -185,12 +184,10 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (!equal(a[i], b[i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -295,7 +292,7 @@ pub function env_captures(t: typeinfo.Type): typeinfo.Type[] {
 
 pub function env_body(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
-    return slice_unchecked(s.name, env_prefix().len(), s.name.len()) + "";
+    return slice_unchecked(s.name, env_prefix().len(), s.name.len()).to_owned();
   }
   return "";
 }
@@ -305,12 +302,10 @@ function prefixed(name: string, prefix: string): boolean {
   if (name.len() <= n) {
     return false;
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (name[i] != prefix[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

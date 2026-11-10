@@ -1,0 +1,7 @@
+{
+  "baseline": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "fixed_benchmark_and_stdlib_diff": "",
+  "compiler_delta": "compiler/interp.fern\n",
+  "candidate_product_diff_from_published_head": ""
+}

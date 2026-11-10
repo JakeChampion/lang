@@ -102,6 +102,39 @@ func (e fetchEnv) run(args ...string) (string, int) {
 	return string(out), cmd.ProcessState.ExitCode()
 }
 
+// oversizedArchive is helperArchive with the size field of its second entry
+// set to 2^31-1, far past the end of the archive.
+func oversizedArchive(t *testing.T) []byte {
+	t.Helper()
+	packed, _ := helperArchive(t)
+	zr, err := gzip.NewReader(bytes.NewReader(packed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw bytes.Buffer
+	if _, err := raw.ReadFrom(zr); err != nil {
+		t.Fatal(err)
+	}
+	b := raw.Bytes()
+	header := b[1024:1536]
+	copy(header[124:136], "17777777777\x00")
+	copy(header[148:156], "        ")
+	sum := 0
+	for _, c := range header {
+		sum += int(c)
+	}
+	copy(header[148:156], []byte{byte('0' + sum>>15&7), byte('0' + sum>>12&7), byte('0' + sum>>9&7), byte('0' + sum>>6&7), byte('0' + sum>>3&7), byte('0' + sum&7), 0, ' '})
+	var out bytes.Buffer
+	gz := gzip.NewWriter(&out)
+	if _, err := gz.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
 func helperArchive(t *testing.T, extra ...tarEntry) ([]byte, string) {
 	return tarGz(t, append(extra,
 		tarEntry{name: "helper/fern.toml", body: "[package]\nname = \"helper\"\n"},
@@ -143,6 +176,7 @@ func TestShippedFernFetchRefusals(t *testing.T) {
 	linked, linkHash := helperArchive(t, tarEntry{name: "helper/link", body: "/etc/passwd", typeflag: tar.TypeSymlink})
 	plain := []byte("not an archive\n")
 	cut := good[:len(good)/2]
+	oversized := oversizedArchive(t)
 	for _, c := range []struct {
 		name, hash, want string
 		body             []byte
@@ -152,6 +186,7 @@ func TestShippedFernFetchRefusals(t *testing.T) {
 		{"symlink", linkHash, `archive entry "helper/link" has unsupported type 50 (only files and directories)`, linked},
 		{"not-gzip", sha256Ref(plain), "cannot gunzip the archive: unsupported compressed data: not gzip", plain},
 		{"truncated", sha256Ref(cut), "cannot gunzip the archive: the compressed data ends early", cut},
+		{"entry-size-past-the-archive", sha256Ref(oversized), "reading tar: truncated archive", oversized},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			url := serve(t, c.body)

@@ -1,0 +1,14 @@
+{
+  "checked": "2026-11-10T07:31:01.782735+00:00",
+  "original_waiter_pid": 57474,
+  "signal": 15,
+  "original_phase": "wait-for-tls-control",
+  "measurement_runs_started": 0,
+  "failure": "The tool version preflight requires VALGRIND_LIB for the private installation. No compiler measurement started.",
+  "manual_preflight_exit": 1,
+  "preserved_original_script": "compiler-work-control.py",
+  "preflight_args": [
+    "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+    "--version"
+  ]
+}

@@ -1,3 +1,24 @@
+# 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
+# Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
+# Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
+# 2026-11-10: PR #15087, perf-x86_64 job 129617357009 on 4210785b28. #15076
+# gave http.__plain_path a [u8] parameter, and the inliner does not splice a
+# function with an array view parameter (#15093). http_hello.ir is 0.62% over
+# main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
+# 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
+# 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
+# 2026-11-10: PR #15061, perf-aarch64 job 129516573802 and perf-x86_64 job 129534712785. The video_qtrle rows fall 1-9% on main's tree. This PR changes no codec source. Pinned at the measured values.
+# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
+# http.serialize_response_to and http.serialize_response_to_bytes refuse a
+# field with CR or LF since #15002, so x86_64/http_hello.text rises 2.34%.
+# Pinned at the measured value. The .ir row moved 0.90% and stays.
+# 2026-11-09: PR #15027, CI run 42712933574 (x86 job 129487256157; arm64 job 129487256061). Bank measured text shifts in both directions: http_hello x86 15234 -> 15591 (+2.34%); video_qtrle x86 5371 -> 5234 (-2.55%), arm64 5682 -> 5600 (-1.44%).
+# 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
 # string_count_byte after main updates. Bank the reported size and work counts.
 # Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
@@ -15,6 +36,8 @@
 # 2026-11-09: PR #14836, perf-aarch64 job 129036824048 on 6a490f9b. aarch64 array_append.ir and deflate_decode.ir fall 15.0% and 1.3% under the strict gate. Each is pinned at its measured value.
 # 2026-11-09: the tree-shake fix of #14766 (b1c71641) keeps a primitive's to_string only for a call that reaches it. The nine .text rows that #14756 pinned high fall back on both targets: x86_64 from scripts/perf-bench, aarch64 from the lines of -target arm64-linux assembly, which is what perf-bench counts. Each is pinned at its measured value.
 # 2026-11-09: PR #14797, perf-aarch64 job 128935982726 on 81290273 and perf-x86_64 job 128939680803 on 801b4a44. The eighteen .text rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
+# 2026-11-09: PR #15029, perf jobs 129497664914 and 129497665028 on 67ebb177. Both video_qtrle.text rows fall on main's tree. The compilers before and after this PR emit the same asm for it. Pinned at the measured values.
+# 2026-11-09: PR #15003, perf-aarch64 job 129450875986 on 4b4d1752. aarch64/http_hello.text grows 1.9% and aarch64/http_hello.ir 1.2% on main's tree. #15003 and this PR change no emitted code. Pinned at the measured values.
 # 2026-11-09: PR #14995, perf-aarch64 job 129433730729 on e97dc68d. aarch64/video_qtrle.ir falls 6.2% with b45e9526, which removed the QTRLE per-run result storage and could not measure aarch64 counts locally. This PR changes no codec source. Pinned at its measured value.
 # 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
 # 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The same nine x86_64 .text rows rise as on aarch64. The growth is main's at 1c692d87.
@@ -266,8 +289,12 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15234
-x86_64/http_hello.ir	21796408
+# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
+# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
+# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
+# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
+x86_64/http_hello.text	15691
+x86_64/http_hello.ir	22124422
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8488
@@ -552,16 +579,19 @@ aarch64/deflate_encode.text	7818
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16228
+aarch64/http_hello.text	16619
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
-aarch64/http_hello.ir	23616615
+aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
 aarch64/map_int.text	8497
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8507
-aarch64/map_probe_chain.ir	233221143
+# 2026-11-10: PR #15077, perf-aarch64 job 129585637063 measures map_probe_chain.ir 1.27% lower on main. #15077 changes only -g images.
+# 2026-11-10: PR #15022 at 206df7ee, ARM64 CI job 129589649703.
+# Bank 230251856 guest instructions from run 42743098908. Keep the 1% tolerance.
+aarch64/map_probe_chain.ir	230251856
 aarch64/map_string.text	9472
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
@@ -629,9 +659,13 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 # 2026-11-08: #14770. The corrected display roots remove unused numeric formatters.
 # Pin the measured x86-64 reduction. No performance limit increases.
-x86_64/video_qtrle.text 5371
+x86_64/video_qtrle.text 5234
 x86_64/video_qtrle.ir 1717224731
-aarch64/video_qtrle.text 5682
+# 2026-11-10: PR #15022 at 7bd045eb. CI job 129524617582 measures
+# aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
+# Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
+# Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
+aarch64/video_qtrle.text 5600
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.
 # Pinned to local native Callgrind and cross-target assembly measurements.

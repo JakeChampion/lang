@@ -1,0 +1,112 @@
+{
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate_source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "started": "2026-11-10T03:47:20.121465+00:00",
+  "runs": [
+    {
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:47:20.233947+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:47:35.664266+00:00"
+    },
+    {
+      "label": "format",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-fmt",
+        "-d",
+        "compiler/interp.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:47:35.665472+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:47:35.709258+00:00"
+    },
+    {
+      "label": "candidate-normal",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:47:35.709662+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:48:36.279901+00:00"
+    },
+    {
+      "label": "candidate-count",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-count",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-interpreter-lazy-target-trial-20261110-0345",
+      "source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "1",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T03:48:36.313915+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:49:29.231925+00:00"
+    }
+  ],
+  "binaries": {
+    "baseline-normal": {
+      "sha256": "1be868407c58e40bd6f0a56babf5021c708ea421b0fb6cb4f1ff2980f50a3a11",
+      "reused_build_record": "reused-baseline-build.json"
+    },
+    "baseline-count": {
+      "sha256": "4c4f418402ad755110ded043c51156e9002b542672b9f4b095972c0284a0bb48",
+      "reused_build_record": "reused-baseline-build.json"
+    },
+    "candidate-normal": {
+      "sha256": "ed8d1f643ae1bd38f7d106d93a6b322dc3156f12fca98515b4813ac2dace7a64"
+    },
+    "candidate-count": {
+      "sha256": "56e20d54df22ac4f13dd8a7e735af2351ab54eb20e82e7bcaadaafe25adbfe33"
+    }
+  },
+  "finished": "2026-11-10T03:49:29.253357+00:00"
+}

@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Compare native AVC SPS metadata with FFmpeg syntax and FFprobe dimensions."""
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location("avc_fixtures", ROOT / "scripts/gen-video-avc-fixtures.py")
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+syntax_spec = importlib.util.spec_from_file_location("avc_syntax", ROOT / "scripts/gen-video-avc-syntax-fixtures.py")
+syntax = importlib.util.module_from_spec(syntax_spec)
+syntax_spec.loader.exec_module(syntax)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/avc-sps-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
+                "scripts/video-reference/avc-sps.fern", "internal/stdlib"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm),
+                "scripts/video-reference/avc-sps.fern", "internal/stdlib"], check=True)
+trace = syntax.build_trace()
+
+
+def compare(path, expected):
+    native = subprocess.check_output([str(binary), str(path)], text=True)
+    wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                   cwd=path.parent, text=True)
+    assert native == wasi
+    actual = list(map(int, native.split()))
+    assert actual == expected, (path.name, actual, expected)
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    for name, stream in fixtures.generate(directory):
+        data, expected = fixtures.reference(stream)
+        path = directory / (name + ".sps")
+        path.write_bytes(data)
+        compare(path, expected)
+        print(f"{name}: all 30 native/WASI SPS fields match FFmpeg and FFprobe", flush=True)
+    for name, data in syntax.controls():
+        path = directory / (name + ".sps")
+        path.write_bytes(data)
+        compare(path, syntax.reference(trace, path))
+        print(f"{name}: all 30 native/WASI SPS fields match FFmpeg's coded-bitstream reader", flush=True)

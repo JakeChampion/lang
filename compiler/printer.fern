@@ -20,8 +20,7 @@ function is_control_byte(b: i32): boolean {
 
 function escape_lit_body(s: string, fstring: boolean): string {
   let out: u8[] = [];
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
@@ -46,18 +45,17 @@ function escape_lit_body(s: string, fstring: boolean): string {
     } else {
       out = out.append(s[i]);
     }
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(out);
   }
 }
 
-function quote_string(s: string): string {
+pub function quote_string(s: string): string {
   return "\"" + escape_lit_body(s, false) + "\"";
 }
 
-function escape_fstring_lit(s: string): string {
+pub function escape_fstring_lit(s: string): string {
   return escape_lit_body(s, true);
 }
 
@@ -226,8 +224,7 @@ function print_lambda_params(lm: ast.ExprLambda, depth: i32): string {
 
 function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: boolean, depth: i32): string {
   let out = "(";
-  let pi = 0;
-  while (pi < params.len()) {
+  for pi in 0..params.len() {
     if (pi > 0) {
       out += ", ";
     }
@@ -245,7 +242,6 @@ function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: bo
       out = out + ": " + params[pi].type_name;
     }
     out += print_param_default(params[pi], defaults, depth);
-    pi += 1;
   }
   return out + ")";
 }
@@ -262,10 +258,8 @@ function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
     return body;
   }
   let out: ast.Stmt[] = [];
-  let i = n;
-  while (i < body.len()) {
+  for i in n..body.len() {
     out = out.append(body[i]);
-    i += 1;
   }
   return out;
 }
@@ -641,10 +635,8 @@ function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32, f: 
 
 function print_value_if_let(sg: ast.MatchSugar, arms: WrittenArm[], v: string, depth: i32, f: Fmt): (string, Fmt) {
   let head = arms[0].head;
-  let i = 1;
-  while (i < arms.len() - 1) {
+  for i in 1..arms.len() - 1 {
     head = head + " | " + arms[i].head;
-    i += 1;
   }
   let (yes, g) = arm_expr_value(arms[0].body, v, false, depth, f);
   let (no, g1) = arm_expr_value(arms[arms.len() - 1].body, v, sg.else_chained, depth, g);
@@ -665,8 +657,7 @@ function print_value_match(scrut: ast.Expr, open: i32, arms: WrittenArm[], v: st
   }
   let out = head + " ";
   let h = g;
-  let i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     let (av, g1) = print_value_arm(arms[i], v, depth, h);
     if (av.len() == 0) {
       return ("", f);
@@ -679,7 +670,6 @@ function print_value_match(scrut: ast.Expr, open: i32, arms: WrittenArm[], v: st
     }
     out += av;
     h = g1;
-    i += 1;
   }
   return (out + " }", h);
 }
@@ -805,15 +795,13 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
   }
   let out = "{ ";
   let h = g;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let (text, h1) = print_stmt_body(body[i], 0, h);
     if (util.contains(text, "\n")) {
       return print_value_block_lines(body, n, tail, show_tail, depth, g);
     }
     out = out + text + " ";
     h = h1;
-    i += 1;
   }
   if (show_tail) {
     let (tv, h2) = print_expr_c(tail, prec_lowest(), depth, h);
@@ -826,8 +814,7 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
 function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_tail: boolean, depth: i32, f: Fmt): (string, Fmt) {
   let out = "{\n";
   let g = f;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
       out += "\n";
@@ -840,7 +827,6 @@ function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_
     let (text, g2) = print_stmt(body[i], depth + 1, g);
     out += text;
     g = g2;
-    i += 1;
   }
   if (show_tail) {
     let (tv, g3) = print_value_tail(tail, n > 0, depth + 1, g);
@@ -1075,13 +1061,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     },
     ast.ExprMapLit(ml) => {
       let out = "Map {";
-      let i = 0;
-      while (i < ml.keys.len()) {
+      for i in 0..ml.keys.len() {
         if (i > 0) {
           out += ",";
         }
         out = out + " " + print_expr(ml.keys[i], depth) + ": " + print_expr(ml.vals[i], depth);
-        i += 1;
       }
       return (out + " }", f);
     },
@@ -1127,15 +1111,13 @@ function grouped_lines(elems: ast.Expr[], open_line: i32, spans: parser.BlockSpa
       let (_, npre) = param_patterns_for(lm.params, lm.body);
       if (npre < lm.body.len()) {
         let first = ast.stmt_line(lm.body[npre]);
-        let j = from;
-        while (j < spans.firsts.len()) {
+        for j in from..spans.firsts.len() {
           if (spans.firsts[j] == first && spans.opens[j] >= lm.line) {
             if (spans.closes[j] == first_line(elems[i])) {
               lines = lines.with(i, lines[i - 1]);
             }
             break;
           }
-          j += 1;
         }
       }
     }
@@ -1159,15 +1141,13 @@ function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i3
 function print_list_flat(elems: ast.Expr[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
   let out = "";
   let g = f;
-  let i = 0;
-  while (i < elems.len()) {
+  for i in 0..elems.len() {
     if (i > 0) {
       out += ", ";
     }
     let (t, g2) = print_expr_c(elems[i], prec_lowest(), depth, g);
     out = out + prefixes[i] + t;
     g = g2;
-    i += 1;
   }
   return (out, g);
 }
@@ -1201,10 +1181,8 @@ function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], dep
 
 function indent_str(depth: i32): string {
   let out = "";
-  let i = 0;
-  while (i < depth) {
+  for i in 0..depth {
     out += "  ";
-    i += 1;
   }
   return out;
 }
@@ -1224,12 +1202,10 @@ function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
   if (first <= 0) {
     return (0, 0, f);
   }
-  let i = f.si;
-  while (i < f.spans.firsts.len()) {
+  for i in f.si..f.spans.firsts.len() {
     if (f.spans.firsts[i] == first) {
       return (f.spans.opens[i], f.spans.closes[i], Fmt { ...f, si: i + 1 });
     }
-    i += 1;
   }
   return (0, 0, f);
 }
@@ -1411,8 +1387,7 @@ function keep_list_lines(f: Fmt, open: i32, last: i32): boolean {
 }
 
 function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
-  let i = f.ci;
-  while (i < f.comments.len()) {
+  for i in f.ci..f.comments.len() {
     let ln = f.comments[i].line;
     if (ln > last) {
       return false;
@@ -1420,18 +1395,15 @@ function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
     if (ln > decl_line) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
 
 function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i32): i32[] {
-  let i = 0;
-  while (i < flines.len()) {
+  for i in 0..flines.len() {
     if (flines[i].name == name && flines[i].decl_line == decl_line) {
       return flines[i].lines;
     }
-    i += 1;
   }
   let none: i32[] = [];
   return none;
@@ -1478,8 +1450,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gt;
   }
   out += "\n";
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
       out += "\n";
@@ -1492,7 +1463,6 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     let (body_text, g2) = print_stmt(body[i], depth + 1, g);
     out += body_text;
     g = g2;
-    i += 1;
   }
   if (close_line > 0) {
     let (tail, gc) = drain_leading(g, close_line, depth + 1);
@@ -1588,8 +1558,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       }
       if (pv.nested.len() > 0) {
         let np = head + "(";
-        let ni = 0;
-        while (ni < pv.nested.len()) {
+        for ni in 0..pv.nested.len() {
           if (ni > 0) {
             np += ", ";
           }
@@ -1598,7 +1567,6 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
           } else {
             np += payload_slot(pv, parser.payload_binder(pv, ni));
           }
-          ni += 1;
         }
         return np + ")";
       }
@@ -1612,10 +1580,8 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         return head;
       }
       let out = head + "(" + payload_slot(pv, pv.binding);
-      let i = 0;
-      while (i < pv.extra_bindings.len()) {
+      for i in 0..pv.extra_bindings.len() {
         out = out + ", " + payload_slot(pv, pv.extra_bindings[i]);
-        i += 1;
       }
       return out + ")";
     }
@@ -1766,13 +1732,11 @@ function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Patte
 
 function print_tuple_elems(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): string {
   let out = "(";
-  let i = 0;
-  while (i < kinds.len()) {
+  for i in 0..kinds.len() {
     if (i > 0) {
       out += ", ";
     }
     out += print_tuple_elem(kinds[i], binds[i], lits[i], pats[i]);
-    i += 1;
   }
   return out + ")";
 }
@@ -1793,8 +1757,7 @@ function print_tup_arm(a: ast.TupArm): string {
 
 function print_record_fields(pv: ast.PatVariant): string {
   let out = "{ ";
-  let i = 0;
-  while (i < pv.field_names.len()) {
+  for i in 0..pv.field_names.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -1807,7 +1770,6 @@ function print_record_fields(pv: ast.PatVariant): string {
     if (slot != field) {
       out = out + ": " + slot;
     }
-    i += 1;
   }
   return out + rest_suffix(pv.rest_written, pv.field_names.len()) + " }";
 }
@@ -1830,8 +1792,7 @@ function print_struct_arm(a: ast.StructArm): string {
     return "_";
   }
   let out = a.type_name + " { ";
-  let i = 0;
-  while (i < a.fields.len()) {
+  for i in 0..a.fields.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -1843,7 +1804,6 @@ function print_struct_arm(a: ast.StructArm): string {
     } else if (a.binds[i] != a.fields[i]) {
       out = out + ": " + a.binds[i];
     }
-    i += 1;
   }
   out += rest_suffix(a.rest_written, a.fields.len());
   out += " }";
@@ -1918,8 +1878,7 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
   let arms = sugar_written_arms(sg);
   let out = "match (" + print_expr(sg.scrut, depth) + ") {\n";
   let g = f;
-  let i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
     out = out + indent_str(depth + 1) + arms[i].head;
@@ -1931,7 +1890,6 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
       out += ",";
     }
     out += "\n";
-    i += 1;
   }
   return (out + pad + "}", g);
 }
@@ -1955,8 +1913,7 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
   }
   let out = "let " + head + " = " + print_expr(sg.scrut, depth) + " else " + els + ";";
   let rest = arms[0].body;
-  let i = 0;
-  while (i < rest.len()) {
+  for i in 0..rest.len() {
     let ln = ast.stmt_line(rest[i]);
     out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
@@ -1970,7 +1927,6 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
     let (stext, g2) = print_stmt_line(rest[i], depth, g);
     out += stext;
     g = g2;
-    i += 1;
   }
   return (out, g);
 }
@@ -2090,8 +2046,7 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   }
   let out = "let " + head + " = " + print_expr(m.scrutinee, depth) + " else " + els + ";";
   let rest = arms[0].body;
-  let i = 0;
-  while (i < rest.len()) {
+  for i in 0..rest.len() {
     let ln = ast.stmt_line(rest[i]);
     out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
@@ -2105,7 +2060,6 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     let (stext, g2) = print_stmt_line(rest[i], depth, g);
     out += stext;
     g = g2;
-    i += 1;
   }
   return (out, g);
 }
@@ -2146,8 +2100,7 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
     out += tr;
     g = g0;
   }
-  let i = 0;
-  while (i < us.body.len()) {
+  for i in 0..us.body.len() {
     let ln = ast.stmt_line(us.body[i]);
     out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
@@ -2161,7 +2114,6 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
     let (stext, g2) = print_stmt_line(us.body[i], depth, g);
     out += stext;
     g = g2;
-    i += 1;
   }
   return (out, g);
 }
@@ -2437,10 +2389,8 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
     ii += 1;
   }
   let body: ast.Stmt[] = [];
-  let bi = 3;
-  while (bi < wbody.len()) {
+  for bi in 3..wbody.len() {
     body = body.append(wbody[bi]);
-    bi += 1;
   }
   return Some(ForCSugar { init: init, cond: cond, step: step, body: body, label: label });
 }
@@ -2496,7 +2446,7 @@ function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
 
 function strip_semi(s: string): string {
   if (s.len() > 0 && s[s.len() - 1] == b';') {
-    return slice_unchecked(s, 0, s.len() - 1) + "";
+    return slice_unchecked(s, 0, s.len() - 1).to_owned();
   }
   return s;
 }
@@ -2541,10 +2491,8 @@ function for_binder(var_name: string): string {
 
 function drop_first_stmt(stmts: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i = 1;
-  while (i < stmts.len()) {
+  for i in 1..stmts.len() {
     out = out.append(stmts[i]);
-    i += 1;
   }
   return out;
 }
@@ -2618,13 +2566,11 @@ function stmt_last_line(st: ast.Stmt, ln: i32, spans: parser.BlockSpans): i32 {
 function split_commas(csv: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i <= csv.len()) {
+  for i in 0..=csv.len() {
     if (i == csv.len() || csv[i] == b',') {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -2645,19 +2591,17 @@ function written_part(part: string): string {
   while (trail > lead && part[trail - 1] == b')') {
     trail -= 1;
   }
-  return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail) + "") + slice_unchecked(part, trail, part.len());
+  return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail).to_owned()) + slice_unchecked(part, trail, part.len());
 }
 
 function join_csv(csv: string): string {
   let parts = split_commas(csv);
   let out = "";
-  let i = 0;
-  while (i < parts.len()) {
+  for i in 0..parts.len() {
     if (i > 0) {
       out += ", ";
     }
     out += written_part(parts[i]);
-    i += 1;
   }
   return out;
 }
@@ -2678,12 +2622,10 @@ function struct_destr_pattern(v: ast.StmtVar): string {
   let sd_marker = parser.destr_marker_split(v.type_name).tag;
   let rest = slice_unchecked(sd_marker, 4, sd_marker.len());
   let colon: i32 = -1;
-  let ri = 0;
-  while (ri < rest.len()) {
+  for ri in 0..rest.len() {
     if (rest[ri] == b':' && colon < 0) {
       colon = ri;
     }
-    ri += 1;
   }
   if (colon < 0) {
     return "";
@@ -2692,8 +2634,7 @@ function struct_destr_pattern(v: ast.StmtVar): string {
   let fields = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
   let binds = split_commas(v.name);
   let out = struct_name + " { ";
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -2701,7 +2642,6 @@ function struct_destr_pattern(v: ast.StmtVar): string {
     if (i < binds.len() && binds[i] != fields[i]) {
       out = out + ": " + written_name(binds[i]);
     }
-    i += 1;
   }
   out += rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
   return out + " }";
@@ -2744,10 +2684,8 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
 
 function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[], i32) {
   let pats: string[] = [];
-  let pi = 0;
-  while (pi < params.len()) {
+  for pi in 0..params.len() {
     pats = pats.append("");
-    pi += 1;
   }
 
   let n = 0;
@@ -2772,12 +2710,10 @@ function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[
     }
   }
   let found = 0;
-  let j = 0;
-  while (j < pats.len()) {
+  for j in 0..pats.len() {
     if (pats[j].len() > 0) {
       found += 1;
     }
-    j += 1;
   }
   return (pats, found);
 }
@@ -2804,10 +2740,8 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (is_block_stmt(d.action)) {
         let blk = block_stmts(d.action);
         let inl = "{ ";
-        let bi = 0;
-        while (bi < blk.len()) {
+        for bi in 0..blk.len() {
           inl = inl + print_stmt_inline(blk[bi], 0) + " ";
-          bi += 1;
         }
         if (d.on_error != 0) {
           return ("errdefer " + inl + "}", f);
@@ -2966,8 +2900,7 @@ function print_tparam_list(names: string[], bounds: string[]): string {
     return "";
   }
   let out = "[";
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -2976,7 +2909,6 @@ function print_tparam_list(names: string[], bounds: string[]): string {
       bound = bounds[i];
     }
     out += print_tparam(names[i], bound);
-    i += 1;
   }
   return out + "]";
 }
@@ -3077,8 +3009,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   out = out + fd.name + tps;
   let (dpats, dpre) = param_patterns_for(fd.params, fd.body);
   out += "(";
-  let i = 0;
-  while (i < fd.params.len()) {
+  for i in 0..fd.params.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -3096,7 +3027,6 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
       out = out + ": " + fd.params[i].type_name;
     }
     out += print_param_default(fd.params[i], true, 0);
-    i += 1;
   }
   out += ")";
   if (fd.ret_type.len() > 0) {
@@ -3113,13 +3043,11 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   let out = "";
   if (sd.derives.len() > 0) {
     out += "@derive(";
-    let di = 0;
-    while (di < sd.derives.len()) {
+    for di in 0..sd.derives.len() {
       if (di > 0) {
         out += ", ";
       }
       out += sd.derives[di];
-      di += 1;
     }
     out += ")\n";
   }
@@ -3139,8 +3067,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   let lns = field_lines_for(flines, sd.name, sd.line);
   if (lns.len() == sd.fields.len() && lns.len() > 0 && keep_list_lines(f, sd.line, lns[lns.len() - 1])) {
     out += " {\n";
-    let mi = 0;
-    while (mi < sd.fields.len()) {
+    for mi in 0..sd.fields.len() {
       let (lead, f1) = drain_leading(f, lns[mi], 1);
       out += lead;
       f = f1;
@@ -3148,18 +3075,15 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
       let (tr, f2) = emit_trailing(f, lns[mi]);
       out = out + tr + "\n";
       f = f2;
-      mi += 1;
     }
     return (out + "}\n", f);
   }
   out += " { ";
-  let i = 0;
-  while (i < sd.fields.len()) {
+  for i in 0..sd.fields.len() {
     if (i > 0) {
       out += ", ";
     }
     out = out + sd.fields[i].name + ": " + sd.fields[i].type_name;
-    i += 1;
   }
   return (out + " }\n", f);
 }
@@ -3176,8 +3100,7 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (fd.ret_type.len() > 0) {
     out = out + ": " + fd.ret_type;
   }
-  let i = 0;
-  while (i < fd.body.len()) {
+  for i in 0..fd.body.len() {
     match (fd.body[i]) {
       ast.StmtReturn(r) => {
         let (cv, cf) = print_expr_c(r.value, prec_lowest(), 0, f);
@@ -3185,29 +3108,24 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
       },
       _ => {}
     }
-    i += 1;
   }
   return (out + ";\n", f);
 }
 
-function enum_index(enums: parser.EnumDecl[], name: string): i32 {
-  let i = 0;
-  while (i < enums.len()) {
+pub function enum_index(enums: parser.EnumDecl[], name: string): i32 {
+  for i in 0..enums.len() {
     if (enums[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
-function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
-  let i = 0;
-  while (i < structs.len()) {
+pub function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
+  for i in 0..structs.len() {
     if (structs[i].enum_owner == owner && structs[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -3243,8 +3161,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
   let lns = field_lines_for(flines, ed.name, ed.line);
   if (lns.len() == ed.variant_names.len() && lns.len() > 0 && keep_list_lines(f, ed.line, lns[lns.len() - 1])) {
     out += " {\n";
-    let mvi = 0;
-    while (mvi < ed.variant_names.len()) {
+    for mvi in 0..ed.variant_names.len() {
       let (lead, f1) = drain_leading(f, lns[mvi], 1);
       out += lead;
       f = f1;
@@ -3252,18 +3169,15 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
       let (tr, f2) = emit_trailing(f, lns[mvi]);
       out = out + tr + "\n";
       f = f2;
-      mvi += 1;
     }
     return (out + "}\n", f);
   }
   out += " { ";
-  let vi = 0;
-  while (vi < ed.variant_names.len()) {
+  for vi in 0..ed.variant_names.len() {
     if (vi > 0) {
       out += ", ";
     }
     out += print_enum_variant(ed, structs, vi);
-    vi += 1;
   }
   return (out + " }\n", f);
 }
@@ -3302,8 +3216,7 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let out = "impl";
   if (id.type_params.len() > 0) {
     out += "[";
-    let tpi = 0;
-    while (tpi < id.type_params.len()) {
+    for tpi in 0..id.type_params.len() {
       if (tpi > 0) {
         out += ", ";
       }
@@ -3312,7 +3225,6 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
         bound = id.bounds[tpi];
       }
       out += print_tparam(id.type_params[tpi], bound);
-      tpi += 1;
     }
     out += "]";
   }
@@ -3321,18 +3233,15 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     return (out + " {}\n", f);
   }
   out += " {\n";
-  let abi = 0;
-  while (abi < id.assoc_names.len()) {
+  for abi in 0..id.assoc_names.len() {
     let abv = "";
     if (abi < id.assoc_values.len()) {
       abv = id.assoc_values[abi];
     }
     out = out + indent_str(1) + "type " + id.assoc_names[abi] + " = " + abv + ";\n";
-    abi += 1;
   }
   let g = f;
-  let mi = 0;
-  while (mi < id.methods.len()) {
+  for mi in 0..id.methods.len() {
     if (mi > 0 && g.blank_before(id.methods[mi].line)) {
       out += "\n";
     }
@@ -3340,7 +3249,6 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     let (mtext, mg) = print_impl_method(id.methods[mi], lg);
     out = out + lead + mtext;
     g = mg;
-    mi += 1;
   }
   return (out + "}\n", g);
 }
@@ -3379,8 +3287,7 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   }
   out = out + "function " + m.name + print_type_params(m) + "(";
   let first = true;
-  let i = 0;
-  while (i < m.params.len()) {
+  for i in 0..m.params.len() {
     if (!first) {
       out += ", ";
     }
@@ -3392,7 +3299,6 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
       out = out + ": " + m.params[i].type_name;
     }
     first = false;
-    i += 1;
   }
   out += ")";
   if (m.ret_type.len() > 0) {
@@ -3416,27 +3322,22 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   out = out + "trait " + td.name + print_decl_tparams(td.type_params, td.const_params);
   if (td.supertraits.len() > 0) {
     out += ": ";
-    let spi = 0;
-    while (spi < td.supertraits.len()) {
+    for spi in 0..td.supertraits.len() {
       if (spi > 0) {
         out += " + ";
       }
       out += td.supertraits[spi];
-      spi += 1;
     }
   }
   if (td.methods.len() == 0 && td.assoc_types.len() == 0) {
     return (out + " {}\n", f);
   }
   out += " {\n";
-  let ati = 0;
-  while (ati < td.assoc_types.len()) {
+  for ati in 0..td.assoc_types.len() {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
-    ati += 1;
   }
   let g = f;
-  let mi = 0;
-  while (mi < td.methods.len()) {
+  for mi in 0..td.methods.len() {
     if (mi > 0 && g.blank_before(td.methods[mi].line)) {
       out += "\n";
     }
@@ -3444,7 +3345,6 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     let (mtext, mg) = print_trait_method(td.methods[mi], lg);
     out = out + lead + mtext;
     g = mg;
-    mi += 1;
   }
   return (out + "}\n", g);
 }
@@ -3458,8 +3358,7 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     out += "unsafe ";
   }
   out = out + "function " + m.name + print_type_params(m) + "(";
-  let i = 0;
-  while (i < m.params.len()) {
+  for i in 0..m.params.len() {
     if (i > 0) {
       out += ", ";
     }
@@ -3470,7 +3369,6 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     if (m.params[i].type_name.len() > 0) {
       out = out + ": " + m.params[i].type_name;
     }
-    i += 1;
   }
   out += ")";
   if (m.ret_type.len() > 0) {
@@ -3497,8 +3395,7 @@ function print_type_alias(a: parser.TypeAlias): string {
   let ln = a.variant_lines;
   let n = ln.len();
   let kept = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
-  let i = 0;
-  while (i < a.variants.len()) {
+  for i in 0..a.variants.len() {
     if (i > 0 && kept && ln[i] > ln[i - 1]) {
       out = out + "\n" + indent_str(1) + "| ";
     } else if (i > 0) {
@@ -3508,7 +3405,6 @@ function print_type_alias(a: parser.TypeAlias): string {
     if (i < a.variant_args.len() && a.variant_args[i].len() > 0) {
       out = out + "[" + a.variant_args[i] + "]";
     }
-    i += 1;
   }
   return out + ";\n";
 }
@@ -3516,13 +3412,11 @@ function print_type_alias(a: parser.TypeAlias): string {
 function print_import(im: parser.Import): string {
   if (im.is_reexport) {
     let re = "pub use " + quote_string(im.path) + ".{";
-    let ri = 0;
-    while (ri < im.reexport_names.len()) {
+    for ri in 0..im.reexport_names.len() {
       if (ri > 0) {
         re += ", ";
       }
       re += im.reexport_names[ri];
-      ri += 1;
     }
     return re + "};\n";
   }
@@ -3583,15 +3477,12 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   let kinds: i32[] = [];
   let idxs: i32[] = [];
   let lines: i32[] = [];
-  let ii = 0;
-  while (ii < mod.imports.len()) {
+  for ii in 0..mod.imports.len() {
     kinds = kinds.append(6);
     idxs = idxs.append(ii);
     lines = lines.append(mod.imports[ii].line);
-    ii += 1;
   }
-  let i = 0;
-  while (i < mod.structs.len()) {
+  for i in 0..mod.structs.len() {
     let owner = mod.structs[i].enum_owner;
     let ei: i32 = -1;
     if (owner.len() > 0) {
@@ -3606,53 +3497,40 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
       idxs = idxs.append(ei);
       lines = lines.append(mod.enums[ei].line);
     }
-    i += 1;
   }
-  let vi = 0;
-  while (vi < mod.enums.len()) {
+  for vi in 0..mod.enums.len() {
     if (mod.enums[vi].variant_names.len() == 0) {
       kinds = kinds.append(1);
       idxs = idxs.append(vi);
       lines = lines.append(mod.enums[vi].line);
     }
-    vi += 1;
   }
-  let ai = 0;
-  while (ai < mod.aliases.len()) {
+  for ai in 0..mod.aliases.len() {
     kinds = kinds.append(2);
     idxs = idxs.append(ai);
     lines = lines.append(mod.aliases[ai].line);
-    ai += 1;
   }
-  let ri = 0;
-  while (ri < mod.resources.len()) {
+  for ri in 0..mod.resources.len() {
     kinds = kinds.append(7);
     idxs = idxs.append(ri);
     lines = lines.append(mod.resources[ri].line);
-    ri += 1;
   }
-  let ti2 = 0;
-  while (ti2 < traits.len()) {
+  for ti2 in 0..traits.len() {
     kinds = kinds.append(4);
     idxs = idxs.append(ti2);
     lines = lines.append(traits[ti2].line);
-    ti2 += 1;
   }
-  let ipi = 0;
-  while (ipi < impls.len()) {
+  for ipi in 0..impls.len() {
     kinds = kinds.append(5);
     idxs = idxs.append(ipi);
     lines = lines.append(impls[ipi].line);
-    ipi += 1;
   }
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].line > 0) {
       kinds = kinds.append(3);
       idxs = idxs.append(fi);
       lines = lines.append(mod.funcs[fi].line);
     }
-    fi += 1;
   }
   let si = 1;
   while (si < lines.len()) {
@@ -3672,8 +3550,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     si += 1;
   }
   let hint_cursor = 0;
-  let di = 0;
-  while (di < kinds.len()) {
+  for di in 0..kinds.len() {
     let dline = lines[di];
     if (di > 0 && !(kinds[di] == 6 && kinds[di - 1] == 6)) {
       chunks = chunks.append("\n");
@@ -3728,10 +3605,8 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = ff;
       }
     }
-    di += 1;
   }
-  let j = 0;
-  while (j < mod.top_stmts.len()) {
+  for j in 0..mod.top_stmts.len() {
     if (wrote) {
       chunks = chunks.append("\n");
       wrote = true;
@@ -3740,1338 +3615,31 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     chunks = chunks.append(stext);
     wrote = true;
     f = sf;
-    j += 1;
   }
   let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
   return util.str_join_chunks(chunks);
 }
 
-function roundtrip_verbatim(src: string): parser.Module {
-  let mod = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
-  return parser.parse_module_verbatim(lexer.tokenize(print_module(mod))).pmod;
-}
-
-function roundtrip_module(src: string): parser.Module {
-  let toks = lexer.tokenize(src);
-  let mod = parser.parse_module(toks);
-  let emitted = print_module(mod);
-  let toks2 = lexer.tokenize(emitted);
-  return parser.parse_module(toks2);
-}
-
-function main(): i32 {
-  let rc = check_expressions_and_control_flow();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_checked_casts();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_string_and_slice_literals();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structs_and_aliases();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_match_statements();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_annotations_and_receivers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_imports();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_loops_and_tuples();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_lambdas();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_qualified_names_and_externs();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_declaration_modifiers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_enums();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_record_patterns();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_const_and_for_sugar();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_visibility_and_destructuring();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_traits_and_impls();
-  if (rc != 0) {
-    return rc;
-  }
-
-  return 0;
-}
-
-function check_expressions_and_control_flow(): i32 {
-  let toks1 = lexer.tokenize("let a = 1 + 2 * 3; return a;");
-  let mod1 = parser.parse_module(toks1);
-  let s1 = print_module(mod1);
-  let rt1 = parser.parse_module(lexer.tokenize(s1));
-  if (rt1.top_stmts.len() != 2) {
-    return 10;
-  }
-  match (rt1.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      if (v.name != "a") {
-        return 11;
-      }
-      match (v.init) {
-        ast.ExprBinary(b) => {
-          if (b.op != "+") {
-            return 12;
-          }
-        },
-        _ => {
-          return 13;
-        }
-      }
-    },
-    _ => {
-      return 14;
-    }
-  }
-
-  let src2 = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
-  let rt2 = roundtrip_module(src2);
-  if (rt2.funcs.len() != 2) {
-    return 20;
-  }
-  if (rt2.funcs[0].name != "add") {
-    return 21;
-  }
-  if (rt2.funcs[0].params.len() != 2) {
-    return 22;
-  }
-  if (rt2.funcs[0].params[0].type_name != "i32") {
-    return 23;
-  }
-  if (rt2.funcs[1].name != "main") {
-    return 24;
-  }
-
-  let src3 = "let x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
-  let rt3 = roundtrip_module(src3);
-  if (rt3.top_stmts.len() != 3) {
-    return 30;
-  }
-  match (rt3.top_stmts[1]) {
-    ast.StmtIf(ifs) => {
-      if (ifs.then_body.len() != 1) {
-        return 31;
-      }
-      if (ifs.else_body.len() != 1) {
-        return 32;
-      }
-    },
-    _ => {
-      return 33;
-    }
-  }
-
-  let src4 = "let a = [3, 5, 7]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
-  let rt4 = roundtrip_module(src4);
-  if (rt4.top_stmts.len() != 5) {
-    return 40;
-  }
-  match (rt4.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprArray(a) => {
-          if (a.elements.len() != 3) {
-            return 41;
-          }
-        },
-        _ => {
-          return 42;
-        }
-      }
-    },
-    _ => {
-      return 43;
-    }
-  }
-  match (rt4.top_stmts[3]) {
-    ast.StmtWhile(w) => {
-      if (w.body.len() != 2) {
-        return 44;
-      }
-    },
-    _ => {
-      return 45;
-    }
-  }
-
-  return 0;
-}
-
-function check_string_and_slice_literals(): i32 {
-  let src5 = "let s = \"hello\\nworld\"; return 0;";
-  let rt5 = roundtrip_module(src5);
-  match (rt5.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprString(_) => {},
-        _ => {
-          return 50;
-        }
-      }
-    },
-    _ => {
-      return 51;
-    }
-  }
-
-  let src6 = "let s = \"hello\"; let t = s[1:4]; return 0;";
-  let rt6 = roundtrip_module(src6);
-  match (rt6.top_stmts[1]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprSlice(_) => {},
-        _ => {
-          return 60;
-        }
-      }
-    },
-    _ => {
-      return 61;
-    }
-  }
-
-  let srcOB = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
-  let outOB = print_module(parser.parse_module(lexer.tokenize(srcOB)));
-  if (!util.contains(outOB, "s[1:]")) {
-    return 62;
-  }
-  if (!util.contains(outOB, "s[:3]")) {
-    return 63;
-  }
-  if (!util.contains(outOB, "s[:]")) {
-    return 64;
-  }
-  if (!util.contains(outOB, "s[1:3]")) {
-    return 65;
-  }
-  if (util.contains(outOB, "s[1:0]")) {
-    return 66;
-  }
-  if (util.contains(outOB, "s[0:")) {
-    return 67;
-  }
-
-  return 0;
-}
-
-function check_structs_and_aliases(): i32 {
-  let src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { let p = Point { x: 3, y: 4 }; return p.x; }";
-  let rt7 = roundtrip_module(src7);
-  if (rt7.structs.len() != 1) {
-    return 70;
-  }
-  if (rt7.structs[0].name != "Point") {
-    return 71;
-  }
-  if (rt7.structs[0].fields.len() != 2) {
-    return 72;
-  }
-  if (rt7.funcs.len() != 1) {
-    return 73;
-  }
-
-  let src8 = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
-  let rt8 = roundtrip_module(src8);
-  if (rt8.aliases.len() != 1) {
-    return 80;
-  }
-  if (rt8.aliases[0].name != "Shape") {
-    return 81;
-  }
-  if (rt8.aliases[0].variants.len() != 2) {
-    return 82;
-  }
-  let src8g = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
-  let rt8g = roundtrip_verbatim(src8g);
-  if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
-    return 83;
-  }
-  if (rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != "T" || rt8g.aliases[0].variant_args[1] != "" || rt8g.aliases[0].variant_args[2] != "Leaf[U]") {
-    return 84;
-  }
-
-  return 0;
-}
-
-function check_match_statements(): i32 {
-  let src9 = "let x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
-  let rt9 = roundtrip_module(src9);
-  if (rt9.top_stmts.len() != 2) {
-    return 90;
-  }
-  match (rt9.top_stmts[1]) {
-    ast.StmtMatch(m) => {
-      if (m.arms.len() != 2) {
-        return 91;
-      }
-      match (m.arms[0].pattern) {
-        ast.PatVariant(pv) => {
-          if (pv.type_name != "Foo") {
-            return 92;
-          }
-          if (pv.binding != "f") {
-            return 93;
-          }
-        },
-        _ => {
-          return 94;
-        }
-      }
-    },
-    _ => {
-      return 95;
-    }
-  }
-
-  return 0;
-}
-
-function check_annotations_and_receivers(): i32 {
-  let srcA = "let n: i32 = 7; let sh: Shape = c; return n;";
-  let rtA = roundtrip_module(srcA);
-  match (rtA.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      if (v.type_name != "i32") {
-        return 100;
-      }
-    },
-    _ => {
-      return 101;
-    }
-  }
-  match (rtA.top_stmts[1]) {
-    ast.StmtVar(v) => {
-      if (v.type_name != "Shape") {
-        return 102;
-      }
-    },
-    _ => {
-      return 103;
-    }
-  }
-
-  let srcB = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
-  let rtB = roundtrip_module(srcB);
-  if (rtB.funcs.len() != 2) {
-    return 110;
-  }
-  if (rtB.funcs[0].name != "advance") {
-    return 111;
-  }
-  if (rtB.funcs[0].receiver_name != "p") {
-    return 112;
-  }
-  if (rtB.funcs[0].receiver_type != "Par") {
-    return 113;
-  }
-  if (rtB.funcs[1].receiver_name != "") {
-    return 114;
-  }
-
-  return 0;
-}
-
-function check_imports(): i32 {
-  let srcC = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
-  let rtC = roundtrip_module(srcC);
-  if (rtC.imports.len() != 2) {
-    return 120;
-  }
-  if (rtC.imports[0].path != "./lexer") {
-    return 121;
-  }
-  if (rtC.imports[1].path != "./parser") {
-    return 122;
-  }
-  if (rtC.funcs.len() != 1) {
-    return 123;
-  }
-
-  return 0;
-}
-
-function check_loops_and_tuples(): i32 {
-  let srcD = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
-  let rtD = roundtrip_module(srcD);
-  if (rtD.top_stmts.len() != 1) {
-    return 130;
-  }
-  match (rtD.top_stmts[0]) {
-    ast.StmtFor(f) => {
-      if (f.var_name != "n") {
-        return 131;
-      }
-      if (f.body.len() != 2) {
-        return 132;
-      }
-      match (f.body[0]) {
-        ast.StmtIf(ifs) => {
-          match (ifs.then_body[0]) {
-            ast.StmtBreak(_) => {},
-            _ => {
-              return 133;
-            }
-          }
-        },
-        _ => {
-          return 134;
-        }
-      }
-      match (f.body[1]) {
-        ast.StmtIf(ifs) => {
-          match (ifs.then_body[0]) {
-            ast.StmtContinue(_) => {},
-            _ => {
-              return 135;
-            }
-          }
-        },
-        _ => {
-          return 136;
-        }
-      }
-    },
-    _ => {
-      return 137;
-    }
-  }
-
-  let srcE = "let t = (10, 20, 30); let x = t.0; return x;";
-  let rtE = roundtrip_module(srcE);
-  if (rtE.top_stmts.len() != 3) {
-    return 140;
-  }
-  match (rtE.top_stmts[0]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprTuple(t) => {
-          if (t.elements.len() != 3) {
-            return 141;
-          }
-        },
-        _ => {
-          return 142;
-        }
-      }
-    },
-    _ => {
-      return 143;
-    }
-  }
-  match (rtE.top_stmts[1]) {
-    ast.StmtVar(v) => {
-      match (v.init) {
-        ast.ExprFieldAccess(fa) => {
-          if (fa.field != "0") {
-            return 144;
-          }
-        },
-        _ => {
-          return 145;
-        }
-      }
-    },
-    _ => {
-      return 146;
-    }
-  }
-
-  return 0;
-}
-
-function check_lambdas(): i32 {
-  let srcF = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  let rtF = roundtrip_module(srcF);
-  if (rtF.funcs.len() != 1) {
-    return 150;
-  }
-  if (rtF.funcs[0].body.len() != 2) {
-    return 151;
-  }
-  match (rtF.funcs[0].body[0]) {
-    ast.StmtVar(v) => {
-      if (v.name != "f") {
-        return 152;
-      }
-      match (v.init) {
-        ast.ExprLambda(lm) => {
-          if (lm.params.len() != 1) {
-            return 153;
-          }
-          if (lm.params[0].name != "x") {
-            return 154;
-          }
-          if (lm.params[0].type_name != "i32") {
-            return 155;
-          }
-          if (lm.ret_type != "i32") {
-            return 156;
-          }
-          if (lm.body.len() != 1) {
-            return 157;
-          }
-        },
-        _ => {
-          return 158;
-        }
-      }
-    },
-    _ => {
-      return 159;
-    }
-  }
-
-  let srcG = "function main(): i32 { return (): i32 => { return 7; }(); }";
-  let rtG = roundtrip_module(srcG);
-  match (rtG.funcs[0].body[0]) {
-    ast.StmtReturn(r) => {
-      match (r.value) {
-        ast.ExprCall(cc) => {
-          match (cc.callee) {
-            ast.ExprLambda(_) => {},
-            _ => {
-              return 161;
-            }
-          }
-        },
-        _ => {
-          return 162;
-        }
-      }
-    },
-    _ => {
-      return 163;
-    }
-  }
-
-  let srcR = "function main(): i32 { let g = (): (string, i32) => { return (\"ab\", 7); }; let h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
-  let pfR = parser.parse_module_verbatim(lexer.tokenize(srcR));
-  let outR = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
-  if (!util.contains(outR, "let g = (): (string, i32) => (\"ab\", 7);")) {
-    return 371;
-  }
-  if (!util.contains(outR, "let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) {
-    return 372;
-  }
-  let pfR2 = parser.parse_module_verbatim(lexer.tokenize(outR));
-  if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) {
-    return 373;
-  }
-  match (pfR2.pmod.funcs[0].body[0]) {
-    ast.StmtVar(vr) => {
-      match (vr.init) {
-        ast.ExprLambda(lr) => {
-          if (lr.ret_type != "(string, i32)") {
-            return 374;
-          }
-        },
-        _ => {
-          return 375;
-        }
-      }
-    },
-    _ => {
-      return 376;
-    }
-  }
-
-  return 0;
-}
-
-function check_qualified_names_and_externs(): i32 {
-  let srcH = "function main(): i32 { return parser.parse_module(42); }";
-  let rtH = roundtrip_module(srcH);
-  match (rtH.funcs[0].body[0]) {
-    ast.StmtReturn(r) => {
-      match (r.value) {
-        ast.ExprCall(cc) => {
-          match (cc.callee) {
-            ast.ExprFieldAccess(fa) => {
-              if (fa.field != "parse_module") {
-                return 171;
-              }
-              match (fa.obj) {
-                ast.ExprIdent(id) => {
-                  if (id.name != "parser") {
-                    return 172;
-                  }
-                },
-                _ => {
-                  return 173;
-                }
-              }
-            },
-            _ => {
-              return 174;
-            }
-          }
-        },
-        _ => {
-          return 175;
-        }
-      }
-    },
-    _ => {
-      return 176;
-    }
-  }
-
-  let srcI = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
-  let modI = parser.parse_module(lexer.tokenize(srcI));
-  if (modI.funcs.len() != 2) {
-    return 180;
-  }
-  if (modI.funcs[0].name != "random_u64") {
-    return 181;
-  }
-  if (modI.funcs[0].import_iface != "wasi:random/random@0.2.0") {
-    return 182;
-  }
-  if (modI.funcs[0].import_wit != "get-random-u64") {
-    return 183;
-  }
-  if (modI.funcs[0].body.len() != 0) {
-    return 184;
-  }
-  if (modI.funcs[1].import_iface.len() != 0) {
-    return 185;
-  }
-  let rtI = roundtrip_module(srcI);
-  if (rtI.funcs.len() != 2) {
-    return 186;
-  }
-  if (rtI.funcs[0].import_iface != "wasi:random/random@0.2.0") {
-    return 187;
-  }
-  if (rtI.funcs[0].import_wit != "get-random-u64") {
-    return 188;
-  }
-  if (rtI.funcs[0].body.len() != 0) {
-    return 189;
-  }
-
-  return 0;
-}
-
-function check_declaration_modifiers(): i32 {
-  let srcM = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
-  let rtM = roundtrip_module(srcM);
-  if (rtM.funcs.len() != 2) {
-    return 190;
-  }
-  if (rtM.funcs[0].name != "pure_add") {
-    return 191;
-  }
-  if (!rtM.funcs[0].fip) {
-    return 192;
-  }
-  if (rtM.funcs[0].fbip || rtM.funcs[0].fip_allowance != 0) {
-    return 164;
-  }
-  if (rtM.funcs[1].fip) {
-    return 193;
-  }
-
-  let srcFB = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
-  let rtFB = roundtrip_module(srcFB);
-  if (rtFB.funcs.len() != 2) {
-    return 165;
-  }
-  if (!rtFB.funcs[0].fbip || rtFB.funcs[0].fip) {
-    return 166;
-  }
-  if (rtFB.funcs[0].fip_allowance != 0) {
-    return 167;
-  }
-
-  let srcFG = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
-  let rtFG = roundtrip_module(srcFG);
-  if (rtFG.funcs.len() != 3) {
-    return 168;
-  }
-  if (!rtFG.funcs[0].fbip || rtFG.funcs[0].fip_allowance != 2) {
-    return 169;
-  }
-  if (!rtFG.funcs[1].fip || rtFG.funcs[1].fbip || rtFG.funcs[1].fip_allowance != 1) {
-    return 170;
-  }
-
-  let srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }";
-  let rtMC = roundtrip_module(srcMC);
-  if (rtMC.structs.len() != 1) {
-    return 194;
-  }
-  if (!rtMC.structs[0].must_consume) {
-    return 195;
-  }
-
-  let srcDrv: string = "@derive(Eq)\nstruct Pt { x: i32 } function main(): i32 { let p: Pt = Pt { x: 1 }; return p.x; }";
-  let modDrv = parser.parse_module(lexer.tokenize(srcDrv));
-  let rtDrv = roundtrip_module(srcDrv);
-  if (rtDrv.structs.len() != 1) {
-    return 196;
-  }
-  if (rtDrv.structs[0].derives.len() != 1) {
-    return 197;
-  }
-  if (rtDrv.structs[0].derives[0] != "Eq") {
-    return 198;
-  }
-  if (rtDrv.funcs.len() != modDrv.funcs.len()) {
-    return 199;
-  }
-
-  let srcJ = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
-  let modJ = parser.parse_module(lexer.tokenize(srcJ));
-  if (modJ.funcs.len() != 2) {
-    return 200;
-  }
-  if (!modJ.funcs[0].async) {
-    return 201;
-  }
-  if (modJ.funcs[1].async) {
-    return 202;
-  }
-  let rtJ = roundtrip_module(srcJ);
-  if (rtJ.funcs.len() != 2) {
-    return 203;
-  }
-  if (!rtJ.funcs[0].async) {
-    return 204;
-  }
-  if (rtJ.funcs[1].async) {
-    return 205;
-  }
-  let rtK = roundtrip_module("pub async function w(): i32 { return 1; }");
-  if (rtK.funcs.len() != 1) {
-    return 206;
-  }
-  if (!rtK.funcs[0].async) {
-    return 207;
-  }
-  let rtL = roundtrip_module("function main(): i32 { let async: i32 = 3; return async + 4; }");
-  if (rtL.funcs.len() != 1) {
-    return 208;
-  }
-  if (rtL.funcs[0].async) {
-    return 209;
-  }
-
-  return 0;
-}
-
-function check_enums(): i32 {
-  let srcEnum = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { let c: Color = Red; return 0; }";
-  let modEnum = parser.parse_module(lexer.tokenize(srcEnum));
-  let rtEnum = roundtrip_module(srcEnum);
-  if (rtEnum.enums.len() != 1) {
-    return 210;
-  }
-  if (rtEnum.enums[0].name != "Color") {
-    return 211;
-  }
-  if (rtEnum.enums[0].variant_names.len() != 2) {
-    return 212;
-  }
-  if (rtEnum.enums[0].variant_names[0] != "Red") {
-    return 213;
-  }
-  if (rtEnum.enums[0].variant_names[1] != "Green") {
-    return 214;
-  }
-  let rgi = variant_decl_index(rtEnum.structs, "Color", "Green");
-  if (rgi < 0) {
-    return 215;
-  }
-  if (rtEnum.structs[rgi].fields.len() != 1) {
-    return 216;
-  }
-  if (rtEnum.structs[rgi].fields[0].type_name != "i32") {
-    return 217;
-  }
-  let rri = variant_decl_index(rtEnum.structs, "Color", "Red");
-  if (rri < 0) {
-    return 218;
-  }
-  if (rtEnum.structs[rri].fields.len() != 0) {
-    return 219;
-  }
-  let esi = 0;
-  while (esi < rtEnum.structs.len()) {
-    if (rtEnum.structs[esi].enum_owner.len() == 0) {
-      return 220;
-    }
-    esi += 1;
-  }
-  if (rtEnum.structs[rgi].derives.len() != 1) {
-    return 221;
-  }
-  if (rtEnum.structs[rgi].derives[0] != "Eq") {
-    return 222;
-  }
-  if (rtEnum.funcs.len() != modEnum.funcs.len()) {
-    return 223;
-  }
-
-  let srcEG = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
-  let modEG = parser.parse_module(lexer.tokenize(srcEG));
-  let rtEG = roundtrip_module(srcEG);
-  if (rtEG.enums.len() != 1) {
-    return 224;
-  }
-  if (!rtEG.enums[0].must_consume) {
-    return 225;
-  }
-  if (rtEG.enums[0].type_params.len() != 1) {
-    return 226;
-  }
-  if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) {
-    return 227;
-  }
-  let fgi = variant_decl_index(rtEG.structs, "Slot", "Full");
-  if (fgi < 0) {
-    return 228;
-  }
-  if (rtEG.structs[fgi].fields[0].type_name != modEG.enums[0].type_params[0]) {
-    return 229;
-  }
-  if (!util.contains(print_module(modEG), "enum Slot[T] { Full(T), Empty }")) {
-    return 274;
-  }
-
-  let srcEM = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
-  let rtEM = roundtrip_module(srcEM);
-  let tpi = variant_decl_index(rtEM.structs, "Pair", "Two");
-  if (tpi < 0) {
-    return 230;
-  }
-  if (rtEM.structs[tpi].fields.len() != 2) {
-    return 231;
-  }
-  if (rtEM.structs[tpi].fields[0].type_name != "i32") {
-    return 232;
-  }
-  if (rtEM.structs[tpi].fields[1].type_name != "string") {
-    return 233;
-  }
-
-  let srcER = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
-  let rtER = roundtrip_module(srcER);
-  let rcvi = variant_decl_index(rtER.structs, "Shape", "Rect");
-  if (rcvi < 0) {
-    return 234;
-  }
-  if (rtER.structs[rcvi].variant_field_names.len() != 2) {
-    return 235;
-  }
-  if (rtER.structs[rcvi].variant_field_names[0] != "w") {
-    return 236;
-  }
-  if (rtER.structs[rcvi].variant_field_names[1] != "h") {
-    return 237;
-  }
-  if (rtER.structs[rcvi].fields.len() != 2) {
-    return 238;
-  }
-  if (rtER.structs[rcvi].fields[0].name != "__ev") {
-    return 239;
-  }
-  if (rtER.structs[rcvi].fields[1].name != "__ev1") {
-    return 240;
-  }
-  if (rtER.structs[rcvi].fields[1].type_name != "string") {
-    return 241;
-  }
-  let uri = variant_decl_index(rtER.structs, "Shape", "Unit");
-  if (uri < 0) {
-    return 242;
-  }
-  if (rtER.structs[uri].variant_field_names.len() != 0) {
-    return 243;
-  }
-
-  let srcPB = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
-  let rtPB = roundtrip_module(srcPB);
-  if (rtPB.funcs.len() < 1) {
-    return 244;
-  }
-  match (rtPB.funcs[0].body[0]) {
-    ast.StmtMatch(m) => {
-      match (m.arms[0].pattern) {
-        ast.PatVariant(pv) => {
-          if (pv.binding != "a") {
-            return 245;
-          }
-          if (pv.extra_bindings.len() != 1) {
-            return 246;
-          }
-          if (pv.extra_bindings[0] != "b") {
-            return 247;
-          }
-        },
-        _ => {
-          return 248;
-        }
-      }
-    },
-    _ => {
-      return 249;
-    }
-  }
-
-  return 0;
-}
-
-function check_record_patterns(): i32 {
-  let src = "function f(s: Shape): i32 { match (s) { Rect { h: hh, .. } => { return hh; }, Circle { .. } => { return 0; } } return 0; } function main(): i32 { return 0; }";
-  let rt = roundtrip_module(src);
-  if (rt.funcs.len() < 1) {
-    return 377;
-  }
-  if let ast.StmtMatch(m) = rt.funcs[0].body[0] {
-    if (m.arms.len() != 2) {
-      return 378;
-    }
-    if let ast.PatVariant(rect) = m.arms[0].pattern {
-      if (rect.field_names.len() != 1 || rect.field_names[0] != "h" || rect.binding != "hh" || !rect.rest_written) {
-        return 379;
-      }
-    } else {
-      return 380;
-    }
-    if let ast.PatVariant(circle) = m.arms[1].pattern {
-      if (circle.field_names.len() != 0 || !circle.rest_written) {
-        return 381;
-      }
-    } else {
-      return 382;
-    }
-    return 0;
-  }
-  return 383;
-}
-
-function check_const_and_for_sugar(): i32 {
-  let srcConst = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
-  let rtConst = roundtrip_module(srcConst);
-  if (rtConst.funcs.len() != 2) {
-    return 250;
-  }
-  let limit_i: i32 = -1;
-  let ci = 0;
-  while (ci < rtConst.funcs.len()) {
-    if (rtConst.funcs[ci].name == "LIMIT") {
-      limit_i = ci;
-    }
-    ci += 1;
-  }
-  if (limit_i < 0) {
-    return 251;
-  }
-  if (!rtConst.funcs[limit_i].is_const) {
-    return 252;
-  }
-  if (rtConst.funcs[limit_i].ret_type != "i32") {
-    return 253;
-  }
-  let rtFn = roundtrip_module("function LIMIT(): i32 { return 41; }");
-  if (rtFn.funcs.len() != 1) {
-    return 254;
-  }
-  if (rtFn.funcs[0].is_const) {
-    return 255;
-  }
-
-  let srcCFor = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
-  let outCFor = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
-  if (!util.contains(outCFor, "for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return 260;
-  }
-  if (util.contains(outCFor, "__forc_")) {
-    return 261;
-  }
-  let rtCFor = roundtrip_module(srcCFor);
-  if (rtCFor.funcs.len() != 1) {
-    return 262;
-  }
-  match (rtCFor.funcs[0].body[1]) {
-    ast.StmtIf(cf) => {
-      match (as_c_for(cf)) {
-        Some(_) => {},
-        None => {
-          return 263;
-        }
-      }
-    },
-    _ => {
-      return 264;
-    }
-  }
-
-  let outBare: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(): i32 { let i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }",
-  )));
-  if (!util.contains(outBare, "for (; i < 3; ) {")) {
-    return 265;
-  }
-
-  let outRange: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(): i32 { let t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }",
-  )));
-  if (!util.contains(outRange, "for i in 0..4 {")) {
-    return 266;
-  }
-  if (!util.contains(outRange, "for j in 0..=4 {")) {
-    return 267;
-  }
-  if (util.contains(outRange, "__range")) {
-    return 268;
-  }
-
-  let outMap: string = print_module(parser.parse_module(lexer.tokenize(
-    "function f(m: map[string, i32]): i32 { let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
-  )));
-  if (!util.contains(outMap, "for (k, v) in m {")) {
-    return 269;
-  }
-
-  let srcLabels = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
-  let outLabels = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
-  if (!util.contains(outLabels, "outer: while (t < 10) {")) {
-    return 270;
-  }
-  if (!util.contains(outLabels, "inner: for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return 271;
-  }
-  if (!util.contains(outLabels, "continue outer;")) {
-    return 272;
-  }
-  if (!util.contains(outLabels, "break inner;")) {
-    return 273;
-  }
-
-  return 0;
-}
-
-function check_visibility_and_destructuring(): i32 {
-  let srcVis = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
-  let rtVis = roundtrip_module(srcVis);
-  if (!rtVis.structs[struct_index(rtVis.structs, "A")].is_pub) {
-    return 280;
-  }
-  if (rtVis.structs[struct_index(rtVis.structs, "B")].is_pub) {
-    return 281;
-  }
-  if (!rtVis.enums[enum_index(rtVis.enums, "C")].is_pub) {
-    return 282;
-  }
-  if (rtVis.enums[enum_index(rtVis.enums, "D")].is_pub) {
-    return 283;
-  }
-  if (rtVis.aliases.len() != 2) {
-    return 284;
-  }
-  if (!rtVis.aliases[0].is_pub) {
-    return 285;
-  }
-  if (rtVis.aliases[1].is_pub) {
-    return 286;
-  }
-
-  let srcTd = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
-  let rtTd = roundtrip_module(srcTd);
-  let mti = func_index(rtTd.funcs, "main");
-  if (mti < 0) {
-    return 287;
-  }
-  if (rtTd.funcs[mti].body.len() != 2) {
-    return 288;
-  }
-  match (rtTd.funcs[mti].body[0]) {
-    ast.StmtVar(v) => {
-      if (v.name != "a,b") {
-        return 289;
-      }
-      if (v.type_name.len() != 0) {
-        return 290;
-      }
-    },
-    _ => {
-      return 291;
-    }
-  }
-  let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
-  let rtSd = roundtrip_module(srcSd);
-  let msi = func_index(rtSd.funcs, "main");
-  if (msi < 0) {
-    return 292;
-  }
-  match (rtSd.funcs[msi].body[0]) {
-    ast.StmtVar(v) => {
-      if (v.name != "x,bb") {
-        return 293;
-      }
-      if (v.type_name != "@sd:P:x,y") {
-        return 294;
-      }
-    },
-    _ => {
-      return 295;
-    }
-  }
-
-  let srcMt = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
-  let rtMt = roundtrip_module(srcMt);
-  let mmi = func_index(rtMt.funcs, "map");
-  if (mmi < 0) {
-    return 296;
-  }
-  if (rtMt.funcs[mmi].receiver_name != "o") {
-    return 297;
-  }
-  if (rtMt.funcs[mmi].all_type_params.len() != 1) {
-    return 298;
-  }
-
-  return 0;
-}
-
-function check_traits_and_impls(): i32 {
-  let srcTr = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
-  let pfTr = parser.parse_module_verbatim(lexer.tokenize(srcTr));
-  let outTr = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
-  let rtTr = parser.parse_module_verbatim(lexer.tokenize(outTr));
-  if (rtTr.ptraits.len() != 1) {
-    return 299;
-  }
-  if (rtTr.ptraits[0].name != "Greet") {
-    return 300;
-  }
-  if (!rtTr.ptraits[0].is_pub) {
-    return 301;
-  }
-  if (rtTr.ptraits[0].type_params.len() != 1) {
-    return 302;
-  }
-  if (rtTr.ptraits[0].type_params[0] != "T") {
-    return 303;
-  }
-  if (rtTr.ptraits[0].supertraits.len() != 1) {
-    return 304;
-  }
-  if (rtTr.ptraits[0].supertraits[0] != "Display") {
-    return 305;
-  }
-  if (rtTr.ptraits[0].methods.len() != 2) {
-    return 306;
-  }
-  if (rtTr.ptraits[0].methods[0].name != "hi") {
-    return 307;
-  }
-  if (rtTr.ptraits[0].methods[0].body.len() != 0) {
-    return 308;
-  }
-  if (rtTr.ptraits[0].methods[1].name != "loud") {
-    return 309;
-  }
-  if (rtTr.ptraits[0].methods[1].body.len() == 0) {
-    return 310;
-  }
-  let pfQ: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "import \"core/cmp\"; pub trait Sortable: cmp.Ord {} function main(): i32 { return 0; }",
-  ));
-  if (pfQ.ptraits.len() != 1) {
-    return 311;
-  }
-  if (pfQ.ptraits[0].supertraits.len() != 1) {
-    return 312;
-  }
-  if (pfQ.ptraits[0].supertraits[0] != "cmp.Ord") {
-    return 313;
-  }
-  if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, pfQ.pflines, [], []), "pub trait Sortable: cmp.Ord {}")) {
-    return 314;
-  }
-
-  let srcIm = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
-  let pfIm = parser.parse_module_verbatim(lexer.tokenize(srcIm));
-  if (pfIm.pimpls.len() != 2) {
-    return 315;
-  }
-  if (pfIm.pimpls[0].trait_ref != "Display") {
-    return 316;
-  }
-  if (pfIm.pimpls[0].type_ref != "i32") {
-    return 317;
-  }
-  if (pfIm.pimpls[0].methods.len() != 0) {
-    return 318;
-  }
-  if (pfIm.pimpls[1].methods.len() != 1) {
-    return 319;
-  }
-  if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
-    return 320;
-  }
-  let outIm = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
-  if (!util.contains(outIm, "impl Display for i32 {}")) {
-    return 321;
-  }
-  if (!util.contains(outIm, "function to_string(self: Self): string {")) {
-    return 322;
-  }
-  let rtIm = parser.parse_module_verbatim(lexer.tokenize(outIm));
-  if (rtIm.pimpls.len() != 2) {
-    return 323;
-  }
-
-  let pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "import \"core/cmp\"; struct Box[T] { item: T } impl[T: cmp.Eq] cmp.Eq for Box[T] { function eq(self: Self, other: Self): boolean { return true; } } function main(): i32 { return 0; }",
-  ));
-  if (pfPa.pimpls.len() != 1) {
-    return 328;
-  }
-  let outPa = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
-  if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) {
-    return 329;
-  }
-  if (!util.contains(outPa, "function eq(self: Self, other: Self): boolean {")) {
-    return 330;
-  }
-
-  let pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "function main(): i32 { let x: f64 = 1e309; return 0; }",
-  ));
-  let outOor = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
-  if (!util.contains(outOor, "let x: f64 = 1e309;")) {
-    return 331;
-  }
-
-  if (quote_string("héllo\nwörld") != "\"héllo\\nwörld\"") {
-    return 340;
-  }
-  if (escape_fstring_lit("pré{x}é") != "pré{{x}}é") {
-    return 341;
-  }
-
-  if (quote_string("a\x00b\x1fc\x7fd") != "\"a\\x00b\\x1fc\\x7fd\"") {
-    return 342;
-  }
-  if (escape_fstring_lit("a\x00b") != "a\\x00b") {
-    return 343;
-  }
-  if (quote_string("\x07é😀") != "\"\\x07é😀\"") {
-    return 347;
-  }
-  if (escape_fstring_lit("é{😀") != "é{{😀") {
-    return 348;
-  }
-  let srcMb = "function main(): i32 { let s: string = \"héllo\"; let f: string = f\"pré {s}\"; return 0; }";
-  let pfMb = parser.parse_module_verbatim(lexer.tokenize(srcMb));
-  let outMb = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
-  let rtMb = parser.parse_module(lexer.tokenize(outMb));
-  if (rtMb.funcs.len() != 1) {
-    return 342;
-  }
-  if (!util.contains(outMb, "\"héllo\"")) {
-    return 343;
-  }
-  if (!util.contains(outMb, "f\"pré {s}\"")) {
-    return 344;
-  }
-  let dl = diff_split_lines("é\nü");
-  if (dl.len() != 2) {
-    return 345;
-  }
-  if (dl[0] != "é\n" || dl[1] != "ü") {
-    return 346;
-  }
-
-  let dcode = diff_selftest();
-  if (dcode != 0) {
-    return dcode;
-  }
-
-  return 0;
-}
-
-function struct_index(structs: parser.StructDecl[], name: string): i32 {
-  let i = 0;
-  while (i < structs.len()) {
-    if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function func_index(funcs: parser.FuncDecl[], name: string): i32 {
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name) {
-      return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function diff_split_lines(s: string): string[] {
+pub function diff_split_lines(s: string): string[] {
   let out: string[] = [];
   if (s.len() == 0) {
     return out;
   }
   let start = 0;
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     if (s[i] == b'\n') {
-      out = out.append(slice_unchecked(s, start, i + 1) + "");
+      out = out.append(slice_unchecked(s, start, i + 1).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   if (start < s.len()) {
-    out = out.append(slice_unchecked(s, start, s.len()) + "");
+    out = out.append(slice_unchecked(s, start, s.len()).to_owned());
   }
   return out;
 }
 
-struct DiffScript { kinds: i32[], lines: string[] }
+pub struct DiffScript { kinds: i32[], lines: string[] }
 
 function diff_max_search_cost(): i32 {
   return 16384;
@@ -5084,8 +3652,7 @@ function diff_intern(a: string[], b: string[]): DiffIds {
   let ia: i32[] = [];
   let ib: i32[] = [];
   let next = 0;
-  let i: i32 = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     let ida: i32 = ids.get_or(a[i], -1);
     if (ida < 0) {
       ida = next;
@@ -5093,10 +3660,8 @@ function diff_intern(a: string[], b: string[]): DiffIds {
       next += 1;
     }
     ia = ia.append(ida);
-    i += 1;
   }
-  let j: i32 = 0;
-  while (j < b.len()) {
+  for j in 0..b.len() {
     let idb: i32 = ids.get_or(b[j], -1);
     if (idb < 0) {
       idb = next;
@@ -5104,7 +3669,6 @@ function diff_intern(a: string[], b: string[]): DiffIds {
       next += 1;
     }
     ib = ib.append(idb);
-    j += 1;
   }
   return DiffIds { ia: ia, ib: ib, distinct: next };
 }
@@ -5118,8 +3682,7 @@ function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi:
   let best_r = 0;
   let rx = 0;
   let ry = 0;
-  let o = 0;
-  while (o < size) {
+  for o in 0..size {
     let j = o - off;
     let xf = vf[o];
     if (xf >= 0) {
@@ -5139,7 +3702,6 @@ function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi:
         ry = nb - yr;
       }
     }
-    o += 1;
   }
   if (best_f >= best_r) {
     if (best_f > 0 && (fx < na || fy < nb)) {
@@ -5163,11 +3725,9 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
   let size = 2 * budget + 4;
   let vf: i32[] = [];
   let vr: i32[] = [];
-  let z = 0;
-  while (z < size) {
+  for z in 0..size {
     vf = vf.append(-1);
     vr = vr.append(-1);
-    z += 1;
   }
   vf = vf.with(off + 1, 0);
   vr = vr.with(off + 1, 0);
@@ -5177,8 +3737,7 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
   let fhi = 0;
   let rlo = 0;
   let rhi = 0;
-  let k = 0;
-  while (k < budget) {
+  for k in 0..budget {
     let jf = -k + flo;
     while (jf <= k - fhi) {
       let o = off + jf;
@@ -5233,7 +3792,6 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
       }
       jr += 2;
     }
-    k += 1;
   }
   return diff_furthest(vf, vr, off, size, alo, ahi, blo, bhi);
 }
@@ -5260,16 +3818,14 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
       anchors = diff_compare(anchors, ia, ib, x, hi_a, y, hi_b, max_cost);
     }
   }
-  let s = 0;
-  while (s < suffix) {
+  for s in 0..suffix {
     anchors = anchors.append(hi_a + s);
     anchors = anchors.append(hi_b + s);
-    s += 1;
   }
   return anchors;
 }
 
-function diff_edit_script(a: string[], b: string[]): DiffScript {
+pub function diff_edit_script(a: string[], b: string[]): DiffScript {
   let m = a.len();
   let n = b.len();
   let ids = diff_intern(a, b);
@@ -5287,11 +3843,9 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
 
   let in_a: boolean[] = [];
   let in_b: boolean[] = [];
-  let z = 0;
-  while (z < ids.distinct) {
+  for z in 0..ids.distinct {
     in_a = in_a.append(false);
     in_b = in_b.append(false);
-    z += 1;
   }
   let i = pre;
   while (i < m - suf) {
@@ -5307,21 +3861,17 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
   let map_a: i32[] = [];
   let fb: i32[] = [];
   let map_b: i32[] = [];
-  i = pre;
-  while (i < m - suf) {
+  for i in pre..m - suf {
     if (in_b[ia[i]]) {
       fa = fa.append(ia[i]);
       map_a = map_a.append(i);
     }
-    i += 1;
   }
-  j = pre;
-  while (j < n - suf) {
+  for j in pre..n - suf {
     if (in_a[ib[j]]) {
       fb = fb.append(ib[j]);
       map_b = map_b.append(j);
     }
-    j += 1;
   }
   let anchors: i32[] = [];
   anchors = diff_compare(anchors, fa, fb, 0, fa.len(), 0, fb.len(), diff_max_search_cost());
@@ -5408,8 +3958,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
   }
 
   let out = "--- " + path_before + "\n+++ " + path_after + "\n";
-  let h = 0;
-  while (h < lo.len()) {
+  for h in 0..lo.len() {
     let start = lo[h] - context;
     if (start < 0) {
       start = 0;
@@ -5444,8 +3993,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
     }
     out = out + "@@ -" + util.i32_to_string(a_pos + 1) + "," + util.i32_to_string(a_len)
       + " +" + util.i32_to_string(b_pos + 1) + "," + util.i32_to_string(b_len) + " @@\n";
-    k = start;
-    while (k < end) {
+    for k in start..end {
       let mark = " ";
       if (kinds[k] == 1) {
         mark = "-";
@@ -5458,158 +4006,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
       if (line.len() == 0 || line[line.len() - 1] != b'\n') {
         out += "\n";
       }
-      k += 1;
     }
-    h += 1;
   }
   return out;
-}
-
-function diff_replay(sc: DiffScript, keep: i32): string {
-  let out = "";
-  let i = 0;
-  while (i < sc.kinds.len()) {
-    if (sc.kinds[i] == 0 || sc.kinds[i] == keep) {
-      out += sc.lines[i];
-    }
-    i += 1;
-  }
-  return out;
-}
-
-function diff_edits(sc: DiffScript): i32 {
-  let n = 0;
-  let i = 0;
-  while (i < sc.kinds.len()) {
-    if (sc.kinds[i] != 0) {
-      n += 1;
-    }
-    i += 1;
-  }
-  return n;
-}
-
-function diff_lcs_edits(a: string[], b: string[]): i32 {
-  let m = a.len();
-  let n = b.len();
-  let prev: i32[] = [];
-  let cur: i32[] = [];
-  let z = 0;
-  while (z <= n) {
-    prev = prev.append(0);
-    cur = cur.append(0);
-    z += 1;
-  }
-  let i = m - 1;
-  while (i >= 0) {
-    prev = cur;
-    let j = n - 1;
-    while (j >= 0) {
-      if (a[i] == b[j]) {
-        cur = cur.with(j, prev[j + 1] + 1);
-      } else if (prev[j] >= cur[j + 1]) {
-        cur = cur.with(j, prev[j]);
-      } else {
-        cur = cur.with(j, cur[j + 1]);
-      }
-      j -= 1;
-    }
-    i -= 1;
-  }
-  return m + n - 2 * cur[0];
-}
-
-function diff_rand(s: i64): i64 {
-  return s * 48271i64 % 2147483647i64;
-}
-
-function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
-  let vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
-  let out: string[] = [];
-  let s = seed;
-  let i = 0;
-  while (i < n) {
-    s = diff_rand(s);
-    out = out.append(vocab[(s % (alphabet as i64)) as i32]);
-    i += 1;
-  }
-  return out;
-}
-
-function diff_selftest(): i32 {
-  let s: i64 = 12345i64;
-  let iter = 0;
-  while (iter < 300) {
-    s = diff_rand(s);
-    let alphabet = 2 + (s % 4i64) as i32;
-    s = diff_rand(s);
-    let na = (s % 14i64) as i32;
-    s = diff_rand(s);
-    let nb = (s % 14i64) as i32;
-    s = diff_rand(s);
-    let a = diff_lines_from(s, na, alphabet);
-    s = diff_rand(s);
-    let b = diff_lines_from(s, nb, alphabet);
-    let sc = diff_edit_script(a, b);
-    if (diff_replay(sc, 1) != util.str_join_chunks(a)) {
-      return 350;
-    }
-    if (diff_replay(sc, 2) != util.str_join_chunks(b)) {
-      return 351;
-    }
-    if (diff_edits(sc) != diff_lcs_edits(a, b)) {
-      return 352;
-    }
-    iter += 1;
-  }
-
-  let la = diff_lines_from(777i64, 400, 3);
-  let lb = diff_lines_from(999i64, 400, 3);
-  let lsc = diff_edit_script(la, lb);
-  if (diff_replay(lsc, 1) != util.str_join_chunks(la)) {
-    return 353;
-  }
-  if (diff_replay(lsc, 2) != util.str_join_chunks(lb)) {
-    return 354;
-  }
-  if (diff_edits(lsc) != diff_lcs_edits(la, lb)) {
-    return 355;
-  }
-
-  let pa = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
-  let pb = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
-  let psc = diff_edit_script(pa, pb);
-  if (diff_edits(psc) != 2) {
-    return 356;
-  }
-  if (diff_replay(psc, 1) != "one\ntwo\nthree\nfour\nfive\n") {
-    return 357;
-  }
-  if (diff_replay(psc, 2) != "one\ntwo\nTHREE\nfour\nfive\n") {
-    return 358;
-  }
-
-  let ud = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
-  if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") {
-    return 359;
-  }
-  if (unified_diff("a\n", "a\n", "x", "y") != "") {
-    return 360;
-  }
-  return 0;
-}
-
-function check_checked_casts(): i32 {
-  for src in ["let x = value as? u8;", "let x = (value + 1) as? u8;", "let x = (value as i64) as? u32;", "let x = (value as? ByteStream)?;"] {
-    let m = parser.parse_module(lexer.tokenize(src));
-    let printed = print_module(m);
-    if (!util.contains(printed, " as? ")) {
-      return 361;
-    }
-    let again = parser.parse_module(lexer.tokenize(printed));
-    if (again.top_stmts.len() != 1 || print_module(again) != printed) {
-      return 362;
-    }
-  }
-  return 0;
 }

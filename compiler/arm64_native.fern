@@ -45,14 +45,12 @@ function arm64_rec_gpr(tok: string): i32 {
     return -1;
   }
   let v = 0;
-  let k = 1;
-  while (k < n) {
+  for k in 1..n {
     let c = tok[k] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
     v = v * 10 + (c - 48);
-    k += 1;
   }
   if (v > 30) {
     return -1;
@@ -782,7 +780,7 @@ function arm64_file_entry(own a: Arm64Asm, line: string): Arm64Asm {
   while (files.len() < n) {
     files = files.append("");
   }
-  return Arm64Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2) + "") };
+  return Arm64Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2).to_owned()) };
 }
 
 function arm64_loc_row(own a: Arm64Asm, line: string): Arm64Asm {
@@ -1697,7 +1695,7 @@ function arm64_encode_bitmask(imm: i64): Arm64Bm {
     cto = clo + arm64_bm_ctz(imm ^ allones) - (64 - size);
   }
   let immr = size - i & size - 1;
-  let nimms: i32 = (size - 1 ^ 0 - 1) << 1;
+  let nimms: i32 = (size - 1 ^ -1) << 1;
   nimms = nimms | cto - 1;
   let nbit = nimms >> 6 & 1 ^ 1;
   let imms = nimms & 0x3f;
@@ -2576,7 +2574,7 @@ function arm64_gas_vlist_one(tok: string): i32 {
   if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
     return -1;
   }
-  return arm64_gas_vreg_any(slice_unchecked(t, 1, t.len() - 1) + "");
+  return arm64_gas_vreg_any(slice_unchecked(t, 1, t.len() - 1).to_owned());
 }
 
 function arm64_gas_vlist_table(tok: string): i32 {
@@ -2584,7 +2582,7 @@ function arm64_gas_vlist_table(tok: string): i32 {
   if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
     return -1;
   }
-  let inner = slice_unchecked(t, 1, t.len() - 1) + "";
+  let inner = slice_unchecked(t, 1, t.len() - 1).to_owned();
   let dash: i32 = -1;
   let i = 0;
   while (i < inner.len()) {
@@ -2596,8 +2594,8 @@ function arm64_gas_vlist_table(tok: string): i32 {
   let first = inner;
   let last = inner;
   if (dash >= 0) {
-    first = slice_unchecked(inner, 0, dash) + "";
-    last = slice_unchecked(inner, dash + 1, inner.len()) + "";
+    first = slice_unchecked(inner, 0, dash).to_owned();
+    last = slice_unchecked(inner, dash + 1, inner.len()).to_owned();
   }
   let n = arm64_gas_vreg_any(first);
   let m = arm64_gas_vreg_any(last);
@@ -2616,7 +2614,7 @@ function arm64_gas_vlist_one_arr(tok: string): i32 {
   if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
     return -1;
   }
-  return arm64_gas_vreg_arrof(slice_unchecked(t, 1, t.len() - 1) + "");
+  return arm64_gas_vreg_arrof(slice_unchecked(t, 1, t.len() - 1).to_owned());
 }
 
 function arm64_gas_narrow_wide_ok(narrow: i32, wide: i32, hi: boolean): boolean {
@@ -3150,7 +3148,7 @@ function arm64_gas_trim_hi(s: string, from: i32, to: i32): i32 {
 
 function arm64_gas_trim_span(s: string, from: i32, to: i32): string {
   let i = arm64_gas_trim_lo(s, from, to);
-  return slice_unchecked(s, i, arm64_gas_trim_hi(s, i, to)) + "";
+  return slice_unchecked(s, i, arm64_gas_trim_hi(s, i, to)).to_owned();
 }
 
 function arm64_gas_trim(s: string): string {
@@ -3540,7 +3538,7 @@ function arm64_gas_vreg_any(tok: string): i32 {
   if (n > 31) {
     return -1;
   }
-  if (arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()) + "") < 0) {
+  if (arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()).to_owned()) < 0) {
     return -1;
   }
   return n;
@@ -3552,7 +3550,7 @@ function arm64_gas_vreg_arrof(tok: string): i32 {
   if (dot < 0 || dot + 1 >= s.len()) {
     return -1;
   }
-  return arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()) + "");
+  return arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()).to_owned());
 }
 
 function arm64_gas_is_vecarr(tok: string): boolean {
@@ -6787,7 +6785,7 @@ function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   if (ops.len() < 3) {
     return a;
   }
-  let rest = slice_unchecked(mnem, 3, mnem.len()) + "";
+  let rest = slice_unchecked(mnem, 3, mnem.len()).to_owned();
   util.push_bytes(a.code, arm64_swap(
     [], arm64_gas_excl_size(mnem, ops[1]), rest.starts_with("a"), util.index_of_sub(rest, "l") >= 0,
     arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
@@ -6800,9 +6798,9 @@ function arm64_gas_emit_lse(own a: Arm64Asm, mnem: string, ops: string[], lm: Ar
     return a;
   }
   let cas = mnem.starts_with("cas");
-  let rest = slice_unchecked(mnem, 5, mnem.len()) + "";
+  let rest = slice_unchecked(mnem, 5, mnem.len()).to_owned();
   if (cas) {
-    rest = slice_unchecked(mnem, 3, mnem.len()) + "";
+    rest = slice_unchecked(mnem, 3, mnem.len()).to_owned();
   }
   util.push_bytes(a.code, arm64_lse(
     [], cas, arm64_gas_excl_size(mnem, ops[1]), rest.starts_with("a"), util.index_of_sub(rest, "l") >= 0,
@@ -7341,9 +7339,9 @@ function arm64_gas_is_bcond(mnem: string): boolean {
 
 function arm64_gas_bcond_suffix(mnem: string): string {
   if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') {
-    return slice_unchecked(mnem, 2, mnem.len()) + "";
+    return slice_unchecked(mnem, 2, mnem.len()).to_owned();
   }
-  return slice_unchecked(mnem, 1, 3) + "";
+  return slice_unchecked(mnem, 1, 3).to_owned();
 }
 
 function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
@@ -7823,13 +7821,13 @@ function arm64_gas_vlist(tok: string): Arm64VList {
   if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
     return none;
   }
-  let inner = slice_unchecked(t, 1, t.len() - 1) + "";
+  let inner = slice_unchecked(t, 1, t.len() - 1).to_owned();
   let dash = util.index_of_sub(inner, "-");
   let first = inner;
   let last = inner;
   if (dash >= 0) {
-    first = slice_unchecked(inner, 0, dash) + "";
-    last = slice_unchecked(inner, dash + 1, inner.len()) + "";
+    first = slice_unchecked(inner, 0, dash).to_owned();
+    last = slice_unchecked(inner, dash + 1, inner.len()).to_owned();
   }
   let n = arm64_gas_vreg_any(first);
   let m = arm64_gas_vreg_any(last);
@@ -8215,7 +8213,7 @@ function arm64_gas_numref_dir(s: string): i32 {
   if (last != 102 && last != 98) {
     return -1;
   }
-  if (!arm64_gas_is_digits(slice_unchecked(s, 0, s.len() - 1) + "")) {
+  if (!arm64_gas_is_digits(slice_unchecked(s, 0, s.len() - 1).to_owned())) {
     return -1;
   }
   if (last == 102) {
@@ -8249,7 +8247,7 @@ function arm64_gas_nl_number(s: string): string {
   while (i + 1 < s.len() && s[i] == b'0') {
     i += 1;
   }
-  return slice_unchecked(s, i, s.len()) + "";
+  return slice_unchecked(s, i, s.len()).to_owned();
 }
 
 function arm64_gas_nl_index(c: Arm64NumericLabels, n: string): i32 {
@@ -8277,7 +8275,7 @@ function arm64_gas_nl_ref(cnt: Arm64NumericLabels, tok: string): string {
   if (dir < 0) {
     return s;
   }
-  let n = arm64_gas_nl_number(slice_unchecked(s, 0, s.len() - 1) + "");
+  let n = arm64_gas_nl_number(slice_unchecked(s, 0, s.len() - 1).to_owned());
   let i = arm64_gas_nl_index(cnt, n);
   let k = 0;
   if (i >= 0) {
@@ -8432,7 +8430,7 @@ function arm64_gas_strip_at(tok: string): string {
   let s = arm64_gas_trim(tok);
   let at = util.index_of_sub(s, "@");
   if (at >= 0) {
-    s = slice_unchecked(s, 0, at) + "";
+    s = slice_unchecked(s, 0, at).to_owned();
   }
   return arm64_gas_trim(s);
 }
@@ -8493,7 +8491,7 @@ function arm64_gas_strip_lo12(tok: string): string {
   let s = arm64_gas_trim(tok);
   let at = util.index_of_sub(s, ":lo12:");
   if (at >= 0) {
-    s = slice_unchecked(s, at + 6, s.len()) + "";
+    s = slice_unchecked(s, at + 6, s.len()).to_owned();
   }
   return arm64_gas_trim(s);
 }
@@ -8653,10 +8651,8 @@ function arm64_gas_alignment(line: string): i32 {
     return 0;
   }
   let a = 1;
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     a *= 2;
-    k += 1;
   }
   return a;
 }
@@ -8699,12 +8695,10 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
 }
 
 function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
-  let i = 0;
-  while (i < p.bss_names.len()) {
+  for i in 0..p.bss_names.len() {
     if (p.bss_names[i] == name) {
       return p.bss_offs[i];
     }
-    i += 1;
   }
   return -1;
 }
@@ -8714,14 +8708,12 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string, sec: i32): 
     let width = arm64_gas_data_width(line);
     if (width > 0) {
       let vals = arm64_gas_values(line);
-      let vi = 0;
-      while (vi < vals.len()) {
+      for vi in 0..vals.len() {
         if (width == 8 && !arm64_gas_numeric_tok(vals[vi])) {
           p = arm64_gas_sym_word(p, vals[vi], sec);
         } else {
           p = arm64_gas_data_le(p, arm64_gas_atoi64(vals[vi]), width);
         }
-        vi += 1;
       }
       return p;
     }
@@ -8863,13 +8855,11 @@ function arm64_lit_reach(): i32 {
 
 function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
   let worst = 0;
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let d = code_len - p.lit_sites[i];
     if (d > worst) {
       worst = d;
     }
-    i += 1;
   }
   return worst;
 }
@@ -8881,14 +8871,12 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
   while ((buf_len(aw.code) & 7) != 0) {
     buf_push_byte(aw.code, 0);
   }
-  let i = 0;
-  while (i < p.lit_sites.len()) {
+  for i in 0..p.lit_sites.len() {
     let site = p.lit_sites[i];
     let rel = buf_len(aw.code) - site;
     aw = arm64_queue_patch(aw, site, 1, rel);
     arm64_push_word(aw.code, p.lit_vals[i]);
     arm64_push_word(aw.code, p.lit_vals[i] >> 32);
-    i += 1;
   }
   return aw;
 }
@@ -9095,10 +9083,10 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
         if (mark == 2) {
           let nk = arm64_named_kind(words[wi + 3]);
           if (nk == 0) {
-            a = arm64_asm_fixup_or_patch(a, slice_unchecked(src, pos + 1, end) + "", arm64_branch_kind(words[wi + 3]));
+            a = arm64_asm_fixup_or_patch(a, slice_unchecked(src, pos + 1, end).to_owned(), arm64_branch_kind(words[wi + 3]));
           } else {
             pf_sites = pf_sites.append(buf_len(a.code) - 4);
-            pf_syms = pf_syms.append(slice_unchecked(src, pos + 1, end) + "");
+            pf_syms = pf_syms.append(slice_unchecked(src, pos + 1, end).to_owned());
             let pk = 0;
             if (nk == 2) {
               pk = 2;
@@ -9144,7 +9132,7 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
       if (line.starts_with(".loc ")) {
         a = arm64_loc_row(a, line);
       } else if (line.starts_with(".fern_var ")) {
-        a = Arm64Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
+        a = Arm64Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()).to_owned()) };
       } else if (line.starts_with(".file ")) {
         a = arm64_file_entry(a, line);
       } else if (line.starts_with(".cfi_")) {
@@ -9192,7 +9180,7 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
     let mnem = line;
     let rest = "";
     if (sp >= 0) {
-      mnem = slice_unchecked(line, 0, sp) + "";
+      mnem = slice_unchecked(line, 0, sp).to_owned();
       rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
     }
     let ops = arm64_gas_operands(rest);
@@ -9323,18 +9311,14 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
     a = Arm64Asm { ...a, text: text };
     p = Arm64GasProg { ...p, ro: [], ro_base: ro_base, code_end: code_end };
   }
-  let ui = 0;
-  while (ui < a.unres.len()) {
+  for ui in 0..a.unres.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
-    ui += 1;
   }
   for name in a.twice {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + name + " defined twice") };
   }
-  let oi = 0;
-  while (oi < a.oor.len()) {
+  for oi in 0..a.oor.len() {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
-    oi += 1;
   }
   return Arm64GasProg { ...p, asm: a, cfi: cfi, pf_sites: pf_sites, pf_syms: pf_syms, pf_kinds: pf_kinds };
 }
@@ -9445,10 +9429,8 @@ function arm64_gas_link_image(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: 
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
     } else {
       let v = dres.addr + addend;
-      let b: i32 = 0;
-      while (b < 8) {
+      for b in 0..8 {
         dat = dat.with(off + b, (v >> b * 8 & 255) as i32);
-        b += 1;
       }
     }
     di += 1;
@@ -9464,10 +9446,8 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 }
 
 function macho_le64(buf: i32[], v: i64): i32[] {
-  let b: i32 = 0;
-  while (b < 8) {
+  for b in 0..8 {
     buf = buf.append((v >> b * 8 & 255) as i32);
-    b += 1;
   }
   return buf;
 }
@@ -9511,10 +9491,8 @@ function macho_name16(buf: i32[], s: string): i32[] {
 }
 
 function macho_zeros(buf: i32[], n: i32): i32[] {
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     buf = buf.append(0);
-    i += 1;
   }
   return buf;
 }
@@ -9679,10 +9657,8 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
     buf = util.le32(buf, 0);
     buf = util.le32(buf, 0);
   }
-  let i = 0;
-  while (i < path.len()) {
+  for i in 0..path.len() {
     buf = buf.append(path[i] as i32);
-    i += 1;
   }
   return macho_zeros(buf, size - fixed - path.len());
 }
@@ -9705,8 +9681,7 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1, 0x50 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x40);
     let k = 0;
     while (k < syms[i].len()) {
@@ -9717,7 +9692,6 @@ function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
     buf = buf.append(0x70 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x90);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9740,12 +9714,10 @@ function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
     return [];
   }
   let buf: i32[] = [0x10 | 1];
-  let i = 0;
-  while (i < offs.len()) {
+  for i in 0..offs.len() {
     buf = buf.append(0x20 | seg_idx);
     buf = macho_uleb(buf, offs[i]);
     buf = buf.append(0x50 | 1);
-    i += 1;
   }
   buf = buf.append(0);
   while (buf.len() % 8 != 0) {
@@ -9844,10 +9816,8 @@ function macho_strtab(buf: i32[], names: string[], idx: i32[]): i32[] {
   buf = buf.append(0);
   for i in idx {
     let n = names[i];
-    let k = 0;
-    while (k < n.len()) {
+    for k in 0..n.len() {
       buf = buf.append(n[k] as i32);
-      k += 1;
     }
     buf = buf.append(0);
   }
@@ -9910,16 +9880,13 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
   sb = macho_be64(sb, exec_seg_limit as i64);
   sb = macho_be64(sb, 1);
 
-  let i = 0;
-  while (i < ident.len()) {
+  for i in 0..ident.len() {
     sb = sb.append(ident[i] as i32);
-    i += 1;
   }
   sb = sb.append(0);
 
   let bytes = util.to_u8(content);
-  let slot = 0;
-  while (slot < n_slots) {
+  for slot in 0..n_slots {
     let pstart = slot * 4096;
     let pend = pstart + 4096;
     if (pend > code_limit) {
@@ -9928,7 +9895,6 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
     for b in crypto.sha256(bytes[pstart:pend]) {
       sb = sb.append(b as i32);
     }
-    slot += 1;
   }
   return sb;
 }
@@ -10053,10 +10019,8 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   if (has_dwarf) {
     let names = macho_dwarf_sects();
     buf = macho_seg(buf, "__DWARF", dwarf_vaddr, 0 as i64, dwarf_off as i64, dwarf_file_len as i64, 0, 0, names.len());
-    let ds = 0;
-    while (ds < names.len()) {
+    for ds in 0..names.len() {
       buf = macho_sect(buf, names[ds], "__DWARF", dwarf_vaddr + dwarf_at[ds] as i64, dwarf[ds].len(), dwarf_off + dwarf_at[ds], 0, 0x02000000);
-      ds += 1;
     }
   }
 
@@ -10092,11 +10056,9 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
     buf = util.append_all(buf, data);
     buf = macho_pad_to(buf, dwarf_off);
   }
-  let k = 0;
-  while (k < dwarf.len()) {
+  for k in 0..dwarf.len() {
     buf = macho_pad_to(buf, dwarf_off + dwarf_at[k]);
     buf = util.append_all(buf, dwarf[k]);
-    k += 1;
   }
   buf = macho_pad_to(buf, linkedit_off);
   buf = util.append_all(buf, rebase);

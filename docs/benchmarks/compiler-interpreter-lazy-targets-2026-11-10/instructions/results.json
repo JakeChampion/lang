@@ -1,0 +1,72 @@
+{
+  "baseline_source": "da3282d0f3bc2614d45667b17edad8f844eb6a1b",
+  "candidate_source": "597b6e782f5d2825baf3ed07dcf9eeba3dc57be2",
+  "tool_sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+  "tool_version": "valgrind-3.24.0",
+  "note": "One guest instruction sample per normal binary on the first fixed 32-record group. Compiler children are not traced. Cache and branch simulation are off. Targeted validation can overlap these instruction collectors. No timing claim derives from these runs.",
+  "runs": [
+    {
+      "compiler": "baseline",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/baseline.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/baseline.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/baseline-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "binary_sha256": "1be868407c58e40bd6f0a56babf5021c708ea421b0fb6cb4f1ff2980f50a3a11",
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T03:54:35.498211+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T03:58:20.010718+00:00",
+      "guest_instructions": 17516890468,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    },
+    {
+      "compiler": "candidate",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/candidate.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/instructions/candidate.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-qualification-20261110-0345/candidate-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "binary_sha256": "ed8d1f643ae1bd38f7d106d93a6b322dc3156f12fca98515b4813ac2dace7a64",
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T03:58:20.098857+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T04:01:28.199888+00:00",
+      "guest_instructions": 17364337681,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    }
+  ],
+  "finished": "2026-11-10T04:01:28.221380+00:00"
+}

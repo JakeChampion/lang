@@ -19,6 +19,7 @@ import "../constfold";
 import "../platforms";
 import "../semlower";
 import "../rtmodule";
+import "std/string";
 
 function verify_provided_module(merged: parser.Module, target: string): i32 {
   let d = semlower.driven(merged, target);
@@ -26,15 +27,13 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   let bodies: ir.Op[][] = [];
   let declared: string[] = [];
   let im = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
-  let i = 0;
-  while (i < im.funcs.len()) {
+  for i in 0..im.funcs.len() {
     declared = declared.append(parser.decl_key(im.funcs[i]));
     let r = ircore.produced(d.sub.bodies, i, im.funcs[i]);
     if (!r.superseded) {
       names = names.append(parser.decl_key(im.funcs[i]));
       bodies = bodies.append(r.ops);
     }
-    i += 1;
   }
   for x in d.sub.extra {
     declared = declared.append(x.name);
@@ -48,15 +47,13 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   let calls = 0;
   let cov = irverifystack.coverage_new();
   let pops = ir.pops_by_kind();
-  let k = 0;
-  while (k < names.len()) {
+  for k in 0..names.len() {
     let r = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
     calls += r.calls;
     for p in r.problems {
       probs = probs.append(p);
     }
     cov = irverifystack.coverage_add(cov, names[k], irverifystack.verify_stack_fn(names[k], bodies[k], pops).bail);
-    k += 1;
   }
   let checked = names.len();
   let tally: string = "checked " + util.i32_to_string(checked) + " functions, "
@@ -79,12 +76,10 @@ function provided_audit(): i32 {
     runtime_names = runtime_names.append(fd.name);
   }
   let bad: string[] = [];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (!ircore.is_fern_helper(names[i]) && !util.has_str(runtime_names, names[i])) {
       bad = bad.append(names[i]);
     }
-    i += 1;
   }
   if (bad.len() == 0) {
     write("provided-audit: all " + util.i32_to_string(names.len())
@@ -93,10 +88,8 @@ function provided_audit(): i32 {
   }
   let out: string = "provided-audit: " + util.i32_to_string(bad.len())
     + " inventory entrie(s) no backend emits:";
-  let j = 0;
-  while (j < bad.len()) {
+  for j in 0..bad.len() {
     out = out + "\n    " + bad[j];
-    j += 1;
   }
   write(out + "\n");
   return 1;
@@ -116,13 +109,11 @@ function per_module_view(entry_path: string, entry: parser.Module, loaded: flatt
   let g = semlower.program(d);
   let raw: parser.Module[] = [];
   let entry_at = 0;
-  let k = 0;
-  while (k < parts.len()) {
+  for k in 0..parts.len() {
     raw = raw.append(parts[k].mod);
     if (parts[k].is_entry) {
       entry_at = k;
     }
-    k += 1;
   }
   return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, contracts: d.sub.contracts, rt: d.sub.rt_lower, refused: d.sub.refused };
 }
@@ -284,8 +275,7 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
     }
     lo = hi;
   }
-  let vi = 0;
-  while (vi < units.len()) {
+  for vi in 0..units.len() {
     let vpath = tmp + "/" + unit_file_name(units[vi]);
     let present = false;
     match (stat(vpath)) {
@@ -305,11 +295,9 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
       }
       return 1;
     }
-    vi += 1;
   }
   let seen: string[] = [];
-  let ri = 0;
-  while (ri < units.len()) {
+  for ri in 0..units.len() {
     let rpath = tmp + "/" + unit_file_name(units[ri]);
     let read_ok = false;
     match (read_file(rpath)) {
@@ -333,7 +321,6 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
       }
       return 2;
     }
-    ri += 1;
   }
   let ce4 = 0;
   match (remove_dir_all(tmp)) {
@@ -354,13 +341,12 @@ function nth_field_i32(s: string, n: i32): i32 {
     }
     i += 1;
   }
-  return util.digits_to_i32(slice_unchecked(s, i, s.len()) + "");
+  return util.digits_to_i32(slice_unchecked(s, i, s.len()).to_owned());
 }
 
 function flat_unit_list(entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], func_budget: i32): string[] {
   let units: string[] = [];
-  let idx = 0;
-  while (idx < parts.len()) {
+  for idx in 0..parts.len() {
     let fcount = infmods[idx].funcs.len();
     let sbytes = 0;
     match (modloader.module_src(modloader.no_overlay(), entry_path, parts, idx)) {
@@ -386,7 +372,6 @@ function flat_unit_list(entry_path: string, parts: flatten.PerModule[], infmods:
         more = false;
       }
     }
-    idx += 1;
   }
   return units;
 }
@@ -427,14 +412,12 @@ function run_per_module(entry_path: string, entry: parser.Module, loaded: flatte
   let v = per_module_view(entry_path, entry, loaded, parts, target);
   let infmods = v.u.mods;
   if (pm_mode == "func-counts" || pm_mode == "shape") {
-    let fci = 0;
-    while (fci < infmods.len()) {
+    for fci in 0..infmods.len() {
       let line = util.i32_to_string(infmods[fci].funcs.len());
       if (pm_mode == "shape") {
         line = parts[fci].ns + "|" + line;
       }
       print(line + "\n");
-      fci += 1;
     }
     return 0;
   }
@@ -444,10 +427,8 @@ function run_per_module(entry_path: string, entry: parser.Module, loaded: flatte
     let srchashes: string[] = [];
     let keys_ea = view_keys(v, cache_dir);
     if (cache_dir.len() > 0) {
-      let chi = 0;
-      while (chi < parts.len()) {
+      for chi in 0..parts.len() {
         srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, chi));
-        chi += 1;
       }
     }
     let uidx = 0;
@@ -475,27 +456,21 @@ function run_per_module(entry_path: string, entry: parser.Module, loaded: flatte
   }
   let sighashes: string[] = [];
   if (pm_mode == "manifest" || pm_mode == "emit" && cache_dir.len() > 0) {
-    let shi = 0;
-    while (shi < parts.len()) {
+    for shi in 0..parts.len() {
       sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
-      shi += 1;
     }
   }
   if (pm_mode == "manifest") {
-    let mi = 0;
-    while (mi < parts.len()) {
+    for mi in 0..parts.len() {
       let src_hash = modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, mi);
       print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
-      mi += 1;
     }
     return 0;
   }
   if (pm_mode == "needs") {
     let needs = ircore.all_runtime_need_roots();
-    let no = 0;
-    while (no < needs.len()) {
+    for no in 0..needs.len() {
       print(needs[no] + "\n");
-      no += 1;
     }
     return 0;
   }

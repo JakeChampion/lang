@@ -387,27 +387,23 @@ function finished(s: State, capacity: i32, hit: boolean): boolean {
     return false;
   }
   let original = initial(capacity, hit);
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = if (i == 0) { token(if (hit) { 10 } else { 3 }, 16) } else { original.regs[i] };
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   return finished_memory(s, original, capacity, hit);
 }
 
 function finished_memory(s: State, original: State, capacity: i32, hit: boolean): boolean {
-  let i = 0;
-  while (i < s.memory.len()) {
+  for i in 0..s.memory.len() {
     if (!same(s.memory[i], expected_memory(s, original, capacity, hit, i))) {
       return false;
     }
     if (i >= 8 && s.writes[i] != expected_writes(s, hit, i)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

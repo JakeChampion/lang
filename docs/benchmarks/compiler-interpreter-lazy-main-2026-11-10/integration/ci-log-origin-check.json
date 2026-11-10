@@ -1,0 +1,14 @@
+{
+  "checked": "2026-11-10T07:34:23.116116+00:00",
+  "method": "Each complete file text equals the decoded GitHub job-log tool response. The comparison ran inside the tool orchestrator without chat output.",
+  "logs": {
+    "129681122122": {
+      "exact_decoded_text_match": true,
+      "sha256": "55a2dbc9c0e17e32b3ec34d411ac1c18e5fdcc9c7cb1e4deeee42f265b181d81"
+    },
+    "129681122027": {
+      "exact_decoded_text_match": true,
+      "sha256": "1d84417bb0a75ac0bad5485488102d37de4213ce9fdaf2b7df720f5a5a45a31b"
+    }
+  }
+}

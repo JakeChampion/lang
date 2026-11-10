@@ -67,10 +67,8 @@ function unknown_flags(): Flags {
 
 function initial(r: value.Interval, register_entry: boolean): State {
   let regs: Word[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
@@ -379,12 +377,10 @@ function expected_register(r: value.Interval, reg: i32): Word {
 }
 
 function final_registers(s: State, r: value.Interval): boolean {
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     if (!same_word(s.regs[i], expected_register(r, i))) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -401,12 +397,10 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     expected = put(expected, 0, 64, identity(8, 0));
     expected = put(expected, 10, 64, identity(6, -16));
   }
-  let i = 0;
-  while (i < 12) {
+  for i in 0..12 {
     if (!same_half(s.cells[i], expected.cells[i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -427,12 +421,10 @@ function unguarded(s: State, original: State, r: value.Interval): State {
     }
     i += 1;
   }
-  i = 0;
-  while (i < s.cells.len()) {
+  for i in 0..s.cells.len() {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }

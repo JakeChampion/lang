@@ -55,13 +55,11 @@ function moves(): void {
   for width in [32, 64] {
     let regs = registers.registers(false, width);
     let suffix = if (width == 32) { "l" } else { "q" };
-    let i = 0;
-    while (i < regs.len()) {
+    for i in 0..regs.len() {
       let j = (i + 1) % regs.len();
       move_pair(width, suffix, regs, i, j);
       arithmetic_pairs(width, suffix, regs, i, j);
       unary_moves(width, suffix, regs[i], i);
-      i += 1;
     }
   }
 }

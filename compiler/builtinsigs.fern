@@ -323,7 +323,7 @@ pub function builtin_result(name: string): string {
   if (close < 0) {
     return "";
   }
-  return slice_unchecked(row, close + 3, row.len()) + "";
+  return slice_unchecked(row, close + 3, row.len()).to_owned();
 }
 
 // An intrinsic that reaches a device or raw memory: an MMIO, raw memory or
@@ -350,9 +350,10 @@ pub function port_intrinsic(name: string): boolean {
 // __cache_sync_code makes instruction fetch see the code written to a line.
 // The atomic ops access the 64-bit word at an address: an acquire load, a
 // release store, and a sequentially consistent fetch-and-add and
-// compare-and-swap, which give the old value.
+// compare-and-swap, which give the old value. __secondary_entry gives the
+// address where PSCI CPU_ON starts another core.
 pub function privileged_intrinsic(name: string): boolean {
-  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas"], name) || sysreg.intrinsic(name);
+  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry"], name) || sysreg.intrinsic(name);
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any

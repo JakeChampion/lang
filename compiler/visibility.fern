@@ -19,12 +19,10 @@ function import_quals(mod: parser.Module): string[] {
 }
 
 function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
-  let i = 0;
-  while (i < loaded.len()) {
+  for i in 0..loaded.len() {
     if (loaded[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -386,12 +384,10 @@ function loaded_index(cx: VisCtx, qual: string): i32 {
   if (owner.len() == 0) {
     return module_named(cx.loaded, qual);
   }
-  let i = 0;
-  while (i < cx.loaded.len()) {
+  for i in 0..cx.loaded.len() {
     if (cx.loaded[i].ident == owner) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -537,8 +533,8 @@ function qual_type_parts(tn: string): (string, string) {
   if (dot < 0) {
     return ("", "");
   }
-  let q = slice_unchecked(tn, 0, dot) + "";
-  let rest = slice_unchecked(tn, dot + 1, tn.len()) + "";
+  let q = slice_unchecked(tn, 0, dot).to_owned();
+  let rest = slice_unchecked(tn, dot + 1, tn.len()).to_owned();
   let cut = rest.len();
   let j = 0;
   while (j < rest.len()) {
@@ -548,12 +544,11 @@ function qual_type_parts(tn: string): (string, string) {
     }
     j += 1;
   }
-  return (q, slice_unchecked(rest, 0, cut) + "");
+  return (q, slice_unchecked(rest, 0, cut).to_owned());
 }
 
 function declares_private_type(mod: parser.Module, name: string): boolean {
-  let i = 0;
-  while (i < mod.structs.len()) {
+  for i in 0..mod.structs.len() {
     if (mod.structs[i].name == name) {
       let owner = mod.structs[i].enum_owner;
       if (owner.len() > 0) {
@@ -561,39 +556,30 @@ function declares_private_type(mod: parser.Module, name: string): boolean {
       }
       return !mod.structs[i].is_pub && !mod.structs[i].is_package;
     }
-    i += 1;
   }
-  let e = 0;
-  while (e < mod.enums.len()) {
+  for e in 0..mod.enums.len() {
     if (mod.enums[e].name == name) {
       return !mod.enums[e].is_pub && !mod.enums[e].is_package;
     }
-    e += 1;
   }
-  let a = 0;
-  while (a < mod.aliases.len()) {
+  for a in 0..mod.aliases.len() {
     if (mod.aliases[a].name == name) {
       return !mod.aliases[a].is_pub && !mod.aliases[a].is_package;
     }
-    a += 1;
   }
   return false;
 }
 
 function type_kind_word(mod: parser.Module, name: string): string {
-  let i = 0;
-  while (i < mod.structs.len()) {
+  for i in 0..mod.structs.len() {
     if (mod.structs[i].name == name) {
       return "struct";
     }
-    i += 1;
   }
-  let e = 0;
-  while (e < mod.enums.len()) {
+  for e in 0..mod.enums.len() {
     if (mod.enums[e].name == name) {
       return "enum";
     }
-    e += 1;
   }
   return "type";
 }
@@ -639,31 +625,21 @@ function type_diags(cx: VisCtx): util.Diag[] {
     return out;
   }
   let src = cx.src;
-  let i = 0;
-  while (i < src.funcs.len()) {
+  for i in 0..src.funcs.len() {
     let f = src.funcs[i];
-    let pi = 0;
-    while (pi < f.params.len()) {
+    for pi in 0..f.params.len() {
       out = check_type_name(f.params[pi].type_name, cx, f.line, f.col, out);
-      pi += 1;
     }
     out = check_type_name(f.ret_type, cx, f.line, f.col, out);
-    let bi = 0;
-    while (bi < f.body.len()) {
+    for bi in 0..f.body.len() {
       out = stmt_type_diags(f.body[bi], cx, out);
-      bi += 1;
     }
-    i += 1;
   }
-  let si = 0;
-  while (si < src.structs.len()) {
+  for si in 0..src.structs.len() {
     let sd = src.structs[si];
-    let fi = 0;
-    while (fi < sd.fields.len()) {
+    for fi in 0..sd.fields.len() {
       out = check_type_name(sd.fields[fi].type_name, cx, sd.line, sd.col, out);
-      fi += 1;
     }
-    si += 1;
   }
   return out;
 }
@@ -701,47 +677,37 @@ function stmt_type_diags(st: ast.Stmt, cx: VisCtx, acc: util.Diag[]): util.Diag[
     },
     ast.StmtIf(i) => {
       acc = expr_type_diags(i.cond, cx, acc);
-      let ti = 0;
-      while (ti < i.then_body.len()) {
+      for ti in 0..i.then_body.len() {
         acc = stmt_type_diags(i.then_body[ti], cx, acc);
-        ti += 1;
       }
-      let ei = 0;
-      while (ei < i.else_body.len()) {
+      for ei in 0..i.else_body.len() {
         acc = stmt_type_diags(i.else_body[ei], cx, acc);
-        ei += 1;
       }
       return acc;
     },
     ast.StmtWhile(w) => {
       acc = expr_type_diags(w.cond, cx, acc);
-      let wi = 0;
-      while (wi < w.body.len()) {
+      for wi in 0..w.body.len() {
         acc = stmt_type_diags(w.body[wi], cx, acc);
-        wi += 1;
       }
       return acc;
     },
     ast.StmtFor(f) => {
       acc = expr_type_diags(f.iter, cx, acc);
-      let fi = 0;
-      while (fi < f.body.len()) {
+      for fi in 0..f.body.len() {
         acc = stmt_type_diags(f.body[fi], cx, acc);
-        fi += 1;
       }
       return acc;
     },
     ast.StmtMatch(m) => {
       acc = expr_type_diags(m.scrutinee, cx, acc);
-      let ai = 0;
-      while (ai < m.arms.len()) {
+      for ai in 0..m.arms.len() {
         acc = pattern_type_diags(m.arms[ai].pattern, cx, m.arms[ai].line, m.arms[ai].col, acc);
         let bi = 0;
         while (bi < m.arms[ai].body.len()) {
           acc = stmt_type_diags(m.arms[ai].body[bi], cx, acc);
           bi += 1;
         }
-        ai += 1;
       }
       return acc;
     },
@@ -807,10 +773,8 @@ function expr_type_diags(e: ast.Expr, cx: VisCtx, acc: util.Diag[]): util.Diag[]
       return expr_type_diags(x.index, cx, acc);
     },
     ast.ExprLambda(lm) => {
-      let i = 0;
-      while (i < lm.body.len()) {
+      for i in 0..lm.body.len() {
         acc = stmt_type_diags(lm.body[i], cx, acc);
-        i += 1;
       }
       return acc;
     },
@@ -872,8 +836,7 @@ function reexport_of_name(mod: parser.Module, name: string): Option[parser.Impor
 
 function reexport_refusal(imp: parser.Import, name: string, loaded: flatten.LoadedModule[], ids: util.NameIndex): Option[parser.Import] {
   let at = imp;
-  let steps = 0;
-  while (steps <= loaded.len()) {
+  for steps in 0..=loaded.len() {
     let mi = ids.find(at.resolved);
     if (mi < 0) {
       return Some(at);
@@ -890,7 +853,6 @@ function reexport_refusal(imp: parser.Import, name: string, loaded: flatten.Load
         return Some(at);
       }
     }
-    steps += 1;
   }
   return Some(at);
 }

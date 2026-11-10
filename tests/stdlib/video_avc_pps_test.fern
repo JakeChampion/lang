@@ -1,0 +1,187 @@
+import "std/video/avc";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+import "video_avc_pps_vectors" as vectors;
+import "video_avc_pps_check" as check;
+
+function sequence(text: string): Result[avc.Sequence, frame.VideoError] {
+  let Ok(bytes) = hex.decode(text) else {
+    return Err(frame.Header);
+  };
+  return avc.inspect_sps(bytes, frame.default_limits());
+}
+
+function reference(): test.TestOutcome {
+  for vector in vectors.vectors() {
+    let Ok(sps) = sequence(vector.sequence) else {
+      return test.fail(vector.name + " SPS");
+    };
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("PPS reference bytes");
+    };
+    let Ok(pps) = avc.inspect_pps(bytes, sps, frame.default_limits()) else {
+      return test.fail(vector.name + " PPS");
+    };
+    let actual = check.values(pps);
+    for at in 0..actual.len() {
+      if (actual[at] != vector.values[at]) {
+        return test.fail(vector.name + " metadata field " + at.to_string());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for vector in vectors.vectors() {
+    let Ok(sps) = sequence(vector.sequence) else {
+      return test.fail("SPS reference");
+    };
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("PPS bytes");
+    };
+    if (avc.inspect_pps(bytes.append(0), sps, frame.default_limits()).is_ok()) {
+      return test.fail(vector.name + " accepted extra byte");
+    }
+    if (avc.inspect_pps(bytes.with(bytes.len() - 1, 0), sps, frame.default_limits()).is_ok()) {
+      return test.fail(vector.name + " accepted missing stop bit");
+    }
+  }
+  for prefix in vectors.prefixes() {
+    let Ok(sps) = sequence(prefix.sequence) else {
+      return test.fail("prefix SPS");
+    };
+    let Ok(bytes) = hex.decode(prefix.bytes) else {
+      return test.fail("prefix PPS");
+    };
+    match (avc.inspect_pps(bytes, sps, frame.default_limits())) {
+      Ok(picture) => {
+        if (prefix.values.len() == 0 || check.values(picture) != prefix.values) {
+          return test.fail(prefix.name + " prefix admission or metadata");
+        }
+      },
+      Err(_) => {
+        if (prefix.values.len() != 0) {
+          return test.fail(prefix.name + " valid shorter PPS rejected");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  for vector in vectors.vectors() {
+    let Ok(sps) = sequence(vector.sequence) else {
+      return test.fail("SPS reference");
+    };
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("PPS bytes");
+    };
+    let exact = frame.Limits { max_pixels: sps.coded.width * sps.coded.height, max_packet_bytes: bytes.len() };
+    if (avc.inspect_pps(bytes, sps, exact).is_err()) {
+      return test.fail(vector.name + " exact limits");
+    }
+    for limited in [frame.Limits { ...exact, max_pixels: exact.max_pixels - 1 }, frame.Limits { ...exact, max_packet_bytes: exact.max_packet_bytes - 1 }] {
+      if let Err(frame.Limit) = avc.inspect_pps(bytes, sps, limited) {} else {
+        return test.fail(vector.name + " one fewer pixel or byte");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_syntax(): test.TestOutcome {
+  for invalid in vectors.invalid() {
+    let Ok(sps) = sequence(invalid.sequence) else {
+      return test.fail("invalid-case SPS");
+    };
+    let Ok(bytes) = hex.decode(invalid.bytes) else {
+      return test.fail("invalid PPS bytes");
+    };
+    match (avc.inspect_pps(bytes, sps, frame.default_limits())) {
+      Err(error) => {
+        if (error != invalid.error) {
+          return test.fail(invalid.name + " category");
+        }
+      },
+      _ => {
+        return test.fail(invalid.name + " accepted");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function context(): test.TestOutcome {
+  let vector = vectors.vectors()[0];
+  let Ok(sps) = sequence(vector.sequence) else {
+    return test.fail("SPS reference");
+  };
+  let Ok(bytes) = hex.decode(vector.bytes) else {
+    return test.fail("PPS reference");
+  };
+  for invalid in [avc.Sequence { ...sps, sequence_id: 1 }, avc.Sequence { ...sps, coded: frame.Format { width: 63, height: 32 } }, avc.Sequence { ...sps, bit_depth_luma: 7 }, avc.Sequence { ...sps, bit_depth_chroma: 15 }, avc.Sequence { ...sps, chroma_format_idc: 4 }, avc.Sequence { ...sps, separate_colour_plane: true }] {
+    if let Err(frame.Header) = avc.inspect_pps(bytes, invalid, frame.default_limits()) {} else {
+      return test.fail("inconsistent sequence context");
+    }
+  }
+  return test.pass();
+}
+
+function headers(): test.TestOutcome {
+  let vector = vectors.vectors()[0];
+  let Ok(sps) = sequence(vector.sequence) else {
+    return test.fail("SPS reference");
+  };
+  for byte in [0x08u8, 0x88u8] {
+    if let Err(frame.Header) = avc.inspect_pps([byte], sps, frame.default_limits()) {} else {
+      return test.fail("PPS NAL header");
+    }
+  }
+  for byte in [0x67u8, 0x69u8] {
+    if let Err(frame.Unsupported) = avc.inspect_pps([byte], sps, frame.default_limits()) {} else {
+      return test.fail("wrong NAL type");
+    }
+  }
+  for bytes in [[0x68u8, 0, 0, 0], [0x68u8, 0, 0, 1], [0x68u8, 0, 0, 2], [0x68u8, 0, 0, 3, 4]] {
+    if let Err(frame.Header) = avc.inspect_pps(bytes, sps, frame.default_limits()) {} else {
+      return test.fail("PPS emulation prevention");
+    }
+  }
+  if let Err(frame.Truncated) = avc.inspect_pps([0x68u8, 0, 0, 3], sps, frame.default_limits()) {} else {
+    return test.fail("incomplete prevention");
+  }
+  return test.pass();
+}
+
+function ceiling(): test.TestOutcome {
+  let vector = vectors.vectors()[0];
+  let Ok(sps) = sequence(vector.sequence) else {
+    return test.fail("SPS reference");
+  };
+  let bytes: u8[] = [0x67];
+  while (bytes.len() < avc.MAX_PPS_BYTES) {
+    bytes = bytes.append(255);
+  }
+  if let Err(frame.Unsupported) = avc.inspect_pps(bytes, sps, frame.default_limits()) {} else {
+    return test.fail("exact PPS byte ceiling");
+  }
+  if let Err(frame.Limit) = avc.inspect_pps(bytes.append(255), sps, frame.default_limits()) {} else {
+    return test.fail("PPS ceiling before copy");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("native AVC picture parameter sets");
+  runner = runner.it("independent PPS metadata and every slice-group map type", reference);
+  runner = runner.it("encoded prefixes and trailing bits", prefixes);
+  runner = runner.it("exact packet and coded-picture limits", limits);
+  runner = runner.it("invalid PPS fields and map references", invalid_syntax);
+  runner = runner.it("matching and valid sequence context", context);
+  runner = runner.it("NAL headers and emulation prevention", headers);
+  runner = runner.it("fixed PPS storage ceiling before copy", ceiling);
+  return runner.finish();
+}

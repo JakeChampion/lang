@@ -62,6 +62,23 @@ AVC and HEVC descriptions use the existing NAL configuration readers.
 The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
 The native decode and encode columns above remain unchanged.
 
+`std/video/avc` reads an ordinary H.264 SPS NAL without a platform codec.
+It reports coded and visible dimensions, crop margins, chroma format, bit depth, and VUI metadata.
+The reader checks emulation prevention, bounded scaling lists, picture-order syntax, HRD entries, and trailing bits.
+The byte budget applies before the unescaped copy. The pixel budget applies to the complete coded picture before crop.
+
+This is native sequence-header inspection, without picture reconstruction or complete stream conformance checks.
+It does not validate pictures, level constraints, or decoder support.
+
+The same module inspects a PPS with its matching parsed sequence.
+It reports entropy and prediction flags, reference defaults, quantizers, slice-group metadata, and optional scaling flags.
+The reader validates all seven slice-group map types without a retained map allocation.
+The caller's packet budget and a 64 KiB PPS ceiling apply before the unescaped copy.
+The coded-picture budget bounds map syntax, including interlaced map units.
+This is parameter metadata, without scaling coefficients, map contents, or reconstructed pixels.
+
+The NAL conversion, MP4 indexer, and Android selection APIs retain their existing contracts.
+
 Times use the track clock's ticks. Version-one composition offsets can produce negative presentation times.
 The index preserves edit lists in their original movie-duration and media-time units.
 An application must apply these edits to construct the movie presentation timeline.
@@ -318,6 +335,12 @@ AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels
 
 `scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
+
+`scripts/check-video-avc-interop` compares 30 native and WASI SPS fields with independent FFmpeg readers.
+Eight fresh streams cover profile, precision, chroma, crop, interlace, color metadata, and HRD cases.
+Six synthetic headers cover scaling lists, separate color planes, 255 picture-order offsets, and two maximum HRD tables.
+FFmpeg's coded bitstream reader independently accepts those synthetic headers.
+Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
 `scripts/test-video` executes the native suite with the sanitizer and the WASI suite.

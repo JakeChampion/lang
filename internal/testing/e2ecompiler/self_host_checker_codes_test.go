@@ -874,7 +874,7 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e051-result-borrowed-through-a-value-match", "enum E { A, B }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction pick(e: E, xs: i32[], ys: i32[]): i32[] { return match (e) { E.A => xs, E.B => ys }; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = []; return keep(pick(E.A, xs, ys)); }\n", []string{"E051"}},
 		{"e051-generic-returning-its-type-parameter-is-not-fresh", "function keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(): i32[] { return [1]; }\nfunction call[T](f: () => T): T { return f(); }\nfunction main(): i32 { return keep(call(mk)); }\n", []string{"E051"}},
 		{"own-accepts-a-payload-of-a-generic-factory", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk[T](n: i32, t: T): Bag { return Full([1]); }\nfunction first(): i32 {\n  match (mk(1, 2)) {\n    Full(xs) => { return keep(xs); },\n    Empty => { return 0; }\n  }\n}\nfunction main(): i32 { return first(); }\n", nil},
-		{"own-accepts-a-written-iife-result", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction id(xs: i32[]): i32[] { return ((): i32[] => xs)(); }\nfunction main(): i32 { let xs: i32[] = [1]; return keep(id(xs)); }\n", nil},
+		{"e051-written-iife-retains-borrowed-array", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction id(xs: i32[]): i32[] { return ((): i32[] => xs)(); }\nfunction main(): i32 { let xs: i32[] = [1]; return keep(id(xs)); }\n", []string{"E051"}},
 		{"own-accepts-a-result-built-from-a-views-values", "function keep(own ys: u8[]): i32 { return ys.len(); }\nfunction bytes(own out: u8[], b: [u8]): u8[] {\n    let i: i32 = 0;\n    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }\n    return out;\n}\nfunction main(): i32 { let a: u8[] = [1 as u8, 2 as u8]; return keep(bytes(bytes([], a), a)); }\n", nil},
 		{"e051-an-element-that-is-a-pointer-still-borrows", "function keep(own ys: string[]): i32 { return ys.len(); }\nfunction firsts(xs: string[]): string[] {\n    let out: string[] = [];\n    out = out.append(xs[0]);\n    return out;\n}\nfunction main(): i32 { return keep(firsts([\"a\"])); }\n", []string{"E051"}},
 		{"own-accepts-a-const-array", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction main(): i32 { return keep(W); }\n", nil},
@@ -3740,6 +3740,7 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		"reaches_a.fern":    "import \"./a\";\npub function h(): i32 { return 0; }\n",
 		"indep_a.fern":      "pub enum IA { Hit, Miss }\npub function f(): i32 { let v = Hit; return 0; }\n",
 		"indep_b.fern":      "pub enum IB { Hit, Stay }\npub function g(): i32 { let v = Hit; return 0; }\n",
+		"stops.fern":        "pub enum Stop { Output(i32), Done, Interrupted }\npub enum Wrap { Hold(Stop), Empty }\n",
 	}
 	e036 := []string{"E036"}
 	cases := []struct {
@@ -3763,6 +3764,12 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		{"local-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let Hit: i32 = 1; return Hit; }\n", nil},
 		{"pattern-settled-by-scrutinee", "import \"./a\";\nimport \"./b\";\nfunction pick(): b.B { return b.Stay; }\nfunction main(): i32 { match (pick()) { Hit => { return 1; }, Stay => { return 0; } } }\n", nil},
 		{"modules-that-do-not-see-each-other", "import \"./indep_a\";\nimport \"./indep_b\";\nfunction main(): i32 { return indep_a.f() + indep_b.g(); }\n", nil},
+		// IoError also has Interrupted, so a lookup by the bare name finds the
+		// other enum.
+		{"imported-payloadless-variant-in-an-option-is-a-binder", "import \"./stops\";\nfunction f(e: Option[stops.Stop]): i32 { match (e) { Some(Interrupted) => { return 2; }, _ => { return 0; } } }\nfunction main(): i32 { return f(None); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-in-a-tuple-is-a-binder", "import \"./stops\";\nfunction f(t: (stops.Stop, i32)): i32 { match (t) { (Interrupted, n) => { return n; } } }\nfunction main(): i32 { return f((stops.Done, 1)); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-in-a-payload-is-a-binder", "import \"./stops\";\nfunction f(w: stops.Wrap): i32 { match (w) { Hold(Interrupted) => { return 1; }, _ => { return 0; } } }\nfunction main(): i32 { return f(stops.Empty); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-with-parentheses-matches-it", "import \"./stops\";\nfunction f(e: Option[stops.Stop]): i32 { match (e) { Some(Interrupted()) => { return 2; }, _ => { return 0; } } }\nfunction main(): i32 { return f(None); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

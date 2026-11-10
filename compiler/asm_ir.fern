@@ -148,8 +148,7 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
-  let arity = 0;
-  while (arity <= 6) {
+  for arity in 0..=6 {
     let base = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       s = emit_ccall_shim1(s, base, arity);
@@ -160,7 +159,6 @@ function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("ccall:" + base + "_f64")) {
       s = emit_ccall_shim1(s, base + "_f64", arity);
     }
-    arity += 1;
   }
   if (s.has_need("ccall:__c_callv")) {
     s = emit_ccallv_shim(s);
@@ -169,8 +167,7 @@ function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function any_ccall_need(s: asmcore.EmitState): boolean {
-  let arity = 0;
-  while (arity <= 6) {
+  for arity in 0..=6 {
     let base = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       return true;
@@ -181,7 +178,6 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
     if (s.has_need("ccall:" + base + "_f64")) {
       return true;
     }
-    arity += 1;
   }
   return s.has_need("ccall:__c_callv");
 }
@@ -1531,10 +1527,8 @@ function x86_aes_keygen_step(rcon: i32, src: string, dst: string, lane: string, 
 function x86_aes_schedule128(): string {
   let o = ".Laesk_128:\n    movdqu (%rsi), %xmm1\n    movdqu %xmm1, (%rdx)\n";
   let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64, 128, 27, 54];
-  let i = 0;
-  while (i < 10) {
+  for i in 0..10 {
     o += x86_aes_keygen_step(rcon[i], "%xmm1", "%xmm1", "255", 16 * (i + 1));
-    i += 1;
   }
   return o + "    jmp .Laesk_ret\n";
 }
@@ -1542,13 +1536,11 @@ function x86_aes_schedule128(): string {
 function x86_aes_schedule256(): string {
   let o = ".Laesk_256:\n    movdqu (%rsi), %xmm1\n    movdqu 16(%rsi), %xmm3\n    movdqu %xmm1, (%rdx)\n    movdqu %xmm3, 16(%rdx)\n";
   let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64];
-  let i = 1;
-  while (i <= 7) {
+  for i in 1..=7 {
     o += x86_aes_keygen_step(rcon[i - 1], "%xmm3", "%xmm1", "255", 32 * i);
     if (i < 7) {
       o += x86_aes_keygen_step(0, "%xmm1", "%xmm3", "170", 32 * i + 16);
     }
-    i += 1;
   }
   return o + "    jmp .Laesk_ret\n";
 }
@@ -1570,13 +1562,11 @@ function x86_aes_expand_key(): string {
 
 function x86_aes_rounds(label: string, regs: string[]): string {
   let o = label + ":\n    movdqu (%r8), %xmm4\n" + x86_aes_each("pxor", regs);
-  let r = 1;
-  while (r < 14) {
+  for r in 1..14 {
     if (r == 10) {
       o = o + "    cmpq $14, %rcx\n    je " + label + "_256\n    movdqu 160(%r8), %xmm4\n" + x86_aes_each("aesenclast", regs) + "    ret\n" + label + "_256:\n";
     }
     o = o + "    movdqu " + util.i32_to_string(16 * r) + "(%r8), %xmm4\n" + x86_aes_each("aesenc", regs);
-    r += 1;
   }
   return o + "    movdqu 224(%r8), %xmm4\n" + x86_aes_each("aesenclast", regs) + "    ret\n";
 }
@@ -1604,11 +1594,9 @@ function x86_aes_ctr_blocks_at(p: string, done: string, tail: string): string {
     o += x86_aes_next_counter(reg);
   }
   o += "    call .Lctr_enc4\n";
-  let j = 0;
-  while (j < 4) {
+  for j in 0..4 {
     let off = util.i32_to_string(16 * j);
     o = o + "    movdqu " + off + "(%rsi), %xmm5\n    pxor %xmm5, " + regs[j] + "\n    movdqu " + regs[j] + ", " + off + "(%rdi)\n";
-    j += 1;
   }
   o = o + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $64, %rdx\n    jmp " + p + "_loop4\n";
   o = o + p + "_loop1:\n    cmpq $16, %rdx\n    jb " + p + "_tail\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
@@ -1665,14 +1653,12 @@ function x86_ghash_blocks4_at(p: string): string {
     + "    call .Lgh_mul\n    movdqa %xmm0, %xmm10\n    call .Lgh_mul\n    movdqa %xmm0, %xmm11\n    call .Lgh_mul\n    movdqa %xmm0, %xmm12\n    movdqa %xmm13, %xmm0\n"
     + p + "_loop4:\n    cmpq $64, %rdx\n    jb " + p + "_loop\n";
   let hs: string[] = ["%xmm12", "%xmm11", "%xmm10", "%xmm1"];
-  let j = 0;
-  while (j < 4) {
+  for j in 0..4 {
     o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n";
     if (j == 0) {
       o += "    pxor %xmm0, %xmm2\n";
     }
     o += x86_ghash_prod(hs[j], j == 0);
-    j += 1;
   }
   return o + x86_ghash_reduce() + "    addq $64, %rsi\n    subq $64, %rdx\n    jmp " + p + "_loop4\n";
 }
@@ -1799,11 +1785,9 @@ function x86_sha256_blocks(): string {
     + "    movq 32(%rsp), %r8\n    movdqu (%r8), %xmm0\n    movdqu 16(%r8), %xmm1\n    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n"
     + "    movdqu .Lsha_bswap(%rip), %xmm15\n    leaq .Lsha_k(%rip), %rbp\n";
   o += ".Lsha_loop:\n    movq 24(%rsp), %rcx\n    cmpq $64, %rcx\n    jb .Lsha_ret\n    subq $64, %rcx\n    movq %rcx, 24(%rsp)\n    movq 16(%rsp), %rsi\n";
-  let j = 0;
-  while (j < 4) {
+  for j in 0..4 {
     let x = "%xmm" + util.i32_to_string(4 + j);
     o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%rsi), " + x + "\n    pshufb %xmm15, " + x + "\n";
-    j += 1;
   }
   o += "    addq $64, %rsi\n    movq %rsi, 16(%rsp)\n    movq 40(%rsp), %rax\n";
   let v: string[] = ["%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
@@ -1813,10 +1797,8 @@ function x86_sha256_blocks(): string {
     i += 1;
   }
   o = o + "    movl %r9d, %edi\n    xorl %r10d, %edi\n" + x86_sha256_rounds() + "    movq 40(%rsp), %rax\n";
-  i = 0;
-  while (i < 8) {
+  for i in 0..8 {
     o = o + "    addl " + v[i] + ", " + util.i32_to_string(8 + 4 * i) + "(%rax)\n";
-    i += 1;
   }
   return o + "    jmp .Lsha_loop\n.Lsha_ret:\n    movq 40(%rsp), %rax\n    addq $56, %rsp\n"
     + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbp\n    popq %rbx\n    ret\n"
@@ -1829,20 +1811,16 @@ function x86_sha256_rounds(): string {
   let ab = "%esi";
   let o = "";
   let n = 0;
-  let g = 0;
-  while (g < 16) {
+  for g in 0..16 {
     let x: string[] = [];
-    let j = 0;
-    while (j < 4) {
+    for j in 0..4 {
       x = x.append("%xmm" + util.i32_to_string(4 + (g + j) % 4));
-      j += 1;
     }
     o = o + "    movdqu " + util.i32_to_string(16 * g) + "(%rbp), %xmm0\n    paddd " + x[0] + ", %xmm0\n    movdqu %xmm0, (%rsp)\n";
     if (g < 12) {
       o += x86_sha256_schedule(x);
     }
-    let r = 0;
-    while (r < 4) {
+    for r in 0..4 {
       let a = v[(64 - n) % 8];
       let b = v[(65 - n) % 8];
       let c = v[(66 - n) % 8];
@@ -1862,9 +1840,7 @@ function x86_sha256_rounds(): string {
       bc = ab;
       ab = t;
       n += 1;
-      r += 1;
     }
-    g += 1;
   }
   return o;
 }
@@ -1889,10 +1865,8 @@ function x86_sha256_schedule(x: string[]): string {
 function emit_rt_sha256(s: asmcore.EmitState): asmcore.EmitState {
   let k = asmcore.sha256_k();
   s = s.write("    .section .rodata\n    .align 16\n.Lsha_bswap:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n.Lsha_k:\n");
-  let i = 0;
-  while (i < 64) {
+  for i in 0..64 {
     s = s.write("    .long " + util.i64_to_string(k[i] as i64) + "\n");
-    i += 1;
   }
   return s.write("    .section .text\n" + x86_sha256_blocks());
 }
@@ -2203,17 +2177,14 @@ function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
 
 function crc32_ieee_table_rows(): string {
   let out = "";
-  let i = 0;
-  while (i < 256) {
+  for i in 0..256 {
     let c = i as u32;
-    let k = 0;
-    while (k < 8) {
+    for k in 0..8 {
       if ((c & 1) != 0) {
         c = c >> 1 ^ 0xedb88320;
       } else {
         c = c >> 1;
       }
-      k += 1;
     }
     if (i % 8 == 0) {
       out += "    .long ";
@@ -2224,7 +2195,6 @@ function crc32_ieee_table_rows(): string {
     if (i % 8 == 7) {
       out += "\n";
     }
-    i += 1;
   }
   return out;
 }
@@ -2341,14 +2311,12 @@ function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitSta
   s = s.write("    vbroadcasti128 8(%r14), %ymm2\n");
   s = s.write("    vpaddusb %ymm5, %ymm0, %ymm3\n");
   s = s.write("    vpshufb %ymm3, %ymm2, %ymm1\n");
-  let h = 1;
-  while (h < 16) {
+  for h in 1..16 {
     s = s.write("    vpsubb %ymm4, %ymm0, %ymm0\n");
     s = s.write("    vbroadcasti128 " + util.i32_to_string(8 + h * 16) + "(%r14), %ymm2\n");
     s = s.write("    vpaddusb %ymm5, %ymm0, %ymm3\n");
     s = s.write("    vpshufb %ymm3, %ymm2, %ymm2\n");
     s = s.write("    vpor %ymm2, %ymm1, %ymm1\n");
-    h += 1;
   }
   s = s.write("    vmovdqu %ymm1, (%rdx,%rcx)\n");
   s = s.write("    addq $32, %rcx\n");
@@ -2900,8 +2868,7 @@ function leaf_trap(n: i32): string {
 
 function emit_trap_stubs(s: asmcore.EmitState): asmcore.EmitState {
   for trap in ssa_jumped_traps() {
-    let n = 0;
-    while (n <= ssa_nsaved() + 1) {
+    for n in 0..=ssa_nsaved() + 1 {
       if (trap_stub_needed(s, trap + leaf_trap(n))) {
         s = s.write(trap + leaf_trap(n) + ":\n");
         s = s.write("    pushq " + util.i32_to_string(8 * n) + "(%rsp)\n");
@@ -2909,7 +2876,6 @@ function emit_trap_stubs(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    jmp " + trap + "\n");
       }
-      n += 1;
     }
   }
   for trap in ssa_called_traps() {
@@ -2926,12 +2892,10 @@ function trap_stub_needed(s: asmcore.EmitState, stub: string): boolean {
 
 function emit_trap_stub_globls(s: asmcore.EmitState): asmcore.EmitState {
   for trap in ssa_jumped_traps() {
-    let n = 0;
-    while (n <= ssa_nsaved() + 1) {
+    for n in 0..=ssa_nsaved() + 1 {
       if (trap_stub_needed(s, trap + leaf_trap(n))) {
         s = s.write(".globl " + trap + leaf_trap(n) + "\n");
       }
-      n += 1;
     }
   }
   for trap in ssa_called_traps() {
@@ -5006,10 +4970,8 @@ function scan_set_setup(shape: asmcore.ScanShape): string {
       + "    vbroadcasti128 48(%r11), %ymm5\n    vbroadcasti128 64(%r11), %ymm6\n    vbroadcasti128 80(%r11), %ymm7\n";
   }
   let r = "";
-  let j = 0;
-  while (j < shape.bytes.len()) {
+  for j in 0..shape.bytes.len() {
     r = r + "    vpbroadcastb " + util.i32_to_string(352 + j) + "(%r11), %ymm" + util.i32_to_string(2 + j) + "\n";
-    j += 1;
   }
   return r;
 }
@@ -5629,10 +5591,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rsi\n    popq %rax\n    movq (%rsi), %r8\n    addq $8, %rsi\n    xorq %r9, %r9\n");
     s = s.write(loop_label.name + ":\n    cmpq %r8, %r9\n    jae " + done_label.name + "\n");
     s = s.write("    movzbl (%rsi,%r9,8), %r10d\n    shll $24, %r10d\n    xorl %r10d, %eax\n");
-    let k = 0;
-    while (k < 8) {
+    for k in 0..8 {
       s = s.write("    movl %eax, %r11d\n    sarl $31, %r11d\n    shll $1, %eax\n    andl $0x04c11db7, %r11d\n    xorl %r11d, %eax\n");
-      k += 1;
     }
     s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
@@ -5795,11 +5755,9 @@ function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
     s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
     s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    let k = 0;
-    while (k < 4) {
+    for k in 0..4 {
       s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
       s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-      k += 1;
     }
     s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
     s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
@@ -6201,8 +6159,7 @@ function ssa_slot_disp(v: i32, save: i32): i32 {
 
 function ssa_saved_regs(reg_of: i32[]): i32[] {
   let used: i32[] = [];
-  let k = ssa_nregs();
-  while (k < ssa_nregs() + ssa_nsaved()) {
+  for k in ssa_nregs()..ssa_nregs() + ssa_nsaved() {
     let found = false;
     for h in reg_of {
       if (h == k) {
@@ -6212,7 +6169,6 @@ function ssa_saved_regs(reg_of: i32[]): i32[] {
     if (found) {
       used = used.append(k);
     }
-    k += 1;
   }
   return used;
 }
@@ -6695,7 +6651,7 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
 
 function ssa_dwarf(reg: string): i32 {
   if (ssa_is_xmm(reg)) {
-    return 17 + util.digits_to_i32(slice_unchecked(reg, 4, reg.len()) + "");
+    return 17 + util.digits_to_i32(slice_unchecked(reg, 4, reg.len()).to_owned());
   }
   let m = ssa_xreg(reg);
   if (m < 0) {
@@ -6736,14 +6692,12 @@ function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: st
 // holds the symbol's address and that the startup relocation moves with the image.
 function sym_addr_label(sym: string): string {
   let out = ".Lsa";
-  let i = 0;
-  while (i < sym.len()) {
+  for i in 0..sym.len() {
     if (sym[i] == b'.') {
       out += "_";
     } else {
       out += slice_unchecked(sym, i, i + 1);
     }
-    i += 1;
   }
   return out;
 }
@@ -7060,7 +7014,8 @@ function ssa_bin_in_slot(ext: i32, b: i32, disp: i32, reg_of: i32[], fr: SsaFram
   if (fr.imm.is_imm[b] && ssa.imm_sym(fr.imm, b) == "") {
     return ssa_alu_im(s, ext, 64, fr.imm.value[b] as i32, "%rbp", disp);
   }
-  let r = ssa_src(reg_of, b, "%rcx");
+  // Spilled binary operations reserve r11. rcx can hold a live value.
+  let r = ssa_src(reg_of, b, "%r11");
   s = ssa_load(reg_of, b, r, s);
   return ssa_alu_rm(s, ext, 64, false, r, "%rbp", disp);
 }
@@ -7876,15 +7831,17 @@ function ssa_shift(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitS
   if (fr.imm.is_imm[ins.args[1]]) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
   }
-  return ssa_shiftx(ins, reg_of, s);
+  let mode = if (ins.result < fr.shift32.len()) { fr.shift32[ins.result] } else { 0 };
+  return ssa_shiftx(ins, reg_of, mode, s);
 }
 
 // A shift by a register count is one BMI2 shlx, shrx or sarx, which reads
 // the count from any register and the source from a register or a slot. A
-// 32-bit shift masks its count to 31 in r11, as the 64-bit shift needs.
-function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// 32-bit count uses a mask unless a proven narrow right shift can use the
+// hardware's 32-bit count masking directly.
+function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], mode: i32, s: asmcore.EmitState): asmcore.EmitState {
   let count = ssa_src(reg_of, ins.args[1], "%r11");
-  if (ins.imm != 64) {
+  if (ins.imm != 64 && mode == 0) {
     s = ssa_load(reg_of, ins.args[1], "%r11", s).write("    andl $31, %r11d\n");
     count = "%r11";
   } else {
@@ -7896,7 +7853,15 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
   }
   let d = ssa_dst(reg_of, ins.result);
-  s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+  if (mode != 0) {
+    let mnem = if (ins.str == "shr_s") { "sarxl" } else { "shrxl" };
+    s = s.write("    " + mnem + " " + ssa_r32(count) + ", " + ssa_rhs32(src) + ", " + ssa_r32(d) + "\n");
+    if (mode == 1) {
+      s = s.write("    movslq " + ssa_r32(d) + ", " + d + "\n");
+    }
+  } else {
+    s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+  }
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -8131,14 +8096,12 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   } else if (ircore.is_task_runtime_fn(ins.str)) {
     s = s.need("task");
   }
-  let i = 0;
-  while (i < argc) {
+  for i in 0..argc {
     let a = i;
     if (!helper) {
       a = argc - 1 - i;
     }
     s = ssa_push_operand(reg_of, ins.args[a], s);
-    i += 1;
   }
   if (helper) {
     s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str));
@@ -8155,11 +8118,9 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
   let mask = s.float_mask(asmcore.sanitize_label(ins.str));
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  let a = 0;
-  while (a < ins.args.len()) {
+  for a in 0..ins.args.len() {
     srcs = srcs.append(reg_of[ins.args[a]]);
     dsts = dsts.append(ssa_arg_loc(mask, a));
-    a += 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
   return ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
@@ -8409,7 +8370,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 
 // One port access, at the width after the colon. in zero-extends the value.
 function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned());
   let sfx = "l";
   let acc = "%eax";
   if (w == 8) {
@@ -8440,7 +8401,7 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // register goes through rdmsr or wrmsr, with the index in %ecx and the value in
 // %edx:%eax.
 function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
+  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned();
   let read = ins.str.starts_with("dev_sysreg_read");
   let cr = sysreg.x86_control(name);
   let msr = sysreg.x86_msr(name);
@@ -8528,7 +8489,7 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   }
   let fixed = x86_no_operand_op(ins.str);
   if (fixed == "") {
-    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
+    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()).to_owned()), "x86-64");
   }
   s = s.write("    " + fixed + "\n    xorl %eax, %eax\n");
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
@@ -8571,7 +8532,7 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   if (!ins.str.starts_with("dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }
-  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()).to_owned());
   if (ins.str.starts_with("dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "%rcx", s);
     let ld = "movq (%rcx), %rax";
@@ -8606,10 +8567,8 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_device(ins, reg_of, s);
   }
   if (ins.str.starts_with("syscall")) {
-    let i = 0;
-    while (i < ins.args.len()) {
+    for i in 0..ins.args.len() {
       s = ssa_push_operand(reg_of, ins.args[i], s);
-      i += 1;
     }
     let regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8", "%r9"];
     let a = ins.args.len() - 2;
@@ -8698,18 +8657,16 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.EmitState { ...s, capture: outer };
   let pops = ssa_leading_pops(arm, ins.args.len());
   let moves = ssa_arg_moves(ins, reg_of, pops, s);
-  let i = 0;
-  while (i < ins.args.len() - pops.len()) {
+  for i in 0..ins.args.len() - pops.len() {
     s = ssa_push_operand(reg_of, ins.args[i], s);
-    i += 1;
   }
   for m in moves {
     s = s.write(m);
   }
-  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+  let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()).to_owned();
   let result = ssa_trailing_push(body);
   if (result != "") {
-    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+    s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()).to_owned());
     return ssa_store(reg_of, ins.result, result, asmcore.ssa_x0_forget(s));
   }
   s = s.write(body + "    popq %rax\n");
@@ -8780,7 +8737,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   if (end >= text.len() || end == at + prefix.len()) {
     return "";
   }
-  return slice_unchecked(text, at + prefix.len() - 1, end) + "";
+  return slice_unchecked(text, at + prefix.len() - 1, end).to_owned();
 }
 
 function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): string[] {
@@ -8804,8 +8761,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
   let left = dsts.len();
   while (left > 0) {
     let progressed = false;
-    let i = 0;
-    while (i < dsts.len()) {
+    for i in 0..dsts.len() {
       if (!done[i] && !asmcore.ssa_still_read(srcs, done, dsts[i], i)) {
         if (srcs[i] != dsts[i]) {
           out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
@@ -8814,7 +8770,6 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
         left -= 1;
         progressed = true;
       }
-      i += 1;
     }
     if (!progressed) {
       let j = 0;
@@ -9099,7 +9054,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, test: boolean }
@@ -9727,8 +9682,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
   let left = srcs.len();
   while (left > 0) {
     let progressed = false;
-    let i = 0;
-    while (i < srcs.len()) {
+    for i in 0..srcs.len() {
       if (!done[i] && !asmcore.ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
           s = ssa_unpark(dsts[i], ssa_vec_loc(parked, s), s);
@@ -9739,7 +9693,6 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
         left -= 1;
         progressed = true;
       }
-      i += 1;
     }
     if (!progressed) {
       let j = 0;
@@ -10123,10 +10076,8 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 
 function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k = ssa_reg_params(f);
-  let p = 0;
-  while (p < k) {
+  for p in 0..k {
     s = ssa_mov_rm(s, 64, true, ssa_reg(p), "%rsp", 8 + 8 * p);
-    p += 1;
   }
   return s.write("__fn_" + name + ".r:\n");
 }
@@ -10202,13 +10153,11 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      let a = 0;
-      while (a < ins.args.len()) {
+      for a in 0..ins.args.len() {
         let v = ins.args[a];
         if (v >= 0 && v < shape.len() && shape[v] && !ssa_shape_compare(ins, 1 - a, imm, shape)) {
           shape = shape.with(v, false);
         }
-        a += 1;
       }
     }
     let t = blk.term;
@@ -10255,14 +10204,12 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let f = formed.f;
   let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let shapes = ssa_shape_plan(f, imm, s.shared);
-  let si = 0;
-  while (si < shapes.vals.len()) {
+  for si in 0..shapes.vals.len() {
     s = asmcore.intern_shape(s, shapes.names[si]);
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
     if (s.pie) {
       s = with_sym_addr(s, asmcore.shape_label(s, shapes.names[si]));
     }
-    si += 1;
   }
   let alloc = ssa_allocate(f, imm, s);
   match (env("FERN_SSA_ALLOC")) {
@@ -10309,7 +10256,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame = ssa_frame_words(fr.nspill, views, cold) * 8;
@@ -10332,8 +10279,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, s);
   let pos = 0;
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     let next: i32 = -1;
     if (bi + 1 < f.blocks.len()) {
@@ -10366,7 +10312,6 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
     }
     pos = pos + blk.insts.len() + 1;
-    bi += 1;
   }
   s = asmcore.dbg_label(s, dbg, fn_label, pos);
   if (leaf) {
@@ -10526,7 +10471,7 @@ function ssa_resolve_tails(text: string, epilogue: string): string {
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let target = slice_unchecked(text, at + prefix.len(), end) + "";
+    let target = slice_unchecked(text, at + prefix.len(), end).to_owned();
     out = out + slice_unchecked(text, from, at) + ssa_tail_epilogue(epilogue, target);
     from = end + 1;
     at = util.index_of_sub_from(text, prefix, from);
@@ -10540,13 +10485,11 @@ function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, ta
 
 function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
   for blk in f.blocks {
-    let k = 0;
-    while (k < blk.insts.len()) {
+    for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
       if (ssa.calls(ins) && !(k == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails))) {
         return true;
       }
-      k += 1;
     }
   }
   return false;
@@ -10568,11 +10511,9 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
     srcs = [reg_of[ins.args[0]]];
     dsts = [ssa_rt_arg_reg(0)];
   } else {
-    let a = 0;
-    while (a < ins.args.len()) {
+    for a in 0..ins.args.len() {
       srcs = srcs.append(reg_of[ins.args[a]]);
       dsts = dsts.append(ssa_arg_loc(mask, a));
-      a += 1;
     }
   }
   s = ssa_parallel_moves(srcs, dsts, asmcore.ssa_x0_forget(s));
@@ -10589,7 +10530,7 @@ function ssa_needs_frame(text: string): boolean {
     while (end < text.len() && text[end] != 10) {
       end += 1;
     }
-    let line = slice_unchecked(text, start, end) + "";
+    let line = slice_unchecked(text, start, end).to_owned();
     if (line.starts_with("    ") && ssa_line_needs_frame(line)) {
       return true;
     }
@@ -10611,21 +10552,17 @@ function ssa_leaf_save(s: asmcore.EmitState, saved: i32[]): asmcore.EmitState {
   if (!s.records()) {
     return s.write(ssa_leaf_save_asm(saved));
   }
-  let i = 0;
-  while (i < saved.len()) {
+  for i in 0..saved.len() {
     s = ssa_cfi(ssa_cfi(ssa_push_r(s, ssa_reg(saved[i])), 3, "", 16 + 8 * i), 6, ssa_reg(saved[i]), 0 - (16 + 8 * i));
-    i += 1;
   }
   return s;
 }
 
 function ssa_leaf_save_asm(saved: i32[]): string {
   let out = "";
-  let i = 0;
-  while (i < saved.len()) {
+  for i in 0..saved.len() {
     let off = util.i32_to_string(16 + 8 * i);
     out = out + "    pushq " + ssa_reg(saved[i]) + "\n    .cfi_def_cfa_offset " + off + "\n    .cfi_offset " + ssa_reg(saved[i]) + ", -" + off + "\n";
-    i += 1;
   }
   return out;
 }
@@ -10695,14 +10632,12 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".r\n");
   }
   let heap = s.has_need("heap");
-  let dop = 0;
-  while (dop < body.ops.len()) {
+  for dop in 0..body.ops.len() {
     let dopop = body.ops[dop];
     if (!heap && ir.op_needs_heap(dopop)) {
       s = s.need("heap");
       heap = true;
     }
-    dop += 1;
   }
 
   irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
@@ -11271,14 +11206,12 @@ function hex_digits(t: string, from: i32): boolean {
   if (from >= t.len()) {
     return false;
   }
-  let i = from;
-  while (i < t.len()) {
+  for i in from..t.len() {
     let c = t[i] as i32;
     let ok = c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70;
     if (!ok) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -11711,13 +11644,11 @@ function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s:
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let vgate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
-  let i = 0;
-  while (i < fns.len()) {
+  for i in 0..fns.len() {
     if (!s.has_named(fns[i].name)) {
       s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), s.prelift(unit.pre, i, bodies[i]), fns[i], s, vgate);
       s = s.with_named(fns[i].name);
     }
-    i += 1;
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
   s = emit_cfi_stubs_from(s, cf0);
@@ -11774,12 +11705,10 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
 }
 
 function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, pre: asmcore.Prelift[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
-  let xi = from;
-  while (xi < cache.len()) {
+  for xi in from..cache.len() {
     if (!s.has_named(cache[xi].name)) {
       s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), s.prelift(pre, xi, cache[xi]), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
-    xi += 1;
   }
   return s;
 }
@@ -11860,10 +11789,8 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     s = asmcore.emit_runtime_globls(s);
   }
   s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, physical);
-  let en = 0;
-  while (en < extra_needs.len()) {
+  for en in 0..extra_needs.len() {
     s = s.need(extra_needs[en]);
-    en += 1;
   }
   if (is_entry && globl_defs) {
     s = emit_trap_stub_globls(s);

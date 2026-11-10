@@ -15,8 +15,7 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
   }
   let values = f.values;
   let quotient = util.minus_ones(gs.x.len());
-  let g = 0;
-  while (g < gs.x.len()) {
+  for g in 0..gs.x.len() {
     if (gs.has_div[g] && gs.has_rem[g]) {
       let lead = f.graph.blocks[gs.block[g]].insts[gs.index[g]];
       if (lead.str == "/") {
@@ -26,7 +25,6 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
         values = values.append(f.values[lead.result]);
       }
     }
-    g += 1;
   }
   let blocks: ssa.SBlock[] = [];
   let bi = 0;
@@ -78,13 +76,11 @@ function grouped(f: ssasem.Func, divisor: Divisors): Groups {
   let d = ssadeps.dominates(f.graph);
   let by_pre = util.minus_ones(2 * n);
   let member: i32[][] = [];
-  let bi = 0;
-  while (bi < n) {
+  for bi in 0..n {
     if (d.pre[bi] >= 0) {
       by_pre = by_pre.with(d.pre[bi], bi);
     }
     member = member.append(util.minus_ones(f.graph.blocks[bi].insts.len()));
-    bi += 1;
   }
   let gs = Groups { x: [], y: [], block: [], index: [], has_div: [], has_rem: [], member: [], any: false };
   for at in by_pre {

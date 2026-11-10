@@ -246,10 +246,6 @@ function display_name(arg: string): string {
   return b + "/";
 }
 
-function inode_key(dev: i64, ino: i64): string {
-  return dev.to_string() + "/" + ino.to_string();
-}
-
 function is_symlink(st: FileStat): boolean {
   return (st.mode & 61440 as u32) == 40960 as u32;
 }
@@ -361,7 +357,7 @@ function stat_child(top: Frame, path: string, name: string): Result[FileStat, Io
 
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
   let out = gnu.out_new();
-  let seen: Map[string, i32] = map_new(1024);
+  let seen: Map[(i64, i64), i32] = map_new(1024);
   let failed = false;
   let grand = 0 as u64;
   let gtime = 0 as i64;
@@ -484,7 +480,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         pending = false;
         let known = false;
         if (!c.count_links) {
-          let key = inode_key(p_st.dev, p_st.ino);
+          let key = (p_st.dev, p_st.ino);
           match (seen.get(key)) {
             Some(_) => {
               known = true;

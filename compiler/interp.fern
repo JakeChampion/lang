@@ -167,7 +167,7 @@ function zero_value_of(heap: interpheap.Heap, type_name: string): Value {
     return v_view_of(heap, [], parser.array_method_element(type_name));
   }
   if (name_ends_with(type_name, "[]")) {
-    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2).to_owned());
   }
   if (type_name == "f64" || type_name == "f32") {
     return v_float(0.0);
@@ -377,17 +377,15 @@ function split_binding_names(csv: string): string[] {
   let out: string[] = [];
   let start = 0;
   let depth = 0;
-  let i = 0;
-  while (i <= csv.len()) {
+  for i in 0..=csv.len() {
     if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i) + "");
+      out = out.append(slice_unchecked(csv, start, i).to_owned());
       start = i + 1;
     } else if (csv[i] == b'(') {
       depth += 1;
     } else if (csv[i] == b')') {
       depth -= 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -409,8 +407,8 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
   }
   let binds = split_binding_names(names);
   if (dm.tag.starts_with("@sd:")) {
-    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()) + "", ":");
-    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()) + "");
+    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()).to_owned(), ":");
+    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()).to_owned());
     if let VStruct(sv) = val {
       let i = 0;
       while (i < binds.len() && i < fields.len()) {
@@ -432,11 +430,10 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
     if (tv.elements.len() != binds.len()) {
       return (env, v_err("destructuring `" + names + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
     }
-    let i = 0;
-    while (i < binds.len()) {
+    for i in 0..binds.len() {
       let b = binds[i];
       if (b.starts_with("(")) {
-        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1) + "", "", tv.elements[i]);
+        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1).to_owned(), "", tv.elements[i]);
         if (is_err(err)) {
           return (env, err);
         }
@@ -444,7 +441,6 @@ function bind_destructure(env: Env, names: string, marker: string, val: Value): 
       } else {
         out = out.bind(b, tv.elements[i]);
       }
-      i += 1;
     }
     return (out, v_void());
   }
@@ -602,10 +598,8 @@ function arr_els(a: VArr): Value[] {
   }
   let out: Value[] = [];
   let n = arr_len(a);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(v_int(st[1 + a.offset + i] as i32));
-    i += 1;
   }
   return out;
 }
@@ -626,10 +620,8 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
 function arr_view(a: VArr, from: i32, to: i32): Value {
   let els = arr_els(a);
   let out: Value[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(els[i]);
-    i += 1;
   }
   return VArr { items: out, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
 }
@@ -639,10 +631,8 @@ function arr_slots(a: VArr): i64[] {
   let st = interpheap.get(a.store).words;
   let out: i64[] = [];
   if (st.len() > 0) {
-    let i = 1;
-    while (i < st.len()) {
+    for i in 1..st.len() {
       out = out.append(st[i]);
-      i += 1;
     }
     return out;
   }
@@ -741,7 +731,7 @@ function v_struct_at(type_name: string, names: string[], values: Value[], targs:
   return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: targs };
 }
 
-function v_err(msg: string): Value {
+pub function v_err(msg: string): Value {
   return VErr { msg: msg, abort: false };
 }
 
@@ -793,7 +783,7 @@ function unwrap_try(v: Value): Value {
   }
 }
 
-function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
+pub function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
   let all = parser.inject_builtin_enums(structs);
   all = add_variant_decl(all, "Some", 1, "Option");
   all = add_variant_decl(all, "None", 0, "Option");
@@ -807,8 +797,7 @@ function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
 // (`Pair[3]`).
 function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
   let r = parser.parse_type_ref(sname);
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == sname || decls[i].name == r.base && r.args.len() > 0) {
       let j = 0;
       while (j < decls[i].fields.len()) {
@@ -819,7 +808,6 @@ function struct_field_type(decls: parser.StructDecl[], sname: string, field: str
       }
       return "";
     }
-    i += 1;
   }
   return "";
 }
@@ -838,44 +826,36 @@ function applied_spelling(spelling: string, vars: string[], args: parser.TypeRef
 }
 
 function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
-  let i = 0;
-  while (i < acc.len()) {
+  for i in 0..acc.len() {
     if (acc[i].name == name) {
       return acc;
     }
-    i += 1;
   }
   let fields: parser.StructFieldDecl[] = [];
-  let f = 0;
-  while (f < arity) {
+  for f in 0..arity {
     let fname = "__ev";
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
     fields = fields.append(parser.bare_field(fname, ""));
-    f += 1;
   }
   return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (decls[i].name == name && decls[i].enum_owner.len() > 0) {
       return decls[i].fields.len();
     }
-    i += 1;
   }
   return -1;
 }
 
-function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+function user_func_exists(name: string, funcs: Funcs): boolean {
+  for at in funcs.named(name) {
+    if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -886,14 +866,12 @@ function v_variant(name: string, args: Value[]): Value {
 
 function v_variant_of(owner: string, name: string, args: Value[]): Value {
   let vnames: string[] = [];
-  let vi = 0;
-  while (vi < args.len()) {
+  for vi in 0..args.len() {
     if (vi == 0) {
       vnames = vnames.append("__ev");
     } else {
       vnames = vnames.append("__ev" + util.i32_to_string(vi));
     }
-    vi += 1;
   }
   return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [] };
 }
@@ -938,19 +916,53 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
 
-function new_env(heap: interpheap.Heap): Env {
+// The program's functions in declaration order, indexed by the name a call
+// uses: the declared name, except that a Map `__iterator` is `iter`.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex }
+
+function funcs_of(decls: parser.FuncDecl[]): Funcs {
+  let names: string[] = [];
+  for fd in decls {
+    names = names.append(runtime_method_name(fd));
+  }
+  return Funcs { decls: decls, runtime_names: util.name_index(names) };
+}
+
+// The positions of the functions that a call of `name` can reach, in
+// declaration order: those declared or called as `name`.
+function (f: Funcs) named(name: string): i32[] {
+  let out: i32[] = [];
+  if (name == "__iterator") {
+    for k in 0..f.decls.len() {
+      if (f.decls[k].name == name) {
+        out = out.append(k);
+      }
+    }
+    return out;
+  }
+  let i = f.runtime_names.chain(name);
+  while (i >= 0) {
+    if (f.runtime_names.names[i] == name) {
+      out = out.append(i);
+    }
+    i = f.runtime_names.next[i];
+  }
+  return out;
+}
+
+pub function new_env(heap: interpheap.Heap): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
 }
 
-function new_module_env(heap: interpheap.Heap, fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
+function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
@@ -987,7 +999,7 @@ function (e: Env) static_type_of(x: ast.Expr): string {
     ast.ExprIndex(ix) => {
       let at = e.static_type_of(ix.array);
       if (name_ends_with(at, "[]")) {
-        return slice_unchecked(at, 0, at.len() - 2) + "";
+        return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
       return "";
     },
@@ -1024,20 +1036,19 @@ function (e: Env) static_type_of(x: ast.Expr): string {
   }
 }
 
-function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string): string {
+function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   let found = "";
   let seen = false;
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && receiver_matches(funcs[i].receiver_type, recv_ty)) {
-      let rt = applied_ret_type(funcs[i], recv_ty);
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && receiver_matches(fd.receiver_type, recv_ty)) {
+      let rt = applied_ret_type(fd, recv_ty);
       if (seen && rt != found) {
         return "";
       }
       found = rt;
       seen = true;
     }
-    i += 1;
   }
   return found;
 }
@@ -1084,17 +1095,16 @@ function (e: Env) binds_name(name: string): boolean {
 
 // func_ret_type is the declared result type of function `name`, with the
 // call's written type arguments put in.
-function func_ret_type(funcs: parser.FuncDecl[], name: string, targs: string[]): string {
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       let refs: parser.TypeRef[] = [];
       for ta in targs {
         refs = refs.append(parser.parse_type_ref(ta));
       }
-      return applied_spelling(funcs[i].ret_type, funcs[i].all_type_params, refs);
+      return applied_spelling(fd.ret_type, fd.all_type_params, refs);
     }
-    i += 1;
   }
   return "";
 }
@@ -1159,7 +1169,7 @@ function lam_read_names(st: ast.Stmt): string[] {
   return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, astwalk.not_lambda);
 }
 
-function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
+pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
   return lam_assign_targets(stmts, acc);
 }
 
@@ -1174,19 +1184,17 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   }
 }
 
-function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
+pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
   let out = cellify_env(env, stmt_lambda_writes(st));
   if (reassigned.len() == 0) {
     return out;
   }
   let reads = lam_read_names(st);
   let hit: string[] = [];
-  let i = 0;
-  while (i < reads.len()) {
+  for i in 0..reads.len() {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
       hit = hit.append(reads[i]);
     }
-    i += 1;
   }
   if (hit.len() == 0) {
     return out;
@@ -1238,8 +1246,7 @@ function (e: Env) raw_value(name: string): Option[Value] {
 function cellify_env(own e: Env, names: string[]): Env {
   let heap = e.heap;
   let out = e;
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     match (out.raw_value(names[i])) {
       Some(cur) => {
         if (!is_cell(cur)) {
@@ -1248,7 +1255,6 @@ function cellify_env(own e: Env, names: string[]): Env {
       },
       None => {}
     }
-    i += 1;
   }
   return out;
 }
@@ -1577,14 +1583,12 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
 function cell_hex_value(s: string, at: Cell[i32]): i64 {
   let i = at.get();
   let bits: i64 = 0i64;
-  let j = 0;
-  while (j < 16) {
+  for j in 0..16 {
     let digit = s[i + j] as i32 - 48;
     if (digit > 9) {
       digit -= 39;
     }
     bits = bits << 4i64 | digit as i64;
-    j += 1;
   }
   at.set(i + 16);
   return bits;
@@ -1594,16 +1598,14 @@ function cell_name_value(s: string, at: Cell[i32]): string {
   let n = cell_hex_value(s, at) as i32;
   let i = at.get();
   at.set(i + n);
-  return slice_unchecked(s, i, i + n) + "";
+  return slice_unchecked(s, i, i + n).to_owned();
 }
 
 function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
   let n = cell_hex_value(s, at) as i32;
   let out: Value[] = [];
-  let k = 0;
-  while (k < n) {
+  for k in 0..n {
     out = out.append(cell_any_value(s, at, edges));
-    k += 1;
   }
   return out;
 }
@@ -1699,10 +1701,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
 
 function byte_array_value(heap: interpheap.Heap, bytes: u8[]): Value {
   let out: Value[] = [];
-  let i = 0;
-  while (i < bytes.len()) {
+  for i in 0..bytes.len() {
     out = out.append(v_int(bytes[i] as i32));
-    i += 1;
   }
   return v_arr_of(heap, out, "u8");
 }
@@ -2303,7 +2303,7 @@ function lanes_splat(width: i32, x: f64): Value {
 function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
   let bits: i64[] = [];
   for b in l.bits {
-    bits = bits.append((b ^ flip) & (clear ^ 0 - 1));
+    bits = bits.append((b ^ flip) & (clear ^ -1));
   }
   return VLanes { width: l.width, bits: bits };
 }
@@ -2325,10 +2325,8 @@ function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
-      let i = 0;
-      while (i < a.bits.len()) {
+      for i in 0..a.bits.len() {
         bits = bits.append(lane_bits(a.width, lane_arith(op, lane_at(a, i), lane_at(b, i))));
-        i += 1;
       }
       return VLanes { width: a.width, bits: bits };
     }
@@ -2389,13 +2387,11 @@ function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
     ones = 4294967295;
   }
   let bits: i64[] = [];
-  let i = 0;
-  while (i < a.bits.len()) {
+  for i in 0..a.bits.len() {
     let x = lane_at(a, i);
     let y = lane_at(b, i);
     let hold = verb == "lt" && x < y || verb == "ne" && x != y;
     bits = bits.append(if (hold) { ones } else { 0 });
-    i += 1;
   }
   return VLanes { width: a.width, bits: bits };
 }
@@ -2405,7 +2401,7 @@ function lanes_select(ls: VLanes[]): Value {
   let i = 0;
   while (i < ls[0].bits.len()) {
     let m = ls[2].bits[i];
-    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ 0 - 1));
+    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ -1));
     i += 1;
   }
   return VLanes { width: ls[0].width, bits: bits };
@@ -3045,10 +3041,8 @@ function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i3
   }
   let out_froms = froms;
   if (froms.len() >= 19) {
-    let k = 0;
-    while (k < 19) {
+    for k in 0..19 {
       out_froms = out_froms.with(k, from[k]);
-      k += 1;
     }
   }
   return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
@@ -3062,8 +3056,7 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
   let n = lens.len() / 3;
   let off = 0;
   let sent = 0;
-  let m = 0;
-  while (m < n) {
+  for m in 0..n {
     let size = lens[3 * m];
     let seg = lens[3 * m + 1];
     if (size < 0 || off + size > data.len()) {
@@ -3105,7 +3098,6 @@ function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32
     }
     off += size;
     sent += 1;
-    m += 1;
   }
   return sent;
 }
@@ -4768,7 +4760,7 @@ function eval_unary(op: string, ov: Value): Value {
     return v_variant("None", none);
   }
   if (is_as_opt) {
-    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()) + "")) {
+    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
       return v_variant("Some", [ov]);
     }
     let none: Value[] = [];
@@ -4847,21 +4839,19 @@ function eval_int_literal(t: string): Value {
 function resolve_ident_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
-    let ci = 0;
-    while (ci < env.funcs.len()) {
-      if (env.funcs[ci].name == name && env.funcs[ci].receiver_type.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
+    for ci in env.funcs.named(name) {
+      let cfd = env.funcs.decls[ci];
+      if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
         let no_args: Value[] = [];
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
-      ci += 1;
     }
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
-    let vfi = 0;
-    while (vfi < env.funcs.len()) {
-      let vfd = env.funcs[vfi];
+    for vfi in env.funcs.named(name) {
+      let vfd = env.funcs.decls[vfi];
       if (vfd.name == name && vfd.receiver_type.len() == 0) {
         let no_names: string[] = [];
         let no_values: Value[] = [];
@@ -4880,7 +4870,6 @@ function resolve_ident_value(name: string, env: Env): Value {
           generic_name: generic_name,
         };
       }
-      vfi += 1;
     }
   }
   return idv;
@@ -5065,14 +5054,12 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     },
     ast.ExprArray(a) => {
       let elems: Value[] = [];
-      let i = 0;
-      while (i < a.elements.len()) {
+      for i in 0..a.elements.len() {
         let ev = eval_expr(a.elements[i], env);
         if (is_err(ev)) {
           return ev;
         }
         elems = elems.append(ev);
-        i += 1;
       }
       return v_arr(env.heap, elems);
     },
@@ -5174,15 +5161,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       match (fa.obj) {
         ast.ExprIdent(ns_id) => {
           let qname = ns_id.name + "." + fa.field;
-          let qi = 0;
-          let qfound = false;
-          while (qi < env.funcs.len()) {
-            if (env.funcs[qi].name == qname && env.funcs[qi].receiver_type.len() == 0) {
-              qfound = true;
-            }
-            qi += 1;
-          }
-          if (qfound) {
+          if (user_func_exists(qname, env.funcs)) {
             name = qname;
             qualified_handled = true;
           }
@@ -5250,14 +5229,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   let targs = bound_type_args(c.type_args, env);
   let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
   let arg_vals: Value[] = [];
-  let i = 0;
-  while (i < c.args.len()) {
+  for i in 0..c.args.len() {
     let av = eval_pinned_arg(c, i, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
     arg_vals = arg_vals.append(av);
-    i += 1;
   }
   if (is_variant) {
     return v_variant_of(variant_enum, variant_name, arg_vals);
@@ -5348,7 +5325,7 @@ function call_target(name: string, is_method: boolean, is_closure: boolean, recv
   if (idx < 0) {
     return (none, false);
   }
-  return (env.funcs[idx], true);
+  return (env.funcs.decls[idx], true);
 }
 
 function method_target_index(name: string, recv: Value, env: Env): i32 {
@@ -5356,25 +5333,21 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
     return assoc_index(env.funcs, tv.name, name);
   }
   let rt = value_type_name(recv);
-  let i = 0;
-  while (i < env.funcs.len()) {
-    let fd = env.funcs[i];
+  for at in env.funcs.named(name) {
+    let fd = env.funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
-      return i;
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
 
 function free_target_index(name: string, env: Env): i32 {
-  let i = 0;
-  while (i < env.funcs.len()) {
-    let fd = env.funcs[i];
+  for at in env.funcs.named(name) {
+    let fd = env.funcs.decls[at];
     if (fd.name == name && fd.receiver_name.len() == 0 && fd.receiver_type.len() == 0) {
-      return i;
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
@@ -5530,27 +5503,23 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
       VStruct(sv) => {
         let bnames = sv.field_names;
         let bvals = sv.field_values;
-        let oi = 0;
-        while (oi < sl.field_values.len()) {
+        for oi in 0..sl.field_values.len() {
           let oname = sl.field_names[oi];
           let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
           if (is_err(ov2)) {
             return ov2;
           }
           let replaced = false;
-          let bi = 0;
-          while (bi < bnames.len()) {
+          for bi in 0..bnames.len() {
             if (bnames[bi] == oname) {
               bvals = bvals.with(bi, ov2);
               replaced = true;
             }
-            bi += 1;
           }
           if (!replaced) {
             bnames = bnames.append(oname);
             bvals = bvals.append(ov2);
           }
-          oi += 1;
         }
         return v_struct_at(sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
       },
@@ -5560,14 +5529,12 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     }
   }
   let fvs: Value[] = [];
-  let i = 0;
-  while (i < sl.field_values.len()) {
+  for i in 0..sl.field_values.len() {
     let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
     if (is_err(fv)) {
       return fv;
     }
     fvs = fvs.append(fv);
-    i += 1;
   }
   return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
 }
@@ -5644,12 +5611,10 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
   }
   match (ov) {
     VStruct(sv) => {
-      let i = 0;
-      while (i < sv.field_names.len()) {
+      for i in 0..sv.field_names.len() {
         if (sv.field_names[i] == fa.field) {
           return sv.field_values[i];
         }
-        i += 1;
       }
       return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
     },
@@ -5684,8 +5649,7 @@ function socket_field(ov: Value, field: string): Value {
 }
 
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
-  let i = 0;
-  while (i < aliases.len()) {
+  for i in 0..aliases.len() {
     if (aliases[i].name == union_name) {
       let j = 0;
       while (j < aliases[i].variants.len()) {
@@ -5696,7 +5660,6 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
       }
       return false;
     }
-    i += 1;
   }
   return false;
 }
@@ -5741,8 +5704,7 @@ function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {
 function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
   let out = aliases;
   let base = aliases.len();
-  let i = 0;
-  while (i < types.len()) {
+  for i in 0..types.len() {
     let owner = types[i].enum_owner;
     if (owner.len() > 0) {
       let k = base;
@@ -5755,16 +5717,15 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }
     }
-    i += 1;
   }
   return out;
 }
 
-function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_closure_mode(heap, cv, args, funcs, aliases, type_decls, false);
 }
 
-function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
+function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
   let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5781,10 +5742,8 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     return v_err("arity mismatch calling closure");
   }
   let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", heap: heap };
-  let j = 0;
-  while (j < fv.params.len()) {
+  for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
-    j += 1;
   }
   if (inline_value) {
     let before_tail: ast.Stmt[] = [];
@@ -5808,14 +5767,13 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   return coerce_int_width(unwrap_try(step.ret), fv.ret_type);
 }
 
-function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string): i32 {
+function assoc_index(funcs: Funcs, type_name: string, name: string): i32 {
   let base = util.base_type_name(type_name);
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && util.base_type_name(funcs[i].receiver_type) == base) {
-      return i;
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_name.len() == 0 && util.base_type_name(fd.receiver_type) == base) {
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
@@ -5855,12 +5813,12 @@ function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[
   return none;
 }
 
-function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let ai = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
   }
-  let fd = funcs[ai];
+  let fd = funcs.decls[ai];
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
@@ -5875,10 +5833,8 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
     t += 1;
   }
-  let j = 0;
-  while (j < fd.params.len()) {
+  for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-    j += 1;
   }
   let step = eval_block(fd.body, Env { ...env });
   if (step.sig != 1) {
@@ -5918,13 +5874,11 @@ function tyarg_of_value(v: Value): string {
         return sv.type_name;
       }
       let name = util.base_type_name(sv.type_name) + "[";
-      let i = 0;
-      while (i < sv.targs.len()) {
+      for i in 0..sv.targs.len() {
         if (i > 0) {
           name += ", ";
         }
         name += sv.targs[i];
-        i += 1;
       }
       return name + "]";
     },
@@ -5946,13 +5900,11 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
     return "";
   }
-  let i = 0;
-  while (i < dref.args.len()) {
+  for i in 0..dref.args.len() {
     let r = tyarg_match_names(parser.render_type_ref(dref.args[i]), tp, parser.render_type_ref(aref.args[i]));
     if (r.len() > 0) {
       return r;
     }
-    i += 1;
   }
   return "";
 }
@@ -6104,8 +6056,9 @@ function runtime_method_name(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
-  for fd in funcs {
+function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
       return true;
     }
@@ -6130,12 +6083,12 @@ function runtime_receiver_name(spelling: string): string {
   return util.base_type_name(spelling);
 }
 
-function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: parser.FuncDecl[]): string {
+function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: Funcs): string {
   let traits = parser.dyn_trait_set(decl_ty);
   if (traits.len() == 0) {
     return name;
   }
-  return parser.dyn_provider_name(funcs, dispatch_type_name(recv), traits, name);
+  return parser.dyn_provider_name(funcs.decls, dispatch_type_name(recv), traits, name);
 }
 
 function dispatch_type_name(v: Value): string {
@@ -6150,10 +6103,9 @@ function dispatch_type_name(v: Value): string {
   return value_type_name(v);
 }
 
-function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
+function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq = has_key_eq(k, funcs, aliases);
-  let i = 0;
-  while (i < m.keys.len()) {
+  for i in 0..m.keys.len() {
     if (by_eq) {
       if let VBool(b) = call_method(heap, m.keys[i], "eq", [k], funcs, aliases, type_decls) {
         if (b.v) {
@@ -6163,16 +6115,16 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.F
     } else if (value_eq(m.keys[i], k)) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
 
 // `==` on a struct or an enum value calls an `eq` method of its type, as
 // the compiled code does, whether an impl declares it or the type itself.
-function has_eq_method(v: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+function has_eq_method(v: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = v {
-    for fd in funcs {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && (base == sv.type_name || variant_of_enum(v, base, aliases))) {
         return true;
@@ -6182,9 +6134,10 @@ function has_eq_method(v: Value, funcs: parser.FuncDecl[], aliases: parser.TypeA
   return false;
 }
 
-function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+function has_key_eq(k: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = k {
-    for fd in funcs {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || variant_of_enum(k, base, aliases))) {
         return true;
@@ -6194,7 +6147,7 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_method_targs(heap, recv, "", name, args, [], funcs, aliases, type_decls);
 }
 
@@ -6211,10 +6164,8 @@ function string_method(heap: interpheap.Heap, sv: VString, name: string, args: V
       return Some(v_err("string." + name + ": takes no arguments"));
     }
     let bs: Value[] = [];
-    let bi = 0;
-    while (bi < sv.v.len()) {
+    for bi in 0..sv.v.len() {
       bs = bs.append(v_byte(sv.v[bi] as i32));
-      bi += 1;
     }
     if (name == "as_bytes") {
       return Some(v_view_of(heap, bs, "u8"));
@@ -6327,7 +6278,7 @@ function reserved_concat(heap: interpheap.Heap, av: VArr, args: Value[]): Option
   return None;
 }
 
-function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
       return call_assoc(heap, tv.name, name, args, funcs, aliases, type_decls);
@@ -6362,14 +6313,12 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let i = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (i >= 0) {
           let nvs: Value[] = [];
-          let j = 0;
-          while (j < m.values.len()) {
+          for j in 0..m.values.len() {
             if (j == i) {
               nvs = nvs.append(args[1]);
             } else {
               nvs = nvs.append(m.values[j]);
             }
-            j += 1;
           }
           return VMap { keys: m.keys, values: nvs };
         }
@@ -6410,8 +6359,7 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
         let last = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
-        let di = 0;
-        while (di < m.keys.len()) {
+        for di in 0..m.keys.len() {
           if (di == at && at != last) {
             nk = nk.append(m.keys[last]);
             nv = nv.append(m.values[last]);
@@ -6419,7 +6367,6 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
             nk = nk.append(m.keys[di]);
             nv = nv.append(m.values[di]);
           }
-          di += 1;
         }
         return v_map(nk, nv);
       }
@@ -6455,15 +6402,14 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
   return call_declared_method(heap, recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
-function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   let own_method = has_receiver_method(funcs, recv_type, name);
-  let i = 0;
-  while (i < funcs.len()) {
-    let fd = funcs[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     let receiver_base = runtime_receiver_name(fd.receiver_type);
     let rt_match = receiver_base == recv_type;
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
@@ -6480,10 +6426,8 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -6491,7 +6435,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   if (name == "to_string" && args.len() == 0) {
     match (recv) {
@@ -6521,8 +6464,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   }
   match (recv) {
     VStruct(sv2) => {
-      let fi = 0;
-      while (fi < sv2.field_names.len()) {
+      for fi in 0..sv2.field_names.len() {
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
@@ -6531,7 +6473,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
             _ => {}
           }
         }
-        fi += 1;
       }
     },
     VBool(bv) => {
@@ -6679,10 +6620,8 @@ function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_into: range out of bounds");
   }
   let out = bs[0];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(at + i, bs[1][from + i]);
-    i += 1;
   }
   return written_bytes(heap, args[0], out);
 }
@@ -6698,10 +6637,8 @@ function call_bytes_range(heap: interpheap.Heap, args: Value[]): Value {
     return v_err("__bytes_range: range out of bounds");
   }
   let out: u8[] = [];
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     out = out.append(bs[0][i]);
-    i += 1;
   }
   return byte_value(heap, out);
 }
@@ -6793,28 +6730,24 @@ function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value
 
 function crc32_cksum_byte(crc: i32, b: i32): i32 {
   crc = crc ^ b << 24;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if (crc < 0) {
       crc = crc << 1 ^ 0x04c11db7;
     } else {
       crc = crc << 1;
     }
-    k += 1;
   }
   return crc;
 }
 
 function crc32_ieee_byte(crc: i32, b: i32): i32 {
   let c = (crc ^ b) as u32;
-  let k = 0;
-  while (k < 8) {
+  for k in 0..8 {
     if ((c & 1) != 0) {
       c = c >> 1 ^ 0xedb88320;
     } else {
       c = c >> 1;
     }
-    k += 1;
   }
   return c as i32;
 }
@@ -6887,13 +6820,10 @@ function inner_mul_values(heap: interpheap.Heap, a: Value[], b: Value[], rows: i
 
 function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
   let out: Value[] = [];
-  let row = 0;
-  while (row < rows) {
-    let col = 0;
-    while (col < columns) {
+  for row in 0..rows {
+    for col in 0..columns {
       let acc = init;
-      let at = 0;
-      while (at < extent) {
+      for at in 0..extent {
         if let VFloat(x) = a[row * extent + at] {
           if let VFloat(y) = b[at * columns + col] {
             let product = x.v * y.v;
@@ -6904,12 +6834,9 @@ function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32
         } else {
           return v_err("__inner_mul_add_f64: elements must be f64");
         }
-        at += 1;
       }
       out = out.append(v_float(acc));
-      col += 1;
     }
-    row += 1;
   }
   return v_arr_of(heap, out, "f64");
 }
@@ -7070,12 +6997,10 @@ function call_mismatch_bytes(args: Value[]): Value {
         room = arr_len(b) - bo;
       }
       let n = clamp_offset(vint_bits(args[4]), room);
-      let i = 0;
-      while (i < n) {
+      for i in 0..n {
         if (vint_bits(arr_at(a, ao + i)) != vint_bits(arr_at(b, bo + i))) {
           return v_int(i);
         }
-        i += 1;
       }
       return v_int(n);
     }
@@ -7108,12 +7033,10 @@ function call_mismatch_bytes_str(args: Value[]): Value {
     if (n < 0) {
       n = 0;
     }
-    let i = 0;
-    while (i < n) {
+    for i in 0..n {
       if (vint_bits(arr_at(a, ao + i)) != b[bo + i] as i32) {
         return v_int(i);
       }
-      i += 1;
     }
     return v_int(n);
   }
@@ -7352,10 +7275,8 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
         return v_err(name + ": expected string arg");
       }
       let s = vstr_of(args[1]);
-      let i = 0;
-      while (i < s.len()) {
+      for i in 0..s.len() {
         push_table_byte(name, h, s[i] as i32, table);
-        i += 1;
       }
       return v_void();
     },
@@ -7375,10 +7296,8 @@ function push_table_byte(name: string, h: usize, c: i32, table: Value[]): void {
     if (n > 7) {
       n = 7;
     }
-    let k = 1;
-    while (k <= n) {
+    for k in 1..=n {
       buf_push_byte(h, vint_bits(table[c * 8 + k]) & 255);
-      k += 1;
     }
     return;
   }
@@ -7414,10 +7333,8 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
       return v_err("buf_push_u64: expected number");
     }
     let w = vint_as_i64(args[1]);
-    let k = 0;
-    while (k < 8) {
+    for k in 0..8 {
       buf_push_byte(h, (w >> (k * 8) as i64) as i32 & 255);
-      k += 1;
     }
     return v_void();
   }
@@ -7502,13 +7419,11 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
     return v_err(name + ": expected " + util.i32_to_string(want) + " args");
   }
   let w: i64[] = [];
-  let k = 0;
-  while (k < want) {
+  for k in 0..want {
     if (!is_int_like(args[k])) {
       return v_err(name + ": arg " + util.i32_to_string(k + 1) + " must be an integer");
     }
     w = w.append(vint_as_i64(args[k]));
-    k += 1;
   }
   if (name == "__ptr_width") {
     return v_int((ptr_bits() / 8i64) as i32);
@@ -7687,11 +7602,11 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_func_targs(heap, name, args, [], "", funcs, aliases, type_decls);
 }
 
-function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
@@ -7768,10 +7683,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       zero = v_bool(false);
     }
     let zs: Value[] = [];
-    let zi = 0;
-    while (zi < an) {
+    for zi in 0..an {
       zs = zs.append(zero);
-      zi += 1;
     }
     return v_arr(heap, zs);
   }
@@ -8002,11 +7915,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     let bs = vstr_of(args[0]);
     let sum = vint_bits(args[1]) & 65535;
-    let bi = 0;
-    while (bi < bs.len()) {
+    for bi in 0..bs.len() {
       sum = (sum >> 1 | sum << 15) & 65535;
       sum = sum + bs[bi] as i32 & 65535;
-      bi += 1;
     }
     return v_int(sum);
   }
@@ -8176,10 +8087,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     match (args[1]) {
       VString(s) => {
         let crc = vint_bits(args[0]);
-        let ci = 0;
-        while (ci < s.v.len()) {
+        for ci in 0..s.v.len() {
           crc = crc32_cksum_byte(crc, s.v[ci] as i32);
-          ci += 1;
         }
         return v_int(crc);
       },
@@ -8212,12 +8121,10 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     if (mn < 0) {
       mn = 0;
     }
-    let mk = 0;
-    while (mk < mn) {
+    for mk in 0..mn {
       if (ma[mao + mk] != mb[mbo + mk]) {
         return v_int(mk);
       }
-      mk += 1;
     }
     return v_int(mn);
   }
@@ -8292,20 +8199,17 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
   }
-  let i = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
-      let fd = funcs[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
       let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
-      let j = 0;
-      while (j < fd.params.len()) {
+      for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-        j += 1;
       }
       let step = eval_block(fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
@@ -8313,7 +8217,6 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   return call_host(heap, name, args);
 }
@@ -8452,12 +8355,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (asv.field_values.len() != bsv.field_values.len()) {
             return false;
           }
-          let si = 0;
-          while (si < asv.field_values.len()) {
+          for si in 0..asv.field_values.len() {
             if (!value_eq(asv.field_values[si], bsv.field_values[si])) {
               return false;
             }
-            si += 1;
           }
           return true;
         },
@@ -8472,12 +8373,10 @@ function value_eq(a: Value, b: Value): boolean {
           if (at.elements.len() != bt.elements.len()) {
             return false;
           }
-          let ti = 0;
-          while (ti < at.elements.len()) {
+          for ti in 0..at.elements.len() {
             if (!value_eq(at.elements[ti], bt.elements[ti])) {
               return false;
             }
-            ti += 1;
           }
           return true;
         },
@@ -8636,7 +8535,7 @@ function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scr
   let owner = r.base;
   let simple = parser.derive_simple_name(pattern);
   if (simple.len() < pattern.len()) {
-    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
+    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1).to_owned();
   }
   let only: i32 = -1;
   let many = false;
@@ -8671,8 +8570,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
   if (is_err(sv)) {
     return step_stop(env, sv);
   }
-  let i = 0;
-  while (i < m.arms.len()) {
+  for i in 0..m.arms.len() {
     let arm = m.arms[i];
     let matched = false;
     let bind_names: string[] = [];
@@ -8742,10 +8640,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
                 if (pv.binding.len() > 0) {
                   pat_binds = pat_binds.append(pv.binding);
                 }
-                let xi = 0;
-                while (xi < pv.extra_bindings.len()) {
+                for xi in 0..pv.extra_bindings.len() {
                   pat_binds = pat_binds.append(pv.extra_bindings[xi]);
-                  xi += 1;
                 }
                 let pbi = 0;
                 while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
@@ -8772,10 +8668,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
     if (matched) {
       let base = env.depth;
       let bodyEnv = scope_env(Env { ...env }, bind_names.len() > 0 || body_binds(arm.body));
-      let bk = 0;
-      while (bk < bind_names.len()) {
+      for bk in 0..bind_names.len() {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
-        bk += 1;
       }
       let reassigned = body_assign_names(arm.body, []);
       for st in arm.body {
@@ -8805,7 +8699,6 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
-    i += 1;
   }
   return step_stop(env, v_err("non-exhaustive match"));
 }
@@ -8828,7 +8721,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let elem_ty = "";
   let iter_ty = env.static_type_of(f.iter);
   if (name_ends_with(iter_ty, "[]")) {
-    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
+    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2).to_owned();
   }
   if (elem_ty.len() == 0) {
     if let VArr(a) = iv {
@@ -8864,7 +8757,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   return step_none(cur);
 }
 
-function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
+pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
   match (st) {
     ast.StmtDefer(d) => {
       return eval_stmt(d.action, env);
@@ -9041,8 +8934,7 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
   let heap = env.heap;
   let released = env.update(a.target, v_int(0));
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
@@ -9053,7 +8945,6 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
       return step_stop(released, out);
     }
     cur = out;
-    i += 1;
   }
   return step_none(released.update(a.target, cur));
 }
@@ -9071,10 +8962,8 @@ function for_elements(iv: Value): Option[Value[]] {
       return Some(elems);
     },
     VMap(m) => {
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         elems = elems.append(v_tuple([m.keys[i], m.values[i]]));
-        i += 1;
       }
       return Some(elems);
     },
@@ -9108,9 +8997,10 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
-function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
+function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
   let rt = value_type_name(recv);
-  for fd in funcs {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return true;
     }
@@ -9186,34 +9076,15 @@ function flattened_env(e: Env): Env {
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
   let reassigned = body_assign_names(body, []);
-  let i = 0;
-  while (i < body.len()) {
+  for i in 0..body.len() {
     cur = cellify_captures(cur, body[i], reassigned);
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
     }
-    i += 1;
   }
   return step_none(cur);
-}
-
-function eval_program(prog: ast.Stmt[]): Value {
-  let heap = interpheap.create();
-  let env = new_env(heap);
-  let preassigned = body_assign_names(prog, []);
-  let i = 0;
-  while (i < prog.len()) {
-    env = cellify_captures(env, prog[i], preassigned);
-    let r = eval_stmt(prog[i], env);
-    env = r.env;
-    if (r.sig != 0) {
-      return r.ret;
-    }
-    i += 1;
-  }
-  return v_err("program reached end without `return`");
 }
 
 pub function exit_status(v: Value): (boolean, i32) {
@@ -9250,25 +9121,20 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let mod = lowered(raw_mod);
   let all_variants = module_type_decls(mod.structs);
   let all_aliases = aliases_with_enums(mod.aliases, all_variants, mod.enums);
-  let i = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
-      let empty_args: Value[] = [];
-      return call_func(heap, "main", empty_args, mod.funcs, all_aliases, all_variants);
-    }
-    i += 1;
+  let funcs = funcs_of(mod.funcs);
+  if (funcs.named("main").len() > 0) {
+    let empty_args: Value[] = [];
+    return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
-  let env = new_module_env(heap, mod.funcs, all_aliases, all_variants);
+  let env = new_module_env(heap, funcs, all_aliases, all_variants);
   let mreassigned = body_assign_names(mod.top_stmts, []);
-  let j = 0;
-  while (j < mod.top_stmts.len()) {
+  for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
     let r = eval_stmt(mod.top_stmts[j], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
     }
-    j += 1;
   }
   return v_err("module has no `main` and no top-level `return`");
 }
@@ -9278,7 +9144,7 @@ pub struct Session { decls: parser.Module, env: Env }
 pub function new_session(): Session {
   let heap = interpheap.create();
   set_args(["-"]);
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, [], [], module_type_decls([])) };
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, funcs_of([]), [], module_type_decls([])) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -9312,7 +9178,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod = lowered(decls);
   let types = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: funcs_of(mod.funcs), aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {
@@ -9332,8 +9198,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     }
   }
   let env = s.env;
-  let k = 0;
-  while (k < body.len()) {
+  for k in 0..body.len() {
     if (k == body.len() - 1) {
       match (body[k]) {
         ast.StmtExpr(x) => {
@@ -9348,7 +9213,6 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
     }
-    k += 1;
   }
   return (Session { ...s, env: session_env(env) }, false, v_void());
 }
@@ -9436,13 +9300,11 @@ function value_text(v: Value): string {
     },
     VMap(m) => {
       let out = "";
-      let i = 0;
-      while (i < m.keys.len()) {
+      for i in 0..m.keys.len() {
         if (i > 0) {
           out += ", ";
         }
         out = out + value_text(m.keys[i]) + ": " + value_text(m.values[i]);
-        i += 1;
       }
       return "Map { " + out + " }";
     },
@@ -9468,15 +9330,13 @@ function values_text(vs: Value[]): string {
 function struct_text(sv: VStruct): string {
   let fields = "";
   let payloads = "";
-  let i = 0;
-  while (i < sv.field_names.len()) {
+  for i in 0..sv.field_names.len() {
     if (i > 0) {
       fields += ", ";
       payloads += ", ";
     }
     fields = fields + sv.field_names[i] + ": " + value_text(sv.field_values[i]);
     payloads += value_text(sv.field_values[i]);
-    i += 1;
   }
   if (sv.field_names.len() == 0) {
     return sv.type_name;
@@ -9494,1403 +9354,6 @@ function u64_text(n: i64, unsigned: boolean): string {
   let u = n as u64;
   let q = u / 10;
   return util.i64_to_string(q as i64) + util.i32_to_string((u - q * 10) as i32);
-}
-
-function run_source(src: string): Value {
-  let toks = lexer.tokenize(src);
-  let stmts = parser.parse_program(toks);
-  return eval_program(stmts);
-}
-
-function run_module(src: string): Value {
-  let toks = lexer.tokenize(src);
-  let mod = parser.parse_module(toks);
-  return eval_module(mod);
-}
-
-function main(): i32 {
-  let rc = check_arithmetic_and_idents();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_conditionals_and_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_while_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_functions_and_recursion();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_arrays();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_string_indexing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_slicing();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_compound_assignment();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structs_and_fields();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_match_statements();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_receiver_methods();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_floats();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_for_in_loops();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_tuples();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_break_and_continue();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_primitive_receivers();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_structural_equality();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_union_receiver_method();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_lambdas_and_closures();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_maps();
-  if (rc != 0) {
-    return rc;
-  }
-  rc = check_numeric_widths();
-  if (rc != 0) {
-    return rc;
-  }
-  return check_string_ordering();
-}
-
-function check_string_ordering(): i32 {
-  let r = run_source("let n = 0; if (\"apple\" < \"pear\") { n = n + 1; } if (\"b\" <= \"b\") { n = n + 2; } if (\"ab\" > \"a\") { n = n + 4; } if (\"a\" >= \"b\") { n = n + 8; } return n;");
-  match (r) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 940;
-      }
-    },
-    _ => {
-      return 941;
-    }
-  }
-  return 0;
-}
-
-function check_arithmetic_and_idents(): i32 {
-  let r1 = run_source("let x = 1 + 2 * 3; let y = (1 + 2) * 3; return x + y;");
-  match (r1) {
-    VInt(i) => {
-      if (i.v != 16) {
-        return 10;
-      }
-    },
-    _ => {
-      return 11;
-    }
-  }
-
-  let r2: Value = run_source("let a = \"hi \" + \"there\"; return 0 - 1;");
-  match (r2) {
-    VInt(i) => {
-      if (i.v != -1) {
-        return 20;
-      }
-    },
-    _ => {
-      return 21;
-    }
-  }
-
-  let r3 = run_source("let b = 5 < 10; let c = b && (1 == 1); return 42;");
-  match (r3) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 30;
-      }
-    },
-    _ => {
-      return 31;
-    }
-  }
-
-  let r4: Value = run_source("let n = 0 - 5; return n;");
-  match (r4) {
-    VInt(i) => {
-      if (i.v != -5) {
-        return 40;
-      }
-    },
-    _ => {
-      return 41;
-    }
-  }
-
-  let r5 = run_source("return 20 / 4;");
-  match (r5) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 50;
-      }
-    },
-    _ => {
-      return 51;
-    }
-  }
-
-  let r6 = run_source("return 1 / 0;");
-  match (r6) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 60;
-      }
-    },
-    _ => {
-      return 61;
-    }
-  }
-  let r6b = run_source("return 7 % 0;");
-  match (r6b) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 62;
-      }
-    },
-    _ => {
-      return 63;
-    }
-  }
-
-  let r7 = run_source("return missing;");
-  match (r7) {
-    VErr(_) => {},
-    _ => {
-      return 70;
-    }
-  }
-
-  return 0;
-}
-
-function check_conditionals_and_assignment(): i32 {
-  let r8 = run_source("let x = 5; if (x < 10) { return 1; } else { return 2; }");
-  match (r8) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 80;
-      }
-    },
-    _ => {
-      return 81;
-    }
-  }
-
-  let r9 = run_source("let x = 20; if (x < 10) { return 1; } else { return 2; }");
-  match (r9) {
-    VInt(i) => {
-      if (i.v != 2) {
-        return 90;
-      }
-    },
-    _ => {
-      return 91;
-    }
-  }
-
-  let r10 = run_source("if (false) { return 7; } return 11;");
-  match (r10) {
-    VInt(i) => {
-      if (i.v != 11) {
-        return 100;
-      }
-    },
-    _ => {
-      return 101;
-    }
-  }
-
-  let r11 = run_source("let k = 2; if (k == 1) { return 10; } else if (k == 2) { return 20; } else { return 30; }");
-  match (r11) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 110;
-      }
-    },
-    _ => {
-      return 111;
-    }
-  }
-
-  let r12 = run_source("let n = 1; n = 7; return n;");
-  match (r12) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 120;
-      }
-    },
-    _ => {
-      return 121;
-    }
-  }
-
-  return 0;
-}
-
-function check_while_loops(): i32 {
-  let r13: Value = run_source(
-    "let i = 1; let s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;",
-  );
-  match (r13) {
-    VInt(i) => {
-      if (i.v != 15) {
-        return 130;
-      }
-    },
-    _ => {
-      return 131;
-    }
-  }
-
-  let r14: Value = run_source(
-    "let i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;",
-  );
-  match (r14) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 140;
-      }
-    },
-    _ => {
-      return 141;
-    }
-  }
-
-  let r15 = run_source("let x = 5; while (false) { x = 99; } return x;");
-  match (r15) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 150;
-      }
-    },
-    _ => {
-      return 151;
-    }
-  }
-
-  return 0;
-}
-
-function check_functions_and_recursion(): i32 {
-  let r16: Value = run_module(
-    "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }",
-  );
-  match (r16) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 160;
-      }
-    },
-    _ => {
-      return 161;
-    }
-  }
-
-  let r17: Value = run_module(
-    "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }",
-  );
-  match (r17) {
-    VInt(i) => {
-      if (i.v != 120) {
-        return 170;
-      }
-    },
-    _ => {
-      return 171;
-    }
-  }
-
-  let r18: Value = run_module(
-    "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); }"
-      + " function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); }"
-      + " function main(): i32 { return is_even(4); }",
-  );
-  match (r18) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 180;
-      }
-    },
-    _ => {
-      return 181;
-    }
-  }
-
-  let r19: Value = run_module(
-    "function main(): i32 { return missing(1); }",
-  );
-  match (r19) {
-    VErr(_) => {},
-    _ => {
-      return 190;
-    }
-  }
-
-  let r20: Value = run_module(
-    "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }",
-  );
-  match (r20) {
-    VErr(_) => {},
-    _ => {
-      return 200;
-    }
-  }
-
-  return 0;
-}
-
-function check_arrays(): i32 {
-  let r21: Value = run_source(
-    "let a = [10, 20, 30]; return a[2];",
-  );
-  match (r21) {
-    VInt(i) => {
-      if (i.v != 30) {
-        return 210;
-      }
-    },
-    _ => {
-      return 211;
-    }
-  }
-
-  let r22 = run_source("let a = [1, 2, 3, 4]; return a.len();");
-  match (r22) {
-    VInt(i) => {
-      if (i.v != 4) {
-        return 220;
-      }
-    },
-    _ => {
-      return 221;
-    }
-  }
-
-  let r23: Value = run_source(
-    "let a = [3, 5, 7, 9]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;",
-  );
-  match (r23) {
-    VInt(i) => {
-      if (i.v != 24) {
-        return 230;
-      }
-    },
-    _ => {
-      return 231;
-    }
-  }
-
-  let r24 = run_source("let a = [1, 2]; return a[5];");
-  match (r24) {
-    VErr(_) => {},
-    _ => {
-      return 240;
-    }
-  }
-
-  let r25 = run_source("let a = []; return a.len();");
-  match (r25) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 250;
-      }
-    },
-    _ => {
-      return 251;
-    }
-  }
-
-  return 0;
-}
-
-function check_string_indexing(): i32 {
-  let r26 = run_source("let s = \"hello\"; return s[0];");
-  match (r26) {
-    VInt(i) => {
-      if (i.v != 104) {
-        return 260;
-      }
-    },
-    _ => {
-      return 261;
-    }
-  }
-
-  let r27 = run_source("let s = \"ABC\"; return s[0] + s[1] + s[2];");
-  match (r27) {
-    VInt(i) => {
-      if (i.v != 198) {
-        return 270;
-      }
-    },
-    _ => {
-      return 271;
-    }
-  }
-
-  let r28 = run_source("let s = \"hi\"; return s[5];");
-  match (r28) {
-    VErr(_) => {},
-    _ => {
-      return 280;
-    }
-  }
-
-  return 0;
-}
-
-function check_slicing(): i32 {
-  let r29 = run_source("let s = \"hello\"; return s[1:4];");
-  match (r29) {
-    VStruct(sv29) => {
-      if (sv29.type_name != "Some") {
-        return 290;
-      }
-      match (sv29.field_values[0]) {
-        VString(s29) => {
-          if (s29.v != "ell") {
-            return 292;
-          }
-        },
-        _ => {
-          return 293;
-        }
-      }
-    },
-    _ => {
-      return 291;
-    }
-  }
-
-  let r30 = run_source("let s = \"hello\"; return slice_unchecked(s, 1, 4)[1];");
-  match (r30) {
-    VInt(i) => {
-      if (i.v != 108) {
-        return 300;
-      }
-    },
-    _ => {
-      return 301;
-    }
-  }
-
-  let r31 = run_source("let a = [10, 20, 30, 40, 50]; let b = a[1:4]; return b[0];");
-  match (r31) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 310;
-      }
-    },
-    _ => {
-      return 311;
-    }
-  }
-
-  let r32 = run_source("let s = \"hi\"; return s[0:99];");
-  match (r32) {
-    VStruct(sv32) => {
-      if (sv32.type_name != "None") {
-        return 320;
-      }
-    },
-    _ => {
-      return 321;
-    }
-  }
-
-  let r32b = run_source("let s = \"héllo\"; return s[0:2];");
-  match (r32b) {
-    VStruct(sv32b) => {
-      if (sv32b.type_name != "None") {
-        return 322;
-      }
-    },
-    _ => {
-      return 323;
-    }
-  }
-
-  let r32u = run_source("let s = \"hi\"; return slice_unchecked(s, 0, 99).len();");
-  match (r32u) {
-    VErr(_) => {},
-    _ => {
-      return 324;
-    }
-  }
-
-  return 0;
-}
-
-function check_compound_assignment(): i32 {
-  let r33: Value = run_source(
-    "let i = 1; let s = 0; while (i <= 10) { s += i; i += 1; } return s;",
-  );
-  match (r33) {
-    VInt(i) => {
-      if (i.v != 55) {
-        return 330;
-      }
-    },
-    _ => {
-      return 331;
-    }
-  }
-
-  let r34 = run_source("let x = 1; x *= 2; x *= 3; return x;");
-  match (r34) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 340;
-      }
-    },
-    _ => {
-      return 341;
-    }
-  }
-
-  return 0;
-}
-
-function check_structs_and_fields(): i32 {
-  let r35 = run_source("return Point { x: 3, y: 4 }.x;");
-  match (r35) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 350;
-      }
-    },
-    _ => {
-      return 351;
-    }
-  }
-
-  let r36: Value = run_source(
-    "let p = Point { x: 7, y: 11 }; return p.x + p.y;",
-  );
-  match (r36) {
-    VInt(i) => {
-      if (i.v != 18) {
-        return 360;
-      }
-    },
-    _ => {
-      return 361;
-    }
-  }
-
-  let r37: Value = run_source(
-    "let b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;",
-  );
-  match (r37) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 370;
-      }
-    },
-    _ => {
-      return 371;
-    }
-  }
-
-  let r38 = run_source("return Point { x: 1, y: 2 }.z;");
-  match (r38) {
-    VErr(_) => {},
-    _ => {
-      return 380;
-    }
-  }
-
-  return 0;
-}
-
-function check_match_statements(): i32 {
-  let src39: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
-  let r39 = run_module(src39);
-  match (r39) {
-    VInt(i) => {
-      if (i.v != 5) {
-        return 390;
-      }
-    },
-    _ => {
-      return 391;
-    }
-  }
-
-  let src40: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return -1; } } return -2; }";
-  let r40 = run_module(src40);
-  match (r40) {
-    VInt(i) => {
-      if (i.v != 7) {
-        return 400;
-      }
-    },
-    _ => {
-      return 401;
-    }
-  }
-
-  let src41: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { let t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return -1; }";
-  let r41 = run_module(src41);
-  match (r41) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 410;
-      }
-    },
-    _ => {
-      return 411;
-    }
-  }
-
-  let src42: string = "struct Empty { } function main(): i32 { let e = Empty { }; match (e) { Empty => { return 42; }, _ => { return -1; } } return -2; }";
-  let r42 = run_module(src42);
-  match (r42) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 420;
-      }
-    },
-    _ => {
-      return 421;
-    }
-  }
-
-  let src43: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Square(_) => { return 2; } } return -1; }";
-  let r43 = run_module(src43);
-  match (r43) {
-    VErr(_) => {},
-    _ => {
-      return 430;
-    }
-  }
-
-  let src44: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 8 }; let n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = -1; } } return n; }";
-  let r44 = run_module(src44);
-  match (r44) {
-    VInt(i) => {
-      if (i.v != 8) {
-        return 440;
-      }
-    },
-    _ => {
-      return 441;
-    }
-  }
-
-  let src45: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Circle(x) => { }, _ => { } } let x: i32 = 77; return x; }";
-  let r45 = run_module(src45);
-  match (r45) {
-    VInt(i) => {
-      if (i.v != 77) {
-        return 450;
-      }
-    },
-    _ => {
-      return 451;
-    }
-  }
-
-  return 0;
-}
-
-function check_receiver_methods(): i32 {
-  let src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { let k = Circle { r: 5 }; return k.area(); }";
-  let r46 = run_module(src46);
-  match (r46) {
-    VInt(i) => {
-      if (i.v != 25) {
-        return 460;
-      }
-    },
-    _ => {
-      return 461;
-    }
-  }
-
-  let src47: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }";
-  let r47 = run_module(src47);
-  match (r47) {
-    VInt(i) => {
-      if (i.v != 12) {
-        return 470;
-      }
-    },
-    _ => {
-      return 471;
-    }
-  }
-
-  let src48: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { let k = Circle { r: 5 }; let m: i32 = area(); let n: i32 = k.area(); return m + n; }";
-  let r48 = run_module(src48);
-  match (r48) {
-    VInt(i) => {
-      if (i.v != 125) {
-        return 480;
-      }
-    },
-    _ => {
-      return 481;
-    }
-  }
-
-  let src49: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { let sq = Square { s: 7 }; return sq.area(); }";
-  let r49 = run_module(src49);
-  match (r49) {
-    VErr(_) => {},
-    _ => {
-      return 490;
-    }
-  }
-
-  return 0;
-}
-
-function check_floats(): i32 {
-  let r50 = run_source("return 3.14;");
-  match (r50) {
-    VFloat(f) => {
-      if (f.v < 3.13 || f.v > 3.15) {
-        return 500;
-      }
-    },
-    _ => {
-      return 501;
-    }
-  }
-
-  let r51 = run_source("return 1.5 + 2.5;");
-  match (r51) {
-    VFloat(f) => {
-      if (f.v < 3.99 || f.v > 4.01) {
-        return 510;
-      }
-    },
-    _ => {
-      return 511;
-    }
-  }
-
-  let r52 = run_source("return 2.5 * 4.0;");
-  match (r52) {
-    VFloat(f) => {
-      if (f.v < 9.99 || f.v > 10.01) {
-        return 520;
-      }
-    },
-    _ => {
-      return 521;
-    }
-  }
-
-  let r53 = run_source("return 3.14 > 3.0;");
-  match (r53) {
-    VBool(b) => {
-      if (!b.v) {
-        return 530;
-      }
-    },
-    _ => {
-      return 531;
-    }
-  }
-
-  let r54 = run_source("return 1.5 == 1.5;");
-  match (r54) {
-    VBool(b) => {
-      if (!b.v) {
-        return 540;
-      }
-    },
-    _ => {
-      return 541;
-    }
-  }
-
-  let r55 = run_source("return 1 + 2.5;");
-  match (r55) {
-    VErr(_) => {},
-    _ => {
-      return 550;
-    }
-  }
-
-  let r55b = run_source("return 2.5 + 1;");
-  match (r55b) {
-    VErr(_) => {},
-    _ => {
-      return 551;
-    }
-  }
-
-  let r55c = run_source("let f: f64 = 1.5; return f + 1 / 2;");
-  match (r55c) {
-    VFloat(f) => {
-      if (f.v < 1.99 || f.v > 2.01) {
-        return 552;
-      }
-    },
-    _ => {
-      return 553;
-    }
-  }
-
-  let r56 = run_source("return 10.0 / 4.0;");
-  match (r56) {
-    VFloat(f) => {
-      if (f.v < 2.49 || f.v > 2.51) {
-        return 560;
-      }
-    },
-    _ => {
-      return 561;
-    }
-  }
-
-  let r57 = run_source("return 0.0 - 3.5;");
-  match (r57) {
-    VFloat(f) => {
-      if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) {
-        return 570;
-      }
-    },
-    _ => {
-      return 571;
-    }
-  }
-
-  return 0;
-}
-
-function check_for_in_loops(): i32 {
-  let src58 = "function main(): i32 { let arr = [1, 2, 3]; let s: i32 = 0; for n in arr { s = s + n; } return s; }";
-  let r58 = run_module(src58);
-  match (r58) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 580;
-      }
-    },
-    _ => {
-      return 581;
-    }
-  }
-
-  let src59: string = "function main(): i32 { for n in [10, 20, 30] { return n; } return 0 - 1; }";
-  let r59 = run_module(src59);
-  match (r59) {
-    VInt(i) => {
-      if (i.v != 10) {
-        return 590;
-      }
-    },
-    _ => {
-      return 591;
-    }
-  }
-
-  let src60 = "function main(): i32 { for n in 7 { } return 0; }";
-  let r60 = run_module(src60);
-  match (r60) {
-    VErr(_) => {},
-    _ => {
-      return 600;
-    }
-  }
-  return check_for_in_subjects();
-}
-
-function check_for_in_subjects(): i32 {
-  let srcs: string[] = [
-    "function main(): i32 { let n: i32 = 0; for b in \"ab\" { n = n + (b as i32); } return n; }",
-    "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"bc\", 2); let n: i32 = 0; for (k, v) in m { n = n + k.len() * 10 + v; } return n; }",
-    "function main(): i32 { let n: i32 = 0; for (a, b) in [(1, 2), (3, 4)] { n = n + a * b; } return n; }",
-    "struct Cd { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction main(): i32 { let n: i32 = 0; let c: Cd = Cd { n: 4 }; for v in c { if (v == 2) { continue; } n = n + v; } return n; }",
-    "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
-  ];
-  let wants: i32[] = [195, 33, 14, 8, 6];
-  let i = 0;
-  while (i < srcs.len()) {
-    let r = run_module(srcs[i]);
-    match (r) {
-      VInt(got) => {
-        if (got.v != wants[i]) {
-          return 920 + i;
-        }
-      },
-      _ => {
-        return 930 + i;
-      }
-    }
-    i += 1;
-  }
-  return 0;
-}
-
-function check_tuples(): i32 {
-  let r61 = run_source("let t = (1, 2, 3); return 0;");
-  match (r61) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 610;
-      }
-    },
-    _ => {
-      return 611;
-    }
-  }
-
-  let r62 = run_source("let t = (10, 20, 30); return t.0;");
-  match (r62) {
-    VInt(i) => {
-      if (i.v != 10) {
-        return 620;
-      }
-    },
-    _ => {
-      return 621;
-    }
-  }
-
-  let r63 = run_source("let t = (10, 20, 30); return t.1;");
-  match (r63) {
-    VInt(i) => {
-      if (i.v != 20) {
-        return 630;
-      }
-    },
-    _ => {
-      return 631;
-    }
-  }
-
-  let r64 = run_source("let t = (10, 20); return t.5;");
-  match (r64) {
-    VErr(_) => {},
-    _ => {
-      return 640;
-    }
-  }
-
-  let r65 = run_source("let t = (42, \"hi\"); return t.0;");
-  match (r65) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 650;
-      }
-    },
-    _ => {
-      return 651;
-    }
-  }
-
-  return 0;
-}
-
-function check_break_and_continue(): i32 {
-  let src66 = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
-  let r66 = run_module(src66);
-  match (r66) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 660;
-      }
-    },
-    _ => {
-      return 661;
-    }
-  }
-
-  let src67 = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
-  let r67 = run_module(src67);
-  match (r67) {
-    VInt(i) => {
-      if (i.v != 6) {
-        return 670;
-      }
-    },
-    _ => {
-      return 671;
-    }
-  }
-
-  let src68 = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
-  let r68 = run_module(src68);
-  match (r68) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 680;
-      }
-    },
-    _ => {
-      return 681;
-    }
-  }
-
-  let src69 = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
-  let r69 = run_module(src69);
-  match (r69) {
-    VInt(i) => {
-      if (i.v != 12) {
-        return 690;
-      }
-    },
-    _ => {
-      return 691;
-    }
-  }
-
-  return 0;
-}
-
-function check_primitive_receivers(): i32 {
-  let src70 = "function (s: string) doubled(): string { return s + s; } function main(): i32 { let v: string = \"ab\"; let w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
-  let r70 = run_module(src70);
-  match (r70) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 700;
-      }
-    },
-    _ => {
-      return 701;
-    }
-  }
-
-  let src71 = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { let x: i32 = 21; return x.twice(); }";
-  let r71 = run_module(src71);
-  match (r71) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 710;
-      }
-    },
-    _ => {
-      return 711;
-    }
-  }
-
-  return 0;
-}
-
-function check_structural_equality(): i32 {
-  let r72 = run_source("return (1, 2, 3) == (1, 2, 3);");
-  match (r72) {
-    VBool(b) => {
-      if (!b.v) {
-        return 720;
-      }
-    },
-    _ => {
-      return 721;
-    }
-  }
-
-  let r73 = run_source("return (1, 2, 3) == (1, 2, 4);");
-  match (r73) {
-    VBool(b) => {
-      if (b.v) {
-        return 730;
-      }
-    },
-    _ => {
-      return 731;
-    }
-  }
-
-  let r74 = run_source("return (1, \"hi\") == (1, \"hi\");");
-  match (r74) {
-    VBool(b) => {
-      if (!b.v) {
-        return 740;
-      }
-    },
-    _ => {
-      return 741;
-    }
-  }
-
-  let r75 = run_source("return [1, 2, 3] == [1, 2, 3];");
-  match (r75) {
-    VBool(b) => {
-      if (!b.v) {
-        return 750;
-      }
-    },
-    _ => {
-      return 751;
-    }
-  }
-
-  let r76 = run_source("return [1, 2, 3] == [1, 2, 4];");
-  match (r76) {
-    VBool(b) => {
-      if (b.v) {
-        return 760;
-      }
-    },
-    _ => {
-      return 761;
-    }
-  }
-
-  let r77 = run_source("return [1, 2] == [1, 2, 3];");
-  match (r77) {
-    VBool(b) => {
-      if (b.v) {
-        return 770;
-      }
-    },
-    _ => {
-      return 771;
-    }
-  }
-
-  let src78: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
-  let r78 = run_module(src78);
-  match (r78) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 780;
-      }
-    },
-    _ => {
-      return 781;
-    }
-  }
-
-  let src79: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
-  let r79 = run_module(src79);
-  match (r79) {
-    VInt(i) => {
-      if (i.v != 0) {
-        return 790;
-      }
-    },
-    _ => {
-      return 791;
-    }
-  }
-
-  return 0;
-}
-
-function check_union_receiver_method(): i32 {
-  let src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { let c = Circle { r: 3 }; return c.tag(); }";
-  let r80 = run_module(src80);
-  match (r80) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 800;
-      }
-    },
-    _ => {
-      return 801;
-    }
-  }
-
-  return 0;
-}
-
-function check_lambdas_and_closures(): i32 {
-  let src81 = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  let r81 = run_module(src81);
-  match (r81) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 810;
-      }
-    },
-    _ => {
-      return 811;
-    }
-  }
-
-  let src82 = "function main(): i32 { let k: i32 = 10; let f = (x: i32): i32 => { return x + k; }; return f(5); }";
-  let r82 = run_module(src82);
-  match (r82) {
-    VInt(i) => {
-      if (i.v != 15) {
-        return 820;
-      }
-    },
-    _ => {
-      return 821;
-    }
-  }
-
-  let src83 = "function main(): i32 { return (n: i32): i32 => { return n * 2; }(21); }";
-  let r83 = run_module(src83);
-  match (r83) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 830;
-      }
-    },
-    _ => {
-      return 831;
-    }
-  }
-
-  return 0;
-}
-
-function check_maps(): i32 {
-  let src84: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); let got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
-  let r84 = run_module(src84);
-  match (r84) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 840;
-      }
-    },
-    _ => {
-      return 841;
-    }
-  }
-
-  let src85 = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
-  let r85 = run_module(src85);
-  match (r85) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 850;
-      }
-    },
-    _ => {
-      return 851;
-    }
-  }
-
-  let src86 = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
-  let r86 = run_module(src86);
-  match (r86) {
-    VInt(i) => {
-      if (i.v != 3) {
-        return 860;
-      }
-    },
-    _ => {
-      return 861;
-    }
-  }
-
-  let src87 = "function main(): i32 { let m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
-  let r87 = run_module(src87);
-  match (r87) {
-    VInt(i) => {
-      if (i.v != 99) {
-        return 870;
-      }
-    },
-    _ => {
-      return 871;
-    }
-  }
-
-  let mainSrc88 = "function main(): i32 { return parser.parse_module(); }";
-  let modSrc88 = "pub function parse_module(): i32 { return 42; }";
-  let mainMod88 = parser.parse_module(lexer.tokenize(mainSrc88));
-  let pMod88 = parser.parse_module(lexer.tokenize(modSrc88));
-  let merged88 = parser.merge_module_prefixed(mainMod88, pMod88, "parser");
-  let r88 = eval_module(merged88);
-  match (r88) {
-    VInt(i) => {
-      if (i.v != 42) {
-        return 880;
-      }
-    },
-    _ => {
-      return 881;
-    }
-  }
-
-  return 0;
-}
-
-function check_numeric_widths(): i32 {
-  let src89 = "function main(): i32 { let x: u32 = 4294967288 as u32; let y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
-  let r89 = run_module(src89);
-  match (r89) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 890;
-      }
-    },
-    _ => {
-      return 891;
-    }
-  }
-  let src90 = "function main(): i32 { let x: u32 = 4294967290 as u32; let y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
-  let r90 = run_module(src90);
-  match (r90) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 900;
-      }
-    },
-    _ => {
-      return 901;
-    }
-  }
-
-  let src91 = "function main(): i32 { let a: f32 = 16777216.0 as f32; let b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 1; } return 0; }";
-  let r91 = run_module(src91);
-  match (r91) {
-    VInt(i) => {
-      if (i.v != 1) {
-        return 910;
-      }
-    },
-    _ => {
-      return 911;
-    }
-  }
-
-  return 0;
 }
 
 function interp_mulhi(a: u64, b: u64): u64 {

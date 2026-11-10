@@ -1,0 +1,56 @@
+{
+  "instructions/baseline.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/baseline.callgrind",
+    "original_sha256": "0e4c14123474e7aa72a8bc4e1eb33b0f0045ca17ae047f44cb169a086ccc32d9",
+    "original_bytes": 1560574
+  },
+  "instructions/baseline.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/baseline.valgrind.log",
+    "original_sha256": "b534aab46c5329d5c98d87df1f981ef2003ecd78d3108f99604f54d6ae0ef932",
+    "original_bytes": 750
+  },
+  "instructions/candidate.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/candidate.callgrind",
+    "original_sha256": "27e60368b43bf8886af88cc7b2421399a4312e91936d1c09c09bec85f4b979b4",
+    "original_bytes": 1560695
+  },
+  "instructions/candidate.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/instructions/candidate.valgrind.log",
+    "original_sha256": "eed1de09bb15645bca1a20567c6a734c613412ff67b6655f0c6e9ca514243749",
+    "original_bytes": 751
+  },
+  "compilation-instructions-v2/baseline.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/baseline.callgrind",
+    "original_sha256": "cf9ba66b112c0196cb083a5a998701e6c31acd28305a583a057c860f0cb0c763",
+    "original_bytes": 2830729
+  },
+  "compilation-instructions-v2/baseline.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/baseline.valgrind.log",
+    "original_sha256": "9fb274c27911d7d0ee63cb2c028c343ed5bf57a572aedfd8b06c747ae62b4391",
+    "original_bytes": 889
+  },
+  "compilation-instructions-v2/candidate.callgrind.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/candidate.callgrind",
+    "original_sha256": "d72d120ef1468340281862b151b5633813212ca5b7df173364c246bada5a57e1",
+    "original_bytes": 2830573
+  },
+  "compilation-instructions-v2/candidate.valgrind.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-lazy-main-qualification-20261110-0710/compilation-instructions-v2/candidate.valgrind.log",
+    "original_sha256": "3dcabbe175a3f9f81b3e124af7a35ad2e4c15090b09f4eed6f97ce6ba6462afe",
+    "original_bytes": 890
+  },
+  "integration/job-129681122122.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0710/job-129681122122.log",
+    "original_sha256": "55a2dbc9c0e17e32b3ec34d411ac1c18e5fdcc9c7cb1e4deeee42f265b181d81",
+    "original_bytes": 128724
+  },
+  "integration/job-129681122027.log.gz": {
+    "original_path": "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-integration-20261110-0710/job-129681122027.log",
+    "original_sha256": "1d84417bb0a75ac0bad5485488102d37de4213ce9fdaf2b7df720f5a5a45a31b",
+    "original_bytes": 116171
+  },
+  "implementation.patch.gz": {
+    "original_sha256": "54655c61afd05d429eb78f92fa7a166bca867205608d7a558365ecf5cc571a71",
+    "original_bytes": 6210
+  }
+}

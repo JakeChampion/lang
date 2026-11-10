@@ -33,10 +33,8 @@ pub function run(out: ssaprepare.Output, aligned: boolean): void {
     exit(185);
   }
   let changed = parts[0];
-  let i = 1;
-  while (i < parts.len()) {
+  for i in 1..parts.len() {
     changed = changed + "    " + (if (row.context.architecture == "arm64") { "mov x0, #0" } else { "movq $0, %rax" }) + "\n    ret\n" + parts[i];
-    i += 1;
   }
   check(changed, row, false);
 }

@@ -283,6 +283,26 @@ function test_in_place(): test.TestOutcome {
   return test.assert_eq(opened(round_trip(rfc_seq(), -1, rfc_seq())), hex.encode(sunscreen()));
 }
 
+function filled(n: i32, b: u8): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append(b);
+  }
+  return out;
+}
+
+function test_counter_range(): test.TestOutcome {
+  let key = filled(32, 7 as u8);
+  let nonce = filled(12, 9 as u8);
+  let last = shown(xor_bytes(key, nonce, 4294967295, filled(64, 0 as u8)));
+  let past = shown(xor_bytes(key, nonce, 4294967295, filled(65, 0 as u8)));
+  let far = shown(xor_bytes(key, nonce, 4294967294, filled(150, 0 as u8)));
+  if (last.len() != 128) {
+    return test.fail("the last block is in range: " + last);
+  }
+  return test.assert_eq(past + "|" + far, "aead: the data needs more blocks than the 32-bit block counter has left|aead: the data needs more blocks than the 32-bit block counter has left");
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
@@ -297,6 +317,7 @@ function main(): i32 {
   r = r.it("open, several blocks", test_open_long);
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
+  r = r.it("the block counter does not wrap", test_counter_range);
   r = r.it("a key built once", test_key_built_once);
   r = r.it("seal and open in place, RFC 8439 under a sequence number", test_in_place);
   return r.finish();

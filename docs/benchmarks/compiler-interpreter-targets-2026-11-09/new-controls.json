@@ -1,0 +1,82 @@
+[
+  {
+    "name": "call-explicit-type-arguments",
+    "compiler": "base",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-explicit-type-arguments",
+    "compiler": "candidate",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-zero-arguments-generic",
+    "compiler": "base",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-zero-arguments-generic",
+    "compiler": "candidate",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-static-const-type-argument",
+    "compiler": "base",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-static-const-type-argument",
+    "compiler": "candidate",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-method",
+    "compiler": "base",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-method",
+    "compiler": "candidate",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-associated",
+    "compiler": "base",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "call-nested-generic-associated",
+    "compiler": "candidate",
+    "expected": 42,
+    "got": 42,
+    "stdout": "",
+    "stderr": ""
+  }
+]

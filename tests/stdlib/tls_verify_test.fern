@@ -270,6 +270,24 @@ function test_name_constraints(): test.TestOutcome {
   return test.assert_eq(outcome(verify.server([dn_leaf(), dn_int()], ec_roots(), "example.com", now())), "tls verify: certificate 1 has an unknown critical extension 2.5.29.30");
 }
 
+// A root that excludes foo.example.com.
+function wild_root(): u8[] {
+  return __codec_bytes(hex.decode("3082014b3081fea003020102020101300506032b6570301b31193017060355040313104e43206578636c7564656420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a301b31193017060355040313104e43206578636c7564656420726f6f74302a300506032b6570032100a285d9c617bf1025f899584f9bebeafe50444eac5ae5fdd8d2b8afe75a2a1a08a3653063300e0603551d0f0101ff040403020204300f0603551d130101ff040530030101ff301d0603551d0e04160414194c5e897ca0e5ea4eda830c3a99fbefc932499430210603551d1e0101ff04173015a1133011820f666f6f2e6578616d706c652e636f6d300506032b65700341008ec1a1d31e53f9e91b5c5297143fde642618cabfce18cc6aa7d2b2e239eb8ce3f47f11492812bf0de8c5c25402cfe65956cbf9d1554a2e6508271cd07285fe00"));
+}
+
+// A leaf below wild_root for *.example.com.
+function wild_leaf(): u8[] {
+  return __codec_bytes(hex.decode("3082014a3081fda003020102020102300506032b6570301b31193017060355040313104e43206578636c7564656420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a300f310d300b060355040313046c656166302a300506032b65700321009cc7d585530c9a3dd939dc0742a4b7b53f3abfe6dce0de4dfc70b9f6f502e792a370306e300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301300c0603551d130101ff04023000301f0603551d23041830168014194c5e897ca0e5ea4eda830c3a99fbefc932499430180603551d110411300f820d2a2e6578616d706c652e636f6d300506032b6570034100ff97aa0acaf2830e4343e96846686920f28f298b1e7993ff959de1c9100257b1335369d0c3ea5dfdf5174b775ef18dced7c646502f6168d638973c3893f49e0a"));
+}
+
+function test_a_wildcard_reaches_an_excluded_name(): test.TestOutcome {
+  let refused = "tls verify: certificate 1's name constraints exclude a name below it";
+  if (outcome(verify.server([wild_leaf()], verify.roots([wild_root()]), "foo.example.com", now())) != refused) {
+    return test.fail("the excluded name");
+  }
+  return test.assert_eq(outcome(verify.server([wild_leaf()], verify.roots([wild_root()]), "bar.example.com", now())), refused);
+}
+
 function test_bad_signature(): test.TestOutcome {
   let b = ec_leaf();
   let serial = 0;
@@ -277,6 +295,17 @@ function test_bad_signature(): test.TestOutcome {
     serial += 1;
   }
   return test.assert_eq(outcome(verify.server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
+}
+
+// The outer signatureAlgorithm follows the TBSCertificate. Its tag is not
+// in the signed part.
+function test_an_algorithm_with_another_tag(): test.TestOutcome {
+  let b = ec_leaf();
+  let at = 8 + (b[6] as i32 << 8 | b[7] as i32);
+  if (b[at] != 0x30 as u8) {
+    return test.fail("the fixture moved");
+  }
+  return test.assert_eq(outcome(verify.server([b.with(at, 0x31 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0: x509: malformed AlgorithmIdentifier");
 }
 
 function test_roots_from_pem(): test.TestOutcome {
@@ -363,6 +392,21 @@ function test_certificate_verify(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// One leaf and four self-issued CA certificates with one name and one key.
+function loop_chain(): u8[][] {
+  return [
+    __codec_bytes(hex.decode("308201303081d7a003020102020101300a06082a8648ce3d04030230123110300e06035504030c074c6f6f70204341301e170d3230303130313030303030305a170d3430303130313030303030305a30163114301206035504030c0b76696374696d2e746573743059301306072a8648ce3d020106082a8648ce3d030107034200045f8edfbab468714a01edd615e383f64254963861c2092ed1ffc7d0e8fc11efbf8378eb4ace31afdb2374be476ac86f6b5545492f585cc2a7a51e9e19d139a05ea31a301830160603551d11040f300d820b76696374696d2e74657374300a06082a8648ce3d0403020348003045022100a860a5e6d805e0fae84ceb66302c13c05523c4e2e7a5b81955de3f39f1c3a972022012a9f26759e1d63b7ed2b2cb4afbd9f9d9d016931e4fc3647277f5d37639efd9")),
+    __codec_bytes(hex.decode("308201243081cca003020102020164300a06082a8648ce3d04030230123110300e06035504030c074c6f6f70204341301e170d3230303130313030303030305a170d3430303130313030303030305a30123110300e06035504030c074c6f6f702043413059301306072a8648ce3d020106082a8648ce3d030107034200042d16b2d8d664552e2ccb7c0113e3ed696898d2814ffb028d404858efb5e8cd39c43e7e6de78dcb2a7e32df5930f969c9d950c40c337ab4f7c2203aaf153933c1a3133011300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034700304402202773ae03fe7276968a92affbeba90f1e0160960c9b3a4314a2b0808b2ea989fc0220112251dfce4c70f775908920fb1b2e46f070c625ead19d8a488e4ebdae4b8f48")),
+    __codec_bytes(hex.decode("308201263081cca003020102020165300a06082a8648ce3d04030230123110300e06035504030c074c6f6f70204341301e170d3230303130313030303030305a170d3430303130313030303030305a30123110300e06035504030c074c6f6f702043413059301306072a8648ce3d020106082a8648ce3d030107034200042d16b2d8d664552e2ccb7c0113e3ed696898d2814ffb028d404858efb5e8cd39c43e7e6de78dcb2a7e32df5930f969c9d950c40c337ab4f7c2203aaf153933c1a3133011300f0603551d130101ff040530030101ff300a06082a8648ce3d0403020349003046022100f35c6390008148fd65712d2cc57fc409dcce65739fb746ada53e64495f4e2954022100df5e8967fb0a7fb587b8e5064cfdd43e46d44b65944eb368e403e5e3e67d4c25")),
+    __codec_bytes(hex.decode("308201253081cca003020102020166300a06082a8648ce3d04030230123110300e06035504030c074c6f6f70204341301e170d3230303130313030303030305a170d3430303130313030303030305a30123110300e06035504030c074c6f6f702043413059301306072a8648ce3d020106082a8648ce3d030107034200042d16b2d8d664552e2ccb7c0113e3ed696898d2814ffb028d404858efb5e8cd39c43e7e6de78dcb2a7e32df5930f969c9d950c40c337ab4f7c2203aaf153933c1a3133011300f0603551d130101ff040530030101ff300a06082a8648ce3d040302034800304502204bb6537967327f11e5ae55b1aaa1555d6aac36c0e146c45e269606227e99077b022100c25e79759f64fb3e6cc7b7fc4c3e626345920a70420fc342fa0dffdaa4bc3e75")),
+    __codec_bytes(hex.decode("308201253081cca003020102020167300a06082a8648ce3d04030230123110300e06035504030c074c6f6f70204341301e170d3230303130313030303030305a170d3430303130313030303030305a30123110300e06035504030c074c6f6f702043413059301306072a8648ce3d020106082a8648ce3d030107034200042d16b2d8d664552e2ccb7c0113e3ed696898d2814ffb028d404858efb5e8cd39c43e7e6de78dcb2a7e32df5930f969c9d950c40c337ab4f7c2203aaf153933c1a3133011300f0603551d130101ff040530030101ff300a06082a8648ce3d0403020348003045022100a0babffeedec0259b32a2c75a8486e4fbc2eb3246130b4ee0792b5da037cc1a80220409798d2e46244f9aba50cd43dd8d023e9bc77977f293ef38667770c021e16a7")),
+  ];
+}
+
+function test_a_looping_chain_is_refused(): test.TestOutcome {
+  return test.assert_eq(outcome(verify.server(loop_chain(), verify.no_roots(), "victim.test", time.timestamp_from_unix(1750000000 as i64))), "tls verify: no path from the certificate reaches a trusted root");
+}
+
 function main(): i32 {
   let r = test.new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
@@ -373,8 +417,11 @@ function main(): i32 {
   r = r.it("refusals", test_refusals);
   r = r.it("denied keys", test_denied_keys);
   r = r.it("a bad signature", test_bad_signature);
+  r = r.it("an algorithm with a tag that is not SEQUENCE", test_an_algorithm_with_another_tag);
   r = r.it("roots from PEM", test_roots_from_pem);
   r = r.it("name constraints", test_name_constraints);
+  r = r.it("a wildcard reaches an excluded name", test_a_wildcard_reaches_an_excluded_name);
+  r = r.it("a looping chain is refused", test_a_looping_chain_is_refused);
   r = r.it("RFC 8448's CertificateVerify", test_certificate_verify);
   return r.finish();
 }

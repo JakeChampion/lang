@@ -1,0 +1,38 @@
+{
+  "run": 42715092156,
+  "head": "345f706f2295c5ce0401984d36edbb9113c1adac",
+  "jobs": [
+    129496306737,
+    129496306939
+  ],
+  "updates": {
+    "x86_64/http_hello.text": "15591",
+    "x86_64/video_qtrle.text": "5234",
+    "selfhost/x86-64-linux/http_hello.emit": "15591",
+    "selfhost/arm64-linux/http_hello.emit": "16542",
+    "selfhost/wasm32-wasi/http_hello.emit": "18926",
+    "selfhost/x86-64-linux/video_qtrle.emit": "5234",
+    "selfhost/arm64-linux/video_qtrle.emit": "5600",
+    "selfhost/wasm32-wasi/video_qtrle.emit": "6036",
+    "profile/arm64-linux/http_hello.diagnostic.bytes": "129160",
+    "profile/arm64-linux/http_hello.diagnostic.emit": "16493",
+    "profile/arm64-linux/http_hello.hardened.bytes": "81064",
+    "profile/arm64-linux/http_hello.hardened.emit": "18088",
+    "profile/arm64-linux/http_hello.minimal.bytes": "63432",
+    "profile/arm64-linux/http_hello.minimal.emit": "13622",
+    "profile/arm64-linux/http_hello.safe.bytes": "74936",
+    "profile/arm64-linux/http_hello.safe.emit": "16542",
+    "profile/x86-64-linux/http_hello.diagnostic.bytes": "118384",
+    "profile/x86-64-linux/http_hello.diagnostic.emit": "15289",
+    "profile/x86-64-linux/http_hello.diagnostic.ir": "40308693",
+    "profile/x86-64-linux/http_hello.hardened.bytes": "71648",
+    "profile/x86-64-linux/http_hello.hardened.emit": "16123",
+    "profile/x86-64-linux/http_hello.hardened.ir": "30101928",
+    "profile/x86-64-linux/http_hello.minimal.bytes": "56640",
+    "profile/x86-64-linux/http_hello.minimal.emit": "13189",
+    "profile/x86-64-linux/http_hello.minimal.ir": "23512415",
+    "profile/x86-64-linux/http_hello.safe.bytes": "66288",
+    "profile/x86-64-linux/http_hello.safe.emit": "15591",
+    "aarch64/video_qtrle.text": "5600"
+  }
+}

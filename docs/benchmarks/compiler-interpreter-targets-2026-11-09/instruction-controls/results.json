@@ -1,0 +1,73 @@
+{
+  "baseline_source": "ebb50c78c0ca714180704352881da7e39efb570f",
+  "candidate_source": "424fe24f4cf2bd1c0c49060215f1fe622ef4d5b2",
+  "candidate_snapshot": "/workspace/lang-interpreter-skip-snapshot-20261109",
+  "tool_version": "valgrind-3.24.0",
+  "tool_sha256": "340065228e4a322aacbc4e11fcd39162a3e20fba4b4aa965708e50012175a8c5",
+  "scope": "One guest-instruction sample per binary on first32recorddiagnostic. Same normal binaries as production samples. Compiler-process children not traced. Cache and branch simulation off. Not a wall-time benchmark.",
+  "runs": [
+    {
+      "name": "base",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-instructions-20261109/base.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-instructions-20261109/base.valgrind.log",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/fern-normal",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "399c2edff7588a198bc1e44fcc604a1996dc5d75e094dcf8886286021984a0dc",
+      "started": "2026-11-09T22:41:02.284463+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-09T22:46:27.529423+00:00",
+      "guest_instructions": 26463602512,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    },
+    {
+      "name": "candidate",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-instructions-20261109/candidate.callgrind",
+        "--log-file=/workspace/lang-interpreter-dispatch-20261109/build/interpreter-instructions-20261109/candidate.valgrind.log",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-dispatch-20261109/fern-candidate",
+        "-stdlib",
+        "/workspace/lang-interpreter-timeout-20261109/internal/stdlib",
+        "-interp",
+        "/workspace/lang-interpreter-timeout-20261109/build/interpreter-profile-20261109/first-group.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-timeout-20261109",
+      "binary_sha256": "61ed090462dbf841320a8bd597b15a8b8399c65b0036c4ae58492dc7c9eea07f",
+      "started": "2026-11-09T22:46:27.615865+00:00",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "exit_code": 0,
+      "finished": "2026-11-09T22:52:19.744511+00:00",
+      "guest_instructions": 23717071286,
+      "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405"
+    }
+  ],
+  "finished": "2026-11-09T22:52:19.789717+00:00"
+}

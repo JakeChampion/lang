@@ -1,0 +1,11 @@
+// RFC 5869 limits HKDF to 255 blocks of output. The limit itself answers,
+// and one byte more stops the program with status 134.
+import "std/crypto";
+
+function main(): i32 {
+    let none: u8[] = [];
+    let key: u8[] = [1, 2, 3];
+    print(crypto.hkdf_sha256(none, key, none, 8160).len().to_string());
+    print(crypto.hkdf_sha256(none, key, none, 8161).len().to_string());
+    return 0;
+}

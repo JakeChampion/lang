@@ -17,10 +17,8 @@ function unknown_flags(): count.Flags {
 
 function initial(shared: boolean, register_entry: boolean, zero: boolean): State {
   let regs: Value[] = [];
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     regs = regs.append(token(if (i == 4) { 3 } else { 1 }, i));
-    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, token(2, 0));
@@ -201,12 +199,10 @@ function finished(s: State): boolean {
   if (!heap_finished(s) || s.regs[0].kind != 2 || s.regs[4].kind != 3) {
     return false;
   }
-  let i = 2;
-  while (i < 16) {
+  for i in 2..16 {
     if (i != 4 && (s.regs[i].kind != 1 || s.regs[i].identity != i)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -220,12 +216,10 @@ function same_value(a: Value, b: Value): boolean {
 }
 
 function unguarded(s: State, original: State): State {
-  let i = 0;
-  while (i < s.regs.len()) {
+  for i in 0..s.regs.len() {
     if (i != 1 && !same_value(s.regs[i], original.regs[i])) {
       return State { ...s, ok: false };
     }
-    i += 1;
   }
   let regs = if (same_value(s.regs[1], original.regs[1])) { s.regs } else { s.regs.with(1, original.regs[1]) };
   let same_heap = s.heap.shared == original.heap.shared && s.heap.stored.family == original.heap.stored.family && s.heap.stored.delta == original.heap.stored.delta;

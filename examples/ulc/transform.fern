@@ -18,21 +18,19 @@ struct TrigGrid { cosine: f64[], sine: f64[] }
 // Direct evaluation every 32 steps bounds the error of the angle recurrence.
 @inline
 function grid(own cosine: f64[], own sine: f64[], offset: i32, count: i32, start: f64, step: f64): TrigGrid {
-  let dc = step.cos();
-  let ds = step.sin();
+  let dc = __f64x2_splat(step.cos());
+  let ds_value = step.sin();
+  let ds = __f64x2_of(-ds_value, ds_value);
   let base = 0;
   while (base < count) {
     let angle = start + step * (base as f64);
-    let c = angle.cos();
-    let s = angle.sin();
+    let phase = __f64x2_of(angle.cos(), angle.sin());
     let end = if (count - base < 32) { count } else { base + 32 };
     let i = base;
     while (i < end) {
-      cosine = cosine.with(offset + i, c);
-      sine = sine.with(offset + i, s);
-      let next = c * dc - s * ds;
-      s = s * dc + c * ds;
-      c = next;
+      cosine = cosine.with(offset + i, __f64x2_lane(phase, 0));
+      sine = sine.with(offset + i, __f64x2_lane(phase, 1));
+      phase = phase * dc + __f64x2_reverse(phase) * ds;
       i += 1;
     }
     base = end;

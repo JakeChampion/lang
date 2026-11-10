@@ -145,12 +145,10 @@ pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState 
   let store_local = ir.K_STORE_LOCAL;
   let tee_local = ir.K_TEE_LOCAL;
   let ops: ir.Op[] = [];
-  i = 0;
-  while (i < r.n_params) {
+  for i in 0..r.n_params {
     if (slots[i] >= 0) {
       ops = joined(ops, decode(i, slots[i]));
     }
-    i += 1;
   }
   for op in r.ops {
     let value = read_value(op, call_direct);

@@ -1,0 +1,5 @@
+struct P { n: i32 }
+function id[T](x: T): T { return x; }
+trait Choose { function choose[T](first: T, next: T): T { return next; } }
+impl Choose for P {}
+function main(): i32 { return P.choose(7, id(42)); }

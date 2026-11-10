@@ -1,0 +1,6 @@
+{
+  "initial_source": "32561cd31df54c009b8562ac187a0ece0ac3956a",
+  "qualified_source": "db4308a127fa82a0a6cf45f1c86851a709f010d4",
+  "same_binary_sha256": "cdc5289233e4fe4dc6f3f2da8c9cd5eaf6400ae35e9f7520ad963eb7a7b05be0",
+  "note": "Whitespace-only correction and test additions do not change the normal executable. Both full builds completed successfully."
+}

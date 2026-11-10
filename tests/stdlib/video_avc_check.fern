@@ -1,0 +1,19 @@
+import "std/video/avc";
+
+function flag(value: boolean): i64 {
+  return if (value) { 1i64 } else { 0i64 };
+}
+
+pub function values(s: avc.Sequence): i64[] {
+  return [
+    s.profile_idc as i64, s.level_idc as i64, s.sequence_id as i64,
+    s.chroma_format_idc as i64, flag(s.separate_colour_plane), s.bit_depth_luma as i64, s.bit_depth_chroma as i64,
+    s.coded.width as i64, s.coded.height as i64, s.visible.width as i64, s.visible.height as i64,
+    s.crop.left as i64, s.crop.top as i64, s.crop.right as i64, s.crop.bottom as i64,
+    flag(s.frame_mbs_only), flag(s.mb_adaptive_frame_field), s.max_reference_frames as i64,
+    s.vui.aspect_ratio.numerator as i64, s.vui.aspect_ratio.denominator as i64,
+    flag(s.vui.video_signal_present), flag(s.vui.colour_description_present), s.vui.video_format as i64,
+    flag(s.vui.full_range), s.vui.colour_primaries as i64, s.vui.transfer_characteristics as i64,
+    s.vui.matrix_coefficients as i64, s.vui.num_units_in_tick as i64, s.vui.time_scale as i64, flag(s.vui.fixed_frame_rate),
+  ];
+}

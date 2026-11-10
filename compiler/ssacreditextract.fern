@@ -344,12 +344,10 @@ function merged(c: Context, old: State, path: i32): Context {
   out = calc(out, 0, old.slot, out.temp);
   let slot = out.temp;
   let rest: i32[] = [];
-  let k = 0;
-  while (k < s.rest.len()) {
+  for k in 0..s.rest.len() {
     out = calc(out, 4, path, s.rest[k]);
     out = calc(out, 0, old.rest[k], out.temp);
     rest = rest.append(out.temp);
-    k += 1;
   }
   out = calc(out, 0, old.path, path);
   let joined = out.temp;

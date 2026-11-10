@@ -25,10 +25,8 @@ function change(text: string, old: string, replacement: string): string {
   let parts = text.split(old);
   require(parts.len() > 1, 96);
   let out = parts[0];
-  let i = 1;
-  while (i < parts.len()) {
+  for i in 1..parts.len() {
     out = out + replacement + parts[i];
-    i += 1;
   }
   return out;
 }
@@ -54,10 +52,8 @@ function fragment(text: string): string {
 function instructions(text: string, arm: boolean): void {
   let from = if (arm) { ["ldr x2, [sp]", "mov x0, #0", "mov x0, #1", "tbnz x2, #0,", "blo ", "and x2, x2, #0xfffffffffffffffd", "ldur w3, [x2, #-8]", "cmp w3, #1", "bne "] } else { ["movq 8(%rsp), %rcx", "movq $0, %rax", "movq $1, %rax", "jnz ", "jb ", "andq $-3, %rcx", "movl -8(%rcx), %edx", "cmpl $1, %edx", "jne "] };
   let to = if (arm) { ["ldr x2, [sp, #8]", "mov x0, #1", "mov x0, #0", "tbz x2, #0,", "b ", "", "ldur w3, [x2, #-4]", "cmp w3, #2", "beq "] } else { ["movq 16(%rsp), %rcx", "movq $1, %rax", "movq $0, %rax", "jz ", "jmp ", "", "movl -4(%rcx), %edx", "cmpl $2, %edx", "je "] };
-  let i = 0;
-  while (i < from.len()) {
+  for i in 0..from.len() {
     check(change(text, from[i], to[i]), arm, false);
-    i += 1;
   }
   let read = from[6];
   check(change(text, from[1], read + "\n" + from[1]), arm, false);
@@ -138,7 +134,7 @@ pub function run(output: string, arm: boolean): void {
 }
 
 pub function debug(g: ircore.Gated, arm: boolean): void {
-  let sw = asmcore.Switches { backtrace: false, sanitize: true, sandbox: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", user_mode: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: true, sandbox: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
   if (arm) {
     let out = asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, true, false, "", ["heap"], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, sw, true);
     check(out.text, arm, false);

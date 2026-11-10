@@ -39,13 +39,11 @@ pub function sanitize_label(name: string): string {
 pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
   let refs = astwalk.collect_lambda_idents(lm, []);
   let caps: string[] = [];
-  let ri = 0;
-  while (ri < refs.len()) {
+  for ri in 0..refs.len() {
     let nm = refs[ri];
     if (!util.has_str(caps, nm) && outer.has_local(nm)) {
       caps = caps.append(nm);
     }
-    ri += 1;
   }
   return caps;
 }
@@ -79,6 +77,8 @@ pub struct EmitState {
   interrupts: string[],
   // The label of the `@early` hook, or "".
   early: string,
+  // The label of the `@secondary` entry, or "".
+  secondary: string,
   // The program calls __user_run: a kernel image then holds the lower-level
   // trap entries.
   user_mode: boolean,
@@ -186,13 +186,11 @@ function record_syscall(t: EmitState, nr: i32): EmitState {
     return t;
   }
   let out: i32[] = [];
-  let i = 0;
-  while (i < t.syscalls.len()) {
+  for i in 0..t.syscalls.len() {
     if (i == at) {
       out = out.append(nr);
     }
     out = out.append(t.syscalls[i]);
-    i += 1;
   }
   if (at == t.syscalls.len()) {
     out = out.append(nr);
@@ -416,17 +414,13 @@ pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
 
 pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): string[] {
   let out: string[] = [];
-  let fi = lo;
-  while (fi < hi) {
+  for fi in lo..hi {
     if (cache.len() == 0 || !cache[fi].superseded) {
       out = out.append(sanitize_label(parser.decl_key(mod.funcs[fi])));
     }
-    fi += 1;
   }
-  let xi = mod.funcs.len();
-  while (xi < cache.len()) {
+  for xi in mod.funcs.len()..cache.len() {
     out = out.append(sanitize_label(cache[xi].name));
-    xi += 1;
   }
   return out;
 }
@@ -443,8 +437,7 @@ pub struct FloatAbi { names: irtables.SigReg, masks: string[] }
 pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): FloatAbi {
   let names: string[] = [];
   let masks: string[] = [];
-  let fi = 0;
-  while (fi < cache.len()) {
+  for fi in 0..cache.len() {
     let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (inside && !cache[fi].superseded && cache[fi].ok) {
       let name = cache[fi].name;
@@ -457,17 +450,14 @@ pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtable
         masks = masks.append(mask);
       }
     }
-    fi += 1;
   }
   return FloatAbi { names: irtables.sig_reg_of(names), masks: masks };
 }
 
 function float_mask_of(r: irtables.LowerResult): string {
   let mask = "";
-  let p = 0;
-  while (p < r.n_params) {
+  for p in 0..r.n_params {
     mask += slot_class(r, p);
-    p += 1;
   }
   let res = "x";
   if (r.result_kind == irtables.result_f64()) {
@@ -529,8 +519,7 @@ pub function lane_result(mask: string): boolean {
 pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[], kt: ssa_lift.KindTable): UnitLeaves {
   let out: ssa.Leaf[] = [];
   let pre: Prelift[] = [];
-  let fi = 0;
-  while (fi < cache.len()) {
+  for fi in 0..cache.len() {
     let p = no_prelift();
     let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (fi < mod.funcs.len() && mod.funcs[fi].no_inline) {
@@ -550,7 +539,6 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
     }
     pre = pre.append(p);
-    fi += 1;
   }
   let leaves = ssa.leaves_of(out);
   return UnitLeaves { leaves: leaves, pre: unformed_callers(pre, leaves) };
@@ -632,6 +620,7 @@ pub function new_state(): EmitState {
     ram_size: 0i64,
     interrupts: [],
     early: "",
+    secondary: "",
     user_mode: false,
     const_aggs: [],
     const_agg_ix: util.name_index([]),
@@ -717,7 +706,7 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, user_mode: boolean }
+pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
 
 // The -sanitize quarantine budget in bytes when no -quarantine was given: 64 MiB.
 pub function quarantine_default(): i64 {
@@ -733,11 +722,11 @@ pub function arena_bytes(limit: i64): i64 {
 }
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", user_mode: false };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
 }
 
 // A `.loc` row names the document line of a literate module, not its tangled line.
@@ -792,12 +781,10 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
 }
 
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
-  let i = 0;
-  while (i < s.shape_lits.len()) {
+  for i in 0..s.shape_lits.len() {
     if (s.shape_lits[i] == name) {
       return s;
     }
-    i += 1;
   }
   return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
 }
@@ -827,7 +814,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
     while (j < n && asm_text[j] != b'\n') {
       j += 1;
     }
-    let line = slice_unchecked(asm_text, i, j) + "";
+    let line = slice_unchecked(asm_text, i, j).to_owned();
     let drop = false;
     if (state == 1) {
       drop = true;
@@ -837,7 +824,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) {
         k += 1;
       }
-      let body = slice_unchecked(line, k, line.len()) + "";
+      let body = slice_unchecked(line, k, line.len()).to_owned();
       if (body.len() == 0) {
         drop = true;
       } else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") {
@@ -849,7 +836,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       }
     }
     if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
-      let sym = slice_unchecked(line, 6, line.len()) + "";
+      let sym = slice_unchecked(line, 6, line.len()).to_owned();
       if (util.has_str(seen, sym)) {
         drop = true;
         state = 1;
@@ -2646,8 +2633,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
             return ty_i32();
           }
           if (!ty_is_unknown(rcv)) {
-            let fi = 0;
-            while (fi < s.funcs.len()) {
+            for fi in 0..s.funcs.len() {
               if (s.funcs[fi].name == fa.field && ty_eq(struct_local_tag(s.funcs[fi].receiver_type, s), rcv)) {
                 let rt = s.funcs[fi].ret_type;
                 if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
@@ -2659,7 +2645,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                 }
                 return ty_unknown();
               }
-              fi += 1;
             }
           }
           return ty_unknown();
@@ -2710,24 +2695,20 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
   let di = irtables.stab_first(s.struct_decls, struct_name);
   if (di >= 0) {
     let sd = s.struct_decls.decls[di];
-    let fi = 0;
-    while (fi < sd.fields.len()) {
+    for fi in 0..sd.fields.len() {
       if (sd.fields[fi].name == field) {
         return struct_local_tag(sd.fields[fi].type_name, s);
       }
-      fi += 1;
     }
   }
   return ty_unknown();
 }
 
 pub function struct_local_tag(type_name: string, s: EmitState): Ty {
-  let bi = 0;
-  while (bi < type_name.len()) {
+  for bi in 0..type_name.len() {
     if (type_name[bi] == b'[') {
       return ty_from_name(type_name);
     }
-    bi += 1;
   }
   if (is_struct_decl_name(type_name, s)) {
     return ty_named(type_name);
@@ -3576,10 +3557,8 @@ pub function split_tuple_ret(tt: string): TwoTags {
     return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_ref(t.args[1]) };
   }
   let rest = parser.render_type_ref(t.args[1]);
-  let k = 2;
-  while (k < t.args.len()) {
+  for k in 2..t.args.len() {
     rest = rest + ", " + parser.render_type_ref(t.args[k]);
-    k += 1;
   }
   return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_name(rest) };
 }
@@ -4430,12 +4409,10 @@ pub function (s: EmitState) reset_locals(): EmitState {
 }
 
 pub function (s: EmitState) has_local(name: string): boolean {
-  let i = 0;
-  while (i < s.local_names.len()) {
+  for i in 0..s.local_names.len() {
     if (s.local_names[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4564,15 +4541,13 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   s = shp.state;
   let text = shp.label + "|";
   let vals = ir.const_struct_values(packed);
-  let i = 0;
-  while (i < vals.len()) {
+  for i in 0..vals.len() {
     if (i > 0) {
       text += ",";
     }
     let w = const_agg_word(s, vals[i], entry);
     s = w.state;
     text += w.text;
-    i += 1;
   }
   return ConstAggPack { state: s, text: text };
 }
@@ -4644,12 +4619,10 @@ pub function (s: EmitState) need(name: string): EmitState {
   let cur = EmitState { ...s, needed: s.needed.append(name) };
   while (i < cur.needed.len()) {
     let deps = runtime_need_deps(cur.needed[i]);
-    let j = 0;
-    while (j < deps.len()) {
+    for j in 0..deps.len() {
       if (!cur.holds(deps[j])) {
         cur = EmitState { ...cur, needed: cur.needed.append(deps[j]) };
       }
-      j += 1;
     }
     i += 1;
   }
@@ -4757,12 +4730,10 @@ function direct_need_deps(name: string): string[] {
 }
 
 function (s: EmitState) holds(name: string): boolean {
-  let i = 0;
-  while (i < s.needed.len()) {
+  for i in 0..s.needed.len() {
     if (s.needed[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4782,23 +4753,19 @@ pub function (s: EmitState) has_need(name: string): boolean {
 pub function settles(t: EmitState, before: i32, missed: usize): boolean {
   let names = "\n" + buf_take(missed);
   buf_free(missed);
-  let i = before;
-  while (i < t.needed.len()) {
+  for i in before..t.needed.len() {
     if (util.contains(names, "\n" + t.needed[i] + "\n")) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
 
 pub function (s: EmitState) any_need(names: string[]): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (s.has_need(names[i])) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -4829,8 +4796,7 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
   let lo = 0;
   let span: i32 = -1;
   let run = 0;
-  let b = 0;
-  while (b < 256) {
+  for b in 0..256 {
     if (members[b] == mark) {
       marked = marked.append(b);
       run += 1;
@@ -4841,7 +4807,6 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
     } else {
       run = 0;
     }
-    b += 1;
   }
   let n = marked.len();
   let nibble = ScanShape { nibble: true, invert: false, range: false, bytes: [] };
@@ -4870,10 +4835,8 @@ pub function utf8_tables(label: string): string {
   o += "    .byte 1, 1, 1, 1, 1, 1, 1, 1, 230, 174, 186, 186, 1, 1, 1, 1\n";
   for c in [15, 96, 112, 128] {
     let r = "    .byte " + util.i32_to_string(c);
-    let k = 1;
-    while (k < 16) {
+    for k in 1..16 {
       r = r + ", " + util.i32_to_string(c);
-      k += 1;
     }
     o = o + r + "\n";
   }
@@ -4882,22 +4845,16 @@ pub function utf8_tables(label: string): string {
 
 pub function scan_set_tables(members: string): string {
   let out: u8[] = [];
-  let half = 0;
-  while (half < 2) {
-    let lo = 0;
-    while (lo < 16) {
+  for half in 0..2 {
+    for lo in 0..16 {
       let bits = 0;
-      let h = 0;
-      while (h < 8) {
+      for h in 0..8 {
         if (members[(half * 8 + h) * 16 + lo] == b'1') {
           bits = bits | 1 << h;
         }
-        h += 1;
       }
       out = out.append(bits as u8);
-      lo += 1;
     }
-    half += 1;
   }
   let k = 0;
   while (k < 16) {
@@ -4911,14 +4868,12 @@ pub function scan_set_tables(members: string): string {
       k += 1;
     }
   }
-  k = 0;
-  while (k < 256) {
+  for k in 0..256 {
     if (members[k] == b'1') {
       out = out.append(1 as u8);
     } else {
       out = out.append(0 as u8);
     }
-    k += 1;
   }
   for c in scan_set_shape(members).bytes {
     out = out.append(c as u8);
@@ -4930,8 +4885,7 @@ pub function scan_set_tables(members: string): string {
 
 pub function escape_for_ascii(s: string): string {
   let out: u8[] = [];
-  let i = 0;
-  while (i < s.len()) {
+  for i in 0..s.len() {
     let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
@@ -4959,7 +4913,6 @@ pub function escape_for_ascii(s: string): string {
     } else {
       out = out.append(s[i] as u8);
     }
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(out);
@@ -5057,13 +5010,13 @@ pub function assignable(want: Ty, got: Ty): boolean {
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
   let lex = kind;
   if (lex.starts_with("stmt: ")) {
-    lex = slice_unchecked(lex, 6, lex.len()) + "";
+    lex = slice_unchecked(lex, 6, lex.len()).to_owned();
   }
   if (lex.starts_with("lex:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8).to_owned(), message: slice_unchecked(lex, 9, lex.len()).to_owned(), line: line, col: col, fix: None };
   }
   if (lex.starts_with("code:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9) + "", message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9).to_owned(), message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
   }
   if (util.is_f64_range_kind(kind)) {
     return util.Diag { related: [], length: 0, code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
@@ -5084,7 +5037,7 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
 function sentinel_message(kind: string): string {
   let k = kind;
   if (k.starts_with("stmt: ")) {
-    k = slice_unchecked(k, 6, k.len()) + "";
+    k = slice_unchecked(k, 6, k.len()).to_owned();
   }
   if (k.starts_with("punct:")) {
     return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
@@ -5093,7 +5046,7 @@ function sentinel_message(kind: string): string {
     return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
   }
   if (k.starts_with("missing ")) {
-    return missing_message(slice_unchecked(k, 8, k.len()) + "");
+    return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
   }
   if (k == "eof") {
     return "expected an expression, got the end of the file";
@@ -5167,10 +5120,10 @@ function missing_message(what: string): string {
 
 function decl_sentinel_text(kind: string): string {
   if (kind.starts_with("decl:")) {
-    return slice_unchecked(kind, 5, kind.len()) + "";
+    return slice_unchecked(kind, 5, kind.len()).to_owned();
   }
   if (kind.starts_with("stmt: decl:")) {
-    return slice_unchecked(kind, 11, kind.len()) + "";
+    return slice_unchecked(kind, 11, kind.len()).to_owned();
   }
   return "";
 }
@@ -5302,8 +5255,7 @@ function unknown_errors_expr(e: ast.Expr, where: string, errs: util.Diag[]): uti
 
 pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let where = "in fn '" + mod.funcs[fi].name + "'";
     if (mod.funcs[fi].name.len() == 0) {
       where = "in malformed function declaration";
@@ -5316,7 +5268,6 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
       pi += 1;
     }
     errs = unknown_errors_stmts(mod.funcs[fi].body, where, errs);
-    fi += 1;
   }
   return unknown_errors_stmts(mod.top_stmts, "at top level", errs);
 }
@@ -5329,12 +5280,10 @@ function display_named(label: string): boolean {
   if (label.len() == 0) {
     return false;
   }
-  let i = 0;
-  while (i < label.len()) {
+  for i in 0..label.len() {
     if (!lexer.is_alphanumeric(label[i] as i32)) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -5388,23 +5337,17 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
 
 pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] {
   let out: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let ctx = DisplayCtx { st: s, fname: fd.name, diags: [] };
-    let si = 0;
-    while (si < fd.body.len()) {
+    for si in 0..fd.body.len() {
       ctx = astwalk.fold_stmt(fd.body[si], ctx, display_fold);
-      si += 1;
     }
     out = util.append_diags(out, ctx.diags);
-    fi += 1;
   }
   let tctx = DisplayCtx { st: s, fname: "main", diags: [] };
-  let ti = 0;
-  while (ti < mod.top_stmts.len()) {
+  for ti in 0..mod.top_stmts.len() {
     tctx = astwalk.fold_stmt(mod.top_stmts[ti], tctx, display_fold);
-    ti += 1;
   }
   return util.append_diags(out, tctx.diags);
 }
@@ -5518,8 +5461,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return check_stmts(fo.body, want, fname, ctx);
     },
     ast.StmtMatch(m) => {
-      let ai = 0;
-      while (ai < m.arms.len()) {
+      for ai in 0..m.arms.len() {
         let actx = ctx;
         match (m.arms[ai].pattern) {
           ast.PatLiteral(literal) => {
@@ -5551,7 +5493,6 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
         }
         actx = check_stmts(m.arms[ai].body, want, fname, actx);
         ctx = CheckCtx { st: ctx.st, diags: actx.diags };
-        ai += 1;
       }
       return ctx;
     },
@@ -5566,8 +5507,8 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
   let owner = "";
   let dot = util.index_of_sub(name, ".");
   if (dot >= 0) {
-    owner = slice_unchecked(name, 0, dot) + "";
-    name = slice_unchecked(name, dot + 1, name.len()) + "";
+    owner = slice_unchecked(name, 0, dot).to_owned();
+    name = slice_unchecked(name, dot + 1, name.len()).to_owned();
   }
   let di: i32 = -1;
   if (owner.len() > 0) {
@@ -5602,23 +5543,19 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
     }
     return out;
   }
-  let k = 0;
-  while (k < names.len()) {
+  for k in 0..names.len() {
     if (names.len() == sd.fields.len()) {
       out = out.bind_local_typed(names[k], struct_local_tag(sd.fields[k].type_name, st));
     } else {
       out = out.bind_local_typed(names[k], ty_unknown());
     }
-    k += 1;
   }
   return out;
 }
 
 pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     ctx = check_stmt(stmts[i], want, fname, ctx);
-    i += 1;
   }
   return ctx;
 }
@@ -5629,10 +5566,8 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
   if (fd.receiver_type.len() > 0) {
     s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
-    pi += 1;
   }
   let ctx = CheckCtx { st: s2, diags: [] };
   ctx = check_stmts(fd.body, want, fd.name, ctx);
@@ -5655,10 +5590,8 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
   if (errs.len() > 0) {
     return errs;
   }
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
-    fi += 1;
   }
   errs = util.append_diags(errs, check_map_new_chain(mod));
   errs = util.append_diags(errs, check_undefined_calls(mod));
@@ -5780,10 +5713,8 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
       return out;
     },
     ast.ExprTuple(t) => {
-      let i = 0;
-      while (i < t.elements.len()) {
+      for i in 0..t.elements.len() {
         out = map_chain_check_expr(t.elements[i], fname, out);
-        i += 1;
       }
       return out;
     },
@@ -5795,8 +5726,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
 
 function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
   let out = errs;
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     match (stmts[i]) {
       ast.StmtVar(v) => {
         out = map_chain_check_expr(v.init, fname, out);
@@ -5825,13 +5755,11 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       ast.StmtMatch(m) => {
         out = map_chain_check_expr(m.scrutinee, fname, out);
-        let ai = 0;
-        while (ai < m.arms.len()) {
+        for ai in 0..m.arms.len() {
           if (m.arms[ai].has_guard) {
             out = map_chain_check_expr(m.arms[ai].guard, fname, out);
           }
           out = map_chain_check_stmts(m.arms[ai].body, fname, out);
-          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -5839,17 +5767,14 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       _ => {}
     }
-    i += 1;
   }
   return out;
 }
 
 pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
-    fi += 1;
   }
   return errs;
 }
@@ -5857,12 +5782,10 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (names[i] == name) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -5888,17 +5811,13 @@ function callgate_known_names(mod: parser.Module): string[] {
   out = out.append("Ok");
   out = out.append("Err");
   let sd = parser.inject_builtin_enums(mod.structs);
-  let si = 0;
-  while (si < sd.len()) {
+  for si in 0..sd.len() {
     out = out.append(sd[si].name);
-    si += 1;
   }
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() > 0) {
       out = out.append(mod.funcs[fi].name);
     }
-    fi += 1;
   }
   out = astwalk.collect_bound_stmts(mod.top_stmts, out);
   return out;
@@ -5908,7 +5827,7 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
   let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      let ns = slice_unchecked(name, 0, i) + "";
+      let ns = slice_unchecked(name, 0, i).to_owned();
       let pfx = ns + "__";
       if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) {
         return "";
@@ -5921,13 +5840,11 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
 }
 
 function callgate_ns_present(pfx: string, names: string[]): boolean {
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let nm = names[i];
     if (nm.len() > pfx.len() && nm.starts_with(pfx)) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -6008,10 +5925,8 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return errs;
     },
     ast.ExprStructLit(sl) => {
-      let i = 0;
-      while (i < sl.field_values.len()) {
+      for i in 0..sl.field_values.len() {
         errs = callgate_expr(sl.field_values[i], g, where, bound, errs);
-        i += 1;
       }
       if (sl.has_base) {
         errs = callgate_expr(sl.base, g, where, bound, errs);
@@ -6023,10 +5938,8 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
     },
     ast.ExprLambda(lm) => {
       let lb = bound;
-      let pi = 0;
-      while (pi < lm.params.len()) {
+      for pi in 0..lm.params.len() {
         lb = lb.append(lm.params[pi].name);
-        pi += 1;
       }
       lb = astwalk.collect_bound_stmts(lm.body, lb);
       return callgate_stmts(lm.body, g, where, lb, errs);
@@ -6048,8 +5961,7 @@ function callgate_known_callee(name: string, known: string[]): boolean {
 }
 
 function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
-  let i = 0;
-  while (i < stmts.len()) {
+  for i in 0..stmts.len() {
     match (stmts[i]) {
       ast.StmtVar(v) => {
         errs = callgate_expr(v.init, g, where, bound, errs);
@@ -6078,13 +5990,11 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       ast.StmtMatch(m) => {
         errs = callgate_expr(m.scrutinee, g, where, bound, errs);
-        let ai = 0;
-        while (ai < m.arms.len()) {
+        for ai in 0..m.arms.len() {
           if (m.arms[ai].has_guard) {
             errs = callgate_expr(m.arms[ai].guard, g, where, bound, errs);
           }
           errs = callgate_stmts(m.arms[ai].body, g, where, bound, errs);
-          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -6092,52 +6002,43 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       _ => {}
     }
-    i += 1;
   }
   return errs;
 }
 
 function callgate_free_names(mod: parser.Module): string[] {
   let names: string[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       names = names.append(mod.funcs[fi].name);
     }
-    fi += 1;
   }
   return names;
 }
 
 function callgate_free_argc(mod: parser.Module): i32[] {
   let argc: i32[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       argc = argc.append(mod.funcs[fi].params.len());
     }
-    fi += 1;
   }
   return argc;
 }
 
 function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let bound: string[] = [];
     if (fd.receiver_type.len() > 0) {
       bound = bound.append(fd.receiver_name);
     }
-    let pi = 0;
-    while (pi < fd.params.len()) {
+    for pi in 0..fd.params.len() {
       bound = bound.append(fd.params[pi].name);
-      pi += 1;
     }
     bound = astwalk.collect_bound_stmts(fd.body, bound);
     errs = callgate_stmts(fd.body, g, "in fn '" + fd.name + "'", bound, errs);
-    fi += 1;
   }
   if (g.check_undef) {
     let tb = astwalk.collect_bound_stmts(mod.top_stmts, []);
@@ -6156,8 +6057,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 
 pub function check_decl_names(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     if (mod.funcs[i].name.len() == 0 && mod.funcs[i].is_const) {
       errs = errs.append(util.Diag {
         length: 0,
@@ -6176,7 +6076,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    i += 1;
   }
   for td in mod.trait_decls {
     if (td.name.len() == 0) {
@@ -6188,8 +6087,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       }
     }
   }
-  let si = 0;
-  while (si < mod.structs.len()) {
+  for si in 0..mod.structs.len() {
     if (mod.structs[si].name.len() == 0) {
       errs = errs.append(util.Diag {
         length: 0,
@@ -6199,7 +6097,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    si += 1;
   }
   for en in mod.enums {
     if (en.name.len() == 0) {
@@ -6272,12 +6169,10 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
     return errs;
   }
   let has_main = false;
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].receiver_type.len() == 0 && mod.funcs[fi].name == "main") {
       has_main = true;
     }
-    fi += 1;
   }
   if (!has_main) {
     return errs;
@@ -6432,7 +6327,7 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   while (bar < e.len() && e[bar] != 124) {
     bar += 1;
   }
-  let shp = slice_unchecked(e, 0, bar) + "";
+  let shp = slice_unchecked(e, 0, bar).to_owned();
   if (shp == "8") {
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
@@ -6449,10 +6344,8 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   st = st.write("    .quad -1\n");
   st = st.write(const_agg_label(st, i) + ":\n");
   st = st.write("    .quad " + shp + "\n");
-  let vi = 0;
-  while (vi < vals.len()) {
+  for vi in 0..vals.len() {
     st = emit_const_agg_field(st, i, vi, vals[vi]);
-    vi += 1;
   }
   return st;
 }
@@ -6478,12 +6371,10 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
     let e = s.const_aggs[i];
     if (const_agg_kind(e) == 2 || ir.const_struct_type(e) == "0") {
       let vals = ir.const_struct_values(e);
-      let vi = 0;
-      while (vi < vals.len()) {
+      for vi in 0..vals.len() {
         if (const_agg_holds_box(vals[vi])) {
           s = s.write("    .quad " + const_agg_field_label(s, i, vi) + "\n");
         }
-        vi += 1;
       }
     }
     i += 1;
@@ -6577,10 +6468,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_arr_dec.u", "__fn___fern_str_free.u",
     "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
   ];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     s = s.write(".globl " + names[i] + "\n");
-    i += 1;
   }
   return s;
 }
@@ -6592,10 +6481,8 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
     return DbgVars { at: [], rows: [] };
   }
   let d = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
-  let i = 0;
-  while (i < r.dbg_slots.len()) {
+  for i in 0..r.dbg_slots.len() {
     d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
-    i += 1;
   }
   return d;
 }
@@ -6627,7 +6514,7 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
     if (j < 0 || j > end) {
       j = end;
     }
-    let shape = slice_unchecked(t, i, j) + "";
+    let shape = slice_unchecked(t, i, j).to_owned();
     let label = dbg_shape_label(s, shape);
     if (label != "") {
       if (out != "") {
@@ -6662,8 +6549,7 @@ function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered
     param = "1";
   }
   let done: i32[] = [];
-  let j = 0;
-  while (j < seen_slots.len()) {
+  for j in 0..seen_slots.len() {
     let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
     if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
       done = done.append(v);
@@ -6674,7 +6560,6 @@ function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered
         rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
       };
     }
-    j += 1;
   }
   return d;
 }
@@ -6704,10 +6589,8 @@ pub function dbg_label(s: EmitState, d: DbgVars, fn_label: string, pos: i32): Em
 }
 
 pub function dbg_labels(s: EmitState, d: DbgVars, fn_label: string, lo: i32, hi: i32): EmitState {
-  let pos = lo;
-  while (pos < hi) {
+  for pos in lo..hi {
     s = dbg_label(s, d, fn_label, pos);
-    pos += 1;
   }
   return s;
 }
@@ -6738,7 +6621,7 @@ function emit_debug_row(own s: EmitState, row: string): EmitState {
   let a = __memchr(row, 124, 0);
   let b = __memchr(row, 124, a + 1);
   let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c) + "");
+  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
   return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
 }
 
@@ -6860,10 +6743,8 @@ pub function ssa_funary_known(what: string): boolean {
 }
 
 pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {
-  let mi = begin;
-  while (mi < blk.insts.len()) {
+  for mi in begin..blk.insts.len() {
     s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
-    mi += 1;
   }
   if (!tailed) {
     s = ssa_prepared_loc(source.terms, blk.id, s);
@@ -6912,20 +6793,17 @@ pub function ssa_join(lp: string, blk: i32): string {
 }
 
 pub function ssa_lane_index(what: string): i32 {
-  let k = 0;
-  while (k < what.len()) {
+  for k in 0..what.len() {
     if (what[k] == b':') {
       return what[k + 1] as i32 - 48;
     }
-    k += 1;
   }
   return 0;
 }
 
 pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
   let units: boolean[] = [];
-  let v = 0;
-  while (v < lanes.len()) {
+  for v in 0..lanes.len() {
     if (lanes[v] && reg_of[v] < -1) {
       let u = ssa.spill_slot(reg_of[v]);
       while (units.len() <= u + 1) {
@@ -6933,7 +6811,6 @@ pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
       }
       units = units.with(u, true).with(u + 1, true);
     }
-    v += 1;
   }
   return units;
 }
@@ -6960,12 +6837,10 @@ pub function ssa_line_loc(ins: ssa.SInst, s: EmitState): EmitState {
 }
 
 pub function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
-  let k = 0;
-  while (k < srcs.len()) {
+  for k in 0..srcs.len() {
     if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) {
       return true;
     }
-    k += 1;
   }
   return false;
 }
@@ -6987,12 +6862,10 @@ pub function ssa_shift_tag(tag: i32): boolean {
 }
 
 pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
-  let j = 0;
-  while (j < srcs.len()) {
+  for j in 0..srcs.len() {
     if (j != self && !done[j] && srcs[j] == reg) {
       return true;
     }
-    j += 1;
   }
   return false;
 }

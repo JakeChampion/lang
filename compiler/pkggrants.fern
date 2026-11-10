@@ -2,6 +2,7 @@ import "./fern_toml";
 import "./caps";
 import "./modloader";
 import "./util";
+import "std/string";
 
 pub struct ManifestAt { dir: string, man: fern_toml.Manifest }
 
@@ -36,24 +37,20 @@ pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.M
     return mans;
   }
   let key = canonical_dir(dir);
-  let i = 0;
-  while (i < mans.len()) {
+  for i in 0..mans.len() {
     if (mans[i].dir == key) {
       return mans;
     }
-    i += 1;
   }
   return mans.append(ManifestAt { dir: key, man: man });
 }
 
 function union_grant(own held: Holding[], dir: string, grants: string[]): Holding[] {
   let at = -1;
-  let i = 0;
-  while (i < held.len()) {
+  for i in 0..held.len() {
     if (held[i].dir == dir) {
       at = i;
     }
-    i += 1;
   }
   if (at < 0) {
     at = held.len();
@@ -71,12 +68,10 @@ function union_grant(own held: Holding[], dir: string, grants: string[]): Holdin
 struct GrantEdge { from: string, to: string, grants: string[] }
 
 function holding_index(held: Holding[], dir: string): i32 {
-  let i = 0;
-  while (i < held.len()) {
+  for i in 0..held.len() {
     if (held[i].dir == dir) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -160,13 +155,11 @@ function sorted_unique(input: string[]): string[] {
 
 function joined(xs: string[], sep: string): string {
   let out = "";
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (i > 0) {
       out += sep;
     }
     out += xs[i];
-    i += 1;
   }
   return out;
 }
@@ -216,13 +209,11 @@ function within(dir: string, parent: string): boolean {
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
   let held = holdings(mans, root.dir);
   let pkgs: caps.Pkg[] = [root];
-  let i = 0;
-  while (i < modules.len()) {
+  for i in 0..modules.len() {
     let m = modules[i];
     if (!m.stdlib) {
       pkgs = pkgs.append(module_package(m, prefixes[i], root, held));
     }
-    i += 1;
   }
   return Checked { pkgs: pkgs, refused: attenuation_refusals(mans, held, root.dir) };
 }
@@ -233,7 +224,7 @@ function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holdi
   for h in held {
     if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
       dir = h.dir;
-      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
+      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()).to_owned();
     }
   }
   let at = holding_index(held, dir);

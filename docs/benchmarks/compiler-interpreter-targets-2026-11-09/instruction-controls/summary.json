@@ -1,0 +1,8 @@
+{
+  "base_guest_instructions": 26463602512,
+  "shortcut_guest_instructions": 23717071286,
+  "saved": 2746531226,
+  "reduction_percent": 10.378523576881028,
+  "stdout_sha256": "bbad629a22a10b63a949bf7771ba4d50bbc25b11dc70e593d99a200176a46405",
+  "note": "Originalebb versus shortcut424fe on the first32-recorddiagnostic. One sample per binary. This does not measure the new index."
+}

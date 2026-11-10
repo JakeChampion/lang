@@ -1,5 +1,6 @@
 import "./util";
 import "./rtbytecopy";
+import "std/string";
 
 pub struct Op {
   kind_tag: i32,
@@ -1267,9 +1268,9 @@ pub function op_privileged(kind: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-// The privileged kinds are 415 to 417, 499 to 510, 518, 519, and 521 to 524.
+// The privileged kinds are 415 to 417, 499 to 510, 518, 519, and 521 to 525.
 pub function is_privileged_kind(id: i32): boolean {
-  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_IRQ_PENDING || id == K_USER_RUN || id == K_CACHE_SYNC_CODE || id >= K_ATOMIC_LOAD_ACQUIRE && id <= K_ATOMIC_CAS;
+  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_IRQ_PENDING || id == K_USER_RUN || id == K_CACHE_SYNC_CODE || id >= K_ATOMIC_LOAD_ACQUIRE && id <= K_SECONDARY_ENTRY;
 }
 
 // hvc and smc take the function and three arguments. wfi, boot_info,
@@ -1846,7 +1847,7 @@ pub function const_struct_type(packed: string): string {
   while (i < packed.len() && packed[i] != 124) {
     i += 1;
   }
-  return slice_unchecked(packed, 0, i) + "";
+  return slice_unchecked(packed, 0, i).to_owned();
 }
 
 pub function const_struct_payload(packed: string): string {
@@ -1857,7 +1858,7 @@ pub function const_struct_payload(packed: string): string {
   if (i == packed.len()) {
     return "";
   }
-  return slice_unchecked(packed, i + 1, packed.len()) + "";
+  return slice_unchecked(packed, i + 1, packed.len()).to_owned();
 }
 
 pub function const_struct_values(packed: string): string[] {
@@ -1875,13 +1876,13 @@ pub function const_struct_values(packed: string): string[] {
     } else if (packed[i] == b'}') {
       depth -= 1;
     } else if (packed[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(packed, start, i) + "");
+      out = out.append(slice_unchecked(packed, start, i).to_owned());
       start = i + 1;
     }
     i += 1;
   }
   if (start < packed.len()) {
-    out = out.append(slice_unchecked(packed, start, packed.len()) + "");
+    out = out.append(slice_unchecked(packed, start, packed.len()).to_owned());
   }
   return out;
 }
@@ -1932,7 +1933,7 @@ pub function const_struct_ref(word: string): string {
   if (word.len() < 2 || word[0] != b'{' || word[word.len() - 1] != b'}') {
     return "";
   }
-  return slice_unchecked(word, 1, word.len() - 1) + "";
+  return slice_unchecked(word, 1, word.len() - 1).to_owned();
 }
 
 // A constant closure whose stub carries the signature word `cfi` under -harden.
@@ -1973,7 +1974,7 @@ pub function const_struct_fn_body(packed: string): string {
   if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
     return "";
   }
-  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)) + "";
+  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)).to_owned();
 }
 
 // The signature word of a constant closure.
@@ -1983,7 +1984,7 @@ pub function const_struct_fn_sig(packed: string): i32 {
   if (at >= t.len()) {
     return 0;
   }
-  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()) + "");
+  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()).to_owned());
 }
 
 function const_struct_fn_hash_at(t: string): i32 {
@@ -2051,13 +2052,11 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
   let tag = "";
-  let i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     if (i > 0) {
       tag += ",";
     }
     tag += arms[i];
-    i += 1;
   }
   return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
@@ -2065,15 +2064,13 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
 pub function dyn_dispatch_arms(tag: string): string[] {
   let out: string[] = [];
   let start = 0;
-  let k = 0;
-  while (k <= tag.len()) {
+  for k in 0..=tag.len() {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
-        out = out.append(slice_unchecked(tag, start, k) + "");
+        out = out.append(slice_unchecked(tag, start, k).to_owned());
       }
       start = k + 1;
     }
-    k += 1;
   }
   return out;
 }
@@ -2340,6 +2337,10 @@ pub const K_ATOMIC_STORE_RELEASE: i32 = 522;
 pub const K_ATOMIC_FETCH_ADD: i32 = 523;
 
 pub const K_ATOMIC_CAS: i32 = 524;
+
+// The address of the entry where PSCI CPU_ON starts another core. It records
+// the active translation for that core.
+pub const K_SECONDARY_ENTRY: i32 = 525;
 
 pub const K_F32_BITS: i32 = 14;
 
@@ -3528,10 +3529,11 @@ const KIND_NAMES: string[] = [
   "atomic_store_release",  // 522
   "atomic_fetch_add",  // 523
   "atomic_cas",  // 524
+  "secondary_entry",  // 525
 ];
 
 // BEGIN GENERATED KIND ORDER (cmd/irkindgen) — do not edit by hand.
-const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 221, 418, 419, 483, 163, 282, 213, 280, 211, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 324, 361, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
+const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 221, 418, 419, 483, 163, 282, 213, 280, 211, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 324, 361, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
 
 // END GENERATED KIND ORDER
 
@@ -3787,10 +3789,8 @@ pub function op_pops_by(by_kind: i32[], o: Op): i32 {
 
 pub function pops_by_kind(): i32[] {
   let out: i32[] = [];
-  let t = 0;
-  while (t < 1024) {
+  for t in 0..1024 {
     out = out.append(kind_pops(t));
-    t += 1;
   }
   return out;
 }
@@ -3953,8 +3953,7 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
   let k_end = K_END;
   let else_at: i32 = -1;
   let d = 0;
-  let i = if_at + 1;
-  while (i < ops.len()) {
+  for i in if_at + 1..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3966,7 +3965,6 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
     } else if (t == k_else && d == 0 && else_at < 0) {
       else_at = i;
     }
-    i += 1;
   }
   return IfSpan { else_at: else_at, end_at: -1 };
 }
@@ -3979,8 +3977,7 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
   let k_br = K_BR;
   let k_brif = K_BRIF;
   let d = 0;
-  let i = lo;
-  while (i < hi) {
+  for i in lo..hi {
     let t = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -3993,7 +3990,6 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
         return true;
       }
     }
-    i += 1;
   }
   return false;
 }
@@ -4130,10 +4126,8 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
           if (wrap) {
             out = out.append(op_block(0));
           }
-          let j = lo;
-          while (j < hi) {
+          for j in lo..hi {
             out = out.append(cur[j]);
-            j += 1;
           }
           if (wrap) {
             out = out.append(op_end());
@@ -4176,10 +4170,8 @@ function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
     out = out.append(ops[j]);
     j += 1;
   }
-  j = 0;
-  while (j < tail.len()) {
+  for j in 0..tail.len() {
     out = out.append(tail[j]);
-    j += 1;
   }
   return out;
 }
@@ -4652,16 +4644,26 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
   let i = 0;
   while (i < ops.len()) {
     let kt = ops[i].kind_tag;
+    if ((kt == K_F32_BITS || kt == K_F32_FROM_BITS) && i + 2 < ops.len()
+      && ops[i + 1].kind_tag == (if (kt == K_F32_BITS) { K_F32_FROM_BITS } else { K_F32_BITS })
+      && ops[i + 2].kind_tag == kt) {
+      if (!changed) {
+        out = fold_prefixed(ops, i, []);
+      }
+      // Keep the first required precision conversion.
+      out = out.append(ops[i]);
+      changed = true;
+      i += 3;
+      continue;
+    }
     if ((kt == k_i32 || kt == k_i32_text) && i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
       match (strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1])) {
         Some(repl) => {
           if (!changed) {
             out = fold_prefixed(ops, i, []);
           }
-          let r = 0;
-          while (r < repl.len()) {
+          for r in 0..repl.len() {
             out = out.append(repl[r]);
-            r += 1;
           }
           changed = true;
           i += 2;
@@ -4695,15 +4697,13 @@ function tv_dump(pass: string, before: Op[], after: Op[]): void {
 
 function tv_ops(side: string, ops: Op[]): string {
   let s = "fern-tv " + side + " " + util.i32_to_string(ops.len()) + "\n";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let u = "0";
     if (o.unsigned) {
       u = "1";
     }
     s = s + kind_name(o.kind_tag) + " " + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm) + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + u + " " + util.i32_to_string(o.decl) + " :" + hex_text(o.str) + "\n";
-    i += 1;
   }
   return s;
 }
@@ -4725,8 +4725,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   let k_end = K_END;
   let k_br = K_BR;
   let k_return = K_RETURN;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if (t == k_end || t == k_else) {
       if (dead && depth == dead_depth) {
@@ -4749,7 +4748,6 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
       dead = true;
       dead_depth = depth;
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -4819,12 +4817,10 @@ function slot_reads(ops: Op[]): i32[] {
 }
 
 function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
-  let s = first;
-  while (s < first + n) {
+  for s in first..first + n {
     if (s >= 0 && s < loads.len()) {
       loads = loads.with(s, loads[s] + 1);
     }
-    s += 1;
   }
   return loads;
 }
@@ -4862,12 +4858,10 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
     return Cancelled { ops: ops, loads: loads, emptied: false };
   }
   let out: Op[] = [];
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (!gone[i]) {
       out = out.append(ops[i]);
     }
-    i += 1;
   }
   return Cancelled { ops: out, loads: loads, emptied: emptied };
 }
@@ -4896,24 +4890,18 @@ function zg_first_write(ops: Op[], nslots: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let first = __alloc_i32(nslots);
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     first = first.with(z, ops.len());
-    z += 1;
   }
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let t = ops[i].kind_tag;
     if ((t == k_store || t == k_tee) && !zg_rezero(ops, i)) {
       first = zg_mark(first, ops[i].i32_imm, i);
     } else if (frame_box_base(ops[i]) >= 0) {
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         first = zg_mark(first, frame_box_base(ops[i]) + fk, i);
-        fk += 1;
       }
     }
-    i += 1;
   }
   return first;
 }
@@ -5196,15 +5184,13 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
   }
   let data_for = licm_data_slots(ops, loop_idx, end, slot_for, cur.n_locals + n);
   let slots = n;
-  let d = 0;
-  while (d < data_for.len()) {
+  for d in 0..data_for.len() {
     if (data_for[d] >= 0) {
       pre = pre.append(op_load_local(d));
       pre = pre.append(op_str_data());
       pre = pre.append(op_store_local(data_for[d]));
       slots += 1;
     }
-    d += 1;
   }
   let out: Op[] = [];
   let j = 0;
@@ -5212,10 +5198,8 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
     out = out.append(ops[j]);
     j += 1;
   }
-  let p = 0;
-  while (p < pre.len()) {
+  for p in 0..pre.len() {
     out = out.append(pre[p]);
-    p += 1;
   }
   out = out.append(ops[loop_idx]);
   let k_load = K_LOAD_LOCAL;
@@ -5279,12 +5263,10 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: i32[], 
 }
 
 function licm_listed(order: i32[], src: i32): boolean {
-  let i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     if (order[i] == src) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -5316,8 +5298,7 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
   let k_if = K_IF;
   let k_end = K_END;
   let depth = 0;
-  let j = open;
-  while (j < ops.len()) {
+  for j in open..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       depth += 1;
@@ -5327,7 +5308,6 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
         return j;
       }
     }
-    j += 1;
   }
   return -1;
 }
@@ -5335,13 +5315,11 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
 function licm_stored_locals(ops: Op[], lo: i32, hi: i32, own stored: i32[], mark: i32): i32[] {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
-  let j = lo;
-  while (j < hi) {
+  for j in lo..hi {
     let t = ops[j].kind_tag;
     if (t == k_store || t == k_tee) {
       stored = stored.with(ops[j].i32_imm, mark);
     }
-    j += 1;
   }
   return stored;
 }
@@ -5351,39 +5329,33 @@ function cp_max_slot(ops: Op[]): i32 {
   let k_store = K_STORE_LOCAL;
   let k_tee = K_TEE_LOCAL;
   let maxs: i32 = -1;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let kt = ops[i].kind_tag;
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (ops[i].i32_imm > maxs) {
         maxs = ops[i].i32_imm;
       }
     }
-    i += 1;
   }
   return maxs;
 }
 
 function cp_kill_after(own has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     let s = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
-    k += 1;
   }
   return has;
 }
 
 function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
   let out: i32[] = [];
-  let k = 0;
-  while (k < bound.len()) {
+  for k in 0..bound.len() {
     if (has[bound[k]]) {
       out = out.append(bound[k]);
     }
-    k += 1;
   }
   return out;
 }
@@ -5396,8 +5368,7 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
   let k_if = K_IF;
   let k_end = K_END;
   let d = 0;
-  let j = at + 1;
-  while (j < ops.len()) {
+  for j in at + 1..ops.len() {
     let t = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d += 1;
@@ -5413,15 +5384,12 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
       }
     } else if (frame_box_base(ops[j]) >= 0) {
       let fb = frame_box_base(ops[j]);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         if (fb + fk >= 0 && fb + fk < has.len()) {
           has = has.with(fb + fk, false);
         }
-        fk += 1;
       }
     }
-    j += 1;
   }
   return has;
 }
@@ -5449,10 +5417,8 @@ pub function const_propagate(ops: Op[]): Op[] {
   let has = __alloc_bool(nslots);
   let wrote = util.minus_ones(nslots);
   let bound: i32[] = [];
-  let z = 0;
-  while (z < nslots) {
+  for z in 0..nslots {
     known = known.append(zero);
-    z += 1;
   }
 
   let fr_kind: i32[] = [];
@@ -5464,8 +5430,7 @@ pub function const_propagate(ops: Op[]): Op[] {
 
   let out: Op[] = [];
   let copying = false;
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let kt = o.kind_tag;
     let emit = o;
@@ -5506,8 +5471,7 @@ pub function const_propagate(ops: Op[]): Op[] {
       }
     } else if (frame_box_base(o) >= 0) {
       let fb = frame_box_base(o);
-      let fk = 0;
-      while (fk < 3) {
+      for fk in 0..3 {
         let fs = fb + fk;
         if (fs >= 0 && fs < nslots) {
           wrote = wrote.with(fs, i);
@@ -5516,7 +5480,6 @@ pub function const_propagate(ops: Op[]): Op[] {
             has = has.with(fs, false);
           }
         }
-        fk += 1;
       }
     } else if (kt == k_store || kt == k_tee) {
       let sl = o.i32_imm;
@@ -5544,7 +5507,6 @@ pub function const_propagate(ops: Op[]): Op[] {
     if (copying) {
       out = out.append(emit);
     }
-    i += 1;
   }
   if (copying) {
     return out;
@@ -5600,8 +5562,7 @@ pub function propagate_copies(ops: Op[]): Op[] {
   }
   let out: Op[] = [];
   let copying = false;
-  i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let dead_tee = false;
     let sl2 = ops[i].i32_imm;
     if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
@@ -5615,7 +5576,6 @@ pub function propagate_copies(ops: Op[]): Op[] {
       out = fold_prefixed(ops, i, []);
       copying = true;
     }
-    i += 1;
   }
   if (copying) {
     return out;

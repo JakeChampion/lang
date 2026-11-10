@@ -1,0 +1,10 @@
+// A TOTP period below 1 second stops the program with status 134.
+import "std/crypto";
+import "std/string";
+
+function main(): i32 {
+    let key = "12345678901234567890123456789012".bytes();
+    print((crypto.totp_sha256(key, 59, 30, 8) >= 0).to_string());
+    print(crypto.totp_sha256(key, 59, 0, 8).to_string());
+    return 0;
+}

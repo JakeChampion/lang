@@ -109,12 +109,10 @@ function calls(s: string): void {
 function identities(s: string): void {
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 0;
-  while (i < regs.len()) {
+  for i in 0..regs.len() {
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
     mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
-    i += 1;
   }
   mutation(s, "movl -8(%rax), %ecx", "movq %rbx, %rcx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", true);
   mutation(s, "movl -8(%rax), %ecx", "movl %ebx, %ecx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", false);

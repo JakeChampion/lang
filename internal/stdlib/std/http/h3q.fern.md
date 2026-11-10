@@ -145,7 +145,7 @@ pub function (c: Conn) tickets_taken(): Conn {
 }
 
 pub function (c: Conn) events_taken(): Conn {
-  return Conn { ...c, events: [] };
+  return Conn { ...c, events: c.events.truncate(0) };
 }
 
 // Parked is a connection between requests, without its events, so a client

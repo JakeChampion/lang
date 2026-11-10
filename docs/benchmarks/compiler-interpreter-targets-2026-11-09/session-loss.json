@@ -1,0 +1,5 @@
+{
+  "observed_at": "2026-11-09T22:13:19.537134+00:00",
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "note": "The tool returned Unknown process id for two previously active sessions. Their parent processes are zombies. The full native interpreter children remain alive because each has a separate session. The count build and Go test process also stopped without final records. No OOM event appears in cgroup counters. Retain incomplete records and do not call them passes. Restart incomplete controls in detached sessions. Full controls use a procfs monitor with the original deadlines."
+}

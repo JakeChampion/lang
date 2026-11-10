@@ -49,6 +49,14 @@ func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string,
 		t.Skip("requires GNU coreutils 9.4 or newer")
 	}
 	t.Logf("reference: %s", first)
+	RunDigestCheckByteCasesAgainst(t, utility, bin, runner, []string{oracle}, census)
+}
+
+func RunDigestCheckByteCasesAgainst(t *testing.T, utility, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU checksum reference command")
+	}
 	dir := t.TempDir()
 	for _, name := range []string{"f", "é🙂", "back\\slash", "new\nline"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("hello\n"), 0o644); err != nil {
@@ -81,7 +89,7 @@ func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string,
 		} else if utility == "cksum" {
 			args = append(args, "--untagged")
 		}
-		out, diagnostic, code := run([]string{oracle}, append(args, name), "")
+		out, diagnostic, code := run(oracle, append(args, name), "")
 		if code != 0 || diagnostic != "" {
 			t.Fatalf("generate checksum: %d %s", code, diagnostic)
 		}
@@ -136,7 +144,7 @@ func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string,
 	}
 	if utility == "cksum" {
 		for _, algorithm := range []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"} {
-			line, diagnostic, code := run([]string{oracle}, []string{"-a", algorithm, "--tag", "f"}, "")
+			line, diagnostic, code := run(oracle, []string{"-a", algorithm, "--tag", "f"}, "")
 			if code != 0 || diagnostic != "" {
 				t.Fatalf("generate %s checksum: %d %s", algorithm, code, diagnostic)
 			}
@@ -206,7 +214,7 @@ func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string,
 					}
 				}
 			} else {
-				want, diagnostic, code = run([]string{oracle}, args, input)
+				want, diagnostic, code = run(oracle, args, input)
 				diagnostic = normalize(diagnostic)
 			}
 			command := append(append([]string{}, runner...), bin)

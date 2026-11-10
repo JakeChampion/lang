@@ -1,0 +1,829 @@
+=== RUN   TestSelfHostInterpCallCostIgnoresFunctionCount
+    self_host_interp_call_lookup_test.go:20: no filler functions: 2.515626401s, 4000 filler functions: 2.342839473s
+--- PASS: TestSelfHostInterpCallCostIgnoresFunctionCount (64.21s)
+=== RUN   TestSelfHostInterpCallableValues
+=== RUN   TestSelfHostInterpCallableValues/field-closure-on-local
+=== RUN   TestSelfHostInterpCallableValues/field-closure-through-array
+=== RUN   TestSelfHostInterpCallableValues/field-closure-captures
+=== RUN   TestSelfHostInterpCallableValues/method-wins-over-field
+=== RUN   TestSelfHostInterpCallableValues/ordinary-method
+=== RUN   TestSelfHostInterpCallableValues/tuple-element-closure
+=== RUN   TestSelfHostInterpCallableValues/fn-pointer-field
+=== RUN   TestSelfHostInterpCallableValues/fn-name-as-argument
+=== RUN   TestSelfHostInterpCallableValues/method-returned-closure
+=== RUN   TestSelfHostInterpCallableValues/local-shadows-fn-name
+=== RUN   TestSelfHostInterpCallableValues/plain-tuple-read
+=== RUN   TestSelfHostInterpCallableValues/const-ref
+=== RUN   TestSelfHostInterpCallableValues/const-two
+=== RUN   TestSelfHostInterpCallableValues/const-in-callee
+=== RUN   TestSelfHostInterpCallableValues/const-receiver
+=== RUN   TestSelfHostInterpCallableValues/const-as-argument
+=== RUN   TestSelfHostInterpCallableValues/enum-variant-nullary
+=== RUN   TestSelfHostInterpCallableValues/enum-variant-payload
+--- PASS: TestSelfHostInterpCallableValues (13.48s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-on-local (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-through-array (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/field-closure-captures (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/method-wins-over-field (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/ordinary-method (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/tuple-element-closure (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/fn-pointer-field (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/fn-name-as-argument (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/method-returned-closure (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/local-shadows-fn-name (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/plain-tuple-read (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-ref (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-two (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-in-callee (0.01s)
+    --- PASS: TestSelfHostInterpCallableValues/const-receiver (0.05s)
+    --- PASS: TestSelfHostInterpCallableValues/const-as-argument (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/enum-variant-nullary (0.02s)
+    --- PASS: TestSelfHostInterpCallableValues/enum-variant-payload (0.01s)
+=== RUN   TestSelfHostInterpDriverX86_64
+=== RUN   TestSelfHostInterpDriverX86_64/raw-filesystem-byte-results
+=== RUN   TestSelfHostInterpDriverX86_64/return-literal
+=== RUN   TestSelfHostInterpDriverX86_64/arith
+=== RUN   TestSelfHostInterpDriverX86_64/hex-literal
+=== RUN   TestSelfHostInterpDriverX86_64/hex-arith
+=== RUN   TestSelfHostInterpDriverX86_64/sci-float-exp
+=== RUN   TestSelfHostInterpDriverX86_64/sci-float-frac
+=== RUN   TestSelfHostInterpDriverX86_64/sci-float-neg-exp
+=== RUN   TestSelfHostInterpDriverX86_64/float-lit-overflow-rejected
+=== RUN   TestSelfHostInterpDriverX86_64/float-lit-underflow-accepted
+=== RUN   TestSelfHostInterpDriverX86_64/bool-literal-postfix
+=== RUN   TestSelfHostInterpDriverX86_64/locals
+=== RUN   TestSelfHostInterpDriverX86_64/if
+=== RUN   TestSelfHostInterpDriverX86_64/call
+=== RUN   TestSelfHostInterpDriverX86_64/call-explicit-type-arguments
+=== RUN   TestSelfHostInterpDriverX86_64/call-zero-arguments-generic
+=== RUN   TestSelfHostInterpDriverX86_64/call-static-const-type-argument
+=== RUN   TestSelfHostInterpDriverX86_64/call-nested-generic-method
+=== RUN   TestSelfHostInterpDriverX86_64/call-nested-generic-associated
+=== RUN   TestSelfHostInterpDriverX86_64/default-one
+=== RUN   TestSelfHostInterpDriverX86_64/default-multi
+=== RUN   TestSelfHostInterpDriverX86_64/float
+=== RUN   TestSelfHostInterpDriverX86_64/cast-i64-to-i32
+=== RUN   TestSelfHostInterpDriverX86_64/cast-f64-to-i32
+=== RUN   TestSelfHostInterpDriverX86_64/cast-i32-to-f64
+=== RUN   TestSelfHostInterpDriverX86_64/cast-in-i64-array-sum
+=== RUN   TestSelfHostInterpDriverX86_64/asc-array-identity
+=== RUN   TestSelfHostInterpDriverX86_64/range-sum
+=== RUN   TestSelfHostInterpDriverX86_64/range-continue
+=== RUN   TestSelfHostInterpDriverX86_64/range-break
+=== RUN   TestSelfHostInterpDriverX86_64/range-empty
+=== RUN   TestSelfHostInterpDriverX86_64/range-nested
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-sum
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-continue
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-break
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-single
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-reversed
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-i32-max
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-i32-max-last
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-i32-min-single
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-i32-max-continue
+=== RUN   TestSelfHostInterpDriverX86_64/range-incl-i32-max-break
+=== RUN   TestSelfHostInterpDriverX86_64/defer-binding-in-a-conditional
+=== RUN   TestSelfHostInterpDriverX86_64/defer-binding-in-a-loop-body
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-lambda
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-lambda-var
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-lambda-nested
+=== RUN   TestSelfHostInterpDriverX86_64/labeled-break-in-lambda
+=== RUN   TestSelfHostInterpDriverX86_64/labeled-continue-in-lambda
+=== RUN   TestSelfHostInterpDriverX86_64/labeled-break-shadowed-in-lambda
+=== RUN   TestSelfHostInterpDriverX86_64/defer-in-lambda
+=== RUN   TestSelfHostInterpDriverX86_64/defer-in-lambda-runs
+=== RUN   TestSelfHostInterpDriverX86_64/defer-in-lambda-and-fn
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-lambda-match-arm
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-if-branches
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-match-arm
+=== RUN   TestSelfHostInterpDriverX86_64/range-in-defer
+=== RUN   TestSelfHostInterpDriverX86_64/generic-trait-default-method
+=== RUN   TestSelfHostInterpDriverX86_64/slice-open-low
+=== RUN   TestSelfHostInterpDriverX86_64/cfor-expr-init
+=== RUN   TestSelfHostInterpDriverX86_64/cfor-empty-init
+=== RUN   TestSelfHostInterpDriverX86_64/lexer-formfeed-ws
+=== RUN   TestSelfHostInterpDriverX86_64/bit-and
+=== RUN   TestSelfHostInterpDriverX86_64/bit-or
+=== RUN   TestSelfHostInterpDriverX86_64/bit-xor
+=== RUN   TestSelfHostInterpDriverX86_64/bit-shl
+=== RUN   TestSelfHostInterpDriverX86_64/bit-shr
+=== RUN   TestSelfHostInterpDriverX86_64/div-by-zero-total
+=== RUN   TestSelfHostInterpDriverX86_64/mod-by-zero-total
+=== RUN   TestSelfHostInterpDriverX86_64/fdiv-inf
+=== RUN   TestSelfHostInterpDriverX86_64/fdiv-nan
+=== RUN   TestSelfHostInterpDriverX86_64/and-short-circuit
+=== RUN   TestSelfHostInterpDriverX86_64/or-short-circuit
+=== RUN   TestSelfHostInterpDriverX86_64/oob-var-init-not-swallowed
+=== RUN   TestSelfHostInterpDriverX86_64/braceless-if-else
+=== RUN   TestSelfHostInterpDriverX86_64/braceless-while-refused
+=== RUN   TestSelfHostInterpDriverX86_64/braceless-for-refused
+=== RUN   TestSelfHostInterpDriverX86_64/chained-assign-2
+=== RUN   TestSelfHostInterpDriverX86_64/chained-assign-3
+=== RUN   TestSelfHostInterpDriverX86_64/use-monadic-bind
+=== RUN   TestSelfHostInterpDriverX86_64/cast-u8-wrap
+=== RUN   TestSelfHostInterpDriverX86_64/cast-u8-inrange
+=== RUN   TestSelfHostInterpDriverX86_64/str-len-method
+=== RUN   TestSelfHostInterpDriverX86_64/arr-len-method
+=== RUN   TestSelfHostInterpDriverX86_64/arr-len-empty
+=== RUN   TestSelfHostInterpDriverX86_64/arr-append-len
+=== RUN   TestSelfHostInterpDriverX86_64/arr-append-value
+=== RUN   TestSelfHostInterpDriverX86_64/arr-append-immutable
+=== RUN   TestSelfHostInterpDriverX86_64/const-ref
+=== RUN   TestSelfHostInterpDriverX86_64/const-in-expr
+=== RUN   TestSelfHostInterpDriverX86_64/const-two
+=== RUN   TestSelfHostInterpDriverX86_64/const-in-callee
+=== RUN   TestSelfHostInterpDriverX86_64/const-string
+=== RUN   TestSelfHostInterpDriverX86_64/enum-nullary-match
+=== RUN   TestSelfHostInterpDriverX86_64/enum-nullary-first
+=== RUN   TestSelfHostInterpDriverX86_64/enum-three-way
+=== RUN   TestSelfHostInterpDriverX86_64/enum-wildcard-arm
+=== RUN   TestSelfHostInterpDriverX86_64/enum-return-from-fn
+=== RUN   TestSelfHostInterpDriverX86_64/enum-in-array
+=== RUN   TestSelfHostInterpDriverX86_64/enum-payload-bind
+=== RUN   TestSelfHostInterpDriverX86_64/enum-payload-other-arm
+=== RUN   TestSelfHostInterpDriverX86_64/enum-option-unwrap
+=== RUN   TestSelfHostInterpDriverX86_64/enum-result-err
+=== RUN   TestSelfHostInterpDriverX86_64/enum-payload-ignore
+=== RUN   TestSelfHostInterpDriverX86_64/enum-payload-in-array
+=== RUN   TestSelfHostInterpDriverX86_64/enum-method-payload
+=== RUN   TestSelfHostInterpDriverX86_64/enum-method-nullary
+=== RUN   TestSelfHostInterpDriverX86_64/enum-method-with-arg
+=== RUN   TestSelfHostInterpDriverX86_64/builtin-ioerror-method
+=== RUN   TestSelfHostInterpDriverX86_64/builtin-variant-shadow-method
+=== RUN   TestSelfHostInterpDriverX86_64/i64-literal-div
+=== RUN   TestSelfHostInterpDriverX86_64/i64-mul-fits-operands
+=== RUN   TestSelfHostInterpDriverX86_64/i64-accumulator
+=== RUN   TestSelfHostInterpDriverX86_64/i64-negative-div
+=== RUN   TestSelfHostInterpDriverX86_64/i64-mod
+=== RUN   TestSelfHostInterpDriverX86_64/i64-param-promote
+=== RUN   TestSelfHostInterpDriverX86_64/i64-array-sum
+=== RUN   TestSelfHostInterpDriverX86_64/i64-compare
+=== RUN   TestSelfHostInterpDriverX86_64/i32-overflow-unchanged
+=== RUN   TestSelfHostInterpDriverX86_64/u32-shr-logical
+=== RUN   TestSelfHostInterpDriverX86_64/u32-div-unsigned
+=== RUN   TestSelfHostInterpDriverX86_64/u32-cmp-unsigned
+=== RUN   TestSelfHostInterpDriverX86_64/f32-round-2p24
+=== RUN   TestSelfHostInterpDriverX86_64/f32-sticky-chain
+=== RUN   TestSelfHostInterpDriverX86_64/defer-scope-exit
+=== RUN   TestSelfHostInterpDriverX86_64/defer-not-eager-mid-body
+=== RUN   TestSelfHostInterpDriverX86_64/labeled-break-two-level
+=== RUN   TestSelfHostInterpDriverX86_64/labeled-continue-two-level
+=== RUN   TestSelfHostInterpDriverX86_64/unlabeled-break-innermost
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-add-negative
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-add-eq-min
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-add-via-locals
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-add-literals
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-add-not-greater
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-sub
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-mul
+=== RUN   TestSelfHostInterpDriverX86_64/i32-wrap-shl
+=== RUN   TestSelfHostInterpDriverX86_64/sat-add-hi
+=== RUN   TestSelfHostInterpDriverX86_64/sat-sub-lo
+=== RUN   TestSelfHostInterpDriverX86_64/sat-mul-hi
+=== RUN   TestSelfHostInterpDriverX86_64/sat-mul-lo
+=== RUN   TestSelfHostInterpDriverX86_64/sat-plain
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-hi
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-lo
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-exact-min
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-plain
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-oor
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-oor-zero
+=== RUN   TestSelfHostInterpDriverX86_64/sat-shl-neg-count
+=== RUN   TestSelfHostInterpDriverX86_64/slice-unchecked-builtin
+=== RUN   TestSelfHostInterpDriverX86_64/slice-unchecked-oob
+--- PASS: TestSelfHostInterpDriverX86_64 (51.44s)
+    --- PASS: TestSelfHostInterpDriverX86_64/raw-filesystem-byte-results (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/return-literal (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arith (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/hex-literal (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/hex-arith (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sci-float-exp (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sci-float-frac (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sci-float-neg-exp (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/float-lit-overflow-rejected (0.01s)
+    --- PASS: TestSelfHostInterpDriverX86_64/float-lit-underflow-accepted (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bool-literal-postfix (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/locals (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/if (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call-explicit-type-arguments (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call-zero-arguments-generic (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call-static-const-type-argument (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call-nested-generic-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/call-nested-generic-associated (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/default-one (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/default-multi (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/float (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-i64-to-i32 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-f64-to-i32 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-i32-to-f64 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-in-i64-array-sum (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/asc-array-identity (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-sum (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-continue (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-break (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-empty (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-nested (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-sum (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-continue (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-break (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-single (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-reversed (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-i32-max (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-i32-max-last (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-i32-min-single (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-i32-max-continue (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-incl-i32-max-break (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-binding-in-a-conditional (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-binding-in-a-loop-body (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-lambda (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-lambda-var (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-lambda-nested (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/labeled-break-in-lambda (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/labeled-continue-in-lambda (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/labeled-break-shadowed-in-lambda (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-in-lambda (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-in-lambda-runs (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-in-lambda-and-fn (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-lambda-match-arm (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-if-branches (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-match-arm (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/range-in-defer (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/generic-trait-default-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/slice-open-low (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cfor-expr-init (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cfor-empty-init (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/lexer-formfeed-ws (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bit-and (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bit-or (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bit-xor (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bit-shl (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/bit-shr (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/div-by-zero-total (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/mod-by-zero-total (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/fdiv-inf (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/fdiv-nan (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/and-short-circuit (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/or-short-circuit (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/oob-var-init-not-swallowed (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/braceless-if-else (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/braceless-while-refused (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/braceless-for-refused (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/chained-assign-2 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/chained-assign-3 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/use-monadic-bind (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-u8-wrap (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/cast-u8-inrange (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/str-len-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arr-len-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arr-len-empty (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arr-append-len (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arr-append-value (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/arr-append-immutable (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/const-ref (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/const-in-expr (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/const-two (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/const-in-callee (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/const-string (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-nullary-match (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-nullary-first (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-three-way (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-wildcard-arm (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-return-from-fn (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-in-array (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-payload-bind (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-payload-other-arm (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-option-unwrap (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-result-err (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-payload-ignore (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-payload-in-array (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-method-payload (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-method-nullary (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/enum-method-with-arg (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/builtin-ioerror-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/builtin-variant-shadow-method (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-literal-div (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-mul-fits-operands (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-accumulator (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-negative-div (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-mod (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-param-promote (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-array-sum (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i64-compare (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-overflow-unchanged (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/u32-shr-logical (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/u32-div-unsigned (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/u32-cmp-unsigned (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/f32-round-2p24 (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/f32-sticky-chain (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-scope-exit (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/defer-not-eager-mid-body (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/labeled-break-two-level (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/labeled-continue-two-level (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/unlabeled-break-innermost (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-add-negative (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-add-eq-min (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-add-via-locals (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-add-literals (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-add-not-greater (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-sub (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-mul (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/i32-wrap-shl (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-add-hi (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-sub-lo (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-mul-hi (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-mul-lo (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-plain (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-hi (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-lo (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-exact-min (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-plain (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-oor (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-oor-zero (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/sat-shl-neg-count (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/slice-unchecked-builtin (0.00s)
+    --- PASS: TestSelfHostInterpDriverX86_64/slice-unchecked-oob (0.00s)
+=== RUN   TestSelfHostInterpDriverArm64
+=== RUN   TestSelfHostInterpDriverArm64/raw-filesystem-byte-results
+=== RUN   TestSelfHostInterpDriverArm64/return-literal
+=== RUN   TestSelfHostInterpDriverArm64/arith
+=== RUN   TestSelfHostInterpDriverArm64/hex-literal
+=== RUN   TestSelfHostInterpDriverArm64/hex-arith
+=== RUN   TestSelfHostInterpDriverArm64/sci-float-exp
+=== RUN   TestSelfHostInterpDriverArm64/sci-float-frac
+=== RUN   TestSelfHostInterpDriverArm64/sci-float-neg-exp
+=== RUN   TestSelfHostInterpDriverArm64/float-lit-overflow-rejected
+=== RUN   TestSelfHostInterpDriverArm64/float-lit-underflow-accepted
+=== RUN   TestSelfHostInterpDriverArm64/bool-literal-postfix
+=== RUN   TestSelfHostInterpDriverArm64/locals
+=== RUN   TestSelfHostInterpDriverArm64/if
+=== RUN   TestSelfHostInterpDriverArm64/call
+=== RUN   TestSelfHostInterpDriverArm64/call-explicit-type-arguments
+=== RUN   TestSelfHostInterpDriverArm64/call-zero-arguments-generic
+=== RUN   TestSelfHostInterpDriverArm64/call-static-const-type-argument
+=== RUN   TestSelfHostInterpDriverArm64/call-nested-generic-method
+=== RUN   TestSelfHostInterpDriverArm64/call-nested-generic-associated
+=== RUN   TestSelfHostInterpDriverArm64/default-one
+=== RUN   TestSelfHostInterpDriverArm64/default-multi
+=== RUN   TestSelfHostInterpDriverArm64/float
+=== RUN   TestSelfHostInterpDriverArm64/cast-i64-to-i32
+=== RUN   TestSelfHostInterpDriverArm64/cast-f64-to-i32
+=== RUN   TestSelfHostInterpDriverArm64/cast-i32-to-f64
+=== RUN   TestSelfHostInterpDriverArm64/cast-in-i64-array-sum
+=== RUN   TestSelfHostInterpDriverArm64/asc-array-identity
+=== RUN   TestSelfHostInterpDriverArm64/range-sum
+=== RUN   TestSelfHostInterpDriverArm64/range-continue
+=== RUN   TestSelfHostInterpDriverArm64/range-break
+=== RUN   TestSelfHostInterpDriverArm64/range-empty
+=== RUN   TestSelfHostInterpDriverArm64/range-nested
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-sum
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-continue
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-break
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-single
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-reversed
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-i32-max
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-i32-max-last
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-i32-min-single
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-i32-max-continue
+=== RUN   TestSelfHostInterpDriverArm64/range-incl-i32-max-break
+=== RUN   TestSelfHostInterpDriverArm64/defer-binding-in-a-conditional
+=== RUN   TestSelfHostInterpDriverArm64/defer-binding-in-a-loop-body
+=== RUN   TestSelfHostInterpDriverArm64/range-in-lambda
+=== RUN   TestSelfHostInterpDriverArm64/range-in-lambda-var
+=== RUN   TestSelfHostInterpDriverArm64/range-in-lambda-nested
+=== RUN   TestSelfHostInterpDriverArm64/labeled-break-in-lambda
+=== RUN   TestSelfHostInterpDriverArm64/labeled-continue-in-lambda
+=== RUN   TestSelfHostInterpDriverArm64/labeled-break-shadowed-in-lambda
+=== RUN   TestSelfHostInterpDriverArm64/defer-in-lambda
+=== RUN   TestSelfHostInterpDriverArm64/defer-in-lambda-runs
+=== RUN   TestSelfHostInterpDriverArm64/defer-in-lambda-and-fn
+=== RUN   TestSelfHostInterpDriverArm64/range-in-lambda-match-arm
+=== RUN   TestSelfHostInterpDriverArm64/range-in-if-branches
+=== RUN   TestSelfHostInterpDriverArm64/range-in-match-arm
+=== RUN   TestSelfHostInterpDriverArm64/range-in-defer
+=== RUN   TestSelfHostInterpDriverArm64/generic-trait-default-method
+=== RUN   TestSelfHostInterpDriverArm64/slice-open-low
+=== RUN   TestSelfHostInterpDriverArm64/cfor-expr-init
+=== RUN   TestSelfHostInterpDriverArm64/cfor-empty-init
+=== RUN   TestSelfHostInterpDriverArm64/lexer-formfeed-ws
+=== RUN   TestSelfHostInterpDriverArm64/bit-and
+=== RUN   TestSelfHostInterpDriverArm64/bit-or
+=== RUN   TestSelfHostInterpDriverArm64/bit-xor
+=== RUN   TestSelfHostInterpDriverArm64/bit-shl
+=== RUN   TestSelfHostInterpDriverArm64/bit-shr
+=== RUN   TestSelfHostInterpDriverArm64/div-by-zero-total
+=== RUN   TestSelfHostInterpDriverArm64/mod-by-zero-total
+=== RUN   TestSelfHostInterpDriverArm64/fdiv-inf
+=== RUN   TestSelfHostInterpDriverArm64/fdiv-nan
+=== RUN   TestSelfHostInterpDriverArm64/and-short-circuit
+=== RUN   TestSelfHostInterpDriverArm64/or-short-circuit
+=== RUN   TestSelfHostInterpDriverArm64/oob-var-init-not-swallowed
+=== RUN   TestSelfHostInterpDriverArm64/braceless-if-else
+=== RUN   TestSelfHostInterpDriverArm64/braceless-while-refused
+=== RUN   TestSelfHostInterpDriverArm64/braceless-for-refused
+=== RUN   TestSelfHostInterpDriverArm64/chained-assign-2
+=== RUN   TestSelfHostInterpDriverArm64/chained-assign-3
+=== RUN   TestSelfHostInterpDriverArm64/use-monadic-bind
+=== RUN   TestSelfHostInterpDriverArm64/cast-u8-wrap
+=== RUN   TestSelfHostInterpDriverArm64/cast-u8-inrange
+=== RUN   TestSelfHostInterpDriverArm64/str-len-method
+=== RUN   TestSelfHostInterpDriverArm64/arr-len-method
+=== RUN   TestSelfHostInterpDriverArm64/arr-len-empty
+=== RUN   TestSelfHostInterpDriverArm64/arr-append-len
+=== RUN   TestSelfHostInterpDriverArm64/arr-append-value
+=== RUN   TestSelfHostInterpDriverArm64/arr-append-immutable
+=== RUN   TestSelfHostInterpDriverArm64/const-ref
+=== RUN   TestSelfHostInterpDriverArm64/const-in-expr
+=== RUN   TestSelfHostInterpDriverArm64/const-two
+=== RUN   TestSelfHostInterpDriverArm64/const-in-callee
+=== RUN   TestSelfHostInterpDriverArm64/const-string
+=== RUN   TestSelfHostInterpDriverArm64/enum-nullary-match
+=== RUN   TestSelfHostInterpDriverArm64/enum-nullary-first
+=== RUN   TestSelfHostInterpDriverArm64/enum-three-way
+=== RUN   TestSelfHostInterpDriverArm64/enum-wildcard-arm
+=== RUN   TestSelfHostInterpDriverArm64/enum-return-from-fn
+=== RUN   TestSelfHostInterpDriverArm64/enum-in-array
+=== RUN   TestSelfHostInterpDriverArm64/enum-payload-bind
+=== RUN   TestSelfHostInterpDriverArm64/enum-payload-other-arm
+=== RUN   TestSelfHostInterpDriverArm64/enum-option-unwrap
+=== RUN   TestSelfHostInterpDriverArm64/enum-result-err
+=== RUN   TestSelfHostInterpDriverArm64/enum-payload-ignore
+=== RUN   TestSelfHostInterpDriverArm64/enum-payload-in-array
+=== RUN   TestSelfHostInterpDriverArm64/enum-method-payload
+=== RUN   TestSelfHostInterpDriverArm64/enum-method-nullary
+=== RUN   TestSelfHostInterpDriverArm64/enum-method-with-arg
+=== RUN   TestSelfHostInterpDriverArm64/builtin-ioerror-method
+=== RUN   TestSelfHostInterpDriverArm64/builtin-variant-shadow-method
+=== RUN   TestSelfHostInterpDriverArm64/i64-literal-div
+=== RUN   TestSelfHostInterpDriverArm64/i64-mul-fits-operands
+=== RUN   TestSelfHostInterpDriverArm64/i64-accumulator
+=== RUN   TestSelfHostInterpDriverArm64/i64-negative-div
+=== RUN   TestSelfHostInterpDriverArm64/i64-mod
+=== RUN   TestSelfHostInterpDriverArm64/i64-param-promote
+=== RUN   TestSelfHostInterpDriverArm64/i64-array-sum
+=== RUN   TestSelfHostInterpDriverArm64/i64-compare
+=== RUN   TestSelfHostInterpDriverArm64/i32-overflow-unchanged
+=== RUN   TestSelfHostInterpDriverArm64/u32-shr-logical
+=== RUN   TestSelfHostInterpDriverArm64/u32-div-unsigned
+=== RUN   TestSelfHostInterpDriverArm64/u32-cmp-unsigned
+=== RUN   TestSelfHostInterpDriverArm64/f32-round-2p24
+=== RUN   TestSelfHostInterpDriverArm64/f32-sticky-chain
+=== RUN   TestSelfHostInterpDriverArm64/defer-scope-exit
+=== RUN   TestSelfHostInterpDriverArm64/defer-not-eager-mid-body
+=== RUN   TestSelfHostInterpDriverArm64/labeled-break-two-level
+=== RUN   TestSelfHostInterpDriverArm64/labeled-continue-two-level
+=== RUN   TestSelfHostInterpDriverArm64/unlabeled-break-innermost
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-add-negative
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-add-eq-min
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-add-via-locals
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-add-literals
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-add-not-greater
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-sub
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-mul
+=== RUN   TestSelfHostInterpDriverArm64/i32-wrap-shl
+=== RUN   TestSelfHostInterpDriverArm64/sat-add-hi
+=== RUN   TestSelfHostInterpDriverArm64/sat-sub-lo
+=== RUN   TestSelfHostInterpDriverArm64/sat-mul-hi
+=== RUN   TestSelfHostInterpDriverArm64/sat-mul-lo
+=== RUN   TestSelfHostInterpDriverArm64/sat-plain
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-hi
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-lo
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-exact-min
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-plain
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-oor
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-oor-zero
+=== RUN   TestSelfHostInterpDriverArm64/sat-shl-neg-count
+=== RUN   TestSelfHostInterpDriverArm64/slice-unchecked-builtin
+=== RUN   TestSelfHostInterpDriverArm64/slice-unchecked-oob
+--- PASS: TestSelfHostInterpDriverArm64 (34.71s)
+    --- PASS: TestSelfHostInterpDriverArm64/raw-filesystem-byte-results (0.35s)
+    --- PASS: TestSelfHostInterpDriverArm64/return-literal (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/arith (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/hex-literal (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/hex-arith (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/sci-float-exp (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/sci-float-frac (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/sci-float-neg-exp (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/float-lit-overflow-rejected (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/float-lit-underflow-accepted (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/bool-literal-postfix (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/locals (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/if (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/call (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/call-explicit-type-arguments (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/call-zero-arguments-generic (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/call-static-const-type-argument (0.21s)
+    --- PASS: TestSelfHostInterpDriverArm64/call-nested-generic-method (0.27s)
+    --- PASS: TestSelfHostInterpDriverArm64/call-nested-generic-associated (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/default-one (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/default-multi (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/float (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-i64-to-i32 (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-f64-to-i32 (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-i32-to-f64 (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-in-i64-array-sum (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/asc-array-identity (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-sum (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-continue (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-break (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-empty (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-nested (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-sum (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-continue (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-break (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-single (0.20s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-reversed (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-i32-max (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-i32-max-last (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-i32-min-single (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-i32-max-continue (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-incl-i32-max-break (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-binding-in-a-conditional (0.22s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-binding-in-a-loop-body (0.22s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-lambda (0.27s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-lambda-var (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-lambda-nested (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/labeled-break-in-lambda (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/labeled-continue-in-lambda (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/labeled-break-shadowed-in-lambda (0.22s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-in-lambda (0.21s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-in-lambda-runs (0.25s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-in-lambda-and-fn (0.28s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-lambda-match-arm (0.27s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-if-branches (0.24s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-match-arm (0.25s)
+    --- PASS: TestSelfHostInterpDriverArm64/range-in-defer (0.28s)
+    --- PASS: TestSelfHostInterpDriverArm64/generic-trait-default-method (0.25s)
+    --- PASS: TestSelfHostInterpDriverArm64/slice-open-low (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/cfor-expr-init (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/cfor-empty-init (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/lexer-formfeed-ws (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/bit-and (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/bit-or (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/bit-xor (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/bit-shl (0.08s)
+    --- PASS: TestSelfHostInterpDriverArm64/bit-shr (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/div-by-zero-total (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/mod-by-zero-total (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/fdiv-inf (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/fdiv-nan (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/and-short-circuit (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/or-short-circuit (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/oob-var-init-not-swallowed (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/braceless-if-else (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/braceless-while-refused (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/braceless-for-refused (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/chained-assign-2 (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/chained-assign-3 (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/use-monadic-bind (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-u8-wrap (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/cast-u8-inrange (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/str-len-method (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/arr-len-method (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/arr-len-empty (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/arr-append-len (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/arr-append-value (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/arr-append-immutable (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/const-ref (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/const-in-expr (0.09s)
+    --- PASS: TestSelfHostInterpDriverArm64/const-two (0.09s)
+    --- PASS: TestSelfHostInterpDriverArm64/const-in-callee (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/const-string (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-nullary-match (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-nullary-first (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-three-way (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-wildcard-arm (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-return-from-fn (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-in-array (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-payload-bind (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-payload-other-arm (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-option-unwrap (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-result-err (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-payload-ignore (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-payload-in-array (0.17s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-method-payload (0.16s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-method-nullary (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/enum-method-with-arg (0.15s)
+    --- PASS: TestSelfHostInterpDriverArm64/builtin-ioerror-method (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/builtin-variant-shadow-method (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-literal-div (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-mul-fits-operands (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-accumulator (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-negative-div (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-mod (0.19s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-param-promote (0.18s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-array-sum (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/i64-compare (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-overflow-unchanged (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/u32-shr-logical (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/u32-div-unsigned (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/u32-cmp-unsigned (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/f32-round-2p24 (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/f32-sticky-chain (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-scope-exit (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/defer-not-eager-mid-body (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/labeled-break-two-level (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/labeled-continue-two-level (0.14s)
+    --- PASS: TestSelfHostInterpDriverArm64/unlabeled-break-innermost (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-add-negative (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-add-eq-min (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-add-via-locals (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-add-literals (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-add-not-greater (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-sub (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-mul (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/i32-wrap-shl (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-add-hi (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-sub-lo (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-mul-hi (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-mul-lo (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-plain (0.09s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-hi (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-lo (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-exact-min (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-plain (0.08s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-oor (0.10s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-oor-zero (0.13s)
+    --- PASS: TestSelfHostInterpDriverArm64/sat-shl-neg-count (0.11s)
+    --- PASS: TestSelfHostInterpDriverArm64/slice-unchecked-builtin (0.12s)
+    --- PASS: TestSelfHostInterpDriverArm64/slice-unchecked-oob (0.11s)
+=== RUN   TestSelfHostInterpDynProvider
+=== RUN   TestSelfHostInterpDynProvider/dyn-second-trait
+=== RUN   TestSelfHostInterpDynProvider/dyn-first-trait
+=== RUN   TestSelfHostInterpDynProvider/dyn-param
+=== RUN   TestSelfHostInterpDynProvider/dyn-array-for-loop
+=== RUN   TestSelfHostInterpDynProvider/dyn-array-index
+=== RUN   TestSelfHostInterpDynProvider/dyn-captured-by-closure
+=== RUN   TestSelfHostInterpDynProvider/dyn-struct-field
+=== RUN   TestSelfHostInterpDynProvider/dyn-nested-struct-field
+=== RUN   TestSelfHostInterpDynProvider/dyn-struct-field-array
+=== RUN   TestSelfHostInterpDynProvider/dyn-call-result
+=== RUN   TestSelfHostInterpDynProvider/dyn-method-call-result
+=== RUN   TestSelfHostInterpDynProvider/dyn-field-of-call-result
+=== RUN   TestSelfHostInterpDynProvider/dyn-call-result-binding
+=== RUN   TestSelfHostInterpDynProvider/only-trait-a
+=== RUN   TestSelfHostInterpDynProvider/only-trait-b
+=== RUN   TestSelfHostInterpDynProvider/concrete-receiver-alongside-collision
+=== RUN   TestSelfHostInterpDynProvider/inherent-method
+=== RUN   TestSelfHostInterpDynProvider/concrete-single-trait
+=== RUN   TestSelfHostInterpDynProvider/i64-width-binding
+=== RUN   TestSelfHostInterpDynProvider/f32-precision-binding
+=== RUN   TestSelfHostInterpDynProvider/param-width-binding
+=== RUN   TestSelfHostInterpDynProvider/inferred-i64-from-call
+=== RUN   TestSelfHostInterpDynProvider/inferred-f32-from-call
+=== RUN   TestSelfHostInterpDynProvider/call-shadowed-by-local
+=== RUN   TestSelfHostInterpDynProvider/closure-in-field-call
+--- PASS: TestSelfHostInterpDynProvider (0.73s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-second-trait (0.02s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-first-trait (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-param (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-array-for-loop (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-array-index (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-captured-by-closure (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-struct-field (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-nested-struct-field (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-struct-field-array (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-call-result (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-method-call-result (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-field-of-call-result (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/dyn-call-result-binding (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/only-trait-a (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/only-trait-b (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/concrete-receiver-alongside-collision (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/inherent-method (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/concrete-single-trait (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/i64-width-binding (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/f32-precision-binding (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/param-width-binding (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/inferred-i64-from-call (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/inferred-f32-from-call (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/call-shadowed-by-local (0.01s)
+    --- PASS: TestSelfHostInterpDynProvider/closure-in-field-call (0.01s)
+=== RUN   TestSelfHostInterpScopeFrames
+=== RUN   TestSelfHostInterpScopeFrames/oracle/typed-shadow
+=== RUN   TestSelfHostInterpScopeFrames/oracle/labeled-unwind
+=== RUN   TestSelfHostInterpScopeFrames/oracle/iteration-captures
+=== RUN   TestSelfHostInterpScopeFrames/oracle/outer-array-alias
+=== RUN   TestSelfHostInterpScopeFrames/oracle/match-shadow
+=== RUN   TestSelfHostInterpScopeFrames/oracle/escaped-block-capture
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/contracts
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/typed-shadow
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/labeled-unwind
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/iteration-captures
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/outer-array-alias
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/match-shadow
+=== RUN   TestSelfHostInterpScopeFrames/x86-64-linux/escaped-block-capture
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/contracts
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/typed-shadow
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/labeled-unwind
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/iteration-captures
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/outer-array-alias
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/match-shadow
+=== RUN   TestSelfHostInterpScopeFrames/arm64-linux/escaped-block-capture
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/contracts
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/typed-shadow
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/labeled-unwind
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/iteration-captures
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/outer-array-alias
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/match-shadow
+=== RUN   TestSelfHostInterpScopeFrames/wasm32-wasi/escaped-block-capture
+--- PASS: TestSelfHostInterpScopeFrames (37.11s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/typed-shadow (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/labeled-unwind (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/iteration-captures (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/outer-array-alias (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/match-shadow (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/oracle/escaped-block-capture (0.01s)
+    --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux (12.07s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/contracts (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/typed-shadow (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/labeled-unwind (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/iteration-captures (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/outer-array-alias (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/match-shadow (0.00s)
+        --- PASS: TestSelfHostInterpScopeFrames/x86-64-linux/escaped-block-capture (0.00s)
+    --- PASS: TestSelfHostInterpScopeFrames/arm64-linux (11.68s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/contracts (0.18s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/typed-shadow (0.13s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/labeled-unwind (0.11s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/iteration-captures (0.27s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/outer-array-alias (0.16s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/match-shadow (0.24s)
+        --- PASS: TestSelfHostInterpScopeFrames/arm64-linux/escaped-block-capture (0.14s)
+    --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi (12.91s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/contracts (0.95s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/typed-shadow (0.03s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/labeled-unwind (0.02s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/iteration-captures (0.03s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/outer-array-alias (0.02s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/match-shadow (0.02s)
+        --- PASS: TestSelfHostInterpScopeFrames/wasm32-wasi/escaped-block-capture (0.03s)
+=== RUN   TestSelfHostInterpStructOps
+--- PASS: TestSelfHostInterpStructOps (1.99s)
+=== RUN   TestSelfHostInterpAssocConsts
+--- PASS: TestSelfHostInterpAssocConsts (0.17s)
+=== RUN   TestSelfHostInterpMapKeysCompareThroughEq
+=== RUN   TestSelfHostInterpMapKeysCompareThroughEq/map_hand_written_eq_hash_keys
+=== RUN   TestSelfHostInterpMapKeysCompareThroughEq/char_eq_ord_hash
+--- PASS: TestSelfHostInterpMapKeysCompareThroughEq (2.20s)
+    --- PASS: TestSelfHostInterpMapKeysCompareThroughEq/map_hand_written_eq_hash_keys (0.28s)
+    --- PASS: TestSelfHostInterpMapKeysCompareThroughEq/char_eq_ord_hash (0.27s)
+=== RUN   TestSelfHostInterpX86_64
+--- PASS: TestSelfHostInterpX86_64 (10.47s)
+=== RUN   TestSelfHostInterpArm64
+--- PASS: TestSelfHostInterpArm64 (13.95s)
+=== RUN   TestSelfHostNestedOwnedFields
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/handle_nested_fields_close_from_owned_root
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_borrowed_root
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_retained_alias
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_reassigned_owner
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_repeated_loop
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_captured_owner
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_borrowed_local
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_field_read_later
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_closed_twice
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_deferred_close
+=== RUN   TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_whole_read_later
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/handle_nested_fields_close_from_owned_root
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_borrowed_root
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_retained_alias
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_reassigned_owner
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_repeated_loop
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_captured_owner
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_borrowed_local
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_field_read_later
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_closed_twice
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_deferred_close
+=== RUN   TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_whole_read_later
+--- PASS: TestSelfHostNestedOwnedFields (39.22s)
+    --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux (16.61s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/handle_nested_fields_close_from_owned_root (0.04s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_borrowed_root (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_retained_alias (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_reassigned_owner (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_repeated_loop (0.01s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_captured_owner (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_borrowed_local (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_field_read_later (0.01s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_closed_twice (0.01s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_deferred_close (0.00s)
+        --- PASS: TestSelfHostNestedOwnedFields/x86-64-linux/diag_e051_nested_field_whole_read_later (0.01s)
+    --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi (22.60s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/handle_nested_fields_close_from_owned_root (0.10s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_borrowed_root (0.07s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_retained_alias (0.05s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_reassigned_owner (0.05s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_repeated_loop (0.05s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_captured_owner (0.04s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_borrowed_local (0.03s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_field_read_later (0.05s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_closed_twice (0.06s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_deferred_close (0.04s)
+        --- PASS: TestSelfHostNestedOwnedFields/wasm32-wasi/diag_e051_nested_field_whole_read_later (0.04s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	269.735s

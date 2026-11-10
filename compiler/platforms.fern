@@ -202,12 +202,10 @@ pub function has_capability(target: string, capability: string): boolean {
 pub function targets_providing(capability: string): string[] {
   let out: string[] = [];
   let all = targets();
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     if (has_capability(all[i], capability)) {
       out = out.append(all[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -438,6 +436,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__atomic_store_release", capability: "privileged" },
     Gate { builtin: "__atomic_fetch_add", capability: "privileged" },
     Gate { builtin: "__atomic_cas", capability: "privileged" },
+    Gate { builtin: "__secondary_entry", capability: "privileged" },
     Gate { builtin: "__irq_pending", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },
     Gate { builtin: "__port_in16", capability: "privileged" },
@@ -487,12 +486,10 @@ pub function core_builtin(name: string): boolean {
 
 pub function gated_capability(name: string): string {
   let gates = gated_builtins();
-  let i = 0;
-  while (i < gates.len()) {
+  for i in 0..gates.len() {
     if (gates[i].builtin == name) {
       return gates[i].capability;
     }
-    i += 1;
   }
   return "";
 }
@@ -543,12 +540,10 @@ pub function forbidden_gates(target: string, provided_caps: string[]): Gate[] {
     return out;
   }
   let gates = gated_builtins();
-  let i = 0;
-  while (i < gates.len()) {
+  for i in 0..gates.len() {
     if (!util.has_str(d.capabilities, gates[i].capability) && !util.has_str(provided_caps, gates[i].capability)) {
       out = out.append(gates[i]);
     }
-    i += 1;
   }
   return out;
 }
@@ -570,27 +565,20 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
     return out;
   }
   let wanted: string[] = [];
-  let wi = 0;
-  while (wi < forbidden.len()) {
+  for wi in 0..forbidden.len() {
     wanted = wanted.append(forbidden[wi].builtin);
-    wi += 1;
   }
   let want = util.name_index(wanted);
 
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let fd = mod.funcs[fi];
     let calls: astwalk.CallSite[] = [];
-    let bi = 0;
-    while (bi < fd.body.len()) {
+    for bi in 0..fd.body.len() {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
-      bi += 1;
     }
     let seen: string[] = [];
-    let ci = 0;
-    while (ci < calls.len()) {
-      let gi = 0;
-      while (gi < forbidden.len()) {
+    for ci in 0..calls.len() {
+      for gi in 0..forbidden.len() {
         if (!calls[ci].method && calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
           seen = seen.append(calls[ci].name);
           out = out.append(Violation {
@@ -603,11 +591,8 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
             fn_module: util.mangled_module(fd.name),
           });
         }
-        gi += 1;
       }
-      ci += 1;
     }
-    fi += 1;
   }
   return out;
 }
@@ -615,41 +600,34 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
 pub function reach(mod: parser.Module): string[] {
   let gates = gated_builtins();
   let wanted: string[] = [];
-  let wi = 0;
-  while (wi < gates.len()) {
+  for wi in 0..gates.len() {
     wanted = wanted.append(gates[wi].builtin);
-    wi += 1;
   }
   let want = util.name_index(wanted);
 
   let found: string[] = [];
-  let fi = 0;
-  while (fi < mod.funcs.len()) {
+  for fi in 0..mod.funcs.len() {
     let calls: astwalk.CallSite[] = [];
     let bi = 0;
     while (bi < mod.funcs[fi].body.len()) {
       calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
       bi += 1;
     }
-    let ci = 0;
-    while (ci < calls.len()) {
+    for ci in 0..calls.len() {
       if (!calls[ci].method) {
         let cap = gated_capability(calls[ci].name);
         if (cap.len() > 0 && !util.has_str(found, cap)) {
           found = found.append(cap);
         }
       }
-      ci += 1;
     }
-    fi += 1;
   }
   return sorted(found);
 }
 
 function sorted(xs: string[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     let pos = 0;
     while (pos < out.len() && util.str_less(out[pos], xs[i])) {
       pos += 1;
@@ -666,7 +644,6 @@ function sorted(xs: string[]): string[] {
       j += 1;
     }
     out = next;
-    i += 1;
   }
   return out;
 }
@@ -725,13 +702,11 @@ pub function violation_message(v: Violation): string {
   }
   let providers = targets_providing(v.capability);
   let list = "";
-  let i = 0;
-  while (i < providers.len()) {
+  for i in 0..providers.len() {
     if (i > 0) {
       list += " ";
     }
     list += providers[i];
-    i += 1;
   }
   let msg: string = "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
     + v.builtin + "`" + where + "; targets providing it: [" + list + "]";

@@ -15,12 +15,10 @@ import "./lexer";
 pub struct Finalizer { receiver: string, symbol: string, writes: boolean }
 
 pub function finalizer_index(rows: Finalizer[], receiver: string): i32 {
-  let i = 0;
-  while (i < rows.len()) {
+  for i in 0..rows.len() {
     if (rows[i].receiver == receiver) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -128,12 +126,10 @@ pub function find_contract(table: Contracts, name: string): i32 {
 }
 
 pub function find_contract_in(calls: Contract[], name: string): i32 {
-  let i = 0;
-  while (i < calls.len()) {
+  for i in 0..calls.len() {
     if (calls[i].name == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -168,23 +164,19 @@ pub function anchored_of(deps: i32[][], nvals: i32): Anchored {
   }
   let start = __alloc_i32(nvals + 1);
   let total = 0;
-  let v = 0;
-  while (v < nvals) {
+  for v in 0..nvals {
     total += count[v];
     start = start.with(v + 1, total);
-    v += 1;
   }
   let at = __alloc_i32(total);
   let fill = start;
-  w = 0;
-  while (w < known) {
+  for w in 0..known {
     for dep in deps[w] {
       if (dep >= 0 && dep < nvals) {
         at = at.with(fill[dep], w);
         fill = fill.with(dep, fill[dep] + 1);
       }
     }
-    w += 1;
   }
   return Anchored { start: start, at: at };
 }
@@ -251,10 +243,8 @@ function uses_of(f: Func): Uses {
       count = count.with(t + 1, count[t + 1] + 1);
     }
   }
-  let v = 0;
-  while (v < n) {
+  for v in 0..n {
     count = count.with(v + 1, count[v + 1] + count[v]);
-    v += 1;
   }
   let kinds = __alloc_i32(count[n]);
   let block = __alloc_i32(count[n]);
@@ -898,13 +888,11 @@ pub function dyn_call_name(method: string, traits: string[], arms: string[]): st
     i += 1;
   }
   out += "|";
-  i = 0;
-  while (i < arms.len()) {
+  for i in 0..arms.len() {
     if (i > 0) {
       out += ",";
     }
     out += arms[i];
-    i += 1;
   }
   return out;
 }
@@ -919,15 +907,13 @@ pub function dyn_call_arms(name: string): string[] {
   while (start > 4 && name[start - 1] != b'|') {
     start -= 1;
   }
-  let k = start;
-  while (k <= name.len()) {
+  for k in start..=name.len() {
     if (k == name.len() || name[k] == b',') {
       if (k > start) {
-        out = out.append(slice_unchecked(name, start, k) + "");
+        out = out.append(slice_unchecked(name, start, k).to_owned());
       }
       start = k + 1;
     }
-    k += 1;
   }
   return out;
 }
@@ -1012,15 +998,13 @@ pub function structural_map_key(k: typeinfo.Type): boolean {
 
 function identifier_key(key: string): string {
   let out = "";
-  let i = 0;
-  while (i < key.len()) {
+  for i in 0..key.len() {
     let c = key[i];
     if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_') {
       out += slice_unchecked(key, i, i + 1);
     } else {
       out += "_";
     }
-    i += 1;
   }
   return out;
 }
@@ -1121,11 +1105,9 @@ pub function closure_captures(c: Contract): typeinfo.Type[] {
 pub function closure_type(c: Contract): typeinfo.Type {
   let params: typeinfo.Type[] = [];
   let owns: boolean[] = [];
-  let i = 1;
-  while (i < c.params.len()) {
+  for i in 1..c.params.len() {
     params = params.append(c.params[i]);
     owns = owns.append(consuming_mode(c.modes, i, c.params[i]));
-    i += 1;
   }
   return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
 }
@@ -1263,12 +1245,10 @@ function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
     if (ins.args.len() != tup.elements.len()) {
       return "tuple construction arity";
     }
-    let i = 0;
-    while (i < ins.args.len()) {
+    for i in 0..ins.args.len() {
       if (!semtypes.equal(tup.elements[i], f.values[ins.args[i]])) {
         return "tuple element type";
       }
-      i += 1;
     }
     return "";
   }
@@ -1344,12 +1324,10 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
   if (ins.args.len() != fields.len()) {
     return "record construction arity";
   }
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) {
       return "record field type";
     }
-    i += 1;
   }
   return "";
 }
@@ -1467,12 +1445,10 @@ function variant_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Ty
   if (ins.args.len() != fields.len()) {
     return "variant construction arity";
   }
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) {
       return "variant field type";
     }
-    i += 1;
   }
   return "";
 }
@@ -1667,12 +1643,10 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != caps.len()) {
     return "closure capture count";
   }
-  let i = 0;
-  while (i < caps.len()) {
+  for i in 0..caps.len() {
     if (!semtypes.equal(f.values[ins.args[i]], caps[i])) {
       return "closure capture type";
     }
-    i += 1;
   }
   return "";
 }
@@ -1689,12 +1663,10 @@ function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() != params.len() + 1) {
     return "indirect call arity";
   }
-  let i = 0;
-  while (i < params.len()) {
+  for i in 0..params.len() {
     if (!semtypes.equal(params[i], f.values[ins.args[i + 1]])) {
       return "indirect call argument type";
     }
-    i += 1;
   }
   if (!semtypes.equal(func_result(sig), result)) {
     return "indirect call result type";
@@ -2196,12 +2168,10 @@ function unbindable(why: string): Binding {
 }
 
 function bound_at(b: Binding, name: string): i32 {
-  let i = 0;
-  while (i < b.names.len()) {
+  for i in 0..b.names.len() {
     if (b.names[i] == name) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -2296,8 +2266,7 @@ function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): 
   if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) {
     return mismatch();
   }
-  let i = 0;
-  while (i < x.param_types.len()) {
+  for i in 0..x.param_types.len() {
     if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) {
       return mismatch();
     }
@@ -2308,7 +2277,6 @@ function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): 
     if (!b.ok) {
       return b;
     }
-    i += 1;
   }
   return bind_type(b, x.ret_type, y.ret_type);
 }
@@ -2317,13 +2285,11 @@ function bind_list(b: Binding, want: typeinfo.Type[], got: typeinfo.Type[]): Bin
   if (want.len() != got.len()) {
     return mismatch();
   }
-  let i = 0;
-  while (i < want.len()) {
+  for i in 0..want.len() {
     b = bind_type(b, want[i], got[i]);
     if (!b.ok) {
       return b;
     }
-    i += 1;
   }
   return b;
 }
@@ -2414,12 +2380,10 @@ function variables_of(ts: typeinfo.Type[], out: string[]): string[] {
 
 pub function filled(b: Binding, from: Binding): Binding {
   let out = b;
-  let i = 0;
-  while (i < from.names.len()) {
+  for i in 0..from.names.len() {
     if (bound_at(out, from.names[i]) < 0) {
       out = Binding { ...out, names: out.names.append(from.names[i]), types: out.types.append(from.types[i]) };
     }
-    i += 1;
   }
   return out;
 }
@@ -2445,8 +2409,7 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
   let name = instance_name(c.name, b, vars);
   let params: typeinfo.Type[] = [];
   let modes: i32[] = [];
-  let i = 0;
-  while (i < c.params.len()) {
+  for i in 0..c.params.len() {
     let t = substitute(c.params[i], b);
     if (i == 0 && semtypes.is_env(t)) {
       t = env_type(name, semtypes.env_captures(t));
@@ -2457,7 +2420,6 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
     } else {
       modes = modes.append(value_mode());
     }
-    i += 1;
   }
   return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
 }
@@ -2547,8 +2509,7 @@ pub function variant_key(t: typeinfo.Type, name: string): string {
 function trait_set_key(traits: string): string {
   let hex = "0123456789abcdef";
   let out = "";
-  let i = 0;
-  while (i < traits.len()) {
+  for i in 0..traits.len() {
     let b = traits[i] as i32;
     let alnum = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122;
     if (alnum) {
@@ -2556,7 +2517,6 @@ function trait_set_key(traits: string): string {
     } else {
       out = out + "_" + slice_unchecked(hex, b / 16, b / 16 + 1) + slice_unchecked(hex, b % 16, b % 16 + 1);
     }
-    i += 1;
   }
   return out;
 }
@@ -2630,12 +2590,10 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (is_dyn_call(ins.str) && (c.params.len() == 0 || !typeinfo.is_dyn(c.params[0]))) {
     return "dyn call receiver type";
   }
-  let i = 0;
-  while (i < ins.args.len()) {
+  for i in 0..ins.args.len() {
     if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) {
       return "call argument type";
     }
-    i += 1;
   }
   if (!semtypes.equal(c.result, result)) {
     return "call result type";
@@ -2658,12 +2616,10 @@ function call_capture_valid(f: Func, ins: ssa.SInst): boolean {
   if (base < 0 || base > f.values.len() - count) {
     return false;
   }
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     if (!is_wide(f.values[base + i]) || !is_unsigned_int(f.values[base + i])) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -3250,8 +3206,7 @@ function schema_error(f: Func): string {
 }
 
 function contracts_error(calls: Contract[]): string {
-  let i = 0;
-  while (i < calls.len()) {
+  for i in 0..calls.len() {
     let c = calls[i];
     if (c.name == "") {
       return "empty call contract name";
@@ -3270,7 +3225,6 @@ function contracts_error(calls: Contract[]): string {
     if (!semtypes.concrete(c.result, true)) {
       return "unresolved call result type";
     }
-    i += 1;
   }
   return "";
 }
@@ -3450,15 +3404,13 @@ function settled_ways(f: Func, value: i32, g: Guards): Known[] {
   let changed = true;
   while (changed) {
     changed = false;
-    i = 0;
-    while (i < n) {
+    for i in 0..n {
       let m = met_at(f, value, g, known, seen, i);
       if (i != entry && m.any && (!seen[i] || !same_known(m.known, known[i]))) {
         known = known.with(i, m.known);
         seen = seen.with(i, true);
         changed = true;
       }
-      i += 1;
     }
   }
   return known;
@@ -3539,10 +3491,8 @@ function twins(defs: ssa.SInst[]): i32[] {
     t = Twins { same: t.same.append(-1), kids: t.kids.append([]) };
     v += 1;
   }
-  v = 0;
-  while (v < defs.len()) {
+  for v in 0..defs.len() {
     t = twin_into(defs, t, v);
-    v += 1;
   }
   return t.same;
 }
@@ -3587,8 +3537,7 @@ function twin_of(g: Guards, v: i32): i32 {
 function guards_of(f: Func, facts: ssadeps.Facts): Guards {
   let defs = ssa.inst_defs(f.graph);
   let tests: i32[] = [];
-  let pi = 0;
-  while (pi < f.graph.blocks.len()) {
+  for pi in 0..f.graph.blocks.len() {
     let b = f.graph.blocks[pi];
     if (b.term.kind_tag == ssa.TERM_BRIF && b.term.t != b.term.f && b.term.cond >= 0 && b.term.cond < defs.len()) {
       let k = defs[b.term.cond].kind_tag;
@@ -3596,7 +3545,6 @@ function guards_of(f: Func, facts: ssadeps.Facts): Guards {
         tests = tests.append(pi);
       }
     }
-    pi += 1;
   }
   if (facts.checked) {
     return Guards { dom: facts.dom, at: facts.at, defs: defs, tests: tests, same: twins(defs) };
@@ -3657,8 +3605,7 @@ function guard_error(f: Func, facts: ssadeps.Facts): string {
     reachable = ssadeps.reachable_blocks(f.graph);
   }
   let g = guards_of(f, facts);
-  let bi = 0;
-  while (bi < f.graph.blocks.len()) {
+  for bi in 0..f.graph.blocks.len() {
     if (reachable[bi]) {
       for ins in f.graph.blocks[bi].insts {
         if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, g)) {
@@ -3666,7 +3613,6 @@ function guard_error(f: Func, facts: ssadeps.Facts): string {
         }
       }
     }
-    bi += 1;
   }
   return "";
 }
@@ -3824,10 +3770,8 @@ function view_roots(f: Func, parents: i32[][]): i32[][] {
 
 function borrow_parents(f: Func): i32[][] {
   let parents: i32[][] = [];
-  let i = 0;
-  while (i < f.graph.nvals) {
+  for i in 0..f.graph.nvals {
     parents = parents.append([]);
-    i += 1;
   }
   let cells = cell_borrows(f);
   for b in f.graph.blocks {
@@ -4249,10 +4193,8 @@ function closure(parents: i32[][]): Closure {
   let n = parents.len();
   let derived: i32[][] = [];
   let state = __alloc_i32(n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     derived = derived.append([]);
-    i += 1;
   }
   let v = 0;
   while (v < n) {
@@ -4378,8 +4320,7 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     made = made.append(-1);
   }
   let last: i32[] = [];
-  let pi = 0;
-  while (pi < f.graph.blocks.len()) {
+  for pi in 0..f.graph.blocks.len() {
     let b = f.graph.blocks[pi];
     s = CopySplice { ...s, id: b.id, preds: b.preds, insts: [] };
     for ins in b.insts {
@@ -4392,7 +4333,6 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     made = e.made;
     last = last.append(s.id);
     s = sp_close(s, b.term);
-    pi += 1;
   }
   let blocks: ssa.SBlock[] = [];
   let first_new = ssa.next_block_id(f.graph);
@@ -4414,12 +4354,10 @@ function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
   let out: i32[] = [];
   for p in preds {
     let at: i32 = -1;
-    let i = 0;
-    while (i < g.blocks.len()) {
+    for i in 0..g.blocks.len() {
       if (g.blocks[i].id == p) {
         at = i;
       }
-      i += 1;
     }
     if (at >= 0) {
       out = out.append(last[at]);
@@ -4433,27 +4371,23 @@ function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
 struct Made { s: CopySplice, made: i32[] }
 
 function copies_at(f: Func, s: CopySplice, made: i32[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): Made {
-  let ci = 0;
-  while (ci < copies.len()) {
+  for ci in 0..copies.len() {
     let c = copies[ci];
     if (c.at == at && c.edge == edge && (edge || c.consumer == consumer)) {
       let r = deep_copy(f, s, c.value);
       s = r.s;
       made = made.with(ci, r.value);
     }
-    ci += 1;
   }
   return Made { s: s, made: made };
 }
 
 function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]): ssa.SInst {
-  let ci = 0;
-  while (ci < copies.len()) {
+  for ci in 0..copies.len() {
     let c = copies[ci];
     if (ins.result >= 0 && ins.result == c.consumer) {
       ins = ssa.SInst { ...ins, args: ins.args.with(c.slot, made[ci]) };
     }
-    ci += 1;
   }
   return ins;
 }
@@ -4683,26 +4617,22 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
 function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   let fields = f.records.list[semrecords.find(f.records, t)].fields;
   let parts: i32[] = [];
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     let g = sp_emit(s, record_get(), fields[i].ty, [v], i, fields[i].name);
     let c = deep_copy(f, g.s, g.value);
     s = c.s;
     parts = parts.append(c.value);
-    i += 1;
   }
   return sp_emit(s, record_new(), t, parts, 0, "");
 }
 
 function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: typeinfo.Type[]): Copied {
   let parts: i32[] = [];
-  let i = 0;
-  while (i < elements.len()) {
+  for i in 0..elements.len() {
     let e = sp_emit(s, tuple_get(), elements[i], [v], i, "");
     let c = deep_copy(f, e.s, e.value);
     s = c.s;
     parts = parts.append(c.value);
-    i += 1;
   }
   return sp_emit(s, tuple_new(), t, parts, 0, "");
 }
@@ -4771,13 +4701,11 @@ function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
 
 function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
   let out: ssa.SBlock[] = [];
-  let i = 0;
-  while (i < blocks.len()) {
+  for i in 0..blocks.len() {
     if (i == at) {
       out = out.append(b);
     }
     out = out.append(blocks[i]);
-    i += 1;
   }
   if (at >= blocks.len()) {
     out = out.append(b);
@@ -4791,8 +4719,7 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   s = sp_blocks(s, 1);
   let froms: i32[] = [];
   let built: i32[] = [];
-  let k = 0;
-  while (k < variants.len()) {
+  for k in 0..variants.len() {
     if (k + 1 < variants.len()) {
       let test = sp_emit(s, variant_is(), boolean_type(), [v], 0, variants[k].name);
       s = test.s;
@@ -4810,7 +4737,6 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
       built = built.append(r.value);
       s = sp_close(r.s, ssa.t_br(join));
     }
-    k += 1;
   }
   s = sp_open(s, join, froms);
   let out = s.values.len();
@@ -4820,13 +4746,11 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
 
 function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, variant: semrecords.Variant): Copied {
   let parts: i32[] = [];
-  let j = 0;
-  while (j < variant.fields.len()) {
+  for j in 0..variant.fields.len() {
     let g = sp_emit(s, variant_get(), variant.fields[j].ty, [v], j, variant.name);
     let c = deep_copy(f, g.s, g.value);
     s = c.s;
     parts = parts.append(c.value);
-    j += 1;
   }
   return sp_emit(s, variant_new(), t, parts, 0, variant.name);
 }
@@ -4983,14 +4907,12 @@ pub function merge_copies(f: Func): MergePlan {
   let none = __alloc_bool(f.values.len());
   let defs = ssa.inst_defs(f.graph);
   let m = MergeScan { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
-  let bi = 0;
-  while (bi < f.graph.blocks.len()) {
+  for bi in 0..f.graph.blocks.len() {
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == ssa.PHI && holds_view(f, f.values[ins.result])) {
         plan = operand_copies(f, defs, m, bi, ins.result, none, plan);
       }
     }
-    bi += 1;
   }
   return plan;
 }
@@ -5044,10 +4966,8 @@ function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consum
 
 function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[], own plan: MergePlan): MergePlan {
   let args = defs[consumer].args;
-  let j = 0;
-  while (j < args.len()) {
+  for j in 0..args.len() {
     plan = held_copies(f, defs, m, join, consumer, j, args[j], seen, plan);
-    j += 1;
   }
   return plan;
 }
@@ -5094,14 +5014,12 @@ function defining_positions(f: Func): i32[] {
   for _ in f.values {
     out = out.append(-1);
   }
-  let bi = 0;
-  while (bi < f.graph.blocks.len()) {
+  for bi in 0..f.graph.blocks.len() {
     for ins in f.graph.blocks[bi].insts {
       if (ins.result >= 0 && ins.result < out.len()) {
         out = out.with(ins.result, bi);
       }
     }
-    bi += 1;
   }
   return out;
 }
@@ -5168,8 +5086,7 @@ function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents:
     return -1;
   }
   let hole: i32 = -1;
-  let bi = 0;
-  while (bi < kinds.len()) {
+  for bi in 0..kinds.len() {
     if (kinds[bi] == cons_tail()) {
       let at = cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs);
       if (hole >= 0 && at != hole) {
@@ -5177,7 +5094,6 @@ function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents:
       }
       hole = at;
     }
-    bi += 1;
   }
   return hole;
 }
@@ -5270,12 +5186,10 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
   if (c.args.len() != nparams || !args_cross(f, c.args, parents, defs)) {
     return -1;
   }
-  let i = at + 1;
-  while (i < n - 1) {
+  for i in at + 1..n - 1 {
     if (util.index_of_i32(b.insts[i].args, c.result) >= 0) {
       return -1;
     }
-    i += 1;
   }
   let uses = 0;
   for a in cons.args {
@@ -5310,14 +5224,12 @@ function fresh_block_id(f: Func): i32 {
 
 function phi_map(f: Func, nparams: i32): i32[] {
   let map: i32[] = [];
-  let v = 0;
-  while (v < f.graph.nvals) {
+  for v in 0..f.graph.nvals {
     if (v < nparams) {
       map = map.append(f.graph.nvals + v);
     } else {
       map = map.append(v);
     }
-    v += 1;
   }
   return map;
 }
@@ -5403,17 +5315,14 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   let s = Splice { values: values, blocks: [], backs: [], rows: [] };
   let head = ssa.SBlock { ...entry, id: header, insts: not_kind_6(entry.insts) };
   s = rewrite_block(s, f, head, kinds[0], map, header, hole, ch);
-  let bi = 1;
-  while (bi < f.graph.blocks.len()) {
+  for bi in 1..f.graph.blocks.len() {
     let b = f.graph.blocks[bi];
     s = rewrite_block(s, f, ssa.SBlock { ...b, preds: repointed(b.preds, entry.id, header) }, kinds[bi], map, header, hole, ch);
-    bi += 1;
   }
 
   let entry_insts = kind_6(entry.insts);
   let firsts: i32[] = [];
-  p = 0;
-  while (p < nparams) {
+  for p in 0..nparams {
     firsts = firsts.append(p);
     if (sliced_on_back_edge(f, s.rows, p)) {
       let at = s.values.len();
@@ -5423,7 +5332,6 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
       s = Splice { ...s, values: s.values.append(i32_type()).append(i32_type()).append(f.values[p]) };
       firsts = firsts.with(p, at + 2);
     }
-    p += 1;
   }
   if (hole >= 0) {
     entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
@@ -5440,10 +5348,8 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
     preds = preds.append(back);
   }
   blocks = blocks.append(ssa.SBlock { ...built, insts: head_insts, preds: preds });
-  let k = 1;
-  while (k < s.blocks.len()) {
+  for k in 1..s.blocks.len() {
     blocks = blocks.append(s.blocks[k]);
-    k += 1;
   }
   let graph = ssa.SFunc { ...f.graph, nvals: s.values.len(), blocks: blocks };
   return Func { ...f, graph: graph, values: s.values };
@@ -5559,10 +5465,8 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
 
 function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
   let out: ssa.SInst[] = [];
-  let p = 0;
-  while (p < nparams) {
+  for p in 0..nparams {
     out = out.append(ssa.SInst { ...phi_over(map[p], firsts[p], rows, p), imm: p, str: name });
-    p += 1;
   }
   if (hole >= 0) {
     out = out.append(phi_over(ch.r, ch.r0, rows, nparams));

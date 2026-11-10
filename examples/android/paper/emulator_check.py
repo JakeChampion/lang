@@ -9,10 +9,10 @@ log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a tap on the time that
 opens the clock app, a swipe up that opens the app list in the paper
 colour with the keyboard for its text field, a tap on the search field that
-shows the keyboard again after the back key hid it, a search for "pap" that finds Paper and
-opens it, the back key that goes back to the home screen, a frame section
-in the system trace while the list slides, and no crash in logcat. OUT_DIR
-gets the frames, logcat and the trace.
+shows the keyboard again after the back key hid it, a search for "pap" that
+finds Paper and opens it, Back that hides the keyboard, then Back that goes
+home, a frame section in the system trace while the list slides, and no
+crash in logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
 from pathlib import Path
@@ -41,32 +41,50 @@ def paper_part(out, name, top_half=False):
     return width, height, part
 
 
-def keyboard_shown(timeout=5.0):
-    """The keyboard of the system shows within `timeout` seconds."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if re.search(r"mInputShown=true", adb("shell", "dumpsys", "input_method", check=False)):
+def wait_for_keyboard(shown, timeout=5.0):
+    """The keyboard reaches the requested state within `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        visible = bool(re.search(r"mInputShown=true", adb("shell", "dumpsys", "input_method", check=False)))
+        if visible == shown:
             return True
         time.sleep(0.5)
     return False
 
 
-def check_keyboard(width):
-    """The app list opens with the keyboard, which types into the text field
-    of the app: an editor of text with the action Go. After the back key
-    hides the keyboard, a tap on the search field shows it again. The search
-    field is 36 dp below the status bar, so a tap 74 dp from the top is on
-    it."""
-    if not keyboard_shown():
-        fail("the app list opened without the keyboard")
-        return
+def keyboard_shown(timeout=5.0):
+    return wait_for_keyboard(True, timeout)
+
+
+def editor_is_field():
+    """The keyboard types into the text field of the app: an editor of text
+    with the action Go, not the decor view."""
     editor = re.search(r"inputType=0x(\w+) imeOptions=0x(\w+)", adb("shell", "dumpsys", "input_method", check=False))
     if not editor or editor.group(1) != "1" or editor.group(2) != "10000002":
         fail("the keyboard does not type into the text field: " + (editor.group(0) if editor else "no editor"))
-        return
+        return False
+    return True
+
+
+def hide_keyboard():
+    """Back hides the keyboard before the app receives a Back event."""
+    if not keyboard_shown():
+        fail("the app list opened without the keyboard")
+        return False
+    if not editor_is_field():
+        return False
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    if keyboard_shown(1.5):
+    if not wait_for_keyboard(False, 1.5):
         fail("the back key did not hide the keyboard")
+        return False
+    return True
+
+
+def check_keyboard(width):
+    """The app list opens with the keyboard. After Back hides it, a tap on
+    the search field shows it again. The field is 36 dp below the status
+    bar, so a tap 74 dp from the top is on it."""
+    if not hide_keyboard():
         return
     density = re.findall(r"(\d+)", adb("shell", "wm", "density"))
     scale = int(density[-1]) / 160 if density else 1.0
@@ -137,12 +155,20 @@ def main(apk, out):
 
     adb("shell", "input", "swipe", str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 4), "150")
     time.sleep(1.0)
+    keyboard_hidden = hide_keyboard()
+    if keyboard_hidden:
+        _, _, part = paper_part(out, "keyboard-back", top_half=True)
+        if part < 0.6:
+            fail("the back key hid the keyboard and closed the app list")
     early = logcat()
     adb("logcat", "-c")
-    adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    if not wait_for(r"paper: layer 0"):
-        fail("the back key did not go back to the home screen")
-    paper_part(out, "back")
+    if keyboard_hidden:
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        if not wait_for(r"paper: layer 0"):
+            fail("the back key did not go back to the home screen")
+    _, _, part = paper_part(out, "back")
+    if part < 0.05 or part > 0.7:
+        fail(f"the home screen after Back has {part:.3f} of the paper colour, not paper above the wallpaper")
 
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
