@@ -28,6 +28,15 @@ The original Go oracle/native `opus_delimited` subtest also passes in 439.89 sec
 The index removes 22.56% of guest instructions on the first diagnostic group, relative to the shortcut version.
 Exact-head CI remains the merge gate.
 
+Main now supplies the broader `Funcs` Map index from PR #15080.
+This index replaces the earlier `NameIndex` alternative.
+The earlier archives retain their original code and source identities.
+
+The [argument prepass comparison](benchmarks/compiler-interpreter-map-shortcut-2026-11-10/README.md) tests the remaining unused-search shortcut against that Map index.
+Four of five first-group pairs increase CPU time, despite fewer allocation events.
+The extra argument prepass is rejected as the final implementation.
+A separate lazy-lookup trial needs its own measurements and correctness controls.
+
 The [fresh main comparison](benchmarks/compiler-interpreter-index-main-2026-11-09/README.md) compares main `4a044282` with merged source `6f6bddfc`.
 The original oracle/native Opus subtest passes in 634.93 seconds under the unchanged package timeout.
 Ten targeted suites report 387 passes and zero skips.
