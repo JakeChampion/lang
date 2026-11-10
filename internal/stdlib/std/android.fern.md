@@ -32,6 +32,8 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 
 <<text fields>>
 
+<<accessibility>>
+
 <<windows>>
 ```
 
@@ -185,9 +187,11 @@ function c_pthread_detach(thread: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
+
+`Access` has the id of an item of the tree of `std/android/access` and the action that an accessibility service, such as TalkBack, did on it: `ACCESS_CLICK` or `ACCESS_LONG_CLICK`.
 
 `Text` has the whole text of the field of `std/android/keyboard` after the keyboard of the system changed it. `TextAction` has the code of the action key of that keyboard, such as `ACTION_GO`.
 
@@ -195,7 +199,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 26 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -219,6 +223,7 @@ pub enum Event {
   Char(i32),
   Text(string),
   TextAction(i32),
+  Access(i32, i32),
   Tick,
   Posted(i32, usize),
 }
@@ -252,6 +257,8 @@ const CONTENT_RECT: i32 = 24;
 const TEXT: i32 = 25;
 
 const TEXT_ACTION: i32 = 26;
+
+const ACCESS: i32 = 27;
 
 function lifecycle_event(kind: i32): Event {
   if (kind == START) {
@@ -303,6 +310,9 @@ function message_event(kind: i32, arg: usize): Event {
   if (kind == TEXT_ACTION) {
     return TextAction(arg as i32);
   }
+  if (kind == ACCESS) {
+    return Access((arg >> 8) as i32, (arg & 255 as usize) as i32);
+  }
   if (kind > INPUT_DESTROYED || kind < START) {
     return Posted(kind, arg);
   }
@@ -322,7 +332,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -439,16 +449,29 @@ function ui_env(activity: usize): usize {
   }
 }
 
+// A new context for `activity`, with its three pipes, or 0 when a pipe
+// cannot open.
+function new_context(activity: usize): usize {
+  unsafe {
+    let ctx: usize = __alloc(Context.c_size() as i32);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64 }.c_store(ctx);
+    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
+    if (ok != 0) {
+      __free(ctx, Context.c_size() as i32);
+      return 0 as usize;
+    }
+    return ctx;
+  }
+}
+
 // Sets the callbacks of `activity` and starts the loop thread at
 // `thread_main`, a C function of one usize argument, such as an @callback
 // entry. The loop thread gets the context, which it gives to `run`. Call it
 // from ANativeActivity_onCreate.
 pub function start(activity: usize, thread_main: usize): void {
   unsafe {
-    let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0 }.c_store(ctx);
-    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
-    if (ok != 0) {
+    let ctx: usize = new_context(activity);
+    if (ctx == 0 as usize) {
       c_activity_finish(activity);
       return;
     }
@@ -478,7 +501,7 @@ pub function send(activity: usize, kind: i32, arg: usize): void {
     }
     __free(msg, size as i32);
     if (kind == DESTROY) {
-      close_text_field(activity, ctx);
+      close_ui(activity, ctx);
       let a: i32 = c_close(Context.c_load_message_write(ctx));
       let b: i32 = c_close(Context.c_load_reply_read(ctx));
       NativeActivity.c_store_instance(activity, 0 as usize);
@@ -726,7 +749,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
         let kind: i32 = c_event_type(ev);
         let handled = 0;
         if (kind == 2) {
-          state = step(state, Touch(c_motion_action(ev) & 255, c_motion_x(ev, 0 as usize), c_motion_y(ev, 0 as usize)));
+          let action: i32 = c_motion_action(ev) & 255;
+          let x: f32 = c_motion_x(ev, 0 as usize);
+          let y: f32 = c_motion_y(ev, 0 as usize);
+          hover(lp.ctx, action, x as i32, y as i32);
+          state = step(state, Touch(action, x, y));
           handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
@@ -1108,30 +1135,31 @@ pub const ACTION_DONE: i32 = 6;
 // with a full-screen editor in landscape.
 const NO_EXTRACT_UI: i32 = 268435456;
 
-// A request from the loop thread to the UI thread. `text` is a buffer from
-// text_buffer, or 0.
+// A request from the loop thread to the UI thread: an op, two numbers, and a
+// buffer from bytes_buffer or 0. The UI thread frees the buffer unless the op
+// keeps it.
 @derive(ffi.CLayout)
-struct FieldRequest { op: i32, input: i32, action: i32, text: usize }
+struct UiRequest { op: i32, a: i32, b: i32, data: usize }
 
 // Asks the UI thread to show the field with `text`, the input type `input`
 // and the action key `action`.
 pub(package) function show_field(ctx: usize, text: string, input: i32, action: i32): void {
-  field_request(ctx, FieldRequest { op: FIELD_SHOW, input: input, action: action, text: text_buffer(text) });
+  ui_request(ctx, UiRequest { op: FIELD_SHOW, a: input, b: action, data: text_buffer(text) });
 }
 
 // Asks the UI thread to give the field the text `text`.
 pub(package) function set_field(ctx: usize, text: string): void {
-  field_request(ctx, FieldRequest { op: FIELD_SET, input: 0, action: 0, text: text_buffer(text) });
+  ui_request(ctx, UiRequest { op: FIELD_SET, a: 0, b: 0, data: text_buffer(text) });
 }
 
 // Asks the UI thread to hide the keyboard and take the focus from the field.
 pub(package) function hide_field(ctx: usize): void {
-  field_request(ctx, FieldRequest { op: FIELD_HIDE, input: 0, action: 0, text: 0 as usize });
+  ui_request(ctx, UiRequest { op: FIELD_HIDE, a: 0, b: 0, data: 0 as usize });
 }
 
-function field_request(ctx: usize, r: FieldRequest): void {
+function ui_request(ctx: usize, r: UiRequest): void {
   unsafe {
-    let req: usize = __alloc(FieldRequest.c_size() as i32);
+    let req: usize = __alloc(UiRequest.c_size() as i32);
     r.c_store(req);
     let slot: usize = __alloc(8);
     __store_ptr(slot, req);
@@ -1145,11 +1173,11 @@ function field_request(ctx: usize, r: FieldRequest): void {
 
 function free_request(req: usize): void {
   unsafe {
-    let text: usize = FieldRequest.c_load_text(req);
-    if (text != 0 as usize) {
-      let dropped = taken_text(text);
+    let data: usize = UiRequest.c_load_data(req);
+    if (data != 0 as usize) {
+      free_bytes(data);
     }
-    __free(req, FieldRequest.c_size() as i32);
+    __free(req, UiRequest.c_size() as i32);
   }
 }
 
@@ -1163,7 +1191,9 @@ function on_ui_request(fd: i32, events: i32, data: usize): i32 {
     let slot: usize = __alloc(8);
     while (c_read(fd, slot, 8 as usize) == 8i64) {
       let req: usize = __load_ptr(slot);
-      do_request(data, FieldRequest.c_load(req));
+      if (do_request(data, UiRequest.c_load(req))) {
+        UiRequest.c_store_data(req, 0 as usize);
+      }
       free_request(req);
     }
     __free(slot, 8);
@@ -1171,7 +1201,17 @@ function on_ui_request(fd: i32, events: i32, data: usize): i32 {
   return 1;
 }
 
-function do_request(ctx: usize, r: FieldRequest): void {
+// Does the request `r` on the UI thread. It is true when the request keeps
+// its buffer.
+function do_request(ctx: usize, r: UiRequest): boolean {
+  if (r.op > FIELD_HIDE) {
+    return access_request(ctx, r);
+  }
+  field_request(ctx, r);
+  return false;
+}
+
+function field_request(ctx: usize, r: UiRequest): void {
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
     let e: usize = NativeActivity.c_load_env(activity);
@@ -1184,11 +1224,11 @@ function do_request(ctx: usize, r: FieldRequest): void {
       return;
     }
     if (r.op == FIELD_SHOW) {
-      let typed = jni.call_void(e, field, "setInputType", "(I)V", [r.input as usize]);
-      let options = jni.call_void(e, field, "setImeOptions", "(I)V", [(r.action | NO_EXTRACT_UI) as usize]);
+      let typed = jni.call_void(e, field, "setInputType", "(I)V", [r.a as usize]);
+      let options = jni.call_void(e, field, "setImeOptions", "(I)V", [(r.b | NO_EXTRACT_UI) as usize]);
     }
-    if (r.text != 0 as usize) {
-      field_text(ctx, e, field, text_of_buffer(r.text));
+    if (r.data != 0 as usize) {
+      field_text(ctx, e, field, text_of_buffer(r.data));
     }
     if (r.op == FIELD_SHOW) {
       let focused = call_bool(e, field, "requestFocus", "()Z", []);
@@ -1282,9 +1322,10 @@ function call_bool(e: usize, obj: usize, name: string, sig: string, values: usiz
   return got != 0;
 }
 
-// Takes the field away on Destroy, on the UI thread: it stops the looper
-// watching the pipe, frees the requests that wait in it, and closes it.
-function close_text_field(activity: usize, ctx: usize): void {
+// Ends the requests on Destroy, on the UI thread: it stops the looper watching
+// the pipe, frees the requests that wait in it, closes it, and releases the
+// views of the requests.
+function close_ui(activity: usize, ctx: usize): void {
   unsafe {
     let read: i32 = Context.c_load_ui_read(ctx);
     let removed: i32 = c_looper_remove_fd(c_looper_for_thread(), read);
@@ -1300,22 +1341,30 @@ function close_text_field(activity: usize, ctx: usize): void {
     if (field != 0 as usize) {
       let d: usize = jni.delete_global_ref(e, field);
     }
-    let watcher: usize = Context.c_load_watcher(ctx);
-    if (watcher != 0 as usize) {
-      // A new activity can start before this one ends, and own the field.
-      let id: usize = jni.get_static_field_id(e, watcher, "fern", "J");
-      if (jni.get_static_long_field(e, watcher, id) == ctx) {
-        let f: usize = jni.set_static_long_field(e, watcher, id, 0 as usize);
-      }
-      let g: usize = jni.delete_global_ref(e, watcher);
-    }
+    release_class(e, Context.c_load_watcher(ctx), ctx);
+    close_access(e, ctx);
   }
 }
 
-// The context of the activity, which TextField keeps in its static field.
-function field_context(env: usize, thiz: usize): usize {
+// Releases the global reference `class` of a class with a static `fern`
+// field, and clears that field when it still holds `ctx`. A new activity can
+// start before this one ends, and own the class.
+function release_class(e: usize, class: usize, ctx: usize): void {
+  if (class == 0 as usize) {
+    return;
+  }
+  let id: usize = jni.get_static_field_id(e, class, "fern", "J");
+  if (jni.get_static_long_field(e, class, id) == ctx) {
+    let f: usize = jni.set_static_long_field(e, class, id, 0 as usize);
+  }
+  let g: usize = jni.delete_global_ref(e, class);
+}
+
+// The context of the activity, which the class of `thiz` keeps in its static
+// field `fern`.
+function static_context(env: usize, thiz: usize): usize {
   let class: usize = jni.get_object_class(env, thiz);
-  let ctx: usize = jni.get_static_long_field(env, class, jni.get_static_field_id(env, class, "fern", "J")) as usize;
+  let ctx = jni.get_static_long_field(env, class, jni.get_static_field_id(env, class, "fern", "J"));
   let a: usize = jni.delete_local_ref(env, class);
   return ctx;
 }
@@ -1323,7 +1372,7 @@ function field_context(env: usize, thiz: usize): usize {
 // After a change of the text of the field, on the UI thread: the loop thread
 // gets the whole text.
 pub(package) function text_changed(env: usize, thiz: usize, editable: usize): void {
-  let ctx = field_context(env, thiz);
+  let ctx = static_context(env, thiz);
   if (ctx == 0 as usize) {
     return;
   }
@@ -1341,7 +1390,7 @@ pub(package) function text_changed(env: usize, thiz: usize, editable: usize): vo
 // The action key of the keyboard, on the UI thread. It is true when the loop
 // thread gets the action.
 pub(package) function text_action(env: usize, thiz: usize, action: i32): boolean {
-  let ctx = field_context(env, thiz);
+  let ctx = static_context(env, thiz);
   if (ctx == 0 as usize) {
     return false;
   }
@@ -1353,7 +1402,11 @@ pub(package) function text_action(env: usize, thiz: usize, action: i32): boolean
 
 // A heap copy of `text` for another thread: its length, then its bytes.
 pub(package) function text_buffer(text: string): usize {
-  let b = text.as_bytes();
+  return bytes_buffer(text.as_bytes());
+}
+
+// A heap copy of `b` for another thread: its length, then its bytes.
+function bytes_buffer(b: [u8]): usize {
   unsafe {
     let buf: usize = __alloc(4 + b.len());
     __store_i32(buf, b.len());
@@ -1362,12 +1415,16 @@ pub(package) function text_buffer(text: string): usize {
   }
 }
 
-// The text of a buffer from text_buffer, which it frees.
-pub(package) function taken_text(buf: usize): string {
-  let text = text_of_buffer(buf);
+function free_bytes(buf: usize): void {
   unsafe {
     __free(buf, 4 + __load_i32(buf));
   }
+}
+
+// The text of a buffer from text_buffer, which it frees.
+pub(package) function taken_text(buf: usize): string {
+  let text = text_of_buffer(buf);
+  free_bytes(buf);
   return text;
 }
 
@@ -1380,6 +1437,500 @@ function text_of_buffer(buf: usize): string {
     }
   }
   return unsafe { string_from_bytes_unchecked(b) };
+}
+```
+
+### `accessibility`
+
+An accessibility service, such as TalkBack, reads the views of a window. A NativeActivity draws its own pixels, so the service finds no view to read. `std/android/access` gives the service a tree of items. The app gives each item an id, a rectangle in the pixels of the window, a text, and the actions that the item takes.
+
+This section keeps the parts of the tree that use the context of the activity. The first tree adds a plain `View` that covers the window. That view has a delegate, the class `dev.fern.android.AccessDelegate`, which gives the service a provider, `dev.fern.android.AccessTree`. The provider makes a node for each item from the last tree.
+
+The loop thread sends each tree as a request to the UI thread, through the pipe of the text fields. It sends a tree only when the bytes of the tree change. A hover pointer, which TalkBack makes when it explores by touch, also goes to the UI thread. The item under the pointer gets the hover event that moves the focus of the service. A click or a long click of the service comes to the loop thread as an `Access` event.
+
+```fern
+<<accessibility>>=
+const ACCESS_TREE: i32 = 4;
+
+const ACCESS_HOVER: i32 = 5;
+
+const ACCESS_EXIT: i32 = 6;
+
+// AccessibilityNodeProvider.HOST_VIEW_ID: the node of the view itself.
+const HOST_ID: i32 = -1;
+
+// No item. The id of an item is 0 or more.
+const NO_ITEM: i32 = -2;
+
+// AccessibilityNodeInfo.ACTION_CLICK: the item does something on a tap.
+pub const ACCESS_CLICK: i32 = 16;
+
+// AccessibilityNodeInfo.ACTION_LONG_CLICK: the item does something on a
+// long press.
+pub const ACCESS_LONG_CLICK: i32 = 32;
+
+const ACTION_ACCESSIBILITY_FOCUS: i32 = 64;
+
+const ACTION_CLEAR_ACCESSIBILITY_FOCUS: i32 = 128;
+
+// AccessibilityNodeProvider.findFocus: FOCUS_ACCESSIBILITY.
+const FOCUS_ACCESSIBILITY: i32 = 2;
+
+// The AccessibilityEvent types.
+const EVENT_CLICKED: i32 = 1;
+
+const EVENT_LONG_CLICKED: i32 = 2;
+
+const EVENT_HOVER_ENTER: i32 = 128;
+
+const EVENT_HOVER_EXIT: i32 = 256;
+
+const EVENT_CONTENT_CHANGED: i32 = 2048;
+
+const EVENT_FOCUSED: i32 = 32768;
+
+const EVENT_FOCUS_CLEARED: i32 = 65536;
+
+// An item of the tree: its id, its rectangle in the pixels of the window,
+// the text that the service reads, and its actions, a sum of ACCESS_CLICK
+// and ACCESS_LONG_CLICK.
+pub struct AccessItem { id: i32, x: i32, y: i32, w: i32, h: i32, text: string, actions: i32 }
+
+// The bytes of each item: its id, x, y, w, h and actions, and the length of
+// its text, then its text.
+const ITEM_HEAD: i32 = 28;
+
+// Sends the tree `items` to the UI thread when it differs from the last
+// tree. Call it on the loop thread.
+pub(package) function publish_tree(ctx: usize, items: AccessItem[]): void {
+  let b: u8[] = [];
+  b = put_i32(b, items.len());
+  for it in items {
+    for v in [it.id, it.x, it.y, it.w, it.h, it.actions, it.text.len()] {
+      b = put_i32(b, v);
+    }
+    b = b.concat(it.text.as_bytes());
+  }
+  let hash = fnv(b);
+  unsafe {
+    if (Context.c_load_sent(ctx) == hash) {
+      return;
+    }
+    Context.c_store_sent(ctx, hash);
+  }
+  ui_request(ctx, UiRequest { op: ACCESS_TREE, a: 0, b: 0, data: bytes_buffer(b) });
+}
+
+function put_i32(b: u8[], v: i32): u8[] {
+  let out = b;
+  for k in 0..4 {
+    out = out.append((v >> 8 * k & 255) as u8);
+  }
+  return out;
+}
+
+// The FNV-1a hash of `b`. It is never 0, the hash of no tree.
+function fnv(b: u8[]): i64 {
+  let h = -3750763034362895579i64;
+  for c in b {
+    h = (h ^ c as i64) * 1099511628211i64;
+  }
+  if (h == 0i64) {
+    return 1i64;
+  }
+  return h;
+}
+
+// Sends a hover pointer of the loop thread to the UI thread, once a tree is
+// sent.
+function hover(ctx: usize, action: i32, x: i32, y: i32): void {
+  unsafe {
+    if (Context.c_load_sent(ctx) == 0i64) {
+      return;
+    }
+  }
+  if (action == 7 || action == 9) {
+    ui_request(ctx, UiRequest { op: ACCESS_HOVER, a: x, b: y, data: 0 as usize });
+  } else if (action == 10) {
+    ui_request(ctx, UiRequest { op: ACCESS_EXIT, a: 0, b: 0, data: 0 as usize });
+  }
+}
+
+struct Item { id: i32, x: i32, y: i32, w: i32, h: i32, actions: i32, text: string }
+
+function tree_count(tree: usize): i32 {
+  unsafe {
+    return __load_i32(tree + 4 as usize);
+  }
+}
+
+// The offset of each item in the buffer of a tree.
+function item_offsets(tree: usize): i32[] {
+  let out: i32[] = [];
+  if (tree == 0 as usize) {
+    return out;
+  }
+  let off = 8;
+  unsafe {
+    for k in 0..tree_count(tree) {
+      out = out.append(off);
+      off += ITEM_HEAD + __load_i32(tree + (off + 24) as usize);
+    }
+  }
+  return out;
+}
+
+function item_at(tree: usize, off: i32): Item {
+  unsafe {
+    let p: usize = tree + off as usize;
+    let n: i32 = __load_i32(p + 24 as usize);
+    let b: u8[] = [];
+    for k in 0..n {
+      b = b.append(__load_u8(p + (ITEM_HEAD + k) as usize) as u8);
+    }
+    return Item { id: __load_i32(p), x: __load_i32(p + 4 as usize), y: __load_i32(p + 8 as usize), w: __load_i32(p + 12 as usize), h: __load_i32(p + 16 as usize), actions: __load_i32(p + 20 as usize), text: string_from_bytes_unchecked(b) };
+  }
+}
+
+// The offset of the item `id` in the tree, or -1.
+function item_offset(tree: usize, id: i32): i32 {
+  for off in item_offsets(tree) {
+    unsafe {
+      if (__load_i32(tree + off as usize) == id) {
+        return off;
+      }
+    }
+  }
+  return -1;
+}
+
+// The id of the last item whose rectangle holds (x, y), or NO_ITEM.
+function item_under(tree: usize, x: i32, y: i32): i32 {
+  let found = NO_ITEM;
+  for off in item_offsets(tree) {
+    let it = item_at(tree, off);
+    if (x >= it.x && x < it.x + it.w && y >= it.y && y < it.y + it.h) {
+      found = it.id;
+    }
+  }
+  return found;
+}
+
+// Does a tree or hover request on the UI thread. It is true when it keeps
+// the buffer of the request.
+function access_request(ctx: usize, r: UiRequest): boolean {
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    if (r.op == ACCESS_TREE && Context.c_load_host(ctx) == 0 as usize) {
+      new_access_host(ctx, e, NativeActivity.c_load_clazz(activity));
+    }
+    let host: usize = Context.c_load_host(ctx);
+    if (host == 0 as usize) {
+      return false;
+    }
+    if (r.op == ACCESS_TREE) {
+      let old: usize = Context.c_load_tree(ctx);
+      if (old != 0 as usize) {
+        free_bytes(old);
+      }
+      Context.c_store_tree(ctx, r.data);
+      if (item_offset(r.data, Context.c_load_focused(ctx)) < 0) {
+        Context.c_store_focused(ctx, NO_ITEM);
+      }
+      if (item_offset(r.data, Context.c_load_hovered(ctx)) < 0) {
+        Context.c_store_hovered(ctx, NO_ITEM);
+      }
+      let changed = jni.call_void(e, host, "sendAccessibilityEvent", "(I)V", [EVENT_CONTENT_CHANGED as usize]);
+      return true;
+    }
+    let id = NO_ITEM;
+    if (r.op == ACCESS_HOVER) {
+      id = item_under(Context.c_load_tree(ctx), r.a, r.b);
+    }
+    let was: i32 = Context.c_load_hovered(ctx);
+    if (id != was) {
+      if (was != NO_ITEM) {
+        send_item_event(ctx, e, was, EVENT_HOVER_EXIT);
+      }
+      if (id != NO_ITEM) {
+        send_item_event(ctx, e, id, EVENT_HOVER_ENTER);
+      }
+      Context.c_store_hovered(ctx, id);
+    }
+    return false;
+  }
+}
+
+// Adds the view that holds the tree, with its delegate and its provider.
+function new_access_host(ctx: usize, e: usize, obj: usize): void {
+  let view_class: usize = jni.find_class(e, "android/view/View");
+  let args: usize = jni.jvalues([obj]);
+  let view: usize = jni.new_object_a(e, view_class, jni.get_method_id(e, view_class, "<init>", "(Landroid/content/Context;)V"), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, view_class);
+  if (view == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return;
+  }
+  // ViewGroup.LayoutParams.MATCH_PARENT in both directions.
+  let lp_class: usize = jni.find_class(e, "android/view/ViewGroup$LayoutParams");
+  let lp_args: usize = jni.jvalues([4294967295 as usize, 4294967295 as usize]);
+  let lp: usize = jni.new_object_a(e, lp_class, jni.get_method_id(e, lp_class, "<init>", "(II)V"), lp_args);
+  jni.free_buffer(lp_args);
+  let important = jni.call_void(e, view, "setImportantForAccessibility", "(I)V", [1 as usize]);
+  let added = jni.call_void(e, obj, "addContentView", "(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V", [view, lp]);
+  let delegate_class: usize = jni.load_class(e, obj, "dev.fern.android.AccessDelegate");
+  let tree_class: usize = jni.load_class(e, obj, "dev.fern.android.AccessTree");
+  if (added && delegate_class != 0 as usize && tree_class != 0 as usize) {
+    let delegate: usize = new_plain(e, delegate_class);
+    let provider: usize = new_plain(e, tree_class);
+    for class in [delegate_class, tree_class] {
+      let set: usize = jni.set_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"), ctx);
+    }
+    let delegated = jni.call_void(e, view, "setAccessibilityDelegate", "(Landroid/view/View$AccessibilityDelegate;)V", [delegate]);
+    unsafe {
+      Context.c_store_host(ctx, jni.new_global_ref(e, view));
+      Context.c_store_provider(ctx, jni.new_global_ref(e, provider));
+      Context.c_store_delegate_class(ctx, jni.new_global_ref(e, delegate_class));
+      Context.c_store_tree_class(ctx, jni.new_global_ref(e, tree_class));
+    }
+    for r in [delegate, provider] {
+      let d: usize = jni.delete_local_ref(e, r);
+    }
+  }
+  let cleared: usize = jni.exception_clear(e);
+  for r in [tree_class, delegate_class, lp, lp_class, view] {
+    let d: usize = jni.delete_local_ref(e, r);
+  }
+}
+
+// A new object of `class` from its constructor with no arguments.
+function new_plain(e: usize, class: usize): usize {
+  let none: usize = jni.jvalue_alloc(0);
+  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), none);
+  jni.free_buffer(none);
+  return obj;
+}
+
+function call_static(e: usize, class: usize, name: string, sig: string, values: usize[]): usize {
+  let args: usize = jni.jvalues(values);
+  let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, name, sig), args);
+  jni.free_buffer(args);
+  return got;
+}
+
+// The class name that tells the service the role of an item.
+function item_class(it: Item): string {
+  if ((it.actions & ACCESS_CLICK) != 0) {
+    return "android.widget.Button";
+  }
+  return "android.widget.TextView";
+}
+
+// Sends the accessibility event `kind` for the item `id` from the view that
+// holds the tree.
+function send_item_event(ctx: usize, e: usize, id: i32, kind: i32): void {
+  unsafe {
+    let host: usize = Context.c_load_host(ctx);
+    let obj: usize = NativeActivity.c_load_clazz(Context.c_load_activity(ctx));
+    let class: usize = jni.find_class(e, "android/view/accessibility/AccessibilityEvent");
+    let ev: usize = call_static(e, class, "obtain", "(I)Landroid/view/accessibility/AccessibilityEvent;", [kind as usize]);
+    let pkg: usize = jni.call_object(e, obj, "getPackageName", "()Ljava/lang/String;", []);
+    let named = jni.call_void(e, ev, "setPackageName", "(Ljava/lang/CharSequence;)V", [pkg]);
+    let off = item_offset(Context.c_load_tree(ctx), id);
+    if (off >= 0) {
+      let it = item_at(Context.c_load_tree(ctx), off);
+      let cls: usize = jni.new_string(e, item_class(it));
+      let classed = jni.call_void(e, ev, "setClassName", "(Ljava/lang/CharSequence;)V", [cls]);
+      let list: usize = jni.call_object(e, ev, "getText", "()Ljava/util/List;", []);
+      let text: usize = jni.new_string(e, it.text);
+      let added = call_bool(e, list, "add", "(Ljava/lang/Object;)Z", [text]);
+      for r in [text, list, cls] {
+        let d: usize = jni.delete_local_ref(e, r);
+      }
+    }
+    let enabled = jni.call_void(e, ev, "setEnabled", "(Z)V", [1 as usize]);
+    let sourced = jni.call_void(e, ev, "setSource", "(Landroid/view/View;I)V", [host, id as usize]);
+    let parent: usize = jni.call_object(e, host, "getParent", "()Landroid/view/ViewParent;", []);
+    if (parent != 0 as usize) {
+      let sent = call_bool(e, parent, "requestSendAccessibilityEvent", "(Landroid/view/View;Landroid/view/accessibility/AccessibilityEvent;)Z", [host, ev]);
+    }
+    let cleared: usize = jni.exception_clear(e);
+    for r in [parent, pkg, ev, class] {
+      let d: usize = jni.delete_local_ref(e, r);
+    }
+  }
+}
+
+// The provider of the view that holds the tree, for the delegate.
+pub(package) function access_provider(env: usize, thiz: usize): usize {
+  let ctx = static_context(env, thiz);
+  if (ctx == 0 as usize) {
+    return 0 as usize;
+  }
+  unsafe {
+    return jni.new_local_ref(env, Context.c_load_provider(ctx));
+  }
+}
+
+// The node of the item `id`, or of the view that holds the tree for
+// HOST_ID, as a local reference, or 0.
+pub(package) function access_node(env: usize, thiz: usize, id: i32): usize {
+  let ctx = static_context(env, thiz);
+  if (ctx == 0 as usize) {
+    return 0 as usize;
+  }
+  return item_node(ctx, env, id);
+}
+
+// The node that has the focus of the service, or 0.
+pub(package) function access_focus(env: usize, thiz: usize, kind: i32): usize {
+  let ctx = static_context(env, thiz);
+  if (ctx == 0 as usize || kind != FOCUS_ACCESSIBILITY) {
+    return 0 as usize;
+  }
+  unsafe {
+    let id: i32 = Context.c_load_focused(ctx);
+    if (id == NO_ITEM) {
+      return 0 as usize;
+    }
+    return item_node(ctx, env, id);
+  }
+}
+
+function item_node(ctx: usize, e: usize, id: i32): usize {
+  unsafe {
+    let host: usize = Context.c_load_host(ctx);
+    let tree: usize = Context.c_load_tree(ctx);
+    let class: usize = jni.find_class(e, "android/view/accessibility/AccessibilityNodeInfo");
+    if (id == HOST_ID) {
+      let info: usize = call_static(e, class, "obtain", "(Landroid/view/View;)Landroid/view/accessibility/AccessibilityNodeInfo;", [host]);
+      let init = jni.call_void(e, host, "onInitializeAccessibilityNodeInfo", "(Landroid/view/accessibility/AccessibilityNodeInfo;)V", [info]);
+      for off in item_offsets(tree) {
+        let child = jni.call_void(e, info, "addChild", "(Landroid/view/View;I)V", [host, __load_i32(tree + off as usize) as usize]);
+      }
+      let a: usize = jni.delete_local_ref(e, class);
+      return info;
+    }
+    let off = item_offset(tree, id);
+    if (off < 0) {
+      let b: usize = jni.delete_local_ref(e, class);
+      return 0 as usize;
+    }
+    let it = item_at(tree, off);
+    let info: usize = call_static(e, class, "obtain", "(Landroid/view/View;I)Landroid/view/accessibility/AccessibilityNodeInfo;", [host, id as usize]);
+    let obj: usize = NativeActivity.c_load_clazz(Context.c_load_activity(ctx));
+    let pkg: usize = jni.call_object(e, obj, "getPackageName", "()Ljava/lang/String;", []);
+    let cls: usize = jni.new_string(e, item_class(it));
+    let text: usize = jni.new_string(e, it.text);
+    let rect_class: usize = jni.find_class(e, "android/graphics/Rect");
+    let rect_args: usize = jni.jvalues([it.x as usize, it.y as usize, (it.x + it.w) as usize, (it.y + it.h) as usize]);
+    let rect: usize = jni.new_object_a(e, rect_class, jni.get_method_id(e, rect_class, "<init>", "(IIII)V"), rect_args);
+    jni.free_buffer(rect_args);
+    let calls = [
+      ("setParent", "(Landroid/view/View;)V", [host]),
+      ("setPackageName", "(Ljava/lang/CharSequence;)V", [pkg]),
+      ("setClassName", "(Ljava/lang/CharSequence;)V", [cls]),
+      ("setText", "(Ljava/lang/CharSequence;)V", [text]),
+      ("setBoundsInParent", "(Landroid/graphics/Rect;)V", [rect]),
+      ("setVisibleToUser", "(Z)V", [1 as usize]),
+      ("setEnabled", "(Z)V", [1 as usize]),
+    ];
+    for (name, sig, values) in calls {
+      let done = jni.call_void(e, info, name, sig, values);
+    }
+    let place: usize = jni.new_int_array(e, 2);
+    let located = jni.call_void(e, host, "getLocationOnScreen", "([I)V", [place]);
+    let at = jni.int_array_region(e, place, 0, 2);
+    let moved = jni.call_void(e, rect, "offset", "(II)V", [at[0] as usize, at[1] as usize]);
+    let screen = jni.call_void(e, info, "setBoundsInScreen", "(Landroid/graphics/Rect;)V", [rect]);
+    if ((it.actions & ACCESS_CLICK) != 0) {
+      let c = jni.call_void(e, info, "addAction", "(I)V", [ACCESS_CLICK as usize]);
+      let d = jni.call_void(e, info, "setClickable", "(Z)V", [1 as usize]);
+    }
+    if ((it.actions & ACCESS_LONG_CLICK) != 0) {
+      let c = jni.call_void(e, info, "addAction", "(I)V", [ACCESS_LONG_CLICK as usize]);
+      let d = jni.call_void(e, info, "setLongClickable", "(Z)V", [1 as usize]);
+    }
+    if (Context.c_load_focused(ctx) == id) {
+      let c = jni.call_void(e, info, "setAccessibilityFocused", "(Z)V", [1 as usize]);
+      let d = jni.call_void(e, info, "addAction", "(I)V", [ACTION_CLEAR_ACCESSIBILITY_FOCUS as usize]);
+    } else {
+      let c = jni.call_void(e, info, "addAction", "(I)V", [ACTION_ACCESSIBILITY_FOCUS as usize]);
+    }
+    for r in [place, rect, rect_class, text, cls, pkg, class] {
+      let f: usize = jni.delete_local_ref(e, r);
+    }
+    return info;
+  }
+}
+
+// The action `action` of the service on the item `id`. It is true when the
+// item takes the action.
+pub(package) function access_action(env: usize, thiz: usize, id: i32, action: i32, args: usize): boolean {
+  let ctx = static_context(env, thiz);
+  if (ctx == 0 as usize) {
+    return false;
+  }
+  unsafe {
+    let host: usize = Context.c_load_host(ctx);
+    if (id == HOST_ID) {
+      return call_bool(env, host, "performAccessibilityAction", "(ILandroid/os/Bundle;)Z", [action as usize, args]);
+    }
+    let tree: usize = Context.c_load_tree(ctx);
+    let off = item_offset(tree, id);
+    if (off < 0) {
+      return false;
+    }
+    let focused: i32 = Context.c_load_focused(ctx);
+    if (action == ACTION_ACCESSIBILITY_FOCUS) {
+      if (focused == id) {
+        return false;
+      }
+      Context.c_store_focused(ctx, id);
+      if (focused != NO_ITEM) {
+        send_item_event(ctx, env, focused, EVENT_FOCUS_CLEARED);
+      }
+      send_item_event(ctx, env, id, EVENT_FOCUSED);
+      return true;
+    }
+    if (action == ACTION_CLEAR_ACCESSIBILITY_FOCUS) {
+      if (focused != id) {
+        return false;
+      }
+      Context.c_store_focused(ctx, NO_ITEM);
+      send_item_event(ctx, env, id, EVENT_FOCUS_CLEARED);
+      return true;
+    }
+    if ((action == ACCESS_CLICK || action == ACCESS_LONG_CLICK) && (item_at(tree, off).actions & action) != 0) {
+      send(Context.c_load_activity(ctx), ACCESS, id as usize << 8 | action as usize);
+      let kind = EVENT_CLICKED;
+      if (action == ACCESS_LONG_CLICK) {
+        kind = EVENT_LONG_CLICKED;
+      }
+      send_item_event(ctx, env, id, kind);
+      return true;
+    }
+    return false;
+  }
+}
+
+// Releases the view that holds the tree, and the tree, on Destroy.
+function close_access(e: usize, ctx: usize): void {
+  unsafe {
+    for r in [Context.c_load_host(ctx), Context.c_load_provider(ctx)] {
+      if (r != 0 as usize) {
+        let d: usize = jni.delete_global_ref(e, r);
+      }
+    }
+    release_class(e, Context.c_load_delegate_class(ctx), ctx);
+    release_class(e, Context.c_load_tree_class(ctx), ctx);
+    let tree: usize = Context.c_load_tree(ctx);
+    if (tree != 0 as usize) {
+      free_bytes(tree);
+    }
+  }
 }
 ```
 

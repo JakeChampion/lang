@@ -68,6 +68,16 @@ function gpu_line(dir: string, line: string): void {
   let ok = write_file(dir + "/gpu", testkit.read_text(dir + "/gpu") + line + "\n");
 }
 
+// The last items for an accessibility service, one "id text actions" line
+// for each item.
+function access_line(dir: string, items: android.AccessItem[]): void {
+  let lines: string[] = [];
+  for it in items {
+    lines = lines.append(it.id.to_string() + " " + it.text + " " + it.actions.to_string());
+  }
+  let ok = write_file(dir + "/access", lines.join("\n"));
+}
+
 // The calls to the text field of the keyboard go to a log of their own.
 function field_line(dir: string, line: string): void {
   let ok = write_file(dir + "/field", testkit.read_text(dir + "/field") + line + "\n");
@@ -121,6 +131,7 @@ function fake(dir: string, now: i64): control.Device {
     show_field: (text: string, action: i32): void => field_line(dir, "show " + action.to_string() + " " + text),
     set_field: (text: string): void => field_line(dir, "set " + text),
     hide_field: (): void => field_line(dir, "hide"),
+    access: (items: android.AccessItem[]): void => access_line(dir, items),
     bars: (top: boolean, bottom: boolean): void => {},
     has_location: (): boolean => false,
     ask_location: (): void => {},
@@ -374,6 +385,48 @@ function test_hardware_keys_set_field(): test.TestOutcome {
   return test.assert_eq(fielded(r), "show 2 ; hide; hide; show 2 ; set z; set zq; set z; hide");
 }
 
+// The number that the digits of `s` write.
+function int_of(s: string): i32 {
+  let v = 0;
+  for c in s.as_bytes() {
+    v = v * 10 + (c - b'0') as i32;
+  }
+  return v;
+}
+
+// The item for an accessibility service whose text starts with `text`,
+// as its id and actions, or (-1, 0).
+function access_item(r: Run, text: string): (i32, i32) {
+  for line in testkit.read_text(r.dir + "/access").split("\n") {
+    let parts = line.split(" ");
+    if (parts.len() >= 3 && line.drop(parts[0].len() + 1).starts_with(text)) {
+      return (int_of(parts[0]), int_of(parts[parts.len() - 1]));
+    }
+  }
+  return (-1, 0);
+}
+
+// An accessibility service reads the app list, and a double tap on an app
+// opens it.
+function test_access_opens_an_app(): test.TestOutcome {
+  let r = swipe(shown("access"), 2000, 900);
+  let (id, actions) = access_item(r, "Paper");
+  let (search, _) = access_item(r, "Search");
+  r = at(r, 20, android.Access(id, android.ACCESS_CLICK));
+  return test.assert_eq((id >= 0).to_string() + " " + actions.to_string() + " " + (search >= 0).to_string() + " " + logged(r), "true 48 true launch " + PAPER_KEY);
+}
+
+// A long press of the service opens the menu of an app. The service then
+// reads only the menu, not the list behind it.
+function test_access_long_press_opens_the_menu(): test.TestOutcome {
+  let r = swipe(shown("access-menu"), 2000, 900);
+  let (id, _) = access_item(r, "Paper");
+  r = at(r, 20, android.Access(id, android.ACCESS_LONG_CLICK));
+  let (search, _) = access_item(r, "Search");
+  let (rename, actions) = access_item(r, "Rename");
+  return test.assert_eq(r.s.sheet.is_some().to_string() + " " + search.to_string() + " " + (rename >= 0).to_string() + " " + actions.to_string(), "true -1 true 16");
+}
+
 function test_rename(): test.TestOutcome {
   let r = add_home(shown("rename"), "com.android.chrome/Main");
   r = long(r, "menu:com.android.chrome/Main");
@@ -510,6 +563,8 @@ function main(): i32 {
   r = r.it("a home app opens", test_home_app_opens);
   r = r.it("the keyboard of the system types through the text field", test_text_field);
   r = r.it("a hardware key gives the field the new text", test_hardware_keys_set_field);
+  r = r.it("an accessibility service opens an app", test_access_opens_an_app);
+  r = r.it("a long press of the service opens the menu alone", test_access_long_press_opens_the_menu);
   r = r.it("rename an app", test_rename);
   r = r.it("a blocked app does not open", test_block);
   r = r.it("a mindful app opens after the pause", test_mindful_pause);

@@ -4,6 +4,7 @@
 // touch, so the drawing and the touches use one layout. The sizes are those
 // of Paper's Android views: text in sp and boxes in dp. Every function is
 // pure except `render`, which writes only into the frame.
+import "std/android";
 import "std/android/draw";
 import "std/jpeg";
 import "./face";
@@ -856,6 +857,154 @@ pub function group_at(ns: Node[], x: i32, y: i32): string {
     k -= 1;
   }
   return "";
+}
+
+// --- accessibility
+
+// The text that a node shows, or "".
+function shown_text(n: Node): string {
+  match (n.paint) {
+    Label(text, _, _, _, _) => {
+      return text;
+    },
+    Shadowed(text, _, _, _, _) => {
+      return text;
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// The name of a node with an action and no text of its own.
+function action_name(act: string): string {
+  if (act.starts_with("jump:")) {
+    return act.drop(5).to_owned();
+  }
+  if (act == "music") {
+    return "Music";
+  }
+  if (act == "weather") {
+    return "Weather";
+  }
+  if (act == "type") {
+    return "Search apps";
+  }
+  if (act == "held") {
+    return "Held notifications";
+  }
+  return act;
+}
+
+// The part of node `n` that shows, between its clip rows, as x, y, w, h.
+function visible(n: Node): (i32, i32, i32, i32) {
+  let y0 = n.y.max(n.clip0);
+  let y1 = (n.y + n.h).min(n.clip1);
+  return (n.x, y0, n.w, (y1 - y0).max(0));
+}
+
+function holds(r: (i32, i32, i32, i32), n: Node): boolean {
+  let (x, y, w, h) = r;
+  let cx = n.x + n.w / 2;
+  let cy = n.y + n.h / 2;
+  return cx >= x && cx < x + w && cy >= y && cy < y + h;
+}
+
+// The nodes that an accessibility service can reach: those after the last
+// scrim, which covers the screen behind a sheet or the pause.
+function reachable(ns: Node[]): Node[] {
+  let start = 0;
+  for k in 0..ns.len() {
+    if (ns[k].act == "dismiss" || ns[k].act == "none") {
+      start = k + 1;
+    }
+  }
+  return ns.drop(start);
+}
+
+// A stable id for the key `key`, which no id in `used` has.
+function access_id(key: string, used: i32[]): i32 {
+  let id = (key.hash_fnv32() & 1073741823u32) as i32;
+  while (used.contains(id)) {
+    id = id + 1 & 1073741823;
+  }
+  return id;
+}
+
+// The items that an accessibility service reads, with the node of each
+// one: each node with an action, named by the text of the labels in it,
+// and each label in no such node.
+function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
+  let reach = reachable(ns);
+  let out: (android.AccessItem, Node)[] = [];
+  let used: i32[] = [];
+  let named: boolean[] = [];
+  for n in reach {
+    named = named.append(false);
+  }
+  for n in reach {
+    if (n.act.len() == 0 && n.long.len() == 0) {
+      continue;
+    }
+    let r = visible(n);
+    let (x, y, w, h) = r;
+    if (h == 0) {
+      continue;
+    }
+    let parts: string[] = [];
+    for k in 0..reach.len() {
+      let t = shown_text(reach[k]);
+      if (t.len() > 0 && holds(r, reach[k])) {
+        parts = parts.append(t);
+        named = named.with(k, true);
+      }
+    }
+    let text = parts.join(", ");
+    if (text.len() == 0) {
+      text = action_name(n.act);
+    }
+    let actions = 0;
+    if (n.act.len() > 0) {
+      actions |= android.ACCESS_CLICK;
+    }
+    if (n.long.len() > 0) {
+      actions |= android.ACCESS_LONG_CLICK;
+    }
+    let id = access_id(n.act + "|" + n.long, used);
+    used = used.append(id);
+    out = out.append((android.AccessItem { id: id, x: x, y: y, w: w, h: h, text: text, actions: actions }, n));
+  }
+  for k in 0..reach.len() {
+    let n = reach[k];
+    let t = shown_text(n);
+    let (x, y, w, h) = visible(n);
+    if (t.len() == 0 || named[k] || h == 0) {
+      continue;
+    }
+    let id = access_id("text|" + t, used);
+    used = used.append(id);
+    out = out.append((android.AccessItem { id: id, x: x, y: y, w: w, h: h, text: t, actions: 0 }, n));
+  }
+  return out;
+}
+
+// The items of the nodes `ns` for an accessibility service.
+pub function access_items(ns: Node[]): android.AccessItem[] {
+  let out: android.AccessItem[] = [];
+  for (item, _) in access_pairs(ns) {
+    out = out.append(item);
+  }
+  return out;
+}
+
+// The node of the item `id` of the nodes `ns`, or None.
+pub function access_node(ns: Node[], id: i32): Option[Node] {
+  for (item, n) in access_pairs(ns) {
+    if (item.id == id) {
+      return Some(n);
+    }
+  }
+  return None;
 }
 
 // --- drawing

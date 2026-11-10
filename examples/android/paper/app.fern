@@ -6,6 +6,7 @@
 // which hears the home key, a task for the UI thread that sets the system
 // bars, and the notification listener of the notification filter.
 import "std/android";
+import "std/android/access";
 import "std/android/draw";
 import "std/android/keyboard";
 import "std/android/property";
@@ -795,6 +796,7 @@ function device(ctx: usize, wall: u8[]): control.Device {
     show_field: (text: string, action: i32): void => keyboard.show(ctx, text, android.INPUT_TEXT, action),
     set_field: (text: string): void => keyboard.set_text(ctx, text),
     hide_field: (): void => keyboard.hide(ctx),
+    access: (items: android.AccessItem[]): void => access.publish(ctx, items),
     bars: (top: boolean, bottom: boolean): void => set_bars(ctx, top, bottom),
     has_location: (): boolean => android.has_permission(ctx, LOCATION),
     ask_location: (): void => android.request_permissions(ctx, [LOCATION]),

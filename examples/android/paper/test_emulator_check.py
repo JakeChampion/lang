@@ -15,7 +15,9 @@ spec.loader.exec_module(check)
 class Device:
     def __init__(self, *, stuck_keyboard=False, missing_keyboard=False,
                  ignored_back=False, early_close=False, wrong_home=False,
-                 editor="inputType=0x1 imeOptions=0x10000002"):
+                 editor="inputType=0x1 imeOptions=0x10000002",
+                 dump='<node index="2" text="9:06" resource-id="" class="android.widget.Button" package="dev.fern.paper" content-desc="" clickable="true" />'):
+        self.dump = dump
         self.keyboard = False
         self.editor = editor
         self.layer = 0
@@ -59,6 +61,8 @@ class Device:
             return "B|12|frame"
         elif args == ("shell", "dumpsys", "input_method") and self.keyboard:
             return self.editor
+        elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
+            return self.dump
         return ""
 
     def wait_for(self, pattern, timeout=30):
@@ -122,6 +126,10 @@ class BackNavigationTests(unittest.TestCase):
     def test_keyboard_must_type_into_the_text_field(self):
         failures = self.run_device(Device(editor="inputType=0x0 imeOptions=0x0"))
         self.assertIn("the keyboard does not type into the text field: inputType=0x0 imeOptions=0x0", failures)
+
+    def test_clock_must_be_a_button_for_accessibility(self):
+        failures = self.run_device(Device(dump='<node text="9:06" class="android.view.View" package="dev.fern.paper" clickable="false" />'))
+        self.assertIn("the accessibility layer has no clock button of Paper", failures)
 
     def test_home_transition_also_requires_the_home_frame(self):
         failures = self.run_device(Device(wrong_home=True))
