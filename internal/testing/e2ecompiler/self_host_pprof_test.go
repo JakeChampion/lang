@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,5 +176,43 @@ func TestSelfHostPprofReservoirWeights(t *testing.T) {
 	}
 	if bytes < 530000*40-32768 || bytes > 530000*40+32768 {
 		t.Errorf("scaled byte estimate %d", bytes)
+	}
+}
+
+func TestSelfHostPprofBinarySymbolization(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	var source strings.Builder
+	for i := 0; i < 64; i++ {
+		fmt.Fprintf(&source, `@noinline function allocate%d(index: i32): i32 {
+   let sum = 0;
+   for n in 0..64 { let xs: i32[] = [n, n + 1]; sum += xs[index]; }
+   return sum;
+  }
+`, i)
+	}
+	source.WriteString(`function main(): i32 {
+  let index = args().len() - 1;
+  let before = __heap_alloc_count();
+  let sum = 0;
+ `)
+	for i := 0; i < 64; i++ {
+		fmt.Fprintf(&source, "sum += allocate%d(index);\n", i)
+	}
+	source.WriteString(`if (__heap_alloc_count() - before != 4096i64 || sum != 129024) { return 12; }
+ return 7;
+ }`)
+	file := filepath.Join(t.TempDir(), "symbols.pprof")
+	bin := compilePprofProfile(t, cli, source.String(), "x86-64-linux", "alloc-pprof", file, "-g")
+	stdout, stderr := runCPUProfile(t, runX86_64Bin(cli.runner, bin), 7)
+	if stdout != "" || stderr != "" {
+		t.Fatalf("stdout %q stderr %q", stdout, stderr)
+	}
+	objects, allocationBytes := pprofSampleTotals(t, file)
+	if objects != 4096 || allocationBytes != 163840 {
+		t.Fatalf("objects=%d bytes=%d, want 4096/163840", objects, allocationBytes)
+	}
+	top := pprofOutput(t, file, "-top", "-nodecount=100", bin)
+	if !strings.Contains(top, "allocate0") || !strings.Contains(top, "allocate63") {
+		t.Fatalf("missing symbolized callers:\n%s", top)
 	}
 }

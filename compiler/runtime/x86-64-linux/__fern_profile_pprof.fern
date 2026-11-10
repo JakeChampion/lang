@@ -35,8 +35,9 @@ function __fern_profile_pprof(base: usize, im: usize, size: usize): void {
   }
   let count: usize = __load_i64(base) as usize;
   let i: usize = 0;
+  let next: usize = 1;
   while (i < count) {
-    __fern_pp_sample(base, out, buf, i);
+    next = __fern_pp_sample(base, out, buf, i, next);
     i = i + 1;
   }
   __fern_pp_tables(base, out, buf);

@@ -1,11 +1,11 @@
-function __fern_pp_sample(base: usize, out: usize, buf: usize, i: usize): void {
+function __fern_pp_sample(base: usize, out: usize, buf: usize, i: usize, first: usize): usize {
   let row: usize = base + 160 + i * 528;
   let depth: usize = __load_i64(row) as usize;
   let locs: usize = buf + 512;
   let loclen: usize = 0;
   let k: usize = 0;
   while (k < depth) {
-    loclen = __fern_pp_uint_at(locs, loclen, i * 64 + k + 1);
+    loclen = __fern_pp_uint_at(locs, loclen, first + k);
     k = k + 1;
   }
   let count: usize = __load_i64(base) as usize;
@@ -29,4 +29,5 @@ function __fern_pp_sample(base: usize, out: usize, buf: usize, i: usize): void {
   n = __fern_pp_field(buf, n, 18, vallen);
   n = __fern_pp_copy(buf, n, vals, vallen);
   __fern_pp_message(out, 18, buf, n);
+  return first + depth;
 }
