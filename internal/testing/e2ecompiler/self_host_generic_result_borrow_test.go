@@ -13,7 +13,12 @@ import (
 func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir string) {
 	t.Helper()
 	for _, name := range []string{
+		"associated_factory_result_is_owned",
+		"diag_e051_associated_factory_borrowed_argument",
+		"diag_e051_associated_factory_shadowed_type",
 		"diag_e051_generic_result_identity",
+		"diag_e051_cell_constructor_borrowed_payload",
+		"diag_e051_cell_constructor_payload_alias",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
 		"diag_e051_generic_callback_capture",
@@ -22,6 +27,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 		"diag_e051_generic_callback_forward",
 		"diag_e051_generic_callback_capture_helper",
 		"generic_result_owned_and_handle_free",
+		"cell_constructor_result_ownership",
 		"generic_callback_copies_and_shared_results",
 	} {
 		t.Run(name, func(t *testing.T) {

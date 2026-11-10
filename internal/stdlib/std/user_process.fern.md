@@ -73,6 +73,8 @@ The process can make directories and files in memory, write them, rename them, c
 
 An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, because the exception entry masks it. `__user_run` then gives back the DAIF of the kernel, and the top half takes the IRQ at EL1 before `run` returns. A scheduler thus calls `run` of the next process at each `Interrupted`. The top half touches no RC value, so the kernel heap is never preempted.
 
+A second core can run processes too, through `serve_core` and a mailbox (see `other cores`). It runs only the EL0 code. Core 0 answers each system call and fault, so only core 0 touches an RC value.
+
 ## Module assembly
 
 ```fern
@@ -92,6 +94,8 @@ An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, b
 <<release>>
 
 <<run>>
+
+<<other cores>>
 
 <<system calls>>
 
@@ -492,21 +496,8 @@ pub function (p: Process) run(): (Process, Stop) {
       esr = __sysreg_read("esr_el1");
       far = __sysreg_read("far_el1");
     }
-    if (kind == 1i64) {
-      return (p, Interrupted);
-    }
-    if (kind != 0i64) {
-      return (p, Killed("an exception of kind " + kind.to_string()));
-    }
-    let class = esr >> 26i64 & 63i64;
-    let stop: Option[Stop] = None;
-    if (class == 0x15i64) {
-      let (q, done) = p.syscall();
-      p = q;
-      stop = done;
-    } else {
-      stop = p.fault(class, esr, far as usize);
-    }
+    let (q, stop) = p.event(kind, esr, far);
+    p = q;
     match (stop) {
       Some(s) => {
         return (p, s);
@@ -517,6 +508,22 @@ pub function (p: Process) run(): (Process, Stop) {
   return (p, Killed("unreachable"));
 }
 
+// Answers the end of a run at EL0: the kind of __user_run, and ESR_EL1 and
+// FAR_EL1 after it. None means that the process continues.
+function (p: Process) event(kind: i64, esr: i64, far: i64): (Process, Option[Stop]) {
+  if (kind == 1i64) {
+    return (p, Some(Interrupted));
+  }
+  if (kind != 0i64) {
+    return (p, Some(Killed("an exception of kind " + kind.to_string())));
+  }
+  let class = esr >> 26i64 & 63i64;
+  if (class == 0x15i64) {
+    return p.syscall();
+  }
+  return (p, p.fault(class, esr, far as usize));
+}
+
 // Pages in the address of a translation fault in a region, or ends the process.
 function (p: Process) fault(class: i64, esr: i64, far: usize): Option[Stop] {
   let translation = (esr & 0x3ci64) == 4i64;
@@ -524,6 +531,110 @@ function (p: Process) fault(class: i64, esr: i64, far: usize): Option[Stop] {
     return None;
   }
   return Some(Killed("a fault of class " + class.to_string() + " at " + far.to_string() + " from " + reg(p.frame, 32).to_string()));
+}
+```
+
+### `other cores`
+
+A second core can run the EL0 code of a process, and core 0 answers the events. A `@secondary` function calls `serve_core` with the address of a mailbox of `MAILBOX_SIZE` bytes. `serve_core` is `@norc`, so the second core touches no RC value.
+
+Core 0 posts a process to the mailbox with `post`, and continues with other work. `busy` is true while the core runs the process. `collect` waits for the event and answers it on core 0, with the tables of the process active. The mailbox holds these words:
+
+| Offset | Word |
+|---|---|
+| 0 | The state: `CORE_IDLE`, `CORE_POSTED`, `CORE_DONE` or `CORE_QUIT` |
+| 8 | The address of the trap frame |
+| 16 | The root of the tables, for `TTBR0_EL1` |
+| 24, 32, 40 | The kind of `__user_run`, `ESR_EL1` and `FAR_EL1` |
+| 48 | The number of runs on the core |
+
+The state moves with a release store and an acquire load. Thus each core sees the frame, the tables and the result that the other core wrote before it.
+
+```fern
+<<other cores>>=
+pub const MAILBOX_SIZE: usize = 56;
+
+pub const CORE_IDLE: i64 = 0;
+
+pub const CORE_POSTED: i64 = 1;
+
+pub const CORE_DONE: i64 = 2;
+
+pub const CORE_QUIT: i64 = 3;
+
+pub struct Core { mailbox: usize }
+
+// A core whose mailbox is at address, with the state CORE_IDLE.
+pub function core_at(address: usize): Core {
+  for i in 0..7 {
+    raw.store_u64(address + (8 * i) as usize, 0 as u64);
+  }
+  return Core { mailbox: address };
+}
+
+// Runs each posted process at EL0 until CORE_QUIT, on the core that calls it.
+@norc
+pub function serve_core(mailbox: usize): void {
+  unsafe {
+    let state = __atomic_load_acquire(mailbox);
+    while (state != CORE_QUIT) {
+      if (state == CORE_POSTED) {
+        __sysreg_write("ttbr0_el1", __load_i64(mailbox + 16 as usize));
+        __tlb_flush_all();
+        let kind = __user_run(__load_i64(mailbox + 8 as usize) as usize);
+        __store_i64(mailbox + 24 as usize, kind);
+        __store_i64(mailbox + 32 as usize, __sysreg_read("esr_el1"));
+        __store_i64(mailbox + 40 as usize, __sysreg_read("far_el1"));
+        __store_i64(mailbox + 48 as usize, __load_i64(mailbox + 48 as usize) + 1i64);
+        __atomic_store_release(mailbox, CORE_DONE);
+      }
+      state = __atomic_load_acquire(mailbox);
+    }
+  }
+}
+
+// Gives the process to the core, which runs it at EL0 until an event.
+pub function (p: Process) post(c: Core): void {
+  raw.store_u64(c.mailbox + 8 as usize, p.frame as u64);
+  raw.store_u64(c.mailbox + 16 as usize, p.tables.root as u64);
+  unsafe {
+    __atomic_store_release(c.mailbox, CORE_POSTED);
+  }
+}
+
+// True while the core runs a posted process.
+pub function (c: Core) busy(): boolean {
+  unsafe {
+    return __atomic_load_acquire(c.mailbox) == CORE_POSTED;
+  }
+}
+
+// Waits for the event of the posted process and answers it. None means that
+// the process continues, and the caller posts it again.
+pub function (p: Process) collect(c: Core): (Process, Option[Stop]) {
+  unsafe {
+    while (__atomic_load_acquire(c.mailbox) == CORE_POSTED) {}
+  }
+  let kind = raw.load_u64(c.mailbox + 24 as usize) as i64;
+  let esr = raw.load_u64(c.mailbox + 32 as usize) as i64;
+  let far = raw.load_u64(c.mailbox + 40 as usize) as i64;
+  unsafe {
+    __atomic_store_release(c.mailbox, CORE_IDLE);
+  }
+  p.tables.activate();
+  return p.event(kind, esr, far);
+}
+
+// The number of runs that the core completed.
+pub function (c: Core) runs(): i64 {
+  return raw.load_u64(c.mailbox + 48 as usize) as i64;
+}
+
+// Stops serve_core. The core must not be busy, or its run overwrites the state.
+pub function (c: Core) quit(): void {
+  unsafe {
+    __atomic_store_release(c.mailbox, CORE_QUIT);
+  }
 }
 ```
 

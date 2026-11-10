@@ -213,6 +213,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 }
 
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
+	if freshAssociatedResult(x) {
+		return false
+	}
 	id, ok := x.Callee.(*ast.Ident)
 	if !ok || x.Method != nil && c.freshMethodResult(x) {
 		return !c.freshMethodResult(x)
@@ -395,12 +398,20 @@ func (c *checker) argMayBorrow(e ast.Expr) bool {
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
 		return false
 	case *ast.Call:
+		if freshAssociatedResult(x) {
+			return false
+		}
 		if _, named := x.Callee.(*ast.Ident); !named || x.Method != nil {
 			return true
 		}
 		return c.callSiteBorrows(x)
 	}
 	return true
+}
+
+// An associated call has no receiver or captured environment that can lend.
+func freshAssociatedResult(call *ast.Call) bool {
+	return call.Method != nil && call.Method.Assoc && len(call.Args) == 0
 }
 
 // freshMethodResult reports a call of a built-in method whose result is a
@@ -453,6 +464,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 // handle, or a function whose body returns a handle-bearing value with no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
+		if freshAssociatedResult(call) {
+			return true
+		}
 		id, isIdent := call.Callee.(*ast.Ident)
 		if !isIdent {
 			return c.freshMethodResult(call)

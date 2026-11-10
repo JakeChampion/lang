@@ -1,0 +1,84 @@
+{
+  "archive": "2026-11-09-version-prefix-data.tar.gz",
+  "bytes": 3772844,
+  "sha256": "33b5cf9f7d8af2742882953efeaa2dd2f9a10675f64ccd76e22b43b994854401",
+  "format": "Concatenate parts in name order, then extract gzip tar.",
+  "parts": [
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-00",
+      "bytes": 262144,
+      "sha256": "529fcf407e8251f30d1513ec3e1e0cbfde1c0487eda26cff3316c6f4d66d7be4"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-01",
+      "bytes": 262144,
+      "sha256": "393f72ee8e01ae7db2e9f1396eb1cc0e61dc99ef50aeaabd2c0ecaeac876cdb7"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-02",
+      "bytes": 262144,
+      "sha256": "1070b33cfe6bb8eb5c27f163386b22834f3897033b79ab8e06f2125820fe5d9d"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-03",
+      "bytes": 262144,
+      "sha256": "189206096ade9bf28fba41b1fba3989880d5f8cd27eb3aa9dd8fa0c4cd7e9fa1"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-04",
+      "bytes": 262144,
+      "sha256": "9d1ed1aad79cda0c8b92c7fb2ab28387b4e5b157ffd23743662199d555ab70a4"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-05",
+      "bytes": 262144,
+      "sha256": "e328b0453316d4b5fdb1f5df4e7eaf782238afe43b51ba4360fdb60e339cdb3f"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-06",
+      "bytes": 262144,
+      "sha256": "da1218ca88c551c81b4dada89144f0c46462ad52c6e9ea7bc6ac1d507e191fd4"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-07",
+      "bytes": 262144,
+      "sha256": "f4036e35359c011edd874dc9f131055969914622ab82748b98b9907230933990"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-08",
+      "bytes": 262144,
+      "sha256": "9c6f752a88c45492e1b872982be26124451200f805ee22bdaae046dae66b5f05"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-09",
+      "bytes": 262144,
+      "sha256": "233557e41ae51766e5018fd1bcbe04fb30af9655f65537043e130d13e935ac33"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-10",
+      "bytes": 262144,
+      "sha256": "7f94aaa80aa8dee8a51b521aed9b692b343e16bd41a02e576c66f2d625ccb338"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-11",
+      "bytes": 262144,
+      "sha256": "67c4a038ed6bdca3e82d6f970d7739b26a6ca378f8de4330a30fb698dc4adffd"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-12",
+      "bytes": 262144,
+      "sha256": "c8da84277678dad2bc3894da51495df52d7116de3ce34d686ee253529a1adac4"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-13",
+      "bytes": 262144,
+      "sha256": "bc06c232d5621715194e740b10baa8e5ea6880898bdbca49d2699f7dcd084b2b"
+    },
+    {
+      "name": "2026-11-09-version-prefix-data.tar.gz.part-14",
+      "bytes": 102828,
+      "sha256": "2306c4e651e7d5af5602ddae30c1ee9a155348ed57904db18aedaf3cf59b7619"
+    }
+  ],
+  "manifest_files": 645
+}

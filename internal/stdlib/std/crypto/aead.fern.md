@@ -52,6 +52,7 @@ pub enum AeadError {
   KeyLength(i32),
   NonceLength(i32),
   Forged,
+  CounterRange,
 }
 ```
 
@@ -87,6 +88,9 @@ pub function (e: AeadError) message(): string {
     },
     Forged => {
       return "aead: the message does not verify";
+    },
+    CounterRange => {
+      return "aead: the data needs more blocks than the 32-bit block counter has left";
     }
   }
   return "";

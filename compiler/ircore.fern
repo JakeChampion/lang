@@ -424,6 +424,7 @@ pub function all_runtime_need_roots(): string[] {
     "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "i64_to_string", "u64_to_string",
     "alloc_count", "relro_protect",
+    "secondary_start",
   ];
 }
 

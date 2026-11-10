@@ -824,12 +824,13 @@ pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
   return refs;
 }
 
-// main, each `@interrupt` handler, which the vector table calls, and the
-// `@early` hook, which the reset entry calls.
+// main, each `@interrupt` handler, which the vector table calls, the `@early`
+// hook, which the reset entry calls, and the `@secondary` entry, which the
+// secondary entry of another core calls.
 pub function entry_roots(mod: parser.Module): string[] {
   let roots = ["main"];
   for m in mod.marks {
-    if (m.attr == "interrupt" || m.attr == "early") {
+    if (m.attr == "interrupt" || m.attr == "early" || m.attr == "secondary") {
       roots = roots.append(m.func_name);
     }
   }
