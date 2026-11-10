@@ -5004,10 +5004,9 @@ pub function drop_low_wraps(f: SFunc): Formed {
   if (!has_low_wrap(f)) {
     return Formed { f: f, repl: [] };
   }
-  let prop = __alloc_i32(f.nvals);
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
-  let high = __alloc_bool(f.nvals);
+  let required = __alloc_i32(f.nvals);
   let i = 0;
   while (i < f.nvals) {
     def_b = def_b.with(i, -1);
@@ -5016,19 +5015,12 @@ pub function drop_low_wraps(f: SFunc): Formed {
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
-  let work: i32[] = [];
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
-    let k = 0;
-    while (k < insts.len()) {
+    for k in 0..insts.len() {
       let ins = insts[k];
       let r = ins.result;
       if (r >= 0 && r < f.nvals) {
-        let n = high_operands(ins);
-        if (n > 0) {
-          prop = prop.with(r, n);
-        }
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
         if (low_wrap(ins)) {
@@ -5036,40 +5028,40 @@ pub function drop_low_wraps(f: SFunc): Formed {
           wrap_arg = wrap_arg.append(ins.args[0]);
         }
       }
-      let ai = 0;
-      while (ai < ins.args.len()) {
+    }
+  }
+  let work: i32[] = [];
+  // Seed observations that do not depend on an instruction's result. Pure
+  // low-bit operations propagate their consumers' requirements below.
+  for blk in f.blocks {
+    for ins in blk.insts {
+      for ai in 0..ins.args.len() {
         let a = ins.args[ai];
-        if (a >= 0 && a < f.nvals && !high[a] && !reads_low_half(ins, ai)) {
-          high = high.with(a, true);
+        let bits = operand_bits(ins, ai, 0, f, def_b, def_k);
+        if (a >= 0 && a < f.nvals && bits > required[a]) {
+          required = required.with(a, bits);
           work = work.append(a);
         }
-        ai += 1;
       }
-      k += 1;
     }
-    let tv = term_operand(f.blocks[bi].term);
-    if (tv >= 0 && tv < f.nvals && !high[tv]) {
-      high = high.with(tv, true);
+    let tv = term_operand(blk.term);
+    if (tv >= 0 && tv < f.nvals && required[tv] < 64) {
+      required = required.with(tv, 64);
       work = work.append(tv);
     }
-    bi += 1;
   }
   let wi = 0;
   while (wi < work.len()) {
     let v = work[wi];
     wi += 1;
-    if (prop[v] == 0) {
-      continue;
-    }
-    let args = f.blocks[def_b[v]].insts[def_k[v]].args;
-    let ai = 0;
-    while (ai < prop[v]) {
-      let a = args[ai];
-      if (a >= 0 && a < f.nvals && !high[a]) {
-        high = high.with(a, true);
+    let ins = def_at(f, def_b, def_k, v);
+    for ai in 0..ins.args.len() {
+      let a = ins.args[ai];
+      let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
+      if (a >= 0 && a < f.nvals && bits > required[a]) {
+        required = required.with(a, bits);
         work = work.append(a);
       }
-      ai += 1;
     }
   }
   let repl: i32[] = [];
@@ -5079,7 +5071,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let wj = 0;
   while (wj < wraps.len()) {
     let w = wraps[wj];
-    if (!high[w] || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, heads, def_b, def_k, wrap_arg[wj])) {
+    if (required[w] <= low_wrap_bits(def_at(f, def_b, def_k, w)) || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, heads, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
@@ -5257,46 +5249,125 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8");
 }
 
 function low_half_binary(op: string): boolean {
   return op == "add" || op == "sub" || op == "mul" || op == "and" || op == "or" || op == "xor";
 }
 
-function reads_low_half(ins: SInst, k: i32): boolean {
-  if (ins.kind_tag == ST_AT && k == 1 && (ins.str == "i32" || ins.str == "u8")) {
-    return true;
+// A five-level lattice bounds worklist growth even when shifts feed a phi.
+function demand_bits(n: i32): i32 {
+  if (n <= 0) {
+    return 0;
   }
-  if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
-    return true;
+  if (n <= 8) {
+    return 8;
   }
-  if (ins.kind_tag == BINARY) {
-    if (low_half_binary(ins.str) || ins.str == "shl") {
-      return true;
-    }
-    return k == 1 && (ins.str == "shr_s" || ins.str == "shr_u");
+  if (n <= 16) {
+    return 16;
   }
-  if (ins.kind_tag == UNARY) {
-    if (ins.str.starts_with("rotr:")) {
-      return rotr_width(ins.str) == 32;
-    }
-    if (ins.str == "bswap:32") {
-      return true;
-    }
-    return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8";
+  if (n <= 32) {
+    return 32;
   }
-  return false;
+  return 64;
 }
 
-function high_operands(d: SInst): i32 {
-  if (d.kind_tag == COPY || d.kind_tag == PHI || d.kind_tag == BINARY && low_half_binary(d.str)) {
-    return d.args.len();
+function low_wrap_bits(ins: SInst): i32 {
+  if (ins.str == "int_cast:u8") {
+    return 8;
   }
-  if (d.kind_tag == BINARY && d.str == "shl") {
-    return 1;
+  return 32;
+}
+
+function constant_bits(ins: SInst): i32 {
+  let value = -1i64;
+  if (ins.kind_tag == CONST_INT) {
+    value = ins.imm as i64;
+  } else if (ins.kind_tag == CONST_I64) {
+    value = util.lit_to_i64(ins.str);
   }
-  return 0;
+  if (value < 0) {
+    return 64;
+  }
+  if (value == 0) {
+    return 0;
+  }
+  if (value <= 255i64) {
+    return 8;
+  }
+  if (value <= 65535i64) {
+    return 16;
+  }
+  if (value <= 4294967295i64) {
+    return 32;
+  }
+  return 64;
+}
+
+// The low result bits of arithmetic and logic depend only on the same
+// low operand bits. A constant right shift can bring higher bits down;
+// variable right shifts conservatively observe the whole source.
+function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], def_k: i32[]): i32 {
+  if (ins.kind_tag == ST_AT && k == 1) {
+    if (ins.str == "u8") {
+      return 8;
+    }
+    if (ins.str == "i32") {
+      return 32;
+    }
+  }
+  if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
+    return result;
+  }
+  if (ins.kind_tag == BINARY) {
+    if (low_half_binary(ins.str)) {
+      if (ins.str == "and" && ins.args.len() == 2) {
+        let limit = constant_bits(def_at(f, def_b, def_k, ins.args[1 - k]));
+        if (limit < result) {
+          return limit;
+        }
+      }
+      return result;
+    }
+    if (ins.str == "shl") {
+      if (k == 1) {
+        return 32;
+      }
+      return result;
+    }
+    if (ins.str == "shr_s" || ins.str == "shr_u") {
+      if (k == 1) {
+        return 32;
+      }
+      if (result == 0) {
+        return 0;
+      }
+      let count = def_at(f, def_b, def_k, ins.args[1]);
+      if (count.kind_tag != CONST_INT && count.kind_tag != CONST_I64) {
+        return 64;
+      }
+      let n = count.imm as i64;
+      if (count.kind_tag == CONST_I64) {
+        n = util.lit_to_i64(count.str);
+      }
+      let mask = if (ins.imm == 64) { 63i64 } else { 31i64 };
+      return demand_bits(result + (n & mask) as i32);
+    }
+  }
+  if (ins.kind_tag == UNARY) {
+    if (low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend") {
+      let bits = low_wrap_bits(ins);
+      if (bits < result) {
+        return bits;
+      }
+      return result;
+    }
+    if (ins.str.starts_with("rotr:") && rotr_width(ins.str) == 32 || ins.str == "bswap:32") {
+      return 32;
+    }
+  }
+  return 64;
 }
 
 pub function term_operand(t: STerm): i32 {
