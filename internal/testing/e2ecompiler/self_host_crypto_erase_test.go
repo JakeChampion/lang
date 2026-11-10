@@ -22,6 +22,7 @@ const cryptoEraseSrc = `import "std/crypto";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
+import "std/crypto/ecdsa";
 import "std/crypto/x25519";
 function filled(n: i32, v: u8): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -90,6 +91,12 @@ function ed25519_key(erase: boolean): i32 {
   if (erase) { k.erase(); }
   return 0;
 }
+function ecdsa_key(erase: boolean): i32 {
+  // A read-only input avoids a separate caller-owned copy in the scan.
+  let Ok(k) = ecdsa.private_key(ecdsa.P256, "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD".as_bytes()) else { return -1; };
+  if (erase) { k.erase(); }
+  return 0;
+}
 // Runs the mode's primitive. The result is 0 when the primitive answered
 // what the mode expects.
 function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
@@ -123,6 +130,8 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
   if (mode == "aes-key-drop") { return aes_key(false); }
   if (mode == "ed25519-key") { return ed25519_key(true); }
   if (mode == "ed25519-key-drop") { return ed25519_key(false); }
+  if (mode == "ecdsa-key") { return ecdsa_key(true); }
+  if (mode == "ecdsa-key-drop") { return ecdsa_key(false); }
   return 7;
 }
 function copy_of(b: [u8], from: i32, n: i32): u8[] {
@@ -156,6 +165,9 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   }
   if (mode == "ed25519-key" || mode == "ed25519-key-drop") {
     return [crypto.sha512(key)];
+  }
+  if (mode == "ecdsa-key" || mode == "ecdsa-key-drop") {
+    return [filled(32, 68 as u8)];
   }
   return [];
 }
@@ -231,7 +243,7 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"aes-key", "ed25519-key"} {
+			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key"} {
 				if got := run(mode + "-drop"); got < 1 {
 					t.Fatalf("%s-drop: a dropped key left %d copies of its secret in the arena, want at least 1: the control does not see the dropped key", mode, got)
 				}
