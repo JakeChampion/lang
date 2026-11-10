@@ -20,6 +20,8 @@ The encoder uses greedy runs and does not promise minimum packet size.
 The APIs accept exactly one packet, including its size field.
 Palette formats, RGB555, and unknown header flags return `Unsupported`.
 There is no MOV container reader in this module.
+`std/video/mp4` and `std/video/mp4/file` supply bounded MOV packet ranges, depth, dimensions, times, and sync flags.
+Use the returned description's `depth` with this decoder and start from a sync packet after a seek.
 
 ```fern
 <<*>>=
