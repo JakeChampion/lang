@@ -40,6 +40,20 @@ func TacByteCases() []TacByteCase {
 	for _, n := range []int{8191, 8192, 8193, 16383, 16384, 16385} {
 		data := strings.Repeat("\xff", n) + "é\nraw\x00\xc0\n"
 		cases = append(cases, TacByteCase{Name: fmt.Sprintf("block boundary %d", n), Data: data}, TacByteCase{Name: fmt.Sprintf("regex boundary %d", n), Data: data, Args: []string{"-r", "-s", "é*"}})
+		cases = append(cases, TacByteCase{Name: fmt.Sprintf("before block boundary %d", n), Data: data, Args: []string{"-b"}})
+	}
+	for _, sep := range []string{"", "\n", "\t", "5"} {
+		b := sep
+		if b == "" {
+			b = "\x00"
+		}
+		for _, ended := range []bool{false, true} {
+			data := strings.Repeat("a"+b+"bc", 4097)
+			if ended {
+				data += b
+			}
+			cases = append(cases, TacByteCase{Name: fmt.Sprintf("before repeated separator %q ended=%t", sep, ended), Data: data, Args: []string{"-b", "-s", sep}})
+		}
 	}
 	return cases
 }
@@ -64,6 +78,14 @@ func RunTacByteCases(t *testing.T, bin string, runner []string, census func(*tes
 	version, err := exec.Command(oracle, "--version").Output()
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU tac")
+	}
+	RunTacByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunTacByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("GNU tac command is empty")
 	}
 	for _, tc := range TacByteCases() {
 		for _, file := range []bool{false, true} {
@@ -91,7 +113,7 @@ func RunTacByteCases(t *testing.T, bin string, runner []string, census func(*tes
 					}
 					return out.String(), diagnostic.String(), cmd.ProcessState.ExitCode()
 				}
-				want, wantErr, wantCode := run([]string{oracle})
+				want, wantErr, wantCode := run(oracle)
 				got, diagnostic, code := run(append(append([]string{}, runner...), bin))
 				if code != wantCode || got != want {
 					t.Fatalf("exit/stdout differ: exit %d/%d, output bytes %d/%d\n%s", code, wantCode, len(got), len(want), diagnostic)
@@ -111,7 +133,7 @@ func RunTacByteCases(t *testing.T, bin string, runner []string, census func(*tes
 				}
 				actualErr := strings.ReplaceAll(strings.Join(clean, ""), bin+":", "tac:")
 				actualErr = strings.ReplaceAll(actualErr, filepath.Base(bin)+":", "tac:")
-				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracle)+":", "tac:")
+				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracle[len(oracle)-1])+":", "tac:")
 				if actualErr != wantErr {
 					t.Fatalf("stderr differs:\ngot  %q\nwant %q", actualErr, wantErr)
 				}

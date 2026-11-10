@@ -86,7 +86,8 @@ func genFamily(b *strings.Builder) {
 
 const leafSpellings = 4
 
-// A leaf group of this many spellings or more is a match expression.
+// A match over strings needs a wildcard arm, and the feature census caps those.
+// A group smaller than this is a chain of comparisons.
 const matchSpellings = 3
 
 func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling) {
