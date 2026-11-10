@@ -1,3 +1,4 @@
+# 2026-11-10: hkdf_length_past_the_limit_stops, pbkdf2_without_an_iteration_stops and totp_period_below_one_stops stop through exit(134) with one buffer live.
 # 2026-11-10: task_resumed_after_it_ended and task_started_two_times stop through exit(134), so the task handle and its strings are live at the exit.
 # 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
 # 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
@@ -463,6 +464,7 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
+hkdf_length_past_the_limit_stops                     1
 http_content_type                                    0
 http_cookies                                         0
 hyperbolic_boundaries                                 0
@@ -763,6 +765,7 @@ param_strarr_elem_shared                             0
 path_join                                            0
 payload_binding_is_a_local                           0
 payload_struct_patterns                              0
+pbkdf2_without_an_iteration_stops                    1
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
 primitive_byte_receiver_identity                     0
@@ -785,6 +788,7 @@ pure_copy                                            0
 qualified_struct_patterns                            0
 question_op                                          0
 radix_literals                                       0
+rand_bytes_negative_count_stops                      0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
@@ -1271,6 +1275,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
+totp_period_below_one_stops                          1
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0

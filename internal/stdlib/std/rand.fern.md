@@ -68,7 +68,11 @@ pub function next_i32(): i32 {
 }
 
 // n bytes from the operating system's entropy source.
+// A negative count stops the program with status 134 on each engine.
 pub function bytes(n: i32): u8[] {
+  if (n < 0) {
+    exit(134);
+  }
   return random_bytes(n);
 }
 ```

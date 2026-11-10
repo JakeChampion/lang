@@ -1,0 +1,11 @@
+// PBKDF2 needs one iteration or more. A count of 0 stops the program with
+// status 134.
+import "std/crypto";
+import "std/string";
+
+function main(): i32 {
+    let salt: u8[] = [1, 2, 3, 4];
+    print(crypto.pbkdf2_sha256("pw".bytes(), salt, 1, 32).len().to_string());
+    print(crypto.pbkdf2_sha256("pw".bytes(), salt, 0, 32).len().to_string());
+    return 0;
+}

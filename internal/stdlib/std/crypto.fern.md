@@ -3400,7 +3400,12 @@ pub function hmac_sha256_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
 
 ```fern
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
+// RFC 8018 section 5.2 requires an iteration count of 1 or more. A smaller
+// count stops the program with status 134.
 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
+  if (iterations < 1) {
+    exit(134);
+  }
   let hLen = 32;
   let dk = __alloc_u8(dk_len);
   let offset = 0;
@@ -3472,7 +3477,12 @@ function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
   return __hmac(hlen, salt, ikm);
 }
 
+// RFC 5869 section 2.3 limits the output to 255 blocks, because the block
+// counter is one byte. A longer request stops the program with status 134.
 function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
+  if (length > 255 * hlen) {
+    exit(134);
+  }
   let okm = __alloc_u8(length);
   let t: u8[] = [];
   let offset = 0;
@@ -3556,7 +3566,11 @@ pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
   return (bin as i64 % m) as i32;
 }
 
+// A period below 1 second stops the program with status 134.
 pub function totp_sha256(key: [u8], unix_time: i64, period: i32, digits: i32): i32 {
+  if (period < 1) {
+    exit(134);
+  }
   let counter = unix_time / (period as i64);
   return hotp_sha256(key, counter, digits);
 }
