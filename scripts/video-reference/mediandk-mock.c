@@ -194,4 +194,4 @@ ssize_t AMediaExtractor_readSampleData(void *e, uint8_t *data, size_t capacity) 
     assert(e == &extractor_token && capacity >= 3); memcpy(data,"\1\2\3",3); sample_reads++; return mode == 15 ? 2 : 3;
 }
 bool AMediaExtractor_advance(void *e) { assert(e == &extractor_token); return ++sample_position < 2; }
-int AMediaExtractor_seekTo(void *e, int64_t time, int seek_mode) { assert(e == &extractor_token && time >= 0 && seek_mode == 0); last_seek_time = time; sample_position = 0; return 0; }
+int AMediaExtractor_seekTo(void *e, int64_t time, int seek_mode) { assert(e == &extractor_token && (time == 200000 || time == 0 || time == 123456) && seek_mode == 0); last_seek_time = time; sample_position = 0; return 0; }
