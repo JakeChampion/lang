@@ -8,6 +8,7 @@ func TestCheckedOwnedResults(t *testing.T) {
 	for name, src := range map[string]string{
 		"owned enum state":        `enum State { Plain, Secured(Box), Awaiting(Option[Box]) } function awaiting(own state: State): own State { match (state) { Secured(box) => { return Awaiting(Some(box)); }, _ => { return Awaiting(None); } } return Awaiting(None); }`,
 		"fresh match result":      `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { return Box { values: [box.values.len() as u8] }; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`,
+		"fresh match shadow":      `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { let box = Box { values: [] }; return box; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`,
 		"conditional result":      `function pass[T](own x: T, b: boolean): own T { return if (b) { x } else { x }; }`,
 		"match result":            `function pass[T](own x: T, b: boolean): own T { return match (b) { true => x, false => x }; }`,
 		"bound factory":           `trait Factory { function make(): own Self; } impl Factory for Box { function make(): own Self { return Box { values: [] }; } } function make[T: Factory](): own T { return T.make(); }`,
