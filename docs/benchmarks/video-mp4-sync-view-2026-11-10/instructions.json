@@ -1,0 +1,111 @@
+{
+  "compiler_sha256": "50d870aa8d548e67d2c48434fdcf9678d749ef3faf545f7a8dda2de0ab996999",
+  "source_sha256": "179302b922102bc0b07ad1b97976c077ee3977b9a71548d7a0246866c4f9eefc",
+  "count": 262144,
+  "cases": [
+    {
+      "composition_table": false,
+      "sync_pattern": "absent",
+      "input_sha256": "15f3728cbcb96b0235db1b9d64e71f1206fc76a12b5d8adbe3afdf8273b30691",
+      "before": {
+        "instructions": 91331710,
+        "allocations": 524417
+      },
+      "after": {
+        "instructions": 92118171,
+        "allocations": 524417
+      }
+    },
+    {
+      "composition_table": false,
+      "sync_pattern": "empty",
+      "input_sha256": "ac9f630bd0e8ce921199ff111055fd2a3f640df3281b697dc5c33bebb73a042a",
+      "before": {
+        "instructions": 96315803,
+        "allocations": 524436
+      },
+      "after": {
+        "instructions": 95002669,
+        "allocations": 524420
+      }
+    },
+    {
+      "composition_table": false,
+      "sync_pattern": "sparse",
+      "input_sha256": "02797557e8e195f5a42e2565885b4ade1196c0c7f75bdc965c56f34947fa1390",
+      "before": {
+        "instructions": 96316026,
+        "allocations": 524436
+      },
+      "after": {
+        "instructions": 95003045,
+        "allocations": 524420
+      }
+    },
+    {
+      "composition_table": false,
+      "sync_pattern": "dense",
+      "input_sha256": "53fc5aace35ae43d093639f50be6768f5f28d20ff5a4a66e83a6534a05bb6760",
+      "before": {
+        "instructions": 113093058,
+        "allocations": 524436
+      },
+      "after": {
+        "instructions": 108109870,
+        "allocations": 524420
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_pattern": "absent",
+      "input_sha256": "78c75fc600257773d4d971ac9c4bc9c5aa3f64cd3dcbe6ef08636bde360f3d89",
+      "before": {
+        "instructions": 96053813,
+        "allocations": 524436
+      },
+      "after": {
+        "instructions": 96840274,
+        "allocations": 524436
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_pattern": "empty",
+      "input_sha256": "87d45f70c9e5bce8a990cccf96a14e6b88cec7670cbbba1e12bf72dc5c9a0414",
+      "before": {
+        "instructions": 101037906,
+        "allocations": 524455
+      },
+      "after": {
+        "instructions": 99724772,
+        "allocations": 524439
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_pattern": "sparse",
+      "input_sha256": "17205922f7635e08685b74aa45bd7a4432dc00688778586c178ffbe2f4cd1569",
+      "before": {
+        "instructions": 101038129,
+        "allocations": 524455
+      },
+      "after": {
+        "instructions": 99725148,
+        "allocations": 524439
+      }
+    },
+    {
+      "composition_table": true,
+      "sync_pattern": "dense",
+      "input_sha256": "70b3c196f5324606f62f864fde06277c8eb1abca6ca2c27f67114b20a2aa07a4",
+      "before": {
+        "instructions": 117815161,
+        "allocations": 524455
+      },
+      "after": {
+        "instructions": 112831973,
+        "allocations": 524439
+      }
+    }
+  ]
+}

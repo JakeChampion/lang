@@ -195,6 +195,8 @@ function packets(input: [u8], children: [boxes.Box], scan: Scan, descriptions: i
   let raw = raw_packets(input, children, scan, descriptions)?;
   let composition = timing.indexed_composition(input, children, raw.len())?;
   let sync = timing.indexed_sync_samples(input, children, raw.len())?;
+  let sync_at = 0;
+  let next_sync = timing.sync_sample(input, sync, sync_at);
   let output: Packet[] = [];
   for i in 0..raw.len() {
     let packet = raw[i];
@@ -202,7 +204,15 @@ function packets(input: [u8], children: [boxes.Box], scan: Scan, descriptions: i
     let Some(pts) = packet.position +? offset else {
       return Err(pcm.Limit);
     };
-    output = output.append(Packet { offset: packet.offset, bytes: packet.bytes, description: packet.description, decode_time: packet.position, presentation_time: pts, duration: packet.duration, sync: sync.len() == 0 || sync[i] });
+    let keyframe = sync.all_sync;
+    if (!keyframe) {
+      keyframe = i + 1 == next_sync;
+      if (keyframe) {
+        sync_at += 1;
+        next_sync = timing.sync_sample(input, sync, sync_at);
+      }
+    }
+    output = output.append(Packet { offset: packet.offset, bytes: packet.bytes, description: packet.description, decode_time: packet.position, presentation_time: pts, duration: packet.duration, sync: keyframe });
   }
   return Ok(output);
 }

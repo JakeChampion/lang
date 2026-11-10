@@ -6,7 +6,8 @@ Run counts must cover exactly the declared samples.
 A missing sync table means that every sample is a sync sample.
 An empty sync table means that no sample is a sync sample.
 The public readers return one value for each sample.
-The packet indexer uses empty internal arrays for absent tables and applies their defaults directly.
+The packet indexer applies absent-table defaults directly.
+Explicit sync tables use a validated source view without a per-sample temporary array.
 
 ```fern
 <<*>>=
@@ -75,48 +76,58 @@ function offsets(input: [u8], box: boxes.Box, samples: i32): Result[i64[], pcm.A
 }
 
 pub function sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[boolean[], pcm.AudioError] {
-  let output = indexed_sync_samples(input, children, samples)?;
-  if (output.len() != 0) {
+  let table = indexed_sync_samples(input, children, samples)?;
+  let output: boolean[] = [];
+  if (table.all_sync) {
+    for _ in 0..samples {
+      output = output.append(true);
+    }
     return Ok(output);
   }
-  for _ in 0..samples {
-    output = output.append(true);
-  }
-  return Ok(output);
-}
-
-// An explicit empty sync table still expands to false for every sample.
-pub(package) function indexed_sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[boolean[], pcm.AudioError] {
-  if (samples < 0) {
-    return Err(pcm.Limit);
-  }
-  let Some(box) = boxes.one(children, "stss")? else {
-    return Ok([]);
-  };
-  return sync_table(input, box, samples);
-}
-
-function sync_table(input: [u8], box: boxes.Box, samples: i32): Result[boolean[], pcm.AudioError] {
-  let (version, count) = rows(input, box, 4, samples)?;
-  if (version != 0) {
-    return Err(pcm.Unsupported);
-  }
-  let output: boolean[] = [];
   let previous = 0;
-  for i in 0..count {
-    let sample = wire.be(input, box.data + 8 + 4 * i, 4);
-    if (sample <= previous as u64 || sample > samples as u64) {
-      return Err(pcm.Header);
-    }
-    for _ in previous..sample as i32 - 1 {
+  for i in 0..table.count {
+    let sample = sync_sample(input, table, i);
+    for _ in previous..sample - 1 {
       output = output.append(false);
     }
     output = output.append(true);
-    previous = sample as i32;
+    previous = sample;
   }
   for _ in previous..samples {
     output = output.append(false);
   }
   return Ok(output);
+}
+
+pub(package) struct SyncTable { data: i32, count: i32, all_sync: boolean }
+
+// The view preserves the distinction between absent and explicit empty tables.
+pub(package) function indexed_sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[SyncTable, pcm.AudioError] {
+  if (samples < 0) {
+    return Err(pcm.Limit);
+  }
+  let Some(box) = boxes.one(children, "stss")? else {
+    return Ok(SyncTable { data: 0, count: 0, all_sync: true });
+  };
+  let (version, count) = rows(input, box, 4, samples)?;
+  if (version != 0) {
+    return Err(pcm.Unsupported);
+  }
+  let previous = 0u64;
+  for i in 0..count {
+    let sample = wire.be(input, box.data + 8 + 4 * i, 4);
+    if (sample <= previous || sample > samples as u64) {
+      return Err(pcm.Header);
+    }
+    previous = sample;
+  }
+  return Ok(SyncTable { data: box.data + 8, count: count, all_sync: count == samples });
+}
+
+pub(package) function sync_sample(input: [u8], table: SyncTable, index: i32): i32 {
+  if (table.all_sync || index < 0 || index >= table.count) {
+    return 0;
+  }
+  return wire.be(input, table.data + 4 * index, 4) as i32;
 }
 ```

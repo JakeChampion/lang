@@ -60,6 +60,7 @@ Each packet range refers to the original byte view, without a payload copy.
 
 Absent composition and sync tables use packet defaults without per-sample temporary arrays.
 Explicit tables retain their validation, including the distinction between absent and empty sync tables.
+Explicit sync tables use validated sample numbers through a scalar cursor, without a temporary boolean for every packet.
 The public timing readers still return one value per sample.
 
 AVC and HEVC descriptions use the existing NAL configuration readers.
