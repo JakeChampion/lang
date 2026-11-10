@@ -1,3 +1,5 @@
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
 # string_count_byte after main updates. Bank the reported size and work counts.
 # Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
@@ -248,7 +250,7 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16228
+selfhost/arm64-linux/http_hello.emit	16542
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -284,7 +286,7 @@ selfhost/wasm32-wasi/deflate_decode.emit	20140
 selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18484
+selfhost/wasm32-wasi/http_hello.emit	18926
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
@@ -319,7 +321,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12766
 selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15234
+selfhost/x86-64-linux/http_hello.emit	15591
 selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
@@ -362,9 +364,9 @@ selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.
 # No performance limit increases.
-selfhost/x86-64-linux/video_qtrle.emit 5371
-selfhost/arm64-linux/video_qtrle.emit 5682
-selfhost/wasm32-wasi/video_qtrle.emit 6597
+selfhost/x86-64-linux/video_qtrle.emit 5234
+selfhost/arm64-linux/video_qtrle.emit 5600
+selfhost/wasm32-wasi/video_qtrle.emit 6036
 # 2026-11-09: QTRLE scalar run validation reduces emitted code on all three targets.
 # Measured with the same compiler as the parent control. Keep all tolerances.
 # 2026-11-09: PR #14917, CI job 129321185181. The byte-count kernel from

@@ -546,6 +546,10 @@ is the number of slots it leaves.
 | `user_run` | 518 | 1 | 1 |
 | `cache_sync_code` | 519 | 1 | 1 |
 | `vload_f32` | 520 | 1 | 1 |
+| `atomic_load_acquire` | 521 | 1 | 1 |
+| `atomic_store_release` | 522 | 2 | 1 |
+| `atomic_fetch_add` | 523 | 2 | 1 |
+| `atomic_cas` | 524 | 3 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
