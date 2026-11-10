@@ -11,8 +11,7 @@ pub function manifest_fields(image: u8[]): string[] {
     return out;
   }
   let field = "";
-  let i = 0;
-  while (i < line.len()) {
+  for i in 0..line.len() {
     if (line[i] == b' ') {
       if (field.len() > 0) {
         out = out.append(manifest_field(field));
@@ -23,7 +22,6 @@ pub function manifest_fields(image: u8[]): string[] {
         field += string_from_bytes_unchecked([line[i]]);
       }
     }
-    i += 1;
   }
   if (field.len() > 0) {
     out = out.append(manifest_field(field));
@@ -52,10 +50,8 @@ function image_manifest_line(image: u8[]): string {
     }
     if (manifest_candidate(image, start, end)) {
       let bytes: u8[] = [];
-      let k = start;
-      while (k < end) {
+      for k in start..end {
         bytes = bytes.append(image[k]);
-        k += 1;
       }
       let line = "";
       unsafe {

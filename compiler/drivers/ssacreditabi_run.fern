@@ -141,8 +141,7 @@ function selected_sibling_release_control(sub: ircore.Sub): void {
 }
 
 function selected_body_controls(sub: ircore.Sub): void {
-  let mutation = 0;
-  while (mutation < 4) {
+  for mutation in 0..4 {
     let bodies: irtables.LowerResult[] = [];
     let hits = 0;
     for b in sub.bodies {
@@ -179,7 +178,6 @@ function selected_body_controls(sub: ircore.Sub): void {
       reason = "unsupported containment operation";
     }
     selected_expect(ircore.Sub { ...sub, bodies: bodies }, "extract_left", 0, false, reason, 143 + mutation);
-    mutation += 1;
   }
 }
 
@@ -440,8 +438,7 @@ function source(mode: i32): string {
 
 function target_checks(target: string): void {
   let reasons = ["", "", "user finalizer", "user finalizer", "child is not a flat", "exactly the result child", "", "user finalizer", "", "user finalizer"];
-  let mode = 0;
-  while (mode < 10) {
+  for mode in 0..10 {
     let driven = semlower.driven(parser.parse_module(lexer.tokenize(source(mode))), target);
     expect(driven.sub, mode < 2 || mode == 6 || mode == 8, reasons[mode], 10 + mode);
     if (mode >= 6) {
@@ -486,7 +483,6 @@ function target_checks(target: string): void {
       expect(sub, true, "", 29);
       require(ircore.no_sub().physical_records.list.len() == 0 && ircore.no_sub().physical_finalizers.len() == 0, 30);
     }
-    mode += 1;
   }
 }
 
@@ -534,8 +530,7 @@ function replacement_source(mode: i32): string {
 
 function replacement_checks(target: string): void {
   let reasons = ["", "user finalizer", "user finalizer", "child is not a flat", "exactly the incoming child", ""];
-  let mode = 0;
-  while (mode < 6) {
+  for mode in 0..6 {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(replacement_source(mode))), target).sub;
     expect_replace(sub, mode == 0 || mode == 5, reasons[mode], 100 + mode);
     if (mode == 0) {
@@ -580,7 +575,6 @@ function replacement_checks(target: string): void {
       expect_replace(ircore.Sub { ...sub, bodies: changed }, false, "unconsumed replacement credit", 118);
       expect_replace(sub, true, "proved fresh", 119);
     }
-    mode += 1;
   }
 }
 
@@ -616,8 +610,7 @@ function selected_source(mode: i32): string {
 }
 
 function selected_checks(target: string): void {
-  let mode = 0;
-  while (mode < 4) {
+  for mode in 0..4 {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(selected_source(mode))), target).sub;
     let left_reason = "";
     let right_reason = "";
@@ -643,7 +636,6 @@ function selected_checks(target: string): void {
     if (mode == 1) {
       selected_schema_controls(sub);
     }
-    mode += 1;
   }
 }
 
@@ -781,8 +773,7 @@ function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): irc
 
 function partial_checks(target: string): void {
   let reasons = ["", "", "", "sibling type or user finalizer", "sibling is not a flat", "nominal type or user finalizer", "nominal type or user finalizer", "exactly two child fields"];
-  let mode = 0;
-  while (mode < 8) {
+  for mode in 0..8 {
     let sub = semlower.driven(boxed.parsed(partial_source(mode), ["partial_left", "partial_right"]), target).sub;
     partial_expect(sub, "partial_left", 0, mode < 3, reasons[mode], 170 + mode);
     if (mode < 3) {
@@ -801,7 +792,6 @@ function partial_checks(target: string): void {
     if (mode == 2) {
       partial_sibling_controls(sub);
     }
-    mode += 1;
   }
 }
 
@@ -876,8 +866,7 @@ function caller_controls(target: string): void {
       name = "partial_right";
     }
     let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
-    let mode = 0;
-    while (mode < reasons.len()) {
+    for mode in 0..reasons.len() {
       let rows = caller_mutated_bodies(sub, name, mode);
       let names = ["assertion"];
       if (mode == 8) {
@@ -900,7 +889,6 @@ function caller_controls(target: string): void {
         print(p.function_name + ": " + p.message);
         exit(191 + mode);
       }
-      mode += 1;
     }
     let original = abi.check_partial(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
     require(original.ok, 205);

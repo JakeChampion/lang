@@ -397,10 +397,8 @@ function provided_checks(): i32 {
   }
 
   let big: string[] = [];
-  let i = 0;
-  while (i < 3000) {
+  for i in 0..3000 {
     big = big.append("fn_" + util.i32_to_string(i));
-    i += 1;
   }
   let ix = irverify.name_index(big);
   if (!irverify.index_has(ix, "fn_0")) {
@@ -419,12 +417,10 @@ function provided_checks(): i32 {
     return 92;
   }
   let placed = 0;
-  let pj = 0;
-  while (pj < big.len()) {
+  for pj in 0..big.len() {
     if (irverify.index_has(ix, big[pj])) {
       placed += 1;
     }
-    pj += 1;
   }
   if (placed != 3000) {
     return 93;
@@ -460,12 +456,10 @@ function provided_checks(): i32 {
   if (inv.len() < 30) {
     return 95;
   }
-  let vi = 0;
-  while (vi < inv.len()) {
+  for vi in 0..inv.len() {
     if (!irverifyprovided.is_provided(inv[vi])) {
       return 96;
     }
-    vi += 1;
   }
   return 0;
 }
@@ -715,10 +709,8 @@ function native_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
 
 function concat_ops(a: ir.Op[], b: ir.Op[]): ir.Op[] {
   let out = a;
-  let i = 0;
-  while (i < b.len()) {
+  for i in 0..b.len() {
     out = out.append(b[i]);
-    i += 1;
   }
   return out;
 }
@@ -824,12 +816,10 @@ function rc_checks(): i32 {
 
   let gp = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
   let seen = false;
-  let gi = 0;
-  while (gi < gp.len()) {
+  for gi in 0..gp.len() {
     if (util.contains(gp[gi].msg, "never proved unique")) {
       seen = true;
     }
-    gi += 1;
   }
   if (!seen) {
     return 208;
@@ -929,12 +919,10 @@ function rc_checks(): i32 {
 
 function main(): i32 {
   let av = args();
-  let ai = 0;
-  while (ai < av.len()) {
+  for ai in 0..av.len() {
     if (av[ai] == "-refuse") {
       return refuse_probe();
     }
-    ai += 1;
   }
 
   let in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];

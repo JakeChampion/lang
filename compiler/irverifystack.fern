@@ -35,8 +35,7 @@ pub function coverage_str(c: Coverage): string {
   let out = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
   let seen: string[] = [];
   let count: i32[] = [];
-  let i = 0;
-  while (i < c.skipped_why.len()) {
+  for i in 0..c.skipped_why.len() {
     let at = util.index_of_str(seen, c.skipped_why[i]);
     if (at < 0) {
       seen = seen.append(c.skipped_why[i]);
@@ -44,12 +43,9 @@ pub function coverage_str(c: Coverage): string {
     } else {
       count = count.with(at, count[at] + 1);
     }
-    i += 1;
   }
-  let j = 0;
-  while (j < seen.len()) {
+  for j in 0..seen.len() {
     out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
-    j += 1;
   }
   return out;
 }
@@ -71,8 +67,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
 
   let height = 0;
 
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let t = o.kind_tag;
     let base = fr_height[depth - 1];
@@ -186,7 +181,6 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         height = fr_height[depth - 1];
       }
     }
-    i += 1;
   }
 
   if (depth != 1) {

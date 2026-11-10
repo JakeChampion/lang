@@ -16,10 +16,8 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
 
 function drop_last2(a: i32[]): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - 2) {
+  for i in 0..a.len() - 2 {
     out = out.append(a[i]);
-    i += 1;
   }
   return out;
 }
@@ -138,10 +136,8 @@ function bin_sym(k: string): string {
 
 function drop_n(a: i32[], n: i32): i32[] {
   let out: i32[] = [];
-  let i = 0;
-  while (i < a.len() - n) {
+  for i in 0..a.len() - n {
     out = out.append(a[i]);
-    i += 1;
   }
   return out;
 }
@@ -206,8 +202,7 @@ pub function kind_table(): KindTable {
   let classes: i32[] = [];
   let argc: i32[] = [];
   let host: boolean[] = [];
-  let id = 0;
-  while (id < 1024) {
+  for id in 0..1024 {
     let k = ir.kind_name(id);
     let at = facts.ix.find(k);
     let listed = 0;
@@ -238,7 +233,6 @@ pub function kind_table(): KindTable {
     classes = classes.append(c);
     argc = argc.append(n);
     host = host.append(h);
-    id += 1;
   }
   return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
@@ -332,10 +326,8 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
   }
   let args: i32[] = [];
-  let i = stack.len() - argc;
-  while (i < stack.len()) {
+  for i in stack.len() - argc..stack.len() {
     args = args.append(stack[i]);
-    i += 1;
   }
   stack = drop_n(stack, argc);
   let what = k;
@@ -371,10 +363,8 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
   }
   let args: i32[] = [];
-  let i = stack.len() - argc;
-  while (i < stack.len()) {
+  for i in stack.len() - argc..stack.len() {
     args = args.append(stack[i]);
-    i += 1;
   }
   stack = drop_n(stack, argc);
   let v = nvals;
@@ -611,10 +601,8 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
     d -= 1;
   }
   let stack = lv.stack;
-  let e = 0;
-  while (e <= argc) {
+  for e in 0..=argc {
     stack = util.drop_last_i32(stack);
-    e += 1;
   }
   let v = lv.nvals;
   let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.CALL_IND, result: v, args: args, imm: op.i64_imm as i32, str: "" });
@@ -717,10 +705,8 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
     d -= 1;
   }
   let stack = lv.stack;
-  let e = 0;
-  while (e < npop) {
+  for e in 0..npop {
     stack = util.drop_last_i32(stack);
-    e += 1;
   }
   let v = lv.nvals;
   let insts = lv.insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str });
@@ -783,10 +769,8 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
     d -= 1;
   }
   let stack = lv.stack;
-  let e = 0;
-  while (e < n) {
+  for e in 0..n {
     stack = util.drop_last_i32(stack);
-    e += 1;
   }
   let nvals = lv.nvals;
   let box = nvals;
@@ -799,11 +783,9 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
     insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, sh], imm: 0, str: "" });
     nvals += 1;
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, elems[i]], imm: first + i * 8, str: "" });
     nvals += 1;
-    i += 1;
   }
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
@@ -819,10 +801,8 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
     d -= 1;
   }
   let stack = lv.stack;
-  let e = 0;
-  while (e < n) {
+  for e in 0..n {
     stack = util.drop_last_i32(stack);
-    e += 1;
   }
   let box = lv.nvals;
   let len = box + 1;
@@ -830,11 +810,9 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
   insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: len, args: [], imm: n, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: len + 1, args: [box, len], imm: 0, str: "" });
   let nvals = len + 2;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, elems[i]], imm: 8 + i, str: "u8" });
     nvals += 1;
-    i += 1;
   }
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
@@ -944,13 +922,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let slots: i32[] = [];
   let ok = true;
 
-  let p = 0;
-  while (p < nparams) {
+  for p in 0..nparams {
     let pv = nvals;
     nvals += 1;
     cur_insts = cur_insts.append(ssa.SInst { kind_tag: ssa.PARAM, result: pv, args: [], imm: p, str: "" });
     slots = slots.append(pv);
-    p += 1;
   }
   while (slots.len() < nslots) {
     let zv = nvals;
@@ -1154,14 +1130,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       ok = lv.ok;
     } else if (tag == t_dyn_dispatch) {
       let dargs: i32[] = [];
-      let dk = 0;
-      while (dk < op.width) {
+      for dk in 0..op.width {
         if (op.i32_imm + dk < 0 || op.i32_imm + dk >= slots.len()) {
           ok = false;
         } else {
           dargs = dargs.append(slots[op.i32_imm + dk]);
         }
-        dk += 1;
       }
       let dv = nvals;
       nvals += 1;
@@ -1236,8 +1210,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         sc_then_blk = sc_then_blk.with(top, cur_id);
         sc_then_reaches = sc_then_reaches.with(top, reaches);
-        let je = sc_dl_from[top];
-        while (je < dl_n) {
+        for je in sc_dl_from[top]..dl_n {
           let se = dl_slot[je];
           tl_slot = put_at(tl_slot, tl_n, se);
           tl_val = put_at(tl_val, tl_n, slots[se]);
@@ -1246,7 +1219,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           tl_n += 1;
           slot_mark = slot_mark.with(se, dl_prev[je]);
           slots = slots.with(se, dl_old[je]);
-          je += 1;
         }
         dl_n = sc_dl_from[top];
         if (!cur_dead) {
@@ -1352,14 +1324,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           sc_edge_last = sc_edge_last.with(pos, edge_link.len() - 1);
           edge_block = edge_block.append(obid);
           edge_from = edge_from.append(ep_slot.len());
-          let jv = sc_dl_from[pos];
-          while (jv < dl_n) {
+          for jv in sc_dl_from[pos]..dl_n {
             let ev = slots[dl_slot[jv]];
             if (ev != dl_old[jv]) {
               ep_slot = ep_slot.append(dl_slot[jv]);
               ep_val = ep_val.append(ev);
             }
-            jv += 1;
           }
           if (tag == t_br) {
             cur_term = STerm_br(tgt);
@@ -1417,8 +1387,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_dead = false;
           let lo_a = nslots;
           let hi_a: i32 = -1;
-          let ja = dfrom;
-          while (ja < dl_n) {
+          for ja in dfrom..dl_n {
             let sa = dl_slot[ja];
             slot_pos = slot_pos.with(sa, ja);
             if (sa < lo_a) {
@@ -1427,10 +1396,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sa > hi_a) {
               hi_a = sa;
             }
-            ja += 1;
           }
-          let s2 = lo_a;
-          while (s2 <= hi_a) {
+          for s2 in lo_a..=hi_a {
             if (slot_pos[s2] >= 0) {
               let snapv = dl_old[slot_pos[s2]];
               if (t_reaches == 1) {
@@ -1446,7 +1413,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
               }
               slot_pos = slot_pos.with(s2, -1);
             }
-            s2 += 1;
           }
         } else {
           let e_reaches = 0;
@@ -1477,8 +1443,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           let tfrom = sc_tl_from[t2];
           let lo_b = nslots;
           let hi_b: i32 = -1;
-          let jt = tfrom;
-          while (jt < tl_n) {
+          for jt in tfrom..tl_n {
             let sb0 = tl_slot[jt];
             slot_pos = slot_pos.with(sb0, jt);
             if (sb0 < lo_b) {
@@ -1487,10 +1452,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sb0 > hi_b) {
               hi_b = sb0;
             }
-            jt += 1;
           }
-          let jb = dfrom;
-          while (jb < dl_n) {
+          for jb in dfrom..dl_n {
             let sb = dl_slot[jb];
             if (slot_pos[sb] < 0) {
               slot_pos = slot_pos.with(sb, tl_n + jb);
@@ -1501,10 +1464,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sb > hi_b) {
               hi_b = sb;
             }
-            jb += 1;
           }
-          let s3 = lo_b;
-          while (s3 <= hi_b) {
+          for s3 in lo_b..=hi_b {
             let pb = slot_pos[s3];
             if (pb >= 0) {
               let tvv = 0;
@@ -1532,13 +1493,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
               }
               slot_pos = slot_pos.with(s3, -1);
             }
-            s3 += 1;
           }
         }
         let hq = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wq = dfrom;
-        let jq = dfrom;
-        while (jq < dl_n) {
+        for jq in dfrom..dl_n {
           let sq = dl_slot[jq];
           if (t2 > 0 && dl_prev[jq] < t2 - 1 && last_read[sq] >= hq) {
             if (wq != jq) {
@@ -1549,11 +1508,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             wq += 1;
           }
           slot_mark = slot_mark.with(sq, t2 - 1);
-          jq += 1;
         }
         dl_n = wq;
-        let jt2 = sc_tl_from[t2];
-        while (jt2 < tl_n) {
+        for jt2 in sc_tl_from[t2]..tl_n {
           let st = tl_slot[jt2];
           if (t2 > 0 && slot_mark[st] < t2 - 1 && last_read[st] >= hq) {
             dl_slot = put_at(dl_slot, dl_n, st);
@@ -1562,7 +1519,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             dl_n += 1;
             slot_mark = slot_mark.with(st, t2 - 1);
           }
-          jt2 += 1;
         }
         tl_n = sc_tl_from[t2];
         sc_n -= 1;
@@ -1576,10 +1532,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         let hid = sc_target[t2];
         let eidx = scope_edges(edge_link, sc_edge_last[t2]);
         let lpreds: i32[] = [];
-        let q = 0;
-        while (q < eidx.len()) {
+        for q in 0..eidx.len() {
           lpreds = lpreds.append(edge_block[eidx[q]]);
-          q += 1;
         }
         let lfrom = sc_lp_from[t2];
         let nw = lp_n - lfrom;
@@ -1588,15 +1542,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         let r0 = 0;
         while (r0 < nw) {
           slot_pos = slot_pos.with(lp_slot[lfrom + r0], r0);
-          let q0 = 0;
-          while (q0 < nback) {
+          for q0 in 0..nback {
             mat = mat.append(lp_phi[lfrom + r0]);
-            q0 += 1;
           }
           r0 += 1;
         }
-        let q1 = 1;
-        while (q1 < eidx.len()) {
+        for q1 in 1..eidx.len() {
           let e1 = eidx[q1];
           let pj = edge_from[e1];
           let pend = edge_end(edge_from, e1, ep_slot.len());
@@ -1607,7 +1558,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             pj += 1;
           }
-          q1 += 1;
         }
         let bi = sc_blk_from[t2];
         while (bi < blocks.len() && blocks[bi].id != hid) {
@@ -1616,21 +1566,17 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         if (bi < blocks.len()) {
           let b = blocks[bi];
           let ni: ssa.SInst[] = [];
-          let ii = 0;
-          while (ii < b.insts.len()) {
+          for ii in 0..b.insts.len() {
             let inst = b.insts[ii];
             if (ii < nw && inst.kind_tag == ssa.PHI && lp_phi[lfrom + ii] == inst.result) {
               let pargs: i32[] = [lp_pre[lfrom + ii]];
-              let qq = 0;
-              while (qq < nback) {
+              for qq in 0..nback {
                 pargs = pargs.append(mat[ii * nback + qq]);
-                qq += 1;
               }
               ni = ni.append(ssa.SInst { kind_tag: ssa.PHI, result: inst.result, args: pargs, imm: 0, str: "" });
             } else {
               ni = ni.append(inst);
             }
-            ii += 1;
           }
           blocks = blocks.with(bi, ssa.SBlock { id: b.id, insts: ni, term: b.term, preds: lpreds });
         }
@@ -1647,25 +1593,20 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_insts = [];
           cur_preds = [];
           cur_term = STerm_none();
-          let jr = sc_dl_from[t2];
-          while (jr < dl_n) {
+          for jr in sc_dl_from[t2]..dl_n {
             let rr2 = slot_pos[dl_slot[jr]];
             if (rr2 >= 0) {
               slots = slots.with(dl_slot[jr], lp_phi[lfrom + rr2]);
             }
-            jr += 1;
           }
         }
-        r0 = 0;
-        while (r0 < nw) {
+        for r0 in 0..nw {
           slot_pos = slot_pos.with(lp_slot[lfrom + r0], -1);
-          r0 += 1;
         }
         lp_n = lfrom;
         let hl = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wl2 = sc_dl_from[t2];
-        let jl = wl2;
-        while (jl < dl_n) {
+        for jl in wl2..dl_n {
           let sl = dl_slot[jl];
           if (t2 > 0 && dl_prev[jl] < t2 - 1 && last_read[sl] >= hl) {
             if (wl2 != jl) {
@@ -1676,7 +1617,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             wl2 += 1;
           }
           slot_mark = slot_mark.with(sl, t2 - 1);
-          jl += 1;
         }
         dl_n = wl2;
         sc_n -= 1;
@@ -1695,10 +1635,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         }
         let bpreds: i32[] = [];
-        let qb = 0;
-        while (qb < bidx.len()) {
+        for qb in 0..bidx.len() {
           bpreds = bpreds.append(edge_block[bidx[qb]]);
-          qb += 1;
         }
         if (falls_through) {
           bpreds = bpreds.append(fcur);
@@ -1723,8 +1661,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             rb += 1;
           }
-          let qb1 = 0;
-          while (qb1 < ne) {
+          for qb1 in 0..ne {
             let eb = bidx[qb1];
             let pjb = edge_from[eb];
             let pendb = edge_end(edge_from, eb, ep_slot.len());
@@ -1735,13 +1672,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
               }
               pjb += 1;
             }
-            qb1 += 1;
           }
           let ph_row: i32[] = [];
           let ph_lo = nslots;
           let ph_hi: i32 = -1;
-          rb = 0;
-          while (rb < nb) {
+          for rb in 0..nb {
             let es = dl_slot[dfrom_b + rb];
             let first = matb[rb * ne];
             let alleq = !falls_through || slots[es] == first;
@@ -1764,21 +1699,17 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
                 ph_hi = es;
               }
             }
-            rb += 1;
           }
           let np = ph_row.len();
           if (np > 1 && ph_hi - ph_lo + 1 <= np * np) {
             ph_row = [];
-            let ps = ph_lo;
-            while (ps <= ph_hi) {
+            for ps in ph_lo..=ph_hi {
               if (slot_pos[ps] >= 0) {
                 ph_row = ph_row.append(slot_pos[ps]);
               }
-              ps += 1;
             }
           } else {
-            let pi = 1;
-            while (pi < np) {
+            for pi in 1..np {
               let moving = ph_row[pi];
               let at = pi;
               while (at > 0 && dl_slot[dfrom_b + ph_row[at - 1]] > dl_slot[dfrom_b + moving]) {
@@ -1786,19 +1717,15 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
                 at -= 1;
               }
               ph_row = ph_row.with(at, moving);
-              pi += 1;
             }
           }
-          let pk = 0;
-          while (pk < ph_row.len()) {
+          for pk in 0..ph_row.len() {
             let row = ph_row[pk];
             let es = dl_slot[dfrom_b + row];
             slot_pos = slot_pos.with(es, -1);
             let vals: i32[] = [];
-            let qe = 0;
-            while (qe < ne) {
+            for qe in 0..ne {
               vals = vals.append(matb[row * ne + qe]);
-              qe += 1;
             }
             if (falls_through) {
               vals = vals.append(slots[es]);
@@ -1807,7 +1734,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             nvals += 1;
             eo_insts = eo_insts.append(ssa.SInst { kind_tag: ssa.PHI, result: phe, args: vals, imm: 0, str: "" });
             slots = slots.with(es, phe);
-            pk += 1;
           }
         }
         cur_id = eid;
@@ -1817,8 +1743,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_dead = bpreds.len() == 0;
         let hb = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wb = dfrom_b;
-        let jf = dfrom_b;
-        while (jf < dl_n) {
+        for jf in dfrom_b..dl_n {
           let sf = dl_slot[jf];
           if (t2 > 0 && dl_prev[jf] < t2 - 1 && last_read[sf] >= hb) {
             if (wb != jf) {
@@ -1829,7 +1754,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             wb += 1;
           }
           slot_mark = slot_mark.with(sf, t2 - 1);
-          jf += 1;
         }
         dl_n = wb;
         sc_n -= 1;
@@ -1885,8 +1809,7 @@ function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
 
 function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
   let out = util.filled_i32(nslots, -1);
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     let o = ops[i];
     let n = 0;
     if (o.kind_tag == t_load) {
@@ -1894,14 +1817,11 @@ function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
     } else if (o.kind_tag == t_dyn) {
       n = o.width;
     }
-    let k = 0;
-    while (k < n) {
+    for k in 0..n {
       if (o.i32_imm + k >= 0 && o.i32_imm + k < nslots) {
         out = out.with(o.i32_imm + k, i);
       }
-      k += 1;
     }
-    i += 1;
   }
   return out;
 }
@@ -1918,8 +1838,7 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   let lo = nslots;
   let hi: i32 = -1;
   let depth = 0;
-  let j = at + 1;
-  while (j < ops.len()) {
+  for j in at + 1..ops.len() {
     let tg = ops[j].kind_tag;
     if (tg == tags[3]) {
       if (depth == 0) {
@@ -1940,7 +1859,6 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
         }
       }
     }
-    j += 1;
   }
   let out: i32[] = [];
   if (hi < lo) {
@@ -1950,12 +1868,10 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   for sv in raw {
     seen = seen.with(sv - lo, 1);
   }
-  let s = 0;
-  while (s < seen.len()) {
+  for s in 0..seen.len() {
     if (seen[s] == 1) {
       out = out.append(lo + s);
     }
-    s += 1;
   }
   return out;
 }
@@ -2000,10 +1916,8 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
       cargs = cargs.append(stack[stack.len() - 1 - d]);
       d -= 1;
     }
-    let e = 0;
-    while (e < argc) {
+    for e in 0..argc {
       stack = util.drop_last_i32(stack);
-      e += 1;
     }
     let pv = nvals;
     nvals += 1;

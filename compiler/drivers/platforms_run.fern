@@ -154,23 +154,19 @@ function main(): i32 {
     return 25;
   }
   let cores = platforms.core_builtins();
-  let ci = 0;
-  while (ci < cores.len()) {
+  for ci in 0..cores.len() {
     if (platforms.gated_capability(cores[ci]).len() != 0) {
       return 26;
     }
-    ci += 1;
   }
   let gates = platforms.gated_builtins();
-  let gi = 0;
-  while (gi < gates.len()) {
+  for gi in 0..gates.len() {
     if (gates[gi].builtin.len() == 0) {
       return 27;
     }
     if (platforms.targets_providing(gates[gi].capability).len() == 0) {
       return 28;
     }
-    gi += 1;
   }
 
   let forks = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";

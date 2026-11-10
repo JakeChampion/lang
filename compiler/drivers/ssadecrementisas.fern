@@ -21,12 +21,10 @@ function register_moves(): void {
   for width in [32, 64] {
     let regs = registers.registers(false, width);
     let mnemonic = if (width == 32) { "movl" } else { "movq" };
-    let i = 0;
-    while (i < regs.len()) {
+    for i in 0..regs.len() {
       let j = (i + 1) % regs.len();
       let op = sample(mnemonic + " " + regs[i] + ", " + regs[j]);
       require(op.kind == 2 && op.width == width && op.source == i && op.destination == j);
-      i += 1;
     }
   }
 }

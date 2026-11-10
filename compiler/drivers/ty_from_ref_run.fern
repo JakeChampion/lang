@@ -16,10 +16,8 @@ function main(): i32 {
     "Foo", "mod.Bar", "TestRunner", "", "dyn Shape",
   ];
   let out = "";
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     out = out + corpus[i] + " => " + asmcore.ty_tag(asmcore.ty_from_name(corpus[i])) + "\n";
-    i += 1;
   }
   write(out);
   return 0;

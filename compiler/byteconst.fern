@@ -20,8 +20,7 @@ pub function words(bs: u8[]): string {
   }
   let out = __alloc_u8(size as i32);
   let at = 0;
-  let i = 0;
-  while (i < bs.len()) {
+  for i in 0..bs.len() {
     if (i > 0) {
       out = out.with(at, 44 as u8);
       at += 1;
@@ -37,7 +36,6 @@ pub function words(bs: u8[]): string {
     }
     out = out.with(at, (48 + n % 10) as u8);
     at += 1;
-    i += 1;
   }
   unsafe {
     return string_from_bytes_unchecked(out);

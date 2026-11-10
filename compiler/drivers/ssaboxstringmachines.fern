@@ -85,12 +85,10 @@ function paths(s: string): void {
 function identities(s: string): void {
   let regs = registers.registers(false, 64);
   let words = registers.registers(false, 32);
-  let i = 0;
-  while (i < regs.len()) {
+  for i in 0..regs.len() {
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 1);
     mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
-    i += 1;
   }
   let rc = "movl -8(%rax), %ecx";
   mutation(s, rc, "movq %rbx, %rcx\nmovq %rcx, %rbx\n" + rc, true);
@@ -116,10 +114,8 @@ function flag_case(s: string, a: i32, b: i32, width: i32): void {
   let bx = if (width == 32) { "%edx" } else { "%rdx" };
   let suffix = if (width == 32) { "l" } else { "q" };
   let prefix = "mov" + suffix + " $" + a.to_string() + ", " + ax + "\nmov" + suffix + " $" + b.to_string() + ", " + bx + "\ncmp" + suffix + " " + bx + ", " + ax + "\n";
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     mutation(s, "movl -8(%rax), %ecx", prefix + names[i] + " .Lstrfree_ret\nmovl -8(%rax), %ecx", !conditions[i]);
-    i += 1;
   }
 }
 

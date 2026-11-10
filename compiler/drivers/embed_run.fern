@@ -61,12 +61,10 @@ function bytes_are(bs: u8[], want: u8[]): boolean {
   if (bs.len() != want.len()) {
     return false;
   }
-  let i = 0;
-  while (i < bs.len()) {
+  for i in 0..bs.len() {
     if (bs[i] != want[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

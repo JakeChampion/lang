@@ -212,11 +212,9 @@ function helper_memory(memory: Half[], sp: Word, capacity: i32): Half[] {
     memory = memory.with(i, half(11, i as i64, false));
     i += 1;
   }
-  i = 0;
-  while (i < 6) {
+  for i in 0..6 {
     let w = number(if (i == 2 || i == 3) { 1 } else { capacity as i64 });
     memory = memory.with(22 + i, if (i % 2 == 0) { w.low } else { w.high });
-    i += 1;
   }
   return memory;
 }
@@ -278,8 +276,7 @@ function finished(s: State, capacity: i32, register_entry: boolean): boolean {
     return false;
   }
   let original = initial(capacity, register_entry);
-  let i = 0;
-  while (i < 16) {
+  for i in 0..16 {
     let expected = original.regs[i];
     if (i == 0) {
       expected = token(3, 16);
@@ -293,21 +290,18 @@ function finished(s: State, capacity: i32, register_entry: boolean): boolean {
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i += 1;
   }
   return finished_memory(s, original, capacity);
 }
 
 function finished_memory(s: State, original: State, capacity: i32): boolean {
-  let i = 16;
-  while (i < s.memory.len()) {
+  for i in 16..s.memory.len() {
     if (!same(s.memory[i], expected_memory(original, capacity, i))) {
       return false;
     }
     if (i >= 26 && i < s.memory.len() - 2 && s.writes[i] != 1) {
       return false;
     }
-    i += 1;
   }
   return true;
 }

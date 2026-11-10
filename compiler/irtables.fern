@@ -84,8 +84,7 @@ pub function csv_nth(enc: string, n: i32): string {
   let depth = 0;
   let idx = 0;
   let start = 0;
-  let k = 0;
-  while (k <= enc.len()) {
+  for k in 0..=enc.len() {
     if (k == enc.len() || depth == 0 && enc[k] == b',') {
       if (idx == n) {
         return slice_unchecked(enc, start, k).to_owned();
@@ -100,7 +99,6 @@ pub function csv_nth(enc: string, n: i32): string {
         depth -= 1;
       }
     }
-    k += 1;
   }
   return "";
 }
@@ -285,12 +283,10 @@ pub function prim_type_ids(): string[] {
 
 pub function prim_type_id(structs: StructTab, name: string): i32 {
   let names = prim_type_ids();
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     if (names[i] == name) {
       return structs.decls.len() + i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -1042,24 +1038,20 @@ pub function lane_operator(kind: i32, op: string): string {
 pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
   let bound = astwalk.collect_bound_stmts(stmts, []);
   let n = 0;
-  let i = 0;
-  while (i < bound.len()) {
+  for i in 0..bound.len() {
     if (bound[i] == name) {
       n += 1;
     }
-    i += 1;
   }
   return n;
 }
 
 function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
   let ids = astwalk.collect_idents_expr(e, []);
-  let i = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     if (util.index_of_str(names, ids[i]) >= 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -1171,12 +1163,10 @@ pub function erased_passthrough_safe(fn: parser.FuncDecl): boolean {
     return false;
   }
   let enames: string[] = [];
-  let i = 0;
-  while (i < fn.params.len()) {
+  for i in 0..fn.params.len() {
     if (parser.looks_type_var(fn.params[i].type_name)) {
       enames = enames.append(fn.params[i].name);
     }
-    i += 1;
   }
   if (enames.len() == 0) {
     return false;
@@ -1231,15 +1221,11 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  let pi = 0;
-  while (pi < fd.params.len()) {
+  for pi in 0..fd.params.len() {
     bound = bound.append(fd.params[pi].name);
-    pi += 1;
   }
-  let b = 0;
-  while (b < fd.body.len()) {
+  for b in 0..fd.body.len() {
     bound = astwalk.collect_bound_stmt(fd.body[b], bound);
-    b += 1;
   }
   if (bound.len() == 0) {
     return gfns;
@@ -1258,26 +1244,22 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
     return gfns;
   }
   let out: string[] = [];
-  let i = 0;
-  while (i < gfns.len()) {
+  for i in 0..gfns.len() {
     if (util.index_of_str(bound, gfns[i]) < 0) {
       out = out.append(gfns[i]);
     }
-    i += 1;
   }
   return out;
 }
 
 pub function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
   let used = astwalk.collect_lambda_idents(lam, []);
-  let ui = 0;
-  while (ui < used.len()) {
+  for ui in 0..used.len() {
     let u = used[ui];
     if (util.index_of_str(gfns, u) < 0
       && u != "None" && u != "true" && u != "false") {
       return false;
     }
-    ui += 1;
   }
   return true;
 }

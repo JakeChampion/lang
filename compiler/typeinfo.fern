@@ -56,14 +56,12 @@ pub function ownable(t: Type): boolean {
 pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
   let kept: boolean[] = [];
   let any = false;
-  let i = 0;
-  while (i < params.len()) {
+  for i in 0..params.len() {
     let on = i < flags.len() && flags[i] && ownable(params[i]);
     kept = kept.append(on);
     if (on) {
       any = true;
     }
-    i += 1;
   }
   if (!any) {
     return [];
@@ -643,8 +641,7 @@ pub function spelling(t: Type): string {
 
 function param_list_spelling(f: TypeFunc): string {
   let out = "";
-  let i = 0;
-  while (i < f.param_types.len()) {
+  for i in 0..f.param_types.len() {
     let one = spelling(f.param_types[i]);
     if (one.len() == 0) {
       return "";
@@ -656,15 +653,13 @@ function param_list_spelling(f: TypeFunc): string {
       out += "own ";
     }
     out += one;
-    i += 1;
   }
   return out;
 }
 
 function type_list_spelling(ts: Type[]): string {
   let out = "";
-  let i = 0;
-  while (i < ts.len()) {
+  for i in 0..ts.len() {
     let next = spelling(ts[i]);
     if (next.len() == 0) {
       return "";
@@ -673,7 +668,6 @@ function type_list_spelling(ts: Type[]): string {
       out += ", ";
     }
     out += next;
-    i += 1;
   }
   return out;
 }

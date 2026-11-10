@@ -8,10 +8,8 @@ function main(): i32 {
   let parsed = rundriver.parse_stdin("checker_codes_run");
   let mod = flatten.qualify_entry_builtins(parsed);
   let mt = checker.check_module(mod);
-  let i = 0;
-  while (i < mt.diags.len()) {
+  for i in 0..mt.diags.len() {
     print(mt.diags[i].code + "\t" + mt.diags[i].message);
-    i += 1;
   }
   if (mt.diags.len() > 0) {
     return 1;

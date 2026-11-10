@@ -22,10 +22,8 @@ pub struct IntsAt { items: i32[], pos: i32 }
 
 function enc_strs(tag: string, xs: string[]): string {
   let out = tag + util.i32_to_string(xs.len()) + "\n";
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
-    i += 1;
   }
   return out;
 }
@@ -68,13 +66,11 @@ function dec_strs(s: string, pos: i32): StrsAt {
   let n = hdr.items[0];
   let p = hdr.pos;
   let out: string[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let lh = scan_int(s, p);
     let len = lh.items[0];
     out = out.append(slice_unchecked(s, lh.pos, lh.pos + len).to_owned());
     p = lh.pos + len;
-    i += 1;
   }
   return StrsAt { items: out, pos: p };
 }

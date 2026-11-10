@@ -237,10 +237,8 @@ function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32):
 
 function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "children-only drop with stale slot", "child used after final credit or anchor", "children-only drop requires unique parent", "children-only drop with stale slot", "unconsumed child credit", "parent reference required"];
-  let mode = 0;
-  while (mode < reasons.len()) {
+  for mode in 0..reasons.len() {
     expect(lift(child_drop_mutation(body, field, mode)), d, r, mode < 3, reasons[mode], 81 + mode);
-    mode += 1;
   }
 }
 
@@ -280,15 +278,13 @@ function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32)
 function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let facts = [reuse.ScalarField { root: 4 + field, offset: 8 }];
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "missing scalar child field layout", "flat child reference required"];
-  let mode = 0;
-  while (mode < reasons.len()) {
+  for mode in 0..reasons.len() {
     let f = lift(scalar_read_mutation(body, field, mode));
     let p = reuse.check_fields(f, d, r, "Parent", facts);
     if (p.ok != (mode == 0) || p.function_name != f.name || p.message != reasons[mode]) {
       print(p.function_name + ": " + p.message);
       exit(101 + mode);
     }
-    mode += 1;
   }
   let f = lift(scalar_read_mutation(body, field, 0));
   let duplicate = reuse.check_fields(f, d, r, "Parent", facts.append(facts[0]));
@@ -359,15 +355,13 @@ function numeric_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
 
 function numeric_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "integer add requires numeric operands", "signed comparison requires narrowed numeric operands", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "integer cast requires numeric operand", "proved guarded two-child partial replacement"];
-  let mode = 0;
-  while (mode < reasons.len()) {
+  for mode in 0..reasons.len() {
     let f = lift(numeric_mutation(body, field, mode));
     let p = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: 8 }]);
     if (p.ok != (mode == 0 || mode == 9) || p.function_name != f.name || p.message != reasons[mode]) {
       print(p.function_name + ": " + p.message);
       exit(111 + mode);
     }
-    mode += 1;
   }
 }
 
@@ -410,10 +404,8 @@ function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
 
 function shallow_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "old parent used after release", "shallow parent release requires shared parent", "old parent used after release", "old parent used after release"];
-  let mode = 0;
-  while (mode < reasons.len()) {
+  for mode in 0..reasons.len() {
     expect(lift(shallow_mutation(body, field, mode)), d, r, mode < 2, reasons[mode], 92 + mode);
-    mode += 1;
   }
 }
 
@@ -448,10 +440,8 @@ function target_checks(target: string): void {
   numeric_checks(body, d, r, 0);
   expect(f, d, r, true, "proved guarded two-child partial replacement", 10);
   let clearing_reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
-  let clearing_mode = 0;
-  while (clearing_mode < clearing_reasons.len()) {
+  for clearing_mode in 0..clearing_reasons.len() {
     expect(lift(clearing_mutation(body, 0, clearing_mode)), d, r, clearing_mode == 0, clearing_reasons[clearing_mode], 53 + clearing_mode);
-    clearing_mode += 1;
   }
   let reasons: string[] = ["slot store without local child credit", "child used after final credit or anchor", "unconsumed parent credit", "result has stale or uninitialized slot", "overwriting live slot credit", "nonnull reuse donor unsupported", "load from stale or uninitialized slot", "parent release with stale slot", "parent allocation size mismatch"];
   let mode = 0;
@@ -505,10 +495,8 @@ function target_checks(target: string): void {
   require(inserted == 1 && removed == 1, 35);
   expect(lift(irtables.LowerResult { ...body, ops: early }), d, r, true, "proved guarded two-child partial replacement", 36);
   let physical_reasons: string[] = ["unsupported reuse operation", "invalid reuse parameter", "unsupported reuse call", "extra parent allocation", "result shape not initialized", "overwriting live slot credit", "invalid acyclic phi operand", "undefined reuse operand", "unsupported pointer comparison"];
-  mode = 0;
-  while (mode < physical_reasons.len()) {
+  for mode in 0..physical_reasons.len() {
     expect(physical_mutation(f, mode), d, r, false, physical_reasons[mode], 40 + mode);
-    mode += 1;
   }
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, "invalid reuse boundary", 49);
   expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, "invalid reuse boundary", 50);
@@ -543,10 +531,8 @@ function right_checks(target: string): void {
   numeric_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
   expect(lift(bodies[0]), lift(drops[0]), lift(releases[0]), true, "proved guarded two-child partial replacement", 53);
   let reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
-  let mode = 0;
-  while (mode < reasons.len()) {
+  for mode in 0..reasons.len() {
     expect(lift(clearing_mutation(bodies[0], 1, mode)), lift(drops[0]), lift(releases[0]), mode == 0, reasons[mode], 70 + mode);
-    mode += 1;
   }
 }
 
@@ -624,8 +610,7 @@ function caller_controls(target: string): void {
       name = "partial_right";
     }
     let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
-    let mode = 0;
-    while (mode < reasons.len()) {
+    for mode in 0..reasons.len() {
       let rows: irtables.LowerResult[] = [];
       let hits = 0;
       for body in sub.bodies {
@@ -712,7 +697,6 @@ function caller_controls(target: string): void {
         print(p.function_name + ": " + p.message);
         exit(191 + mode);
       }
-      mode += 1;
     }
     let original = reuse.check_fields(named_body(sub.bodies, name), d, r, "Parent", fields);
     require(original.ok, 205);

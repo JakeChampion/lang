@@ -21,15 +21,13 @@ pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   while (depth > 0) {
     depth -= 1;
     let bi = work[depth];
-    let which = 0;
-    while (which < 2) {
+    for which in 0..2 {
       let id = ssa.successor_id(f.blocks[bi].term, which);
       if (id >= 0 && !reachable[at[id]]) {
         reachable = reachable.with(at[id], true);
         work = push_at(work, depth, at[id]);
         depth += 1;
       }
-      which += 1;
     }
   }
   return reachable;
@@ -90,12 +88,10 @@ pub function dominates_at(f: ssa.SFunc, at: i32[]): Dom {
     }
   }
   let by_clock = util.minus_ones(clock);
-  bi = 0;
-  while (bi < n) {
+  for bi in 0..n {
     if (pre[bi] >= 0) {
       by_clock = by_clock.with(pre[bi], bi);
     }
-    bi += 1;
   }
   return Dom { pre: pre, post: post, idom: idom, by_clock: by_clock };
 }
@@ -217,8 +213,7 @@ pub function check_graph(f: ssa.SFunc): Facts {
   }
   let defs = util.minus_ones(f.nvals);
   let positions = util.minus_ones(f.nvals);
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let pos = 0;
     let seen_regular = false;
     for ins in f.blocks[bi].insts {
@@ -241,7 +236,6 @@ pub function check_graph(f: ssa.SFunc): Facts {
       }
       pos += 1;
     }
-    bi += 1;
   }
   for b in f.blocks {
     for ins in b.insts {
@@ -271,8 +265,7 @@ pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): 
     return err;
   }
   let any = false;
-  let value = 0;
-  while (value < f.nvals) {
+  for value in 0..f.nvals {
     if (dependencies[value].len() > 0) {
       any = true;
       if (g.defs[value] < 0) {
@@ -295,7 +288,6 @@ pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): 
         }
       }
     }
-    value += 1;
   }
   if (!any) {
     return "";
@@ -306,15 +298,13 @@ pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): 
 // An empty dependency table checks the values themselves.
 function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
   let err = "";
-  let bi = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let b = f.blocks[bi];
     if (g.reachable[bi]) {
       let pos = 0;
       for ins in b.insts {
         if (ins.kind_tag == ssa.PHI) {
-          let pi = 0;
-          while (pi < b.preds.len()) {
+          for pi in 0..b.preds.len() {
             let pb = g.at[b.preds[pi]];
             if (g.reachable[pb]) {
               err = use_error(ins.args[pi], pb, f.blocks[pb].insts.len(), dependencies, g);
@@ -322,7 +312,6 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
                 return err;
               }
             }
-            pi += 1;
           }
         } else {
           for arg in ins.args {
@@ -339,7 +328,6 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
         return err;
       }
     }
-    bi += 1;
   }
   return "";
 }

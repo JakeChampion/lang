@@ -10,12 +10,10 @@ import "../semlower";
 function main(): i32 {
   let decide = false;
   let av = args();
-  let ai = 1;
-  while (ai < av.len()) {
+  for ai in 1..av.len() {
     if (av[ai] == "-decide") {
       decide = true;
     }
-    ai += 1;
   }
   let mod = rundriver.parse_stdin("wasm_run");
   if (asmcore.refuse_parse_errors([mod])) {

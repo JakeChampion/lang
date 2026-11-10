@@ -95,8 +95,7 @@ function target_checks(target: string): void {
   let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [8] }, 16);
   require(!absent.ok && absent.function_name == f.name && absent.message == "selected child slot absent from layout", 33);
   let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "freeing a shared parent"];
-  let mode = 0;
-  while (mode < 7) {
+  for mode in 0..7 {
     let mutated = lift(mutate(body, mode));
     expect(mutated, d, r, false, 11 + mode);
     let rejected = extract.check(mutated, d, r, helper.FlatChild { offset: 8 });
@@ -104,7 +103,6 @@ function target_checks(target: string): void {
       print(rejected.message);
       exit(40 + mode);
     }
-    mode += 1;
   }
   let reversed: ssa.SBlock[] = [];
   let i = f.blocks.len();
@@ -258,22 +256,18 @@ function sibling_checks(target: string): void {
         other = 8;
       }
       let sibling_reasons: string[] = ["sibling slot left in a freed parent", "sibling released twice", "load from released sibling slot", "uniqueness token joins a nonzero value"];
-      let sm = 0;
-      while (sm < sibling_reasons.len()) {
+      for sm in 0..sibling_reasons.len() {
         let refused = extract.check_selected(sibling_mutated(f, other, sm, r.name), d, r, layout, offset);
         if (refused.ok || refused.message != sibling_reasons[sm]) {
           print(refused.message);
           exit(78 + sm);
         }
-        sm += 1;
       }
       require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
       let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "releasing a shared parent's child"];
-      let mode = 0;
-      while (mode < 7) {
+      for mode in 0..7 {
         let result = extract.check_selected(lift(mutate(body, mode)), d, r, layout, offset);
         require(!result.ok && result.function_name == f.name && result.message == reasons[mode], 63 + mode);
-        mode += 1;
       }
       let changed: ir.Op[] = [];
       let loads = 0;

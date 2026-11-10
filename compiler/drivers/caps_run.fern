@@ -21,8 +21,7 @@ function app_pkgs(governed: boolean, grants: string[]): caps.Pkg[] {
 }
 
 function row_caps(rows: caps.Row[], pkg: string): string {
-  let i = 0;
-  while (i < rows.len()) {
+  for i in 0..rows.len() {
     if (rows[i].pkg == pkg) {
       let out = "";
       let u = 0;
@@ -38,7 +37,6 @@ function row_caps(rows: caps.Row[], pkg: string): string {
       }
       return out;
     }
-    i += 1;
   }
   return "";
 }
@@ -46,27 +44,21 @@ function row_caps(rows: caps.Row[], pkg: string): string {
 function main(): i32 {
   let bs = caps.builtin_caps();
   let vocab = caps.capabilities();
-  let i = 0;
-  while (i < bs.len()) {
+  for i in 0..bs.len() {
     if (!util.has_str(vocab, bs[i].capability)) {
       return 1;
     }
-    i += 1;
   }
-  let v = 1;
-  while (v < vocab.len()) {
+  for v in 1..vocab.len() {
     if (!util.str_less(vocab[v - 1], vocab[v])) {
       return 2;
     }
-    v += 1;
   }
   let ung = caps.ungated();
-  let u2 = 0;
-  while (u2 < ung.len()) {
+  for u2 in 0..ung.len() {
     if (caps.capability_of(ung[u2]).len() > 0) {
       return 3;
     }
-    u2 += 1;
   }
   let fu = 0;
   let fung = caps.frontend_ungated();
@@ -79,33 +71,25 @@ function main(): i32 {
     }
     fu += 1;
   }
-  let d1 = 0;
-  while (d1 < bs.len()) {
-    let d2 = d1 + 1;
-    while (d2 < bs.len()) {
+  for d1 in 0..bs.len() {
+    for d2 in d1 + 1..bs.len() {
       if (bs[d1].builtin == bs[d2].builtin) {
         return 6;
       }
-      d2 += 1;
     }
-    d1 += 1;
   }
 
   let reg = parser.builtin_function_names();
-  let r = 0;
-  while (r < reg.len()) {
+  for r in 0..reg.len() {
     if (!caps.classified(reg[r])) {
       eprint("caps: unclassified builtin: " + reg[r]);
       return 7;
     }
-    r += 1;
   }
-  let fe = 0;
-  while (fe < fung.len()) {
+  for fe in 0..fung.len() {
     if (!util.has_str(reg, fung[fe])) {
       return 8;
     }
-    fe += 1;
   }
 
   let two: parser.Module = parse("function main(): i32 { helper__save(\"x\"); return 0; }\n"

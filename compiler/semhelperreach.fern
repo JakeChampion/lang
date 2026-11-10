@@ -29,12 +29,10 @@ function references(body: irtables.LowerResult, names: util.NameIndex, labels: s
     }
     // Constants can nest function values. Dynamic dispatch stores several names.
     if ((op.kind_tag == ir.K_CONST_STRUCT || op.kind_tag == ir.K_DYN_DISPATCH) && util.contains(op.str, infix)) {
-      let i = 0;
-      while (i < labels.len()) {
+      for i in 0..labels.len() {
         if (!m.live[i] && labels[i] != "" && util.contains(op.str, labels[i])) {
           m = mark(m, i);
         }
-        i += 1;
       }
     }
   }
@@ -77,12 +75,10 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     at += 1;
   }
   let kept = Kept { bodies: [], indices: [] };
-  i = 0;
-  while (i < extra.len()) {
+  for i in 0..extra.len() {
     if (m.live[i]) {
       kept = Kept { bodies: kept.bodies.append(extra[i]), indices: kept.indices.append(i) };
     }
-    i += 1;
   }
   return kept;
 }

@@ -12,13 +12,11 @@ function bound_at(bt: string[], i: i32): string {
 
 function pairs_of(fd: parser.FuncDecl): string {
   let out = "";
-  let i = 0;
-  while (i < fd.type_params.len()) {
+  for i in 0..fd.type_params.len() {
     if (i > 0) {
       out += ",";
     }
     out = out + fd.type_params[i] + "=" + bound_at(fd.bound_traits, i);
-    i += 1;
   }
   if (out.len() == 0) {
     return "<none>";
@@ -28,15 +26,13 @@ function pairs_of(fd: parser.FuncDecl): string {
 
 function main(): i32 {
   let mod = rundriver.parse_stdin("impl_bounds_run");
-  let i = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
     let label = fd.name;
     if (fd.receiver_type.len() > 0) {
       label = fd.receiver_type + "." + fd.name;
     }
     print(util.show_type_vars(label + "\t" + pairs_of(fd)));
-    i += 1;
   }
   return 0;
 }

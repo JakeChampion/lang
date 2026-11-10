@@ -112,8 +112,7 @@ function classify(path: string): i32 {
 function sort_pairs(names: string[], contents: u8[][]): (string[], u8[][]) {
   let on: string[] = [];
   let oc: u8[][] = [];
-  let i = 0;
-  while (i < names.len()) {
+  for i in 0..names.len() {
     let pos = 0;
     while (pos < on.len() && util.str_less(on[pos], names[i])) {
       pos += 1;
@@ -135,7 +134,6 @@ function sort_pairs(names: string[], contents: u8[][]): (string[], u8[][]) {
     }
     on = nn;
     oc = nc;
-    i += 1;
   }
   return (on, oc);
 }
@@ -166,14 +164,12 @@ function common_affix(a: string, b: string): i32 {
 pub function suggest(a: Assets, want: string): string {
   let best = "";
   let best_score = 0;
-  let i = 0;
-  while (i < a.names.len()) {
+  for i in 0..a.names.len() {
     let score = common_affix(a.names[i], want);
     if (score > best_score) {
       best_score = score;
       best = a.names[i];
     }
-    i += 1;
   }
   if (best_score * 3 < want.len()) {
     return "";
@@ -190,13 +186,11 @@ pub function format_available(a: Assets): string {
     shown = 10;
   }
   let out = "embedded assets: ";
-  let i = 0;
-  while (i < shown) {
+  for i in 0..shown {
     if (i > 0) {
       out += ", ";
     }
     out += a.names[i];
-    i += 1;
   }
   if (a.names.len() > shown) {
     out = out + " (and " + util.i32_to_string(a.names.len() - shown) + " more)";
@@ -344,8 +338,7 @@ function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
     return fail(c, a, name + "() but no assets were embedded — pass -embed DIR to the compiler");
   }
   let elems: ast.Expr[] = [];
-  let i = 0;
-  while (i < a.assets.names.len()) {
+  for i in 0..a.assets.names.len() {
     let got = content(c, a.assets, i, name);
     if (got.err.len() > 0) {
       return fail(c, a, got.err);
@@ -354,7 +347,6 @@ function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
     pair = pair.append(ast.ExprString { value: a.assets.names[i], line: c.line, col: c.col });
     pair = pair.append(got.lit);
     elems = elems.append(ast.ExprTuple { elements: pair, line: c.line, col: c.col });
-    i += 1;
   }
   let elem_ty = "(string, string)";
   if (is_bytes_form(name)) {
