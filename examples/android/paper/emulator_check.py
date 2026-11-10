@@ -59,8 +59,14 @@ def keyboard_shown(timeout=5.0):
 def editor_is_field():
     """The keyboard types into the text field of the app: an editor of text
     with the action Go, not the decor view."""
-    editor = re.search(r"inputType=0x(\w+) imeOptions=0x(\w+)", adb("shell", "dumpsys", "input_method", check=False))
-    if not editor or editor.group(1) != "1" or editor.group(2) != "10000002":
+    dump = adb("shell", "dumpsys", "input_method", check=False)
+    # Android prints editor history before the current client's editor.
+    current = re.search(r"(?m)^  mCurrentEditorInfo:([^\n]*)", dump)
+    body = re.match(r"\r?\n((?:    [^\n]*(?:\n|$))+)", dump[current.end():]) if current and not current.group(1).strip() else None
+    info = body.group(1) if body else ""
+    editor = re.search(r"inputType=0x(\w+) imeOptions=0x(\w+)", info)
+    package = re.search(r"\bpackageName=" + re.escape(PACKAGE) + r"(?=\s|$)", info)
+    if not editor or not package or editor.group(1) != "1" or editor.group(2) != "10000002":
         fail("the keyboard does not type into the text field: " + (editor.group(0) if editor else "no editor"))
         return False
     return True
@@ -143,6 +149,7 @@ def main(apk, out):
     if not re.search(r"B\|\d+\|frame", trace):
         fail("the system trace has no frame section of the app")
     _, _, part = paper_part(out, "drawer", top_half=True)
+    Path(out, "input-method-drawer.txt").write_text(adb("shell", "dumpsys", "input_method", check=False))
     if part < 0.6:
         fail(f"the app list has {part:.3f} of the paper colour")
     check_keyboard(width)

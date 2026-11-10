@@ -1,0 +1,212 @@
+import "std/video/mp4";
+import "std/video/mp4/file" as mp4file;
+import "std/video/qtrle";
+import "std/video/frame";
+import "std/audio/mp4/boxes";
+import "std/audio/wire";
+import "std/hex";
+import "std/test";
+import "video_mp4_file_check" as filecheck;
+import "video_qtrle_mov_vectors" as vectors;
+
+function pixels_equal(actual: [u32], text: string): boolean {
+  let Ok(expected) = hex.decode(text) else {
+    return false;
+  };
+  if (expected.len() != actual.len() * 4) {
+    return false;
+  }
+  for i in 0..actual.len() {
+    if (actual[i] != wire.be(expected, i * 4, 4) as u32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function packet_equal(p: mp4.Packet, e: vectors.Packet): boolean {
+  return p.offset == e.offset && p.bytes == e.bytes && p.decode_time == e.dts && p.presentation_time == e.pts && p.duration == e.duration && p.sync == e.sync && p.description == 0;
+}
+
+function decode_track(input: [u8], track: mp4.Track, expected: vectors.Track, start: i32): Result[void, string] {
+  let description = track.descriptions[0];
+  let Ok(initial) = frame.create(description.format, frame.default_limits()) else {
+    return Err("frame storage");
+  };
+  let pixels = initial.pixels;
+  for i in start..track.packets.len() {
+    let p = track.packets[i];
+    if (!packet_equal(p, expected.packets[i])) {
+      return Err("packet metadata");
+    }
+    let decoded = match (qtrle.decode_into(input[p.offset as i32:p.offset as i32 + p.bytes], description.format, description.depth, pixels, frame.default_limits())) {
+      Ok(value) => value,
+      Err(error) => { return Err(error.message()); },
+    };
+    if (!pixels_equal(decoded.pixels, expected.frames[i])) {
+      return Err("decoded ARGB pixels");
+    }
+    pixels = decoded.pixels;
+  }
+  return Ok(());
+}
+
+function track_reference(input: [u8], track: mp4.Track, expected: vectors.Track): Result[void, string] {
+  if (track.descriptions.len() != 1 || track.packets.len() != expected.packets.len()) {
+    return Err("entry counts");
+  }
+  let description = track.descriptions[0];
+  if (description.codec != mp4.QTRLE || description.depth != expected.depth || track.clock.scale != expected.scale) {
+    return Err("codec metadata");
+  }
+  if (description.format != frame.Format { width: 17, height: 5 }) {
+    return Err("dimensions");
+  }
+  if (description.config.length_size != 0 || description.config.csd0.len() != 0 || description.config.csd1.len() != 0) {
+    return Err("unexpected NAL configuration");
+  }
+  if (!track.packets[0].sync) {
+    return Err("missing initial sync packet");
+  }
+  decode_track(input, track, expected, 0)?;
+  for i in 1..track.packets.len() {
+    if (track.packets[i].sync) {
+      decode_track(input, track, expected, i)?;
+    }
+  }
+  return Ok(());
+}
+
+function reference(v: vectors.Vector): Result[void, string] {
+  let Ok(input) = hex.decode(v.bytes) else {
+    return Err("fixture hex");
+  };
+  let index = match (mp4.inspect(input, mp4.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (index.tracks.len() != v.tracks.len()) {
+    return Err("track count");
+  }
+  for i in 0..index.tracks.len() {
+    track_reference(input, index.tracks[i], v.tracks[i])?;
+  }
+  let Ok(media) = filecheck.media(input) else {
+    return Err("media ranges");
+  };
+  for short in [1, 7, 0] {
+    let source = filecheck.memory([filecheck.Segment { at: 0i64, bytes: input }], media, short);
+    let read = match (mp4file.inspect_with(input.len() as i64, source.seek, source.read, mp4file.default_limits())) {
+      Ok(value) => value,
+      Err(error) => { return Err(error.message()); },
+    };
+    if (!filecheck.same(read, index, 0i64)) {
+      return Err("file metadata or media payload read");
+    }
+  }
+  return Ok(());
+}
+
+function references(): test.TestOutcome {
+  for v in vectors.vectors() {
+    if let Err(message) = reference(v) {
+      return test.fail(v.name + ": " + message);
+    }
+  }
+  return test.pass();
+}
+
+function sample_entry(input: [u8]): Result[i32, string] {
+  let from = 0;
+  let end = input.len();
+  for name in ["moov", "trak", "mdia", "minf", "stbl", "stsd"] {
+    let Ok((_, children)) = boxes.children(input, from, end, boxes.Budget { boxes: 0, maximum: 1000 }) else {
+      return Err("children");
+    };
+    let Ok(box) = boxes.required(children, name) else {
+      return Err("box");
+    };
+    from = box.data;
+    end = box.end;
+  }
+  return Ok(from + 16);
+}
+
+function unsupported(): test.TestOutcome {
+  let Ok(input) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture");
+  };
+  let Ok(at) = sample_entry(input) else {
+    return test.fail("sample entry");
+  };
+  for changed in [input.with(at + 9, 1u8), input.with(at + 41, 2u8), input.with(at + 75, 8u8), input.with(at + 75, 16u8), input.with(at + 76, 0u8)] {
+    if let Err(frame.Unsupported) = mp4.inspect(changed, mp4.default_limits()) {} else {
+      return test.fail("unsupported image description");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok(input) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture");
+  };
+  let defaults = mp4.default_limits();
+  for configured in [mp4.Limits { ...defaults, video: frame.Limits { max_pixels: 84, max_packet_bytes: 16777216 } }, mp4.Limits { ...defaults, video: frame.Limits { max_pixels: 85, max_packet_bytes: 1 } }, mp4.Limits { ...defaults, max_packets: 5 }, mp4.Limits { ...defaults, max_descriptions: 0 }] {
+    if let Err(frame.Limit) = mp4.inspect(input, configured) {} else {
+      return test.fail("logical input budget");
+    }
+  }
+  let exact = mp4.Limits { ...defaults, video: frame.Limits { max_pixels: 85, max_packet_bytes: 16777216 }, max_packets: 6, max_descriptions: 1 };
+  if let Err(error) = mp4.inspect(input, exact) {
+    return test.fail(error.message());
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(input) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture");
+  };
+  for end in 0..input.len() {
+    if let Ok(_) = mp4.inspect(input[0:end], mp4.default_limits()) {
+      return test.fail("incomplete movie prefix");
+    }
+  }
+  return test.pass();
+}
+
+function legacy_guard(): test.TestOutcome {
+  let Ok(input) = filecheck.fixture("avc-bframes") else {
+    return test.fail("AVC fixture");
+  };
+  let untyped = input.with(4, 102u8).with(5, 114u8).with(6, 101u8).with(7, 101u8);
+  if let Err(frame.Header) = mp4.inspect(untyped, mp4.default_limits()) {} else {
+    return test.fail("untyped AVC admission");
+  }
+  let Ok(media) = filecheck.media(untyped) else {
+    return test.fail("media extents");
+  };
+  let source = filecheck.memory([filecheck.Segment { at: 0i64, bytes: untyped }], media, 7);
+  if let Err(mp4file.ReadVideo(frame.Header)) = mp4file.inspect_with(untyped.len() as i64, source.seek, source.read, mp4file.default_limits()) {} else {
+    return test.fail("untyped AVC file admission");
+  }
+  let Ok(qtrle) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("QTRLE fixture");
+  };
+  let duplicate = qtrle;
+  for byte in qtrle[0:wire.be(qtrle, 0, 4) as i32] {
+    duplicate = duplicate.append(byte);
+  }
+  if let Err(frame.Header) = mp4.inspect(duplicate, mp4.default_limits()) {} else {
+    return test.fail("duplicate file type");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded native QTRLE MOV input");
+  runner = runner.it("packet metadata, exact ARGB samples, sync seeks, and bounded file reads", references);
+  runner = runner.it("unsupported sample versions, frame counts, palettes, and depths", unsupported);
+  runner = runner.it("packet, description, and exact coded-pixel budgets", limits);
+  runner = runner.it("all incomplete movie prefixes fail before decode", prefixes);
+  runner = runner.it("legacy admission stays specific to QTRLE and rejects duplicate file types", legacy_guard);
+  return runner.finish();
+}
