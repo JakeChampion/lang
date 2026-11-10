@@ -1249,7 +1249,7 @@ function __serve_count_from(own c: __Conns, method: string, status: i32, since: 
   return __Conns { ...c, metrics: grown };
 }
 
-function __stage_background(own c: __Conns, resp: HttpResponse): __Conns {
+function __stage_background(own c: __Conns, resp: HttpResponse): own __Conns {
   match (resp.background) {
     Some(work) => {
       return __Conns { ...c, later: c.later.append(work) };
@@ -3341,7 +3341,7 @@ function __zc_copy[D: async.Driver](drv: D, own c: __Conns, at: i32, body: u8[],
   return (sent.0, sent.1, true);
 }
 
-function __zc_settled(own c: __Conns, slot: i32): __Conns {
+function __zc_settled(own c: __Conns, slot: i32): own __Conns {
   let i = 0;
   while (i < c.zc_slots.len()) {
     if (c.zc_slots[i] == slot && !c.zc_free[i]) {
