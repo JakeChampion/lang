@@ -24133,15 +24133,40 @@ function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], 
 }
 
 // A fresh aggregate can still retain a captured value or its local alias.
-function ow_lambda_retains_capture(lm: ast.ExprLambda, captured: string[], locals: string[]): boolean {
+function ow_lambda_retains_capture(lm: ast.ExprLambda, captured: string[], locals: string[], dx: OwnDecls): boolean {
   function retained(e: ast.Expr, own found: boolean): boolean {
     if (found) {
       return true;
     }
     let aggregate = false;
     match (e) {
-      ast.ExprStructLit(_) => {
-        aggregate = true;
+      ast.ExprStructLit(sl) => {
+        let row = dx.snames.find(sl.type_name);
+        if (row < 0) {
+          aggregate = true;
+        } else {
+          let sd = dx.structs[row];
+          let parts: ast.Expr[] = [];
+          for field in sd.fields {
+            // Copying a scalar field does not retain its source handle.
+            // Unresolved generic fields can still hold a handle.
+            if (!ow_holds_no_handle(field.type_name, dx)) {
+              let i = util.index_of_str(sl.field_names, field.name);
+              if (i >= 0) {
+                parts = parts.append(sl.field_values[i]);
+              } else if (sl.has_base) {
+                parts = parts.append(sl.base);
+              }
+            }
+          }
+          for part in parts {
+            for name in astwalk.collect_idents_expr(part, []) {
+              if (util.has_str(captured, name) || util.has_str(locals, name)) {
+                return true;
+              }
+            }
+          }
+        }
       },
       ast.ExprArray(_) => {
         aggregate = true;
@@ -24187,7 +24212,7 @@ function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed
   }
   let spine = ow_spine_stmts(lm.body);
   let bound = ow_borrowed_locals(spine, ofuncs, captured, values, borrows, builtins, lenders, handles_only);
-  if (ow_lambda_retains_capture(lm, captured, bound)) {
+  if (ow_lambda_retains_capture(lm, captured, bound, lenders.decls)) {
     return true;
   }
   for st in spine {
