@@ -86,6 +86,7 @@ The native runtimes copied the bytes and added the terminator, so `write_file("c
 `subprocess("/bin/sh\0/nonexistent", ...)` ran `/bin/sh`. The Go oracle and wasm32-wasi refused these already.
 Each native runtime routine that passes a string to the kernel as a C string now refuses a NUL byte with `EINVAL` ([AUD-03](https://github.com/JakeChampion/lang/issues/14970)).
 `subprocess` reports the refusal as a failed start: exit code 127 and `Invalid argument` on the standard error of the child.
+An extended attribute value goes to the kernel with its length, not as a C string, so it can hold a NUL byte.
 
 ## Remaining limits
 
