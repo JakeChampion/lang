@@ -1630,35 +1630,52 @@ function access_request(ctx: usize, r: UiRequest): boolean {
       return false;
     }
     if (r.op == ACCESS_TREE) {
-      let old: usize = Context.c_load_tree(ctx);
-      if (old != 0 as usize) {
-        free_bytes(old);
-      }
-      Context.c_store_tree(ctx, r.data);
-      if (item_offset(r.data, Context.c_load_focused(ctx)) < 0) {
-        Context.c_store_focused(ctx, NO_ITEM);
-      }
-      if (item_offset(r.data, Context.c_load_hovered(ctx)) < 0) {
-        Context.c_store_hovered(ctx, NO_ITEM);
-      }
-      let changed = jni.call_void(e, host, "sendAccessibilityEvent", "(I)V", [EVENT_CONTENT_CHANGED as usize]);
+      store_tree(ctx, e, host, r.data);
       return true;
     }
     let id = NO_ITEM;
     if (r.op == ACCESS_HOVER) {
       id = item_under(Context.c_load_tree(ctx), r.a, r.b);
     }
-    let was: i32 = Context.c_load_hovered(ctx);
-    if (id != was) {
-      if (was != NO_ITEM) {
-        send_item_event(ctx, e, was, EVENT_HOVER_EXIT);
-      }
-      if (id != NO_ITEM) {
-        send_item_event(ctx, e, id, EVENT_HOVER_ENTER);
-      }
-      Context.c_store_hovered(ctx, id);
-    }
+    hover_item(ctx, e, id);
     return false;
+  }
+}
+
+// Keeps the tree `tree` in place of the last tree. The focus and the hover
+// end on an item that the new tree does not hold.
+function store_tree(ctx: usize, e: usize, host: usize, tree: usize): void {
+  unsafe {
+    let old: usize = Context.c_load_tree(ctx);
+    if (old != 0 as usize) {
+      free_bytes(old);
+    }
+    Context.c_store_tree(ctx, tree);
+    if (item_offset(tree, Context.c_load_focused(ctx)) < 0) {
+      Context.c_store_focused(ctx, NO_ITEM);
+    }
+    if (item_offset(tree, Context.c_load_hovered(ctx)) < 0) {
+      Context.c_store_hovered(ctx, NO_ITEM);
+    }
+  }
+  let changed = jni.call_void(e, host, "sendAccessibilityEvent", "(I)V", [EVENT_CONTENT_CHANGED as usize]);
+}
+
+// Moves the hover to the item `id`, or NO_ITEM, with the exit and the enter
+// events.
+function hover_item(ctx: usize, e: usize, id: i32): void {
+  unsafe {
+    let was: i32 = Context.c_load_hovered(ctx);
+    if (id == was) {
+      return;
+    }
+    if (was != NO_ITEM) {
+      send_item_event(ctx, e, was, EVENT_HOVER_EXIT);
+    }
+    if (id != NO_ITEM) {
+      send_item_event(ctx, e, id, EVENT_HOVER_ENTER);
+    }
+    Context.c_store_hovered(ctx, id);
   }
 }
 
@@ -1874,46 +1891,58 @@ pub(package) function access_action(env: usize, thiz: usize, id: i32, action: i3
     return false;
   }
   unsafe {
-    let host: usize = Context.c_load_host(ctx);
     if (id == HOST_ID) {
-      return call_bool(env, host, "performAccessibilityAction", "(ILandroid/os/Bundle;)Z", [action as usize, args]);
+      return call_bool(env, Context.c_load_host(ctx), "performAccessibilityAction", "(ILandroid/os/Bundle;)Z", [action as usize, args]);
     }
     let tree: usize = Context.c_load_tree(ctx);
     let off = item_offset(tree, id);
     if (off < 0) {
       return false;
     }
-    let focused: i32 = Context.c_load_focused(ctx);
-    if (action == ACTION_ACCESSIBILITY_FOCUS) {
-      if (focused == id) {
-        return false;
-      }
-      Context.c_store_focused(ctx, id);
-      if (focused != NO_ITEM) {
-        send_item_event(ctx, env, focused, EVENT_FOCUS_CLEARED);
-      }
-      send_item_event(ctx, env, id, EVENT_FOCUSED);
-      return true;
-    }
-    if (action == ACTION_CLEAR_ACCESSIBILITY_FOCUS) {
-      if (focused != id) {
-        return false;
-      }
-      Context.c_store_focused(ctx, NO_ITEM);
-      send_item_event(ctx, env, id, EVENT_FOCUS_CLEARED);
-      return true;
+    if (action == ACTION_ACCESSIBILITY_FOCUS || action == ACTION_CLEAR_ACCESSIBILITY_FOCUS) {
+      return focus_action(ctx, env, id, action == ACTION_ACCESSIBILITY_FOCUS);
     }
     if ((action == ACCESS_CLICK || action == ACCESS_LONG_CLICK) && (item_at(tree, off).actions & action) != 0) {
-      send(Context.c_load_activity(ctx), ACCESS, id as usize << 8 | action as usize);
-      let kind = EVENT_CLICKED;
-      if (action == ACCESS_LONG_CLICK) {
-        kind = EVENT_LONG_CLICKED;
-      }
-      send_item_event(ctx, env, id, kind);
+      click_action(ctx, env, id, action);
       return true;
     }
     return false;
   }
+}
+
+// Gives the accessibility focus to the item `id`, or takes it away. It is
+// false when the focus does not change.
+function focus_action(ctx: usize, env: usize, id: i32, take: boolean): boolean {
+  unsafe {
+    let focused: i32 = Context.c_load_focused(ctx);
+    if (focused == id == take) {
+      return false;
+    }
+    if (!take) {
+      Context.c_store_focused(ctx, NO_ITEM);
+      send_item_event(ctx, env, id, EVENT_FOCUS_CLEARED);
+      return true;
+    }
+    Context.c_store_focused(ctx, id);
+    if (focused != NO_ITEM) {
+      send_item_event(ctx, env, focused, EVENT_FOCUS_CLEARED);
+    }
+    send_item_event(ctx, env, id, EVENT_FOCUSED);
+    return true;
+  }
+}
+
+// Gives the click or the long click `action` on the item `id` to the loop
+// thread, and tells the service.
+function click_action(ctx: usize, env: usize, id: i32, action: i32): void {
+  unsafe {
+    send(Context.c_load_activity(ctx), ACCESS, id as usize << 8 | action as usize);
+  }
+  let kind = EVENT_CLICKED;
+  if (action == ACCESS_LONG_CLICK) {
+    kind = EVENT_LONG_CLICKED;
+  }
+  send_item_event(ctx, env, id, kind);
 }
 
 // Releases the view that holds the tree, and the tree, on Destroy.
