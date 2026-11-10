@@ -1,0 +1,149 @@
+import "std/video/avc";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+import "video_avc_vectors";
+import "video_avc_syntax_vectors";
+import "video_avc_check" as check;
+
+function reference(): test.TestOutcome {
+  for vector in video_avc_vectors.vectors() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("reference bytes");
+    };
+    let Ok(sequence) = avc.inspect_sps(bytes, frame.default_limits()) else {
+      return test.fail(vector.name + " sequence header");
+    };
+    if (check.values(sequence) != vector.values) {
+      return test.fail(vector.name + " independent metadata");
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for vector in video_avc_vectors.vectors() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("reference bytes");
+    };
+    for size in 0..bytes.len() {
+      if let Err(frame.Truncated) = avc.inspect_sps(bytes[:size], frame.default_limits()) {} else {
+        return test.fail(vector.name + " truncated SPS at " + size.to_string());
+      }
+    }
+    if let Err(frame.Header) = avc.inspect_sps(bytes.append(0), frame.default_limits()) {} else {
+      return test.fail("extra trailing byte");
+    }
+    let corrupted = bytes.with(bytes.len() - 1, 0);
+    if (avc.inspect_sps(corrupted, frame.default_limits()).is_ok()) {
+      return test.fail("missing stop bit");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  for vector in video_avc_vectors.vectors() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("reference bytes");
+    };
+    let exact = frame.Limits { max_pixels: (vector.values[7] * vector.values[8]) as i32, max_packet_bytes: bytes.len() };
+    if (avc.inspect_sps(bytes, exact).is_err()) {
+      return test.fail("exact header and coded pixel limits");
+    }
+    for restricted in [frame.Limits { ...exact, max_pixels: exact.max_pixels - 1 }, frame.Limits { ...exact, max_packet_bytes: bytes.len() - 1 }] {
+      if let Err(frame.Limit) = avc.inspect_sps(bytes, restricted) {} else {
+        return test.fail("one fewer pixel or byte");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function header(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for byte in [0x87u8, 0x07u8] {
+    if let Err(frame.Header) = avc.inspect_sps([byte], limits) {} else {
+      return test.fail("forbidden bit or non-reference SPS");
+    }
+  }
+  for byte in [0x06u8, 0x68u8, 0x6fu8] {
+    if let Err(frame.Unsupported) = avc.inspect_sps([byte], limits) {} else {
+      return test.fail("wrong NAL type");
+    }
+  }
+  for bytes in [[0x67u8, 0, 0, 0], [0x67u8, 0, 0, 1], [0x67u8, 0, 0, 2], [0x67u8, 0, 0, 3, 4]] {
+    if let Err(frame.Header) = avc.inspect_sps(bytes, limits) {} else {
+      return test.fail("emulation prevention framing");
+    }
+  }
+  if let Err(frame.Truncated) = avc.inspect_sps([0x67u8, 0, 0, 3], limits) {} else {
+    return test.fail("truncated prevention sequence");
+  }
+  return test.pass();
+}
+
+function syntax(): test.TestOutcome {
+  for vector in video_avc_syntax_vectors.vectors() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("syntax bytes");
+    };
+    let Ok(sequence) = avc.inspect_sps(bytes, frame.default_limits()) else {
+      return test.fail(vector.name + " bounded syntax");
+    };
+    if (check.values(sequence) != vector.values) {
+      return test.fail(vector.name + " independent syntax metadata");
+    }
+    for size in [4, bytes.len() / 2, bytes.len() - 1] {
+      if let Err(frame.Truncated) = avc.inspect_sps(bytes[:size], frame.default_limits()) {} else {
+        return test.fail(vector.name + " incomplete syntax at " + size.to_string());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_syntax(): test.TestOutcome {
+  for vector in video_avc_syntax_vectors.invalid() {
+    let Ok(bytes) = hex.decode(vector.bytes) else {
+      return test.fail("invalid syntax bytes");
+    };
+    match (avc.inspect_sps(bytes, frame.default_limits())) {
+      Err(error) => {
+        if (error != vector.error) {
+          return test.fail(vector.name + " error category");
+        }
+      },
+      _ => {
+        return test.fail(vector.name + " accepted");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function storage_ceiling(): test.TestOutcome {
+  let bytes: u8[] = [0x67, 255, 0, 40, 128];
+  while (bytes.len() < avc.MAX_SPS_BYTES) {
+    bytes = bytes.append(255);
+  }
+  if let Err(frame.Unsupported) = avc.inspect_sps(bytes, frame.default_limits()) {} else {
+    return test.fail("exact header storage ceiling");
+  }
+  if let Err(frame.Limit) = avc.inspect_sps(bytes.append(255), frame.default_limits()) {} else {
+    return test.fail("header ceiling before unescaped copy");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("native AVC sequence headers");
+  runner = runner.it("FFmpeg metadata for profiles, crop, interlace, colour, and HRD", reference);
+  runner = runner.it("every truncated prefix and invalid trailing bits", prefixes);
+  runner = runner.it("exact coded dimensions and packet budgets", limits);
+  runner = runner.it("NAL headers and emulation-prevention errors", header);
+  runner = runner.it("independent scaling, picture order, separate planes, and HRD controls", syntax);
+  runner = runner.it("bounded syntax, overflow, crop, and VUI errors", invalid_syntax);
+  runner = runner.it("fixed header storage ceiling before copy", storage_ceiling);
+  return runner.finish();
+}
