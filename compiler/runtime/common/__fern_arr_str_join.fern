@@ -15,12 +15,12 @@ function __fern_arr_str_join(xs: string[], sep: string): string {
   let j: i32 = 0;
   while (j < n) {
     if (j > 0) {
-      __memcpy(p + off, __raw_data(sep), ls);
+      __memcpy(p + off as usize, __raw_data(sep), ls);
       off += ls;
     }
     let e = xs[j];
     let le = e.len();
-    __memcpy(p + off, __raw_data(e), le);
+    __memcpy(p + off as usize, __raw_data(e), le);
     off += le;
     j += 1;
   }

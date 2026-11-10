@@ -207,6 +207,33 @@ pub function ungated(): string[] {
   ];
 }
 
+// The raw builtins that reach "privileged" when a function of a package
+// calls one. A call site in the standard library does not count for the
+// caller.
+pub function direct_privileged(): string[] {
+  return [
+    "__alloc", "__alloc_reuse", "__alloc_u8_uninit", "__arr_set_len",
+    "__bytes_data", "__c_call0", "__c_call0_f32", "__c_call0_f64",
+    "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2",
+    "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32",
+    "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64",
+    "__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6",
+    "__c_call6_f32", "__c_call6_f64", "__c_callv", "__f32x4_load_ptr",
+    "__f32x4_store", "__f64x2_load_f32_ptr", "__f64x2_load_ptr", "__f64x2_store",
+    "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_rc_dec",
+    "__fern_rc_inc", "__fern_str_dec", "__free", "__heap_adopt",
+    "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64",
+    "__load_ptr", "__load_u8", "__memcpy", "__memset",
+    "__rc_dec", "__rc_get", "__rc_inc", "__store_i32",
+    "__store_i64", "__store_ptr", "__store_u8", "__str_bytes",
+    "__syscall3", "__syscall4", "__syscall5", "__syscall6",
+    "__task_cancelled", "__task_cur", "__task_enter", "__task_free",
+    "__task_leave", "__task_new", "__task_park", "__task_park_until",
+    "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until",
+    "__task_wait",
+  ];
+}
+
 pub function frontend_ungated(): string[] {
   return ["__map_new_i32"];
 }
@@ -310,6 +337,9 @@ function analysis_want(): string[] {
   for b in builtin_caps() {
     want = want.append(b.builtin);
   }
+  for name in direct_privileged() {
+    want = want.append(name);
+  }
   return want;
 }
 
@@ -329,7 +359,7 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
   return out.append(builtin);
 }
 
-function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
+function walk(mod: parser.Module, pkgs: Pkg[], roots: i32[], want: util.NameIndex): Use[] {
   let order: i32[] = [];
   let parent: i32[] = [];
   for ri in 0..roots.len() {
@@ -339,6 +369,7 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     }
   }
 
+  let direct = direct_privileged();
   let found_cap: string[] = [];
   let found_at: i32[] = [];
   let found_builtin: string[] = [];
@@ -353,6 +384,9 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     }
     for ci in 0..calls.len() {
       let cap = capability_of(calls[ci].name);
+      if (cap.len() == 0 && util.has_str(direct, calls[ci].name) && pkg_of(pkgs, fd.module).len() > 0) {
+        cap = "privileged";
+      }
       if (!calls[ci].method && cap.len() > 0 && !util.has_str(found_cap, cap)) {
         found_cap = found_cap.append(cap);
         found_at = found_at.append(qi);
@@ -429,7 +463,7 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
     if (duplicate) {
       label = label + " (" + names[pi] + ")";
     }
-    rows = rows.append(Row { key: names[pi], pkg: label, uses: walk(mod, roots, want) });
+    rows = rows.append(Row { key: names[pi], pkg: label, uses: walk(mod, pkgs, roots, want) });
   }
   return sort_rows(rows);
 }

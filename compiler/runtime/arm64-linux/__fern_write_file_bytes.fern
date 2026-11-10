@@ -32,7 +32,7 @@ function __fern_write_file_bytes(path: string, bytes: i32[]): Result[void, IoErr
   let at: i32 = 0;
   let bad: i32 = 0;
   while (at < n && bad == 0) {
-    let w: i32 = __syscall3(64, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    let w: i32 = __syscall3(64, fd as i64, (p + at as usize) as i64, (n - at) as i64) as i32;
     if (w == 0) {
       bad = 5;
     } else {

@@ -10,7 +10,7 @@ function __fern_profile_finish(base: usize): void {
   let path: string = "/proc/self/exe";
   let j: i32 = 0;
   while (j < path.len()) {
-    __raw_store8(base + 48, j, __load_u8(__raw_data(path) + j));
+    __raw_store8(base + 48, j, __load_u8(__raw_data(path) + j as usize));
     j = j + 1;
   }
   __raw_store8(base + 48, j, 0);

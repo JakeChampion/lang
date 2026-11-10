@@ -573,6 +573,27 @@ function main(): i32 {
   return 7;
 }
 `, false},
+	// RFC 4226 takes the window of the code at an offset that comes from the MAC.
+	{"hotp", `import "std/crypto";
+
+function main(): i32 {
+  let key: u8[] = __alloc_u8(20);
+  let i: i32 = 0;
+  while (i < 20) {
+    key = key.with(i, (i * 9 + 1) as u8);
+    i = i + 1;
+  }
+  __ct_secret(key);
+  let code: i32 = crypto.hotp_sha256(key, 1, 8);
+  let out: u8[] = __alloc_u8(4);
+  out = out.with(0, (code & 255) as u8).with(1, (code >> 8 & 255) as u8).with(2, (code >> 16 & 255) as u8).with(3, (code >> 24 & 255) as u8);
+  __ct_public(out);
+  if (out[0] == 0 as u8 && out[1] == 0 as u8 && out[2] == 0 as u8 && out[3] == 0 as u8) {
+    return 1;
+  }
+  return 0;
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"

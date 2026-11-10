@@ -52,7 +52,7 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
           let cb = __raw_alloc(cl);
           __memcpy(cb, __raw_data(path), plen);
           __raw_store8(cb, plen, 47);
-          __memcpy(cb + plen + 1, buf + pos + 21, nlen);
+          __memcpy(cb + plen as usize + 1, buf + pos as usize + 21, nlen);
           match (__fern_remove_dir_all(__raw_string(cb, cl))) {
             Ok(_) => {},
             Err(_) => {}

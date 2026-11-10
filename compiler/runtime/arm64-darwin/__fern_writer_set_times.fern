@@ -29,14 +29,14 @@ function __fern_writer_set_times(fd: i32, asec: i64, ansec: i64, msec: i64, mnse
   let hi: i32 = 0;
   if ((flags & 4) == 0) {
     hi += 4;
-    __store_i64(buf + n, m0);
-    __store_i64(buf + n + 8, m1);
+    __store_i64(buf + n as usize, m0);
+    __store_i64(buf + n as usize + 8, m1);
     n += 16;
   }
   if ((flags & 2) == 0) {
     hi += 16;
-    __store_i64(buf + n, a0);
-    __store_i64(buf + n + 8, a1);
+    __store_i64(buf + n as usize, a0);
+    __store_i64(buf + n as usize + 8, a1);
     n += 16;
   }
   __raw_store8(al, 5, hi);

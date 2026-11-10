@@ -6,7 +6,7 @@ function __fern_random_i32(): i32 {
     if (want > 256) {
       want = 256;
     }
-    let r = __syscall3(278, (p + off) as i64, want as i64, 0) as i32;
+    let r = __syscall3(278, (p + off as usize) as i64, want as i64, 0) as i32;
     if (r == -4) {
       continue;
     }

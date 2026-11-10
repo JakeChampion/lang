@@ -1,0 +1,19 @@
+// A cast names the type of an operation that has `usize` beside another
+// integer type. The result is the same on a 64-bit target and on wasm.
+function main(): i32 {
+    let z: usize = 3;
+    let n: i32 = -1;
+    let l: i64 = -2;
+    let w: u64 = 5000000000;
+    let small: u32 = 7;
+    if (z as i64 > n as i64) {
+        print("3 > -1");
+    } else {
+        print("3 <= -1");
+    }
+    print((z as i64 + l).to_string());
+    print((z as u64 + w).to_string());
+    print(((z + small) as u64).to_string());
+    print(((z + 8) as u64).to_string());
+    return 0;
+}

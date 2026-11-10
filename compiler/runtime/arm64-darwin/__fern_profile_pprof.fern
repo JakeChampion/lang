@@ -4,7 +4,7 @@ function __fern_profile_pprof(base: usize, im: usize, size: usize): void {
   let path: string = __FERN_PROFILE_PATH;
   let j: i32 = 0;
   while (j < path.len()) {
-    __raw_store8(buf, j, __load_u8(__raw_data(path) + j));
+    __raw_store8(buf, j, __load_u8(__raw_data(path) + j as usize));
     j = j + 1;
   }
   __raw_store8(buf, j, 0);
