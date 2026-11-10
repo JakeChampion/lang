@@ -166,7 +166,11 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
   let past_end = w.len();
   let bound = past_end;
   let first_time = true;
-  let plain = !s.regex && !s.before && s.sep.len() == 1;
+  let plain = !s.regex && s.sep.len() == 1;
+  let sep_offset = 1;
+  if (s.before) {
+    sep_offset = 0;
+  }
   let sepb = 0;
   if (plain) {
     sepb = s.sep[0] as i32;
@@ -174,9 +178,9 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
   while (true) {
     if (plain && !first_time && bound > 0) {
       let j = __rmemchr_bytes(w, sepb, bound - 1);
-      while (j >= 0 && past_end - j - 1 < write_size() - buf_len(h)) {
-        buf_push_bytes_range(h, w, j + 1, past_end);
-        past_end = j + 1;
+      while (j >= 0 && past_end - j - sep_offset < write_size() - buf_len(h)) {
+        buf_push_bytes_range(h, w, j + sep_offset, past_end);
+        past_end = j + sep_offset;
         bound = j;
         if (j == 0) {
           j = -1;
