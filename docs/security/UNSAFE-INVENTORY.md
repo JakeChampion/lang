@@ -70,6 +70,8 @@ The program's ownership check must still reject that use.
 A closure environment shares its captured values and call arguments during evaluation.
 These values retain their managed heap roots for that call.
 The environment does not transfer a source program's borrowed handle to an own parameter.
+A serialized value keeps its managed roots in its edge array.
+Copies of that array share the root boxes until the last native holder releases them.
 
 The TLS identity constructor shares only its `PrivateKey` value.
 `EcdsaKey` contains a curve tag and a scalar byte array.

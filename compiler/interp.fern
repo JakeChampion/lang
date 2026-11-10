@@ -1448,7 +1448,7 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
     let (ok, next) = cell_any_text(h, v, edges, heap, captures);
-    edges = next;
+    edges = unsafe { share_unchecked(next) };
     if (!ok) {
       return (false, edges);
     }
@@ -1499,7 +1499,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       cell_hex_text(h, view);
       cell_name_text(h, a.elem);
       let store = a.store;
-      edges = edges.append(store);
+      edges = unsafe { share_unchecked(edges.append(store)) };
       return cell_parts_text(h, a.items, edges, heap, captures);
     },
     VTuple(t) => {
