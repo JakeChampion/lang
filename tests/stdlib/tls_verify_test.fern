@@ -270,6 +270,24 @@ function test_name_constraints(): test.TestOutcome {
   return test.assert_eq(outcome(verify.server([dn_leaf(), dn_int()], ec_roots(), "example.com", now())), "tls verify: certificate 1 has an unknown critical extension 2.5.29.30");
 }
 
+// A root that excludes foo.example.com.
+function wild_root(): u8[] {
+  return __codec_bytes(hex.decode("3082014b3081fea003020102020101300506032b6570301b31193017060355040313104e43206578636c7564656420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a301b31193017060355040313104e43206578636c7564656420726f6f74302a300506032b6570032100a285d9c617bf1025f899584f9bebeafe50444eac5ae5fdd8d2b8afe75a2a1a08a3653063300e0603551d0f0101ff040403020204300f0603551d130101ff040530030101ff301d0603551d0e04160414194c5e897ca0e5ea4eda830c3a99fbefc932499430210603551d1e0101ff04173015a1133011820f666f6f2e6578616d706c652e636f6d300506032b65700341008ec1a1d31e53f9e91b5c5297143fde642618cabfce18cc6aa7d2b2e239eb8ce3f47f11492812bf0de8c5c25402cfe65956cbf9d1554a2e6508271cd07285fe00"));
+}
+
+// A leaf below wild_root for *.example.com.
+function wild_leaf(): u8[] {
+  return __codec_bytes(hex.decode("3082014a3081fda003020102020102300506032b6570301b31193017060355040313104e43206578636c7564656420726f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a300f310d300b060355040313046c656166302a300506032b65700321009cc7d585530c9a3dd939dc0742a4b7b53f3abfe6dce0de4dfc70b9f6f502e792a370306e300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301300c0603551d130101ff04023000301f0603551d23041830168014194c5e897ca0e5ea4eda830c3a99fbefc932499430180603551d110411300f820d2a2e6578616d706c652e636f6d300506032b6570034100ff97aa0acaf2830e4343e96846686920f28f298b1e7993ff959de1c9100257b1335369d0c3ea5dfdf5174b775ef18dced7c646502f6168d638973c3893f49e0a"));
+}
+
+function test_a_wildcard_reaches_an_excluded_name(): test.TestOutcome {
+  let refused = "tls verify: certificate 1's name constraints exclude a name below it";
+  if (outcome(verify.server([wild_leaf()], verify.roots([wild_root()]), "foo.example.com", now())) != refused) {
+    return test.fail("the excluded name");
+  }
+  return test.assert_eq(outcome(verify.server([wild_leaf()], verify.roots([wild_root()]), "bar.example.com", now())), refused);
+}
+
 function test_bad_signature(): test.TestOutcome {
   let b = ec_leaf();
   let serial = 0;
@@ -390,6 +408,7 @@ function main(): i32 {
   r = r.it("a bad signature", test_bad_signature);
   r = r.it("roots from PEM", test_roots_from_pem);
   r = r.it("name constraints", test_name_constraints);
+  r = r.it("a wildcard reaches an excluded name", test_a_wildcard_reaches_an_excluded_name);
   r = r.it("a looping chain is refused", test_a_looping_chain_is_refused);
   r = r.it("RFC 8448's CertificateVerify", test_certificate_verify);
   return r.finish();

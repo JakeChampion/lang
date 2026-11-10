@@ -94,13 +94,13 @@ pub function downgraded(server_random: [u8]): boolean {
     return false;
   }
   let i = 0;
-  while (i < 8) {
+  while (i < 7) {
     if (server_random[24 + i] != sentinel[i]) {
       return false;
     }
     i += 1;
   }
-  return true;
+  return server_random[31] == 0x01 as u8 || server_random[31] == 0x00 as u8;
 }
 ```
 
