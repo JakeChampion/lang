@@ -595,29 +595,21 @@ function is_worker_builtin(name: string): boolean {
 }
 
 function worker_params(name: string): typeinfo.Type[] {
-  if (name == "__worker_unmap") {
-    return [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_bool()];
-  }
-  if (name == "__heap_adopt") {
-    return [typeinfo.t_i64(), typeinfo.t_i64()];
-  }
-  if (name == "__worker_exit") {
-    return [typeinfo.t_i64(), typeinfo.t_usize()];
-  }
-  return [typeinfo.t_i64()];
+  return match (name) {
+    "__worker_unmap" => [typeinfo.t_i64(), typeinfo.t_i64(), typeinfo.t_bool()],
+    "__heap_adopt" => [typeinfo.t_i64(), typeinfo.t_i64()],
+    "__worker_exit" => [typeinfo.t_i64(), typeinfo.t_usize()],
+    _ => [typeinfo.t_i64()],
+  };
 }
 
 function worker_result(name: string): typeinfo.Type {
-  if (name == "__worker_unmap") {
-    return typeinfo.t_i32();
-  }
-  if (name == "__worker_region") {
-    return typeinfo.t_i64();
-  }
-  if (name == "__worker_reap") {
-    return typeinfo.t_usize();
-  }
-  return typeinfo.t_void();
+  return match (name) {
+    "__worker_unmap" => typeinfo.t_i32(),
+    "__worker_region" => typeinfo.t_i64(),
+    "__worker_reap" => typeinfo.t_usize(),
+    _ => typeinfo.t_void(),
+  };
 }
 
 function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
@@ -3923,22 +3915,14 @@ function (s: Scope) methods_in_namespace(ns: string): string[] {
 }
 
 function preregistered_methods(ns: string): string[] {
-  if (ns == "Array") {
-    return ["append", "len", "truncate", "with"];
-  }
-  if (ns == "slice") {
-    return ["len"];
-  }
-  if (ns == "string") {
-    return ["as_bytes", "len"];
-  }
-  if (ns == "Map") {
-    return ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"];
-  }
-  if (ns == "Cell") {
-    return ["get", "set"];
-  }
-  return [];
+  return match (ns) {
+    "Array" => ["append", "len", "truncate", "with"],
+    "slice" => ["len"],
+    "string" => ["as_bytes", "len"],
+    "Map" => ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"],
+    "Cell" => ["get", "set"],
+    _ => [],
+  };
 }
 
 function map_receiver_type(rt: string): boolean {
@@ -4945,16 +4929,12 @@ pub function receiver_key(t: typeinfo.Type): string {
 // `__send_copy` has its argument's type, `__send_adopt` the type of its
 // binding, and `__send_root` is an address.
 function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
-  if (name == "__send_copy") {
-    return check_expr(c.args[0], s);
-  }
-  if (name == "__send_adopt") {
-    return t_unknown("__send_adopt takes the declared type of its binding");
-  }
-  if (name == "__send_release") {
-    return typeinfo.t_void();
-  }
-  return typeinfo.t_usize();
+  return match (name) {
+    "__send_copy" => check_expr(c.args[0], s),
+    "__send_adopt" => t_unknown("__send_adopt takes the declared type of its binding"),
+    "__send_release" => typeinfo.t_void(),
+    _ => typeinfo.t_usize(),
+  };
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
@@ -15907,16 +15887,12 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         }
       }
       if let typeinfo.TypeArray(at) = rt {
-        if (mfa.field == "append") {
-          return [at.elem];
-        }
-        if (mfa.field == "with") {
-          return [typeinfo.t_i32(), at.elem];
-        }
-        if (mfa.field == "truncate") {
-          return [typeinfo.t_i32()];
-        }
-        return s.array_method_param_types(c, rt, mfa.field, at.view);
+        return match (mfa.field) {
+          "append" => [at.elem],
+          "with" => [typeinfo.t_i32(), at.elem],
+          "truncate" => [typeinfo.t_i32()],
+          _ => s.array_method_param_types(c, rt, mfa.field, at.view),
+        };
       }
     },
     _ => {}
@@ -27067,31 +27043,17 @@ function module_imports_std_json(mod: parser.Module): boolean {
 }
 
 function derive_method_name(kind: string): string {
-  if (kind == "Display") {
-    return "to_string";
-  }
-  if (kind == "Debug") {
-    return "to_debug";
-  }
-  if (kind == "Json") {
-    return "to_json";
-  }
-  if (kind == "FromJson") {
-    return "from_json_value";
-  }
-  if (kind == "Eq") {
-    return "eq";
-  }
-  if (kind == "Ord") {
-    return "cmp";
-  }
-  if (kind == "Hash") {
-    return "hash";
-  }
-  if (kind == "Default") {
-    return "default";
-  }
-  return "";
+  return match (kind) {
+    "Display" => "to_string",
+    "Debug" => "to_debug",
+    "Json" => "to_json",
+    "FromJson" => "from_json_value",
+    "Eq" => "eq",
+    "Ord" => "cmp",
+    "Hash" => "hash",
+    "Default" => "default",
+    _ => "",
+  };
 }
 
 function derive_body_suppressed(fn: parser.FuncDecl, keys: string[]): boolean {
@@ -30833,22 +30795,14 @@ function vb_placeholder_decl(v: ast.StmtVar): boolean {
 }
 
 function vb_zero_of(tag: string): ast.Expr {
-  if (tag == "string") {
-    return ast.ExprString { value: "", line: 0, col: 0 };
-  }
-  if (tag == "boolean") {
-    return ast.ExprBool { value: false, line: 0, col: 0 };
-  }
-  if (tag == "f64") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 };
-  }
-  if (tag == "f32") {
-    return ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" };
-  }
-  if (tag == "i32") {
-    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
-  }
-  return ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 };
+  return match (tag) {
+    "string" => ast.ExprString { value: "", line: 0, col: 0 },
+    "boolean" => ast.ExprBool { value: false, line: 0, col: 0 },
+    "f64" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 },
+    "f32" => ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" },
+    "i32" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 },
+    _ => ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 },
+  };
 }
 
 function vb_retype(e: ast.Expr, s: Scope): ast.Expr {

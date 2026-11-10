@@ -23108,28 +23108,16 @@ function cl_call(name: string, args: ast.Expr[]): ast.Expr {
 
 // The value of type `t` at the address `addr`.
 function cl_load(t: string, addr: ast.Expr): ast.Expr {
-  if (t == "u8") {
-    return e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0);
-  }
-  if (t == "i32") {
-    return cl_call("__load_i32", [addr]);
-  }
-  if (t == "u32") {
-    return e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0);
-  }
-  if (t == "f32") {
-    return cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]);
-  }
-  if (t == "i64") {
-    return cl_call("__load_i64", [addr]);
-  }
-  if (t == "u64") {
-    return e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0);
-  }
-  if (t == "f64") {
-    return cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]);
-  }
-  return cl_call("__load_ptr", [addr]);
+  return match (t) {
+    "u8" => e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0),
+    "i32" => cl_call("__load_i32", [addr]),
+    "u32" => e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0),
+    "f32" => cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]),
+    "i64" => cl_call("__load_i64", [addr]),
+    "u64" => e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0),
+    "f64" => cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]),
+    _ => cl_call("__load_ptr", [addr]),
+  };
 }
 
 // The statement that writes `v` of type `t` at the address `addr`.

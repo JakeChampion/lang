@@ -343,16 +343,12 @@ function x86_lea_idx_nobase(own buf: i32[], dst: i32, index: i32, scale: i32, di
 }
 
 function x86_scale_bits(scale: i32): i32 {
-  if (scale == 2) {
-    return 1;
-  }
-  if (scale == 4) {
-    return 2;
-  }
-  if (scale == 8) {
-    return 3;
-  }
-  return 0;
+  return match (scale) {
+    2 => 1,
+    4 => 2,
+    8 => 3,
+    _ => 0,
+  };
 }
 
 function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
@@ -1859,16 +1855,12 @@ function x86_gas_reg64(tok: string): i32 {
 }
 
 function x86_gas_reg_w(tok: string, size: i32): i32 {
-  if (size == 8) {
-    return x86_gas_reg8(tok);
-  }
-  if (size == 16) {
-    return x86_gas_reg16(tok);
-  }
-  if (size == 32) {
-    return x86_gas_reg32(tok);
-  }
-  return x86_gas_reg64(tok);
+  return match (size) {
+    8 => x86_gas_reg8(tok),
+    16 => x86_gas_reg16(tok),
+    32 => x86_gas_reg32(tok),
+    _ => x86_gas_reg64(tok),
+  };
 }
 
 function x86_gas_suffix_size(mnem: string): i32 {

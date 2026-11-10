@@ -1798,32 +1798,22 @@ pub function is_crc32_op(tag: i32): boolean {
 }
 
 pub function sha_builtin_tag(name: string): i32 {
-  if (name == "__sha256_hw") {
-    return 409;
-  }
-  if (name == "__sha256_hw_blocks") {
-    return 410;
-  }
-  if (name == "__sha1_hw") {
-    return 440;
-  }
-  if (name == "__sha1_hw_blocks") {
-    return 441;
-  }
-  return 0;
+  return match (name) {
+    "__sha256_hw" => 409,
+    "__sha256_hw_blocks" => 410,
+    "__sha1_hw" => 440,
+    "__sha1_hw_blocks" => 441,
+    _ => 0,
+  };
 }
 
 pub function sha_builtin_op(tag: i32): Op {
-  if (tag == 409) {
-    return op_sha256_hw();
-  }
-  if (tag == 440) {
-    return op_sha1_hw();
-  }
-  if (tag == 410) {
-    return packed(op_sha256_hw_blocks());
-  }
-  return packed(op_sha1_hw_blocks());
+  return match (tag) {
+    409 => op_sha256_hw(),
+    440 => op_sha1_hw(),
+    410 => packed(op_sha256_hw_blocks()),
+    _ => packed(op_sha1_hw_blocks()),
+  };
 }
 
 pub function op_proc_exec(): Op {

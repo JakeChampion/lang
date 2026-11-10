@@ -329,22 +329,14 @@ function signed_step(op: string, k: i32): Option[i32] {
 }
 
 function compared(op: string, a: i64, b: i64): boolean {
-  if (op == "<") {
-    return a < b;
-  }
-  if (op == "<=") {
-    return a <= b;
-  }
-  if (op == ">") {
-    return a > b;
-  }
-  if (op == ">=") {
-    return a >= b;
-  }
-  if (op == "==") {
-    return a == b;
-  }
-  return a != b;
+  return match (op) {
+    "<" => a < b,
+    "<=" => a <= b,
+    ">" => a > b,
+    ">=" => a >= b,
+    "==" => a == b,
+    _ => a != b,
+  };
 }
 
 function fits_i32(v: i64): boolean {
@@ -689,16 +681,12 @@ pub function folded_i32(op: string, a: i32, b: i32): Option[i32] {
 }
 
 function arithmetic(op: string, a: i64, b: i64): Option[i64] {
-  if (op == "+") {
-    return Some(a + b);
-  }
-  if (op == "-") {
-    return Some(a - b);
-  }
-  if (op == "*") {
-    return Some(a * b);
-  }
-  return None;
+  return match (op) {
+    "+" => Some(a + b),
+    "-" => Some(a - b),
+    "*" => Some(a * b),
+    _ => None,
+  };
 }
 
 pub struct Constants { f: ssasem.Func, folded: i32 }
