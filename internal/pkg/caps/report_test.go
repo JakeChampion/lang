@@ -243,3 +243,53 @@ function main(): i32 {
 		t.Fatalf("tables chain: got %v", got)
 	}
 }
+
+// A raw builtin in a function of a package counts for that package and for
+// each package that reaches it. A call site in the standard library does not
+// count for the caller.
+func TestAnalyzeRawBuiltinIsPrivilegedOutsideTheStandardLibrary(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"main.fern": `import "./dep";
+import "./words";
+function main(): i32 {
+  return dep.peek() + words.shout("a");
+}`,
+		"dep.fern": `pub function peek(): i32 {
+  unsafe {
+    let p = __alloc(8);
+    __store_u8(p, 33);
+    return __load_u8(p) as i32;
+  }
+}`,
+		"words.fern": `import "std/string";
+pub function shout(s: string): i32 {
+  return s.trim().repeat(2).len();
+}`,
+	})
+	prog := loadChecked(t, filepath.Join(root, "main.fern"))
+	pkgOf := func(module string) string {
+		switch {
+		case strings.HasPrefix(module, "stdlib://"):
+			return ""
+		case strings.HasSuffix(module, "dep.fern"):
+			return "dep"
+		case strings.HasSuffix(module, "words.fern"):
+			return "words"
+		default:
+			return "(root)"
+		}
+	}
+	uses := map[string][]caps.Use{}
+	for _, r := range caps.Analyze(prog, pkgOf) {
+		uses[r.Package] = r.Uses
+	}
+	if got := uses["dep"]; len(got) != 1 || got[0].Capability != "privileged" || strings.Join(got[0].Chain, "|") != "dep__peek|__alloc" {
+		t.Errorf("dep: want privileged through dep__peek|__alloc, got %+v", got)
+	}
+	if got := uses["words"]; len(got) != 0 {
+		t.Errorf("words calls only the standard library, want no capability, got %+v", got)
+	}
+	if got := uses["(root)"]; len(got) != 1 || got[0].Capability != "privileged" {
+		t.Errorf("(root) reaches dep, want privileged, got %+v", got)
+	}
+}
