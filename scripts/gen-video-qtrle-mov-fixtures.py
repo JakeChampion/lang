@@ -56,6 +56,12 @@ def generate(directory):
     run("ffmpeg", "-v", "error", "-y", "-i", str(cases[1][1]), "-f", "lavfi", "-i",
         "sine=frequency=440:sample_rate=48000", "-t", "1", "-c:v", "copy", "-c:a", "aac", str(audio))
     cases.append(("qtrle-audio", audio, [32]))
+    legacy = directory / "qtrle-legacy.mov"
+    data = bytearray(cases[0][1].read_bytes())
+    assert data[4:8] == b"ftyp"
+    data[4:8] = b"free"
+    legacy.write_bytes(data)
+    cases.append(("qtrle-legacy", legacy, [24]))
     for name, path, depths in cases:
         reference = metadata(path)
         assert len(reference["streams"]) == len(depths)

@@ -69,6 +69,9 @@ The same bounded complete-view and seekable-file indexers preserve QTRLE packet 
 Decode must start at a sync packet and retain previous pixels for delta packets.
 Palette depths, RGB555, nonzero sample-description versions, and multiple frames per sample remain unsupported.
 
+Legacy MOV files without `ftyp` are accepted only when every indexed video description is QTRLE.
+The AVC and HEVC file-type requirements remain unchanged.
+
 `std/video/avc` reads an ordinary H.264 SPS NAL without a platform codec.
 It reports coded and visible dimensions, crop margins, chroma format, bit depth, and VUI metadata.
 The reader checks emulation prevention, bounded scaling lists, picture-order syntax, HRD entries, and trailing bits.
@@ -343,9 +346,9 @@ AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels
 `scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
 
-`scripts/check-video-qtrle-mov-interop` compares four fresh MOV files with FFprobe and FFmpeg.
+`scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.
-Fixtures cover RGB24, ARGB32, delta and unchanged frames, fast-start metadata, two video tracks, and interleaved AAC.
+Fixtures cover RGB24, ARGB32, delta and unchanged frames, fast-start metadata, two video tracks, interleaved AAC, and legacy file headers.
 Normal tests use checked-in references and verify all sync-sample starts and bounded file reads without media payload access during indexing.
 
 `scripts/check-video-avc-interop` compares 30 native and WASI SPS fields with independent FFmpeg readers.

@@ -24,6 +24,8 @@ That zero does not describe their component precision. The NAL configuration par
 QTRLE descriptions require version zero, one frame per sample, and the default color-table identifier.
 Palette depths, RGB555, and other sample-description versions return `Unsupported`.
 The caller must start QTRLE decode from a sync packet and preserve previous pixels for delta packets.
+Legacy files without `ftyp` are accepted only when every indexed video description is QTRLE.
+AVC and HEVC still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
 
 Limits bound input bytes, boxes, tracks, packets, descriptions, edits, dimensions, and each packet.
 The packet budget is cumulative across video tracks. The track budget includes non-video tracks.
@@ -282,24 +284,27 @@ function add_track(input: [u8], box: boxes.Box, scan: Scan, own previous: Track[
   return Ok((next, previous));
 }
 
-function headers(input: [u8], configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
+function headers(input: [u8], configured: Limits): Result[(Scan, time.Clock, boxes.Box[], boolean), pcm.AudioError] {
   validate_limits(input, configured)?;
   let (budget, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: configured.max_boxes })?;
-  file_type(input, top)?;
+  let typed = file_type(input, top)?;
   let moov = boxes.required(top, "moov")?;
   let (next, children) = boxes.children(input, moov.data, moov.end, budget)?;
   if let Some(_) = boxes.one(children, "mvex")? {
     return Err(pcm.Unsupported);
   }
-  return movie_header(input, top, children, next, configured);
+  let (scan, movie, values) = movie_header(input, top, children, next, configured)?;
+  return Ok((scan, movie, values, typed));
 }
 
-function file_type(input: [u8], top: [boxes.Box]): Result[void, pcm.AudioError] {
-  let ftyp = boxes.required(top, "ftyp")?;
+function file_type(input: [u8], top: [boxes.Box]): Result[boolean, pcm.AudioError] {
+  let Some(ftyp) = boxes.one(top, "ftyp")? else {
+    return Ok(false);
+  };
   if (ftyp.end - ftyp.data < 8 || (ftyp.end - ftyp.data) % 4 != 0) {
     return Err(pcm.Header);
   }
-  return Ok(());
+  return Ok(true);
 }
 
 function movie_header(input: [u8], top: [boxes.Box], children: boxes.Box[], budget: boxes.Budget, configured: Limits): Result[(Scan, time.Clock, boxes.Box[]), pcm.AudioError] {
@@ -308,8 +313,23 @@ function movie_header(input: [u8], top: [boxes.Box], children: boxes.Box[], budg
 }
 
 function index(input: [u8], configured: Limits): Result[Index, pcm.AudioError] {
-  let (scan, movie, children) = headers(input, configured)?;
-  return collect_tracks(input, scan, movie, children);
+  let (scan, movie, children, typed) = headers(input, configured)?;
+  let result = collect_tracks(input, scan, movie, children)?;
+  return match (check_file_type(result, typed)) { Ok(value) => Ok(value), Err(error) => Err(audio_error(error)) };
+}
+
+// Legacy QuickTime files can omit ftyp. Keep that exception specific to QTRLE.
+pub(package) function check_file_type(index: Index, typed: boolean): Result[Index, frame.VideoError] {
+  if (!typed) {
+    for track in index.tracks {
+      for description in track.descriptions {
+        if (description.codec != QTRLE) {
+          return Err(frame.Header);
+        }
+      }
+    }
+  }
+  return Ok(index);
 }
 
 function collect_tracks(input: [u8], scan: Scan, movie: time.Clock, children: [boxes.Box]): Result[Index, pcm.AudioError] {
