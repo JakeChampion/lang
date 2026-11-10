@@ -1483,7 +1483,7 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
   return ms as i32;
 }
 
-function __backlog_on(own c: __Conns, at: i32): __Conns {
+function __backlog_on(own c: __Conns, at: i32): own __Conns {
   if (c.backlog[at]) {
     return c;
   }
@@ -1975,7 +1975,7 @@ function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof
   return (__Conns { ...c, offs: c.offs.with(at, off), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: last, keep: c.keep.with(at, keep) }, keep, parsed.0, parsed.1);
 }
 
-function __serve_compact(own c: __Conns, at: i32): __Conns {
+function __serve_compact(own c: __Conns, at: i32): own __Conns {
   if (c.lent == at) {
     return __Conns { ...c, bufs: c.bufs.with(at, __bytes_from(c.bufs[at], c.offs[at])), offs: c.offs.with(at, 0), lent: -1 };
   }
@@ -1989,7 +1989,7 @@ function __pipeline_burst(): i32 {
   return 32;
 }
 
-function __serve_next(own c: __Conns, at: i32, opts: Config): __Conns {
+function __serve_next(own c: __Conns, at: i32, opts: Config): own __Conns {
   let now = monotonic_ns();
   let span = opts.keep_alive_idle;
   if (c.bufs[at].len() > c.offs[at]) {
@@ -1999,7 +1999,7 @@ function __serve_next(own c: __Conns, at: i32, opts: Config): __Conns {
   return __body_deadline(c, at, opts, now);
 }
 
-function __body_deadline(own c: __Conns, at: i32, opts: Config, now: i64): __Conns {
+function __body_deadline(own c: __Conns, at: i32, opts: Config, now: i64): own __Conns {
   let since = c.rate_since[at];
   let base = c.rate_base[at];
   let buf = c.bufs[at];
@@ -4189,7 +4189,7 @@ function __serve_step[S](handler: (S, HttpRequest, platform.Host) => (S, HttpRes
   return (stepped.0, __in_time(stepped.1, held.1, time.instant_nanos(held.0.instant()), grpc.is_grpc(req)));
 }
 
-function __serve_started(own c: __Conns, at: i32): __Conns {
+function __serve_started(own c: __Conns, at: i32): own __Conns {
   if (c.rate_since[at] >= 0 as i64) {
     return c;
   }
