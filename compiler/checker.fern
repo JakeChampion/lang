@@ -2812,11 +2812,11 @@ function derives_trait(s: Scope, tyname: string, tr: string): boolean {
   return false;
 }
 
-function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
+function conforms_to_dyn_trait(s: Scope, from: typeinfo.Type, tyname: string, tr: string): boolean {
   let key = util.base_type_name(tr);
   for imp in s.impls {
     if (parser.impl_trait_key(imp) == key && parser.receiver_base(imp.impl_type) == parser.receiver_base(tyname)) {
-      return true;
+      return impl_bounds_hold(s, imp, from);
     }
   }
   return derives_trait(s, tyname, parser.derive_simple_name(key));
@@ -4356,7 +4356,7 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
     return true;
   }
   for tr in parser.dyn_trait_set("dyn " + traits) {
-    if (!conforms_to_dyn_trait(s, tn, tr)) {
+    if (!conforms_to_dyn_trait(s, from, tn, tr)) {
       return false;
     }
   }
@@ -11975,6 +11975,93 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
   return out;
 }
 
+function binder_names_variant(nm: string, en: string, s: Scope): boolean {
+  if (nm.len() == 0 || nm == "_" || variant_payload_count(nm, s.structs) >= 0) {
+    return false;
+  }
+  if (union_lists_variant(s.unions, en, nm)) {
+    return true;
+  }
+  let owner = scope_variant_owner(nm, s);
+  if (owner.len() == 0) {
+    owner = parser.builtin_enum_of(nm);
+  }
+  return owner == en;
+}
+
+function payloadless_binder_diag(nm: string, en: string, place: string, line: i32, col: i32): util.Diag {
+  return dg_at("E015", nm + " is a payload-less variant of enum " + en + ", but a bare name in " + place + " is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col);
+}
+
+function struct_binder_diags(a: ast.StructArm, t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let typeinfo.TypeStruct(st) = t else {
+    return out;
+  };
+  for j in 0..a.fields.len() {
+    if (j < a.field_kinds.len() && j < a.binds.len() && a.field_kinds[j] == 0) {
+      if let typeinfo.TypeUnion(u) = struct_field_type(st, a.fields[j], s) {
+        if (binder_names_variant(a.binds[j], u.name, s)) {
+          out = out.append(payloadless_binder_diag(a.binds[j], u.name, "a struct field", a.line, a.col));
+        }
+      }
+    }
+    if (j < a.field_kinds.len() && j < a.field_pats.len() && a.field_kinds[j] == 3) {
+      out = util.append_diags(out, nested_binder_diags(a.field_pats[j], struct_field_type(st, a.fields[j], s), s, a.line, a.col));
+    }
+  }
+  return out;
+}
+
+function sugar_struct_binder_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (sg.strct.len() == 0) {
+    return out;
+  }
+  let t = check_expr(sg.scrut, s);
+  for arm in sg.strct {
+    if (!arm.is_wild) {
+      out = util.append_diags(out, struct_binder_diags(arm, t, s));
+    }
+  }
+  return out;
+}
+
+function record_binder_diags(pv: ast.PatVariant, st: typeinfo.TypeStruct, s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  for i in 0..pv.field_names.len() {
+    let ft = struct_field_type(st, pv.field_names[i], s);
+    if (i < pv.nested.len() && nested_tests(pv.nested[i])) {
+      out = util.append_diags(out, nested_binder_diags(pv.nested[i], ft, s, line, col));
+    } else if let typeinfo.TypeUnion(u) = ft {
+      let nm = parser.payload_binder(pv, i);
+      if (binder_names_variant(nm, u.name, s)) {
+        out = out.append(payloadless_binder_diag(nm, u.name, "a struct field", line, col));
+      }
+    }
+  }
+  return out;
+}
+
+function nested_binder_diags(p: ast.Pattern, t: typeinfo.Type, s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let ast.PatVariant(pv) = p else {
+    return out;
+  };
+  if let typeinfo.TypeStruct(st) = t {
+    if (parser.is_record_pattern(pv) && pv.type_name == st.name) {
+      return record_binder_diags(pv, st, s, line, col);
+    }
+  }
+  let types = cover_arg_types(t, pattern_cover(p).ctor, pv.nested.len(), s);
+  let i = 0;
+  while (i < pv.nested.len() && i < types.len()) {
+    out = util.append_diags(out, nested_binder_diags(pv.nested[i], types[i], s, line, col));
+    i += 1;
+  }
+  return out;
+}
+
 function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let typeinfo.TypeTuple(tt) = whole else {
@@ -11984,15 +12071,8 @@ function tuple_binder_diags(kinds: i32[], binds: string[], pats: ast.Pattern[], 
   while (i < kinds.len() && i < binds.len() && i < tt.elements.len()) {
     let nm = binds[i];
     if let typeinfo.TypeUnion(u) = tt.elements[i] {
-      let owner = scope_variant_owner(nm, s);
-      if (owner.len() == 0) {
-        owner = parser.builtin_enum_of(nm);
-      }
-      if (union_lists_variant(s.unions, u.name, nm)) {
-        owner = u.name;
-      }
-      if (kinds[i] == 0 && nm.len() > 0 && nm != "_" && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
-        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a tuple element is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      if (kinds[i] == 0 && binder_names_variant(nm, u.name, s)) {
+        out = out.append(payloadless_binder_diag(nm, u.name, "a tuple element", line, col));
       }
     }
     if (kinds[i] == 4 && i < pats.len()) {
@@ -14951,7 +15031,7 @@ function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): str
   let tn = util.base_type_name(type_label(src));
   let missing = "";
   for tr in set {
-    if (!conforms_to_dyn_trait(s, tn, tr)) {
+    if (!conforms_to_dyn_trait(s, src, tn, tr)) {
       if (missing.len() > 0) {
         missing += " + ";
       }
@@ -16810,6 +16890,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, sugar_exhaustive_diags(f.sugar, cur));
+        out = util.append_diags(out, sugar_struct_binder_diags(f.sugar, cur));
         if (f.sugar.lits.len() > 0) {
           out = util.append_diags(out, literal_match_diags(f, cur));
         } else {
@@ -16974,6 +17055,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               if (!foreign) {
                 armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
                 out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
+                out = util.append_diags(out, nested_binder_diags(elem.pattern, mst, cur, elem.line, elem.col));
               }
             },
             _ => {}

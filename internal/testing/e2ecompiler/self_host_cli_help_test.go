@@ -67,7 +67,7 @@ func usageFlags(t *testing.T, help string) map[string]string {
 	return flags
 }
 
-var parserFlagRe = regexp.MustCompile(`\bf\.name == "(-[^"]+)"`)
+var parserFlagRe = regexp.MustCompile(`\bf\.name == "(-[^"]+)"|(?m)^\s*"(-[^"]+)" =>`)
 
 func parserFlags(t *testing.T) []string {
 	t.Helper()
@@ -84,7 +84,7 @@ func parserFlags(t *testing.T) []string {
 		body := string(src[start:])
 		body = body[:strings.Index(body, "\n}\n")]
 		for _, m := range parserFlagRe.FindAllStringSubmatch(body, -1) {
-			seen[m[1]] = true
+			seen[m[1]+m[2]] = true
 		}
 	}
 	var out []string
