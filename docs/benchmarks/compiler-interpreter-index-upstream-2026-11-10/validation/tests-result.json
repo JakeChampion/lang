@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "started": "2026-11-10T02:19:17Z",
+  "finished": "2026-11-10T02:23:15.913519+00:00",
+  "command": "go test ./internal/testing/e2ecompiler -run '^TestSelfHostInterp(X86_64|Arm64|Driver(X86_64|Arm64)|CallableValues|StructOps|AssocConsts|ScopeFrames|DynProvider|MapKeysCompareThroughEq)$' -count=1 -v -timeout=25m",
+  "note": "Fresh main f990 integration before the merge commit. Includes both upstream extracted interpreter-check drivers, the eight earlier suites and same-size REPL replacement on three targets. CI33minutepackagebudget unchanged."
+}

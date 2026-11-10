@@ -40,6 +40,18 @@ The current Opus shard passes all 72 selected subtests in 814.060 seconds under 
 The complete source gate also passes.
 The archive records an inherited ARM64 assembly-size decrease and the separately owned Plex ownership diagnostic.
 
+The [upstream qualification](benchmarks/compiler-interpreter-index-upstream-2026-11-10/README.md) compares main `f9904974` with candidate `206df7ee` after the callback repair.
+Five alternating pairs reduce CPU time by 17.89% to 43.64% on the first interpreter subset.
+Three pairs reduce CPU time by 81.08% to 83.87% on the second subset.
+All outputs agree, and the allocation controls free every allocation with zero live bytes.
+
+Median peak RSS increases by 7,472 KiB on both subsets.
+The full candidate completes all 1,896 records in 364.440 seconds with identical compiled-program output.
+This full control has no paired baseline timing.
+Complete cold and warm compilation produces identical native output without a consistent timing gain.
+The archive retains the higher memory costs and every sample.
+Exact-head CI remains the merge gate.
+
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |
 | Tokenize and parse | Source bytes per second, allocations, peak memory | Real source corpus and malformed input |
