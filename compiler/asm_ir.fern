@@ -7365,21 +7365,18 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
 function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
-  if (a != "%xmm1") {
-    s = s.write("    movaps " + a + ", %xmm1\n");
-  }
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   let mode = asmcore.ssa_lane_index(ins.str);
   if (mode == 0 || mode == 3) {
     let mask = if (ins.imm == 32 && mode == 0) { 27 } else { 78 };
-    s = s.write("    pshufd $" + util.i32_to_string(mask) + ", %xmm1, %xmm1\n");
+    s = s.write("    pshufd $" + util.i32_to_string(mask) + ", " + a + ", " + d + "\n");
   } else {
     s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
-    let op = if (mode == 1) { "unpckl" } else { "unpckh" };
-    let mnem = if (ins.imm == 32) { "p" + op + "dq" } else { op + "pd" };
-    s = s.write("    " + mnem + " " + ssa_fsrc(reg_of, ins.args[1], "%xmm2") + ", %xmm1\n");
+    let b = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+    let op = if (mode == 1) { "vpunpckl" } else { "vpunpckh" };
+    let suffix = if (ins.imm == 32) { "dq" } else { "qdq" };
+    s = s.write("    " + op + suffix + " " + b + ", " + a + ", " + d + "\n");
   }
-  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    movaps %xmm1, " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
