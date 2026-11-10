@@ -9943,7 +9943,7 @@ function is_unsafe_intrinsic(name: string): boolean {
 // A builtin a program names without calling it; a local or a declared
 // function of the same name is the program's own value.
 function builtin_value_named(name: string, s: Scope): boolean {
-  return builtinsigs.builtin_row(name).len() > 0 && !s.defines(name) && !s.has_sig(name);
+  return (builtinsigs.builtin_row(name).len() > 0 || is_registered_intrinsic(name)) && !s.defines(name) && !s.has_sig(name);
 }
 
 function unsafe_value_diag(name: string, line: i32, col: i32): util.Diag {

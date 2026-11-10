@@ -1,0 +1,6 @@
+struct S { f: (u32) => i32 }
+
+function main(): i32 {
+    let s = S { f: __clz32 };
+    return 0;
+}
