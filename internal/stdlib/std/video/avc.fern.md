@@ -1,4 +1,4 @@
-# Native AVC sequence headers
+# Native AVC parameter sets
 
 `inspect_sps` reads one H.264 sequence parameter set through its trailing bits.
 The input includes its NAL header, without a start code or length prefix.
@@ -14,7 +14,7 @@ Fixed syntax limits bound scaling lists, picture-order cycles, and HRD entries.
 These limits do not define an exact process-memory bound.
 
 This reader does not decode pixels or establish complete stream conformance.
-It does not validate pictures, parameter-set references, level constraints, or decoder support.
+Sequence inspection does not validate pictures, parameter-set references, level constraints, or decoder support.
 The existing NAL and MP4 APIs retain their framing contracts.
 
 An absent aspect ratio has numerator and denominator zero.
@@ -27,9 +27,30 @@ VUI tick counts retain their coded units. They do not establish frame durations 
 Malformed supported syntax returns `Header`. Incomplete fields return `Truncated`.
 Input budgets, coded-picture budgets, and overlong integer codes return `Limit`.
 
+`inspect_pps` reads one ordinary picture parameter set with a matching `Sequence` from `inspect_sps`.
+The NAL includes its header, without a start code or length prefix.
+The caller's packet budget and a separate 64 KiB ceiling apply before unescaped storage.
+The coded-picture pixel budget also bounds the map units of the supplied sequence.
+
+The reader checks parameter-set identifiers, entropy flags, reference defaults, prediction flags, quantizers, and optional scaling lists.
+It validates all seven slice-group map types against the supplied coded dimensions.
+Explicit map identifiers are checked without a retained map allocation.
+The result reports metadata, without scaling coefficients, map contents, or decoded samples.
+This does not establish full picture, profile, level, or decoder conformance.
+
+The result uses actual reference counts and quantizer values, rather than their coded offsets.
+A 14-bit sequence can have a negative initial quantizer.
+Without a picture extension, the second chroma offset inherits the first offset.
+The map type is `-1` for one slice group.
+Change rate and explicit map size are zero when their syntax is absent.
+A mismatched sequence identifier or invalid context returns `Header`.
+A byte prefix can itself be a complete shorter PPS when the optional extension is absent.
+The caller must preserve packet boundaries to detect transport truncation.
+The NAL view excludes surrounding zero bytes.
+
 ```fern
 <<*>>=
-// Read bounded H.264 sequence parameter sets without a platform codec.
+// Read bounded H.264 parameter sets without a platform codec.
 import "std/video/frame";
 import "std/audio/alac/bits" as bit_input;
 import "std/audio/pcm";
@@ -93,9 +114,9 @@ function se(input: [u8], at: i64): Result[(i64, i32), frame.VideoError] {
   return Ok((next, if ((value & 1u32) == 0u32) { -magnitude } else { magnitude }));
 }
 
-function unescape(input: [u8], limits: frame.Limits): Result[u8[], frame.VideoError] {
+function parameter_bytes(input: [u8], limits: frame.Limits, kind: u8, maximum: i32): Result[u8[], frame.VideoError] {
   frame.check_packet(input, limits)?;
-  if (input.len() > MAX_SPS_BYTES) {
+  if (input.len() > maximum) {
     return Err(frame.Limit);
   }
   if (input.len() == 0) {
@@ -104,7 +125,7 @@ function unescape(input: [u8], limits: frame.Limits): Result[u8[], frame.VideoEr
   if ((input[0] & 128u8) != 0u8) {
     return Err(frame.Header);
   }
-  if ((input[0] & 31u8) != 7u8) {
+  if ((input[0] & 31u8) != kind) {
     return Err(frame.Unsupported);
   }
   if ((input[0] & 96u8) == 0u8) {
@@ -553,12 +574,218 @@ function trailing(input: [u8], at: i64): Result[void, frame.VideoError] {
 }
 
 pub function inspect_sps(input: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
-  let bytes = unescape(input, limits)?;
+  let bytes = parameter_bytes(input, limits, 7u8, MAX_SPS_BYTES)?;
   let p = prefix(bytes)?;
   let chroma = chroma_header(bytes, p)?;
   let pic = picture(bytes, chroma, limits)?;
   let (at, metadata) = vui(bytes, pic.at, pic.references)?;
   trailing(bytes, at)?;
   return Ok(Sequence { profile_idc: p.profile, level_idc: p.level, sequence_id: p.id, chroma_format_idc: chroma.idc, separate_colour_plane: chroma.separate, bit_depth_luma: chroma.luma, bit_depth_chroma: chroma.chroma, coded: pic.coded, visible: frame.Format { width: pic.coded.width - pic.crop.left - pic.crop.right, height: pic.coded.height - pic.crop.top - pic.crop.bottom }, crop: pic.crop, frame_mbs_only: pic.frame_only, mb_adaptive_frame_field: pic.adaptive, max_reference_frames: pic.references, vui: metadata });
+}
+
+pub const MAX_PPS_BYTES: i32 = 65536;
+
+pub struct PictureParameters { parameter_id: i32, sequence_id: i32, entropy_coding_mode: boolean, bottom_field_pic_order_in_frame_present: boolean, slice_group_count: i32, slice_group_map_type: i32, slice_group_change_direction: boolean, slice_group_change_rate: i32, explicit_map_units: i32, default_reference_l0: i32, default_reference_l1: i32, weighted_pred: boolean, weighted_bipred_idc: i32, initial_qp: i32, initial_qs: i32, chroma_qp_offset: i32, second_chroma_qp_offset: i32, deblocking_filter_control_present: boolean, constrained_intra_pred: boolean, redundant_pic_cnt_present: boolean, transform_8x8_mode: boolean, scaling_matrix_present: boolean }
+
+struct SliceGroups { at: i64, count: i32, kind: i32, direction: boolean, rate: i32, map_units: i32 }
+
+struct PredictionDefaults { at: i64, l0: i32, l1: i32, weighted: boolean, bipred: i32 }
+
+struct QuantizerDefaults { at: i64, qp: i32, qs: i32, chroma: i32, deblock: boolean, intra: boolean, redundant: boolean }
+
+struct PictureExtension { transform: boolean, scaling: boolean, chroma: i32 }
+
+struct PicturePrefix { at: i64, id: i32, entropy: boolean, bottom: boolean }
+
+function valid_depth(depth: i32): boolean {
+  return depth >= 8 && depth <= 14;
+}
+
+function sequence_fields(sequence: Sequence): Result[void, frame.VideoError] {
+  if (sequence.sequence_id < 0 || sequence.sequence_id > 31 || sequence.chroma_format_idc < 0 || sequence.chroma_format_idc > 3 || !valid_depth(sequence.bit_depth_luma) || !valid_depth(sequence.bit_depth_chroma)) {
+    return Err(frame.Header);
+  }
+  return Ok(());
+}
+
+function sequence_map_units(sequence: Sequence, limits: frame.Limits): Result[i32, frame.VideoError] {
+  let pixels = frame.pixel_count(sequence.coded, limits)?;
+  sequence_fields(sequence)?;
+  let row_height = if (sequence.frame_mbs_only) { 16 } else { 32 };
+  if (sequence.coded.width % 16 != 0 || sequence.coded.height % row_height != 0 || sequence.separate_colour_plane && sequence.chroma_format_idc != 3) {
+    return Err(frame.Header);
+  }
+  return Ok(pixels / (16 * row_height));
+}
+
+function group_runs(input: [u8], at: i64, count: i32, units: i32): Result[i64, frame.VideoError] {
+  for _ in 0..count {
+    let (end, _) = bounded_ue(input, at, (units - 1) as u32)?;
+    at = end;
+  }
+  return Ok(at);
+}
+
+function group_rectangles(input: [u8], at: i64, count: i32, units: i32, width: i32): Result[i64, frame.VideoError] {
+  for _ in 0..count - 1 {
+    let (position1, top) = bounded_ue(input, at, (units - 1) as u32)?;
+    at = position1;
+    let (position2, bottom) = bounded_ue(input, at, (units - 1) as u32)?;
+    at = position2;
+    if (top > bottom || top % (width as u32) > bottom % (width as u32)) {
+      return Err(frame.Header);
+    }
+  }
+  return Ok(at);
+}
+
+function explicit_groups(input: [u8], at: i64, count: i32, units: i32): Result[i64, frame.VideoError] {
+  let (position1, size) = bounded_ue(input, at, (units - 1) as u32)?;
+  at = position1;
+  if (size + 1u32 != units as u32) {
+    return Err(frame.Header);
+  }
+  let width = if (count <= 2) { 1 } else if (count <= 4) { 2 } else { 3 };
+  if (units as i64 * (width as i64) > input.len() as i64 * 8i64 - at) {
+    return Err(frame.Truncated);
+  }
+  for _ in 0..units {
+    let (end, group) = read(input, at, width)?;
+    at = end;
+    if (group >= count as u32) {
+      return Err(frame.Header);
+    }
+  }
+  return Ok(at);
+}
+
+function group_change(input: [u8], at: i64, count: i32, kind: i32, units: i32): Result[SliceGroups, frame.VideoError] {
+  if (count != 2) {
+    return Err(frame.Header);
+  }
+  let (position1, direction) = read(input, at, 1)?;
+  at = position1;
+  let (position2, rate) = bounded_ue(input, at, (units - 1) as u32)?;
+  return Ok(SliceGroups { at: position2, count: count, kind: kind, direction: direction != 0u32, rate: rate as i32 + 1, map_units: 0 });
+}
+
+function slice_groups(input: [u8], at: i64, units: i32, width: i32): Result[SliceGroups, frame.VideoError] {
+  let (position1, count_minus_one) = bounded_ue(input, at, 7u32)?;
+  at = position1;
+  let count = count_minus_one as i32 + 1;
+  if (count == 1) {
+    return Ok(SliceGroups { at: at, count: 1, kind: -1, direction: false, rate: 0, map_units: 0 });
+  }
+  let (position2, kind) = bounded_ue(input, at, 6u32)?;
+  at = position2;
+  if (kind >= 3u32 && kind <= 5u32) {
+    return group_change(input, at, count, kind as i32, units);
+  }
+  at = group_map(input, at, count, kind, units, width)?;
+  return Ok(SliceGroups { at: at, count: count, kind: kind as i32, direction: false, rate: 0, map_units: if (kind == 6u32) { units } else { 0 } });
+}
+
+function group_map(input: [u8], at: i64, count: i32, kind: u32, units: i32, width: i32): Result[i64, frame.VideoError] {
+  return match (kind) {
+    0u32 => group_runs(input, at, count, units),
+    1u32 => Ok(at),
+    2u32 => group_rectangles(input, at, count, units, width),
+    6u32 => explicit_groups(input, at, count, units),
+    _ => Err(frame.Header),
+  };
+}
+
+function prediction_defaults(input: [u8], at: i64): Result[PredictionDefaults, frame.VideoError] {
+  let (position1, l0) = bounded_ue(input, at, 31u32)?;
+  at = position1;
+  let (position2, l1) = bounded_ue(input, at, 31u32)?;
+  at = position2;
+  let (position3, weighted) = read(input, at, 1)?;
+  at = position3;
+  let (position4, bipred) = read(input, at, 2)?;
+  if (bipred == 3u32) {
+    return Err(frame.Header);
+  }
+  return Ok(PredictionDefaults { at: position4, l0: l0 as i32 + 1, l1: l1 as i32 + 1, weighted: weighted != 0u32, bipred: bipred as i32 });
+}
+
+function bounded_se(input: [u8], at: i64, minimum: i32, maximum: i32): Result[(i64, i32), frame.VideoError] {
+  let (next, value) = se(input, at)?;
+  if (value < minimum || value > maximum) {
+    return Err(frame.Header);
+  }
+  return Ok((next, value));
+}
+
+function quantizer_defaults(input: [u8], at: i64, depth: i32): Result[QuantizerDefaults, frame.VideoError] {
+  let (position1, qp) = bounded_se(input, at, -26 - 6 * (depth - 8), 25)?;
+  at = position1;
+  let (position2, qs) = bounded_se(input, at, -26, 25)?;
+  at = position2;
+  let (position3, chroma) = bounded_se(input, at, -12, 12)?;
+  at = position3;
+  let (position4, deblock) = read(input, at, 1)?;
+  at = position4;
+  let (position5, intra) = read(input, at, 1)?;
+  at = position5;
+  let (position6, redundant) = read(input, at, 1)?;
+  return Ok(QuantizerDefaults { at: position6, qp: qp + 26, qs: qs + 26, chroma: chroma, deblock: deblock != 0u32, intra: intra != 0u32, redundant: redundant != 0u32 });
+}
+
+function picture_scaling(input: [u8], at: i64, chroma: i32, transform: boolean): Result[i64, frame.VideoError] {
+  let extra = if (!transform) { 0 } else if (chroma == 3) { 6 } else { 2 };
+  for index in 0..6 + extra {
+    let (end, present) = read(input, at, 1)?;
+    at = end;
+    if (present != 0u32) {
+      at = scaling_list(input, at, if (index < 6) { 16 } else { 64 })?;
+    }
+  }
+  return Ok(at);
+}
+
+function picture_extension(input: [u8], at: i64, chroma: i32, offset: i32): Result[PictureExtension, frame.VideoError] {
+  if let Ok(_) = trailing(input, at) {
+    return Ok(PictureExtension { transform: false, scaling: false, chroma: offset });
+  }
+  let (position1, transform) = read(input, at, 1)?;
+  at = position1;
+  let (position2, scaling) = read(input, at, 1)?;
+  at = position2;
+  if (scaling != 0u32) {
+    at = picture_scaling(input, at, chroma, transform != 0u32)?;
+  }
+  let (position3, second) = se(input, at)?;
+  at = position3;
+  if (second < -12 || second > 12) {
+    return Err(frame.Header);
+  }
+  trailing(input, at)?;
+  return Ok(PictureExtension { transform: transform != 0u32, scaling: scaling != 0u32, chroma: second });
+}
+
+function picture_prefix(input: [u8], expected: i32): Result[PicturePrefix, frame.VideoError] {
+  let (at, id) = bounded_ue(input, 0i64, 255u32)?;
+  let (position1, sequence_id) = bounded_ue(input, at, 31u32)?;
+  at = position1;
+  if (sequence_id != expected as u32) {
+    return Err(frame.Header);
+  }
+  let (position2, entropy) = read(input, at, 1)?;
+  at = position2;
+  let (position3, bottom) = read(input, at, 1)?;
+  at = position3;
+  return Ok(PicturePrefix { at: at, id: id as i32, entropy: entropy != 0u32, bottom: bottom != 0u32 });
+}
+
+pub function inspect_pps(input: [u8], sequence: Sequence, limits: frame.Limits): Result[PictureParameters, frame.VideoError] {
+  let bytes = parameter_bytes(input, limits, 8u8, MAX_PPS_BYTES)?;
+  let units = sequence_map_units(sequence, limits)?;
+  let p = picture_prefix(bytes, sequence.sequence_id)?;
+  let groups = slice_groups(bytes, p.at, units, sequence.coded.width / 16)?;
+  let prediction = prediction_defaults(bytes, groups.at)?;
+  let quantizers = quantizer_defaults(bytes, prediction.at, sequence.bit_depth_luma)?;
+  let extension = picture_extension(bytes, quantizers.at, sequence.chroma_format_idc, quantizers.chroma)?;
+  return Ok(PictureParameters { parameter_id: p.id, sequence_id: sequence.sequence_id, entropy_coding_mode: p.entropy, bottom_field_pic_order_in_frame_present: p.bottom, slice_group_count: groups.count, slice_group_map_type: groups.kind, slice_group_change_direction: groups.direction, slice_group_change_rate: groups.rate, explicit_map_units: groups.map_units, default_reference_l0: prediction.l0, default_reference_l1: prediction.l1, weighted_pred: prediction.weighted, weighted_bipred_idc: prediction.bipred, initial_qp: quantizers.qp, initial_qs: quantizers.qs, chroma_qp_offset: quantizers.chroma, second_chroma_qp_offset: extension.chroma, deblocking_filter_control_present: quantizers.deblock, constrained_intra_pred: quantizers.intra, redundant_pic_cnt_present: quantizers.redundant, transform_8x8_mode: extension.transform, scaling_matrix_present: extension.scaling });
 }
 ```

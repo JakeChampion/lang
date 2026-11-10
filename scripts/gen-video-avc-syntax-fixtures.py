@@ -28,11 +28,11 @@ class Writer:
     def se(self, value):
         self.ue(-2 * value if value <= 0 else 2 * value - 1)
 
-    def finish(self):
+    def finish(self, nal_header=0x67):
         self.bits += "1"
         self.bits += "0" * (-len(self.bits) % 8)
         raw = bytes(int(self.bits[i:i + 8], 2) for i in range(0, len(self.bits), 8))
-        output = bytearray([0x67])
+        output = bytearray([nal_header])
         zeros = 0
         for byte in raw:
             if zeros == 2 and byte <= 3:
@@ -133,7 +133,7 @@ def make(**options):
     w.ue(options.get("references", 2))
     w.u(0, 1)
     w.ue(options.get("width", 3))
-    w.ue(1)
+    w.ue(options.get("height", 1))
     only = options.get("only", 1)
     w.u(only, 1)
     if not only:

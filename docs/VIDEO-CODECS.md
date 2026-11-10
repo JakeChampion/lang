@@ -69,6 +69,13 @@ The byte budget applies before the unescaped copy. The pixel budget applies to t
 
 This is native sequence-header inspection, without picture reconstruction or complete stream conformance checks.
 It does not validate pictures, level constraints, or decoder support.
+
+The same module inspects a PPS with its matching parsed sequence.
+It reports entropy and prediction flags, reference defaults, quantizers, slice-group metadata, and optional scaling flags.
+The reader validates all seven slice-group map types without a retained map allocation.
+The caller's packet budget and a 64 KiB PPS ceiling apply before the unescaped copy.
+The coded-picture budget bounds map syntax, including interlaced map units.
+This is parameter metadata, without scaling coefficients, map contents, or reconstructed pixels.
 The NAL conversion, MP4 indexer, and Android selection APIs retain their existing contracts.
 
 Times use the track clock's ticks. Version-one composition offsets can produce negative presentation times.
