@@ -31,6 +31,9 @@ function step(b: Boot, s: Slot): Slot {
     },
     Interrupted => {
       return Slot { ...next, preempts: s.preempts + 1 };
+    },
+    Waiting => {
+      return next;
     }
   }
   b.kernel.activate();
@@ -237,6 +240,9 @@ function answer(b: Boot, s: Slot, event: Option[user_process.Stop], there: boole
     },
     Some(Interrupted()) => {
       return (ran, false);
+    },
+    Some(Waiting()) => {
+      return (ran, true);
     },
     Some(Exited(status)) => {
       print(s.path + " exit " + status.to_string());

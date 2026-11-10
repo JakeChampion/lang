@@ -194,7 +194,8 @@ function run_to_end(path: string, p: user_process.Process): user_process.Process
         print(path + " killed: " + why);
         return p;
       },
-      Interrupted => {}
+      Interrupted => {},
+      Waiting => {}
     }
   }
   return p;
