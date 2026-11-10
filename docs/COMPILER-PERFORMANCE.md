@@ -43,6 +43,12 @@ Fresh validation reports 413 test and subtest passes with zero skips.
 The production rebuild matches main `c9547605` byte for byte and completes the full 1,896-record correctness control.
 The lazy lookup records below remain historical comparisons of their exact rejected candidates.
 
+The [later main integration](benchmarks/compiler-interpreter-main-sync-2026-11-10/README.md) retains the compiler and standard library from `e23f590d`.
+Fresh main and retained production builds are byte-identical.
+The current controls report 413 targeted test and subtest passes and 14 TLS interoperability passes, without skips.
+The rebuilt normal compiler also completes all 1,896 reference records.
+These correctness controls add no compiler performance claim.
+
 The [argument prepass comparison](benchmarks/compiler-interpreter-map-shortcut-2026-11-10/README.md) tests the remaining unused-search shortcut against that Map index.
 Four of five first-group pairs increase CPU time, despite fewer allocation events.
 The extra argument prepass is rejected as the final implementation.

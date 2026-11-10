@@ -1,0 +1,7 @@
+Auto-merging .github/perf-baseline-selfhost.txt
+CONFLICT (content): Merge conflict in .github/perf-baseline-selfhost.txt
+Auto-merging .github/perf-baseline.txt
+CONFLICT (content): Merge conflict in .github/perf-baseline.txt
+Auto-merging .github/profile-costs-baseline.txt
+CONFLICT (content): Merge conflict in .github/profile-costs-baseline.txt
+Automatic merge failed; fix conflicts and then commit the result.

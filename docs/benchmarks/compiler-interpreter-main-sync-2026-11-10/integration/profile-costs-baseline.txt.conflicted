@@ -1,0 +1,311 @@
+# 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
+# Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
+# Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
+# 2026-11-10: PR #15087, perf-x86_64 job 129617357009 on 4210785b28. #15076
+# gave http.__plain_path a [u8] parameter, and the inliner does not splice a
+# function with an array view parameter (#15093). http_hello.ir is 0.62% over
+# main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-10: PR #15079, a local scripts/profile-costs run on main's tree at da3282d0. Eighteen http_hello rows rise 1.1% to 7.3% with f79f524d of #15076, which reads a request target through a view. This PR changes no emitted code. Pinned at the measured values. A .bytes value can differ from CI by the length of the checkout path, inside the tolerance.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
+# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
+# http.serialize_response_to and http.serialize_response_to_bytes refuse a
+# field with CR or LF since #15002, so 19 http_hello rows rise 1% to 5%.
+# Pinned at the measured values.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
+# 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
+# deflate_decode.diagnostic.emit at 12887 after the merge of main d04e79179f.
+# Bank the measured size. Keep all tolerances.
+# 2026-11-09: #14849. Bulk scalar zero fill reduces Deflate instructions.
+# Local Valgrind 3.24.0 measurements bank three x86-64 counts. All tolerances stay fixed.
+# 2026-11-09: PR #14847, perf-x86_64 job 129087018092. profile/x86-64-linux/map_string.hardened.ir rises 1.11%. The PR's compiler emits byte-identical code, so the row moved on main's tree. Pinned at the measured value.
+# 2026-11-09: PR #14829. Local Valgrind 3.24.0 measurements reduce scalar append and deflate instruction counts. The scalar append counts repeat exactly.
+# 2026-11-09: the tree-shake fix of #14766 (b1c71641). The map_string and http_hello rows that #14756 pinned high fall back on both targets, by a local scripts/profile-costs run. Each is pinned at its measured value. A .bytes value can differ from CI by the length of the checkout path, about 16 bytes, inside the tolerance.
+# 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The http_hello and map_string profile rows that #14756 raised fall back with the tree-shaker fix that merged with #14757. Pinned at the measured values.
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The five rows moved with the drift of main since the last bank. Each is pinned at its measured value.
+# 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The http_hello and map_string profile rows rise with the .text rows, and deflate_decode.minimal.ir falls 2.9%. The changes are main's at 1c692d87.
+# 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: nine http_hello rows grow 1.0% to 2.3% and each is pinned at its measured value.
+# 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. Every row below moved with the drift of main since the last bank, not with this change. Each is pinned at its measured value.
+# 2026-11-06: PR #14352. Local scripts/profile-costs runs of this change and of main 075aa763, from checkouts
+# at paths of one length. Under -sanitize a raw free checks the quarantine for a second free. Six diagnostic
+# images on each target add the measured increase: 32 bytes and 9 lines on x86-64, 48 bytes and 13 lines on arm64.
+# Other rows and all tolerances stay fixed.
+# 2026-11-06: SEC-025. Matched main1abb and PR #14327 compilers use the same frozen inputs.
+# Hardened .bytes and .emit limits add only the measured scrub cost. Safe, minimal and diagnostic outputs
+# are byte-identical. Keep the original diagnostic limits. Three hardened x86-64 .ir limits retain the
+# author's Linux measurements against base14952d05: array_append +24.5%, http_hello +7.5%, deflate_decode +2.7%.
+# Actual Linux CI must validate those instruction counts. Bank the measured http_hello.minimal.emit
+# reductions shared by main and this head on both targets. Other rows and all tolerances stay fixed.
+# 2026-11-06: SEC-023, a local scripts/profile-costs run of this change and of main 23797ef0 on one host.
+# Under -harden a raw free walks the first 64 blocks of its list. Each hardened limit adds the measured
+# increase: 46 lines on x86-64 and 66 on arm64. Other rows and all tolerances stay fixed.
+# 2026-11-06: PR #14299, perf-x86_64 job 127734120327 on 6e9e3c10, merged with main at b225e71c:
+# nine rows moved by +1.02% to +1.37%, and each limit moves to the measured value.
+# 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
+# Each static limit adds at most the measured native increase to its previous value.
+# Preserve previous limits for unrelated growth. All tolerances and the warning policy stay fixed.
+# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
+# #14134 into the branch. Six arm64 hardened rows rise 1.15% to 1.41%. Four http_hello rows fall 1.27% to 1.50%.
+# Retain the preceding limits for higher-cost rows and keep all measured reductions.
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
+# three x86-64 http_hello profile rows 1.01% to 1.27%. Only reductions are banked, and no limit rises.
+# 2026-11-03: PR #14122, a local scripts/profile-costs run on its head. Most moved rows shrink 1% to 2%.
+# Preserve the original limits for higher-cost rows. Retain only the measured reductions.
+# 2026-11-02: the security stack (SEC-023, SEC-032, SEC-016, SEC-024), from a local profile-costs run on main 4f3571f1.
+# Only hardened and diagnostic rows move. Encoded free-list links, signed runtime frames and the signature
+# word of each indirect call grow the hardened rows by 1% to 10% in .emit and .bytes, and http_hello.hardened.ir
+# by 12%. The quarantine fills and checks every released payload, so the diagnostic .ir rows grow up to 53%.
+# 2026-11-02: PR14024 keeps PIE gaps out of the file and aligns constant headers to eight bytes.
+# Lower only the 23 measured static image limits. No tolerance changes.
+# Record: docs/benchmarks/raw-storage-flow-2026-11-02/current-main-costs/.
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
+# 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
+# so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
+# 2026-11-02: PR #14025 run 41440248030 on the merge with main 87b88925 (#14019, #14023), whose rows moved
+# before main re-banked them: the wasm .emit rows +3% to +4%, and the diagnostic bytes of startup, call_overhead
+# and int_loop -1.2% to -1.6% on both native targets.
+# 2026-11-02: Fixed-address images map constants read-only at load time.
+# Bank only measured static decreases; keep preceding main's dynamic limits.
+# Record: docs/benchmarks/static-relro-2026-11-02/.
+# Earlier startup-only implementation, superseded by the record above:
+# 2026-11-02: SEC-028 (#13530), from a local profile-costs run. The constant boxes, aggregates and address
+# tables move to .data.rel.ro and _start maps them read-only. Every .emit row grows by the 50 lines of the
+# protection block, and the .ir rows by the auxv scan and the mprotect call. The .bytes rows move with the
+# layout: the data bytes follow the code in the file, so an arm64 image loses its 64 KiB of load-alignment
+# padding, and an x86-64 image moves by at most one page in either direction.
+# 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
+# Source corrections must pass those limits. Improved rows keep their measured lower pins.
+# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. A branch on a join of constants goes to its arm,
+# and __fern_buf_push takes a direct path: enum_match.*.ir -40% to -49%, deflate_decode.*.ir -1.9% to
+# -13.4%, http_hello.*.ir -1.8% to -2.6%, and http_hello.*.emit +1.2% to +1.35% on the native targets.
+# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
+# one block: http_hello.minimal gives back part of the splice's gain, +3.7% to +8.3% against the rows above.
+# 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 43 rows,
+# http_hello.*.emit by -11% to -19% and enum_match.*.emit by -4% to -8%; no row grew.
+# 2026-10-31: PR #13910, measured by CI job 124561576376.
+# 2026-10-31: PR #13923, measured by CI job 124561596792.
+# 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
+# Record the lane's measured changes after the lifetime and shared-helper repairs.
+# 2026-10-29: #13863 (#13061) at 798f4251, from a local profile-costs run. A callback that a
+# program passes by name is now a direct call: closure_call.ir is 35% to 52% lower. The map_string
+# programs grow: each map operation has a clone per key kind.
+# 2026-10-29: Exact reports from CI run 40887715387 at 4dedca4fd on PR #13846.
+# Main moved these rows. Without this PR, the compiler at 5aeed7efc measures the same array_append, enum_match and http_hello rows.
+# All tolerances remain unchanged.
+# 2026-10-28: Exact reports from CI run 40630000183 at b706d4299 on PR #13718.
+# The six map measurements show mixed changes. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-machine-merge-2026-10-28/.
+# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
+# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
+# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
+# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
+# 2026-10-27: first measurement, from scripts/profile-costs on the follow-on branch of #13677 at the profile-costs commit.
+# Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
+profile/arm64-linux/array_append.diagnostic.bytes	14248
+profile/arm64-linux/array_append.diagnostic.emit	1857
+profile/arm64-linux/array_append.hardened.bytes	8600
+profile/arm64-linux/array_append.hardened.emit	1896
+profile/arm64-linux/array_append.minimal.bytes	6072
+profile/arm64-linux/array_append.minimal.emit	1314
+profile/arm64-linux/array_append.safe.bytes	6424
+profile/arm64-linux/array_append.safe.emit	1403
+profile/arm64-linux/call_overhead.diagnostic.bytes	5840
+profile/arm64-linux/call_overhead.diagnostic.emit	626
+profile/arm64-linux/call_overhead.hardened.bytes	3096
+profile/arm64-linux/call_overhead.hardened.emit	554
+profile/arm64-linux/call_overhead.minimal.bytes	2216
+profile/arm64-linux/call_overhead.minimal.emit	378
+profile/arm64-linux/call_overhead.safe.bytes	2456
+profile/arm64-linux/call_overhead.safe.emit	439
+profile/arm64-linux/closure_call.diagnostic.bytes	14184
+profile/arm64-linux/closure_call.diagnostic.emit	1731
+profile/arm64-linux/closure_call.hardened.bytes	7736
+profile/arm64-linux/closure_call.hardened.emit	1672
+profile/arm64-linux/closure_call.minimal.bytes	5320
+profile/arm64-linux/closure_call.minimal.emit	1118
+profile/arm64-linux/closure_call.safe.bytes	5624
+profile/arm64-linux/closure_call.safe.emit	1199
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
+profile/arm64-linux/deflate_decode.diagnostic.bytes	118168
+profile/arm64-linux/deflate_decode.diagnostic.emit	13870
+profile/arm64-linux/deflate_decode.hardened.bytes	64920
+profile/arm64-linux/deflate_decode.hardened.emit	15177
+profile/arm64-linux/deflate_decode.minimal.bytes	53048
+profile/arm64-linux/deflate_decode.minimal.emit	12103
+profile/arm64-linux/deflate_decode.safe.bytes	58712
+profile/arm64-linux/deflate_decode.safe.emit	13560
+profile/arm64-linux/enum_match.diagnostic.bytes	13416
+profile/arm64-linux/enum_match.diagnostic.emit	1700
+profile/arm64-linux/enum_match.hardened.bytes	7528
+profile/arm64-linux/enum_match.hardened.emit	1618
+profile/arm64-linux/enum_match.minimal.bytes	5192
+profile/arm64-linux/enum_match.minimal.emit	1083
+profile/arm64-linux/enum_match.safe.bytes	5496
+profile/arm64-linux/enum_match.safe.emit	1163
+# 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
+<<<<<<< HEAD
+# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
+# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
+# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
+# 2026-11-10: Retain main c9547605's measured diagnostic image size.
+profile/arm64-linux/http_hello.diagnostic.bytes	134872
+profile/arm64-linux/http_hello.diagnostic.emit	17398
+profile/arm64-linux/http_hello.hardened.bytes	86328
+profile/arm64-linux/http_hello.hardened.emit	19405
+profile/arm64-linux/http_hello.minimal.bytes	65160
+profile/arm64-linux/http_hello.minimal.emit	14069
+profile/arm64-linux/http_hello.safe.bytes	79096
+profile/arm64-linux/http_hello.safe.emit	17566
+=======
+profile/arm64-linux/http_hello.diagnostic.bytes	129376
+profile/arm64-linux/http_hello.diagnostic.emit	16571
+profile/arm64-linux/http_hello.hardened.bytes	81480
+profile/arm64-linux/http_hello.hardened.emit	18195
+profile/arm64-linux/http_hello.minimal.bytes	63816
+profile/arm64-linux/http_hello.minimal.emit	13723
+profile/arm64-linux/http_hello.safe.bytes	75240
+profile/arm64-linux/http_hello.safe.emit	16619
+>>>>>>> e23f590d1e523a2a90c7b202c7631b80aa4635da
+profile/arm64-linux/int_loop.diagnostic.bytes	5312
+profile/arm64-linux/int_loop.diagnostic.emit	565
+profile/arm64-linux/int_loop.hardened.bytes	2744
+profile/arm64-linux/int_loop.hardened.emit	460
+profile/arm64-linux/int_loop.minimal.bytes	1992
+profile/arm64-linux/int_loop.minimal.emit	320
+profile/arm64-linux/int_loop.safe.bytes	2248
+profile/arm64-linux/int_loop.safe.emit	381
+profile/arm64-linux/map_string.diagnostic.bytes	140024
+profile/arm64-linux/map_string.diagnostic.emit	10784
+profile/arm64-linux/map_string.hardened.bytes	50424
+profile/arm64-linux/map_string.hardened.emit	11476
+profile/arm64-linux/map_string.minimal.bytes	41192
+profile/arm64-linux/map_string.minimal.emit	9243
+profile/arm64-linux/map_string.safe.bytes	42552
+profile/arm64-linux/map_string.safe.emit	9472
+profile/arm64-linux/startup.diagnostic.bytes	4840
+profile/arm64-linux/startup.diagnostic.emit	546
+profile/arm64-linux/startup.hardened.bytes	2664
+profile/arm64-linux/startup.hardened.emit	443
+profile/arm64-linux/startup.minimal.bytes	1912
+profile/arm64-linux/startup.minimal.emit	303
+profile/arm64-linux/startup.safe.bytes	2168
+profile/arm64-linux/startup.safe.emit	364
+profile/x86-64-linux/array_append.diagnostic.bytes	11592
+profile/x86-64-linux/array_append.diagnostic.emit	1472
+profile/x86-64-linux/array_append.diagnostic.ir	50410800
+profile/x86-64-linux/array_append.hardened.bytes	6928
+profile/x86-64-linux/array_append.hardened.emit	1560
+profile/x86-64-linux/array_append.hardened.ir	12827529
+profile/x86-64-linux/array_append.minimal.bytes	5088
+profile/x86-64-linux/array_append.minimal.emit	1100
+profile/x86-64-linux/array_append.minimal.ir	12005260
+profile/x86-64-linux/array_append.safe.bytes	5456
+profile/x86-64-linux/array_append.safe.emit	1183
+profile/x86-64-linux/array_append.safe.ir	12005460
+profile/x86-64-linux/call_overhead.diagnostic.bytes	5904
+profile/x86-64-linux/call_overhead.diagnostic.emit	575
+profile/x86-64-linux/call_overhead.diagnostic.ir	8551046
+profile/x86-64-linux/call_overhead.hardened.bytes	2688
+profile/x86-64-linux/call_overhead.hardened.emit	432
+profile/x86-64-linux/call_overhead.hardened.ir	8250844
+profile/x86-64-linux/call_overhead.minimal.bytes	1984
+profile/x86-64-linux/call_overhead.minimal.emit	290
+profile/x86-64-linux/call_overhead.minimal.ir	8250814
+profile/x86-64-linux/call_overhead.safe.bytes	2192
+profile/x86-64-linux/call_overhead.safe.emit	347
+profile/x86-64-linux/call_overhead.safe.ir	8250814
+profile/x86-64-linux/closure_call.diagnostic.bytes	11704
+profile/x86-64-linux/closure_call.diagnostic.emit	1372
+profile/x86-64-linux/closure_call.diagnostic.ir	42030322
+profile/x86-64-linux/closure_call.hardened.bytes	6112
+profile/x86-64-linux/closure_call.hardened.emit	1331
+profile/x86-64-linux/closure_call.hardened.ir	41343873
+profile/x86-64-linux/closure_call.minimal.bytes	4400
+profile/x86-64-linux/closure_call.minimal.emit	883
+profile/x86-64-linux/closure_call.minimal.ir	41148167
+profile/x86-64-linux/closure_call.safe.bytes	4656
+profile/x86-64-linux/closure_call.safe.emit	959
+profile/x86-64-linux/closure_call.safe.ir	41178167
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
+# 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
+profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
+profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
+profile/x86-64-linux/deflate_decode.hardened.bytes	55872
+profile/x86-64-linux/deflate_decode.hardened.emit	13293
+profile/x86-64-linux/deflate_decode.hardened.ir	33840579
+profile/x86-64-linux/deflate_decode.minimal.bytes	46688
+profile/x86-64-linux/deflate_decode.minimal.emit	11402
+profile/x86-64-linux/deflate_decode.minimal.ir	39191644
+profile/x86-64-linux/deflate_decode.safe.bytes	51376
+profile/x86-64-linux/deflate_decode.safe.emit	12766
+profile/x86-64-linux/deflate_decode.safe.ir	32880607
+profile/x86-64-linux/enum_match.diagnostic.bytes	10960
+profile/x86-64-linux/enum_match.diagnostic.emit	1351
+profile/x86-64-linux/enum_match.diagnostic.ir	29250209
+profile/x86-64-linux/enum_match.hardened.bytes	6032
+profile/x86-64-linux/enum_match.hardened.emit	1293
+profile/x86-64-linux/enum_match.hardened.ir	29250116
+profile/x86-64-linux/enum_match.minimal.bytes	4224
+profile/x86-64-linux/enum_match.minimal.emit	855
+profile/x86-64-linux/enum_match.minimal.ir	29250077
+profile/x86-64-linux/enum_match.safe.bytes	4544
+profile/x86-64-linux/enum_match.safe.emit	930
+profile/x86-64-linux/enum_match.safe.ir	29250077
+<<<<<<< HEAD
+# 2026-11-10: Retain main c9547605's measured diagnostic image size.
+profile/x86-64-linux/http_hello.diagnostic.bytes	124320
+profile/x86-64-linux/http_hello.diagnostic.emit	16283
+=======
+profile/x86-64-linux/http_hello.diagnostic.bytes	118752
+profile/x86-64-linux/http_hello.diagnostic.emit	15390
+>>>>>>> e23f590d1e523a2a90c7b202c7631b80aa4635da
+# 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
+profile/x86-64-linux/http_hello.diagnostic.ir	40308693
+profile/x86-64-linux/http_hello.hardened.bytes	71952
+profile/x86-64-linux/http_hello.hardened.emit	16234
+profile/x86-64-linux/http_hello.hardened.ir	30101992
+profile/x86-64-linux/http_hello.minimal.bytes	56864
+profile/x86-64-linux/http_hello.minimal.emit	13297
+profile/x86-64-linux/http_hello.minimal.ir	23776415
+profile/x86-64-linux/http_hello.safe.bytes	66528
+profile/x86-64-linux/http_hello.safe.emit	15691
+profile/x86-64-linux/http_hello.safe.ir	22124422
+profile/x86-64-linux/int_loop.diagnostic.bytes	5480
+profile/x86-64-linux/int_loop.diagnostic.emit	523
+profile/x86-64-linux/int_loop.diagnostic.ir	12000209
+profile/x86-64-linux/int_loop.hardened.bytes	2528
+profile/x86-64-linux/int_loop.hardened.emit	376
+profile/x86-64-linux/int_loop.hardened.ir	12000107
+profile/x86-64-linux/int_loop.minimal.bytes	1808
+profile/x86-64-linux/int_loop.minimal.emit	235
+profile/x86-64-linux/int_loop.minimal.ir	12000077
+profile/x86-64-linux/int_loop.safe.bytes	2032
+profile/x86-64-linux/int_loop.safe.emit	292
+profile/x86-64-linux/int_loop.safe.ir	12000077
+profile/x86-64-linux/map_string.diagnostic.bytes	133784
+profile/x86-64-linux/map_string.diagnostic.emit	10858
+profile/x86-64-linux/map_string.diagnostic.ir	59644087
+profile/x86-64-linux/map_string.hardened.bytes	42528
+profile/x86-64-linux/map_string.hardened.emit	10022
+profile/x86-64-linux/map_string.hardened.ir	54709670
+profile/x86-64-linux/map_string.minimal.bytes	36176
+profile/x86-64-linux/map_string.minimal.emit	9007
+profile/x86-64-linux/map_string.minimal.ir	54757303
+profile/x86-64-linux/map_string.safe.bytes	37296
+profile/x86-64-linux/map_string.safe.emit	9311
+profile/x86-64-linux/map_string.safe.ir	52903035
+profile/x86-64-linux/startup.diagnostic.bytes	5024
+profile/x86-64-linux/startup.diagnostic.emit	500
+profile/x86-64-linux/startup.diagnostic.ir	206
+profile/x86-64-linux/startup.hardened.bytes	2448
+profile/x86-64-linux/startup.hardened.emit	355
+profile/x86-64-linux/startup.hardened.ir	105
+profile/x86-64-linux/startup.minimal.bytes	1728
+profile/x86-64-linux/startup.minimal.emit	214
+profile/x86-64-linux/startup.minimal.ir	74
+profile/x86-64-linux/startup.safe.bytes	1952
+profile/x86-64-linux/startup.safe.emit	271
+profile/x86-64-linux/startup.safe.ir	74
