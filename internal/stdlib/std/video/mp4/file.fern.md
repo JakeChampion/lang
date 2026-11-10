@@ -169,7 +169,11 @@ pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read:
   if (scan.metadata.len() == 0) {
     return Err(ReadVideo(frame.Header));
   }
-  let index = match (mp4.inspect_movie(scan.metadata, scan.media, scan.file_bytes, scan.boxes, limits.index)) { Ok(value) => value, Err(error) => { return Err(ReadVideo(error)); } };
+  return index_movie(scan);
+}
+
+function index_movie(scan: Scan): Result[mp4.Index, ReadError] {
+  let index = match (mp4.inspect_movie(scan.metadata, scan.media, scan.file_bytes, scan.boxes, scan.limits.index)) { Ok(value) => value, Err(error) => { return Err(ReadVideo(error)); } };
   return match (mp4.check_file_type(index, scan.file_type)) { Ok(value) => Ok(value), Err(error) => Err(ReadVideo(error)) };
 }
 
