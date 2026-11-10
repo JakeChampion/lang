@@ -1,0 +1,26 @@
+// A task handle is a value, so a copy can outlive the task. A resume of a
+// task that ended stops the program with status 134. It does not run on
+// the record of another task.
+import "std/async";
+
+function label(n: i32): string {
+    return "task " + n.to_string();
+}
+
+function main(): i32 {
+    let first = async.task_new((): string => label(1));
+    match (async.task_start(first)) {
+        Done(v) => { print(v); },
+        Suspended(_) => { print("parked"); }
+    }
+    let second = async.task_new((): string => label(2));
+    match (async.task_start(second)) {
+        Done(v) => { print(v); },
+        Suspended(_) => { print("parked"); }
+    }
+    match (async.task_resume(first, async.Wake.TimedOut)) {
+        Done(v) => { print("resumed " + v); },
+        Suspended(_) => { print("parked again"); }
+    }
+    return 0;
+}

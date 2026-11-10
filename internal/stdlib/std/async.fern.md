@@ -672,7 +672,22 @@ releases its runtime record, so the scheduler only drops its handle.
 <<18 pub enum TaskStatus[T]>>=
 pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 
-pub struct Task[T] { id: i32, entry: () => T }
+// Each copy of a task's handle shares one TaskShared, so a copy that is used
+// after the task moved on reads the task's state, not a freed record.
+// `step` counts the parks, and `wait` is what the task waits for now.
+pub struct TaskShared { phase: i32, step: i32, wait: Wait }
+
+const TASK_NEW: i32 = 0;
+
+const TASK_RUNNING: i32 = 1;
+
+const TASK_PARKED: i32 = 2;
+
+const TASK_DONE: i32 = 3;
+
+const TASK_CANCELLED: i32 = 4;
+
+pub struct Task[T] { id: i32, entry: () => T, shared: Cell[TaskShared] }
 ```
 
 ### `19 pub function task_new[T](entry: () => T): Task[T]`
@@ -681,19 +696,55 @@ pub struct Task[T] { id: i32, entry: () => T }
 <<19 pub function task_new[T](entry: () => T): Task[T]>>=
 pub function task_new[T](entry: () => T): Task[T] {
   unsafe {
-    return Task { id: __task_new(), entry: entry };
+    return Task { id: __task_new(), entry: entry, shared: cell_new(__task_shared(TASK_NEW)) };
   }
 }
 
+// The handle of a task that another scheduler parked under `id`.
+pub function task_adopted[T](id: i32, entry: () => T): Task[T] {
+  return Task { id: id, entry: entry, shared: cell_new(__task_shared(TASK_PARKED)) };
+}
+
+function __task_shared(phase: i32): TaskShared {
+  return TaskShared { phase: phase, step: 0, wait: Wait { set: [], until: None } };
+}
+
 pub function task_start[T](t: Task[T]): TaskStatus[T] {
-  return __settled(t.id, run_task(t, 0));
+  __task_expect(t.shared.get().phase, TASK_NEW);
+  return __task_ran(t, 0);
 }
 
 // Cancelled runs the task on to its end with every wait answering Cancelled
 // and none parking, so a cancelled task always answers Done.
 pub function task_resume[T](t: Task[T], wake: Wake): TaskStatus[T] {
+  __task_expect(t.shared.get().phase, TASK_PARKED);
   __task_wake(t.id, wake);
-  return __settled(t.id, run_task(t, 2));
+  return __task_ran(t, 2);
+}
+
+// Stops the program when a handle is used on a task in another phase: a
+// task started two times, or a task or a future resumed when its task
+// ended, was not started, or is running. A handler can reach this code, and
+// a handler has no ambient log, so there is no message.
+function __task_expect(phase: i32, want: i32): void {
+  if (phase != want) {
+    exit(134);
+  }
+}
+
+function __task_ran[T](t: Task[T], mode: i32): TaskStatus[T] {
+  let before = t.shared.get();
+  t.shared.set(TaskShared { ...before, phase: TASK_RUNNING });
+  let st = __settled(t.id, run_task(t, mode));
+  match (st) {
+    Done(v) => {
+      t.shared.set(TaskShared { ...before, phase: TASK_DONE });
+    },
+    Suspended(w) => {
+      t.shared.set(TaskShared { ...before, phase: TASK_PARKED, step: before.step + 1, wait: w });
+    }
+  }
+  return st;
 }
 
 pub function in_task(): boolean {
@@ -734,15 +785,28 @@ function __task_future[T](t: Task[T], st: TaskStatus[T]): Future[T] {
       return Ready(v);
     },
     Suspended(w) => {
-      return Pending(w, (wake: Wake): Future[T] => __task_woken(t, wake));
+      let step = t.shared.get().step;
+      return Pending(w, (wake: Wake): Future[T] => __task_woken(t, step, wake));
     }
   }
   return Future.Cancelled;
 }
 
-function __task_woken[T](t: Task[T], wake: Wake): Future[T] {
+// A copy of a future that is polled after the task parked again answers the
+// task's present wait, and does not resume the task a second time. A copy
+// that is polled after the task ended has no value to give: task_resume
+// stops the program with a message.
+function __task_woken[T](t: Task[T], step: i32, wake: Wake): Future[T] {
+  let now = t.shared.get();
+  if (now.phase == TASK_CANCELLED) {
+    return Future.Cancelled;
+  }
+  if (now.phase == TASK_PARKED && now.step != step) {
+    return Pending(now.wait, (later: Wake): Future[T] => __task_woken(t, now.step, later));
+  }
   let st = task_resume(t, wake);
   if let Wake.Cancelled = wake {
+    t.shared.set(TaskShared { ...t.shared.get(), phase: TASK_CANCELLED });
     return Future.Cancelled;
   }
   return __task_future(t, st);
