@@ -25,14 +25,16 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 		if _, tagged := BuiltinCaps[name]; tagged {
 			return true
 		}
-		return Ungated[name]
+		return DirectPrivileged[name] || Ungated[name]
 	})
 
 	pkgRoots := map[string][]string{}
+	floor := map[string]bool{}
 	var pkgOrder []string
 	for _, fn := range prog.Funcs {
 		p := pkgOf(fn.BodyModule())
 		if p == "" {
+			floor[fn.Name] = true
 			continue
 		}
 		if _, seen := pkgRoots[p]; !seen {
@@ -43,13 +45,15 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 
 	rows := make([]Row, 0, len(pkgOrder))
 	for _, p := range pkgOrder {
-		rows = append(rows, Row{Package: p, Uses: walk(pkgRoots[p], g)})
+		rows = append(rows, Row{Package: p, Uses: walk(pkgRoots[p], g, floor)})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Package < rows[j].Package })
 	return rows
 }
 
-func walk(roots []string, g *effects.Graph) []Use {
+// walk follows the calls from roots. floor names the functions of no
+// package, which is the standard library: a raw builtin there does not count.
+func walk(roots []string, g *effects.Graph, floor map[string]bool) []Use {
 	parent := map[string]string{}
 	visited := map[string]bool{}
 	var queue []string
@@ -66,6 +70,9 @@ func walk(roots []string, g *effects.Graph) []Use {
 		queue = queue[1:]
 		for _, b := range g.Builtins[fn] {
 			c, tagged := BuiltinCaps[b]
+			if !tagged && !floor[fn] && DirectPrivileged[b] {
+				c, tagged = "privileged", true
+			}
 			if !tagged {
 				continue
 			}

@@ -59,7 +59,9 @@ kv_client = { path = "../kv", capabilities = ["net"] }
 Capability vocabulary (v1, deliberately coarse): `net`, `fs`, `env`,
 `subprocess`, `time`, `random`, `privileged` for the processor
 beneath the OS (the privileged ops, the I/O ports and the raw memory
-accesses of `std/raw`), and `mmio` for device registers. Coarse buckets are auditable;
+accesses of `std/raw`, and each raw builtin that only an `unsafe`
+block accepts, when a package calls one outside the standard library),
+and `mmio` for device registers. Coarse buckets are auditable;
 path-level filtering (à la Deno's `--allow-read=/tmp`) is explicitly
 out of scope for v1.
 
