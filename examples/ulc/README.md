@@ -190,6 +190,10 @@ Native CLI tests cover all block sizes, three rate-control modes, and audio with
 The optional C tests require a C compiler and a complete reference checkout.
 They check compatibility in both directions.
 They check every window pattern at all eight overlap scales, with noise and silence.
+The exhaustive overlap comparison uses the scalar C reference.
+The libfourier SIMD contract requires zero overlap or at least 16 samples.
+The synthetic stream also checks shorter overlaps.
+The performance suite retains tuned SIMD C and records its numerical error separately.
 Python 3 is necessary for the CLI tests.
 
 The example CI entry point is `examples/tests/ulc_codec.fern`.

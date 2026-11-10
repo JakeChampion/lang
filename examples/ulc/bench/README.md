@@ -7,6 +7,47 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Exact coefficient runs
+
+Source `795b51973b626359e063e3d04668de68a4268145` decodes consecutive ordinary coefficients in a separate loop.
+The decoder forms their float bits with an exact adjustment of the exponent.
+All 27 valid quantizers produce normal floats with unchanged bits.
+The unit suite covers all 729 quantizer transitions on native x86-64, ARM64 under QEMU, and WebAssembly.
+Baseline `3fb03cacc6601474db0f53d3e577a0efb157d4e4` contains the SIMD byte-store optimization.
+Each executable uses its own release compiler and standard library, so the comparison also includes compiler changes.
+
+The 2026-11-10 sweep uses CPU 0 of the Xeon Platinum 8573C and one worker.
+Each case has 120 repetitions in six balanced execution orders.
+Silence, tone, noise, and transients cover all three PCM depths.
+Ten-second inputs use blocks of 32768, and hundred-second inputs use blocks of 2048.
+Measurements include process startup and file I/O, with no concurrent local builds or tests.
+Every final Fern WAV equals the baseline byte for byte, and all independent float64 checks pass.
+
+Fern has lower medians than tuned C in 24 of 24 cases.
+The geometric-mean C/Fern ratio is 1.736× overall and 1.276× without silence.
+The fixed-suite intervals are 1.715× to 1.760× and 1.259× to 1.294×.
+These results do not establish a universal performance rank.
+
+Fern has lower medians than the baseline in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.021× overall and 1.018× without silence.
+The intervals are 1.006× to 1.035× and 1.003× to 1.032×.
+The report retains every regression.
+The intervals use 2000 paired bootstrap repetitions and seed 417 within this fixed suite.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10.0 | 32768 | PCM16 | 0.998 | 1.601 |
+| 10.0 | 32768 | PCM24 | 1.024 | 1.485 |
+| 10.0 | 32768 | PCM8 | 1.019 | 1.666 |
+| 100.0 | 2048 | PCM16 | 1.057 | 1.948 |
+| 100.0 | 2048 | PCM24 | 1.020 | 1.636 |
+| 100.0 | 2048 | PCM8 | 1.012 | 2.169 |
+
+[The complete report](x86-64-coefficient-runs.json) retains all repetitions, regressions, executable hashes, compiler hashes, oracle checks, and source revisions.
+Use the [unsigned-guard commands](#unsigned-bounds-guards) with candidate source `795b51973b626359e063e3d04668de68a4268145` and baseline source `3fb03cacc6601474db0f53d3e577a0efb157d4e4`.
+Set `--repetitions 120` and use each source's own release compiler and standard library.
+Retain the pinned C and float64 oracle builds.
+
 ## SIMD byte stores
 
 Source `3fb03cacc6601474db0f53d3e577a0efb157d4e4` combines adjacent scalar stores whose bytes come from SIMD values.
@@ -60,13 +101,13 @@ Every final Fern WAV equals the baseline byte for byte, and all independent floa
 
 Fern has lower medians than tuned C in 22 of 24 cases.
 The geometric-mean C/Fern ratio is 1.647× overall and 1.224× without silence.
-The corresponding fixed-suite intervals are 1.637× to 1.675× and 1.215× to 1.247×.
+The fixed-suite intervals are 1.637× to 1.675× and 1.215× to 1.247×.
 Large-block PCM8 and PCM24 noise favor C, with C/Fern ratios of 0.989× and 0.916×.
 These results do not establish a universal performance ranking.
 
 Fern has lower medians than the previous Fern build in 19 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.018× overall and 1.021× without silence.
-The corresponding intervals are 1.009× to 1.035× and 1.013× to 1.040×.
+The intervals are 1.009× to 1.035× and 1.013× to 1.040×.
 All five baseline regressions remain in the report.
 The intervals use 2000 paired bootstrap repetitions and seed 417; they estimate repetition uncertainty within this fixed suite.
 Compare the two Fern builds within this sweep: the earlier report ran at a different time and has a different baseline.
@@ -100,13 +141,13 @@ Every final Fern WAV equals the baseline byte for byte, and all independent floa
 
 Fern has lower medians than tuned C in 22 of 24 cases.
 The geometric-mean C/Fern ratio is 1.685× overall and 1.243× without silence.
-The corresponding fixed-suite intervals are 1.649× to 1.736× and 1.211× to 1.276×.
+The fixed-suite intervals are 1.649× to 1.736× and 1.211× to 1.276×.
 C remains faster on large-block PCM16 noise and PCM24 noise, with C/Fern ratios of 0.989× and 0.885×.
 These results do not establish a universal performance ranking.
 
 Fern has lower medians than the baseline in 20 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.032× overall and 1.045× without silence.
-The corresponding intervals are 1.008× to 1.065× and 1.017× to 1.066×.
+The intervals are 1.008× to 1.065× and 1.017× to 1.066×.
 All four baseline regressions remain in the report.
 The intervals use 2000 paired bootstrap repetitions and seed 417, covering repetition uncertainty within these fixed cases.
 
@@ -157,13 +198,13 @@ The report retains the other five complete groups.
 
 Fern has lower medians than the baseline in 17 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.019 overall and 1.011 without silence.
-The corresponding fixed-suite intervals are 0.995 to 1.046 and 0.994 to 1.037.
+The fixed-suite intervals are 0.995 to 1.046 and 0.994 to 1.037.
 Both intervals include 1, so this sweep does not establish an overall speed gain.
 The report retains all seven baseline regressions.
 
 Fern has lower medians than tuned C in 20 of 24 cases.
 The geometric-mean C/Fern ratio is 1.644 overall and 1.187 without silence.
-The corresponding intervals are 1.609 to 1.690 and 1.165 to 1.223.
+The intervals are 1.609 to 1.690 and 1.165 to 1.223.
 C has lower medians for large-block PCM16 noise and large-block PCM24 tone, noise, and transients.
 The intervals use 2000 paired bootstrap repetitions and seed 417 within these fixed cases.
 These results do not establish a universal speed ranking.
@@ -220,12 +261,12 @@ Every final WAV equals the baseline byte for byte, and all six float64 oracle ch
 
 Fern has lower medians than the baseline in 19 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.055× overall and 1.076× without silence.
-The corresponding fixed-suite intervals are 1.023× to 1.086× and 1.053× to 1.105×.
+The fixed-suite intervals are 1.023× to 1.086× and 1.053× to 1.105×.
 The raw report retains all five baseline regressions.
 
 Fern has lower medians than tuned C in 21 of 24 cases.
 The geometric-mean C/Fern ratio is 1.654× overall and 1.193× without silence.
-The corresponding intervals are 1.619× to 1.696× and 1.170× to 1.225×.
+The intervals are 1.619× to 1.696× and 1.170× to 1.225×.
 C remains faster in the three large-block noise cases.
 Their C/Fern ratios are 0.958× for PCM8, 0.968× for PCM16, and 0.891× for PCM24.
 These results do not establish a universal speed ranking.
@@ -294,7 +335,7 @@ No other local builds or tests run during measurement.
 
 PCM24 has lower medians than the baseline in all eight cases.
 Its geometric-mean baseline/Fern ratio is 1.061×, or 1.069× across the six non-silent cases.
-The corresponding fixed-suite intervals are 1.011× to 1.114× and 1.034× to 1.118×.
+The fixed-suite intervals are 1.011× to 1.114× and 1.034× to 1.118×.
 
 The complete 24-case comparison has fifteen lower Fern medians than the baseline.
 Its geometric-mean baseline/Fern ratio is 1.028×, with an interval of 1.000× to 1.054×.
@@ -302,7 +343,7 @@ The raw report retains nine baseline regressions in PCM8 or PCM16.
 
 Fern has lower medians than tuned C in 18 of 24 cases.
 The geometric-mean C/Fern ratio is 1.592× overall and 1.115× without silence.
-The corresponding fixed-suite intervals are 1.558× to 1.630× and 1.094× to 1.148×.
+The fixed-suite intervals are 1.558× to 1.630× and 1.094× to 1.148×.
 All nine long non-silent cases favor Fern.
 Six large-block cases still favor C, so these results do not establish a universal speed ranking.
 
@@ -384,13 +425,13 @@ No other local builds or tests run during measurement.
 
 Fern has lower medians than the baseline in 21 of 24 cases, including all eighteen non-silent cases.
 The geometric-mean baseline/Fern ratio is 1.166×, or 1.247× without silence.
-The corresponding fixed-suite intervals are 1.141× to 1.189× and 1.221× to 1.268×.
+The fixed-suite intervals are 1.141× to 1.189× and 1.221× to 1.268×.
 Three short silence cases have lower baseline medians.
 The raw report retains those regressions.
 
 Fern has lower medians than tuned native C in 18 of 24 cases.
 The geometric-mean C/Fern ratio is 1.566×, or 1.110× without silence.
-The corresponding fixed-suite intervals are 1.532× to 1.590× and 1.086× to 1.124×.
+The fixed-suite intervals are 1.532× to 1.590× and 1.086× to 1.124×.
 The calculations use 2000 paired bootstrap repetitions and seed 417.
 These intervals cover repetition uncertainty in this fixed suite.
 They do not quantify other inputs, machines, or runs.
