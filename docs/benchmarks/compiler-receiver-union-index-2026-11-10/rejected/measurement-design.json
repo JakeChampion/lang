@@ -1,0 +1,8 @@
+{
+  "status": "Prepared only. Do not launch until the preceding fixed515d/3d51 comparison completes and its entire results are reviewed. Source change is b442E098, not a request for more favorable old-source samples.",
+  "fixed_input_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate_source": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "timings": "Eight fixed balanced pairs for each Opus/checker cold/warm mode. No extension.64timed+8owncacheprime/probe=72normalcommands.12separateallocationcommands. No additional local heavy work after timing starts.",
+  "instructions": "One matched normal guest-Ir pair per workload/cachemode=8compiles after all timing/count/quality controls complete.",
+  "history": "The earlier normal matrix is retained with every slower pair, shared-host filesystem-overlap qualifier, and unchanged source identities. No pooled totals, no transferred PC maps or speedup claims."
+}

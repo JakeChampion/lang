@@ -1,0 +1,19 @@
+{
+  "source": "74c84520a2925bf40089b640a728813f46fca3c7",
+  "purpose": "Validate negative refusal and all original nonnegative capacity controls after the fixture repair. No product compiler or runtime change.",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2e",
+    "-run",
+    "^Test(SelfHostEntropyAllocationCapacity|SelfHostEntropyReadCompletion|SelfHostStringBytesAllocationCapacity|RandomBytesLargeFill)$",
+    "-count=1",
+    "-timeout=12m",
+    "-json"
+  ],
+  "started": "2026-11-10T18:49:49.345355+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T18:50:25.266110+00:00",
+  "failures": [],
+  "skips": 0
+}

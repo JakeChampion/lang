@@ -1,0 +1,83 @@
+import "std/audio/mp4/tables";
+import "std/audio/pcm";
+import "std/test";
+
+function linear(media: [tables.Media], at: i64, bytes: i32): boolean {
+  if (at < 0i64 || bytes < 1) {
+    return false;
+  }
+  for box in media {
+    if (at >= box.start && at <= box.end && bytes as i64 <= box.end - at) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function admission(media: [tables.Media], at: i64, bytes: i32): boolean {
+  let actual = tables.packets([bytes], [at], [tables.Run { first: 1, count: 1, description: 0 }], [tables.Time { count: 1, duration: 3u32 }], media, 1);
+  let expected = linear(media, at, bytes);
+  return match (actual) {
+    Ok(packets) => expected && packets.len() == 1 && packets[0].offset == at && packets[0].bytes == bytes,
+    Err(pcm.Header) => !expected,
+    Err(_) => false,
+  };
+}
+
+function padded(media: tables.Media[], end: i64): tables.Media[] {
+  for _ in 0..16 {
+    media = media.append(tables.Media { start: end, end: end });
+  }
+  return media;
+}
+
+pub function reference(): test.TestOutcome {
+  let ordered = [tables.Media { start: 0i64, end: 0i64 }, tables.Media { start: 8i64, end: 13i64 }, tables.Media { start: 21i64, end: 29i64 }, tables.Media { start: 29i64, end: 29i64 }, tables.Media { start: 29i64, end: 34i64 }, tables.Media { start: 34i64, end: 34i64 }];
+  let reversed = [ordered[5], ordered[4], ordered[3], ordered[2], ordered[1], ordered[0]];
+  let overlaps = [tables.Media { start: 8i64, end: 34i64 }, tables.Media { start: 21i64, end: 29i64 }, ordered[2], ordered[3], ordered[4]];
+  for media in [[], ordered, padded(ordered, 34i64), padded(reversed, 34i64), padded(overlaps, 34i64), padded([tables.Media { start: -1i64, end: 5i64 }, tables.Media { start: 10i64, end: 9i64 }], 34i64)] {
+    for at in -1..36 {
+      for bytes in -1..11 {
+        if (!admission(media, at as i64, bytes)) {
+          return test.fail("media containment differs from the linear reference");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+pub function wide(): test.TestOutcome {
+  let top = 9223372036854775807i64;
+  let media = padded([tables.Media { start: 8589934592i64, end: 8589934608i64 }, tables.Media { start: top - 16i64, end: top }], top);
+  for at in [8589934591i64, 8589934592i64, 8589934607i64, 8589934608i64, top - 17i64, top - 16i64, top - 1i64, top] {
+    for bytes in [1, 2, 16, 17, 2147483647] {
+      if (!admission(media, at, bytes)) {
+        return test.fail("wide media boundary or end overflow");
+      }
+    }
+  }
+  return test.pass();
+}
+
+pub function chunk_order(): test.TestOutcome {
+  let media: tables.Media[] = [];
+  for i in 0..257 {
+    let at = 8589934592i64 + i as i64 * 16i64;
+    media = media.append(tables.Media { start: at, end: at + 8i64 });
+  }
+  let offsets = [media[256].start, media[0].start, media[128].start, media[1].start];
+  let Ok(packets) = tables.packets([3, 5, 3, 5, 3, 5, 3, 5], offsets, [tables.Run { first: 1, count: 2, description: 0 }], [tables.Time { count: 8, duration: 7u32 }], media, 1) else {
+    return test.fail("non-monotonic chunks require independent searches");
+  };
+  if (packets.len() != 8) {
+    return test.fail("packet count");
+  }
+  for i in 0..packets.len() {
+    let p = packets[i];
+    if (p.offset != offsets[i / 2] + (if (i % 2 == 0) { 0i64 } else { 3i64 }) || p.position != i as i64 * 7i64 || p.duration != 7u32 || p.description != 0) {
+      return test.fail("packet offsets, descriptions, or decoding times changed");
+    }
+  }
+  return test.pass();
+}

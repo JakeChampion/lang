@@ -1,0 +1,12 @@
+{
+  "time": "2026-11-10T17:46:03.526306+00:00",
+  "decision": "REJECT receiver union index optimization. Remove only new helper and its two call sites, keep existing union index, raw API, receiver regression and kernel fixture repair.",
+  "reason": "Fixed cold checker comparison has candidate slower in7of8 CPU pairs and median11.8509315->13.11891s (+10.6994%). Other workload gains and historical0e/99Ir reduction do not justify unresolved compilation cost. No unique layout/timing cause established.",
+  "source_pair": {
+    "baseline": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+    "candidate": "67b216378af4117cde0de6dc92a373a7636cccd2"
+  },
+  "normal_and_count_commands": 84,
+  "sample_extension": false,
+  "instruction_plan": "Stop the incomplete current instrumented run and remaining unstarted matrix after this rejection. Preserve every partial trace/log/state, and do not claim a completed instruction comparison for this source. No additional timing retries."
+}

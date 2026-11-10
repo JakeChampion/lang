@@ -284,6 +284,7 @@ function main(): i32 {
   unsafe {
     __irq_unmask();
   }
+  // Each process visits both cores before it repeats on either core.
   // The slot on core 1, or -1, and the next slot to try on either core.
   let posted = -1;
   let next = 0;
@@ -293,7 +294,7 @@ function main(): i32 {
     if (posted < 0) {
       for k in 0..slots.len() {
         let i = (next + k) % slots.len();
-        if (posted < 0 && !slots[i].done) {
+        if (posted < 0 && !slots[i].done && (!slots[i].there || slots[i].here)) {
           slots[i].p.post(c);
           posted = i;
           next = i + 1;
@@ -303,7 +304,7 @@ function main(): i32 {
     let i = -1;
     for k in 0..slots.len() {
       let j = (next + k) % slots.len();
-      if (i < 0 && j != posted && !slots[j].done) {
+      if (i < 0 && j != posted && !slots[j].done && (!slots[j].here || slots[j].there)) {
         i = j;
       }
     }
@@ -325,11 +326,11 @@ function main(): i32 {
       if (s.done) {
         live -= 1;
       }
-      if (again) {
+      if (again && s.here) {
         s.p.post(c);
       }
       slots = slots.with(posted, s);
-      if (!again) {
+      if (!again || !s.here) {
         posted = -1;
       }
     }

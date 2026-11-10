@@ -1,0 +1,13 @@
+{
+  "source": "63d33384bb4261faa38f4436b4abf4d52a9b9542",
+  "args": [
+    "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261110-1845/retained-normal",
+    "-check",
+    "compiler/fern.fern",
+    "internal/stdlib"
+  ],
+  "binary_sha256": "76f026a1ffd7f056d6e862d1dd4f514d4077abc5c9a99c692ebafc7444cf3b9c",
+  "started": "2026-11-10T18:45:21.504176+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T18:45:41.258202+00:00"
+}

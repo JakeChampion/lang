@@ -1,0 +1,2 @@
+main.fern:6:15: error[E095]: unsafe function "danger" is called outside an unsafe block
+main.fern:7:21: error[E095]: unsafe function "two" is called outside an unsafe block

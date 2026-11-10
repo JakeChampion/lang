@@ -1,0 +1,31 @@
+import "../../compiler/x86_native";
+import "../../compiler/elf";
+import "../../compiler/elfimage";
+
+function main(): i32 {
+  let av = args();
+  if (av.len() != 3) {
+    return 2;
+  }
+  let src = match (read_file(av[1])) { Ok(value) => value, Err(_) => { return 3; } };
+  let words: u8[] = [];
+  let a = x86_native.x86_gas_assemble_words_unlinked(src, words);
+  if (a.unknown.len() > 0) {
+    eprint(a.unknown[0]);
+    return 4;
+  }
+  let image = elfimage.x86_elf_binary(src, words, false, "", "", false);
+  if (image.len() == 0) {
+    return 5;
+  }
+  match (write_file(av[2], image)) { Ok(_) => {}, Err(_) => { return 5; } }
+  let end = x86_native.x86_code_len(a);
+  let names = elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let offsets = elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let sizes = elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let base = elf.elf_x86_wx_text_vaddr();
+  for i in 0..names.len() {
+    print(names[i] + "\t" + (base + offsets[i]).to_string() + "\t" + sizes[i].to_string());
+  }
+  return 0;
+}

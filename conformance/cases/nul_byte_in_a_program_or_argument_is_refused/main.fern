@@ -1,0 +1,10 @@
+// A program name or an argument with a NUL byte does not start a process.
+// The kernel reads each up to the first NUL, so `/bin/sh\0/nonexistent`
+// would run `/bin/sh`.
+function main(): i32 {
+    let a = subprocess("/bin/sh\0/nonexistent", ["-c", "echo ran"], "");
+    print(f"program: {a.exit_code} [{a.stdout}]");
+    let b = subprocess("/bin/echo", ["a\0b"], "");
+    print(f"argument: {b.exit_code} [{b.stdout}]");
+    return 0;
+}

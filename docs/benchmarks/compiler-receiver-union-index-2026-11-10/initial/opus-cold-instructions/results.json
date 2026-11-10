@@ -1,0 +1,105 @@
+{
+  "baseline_source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "candidate_source": "99fda7a649924cdc341f014f52e1d4ab9a6ad0f4",
+  "fixed_input_source": "0e715dffcb9220479b3b6b5dc2055c81cd990497",
+  "order": [
+    "candidate",
+    "baseline"
+  ],
+  "runs": [
+    {
+      "label": "candidate-source-check",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/cand/fern",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-checker-union-candidate-20261110-1600",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T16:09:32.102395+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:10:00.156170+00:00"
+    },
+    {
+      "label": "candidate",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/candidate.callgrind",
+        "--log-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/candidate.valgrind.log",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/cand/opus",
+        "/workspace/lang-compiler-main-20261110-1540/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1540/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T16:10:00.196542+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T16:15:49.261776+00:00",
+      "guest_instructions": 16150097649,
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "baseline",
+      "args": [
+        "/workspace/scratch/lang-valgrind-20261109/root/usr/bin/valgrind",
+        "--tool=callgrind",
+        "--cache-sim=no",
+        "--branch-sim=no",
+        "--trace-children=no",
+        "--callgrind-out-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/baseline.callgrind",
+        "--log-file=/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/baseline.valgrind.log",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-20261110-1600/opus-cold-instructions/base/opus",
+        "/workspace/lang-compiler-main-20261110-1540/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1540/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1540",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0",
+        "VALGRIND_LIB": "/workspace/scratch/lang-valgrind-20261109/root/usr/libexec/valgrind"
+      },
+      "started": "2026-11-10T16:15:49.376834+00:00",
+      "exit_code": 126,
+      "finished": "2026-11-10T16:15:49.387005+00:00"
+    }
+  ],
+  "note": "One normal guest-instruction pair for complete cold Opus compilation. Equal-length copied compiler/output paths. Targeted tests and separate counter builds may overlap. No timing claim from these instrumented runs.",
+  "tool_version": "valgrind-3.24.0",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "binary_sha256": {
+    "baseline": "0bdb3058b58b9e958199425fd0502d95756a6d47ee62f7acf6610a77e2ee1848",
+    "candidate": "6e466f52606ef08df19795c11c43419d9970481114d42eab3ac3b0fde831023f"
+  },
+  "input_sha256": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+  "stdlib_tree": "6a60304dd15c97b83f8a67dd5f006c77cb78edcf",
+  "exit_code": 1,
+  "error": "AssertionError()",
+  "finished": "2026-11-10T16:15:49.387625+00:00"
+}

@@ -1,0 +1,13 @@
+{
+  "source": "c02d2b4c1b2e3232da1dc4f7575383a65c3d9eaa",
+  "args": [
+    "/workspace/lang-checker-union-index-20261110-1540/build/retained-validation-20261110-1750/retained-normal",
+    "-check",
+    "compiler/fern.fern",
+    "internal/stdlib"
+  ],
+  "binary_sha256": "68e415467a0d3b40323959c689318c918d9a2adc8415d58e834dde17de914a83",
+  "started": "2026-11-10T17:57:53.121511+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T17:58:19.138206+00:00"
+}

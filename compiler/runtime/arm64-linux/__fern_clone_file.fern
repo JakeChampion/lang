@@ -1,4 +1,10 @@
 function __fern_clone_file(src: string, dest: string): Result[void, IoError] {
+  if (__count_byte(src, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(src, src.len())));
+  }
+  if (__count_byte(dest, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(dest, dest.len())));
+  }
   let slen = src.len();
   let srcz = __raw_alloc(slen + 1);
   let j = 0;

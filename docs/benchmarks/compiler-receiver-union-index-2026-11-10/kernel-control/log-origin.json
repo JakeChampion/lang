@@ -1,0 +1,8 @@
+{
+  "tool_decoded_bytes": 326267,
+  "tool_decoded_sha256": "f6223aa0ea43fee41789f0c44ab7c980c8ddb60606d52272f124dc94e28b2236",
+  "initial_write_bytes": 326268,
+  "initial_write_sha256": "36d03610a359a28cc6c32ce7da51025f7b1262caf0304ecce87e0bd7e76c446d",
+  "initial_exact": false,
+  "correction": "Remove only transport-added final newline to preserve exact decoded tool text."
+}

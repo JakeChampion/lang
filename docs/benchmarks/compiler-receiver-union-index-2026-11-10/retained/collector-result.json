@@ -1,0 +1,47 @@
+{
+  "baseline": "e4494347c2f16a96727563c4495bd9826fdfadd0",
+  "candidate": "c02d2b4c1b2e3232da1dc4f7575383a65c3d9eaa",
+  "runs": [
+    {
+      "label": "quick.py",
+      "started": "2026-11-10T17:52:30.378211+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:52:52.155909+00:00"
+    },
+    {
+      "label": "build.py",
+      "started": "2026-11-10T17:52:52.156543+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T17:55:27.751361+00:00"
+    },
+    {
+      "label": "validate.py",
+      "started": "2026-11-10T17:55:27.753010+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:03:19.128604+00:00"
+    },
+    {
+      "label": "ci-selftest",
+      "started": "2026-11-10T18:03:19.130018+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T18:04:16.959933+00:00"
+    },
+    {
+      "label": "normal-full-correctness",
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/retained-validation-20261110-1750/retained-normal",
+        "-stdlib",
+        "/workspace/lang-compiler-main-20261110-1750/internal/stdlib",
+        "-interp",
+        "/workspace/lang-compiler-main-20261110-1750/tests/stdlib/opus_delimited_test.fern"
+      ],
+      "started": "2026-11-10T18:04:16.961574+00:00",
+      "note": "No paired timing or normal-run leak claim. Original1980s diagnostic budget.",
+      "exit_code": 0,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+      "finished": "2026-11-10T18:07:53.871297+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T18:07:53.872301+00:00"
+}

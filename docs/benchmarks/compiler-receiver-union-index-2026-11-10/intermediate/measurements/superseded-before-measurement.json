@@ -1,0 +1,6 @@
+{
+  "time": "2026-11-10T16:35:09.283198+00:00",
+  "pid": 100250,
+  "reason": "Correct generated-output policy before any measurement. Waiter never executed any workload.",
+  "timed_commands": 0
+}

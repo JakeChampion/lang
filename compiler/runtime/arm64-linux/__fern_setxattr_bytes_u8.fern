@@ -1,4 +1,10 @@
 function __fern_setxattr_bytes_u8(path: string, name: string, value: i32[]): Result[void, IoError] {
+  if (__count_byte(name, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(name, name.len())));
+  }
+  if (__count_byte(path, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));
+  }
   let vlen = value.len();
   let vp = __raw_arr_ptr(value) + 8;
   let nlen = name.len();

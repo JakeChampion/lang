@@ -1,0 +1,8 @@
+write_file: refused
+read_file: refused
+read_file_bytes: refused
+create_dir: refused
+remove_file: refused
+rename from: refused
+rename to: refused
+stat: refused

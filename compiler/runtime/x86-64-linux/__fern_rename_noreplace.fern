@@ -1,4 +1,10 @@
 function __fern_rename_noreplace(old: string, newp: string): Result[void, IoError] {
+  if (__count_byte(old, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(old, old.len())));
+  }
+  if (__count_byte(newp, 0) > 0) {
+    return Err(__fern_io_error(22, __fern_path_copy(newp, newp.len())));
+  }
   let olen = old.len();
   let oldz = __raw_alloc(olen + 1);
   let j = 0;

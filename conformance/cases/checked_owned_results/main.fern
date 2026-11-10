@@ -1,4 +1,5 @@
 // spec: OR-01
+
 import "core/map";
 
 struct Box { values: u8[] }

@@ -1,0 +1,9 @@
+{
+  "head": "1a4847e9ebee824b2e0b972c5908c20b0fdc9057",
+  "expected_remote": "3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+  "actual_main": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "note": "Publish the validated test-only CI repair promptly. Incoming main E098 diagnostics require later guarded integration and source-scoped requalification. Current fixed measurement sweep stays on immutable515d/3d51 and does not qualify that future integration.",
+  "started": "2026-11-10T17:02:55.321649+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-10T17:02:58.163207+00:00"
+}

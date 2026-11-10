@@ -1,0 +1,15 @@
+{
+  "failures": [
+    {
+      "command": "git worktree add --detach /workspace/lang-compiler-main-20261110-1632 515ddee8d0c06db2b94b4f3a86f3bf1c59cd2909",
+      "returncode": 128,
+      "detail": "Captured stderr was not persisted by the first caller. No worktree remains registered at this destination."
+    },
+    {
+      "command": "git worktree add --detach /workspace/lang-checker-union-candidate-20261110-1633 3d51e1880abc5025731f23772f1a343fe9c7fcbf",
+      "returncode": 128,
+      "exact_error_excerpt": "fatal: cannot create directory at 'docs/benchmarks/video-avc-ci-2026-11-09': No space left on device"
+    }
+  ],
+  "resolution": "New immutable snapshots hard-link unchanged tracked source files. All existing worktrees and ignored archives remain intact. No old data deletion or recovery."
+}

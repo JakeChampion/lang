@@ -1,4 +1,7 @@
 function __fern_unix_listen(path: string, backlog: i32): i32 {
+  if (path.len() > 0 && path[0] != 0 && __count_byte(path, 0) > 0) {
+    return -22;
+  }
   if (path.len() > 107) {
     return -36;
   }

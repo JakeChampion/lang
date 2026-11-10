@@ -4501,7 +4501,7 @@ function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
   return left;
 }
 
-function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
+function pipe_desugar(left: ast.Expr, right: ast.Expr, line: i32, col: i32): ast.Expr {
   match (right) {
     ast.ExprCall(c) => {
       let hole: i32 = -1;
@@ -4523,13 +4523,13 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
             subst = subst.append(c.args[si]);
           }
         }
-        return e_call(c.callee, subst);
+        return e_call_at(c.callee, subst, c.line, c.col);
       }
-      return e_call(c.callee, pipe_prepend(left, c.args));
+      return e_call_at(c.callee, pipe_prepend(left, c.args), c.line, c.col);
     },
     _ => {
       let one: ast.Expr[] = [left];
-      return e_call(right, one);
+      return e_call_at(right, one, line, col);
     }
   }
 }
@@ -4564,6 +4564,8 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
   p = left_p;
   let acc = left_expr;
   while (p.peek_punct() == "|>") {
+    let pipe_line = p.peek_line();
+    let pipe_col = p.peek_col();
     p = p.advance();
     let (right_expr, right_p) = parse_range(p);
     p = right_p;
@@ -4571,7 +4573,7 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
       acc = e_binary("|>", acc, right_expr);
       continue;
     }
-    acc = pipe_desugar(acc, right_expr);
+    acc = pipe_desugar(acc, right_expr, pipe_line, pipe_col);
   }
   return (acc, p);
 }

@@ -1,0 +1,2939 @@
+{
+  "started": "2026-11-10T17:15:25.216753+00:00",
+  "baseline_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "candidate_source": "67b216378af4117cde0de6dc92a373a7636cccd2",
+  "fixed_input_source": "b442b6b93ad733a8e71e972fd0ee31620ee497a3",
+  "design": "Eight fixed pairs per workload and proof-cache mode. Four each order. No sample extension. Equal-length compiler paths. Separate caches per compiler/workload. Actual normal verifier defaults. All samples retained.",
+  "limits": "Shared host. No CPU/frequency isolation. Small read-only CI requests can overlap. Source snapshots and collector scripts precede timings. No other local build, test or instrumentation job overlaps. Instrumented allocation/instruction runs follow normal timings.",
+  "runs": [
+    {
+      "label": "opus-candidate-prime",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:32:10.927075+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4617864468,
+      "cpu_user": 4.457183,
+      "cpu_system": 0.154967,
+      "peak_rss_kib": 199828,
+      "finished": "2026-11-10T17:32:15.545750+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-candidate-probe",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T17:32:15.566989+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4003393651,
+      "cpu_user": 3.834532,
+      "cpu_system": 0.16813799999999998,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:32:19.571547+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "cache_hits": 112,
+      "cache_misses": 0
+    },
+    {
+      "label": "opus-baseline-prime",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:32:19.592974+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4139554668,
+      "cpu_user": 4.015943,
+      "cpu_system": 0.12264499999999999,
+      "peak_rss_kib": 199828,
+      "finished": "2026-11-10T17:32:23.733076+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-baseline-probe",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T17:32:23.753969+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4155745894,
+      "cpu_user": 4.030278,
+      "cpu_system": 0.12383599999999999,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:32:27.910367+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "cache_hits": 112,
+      "cache_misses": 0
+    },
+    {
+      "label": "opus-cold-0-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:27.939005+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4077174585,
+      "cpu_user": 3.974631,
+      "cpu_system": 0.099977,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:32.017591+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-0-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:32.034824+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4354821682,
+      "cpu_user": 4.294082,
+      "cpu_system": 0.059968,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:36.390196+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-1-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:36.410582+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4647681412,
+      "cpu_user": 4.56269,
+      "cpu_system": 0.08365299999999999,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:41.058768+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-1-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:41.077212+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4083745176,
+      "cpu_user": 4.001152,
+      "cpu_system": 0.080367,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:45.161475+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-2-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:45.180918+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4186673206,
+      "cpu_user": 4.108077,
+      "cpu_system": 0.077706,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:49.368143+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-2-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:49.386512+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4302220763,
+      "cpu_user": 4.191554,
+      "cpu_system": 0.107953,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:53.689434+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-3-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:53.708603+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4110182717,
+      "cpu_user": 4.011418,
+      "cpu_system": 0.098148,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:32:57.819590+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-3-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:32:57.839765+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4433389852,
+      "cpu_user": 4.313798,
+      "cpu_system": 0.11924699999999999,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:02.273843+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-4-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:02.291832+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4048025523,
+      "cpu_user": 3.976827,
+      "cpu_system": 0.070476,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:06.340604+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-4-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:06.360463+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4167665665,
+      "cpu_user": 4.081659,
+      "cpu_system": 0.085274,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:10.529000+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-5-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:10.549163+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4204714019,
+      "cpu_user": 4.138428,
+      "cpu_system": 0.06544699999999999,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:14.754800+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-5-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:14.774077+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4034486919,
+      "cpu_user": 3.961061,
+      "cpu_system": 0.07226099999999999,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:18.809477+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-6-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:18.826555+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 3977641036,
+      "cpu_user": 3.873862,
+      "cpu_system": 0.10285,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:22.805052+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-6-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:22.823566+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4575863929,
+      "cpu_user": 4.470839,
+      "cpu_system": 0.104613,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:27.401154+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-7-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:27.420412+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4230115977,
+      "cpu_user": 4.154214,
+      "cpu_system": 0.075291,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:31.651339+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-cold-7-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:33:31.671713+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 3939048002,
+      "cpu_user": 3.863787,
+      "cpu_system": 0.07467,
+      "peak_rss_kib": 167572,
+      "finished": "2026-11-10T17:33:35.611642+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-0-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:33:35.629564+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4084923915,
+      "cpu_user": 4.019184,
+      "cpu_system": 0.065082,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:33:39.715302+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-0-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:33:39.733053+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 3946579122,
+      "cpu_user": 3.867302,
+      "cpu_system": 0.077958,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:33:43.680323+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-1-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:33:43.699818+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4025003818,
+      "cpu_user": 3.9350870000000002,
+      "cpu_system": 0.087799,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:33:47.725764+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-1-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:33:47.744037+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4106629489,
+      "cpu_user": 4.010645,
+      "cpu_system": 0.09519599999999999,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:33:51.851476+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-2-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:33:51.870588+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4137108320,
+      "cpu_user": 4.02465,
+      "cpu_system": 0.110986,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:33:56.008452+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-2-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:33:56.026520+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4161122664,
+      "cpu_user": 4.091108,
+      "cpu_system": 0.06935999999999999,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:00.188579+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-3-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:00.208170+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4003930975,
+      "cpu_user": 3.90763,
+      "cpu_system": 0.095646,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:04.213723+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-3-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:34:04.232863+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4518607371,
+      "cpu_user": 4.424516,
+      "cpu_system": 0.09258999999999999,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:08.752394+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-4-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:34:08.771515+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4174514836,
+      "cpu_user": 4.031988,
+      "cpu_system": 0.141434,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:12.947056+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-4-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:12.969429+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 3969982870,
+      "cpu_user": 3.876704,
+      "cpu_system": 0.09257,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:16.940585+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-5-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:16.960912+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 3881649179,
+      "cpu_user": 3.812795,
+      "cpu_system": 0.067763,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:20.843625+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-5-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:34:20.862531+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4055634200,
+      "cpu_user": 3.965535,
+      "cpu_system": 0.086628,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:24.919383+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-6-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:34:24.936940+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4190527883,
+      "cpu_user": 4.117132,
+      "cpu_system": 0.072729,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:29.128469+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-6-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:29.146863+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4063794561,
+      "cpu_user": 3.9641919999999997,
+      "cpu_system": 0.098633,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:33.211758+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-7-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:33.235488+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 4107557009,
+      "cpu_user": 4.009663,
+      "cpu_system": 0.096907,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:37.344380+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "opus-warm-7-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-memo-baseline"
+      },
+      "started": "2026-11-10T17:34:37.364659+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 4346193180,
+      "cpu_user": 4.251356,
+      "cpu_system": 0.094021,
+      "peak_rss_kib": 167060,
+      "finished": "2026-11-10T17:34:41.712352+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1"
+    },
+    {
+      "label": "checker-candidate-prime",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:34:41.732205+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 12749610096,
+      "cpu_user": 11.826154,
+      "cpu_system": 0.920773,
+      "peak_rss_kib": 611860,
+      "finished": "2026-11-10T17:34:54.482923+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-candidate-probe",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T17:34:54.505947+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 11105537709,
+      "cpu_user": 10.342612,
+      "cpu_system": 0.762343,
+      "peak_rss_kib": 577044,
+      "finished": "2026-11-10T17:35:05.612582+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "cache_hits": 2440,
+      "cache_misses": 0
+    },
+    {
+      "label": "checker-baseline-prime",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:35:05.643343+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 12074090238,
+      "cpu_user": 11.545836,
+      "cpu_system": 0.526618,
+      "peak_rss_kib": 611860,
+      "finished": "2026-11-10T17:35:17.718403+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-baseline-probe",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline",
+        "FERN_IR_VERIFY": "1"
+      },
+      "started": "2026-11-10T17:35:17.741014+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 8977336587,
+      "cpu_user": 8.686723,
+      "cpu_system": 0.289634,
+      "peak_rss_kib": 577044,
+      "finished": "2026-11-10T17:35:26.719763+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "cache_hits": 2440,
+      "cache_misses": 0
+    },
+    {
+      "label": "checker-cold-0-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:35:26.741815+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 12488292557,
+      "cpu_user": 12.214051,
+      "cpu_system": 0.272743,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:35:39.231285+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-0-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:35:39.254577+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11673167245,
+      "cpu_user": 11.372334,
+      "cpu_system": 0.297844,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:35:50.929074+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-1-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:35:50.954023+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11845704253,
+      "cpu_user": 11.556028,
+      "cpu_system": 0.288469,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:36:02.803251+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-1-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:36:02.827329+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 13794535185,
+      "cpu_user": 13.486447,
+      "cpu_system": 0.307141,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:36:16.623247+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-2-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:36:16.648064+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 12817808174,
+      "cpu_user": 12.404464,
+      "cpu_system": 0.411452,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:36:29.467204+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-2-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:36:29.491649+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11858645319,
+      "cpu_user": 11.566256,
+      "cpu_system": 0.29111,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:36:41.352032+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-3-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:36:41.374830+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 12934256073,
+      "cpu_user": 12.528857,
+      "cpu_system": 0.401729,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:36:54.310758+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-3-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:36:54.334536+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 13268696826,
+      "cpu_user": 12.924241,
+      "cpu_system": 0.34234699999999996,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:37:07.604896+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-4-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:37:07.628663+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 13694785643,
+      "cpu_user": 13.320753,
+      "cpu_system": 0.373455,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:37:21.324982+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-4-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:37:21.349261+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11624659962,
+      "cpu_user": 11.317994,
+      "cpu_system": 0.304539,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:37:32.975493+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-5-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:37:33.004482+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11738223731,
+      "cpu_user": 11.397818000000001,
+      "cpu_system": 0.338935,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:37:44.745162+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-5-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:37:44.776441+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 13228448242,
+      "cpu_user": 12.719866,
+      "cpu_system": 0.501365,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:37:58.007036+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-6-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:37:58.037311+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 13018119893,
+      "cpu_user": 12.58726,
+      "cpu_system": 0.42932899999999996,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:38:11.057255+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-6-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:38:11.090908+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 12122591707,
+      "cpu_user": 11.65858,
+      "cpu_system": 0.461215,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:38:23.214829+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-7-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:38:23.247958+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 12335843744,
+      "cpu_user": 11.922766,
+      "cpu_system": 0.410309,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:38:35.585891+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-cold-7-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:38:35.621228+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 12185467084,
+      "cpu_user": 11.66672,
+      "cpu_system": 0.51743,
+      "peak_rss_kib": 579476,
+      "finished": "2026-11-10T17:38:47.808302+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-0-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:38:47.847323+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 9464983535,
+      "cpu_user": 9.062145,
+      "cpu_system": 0.399364,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:38:57.314419+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-0-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:38:57.346140+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 9318754857,
+      "cpu_user": 8.931312,
+      "cpu_system": 0.38558499999999996,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:06.666890+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-1-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:39:06.700657+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 9089346835,
+      "cpu_user": 8.699025,
+      "cpu_system": 0.388825,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:15.791722+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-1-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:39:15.829727+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 9262312030,
+      "cpu_user": 8.840372,
+      "cpu_system": 0.42086599999999996,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:25.093542+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-2-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:39:25.119297+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 9610373438,
+      "cpu_user": 9.226992,
+      "cpu_system": 0.38237699999999997,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:34.731603+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-2-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:39:34.781966+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 10035045354,
+      "cpu_user": 9.675241,
+      "cpu_system": 0.358653,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:44.819637+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-3-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:39:44.849010+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 11597128253,
+      "cpu_user": 10.82552,
+      "cpu_system": 0.7687879999999999,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:39:56.447981+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-3-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:39:56.483107+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 10507751355,
+      "cpu_user": 9.978118,
+      "cpu_system": 0.528929,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:06.993160+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-4-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:40:07.021238+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11708322033,
+      "cpu_user": 10.873849,
+      "cpu_system": 0.8286779999999999,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:18.731783+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-4-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:40:18.761039+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 9581212924,
+      "cpu_user": 9.192682,
+      "cpu_system": 0.387104,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:28.344510+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-5-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:40:28.371298+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 9402507953,
+      "cpu_user": 9.109483,
+      "cpu_system": 0.292226,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:37.775402+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-5-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:40:37.802725+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 9807996088,
+      "cpu_user": 9.42175,
+      "cpu_system": 0.38518199999999997,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:47.612887+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-6-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:40:47.649972+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 11101145050,
+      "cpu_user": 10.608325,
+      "cpu_system": 0.486127,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:40:58.752999+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-6-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:40:58.786348+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 10372774752,
+      "cpu_user": 10.00903,
+      "cpu_system": 0.35919999999999996,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:41:09.161424+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-7-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-candidate"
+      },
+      "started": "2026-11-10T17:41:09.191526+00:00",
+      "compiler_sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11",
+      "exit_code": 0,
+      "wall_ns": 10607098857,
+      "cpu_user": 10.227151,
+      "cpu_system": 0.374218,
+      "peak_rss_kib": 576788,
+      "finished": "2026-11-10T17:41:19.800299+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "checker-warm-7-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": false,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-memo-baseline"
+      },
+      "started": "2026-11-10T17:41:19.839322+00:00",
+      "compiler_sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb",
+      "exit_code": 0,
+      "wall_ns": 13806693832,
+      "cpu_user": 13.205097,
+      "cpu_system": 0.599857,
+      "peak_rss_kib": 576916,
+      "finished": "2026-11-10T17:41:33.648280+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+    },
+    {
+      "label": "opus-count-cold-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:41:33.680769+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 6023314282,
+      "cpu_user": 5.867608,
+      "cpu_system": 0.151029,
+      "peak_rss_kib": 170576,
+      "finished": "2026-11-10T17:41:39.706968+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27673733,
+      "frees": 27673733,
+      "live_bytes": 0
+    },
+    {
+      "label": "opus-count-prime-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-count-memo-baseline"
+      },
+      "started": "2026-11-10T17:41:39.737747+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 5044031642,
+      "cpu_user": 4.886725,
+      "cpu_system": 0.15631,
+      "peak_rss_kib": 202832,
+      "finished": "2026-11-10T17:41:44.783955+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27675428,
+      "frees": 27675428,
+      "live_bytes": 0
+    },
+    {
+      "label": "opus-count-warm-baseline",
+      "compiler": "baseline",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-count-memo-baseline"
+      },
+      "started": "2026-11-10T17:41:44.820977+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 8215167298,
+      "cpu_user": 8.003151,
+      "cpu_system": 0.208552,
+      "peak_rss_kib": 170192,
+      "finished": "2026-11-10T17:41:53.038171+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27575501,
+      "frees": 27575501,
+      "live_bytes": 0
+    },
+    {
+      "label": "opus-count-cold-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:41:53.165603+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 6135371447,
+      "cpu_user": 5.915986,
+      "cpu_system": 0.21722999999999998,
+      "peak_rss_kib": 170576,
+      "finished": "2026-11-10T17:41:59.303682+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27673733,
+      "frees": 27673733,
+      "live_bytes": 0
+    },
+    {
+      "label": "opus-count-prime-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-count-memo-candidate"
+      },
+      "started": "2026-11-10T17:41:59.326801+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 5107137206,
+      "cpu_user": 4.9905349999999995,
+      "cpu_system": 0.115781,
+      "peak_rss_kib": 202832,
+      "finished": "2026-11-10T17:42:04.435988+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27675427,
+      "frees": 27675427,
+      "live_bytes": 0
+    },
+    {
+      "label": "opus-count-warm-candidate",
+      "compiler": "candidate",
+      "workload": "opus",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-reference",
+        "/workspace/lang-compiler-main-20261110-1705/tests/stdlib/opus_delimited_test.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/opus-count-memo-candidate"
+      },
+      "started": "2026-11-10T17:42:04.466705+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 4922917192,
+      "cpu_user": 4.825846,
+      "cpu_system": 0.096514,
+      "peak_rss_kib": 170192,
+      "finished": "2026-11-10T17:42:09.392402+00:00",
+      "output_sha256": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+      "allocs": 27575500,
+      "frees": 27575500,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-cold-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:42:09.417644+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 13632999512,
+      "cpu_user": 13.337258,
+      "cpu_system": 0.295037,
+      "peak_rss_kib": 582480,
+      "finished": "2026-11-10T17:42:23.052765+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 50276354,
+      "frees": 50276354,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-prime-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-count-memo-baseline"
+      },
+      "started": "2026-11-10T17:42:23.088954+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 15751631158,
+      "cpu_user": 15.296089,
+      "cpu_system": 0.45272399999999996,
+      "peak_rss_kib": 614864,
+      "finished": "2026-11-10T17:42:38.843581+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 50375990,
+      "frees": 50375990,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-warm-baseline",
+      "compiler": "baseline",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/baseline-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-count-memo-baseline"
+      },
+      "started": "2026-11-10T17:42:38.872003+00:00",
+      "compiler_sha256": "8f0f243981a07048fd135bea409315b0029536a0717b188861417d12445031ba",
+      "exit_code": 0,
+      "wall_ns": 10132409070,
+      "cpu_user": 9.834894,
+      "cpu_system": 0.295929,
+      "peak_rss_kib": 580048,
+      "finished": "2026-11-10T17:42:49.006746+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 38753454,
+      "frees": 38753454,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-cold-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T17:42:49.211805+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 13966201688,
+      "cpu_user": 13.651795,
+      "cpu_system": 0.311874,
+      "peak_rss_kib": 582480,
+      "finished": "2026-11-10T17:43:03.181757+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 50276354,
+      "frees": 50276354,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-prime-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-count-memo-candidate"
+      },
+      "started": "2026-11-10T17:43:03.217561+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 13761290705,
+      "cpu_user": 13.362178,
+      "cpu_system": 0.39776799999999995,
+      "peak_rss_kib": 614864,
+      "finished": "2026-11-10T17:43:16.981731+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 50375990,
+      "frees": 50375990,
+      "live_bytes": 0
+    },
+    {
+      "label": "checker-count-warm-candidate",
+      "compiler": "candidate",
+      "workload": "checker",
+      "counter_build": true,
+      "args": [
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/candidate-count",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-reference",
+        "/workspace/lang-compiler-main-20261110-1705/compiler/checker.fern",
+        "/workspace/lang-compiler-main-20261110-1705/internal/stdlib"
+      ],
+      "cwd": "/workspace/lang-compiler-main-20261110-1705",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/checker-count-memo-candidate"
+      },
+      "started": "2026-11-10T17:43:17.010487+00:00",
+      "compiler_sha256": "f5cb803ef3c58083cb89f57f2b63a5cf931e86904d51b64cbc384b6fb98646d6",
+      "exit_code": 0,
+      "wall_ns": 10312410393,
+      "cpu_user": 9.978497,
+      "cpu_system": 0.332528,
+      "peak_rss_kib": 580048,
+      "finished": "2026-11-10T17:43:27.324949+00:00",
+      "output_sha256": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855",
+      "allocs": 38753454,
+      "frees": 38753454,
+      "live_bytes": 0
+    }
+  ],
+  "binary_identities": {
+    "baseline": {
+      "path": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/base/fern",
+      "sha256": "2e5f1e240051cdab9524725ae17de0bf9526f89d0e4531a4db7473e2f3e636bb"
+    },
+    "candidate": {
+      "path": "/workspace/lang-checker-union-index-20261110-1540/build/qualification-main-20261110-1705/measurements/cand/fern",
+      "sha256": "d2ddeecba67817b65b043e3d12a6f190c91b5190c14fa0703ca9e99fa746bf11"
+    }
+  },
+  "outputs": {
+    "opus": "35ff3ee8e66e1a6b0d4d03ef87fb7b8f71ee3c47c27797a5d7888a78a8a409a1",
+    "checker": "a32a95b6e1546b8fa16ec22ca4486d999722369931643aacd715fa77b34b8855"
+  },
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "host": {
+    "uname": "Linux 244f525928bb 6.18.57 #1 SMP Tue Oct 20 21:56:04 UTC 2026 x86_64 GNU/Linux",
+    "cpuinfo": "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 207\nmodel name\t: INTEL(R) XEON(R) PLATINUM 8573C\nstepping\t: 2\nmicrocode\t: 0x1\ncpu MHz\t\t: 2300.000\ncache size\t: 266240 KB\nphysical id\t: 0\nsiblings\t: 5\ncore id\t\t: 0\ncpu cores\t: 5\napicid\t\t: 0\ninitial apicid\t: 0\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 28\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs taa retbleed bhi spectre_v2_user its\nbogomips\t: 4600.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 46 bits physical, 57 bits virtual\npower management:\n\nprocessor\t: 1\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 207\nmodel name\t: INTEL(R) XEON(R) PLATINUM 8573C\nstepping\t: 2\nmicrocode\t: 0x1\ncpu MHz\t\t: 2300.000\ncache size\t: 266240 KB\nphysical id\t: 0\nsiblings\t: 5\ncore id\t\t: 1\ncpu cores\t: 5\napicid\t\t: 1\ninitial apicid\t: 1\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 28\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs taa retbleed bhi spectre_v2_user its\nbogomips\t: 4600.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 46 bits physical, 57 bits virtual\npower management:\n\nprocessor\t: 2\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 207\nmodel name\t: INTEL(R) XEON(R) PLATINUM 8573C\nstepping\t: 2\nmicrocode\t: 0x1\ncpu MHz\t\t: 2300.000\ncache size\t: 266240 KB\nphysical id\t: 0\nsiblings\t: 5\ncore id\t\t: 2\ncpu cores\t: 5\napicid\t\t: 2\ninitial apicid\t: 2\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 28\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs taa retbleed bhi spectre_v2_user its\nbogomips\t: 4600.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 46 bits physical, 57 bits virtual\npower management:\n\nprocessor\t: 3\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 207\nmodel name\t: INTEL(R) XEON(R) PLATINUM 8573C\nstepping\t: 2\nmicrocode\t: 0x1\ncpu MHz\t\t: 2300.000\ncache size\t: 266240 KB\nphysical id\t: 0\nsiblings\t: 5\ncore id\t\t: 3\ncpu cores\t: 5\napicid\t\t: 3\ninitial apicid\t: 3\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 28\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs taa retbleed bhi spectre_v2_user its\nbogomips\t: 4600.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 46 bits physical, 57 bits virtual\npower management:\n\nprocessor\t: 4\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 207\nmodel name\t: INTEL(R) XEON(R) PLATINUM 8573C\nstepping\t: 2\nmicrocode\t: 0x1\ncpu MHz\t\t: 2300.000\ncache size\t: 266240 KB\nphysical id\t: 0\nsiblings\t: 5\ncore id\t\t: 4\ncpu cores\t: 5\napicid\t\t: 4\ninitial apicid\t: 4\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 28\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs taa retbleed bhi spectre_v2_user its\nbogomips\t: 4600.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 46 bits physical, 57 bits virtual\npower management:\n\n",
+    "processes_before": "    PID    PPID %CPU COMMAND\n      1       0  0.0 tail\n      2       1  0.0 cloud-agent-log\n      3       2  0.0 caas-prefix-tra\n    206       1  0.0 runuser\n    237     206  0.0 rootlesskit\n    247     237  0.0 exe\n    271     237  0.0 slirp4netns\n    280     247  0.0 dockerd\n    301     280  0.1 containerd\n    579       0  0.0 codex\n    906       1  0.0 git\n    946       1  0.0 go\n   7279       1  0.0 git\n   7961       1  0.0 git\n   8423       1  0.0 git\n   8947       1  0.0 git\n   9206       1  0.0 python3\n   9207       1  2.6 fern-normal\n   9709       1  0.0 go\n  10177       1  0.0 e2ecompiler.tes\n  10434       1  0.0 fern-selfhost-x\n  10473       1  0.0 go\n  10521       1  0.0 python3\n  10522       1  2.7 fern-candidate\n  10611       1  0.0 e2ecompiler.tes\n  10868       1  0.0 git\n  10929       1  0.1 fern-selfhost-x\n  11018       1  0.0 git\n  11491       1  0.0 fern-selfhost-x\n  11609       1  0.0 python3\n  11616       1  0.0 bash\n  11617       1  0.0 python3\n  11888       1  0.0 python3\n  12006       1  0.0 git\n  12645       1  0.0 bash\n  13317       1  0.0 python3\n  13440       1  0.0 python3\n  13540       1  0.0 git\n  13717       1  0.0 git\n  13813       1  0.0 python3\n  13922       1  0.0 git\n  13976       1  0.0 python3\n  14160       1  0.0 git\n  14192       1  0.0 python3\n  14320       1  0.0 git\n  14719       1  0.0 python3\n  14819       1  0.0 git\n  15074       1  0.0 git\n  15079       1  0.0 python3\n  15242       1  0.0 git\n  15247       1  0.0 python3\n  15249       1  0.0 bash\n  16661       1  0.0 python3\n  16662       1  0.0 python3\n  16757       1  0.0 python3\n  17055       1  0.0 git\n  17095       1  0.0 python3\n  17102       1  0.0 python3\n  17120       1  0.0 python3\n  17123       1  0.0 bash\n  17850       1  0.0 bash\n  18367       1  0.0 git\n  18407       1  0.0 git\n  18593       1  0.0 git\n  18697       1  0.0 git\n  18751       1  0.0 python3\n  18790       1  0.0 bash\n  18792       1  0.0 bash\n  19970       1  0.0 python3\n  19971       1  0.0 python3\n  20437       1  0.0 python3\n  20733       1  0.0 git\n  21378       1  0.0 bash\n  22135       1  0.0 bash\n  24499       1  0.0 python3\n  24874       1  0.0 python3\n  25128       1  0.0 bash\n  25674       1  0.0 bash\n  27945       1  0.0 git\n  28733       1  0.0 git\n  28825       1  0.0 python3\n  28928       1  0.0 git\n  29209       1  0.0 bash\n  29213       1  0.0 bash\n  31342       1  0.0 git\n  32005       1  0.0 git\n  32015       1  0.0 git\n  32095       1  0.0 git\n  32357       1  0.0 bash\n  32358       1  0.0 bash\n  32751       1  0.0 python3\n  33636       1  0.0 git\n  33764       1  0.0 git\n  33949       1  0.0 git\n  34140       1  0.0 bash\n  34143       1  0.0 bash\n  34826       1  0.0 git\n  35379       1  0.0 git\n  36114       1  0.0 python3\n  36290       1  0.0 bash\n  37330       1  0.0 python3\n  38738       1  0.0 git\n  38846       1  0.0 git\n  39125       1  0.0 git\n  39152       1  0.0 python3\n  39153       1  0.0 python3\n  39687       1  0.0 bash\n  41259       1  0.0 git\n  41321       1  0.0 bash\n  41471       1  0.0 bash\n  43012       1  0.0 git\n  43100       1  0.0 git\n  44289       1  0.0 git\n  45577       1  0.0 python3\n  45740       1  0.0 python3\n  45858       1  0.0 python3\n  45924       1  0.0 python3\n  45939       1  0.0 python3\n  46335       1  0.0 setsid\n  46336       1  0.0 python3\n  46977       1  0.0 setsid\n  46978       1  0.0 python3\n  47054       1  0.0 setsid\n  47055       1  0.0 python3\n  47493       1  0.0 git\n  50311       1  0.0 git\n  52318       1  0.0 git\n  52414       1  0.0 git\n  53582       1  0.0 git\n  53810       1  0.0 git\n  53855       1  0.0 setsid\n  53856       1  0.0 setsid\n  53857       1  0.0 setsid\n  53858       1  0.0 bash\n  53859       1  0.0 bash\n  53861       1  0.0 python3\n  57413       1  0.0 python3\n  57474       1  0.0 python3\n  57484       1  0.0 python3\n  58096       1  0.0 python3\n  58219       1  0.0 python3\n  58642       1  0.0 git\n  60269       1  0.0 python3\n  60949       1  0.0 python3\n  61338       1  0.0 git\n  61374       1  0.0 bash\n  61375       1  0.0 bash\n  64178       1  0.0 git\n  65760       1  0.0 python3\n  66025       1  0.0 python3\n  66140       1  0.0 git\n  66383       1  0.0 git\n  66401       1  0.0 bash\n  66402       1  0.0 bash\n  69351       1  0.0 python3\n  69534       1  0.0 git\n  69704       1  0.0 git\n  71262       1  0.0 python3\n  71340       1  0.0 git\n  71450       1  0.0 bash\n  71451       1  0.0 bash\n  75012       1  0.0 git\n  75635       1  0.0 setsid\n  75636       1  0.0 setsid\n  75637       1  0.0 bash\n  75638       1  0.0 bash\n  76189       1  0.0 setsid\n  76190       1  0.0 python3\n  76298       1  0.0 bash\n  77477       1  0.0 bash\n  78050       1  0.0 git\n  78682       1  0.0 git\n  78732       1  0.0 python3\n  78790       1  0.0 git\n  79302       1  0.0 bash\n  79395       1  0.0 bash\n  84394       1  0.0 git\n  84573       1  0.0 python3\n  85758       1  0.0 git\n  87226       1  0.0 git\n  87467       1  0.0 bash\n  87468       1  0.0 bash\n  87471       1  0.0 python3\n  88180       1  0.0 bash\n  90576       1  0.0 git\n  90707       1  0.0 python3\n  91664       1  0.0 git\n  91826       1  0.0 python3\n  93035       1  0.0 git\n  93174       1  0.0 git\n  93297       1  0.0 python3\n  94175       1  0.0 git\n  94320       1  0.0 python3\n  95164       1  0.0 git\n  95908       1  0.0 git\n  97060       1  0.0 git\n  97187       1  0.0 bash\n  97503       1  0.0 python3\n  97588       1  0.0 git\n  97628       1  0.0 python3\n  98095       1  0.0 python3\n  98409       1  0.0 python3\n  98929       1  0.0 python3\n  99527       1  0.0 python3\n  99705       1  0.0 python3\n  99706       1  0.0 python3\n  99719       1  0.0 git\n  99801       1  0.0 git\n  99915       1  0.0 git\n 100177       1  0.0 python3\n 100250       1  0.0 python3\n 100304       1  0.0 python3\n 100613       1  0.0 python3\n 101240       1  0.0 python3\n 101241       1  0.0 python3\n 101242       1  0.0 python3\n 101438       1  0.0 python3\n 101738       1  0.0 python3\n 102192       1  0.0 python3\n 103265       1  0.0 python3\n 103372       1  0.0 python3\n 106970       1  0.0 python3\n 107230       1  0.0 python3\n 107484       1  0.0 python3\n 108026       1  0.1 python3\n 108027       1  0.0 python3\n 109731       1  0.0 git\n 109809       1  0.0 git\n 110024       1  0.0 git\n 110249       1  0.0 python3\n 110373       1  0.0 python3\n 110681       1  0.0 python3\n 110682       1  0.0 python3\n 113447       1  0.0 python3\n 113479  110681  0.0 ps\n"
+  },
+  "input_sha256": {
+    "opus": "5880770ba1e3fdd875f8a12cd09c9038351fbf7e09e6b5818cb0cb7f03ca9930",
+    "checker": "76845aabc91d4883f182cbcd86f5f01eb9e5fb8f5e6d992874d366990511637a"
+  },
+  "stdlib_tree": "6a60304dd15c97b83f8a67dd5f006c77cb78edcf",
+  "timings_finished": "2026-11-10T17:41:33.656661+00:00",
+  "summary": {
+    "opus": {
+      "cold": {
+        "baseline": {
+          "wall_s": {
+            "median": 4.26616837,
+            "range": [
+              4.110182717,
+              4.647681412
+            ]
+          },
+          "cpu_s": {
+            "median": 4.264506,
+            "range": [
+              4.109566,
+              4.646343
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 167572.0,
+            "range": [
+              167572,
+              167572
+            ]
+          }
+        },
+        "candidate": {
+          "wall_s": {
+            "median": 4.062600054,
+            "range": [
+              3.939048002,
+              4.433389852
+            ]
+          },
+          "cpu_s": {
+            "median": 4.0609555,
+            "range": [
+              3.9384569999999997,
+              4.433045
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 167572.0,
+            "range": [
+              167572,
+              167572
+            ]
+          }
+        },
+        "paired_cpu_change_percent": [
+          -6.417978663543122,
+          -12.156313040169431,
+          -2.645047443811588,
+          7.871366465461316,
+          -2.870936489739573,
+          -4.057042609497186,
+          -13.085920254436056,
+          -6.881372642897931
+        ]
+      },
+      "warm": {
+        "baseline": {
+          "wall_s": {
+            "median": 4.155811578,
+            "range": [
+              4.0556342,
+              4.518607371
+            ]
+          },
+          "cpu_s": {
+            "median": 4.154529,
+            "range": [
+              4.052163,
+              4.517106
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 167060.0,
+            "range": [
+              167060,
+              167060
+            ]
+          }
+        },
+        "candidate": {
+          "wall_s": {
+            "median": 4.014467396500001,
+            "range": [
+              3.881649179,
+              4.161122664
+            ]
+          },
+          "cpu_s": {
+            "median": 4.013081000000001,
+            "range": [
+              3.8805579999999997,
+              4.160468
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 167060.0,
+            "range": [
+              167060,
+              167060
+            ]
+          }
+        },
+        "paired_cpu_change_percent": [
+          -3.403451195392271,
+          -2.0204143316801426,
+          0.600439690533694,
+          -11.375203504190502,
+          -4.891621312198968,
+          -4.2348987442015655,
+          -3.03198602531205,
+          -5.495656648433512
+        ]
+      }
+    },
+    "checker": {
+      "cold": {
+        "baseline": {
+          "wall_s": {
+            "median": 11.852174785999999,
+            "range": [
+              11.624659962,
+              12.934256073
+            ]
+          },
+          "cpu_s": {
+            "median": 11.850931499999998,
+            "range": [
+              11.622533,
+              12.930586
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 579476.0,
+            "range": [
+              579476,
+              579476
+            ]
+          }
+        },
+        "candidate": {
+          "wall_s": {
+            "median": 13.1232840675,
+            "range": [
+              12.185467084,
+              13.794535185
+            ]
+          },
+          "cpu_s": {
+            "median": 13.11891,
+            "range": [
+              12.184149999999999,
+              13.793588
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 579476.0,
+            "range": [
+              579476,
+              579476
+            ]
+          }
+        },
+        "paired_cpu_change_percent": [
+          6.997459678849793,
+          16.45566713385973,
+          8.084004491385377,
+          2.5985055897698617,
+          17.824642872599284,
+          12.64811485766122,
+          7.3994155841744735,
+          -1.2075252927595148
+        ]
+      },
+      "warm": {
+        "baseline": {
+          "wall_s": {
+            "median": 10.1578737215,
+            "range": [
+              9.26231203,
+              13.806693832
+            ]
+          },
+          "cpu_s": {
+            "median": 10.1569895,
+            "range": [
+              9.261238,
+              13.804954
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 576916.0,
+            "range": [
+              576916,
+              576916
+            ]
+          }
+        },
+        "candidate": {
+          "wall_s": {
+            "median": 9.808129139,
+            "range": [
+              9.089346835,
+              11.597128253
+            ]
+          },
+          "cpu_s": {
+            "median": 9.806840000000001,
+            "range": [
+              9.087850000000001,
+              11.594308
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 576916.0,
+            "range": [
+              576788,
+              576916
+            ]
+          }
+        },
+        "paired_cpu_change_percent": [
+          -1.5284242714349139,
+          -1.8721903054429556,
+          4.4178238966575245,
+          10.347921732909349,
+          -18.139167719929205,
+          -4.132005809768025,
+          -6.545812267248541,
+          -23.20605342111245
+        ]
+      }
+    }
+  },
+  "allocation_controls_finished": "2026-11-10T17:43:27.337921+00:00",
+  "program_controls": {
+    "opus": {
+      "exit_code": 0,
+      "stdout_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161"
+    },
+    "checker": {
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "exit_code": 0,
+  "finished": "2026-11-10T17:43:27.830308+00:00"
+}
