@@ -7634,6 +7634,9 @@ function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
 }
 
 function ssa_vstore(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str.starts_with("vstore:shuffle:")) {
+    return ssa_vstore_shuffle(ins, reg_of, s);
+  }
   s = ssa_read(reg_of, ins.args[0], "%rcx", s);
   s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
   return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", (" + ssa_src(reg_of, ins.args[0], "%rcx") + ")\n");
@@ -11689,6 +11692,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   s = asmcore.emit_const_agg_data(s);
   s = emit_sym_addrs_from(s, 0);
   s = emit_lane_consts(s);
+  s = asmcore.emit_shuffle_masks(s);
   s = asmcore.emit_shape_lits_from(s, 0);
   if (is_entry) {
     s = emit_entry_runtime_settled(s);
@@ -13057,6 +13061,72 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (needs_heap_runtime(s)) {
     s = emit_trap_stubs(s.write("    .text\n"));
+  }
+  return s;
+}
+
+function ssa_vstore_shuffle(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%rcx", s);
+  let at = ssa_src(reg_of, ins.args[0], "%rcx");
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[2], "%xmm2", s);
+  let a = ssa_fsrc(reg_of, ins.args[1], "%xmm1");
+  let b = ssa_fsrc(reg_of, ins.args[2], "%xmm2");
+  let mask = slice_unchecked(ins.str, 15, ins.str.len()) + "";
+  let low_words = true;
+  for byte in mask {
+    if (byte >= b'A' && (byte - b'A') as i32 % 8 >= 4) {
+      low_words = false;
+    }
+  }
+  s = s.write("    movaps " + a + ", %xmm0\n");
+  if (ins.args[1] == ins.args[2]) {
+    let pool = asmcore.shuffle_mask(s, mask);
+    s = pool.state.write("    pshufb " + asmcore.shuffle_mask_label(pool.state, pool.idx) + "(%rip), %xmm0\n");
+  } else if (low_words) {
+    // Two low words from each input fit one SHUFPS before the byte shuffle.
+    let packed = __alloc_u8(16);
+    for i in 0..16 {
+      let byte = mask[i];
+      if (byte >= b'A') {
+        let n = (byte - b'A') as i32;
+        byte = (65 + n / 16 * 8 + n % 16 / 8 * 4 + n % 8) as u8;
+      }
+      packed = packed.with(i, byte);
+    }
+    let text = "";
+    unsafe {
+      text = string_from_bytes_unchecked(packed);
+    }
+    let pool = asmcore.shuffle_mask(s, text);
+    s = pool.state.write("    shufps $136, " + b + ", %xmm0\n    pshufb " + asmcore.shuffle_mask_label(pool.state, pool.idx) + "(%rip), %xmm0\n");
+  } else {
+    let left = __alloc_u8(16);
+    let right = __alloc_u8(16);
+    for i in 0..16 {
+      let n = if (mask[i] >= b'A') { (mask[i] - b'A') as i32 } else { -1 };
+      left = left.with(i, if (n >= 0 && n < 16) { (65 + n) as u8 } else { b'?' });
+      right = right.with(i, if (n >= 16) { (65 + n - 16) as u8 } else { b'?' });
+    }
+    let left_text = "";
+    let right_text = "";
+    unsafe {
+      left_text = string_from_bytes_unchecked(left);
+      right_text = string_from_bytes_unchecked(right);
+    }
+    let l = asmcore.shuffle_mask(s, left_text);
+    let r = asmcore.shuffle_mask(l.state, right_text);
+    s = r.state.write("    movaps " + b + ", %xmm1\n    pshufb " + asmcore.shuffle_mask_label(r.state, l.idx) + "(%rip), %xmm0\n    pshufb " + asmcore.shuffle_mask_label(r.state, r.idx) + "(%rip), %xmm1\n    por %xmm1, %xmm0\n");
+  }
+  if (ins.imm == 16) {
+    return s.write("    movdqu %xmm0, (" + at + ")\n");
+  }
+  if (ins.imm == 4) {
+    return s.write("    movd %xmm0, (" + at + ")\n");
+  }
+  s = s.write("    movq %xmm0, (" + at + ")\n");
+  if (ins.imm == 12) {
+    s = s.write("    pextrd $2, %xmm0, 8(" + at + ")\n");
   }
   return s;
 }

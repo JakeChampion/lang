@@ -87,6 +87,7 @@ pub struct EmitState {
   ssa_frame: i32,
   ssa_save: i32,
   lane_consts: boolean,
+  shuffle_masks: string[],
   ssa_lane_slots: boolean[],
   ssa_trap_suffix: string,
   ssa_x0: i32,
@@ -627,6 +628,7 @@ pub function new_state(): EmitState {
     ssa_frame: 0,
     ssa_save: 0,
     lane_consts: false,
+    shuffle_masks: [],
     ssa_lane_slots: [],
     ssa_trap_suffix: "",
     ssa_x0: -1,
@@ -6086,4 +6088,36 @@ pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: 
 
 pub function ssa_x0_forget(s: EmitState): EmitState {
   return EmitState { ...s, ssa_x0: -1 };
+}
+
+pub function shuffle_mask(s: EmitState, mask: string): ConstAggOut {
+  let i = util.index_of_str(s.shuffle_masks, mask);
+  if (i >= 0) {
+    return ConstAggOut { state: s, idx: i };
+  }
+  return ConstAggOut { state: EmitState { ...s, shuffle_masks: s.shuffle_masks.append(mask) }, idx: s.shuffle_masks.len() };
+}
+
+pub function shuffle_mask_label(s: EmitState, idx: i32): string {
+  return str_lit_label(s, idx) + "_shuffle";
+}
+
+pub function emit_shuffle_masks(s: EmitState): EmitState {
+  if (s.shuffle_masks.len() == 0) {
+    return s;
+  }
+  s = s.write("    .section .rodata\n    .balign 16\n");
+  for i in 0..s.shuffle_masks.len() {
+    s = s.write(shuffle_mask_label(s, i) + ":\n    .byte ");
+    let mask = s.shuffle_masks[i];
+    for j in 0..16 {
+      if (j > 0) {
+        s = s.write(",");
+      }
+      let byte = if (mask[j] >= b'A') { (mask[j] - b'A') as i32 } else { 255 };
+      s = s.write(util.i32_to_string(byte));
+    }
+    s = s.write("\n");
+  }
+  return s.write("    .text\n");
 }
