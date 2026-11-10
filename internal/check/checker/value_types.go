@@ -1,6 +1,9 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"fmt"
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
 
 func (c *checker) valueType(name string) bool {
 	d := c.info.Structs[name]
@@ -13,6 +16,7 @@ func (c *checker) checkValueTypes(prog *ast.Program) {
 			delete(c.consumingTypes, d.Name)
 		}
 	}
+	c.callCopyTypes = nil
 	for _, d := range prog.Structs {
 		if !d.ValueType {
 			continue
@@ -23,6 +27,24 @@ func (c *checker) checkValueTypes(prog *ast.Program) {
 			}
 		}
 	}
+}
+
+// Call checks revisit the same closed types across a module. Keep complete
+// structural keys so a type parameter cannot inherit a nominal type's proof.
+func (c *checker) copyableCallResult(t ast.Type) bool {
+	if t == nil {
+		return false
+	}
+	key := fmt.Sprintf("%#v", t)
+	if copyable, found := c.callCopyTypes[key]; found {
+		return copyable
+	}
+	copyable := c.valueData(t, map[string]bool{})
+	if c.callCopyTypes == nil {
+		c.callCopyTypes = map[string]bool{}
+	}
+	c.callCopyTypes[key] = copyable
+	return copyable
 }
 
 func (c *checker) valueData(t ast.Type, seen map[string]bool) bool {

@@ -1,0 +1,151 @@
+import "std/video/nal";
+import "std/video/nal/input";
+import "std/video/frame";
+import "std/audio/source";
+import "std/test";
+import "std/hex";
+import "video_nal_vectors";
+import "video_annex_b_input_check" as check;
+
+function fixture(): u8[] {
+  return [0, 0, 0, 0, 1, 103, 0, 0, 3, 1, 128, 0, 0, 0, 0, 0, 1, 104, 128, 0, 0];
+}
+
+function framing(): test.TestOutcome {
+  for short in 1..9 {
+    for chunk in [1, 3, 7, 31] {
+      let limits = check.limits();
+      let Ok(result) = check.run(fixture(), short, input.Limits { ...limits, input: source.Limits { ...limits.input, chunk_size: chunk } }) else {
+        return test.fail("short-read framing");
+      };
+      if (result.units.len() != 2 || result.offset != 21i64 || result.largest > chunk) {
+        return test.fail("unit count, final offset, or read bound");
+      }
+      let a = result.units[0];
+      let b = result.units[1];
+      if (a.offset != 5i64 || a.bytes != [103u8, 0, 0, 3, 1, 128] || b.offset != 17i64 || b.bytes != [104u8, 128]) {
+        return test.fail("ranges, padding, emulation prevention, or retained ownership");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function complete(bytes: [u8]): Result[i32, frame.VideoError] {
+  let at = 0;
+  let units = 0;
+  while (at < bytes.len()) {
+    let Some(unit) = nal.next_annex_b(bytes, at, frame.default_limits())? else {
+      return Err(frame.State);
+    };
+    at = unit.next_offset;
+    units += 1;
+  }
+  return Ok(units);
+}
+
+function same_admission(bytes: u8[], short: i32): boolean {
+  let expected = complete(bytes);
+  let actual = check.run(bytes, short, check.limits());
+  return match (expected) {
+    Ok(count) => match (actual) { Ok(result) => result.units.len() == count, _ => false },
+    Err(error) => match (actual) { Err(input.ReadVideo(value)) => error == value, _ => false },
+  };
+}
+
+function prefixes(): test.TestOutcome {
+  let bytes = fixture();
+  for cut in 0..bytes.len() + 1 {
+    let prefix: u8[] = [];
+    for byte in bytes[:cut] {
+      prefix = prefix.append(byte);
+    }
+    for short in [1, 3, 0] {
+      if (!same_admission(prefix, short)) {
+        return test.fail("complete-NAL admission at a source prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for bytes in [[0u8], [0u8, 0], [0u8, 0, 1], [0u8, 0, 0, 1], [9u8, 0, 0, 1, 103], [0u8, 1, 103], [0u8, 0, 2, 103], [0u8, 0, 1, 0, 0, 1, 103], [0u8, 0, 1, 0], [0u8, 0, 1, 103, 0, 0, 1]] {
+    for short in [1, 2, 0] {
+      if (!same_admission(bytes, short)) {
+        return test.fail("malformed or incomplete input category");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function long_source(): test.TestOutcome {
+  let bytes: u8[] = [];
+  for _ in 0..128 {
+    for byte in [0u8, 0, 1, 103] {
+      bytes = bytes.append(byte);
+    }
+  }
+  let Ok(result) = check.run(bytes, 1, check.limits()) else {
+    return test.fail("source larger than the retained window");
+  };
+  if (result.units.len() != 128 || result.offset != 512i64) {
+    return test.fail("bounded stream totals");
+  }
+  for i in 0..128 {
+    if (result.units[i].offset != i as i64 * 4i64 + 3i64 || result.units[i].bytes != [103u8]) {
+      return test.fail("owned unit offsets after buffer compaction");
+    }
+  }
+  return test.pass();
+}
+
+function annex_bytes(units: [input.Unit]): Result[u8[], string] {
+  let canonical: u8[] = [];
+  for unit in units {
+    if (unit.offset != canonical.len() as i64 + 4i64) {
+      return Err("reference payload offset");
+    }
+    for byte in [0u8, 0, 0, 1] {
+      canonical = canonical.append(byte);
+    }
+    for byte in unit.bytes {
+      canonical = canonical.append(byte);
+    }
+  }
+  return Ok(canonical);
+}
+
+function reference(): test.TestOutcome {
+  for vector in video_nal_vectors.vectors() {
+    let Ok(packet) = hex.decode(vector.packet) else {
+      return test.fail("reference packet");
+    };
+    let Ok(bytes) = nal.to_annex_b(packet, 4, frame.default_limits()) else {
+      return test.fail("reference Annex B bytes");
+    };
+    for short in [1, 7, 0] {
+      let Ok(result) = check.run(bytes, short, input.default_limits()) else {
+        return test.fail("reference stream");
+      };
+      let Ok(canonical) = annex_bytes(result.units) else {
+        return test.fail("reference payload offset");
+      };
+      if (canonical != bytes) {
+        return test.fail("independent AVC/HEVC packet bytes changed");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded Annex B NAL source");
+  runner = runner.it("split prefixes, padding, emulation prevention, and owned units", framing);
+  runner = runner.it("every byte prefix matches complete-NAL admission", prefixes);
+  runner = runner.it("malformed and incomplete sources preserve error categories", malformed);
+  runner = runner.it("a long source retains only its bounded byte window", long_source);
+  runner = runner.it("checked-in AVC and HEVC packets preserve every payload byte", reference);
+  return runner.finish();
+}

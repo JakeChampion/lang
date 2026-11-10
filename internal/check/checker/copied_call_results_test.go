@@ -1,6 +1,9 @@
 package checker
 
-import "testing"
+import (
+	"github.com/jakechampion/lang/internal/syntax/diag"
+	"testing"
+)
 
 func TestImmutableCallResultsCanBeCopied(t *testing.T) {
 	for name, src := range map[string]string{
@@ -141,5 +144,20 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 `,
 	} {
 		t.Run(name, func(t *testing.T) { wantE051(t, name, src+` function main(): i32 { return 0; }`) })
+	}
+}
+
+func TestCallCopyCacheSeparatesGenericAndNominalArguments(t *testing.T) {
+	const declarations = `struct Data { bytes: u8[] } struct Box[T] { value: T } `
+	const concrete = `function loan_concrete(x: Box[Data]): Box[Data] { return x; } function consume_concrete(own x: Box[Data]): void {} function concrete(x: Box[Data]): void { consume_concrete(loan_concrete(x)); } `
+	const generic = `function loan_generic[Data](x: Box[Data]): Box[Data] { return x; } function consume_generic[Data](own x: Box[Data]): void {} function generic[Data](x: Box[Data]): void { consume_generic(loan_generic(x)); } `
+	for name, body := range map[string]string{"concrete first": concrete + generic, "generic first": generic + concrete} {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, declarations+body+` function main(): i32 { return 0; }`)
+			errors, ok := err.(diag.Errors)
+			if !ok || len(errors) != 1 || !hasCode(err, "E051") {
+				t.Fatalf("want only the generic loan refusal, got %v", err)
+			}
+		})
 	}
 }

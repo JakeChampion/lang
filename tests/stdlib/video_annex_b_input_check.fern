@@ -1,0 +1,42 @@
+import "std/video/nal/input";
+import "std/video/frame";
+import "std/audio/source";
+import "video_ivf_input_check" as memory;
+
+pub struct Run { units: input.Unit[], offset: i64, calls: i32, largest: i32 }
+
+pub function limits(): input.Limits {
+  return input.Limits { input: source.Limits { chunk_size: 7, max_buffer_bytes: 32 }, max_unit_bytes: 24, max_units: 1024, max_operations: 8192 };
+}
+
+pub function run(bytes: u8[], short: i32, limits: input.Limits): Result[Run, input.ReadError] {
+  let source = memory.memory(bytes, short);
+  let stream = input.create(limits)?;
+  let units: input.Unit[] = [];
+  loop {
+    let before = source.counts();
+    let step = stream.step_with(source.read)?;
+    stream = step.stream;
+    if (source.counts().calls - before.calls > 1 || stream.buffer.bytes.len() > limits.input.max_buffer_bytes) {
+      return Err(input.ReadVideo(frame.State));
+    }
+    match (step.event) {
+      input.UnitReady(value) => {
+        units = units.append(value);
+      },
+      input.Waiting => {},
+      input.End => {
+        break;
+      }
+    }
+  }
+  let before = source.counts();
+  let step = stream.step_with(source.read)?;
+  if let input.End = step.event {} else {
+    return Err(input.ReadVideo(frame.State));
+  }
+  if (source.counts().calls != before.calls || step.stream.operations != before.calls) {
+    return Err(input.ReadVideo(frame.State));
+  }
+  return Ok(Run { units: units, offset: step.stream.offset, calls: before.calls, largest: before.largest });
+}
