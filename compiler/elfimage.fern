@@ -67,15 +67,22 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
   } else {
     bin = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
   }
+  return arm64_with_debug(bin, p, tv, dv, elf.elf_wx_text_off(harden), emit_syms, cu_name, dir);
+}
+
+// The image with its symbol table and DWARF when emit_syms is set. The text
+// of the image starts at text_off in the file and at tv in memory.
+function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: i64, text_off: i32, emit_syms: boolean, cu_name: string, dir: string): string {
   if (!emit_syms) {
     unsafe {
       return string_from_bytes_unchecked(bin);
     }
   }
+  let pa2 = p.asm;
   let aend = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), tv as i32, elf.elf_wx_text_off(harden), aend,
+    elf.elf_cat_u8([], bin), tv as i32, text_off, aend,
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
@@ -89,7 +96,7 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
   }
 }
 
-pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): string {
+pub function arm64_elf_binary_pie(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean): string {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
@@ -115,9 +122,8 @@ pub function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): st
   if (eoff >= pa2.text.len()) {
     return arm64_refusals("arm64-android", "linker", ["no code at _start"]);
   }
-  unsafe {
-    return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden));
-  }
+  let bin = elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden);
+  return arm64_with_debug(bin, p, tv, dv, tv as i32, emit_syms, cu_name, dir);
 }
 
 // The startup reads the address and the page-rounded length of the read-only
