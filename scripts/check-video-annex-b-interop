@@ -18,6 +18,12 @@ subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
 wasm = binary.with_suffix(".wasm")
 subprocess.run([compiler, "-target", "wasm32-wasi", "-o", str(wasm),
                 "scripts/video-reference/annex-b.fern", "internal/stdlib"], check=True)
+stream_binary = ROOT / "build/video/annex-b-input-reference"
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", target, "-sanitize", "-o", str(stream_binary),
+                "scripts/video-reference/annex-b-input.fern"], check=True)
+stream_wasm = stream_binary.with_suffix(".wasm")
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", "wasm32-wasi", "-o", str(stream_wasm),
+                "scripts/video-reference/annex-b-input.fern"], check=True)
 
 
 def decode(path, pixel_format):
@@ -25,7 +31,7 @@ def decode(path, pixel_format):
                                     "-pix_fmt", pixel_format, "-f", "rawvideo", "-"])
 
 
-def check(path, directory, pixel_format):
+def check(path, directory, pixel_format, frames):
     data = path.read_bytes()
     markers = list(re.finditer(b"\x00{2,}\x01", data))
     assert markers and markers[0].start() == 0
@@ -39,6 +45,10 @@ def check(path, directory, pixel_format):
     wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
                                    cwd=directory, text=True).splitlines()
     assert lines == wasi and len(lines) == len(units) + 2
+    streamed = subprocess.check_output([str(stream_binary), str(path)], text=True).splitlines()
+    streamed_wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(stream_wasm), path.name],
+                                          cwd=directory, text=True).splitlines()
+    assert streamed == streamed_wasi == lines[:-2]
     for line, (offset, payload) in zip(lines[:-2], units, strict=True):
         assert line.split() == ["U", str(offset), str(len(payload)), payload.hex()]
     packet = b"".join(struct.pack(">I", len(payload)) + payload for _, payload in units)
@@ -49,9 +59,9 @@ def check(path, directory, pixel_format):
     restored.write_bytes(canonical)
     pixels = decode(path, pixel_format)
     sample_bytes = 2 if pixel_format == "yuv420p10le" else 1
-    assert len(pixels) == 6 * 64 * 48 * 3 // 2 * sample_bytes
+    assert len(pixels) == frames * 64 * 48 * 3 // 2 * sample_bytes
     assert decode(restored, pixel_format) == pixels
-    print(f"{path.name}: {len(units)} native/WASI ranges and lengths match; FFmpeg planes match", flush=True)
+    print(f"{path.name}: {len(units)} complete/streamed native/WASI ranges match; FFmpeg planes match", flush=True)
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -62,13 +72,17 @@ with tempfile.TemporaryDirectory() as temporary:
         ("avc-high10", "h264", "libx264", "high10", "yuv420p10le"),
         ("hevc-main", "hevc", "libx265", "main", "yuv420p"),
         ("hevc-main10", "hevc", "libx265", "main10", "yuv420p10le"),
+        ("avc-long", "h264", "libx264", "baseline", "yuv420p"),
     ]
     for name, codec, encoder, profile, pixels in cases:
         path = directory / f"{name}.{codec}"
+        frames = 120 if name == "avc-long" else 6
         options = ["-x264-params", "repeat-headers=1:aud=1:scenecut=0"] if codec == "h264" else [
             "-x265-params", "repeat-headers=1:aud=1:scenecut=0:pools=none:frame-threads=1:log-level=error"]
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=6",
-                        "-frames:v", "6", "-c:v", encoder, "-profile:v", profile, "-threads", "1",
+                        "-frames:v", str(frames), "-c:v", encoder, "-profile:v", profile, "-threads", "1",
                         "-g", "4", "-bf", "0" if profile == "baseline" else "2", "-pix_fmt", pixels,
                         *options, "-f", codec, str(path)], check=True)
-        check(path, directory, pixels)
+        if name == "avc-long":
+            assert path.stat().st_size > 4104 * 4
+        check(path, directory, pixels, frames)

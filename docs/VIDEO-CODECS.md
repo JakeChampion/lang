@@ -148,6 +148,15 @@ The iterator borrows its input and excludes start codes and surrounding zero byt
 It preserves emulation-prevention bytes inside each unit.
 The converter checks complete input and output budgets, plus the capacity of each length prefix.
 
+`std/video/nal/input` reads Annex B units through a bounded sequential byte source.
+Each step performs at most one read and returns at most one owned unit with a 64-bit relative payload offset.
+Limits cover the input window, unit payload bytes, unit count, and read operations.
+The scanner preserves its position across short reads and reuses the complete-view framing parser for each finished unit.
+
+An empty source returns `End`. Incomplete prefixes or missing payloads return `Truncated`, and I/O errors retain their category.
+This reader does not identify access units or provide timestamps. A decoder still needs complete access units and timing from the caller.
+The caller owns the source and must run blocking I/O outside the Android loop callback.
+
 Both functions inspect packet framing without a platform codec.
 They do not identify access units or supply timestamps. A muxer still needs packet boundaries and timing from the caller.
 

@@ -1,0 +1,156 @@
+import "std/video/nal/input";
+import "std/video/frame";
+import "std/audio/source";
+import "std/test";
+import "video_annex_b_input_check" as check;
+import "video_ivf_input_check" as memory;
+
+function unit(size: i32): u8[] {
+  let bytes: u8[] = [0, 0, 0, 1];
+  for _ in 0..size {
+    bytes = bytes.append(103);
+  }
+  return bytes;
+}
+
+function budgets(): test.TestOutcome {
+  let limits = check.limits();
+  let bytes = unit(24);
+  let Ok(result) = check.run(bytes, 1, limits) else {
+    return test.fail("exact unit budget");
+  };
+  if (result.units.len() != 1 || result.units[0].bytes.len() != 24) {
+    return test.fail("exact payload extent");
+  }
+  if let Err(input.ReadVideo(frame.Limit)) = check.run(unit(25), 1, limits) {} else {
+    return test.fail("unit overflow");
+  }
+  let zeros: u8[] = [];
+  for _ in 0..40 {
+    zeros = zeros.append(0);
+  }
+  if let Err(input.ReadVideo(frame.Limit)) = check.run(zeros, 1, limits) {} else {
+    return test.fail("padding exceeds input window");
+  }
+  let exact = input.Limits { ...limits, max_operations: bytes.len() + 1 };
+  if (check.run(bytes, 1, exact).is_err()) {
+    return test.fail("exact read-operation count");
+  }
+  if let Err(input.ReadVideo(frame.Limit)) = check.run(bytes, 1, input.Limits { ...exact, max_operations: bytes.len() }) {} else {
+    return test.fail("read-operation exhaustion");
+  }
+  return test.pass();
+}
+
+function configuration(): test.TestOutcome {
+  let limits = check.limits();
+  let bad = [
+    input.Limits { ...limits, max_unit_bytes: 0 },
+    input.Limits { ...limits, max_unit_bytes: 25 },
+    input.Limits { ...limits, max_units: -1 },
+    input.Limits { ...limits, max_operations: 0 },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 0, max_buffer_bytes: 32 } },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 1048577, max_buffer_bytes: 32 } },
+    input.Limits { ...limits, input: source.Limits { chunk_size: 1, max_buffer_bytes: 8 } },
+  ];
+  for configured in bad {
+    if let Err(input.ReadVideo(frame.Limit)) = input.create(configured) {} else {
+      return test.fail("invalid input configuration");
+    }
+  }
+  return test.pass();
+}
+
+function unit_count(): test.TestOutcome {
+  let limits = input.Limits { ...check.limits(), max_units: 0 };
+  let Ok(empty) = check.run([], 1, limits) else {
+    return test.fail("empty source at zero-unit limit");
+  };
+  if (empty.calls != 1 || empty.largest != 1) {
+    return test.fail("bounded EOF probe at unit limit");
+  }
+  let source = memory.memory(unit(1), 0);
+  let Ok(stream) = input.create(limits) else {
+    return test.fail("zero-unit create");
+  };
+  if let Err(input.ReadVideo(frame.Limit)) = stream.step_with(source.read) {} else {
+    return test.fail("unit-count limit");
+  }
+  if (source.counts().position != 1 || source.counts().largest != 1) {
+    return test.fail("payload read after zero-unit limit");
+  }
+  let bytes: u8[] = [0, 0, 1, 103, 0, 0, 1, 104];
+  if let Err(input.ReadVideo(frame.Limit)) = check.run(bytes, 1, input.Limits { ...limits, max_units: 1 }) {} else {
+    return test.fail("second unit exceeds count");
+  }
+  return test.pass();
+}
+
+function callbacks(): test.TestOutcome {
+  let Ok(stream) = input.create(check.limits()) else {
+    return test.fail("create");
+  };
+  let io = (_: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  if let Err(input.ReadIo(Interrupted())) = stream.step_with(io) {} else {
+    return test.fail("I/O category");
+  }
+  let Ok(next) = input.create(check.limits()) else {
+    return test.fail("create");
+  };
+  let oversized = (count: i32): Result[u8[], IoError] => {
+    let bytes: u8[] = [];
+    for _ in 0..count + 1 {
+      bytes = bytes.append(0);
+    }
+    return Ok(bytes);
+  };
+  if let Err(input.ReadVideo(frame.Limit)) = next.step_with(oversized) {} else {
+    return test.fail("oversized callback response");
+  }
+  return test.pass();
+}
+
+function shifted(own stream: input.Stream, offset: i64, read: (i32) => Result[u8[], IoError]): Result[input.Step, input.ReadError] {
+  stream = input.Stream { ...stream, offset: offset };
+  return stream.step_with(read);
+}
+
+function offsets(): test.TestOutcome {
+  for offset in [8589934592i64, 9223372036854775804i64] {
+    let source = memory.memory(unit(1), 0);
+    let Ok(stream) = input.create(check.limits()) else {
+      return test.fail("create");
+    };
+    let Ok(first) = shifted(stream, offset, source.read) else {
+      return test.fail("buffer input");
+    };
+    let result = first.stream.step_with(source.read);
+    if (offset == 8589934592i64) {
+      let Ok(step) = result else {
+        return test.fail("wide offset");
+      };
+      if let input.UnitReady(value) = step.event {
+        if (value.offset != offset + 4i64 || value.bytes != [103u8]) {
+          return test.fail("64-bit payload offset narrowing");
+        }
+      } else {
+        return test.fail("wide unit event");
+      }
+    } else {
+      if let Err(input.ReadVideo(frame.Limit)) = result {} else {
+        return test.fail("absolute offset overflow");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded Annex B source limits");
+  runner = runner.it("exact unit and read budgets, overflow, and padding", budgets);
+  runner = runner.it("invalid limit configurations", configuration);
+  runner = runner.it("unit count and bounded EOF probe", unit_count);
+  runner = runner.it("I/O category and callback response bounds", callbacks);
+  runner = runner.it("64-bit relative positions and overflow", offsets);
+  return runner.finish();
+}

@@ -1,0 +1,38 @@
+// Emit streamed NAL ranges for independent Annex B and decoded-plane checks.
+import "std/video/nal/input";
+import "std/audio/source";
+import "std/hex";
+
+function emit(reader: Reader): Result[void, string] {
+  let limits = input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: 7, max_buffer_bytes: 4104 }, max_unit_bytes: 4096 };
+  let stream = match (input.create(limits)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  loop {
+    let step = match (stream.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    stream = step.stream;
+    match (step.event) {
+      input.UnitReady(value) => {
+        print("U " + value.offset.to_string() + " " + value.bytes.len().to_string() + " " + hex.encode(value.bytes));
+      },
+      input.Waiting => {},
+      input.End => {
+        return Ok(());
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 2;
+  };
+  let result = emit(reader);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 3; } },
+    Err(message) => { eprint(message); return 4; },
+  };
+}
