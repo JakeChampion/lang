@@ -7,6 +7,47 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Exact coefficient runs
+
+Source `795b51973b626359e063e3d04668de68a4268145` decodes consecutive ordinary coefficients in a separate loop.
+The decoder forms their float bits with an exact adjustment of the exponent.
+All 27 valid quantizers produce normal floats with unchanged bits.
+The unit suite covers all 729 quantizer transitions on native x86-64, ARM64 under QEMU, and WebAssembly.
+Baseline `3fb03cacc6601474db0f53d3e577a0efb157d4e4` contains the SIMD byte-store optimization.
+Each executable uses its own release compiler and standard library, so the comparison also includes compiler changes.
+
+The 2026-11-10 sweep uses CPU 0 of the Xeon Platinum 8573C and one worker.
+Each case has 120 repetitions in six balanced execution orders.
+Silence, tone, noise, and transients cover all three PCM depths.
+Ten-second inputs use blocks of 32768, and hundred-second inputs use blocks of 2048.
+Measurements include process startup and file I/O, with no concurrent local builds or tests.
+Every final Fern WAV equals the baseline byte for byte, and all independent float64 checks pass.
+
+Fern has lower medians than tuned C in 24 of 24 cases.
+The geometric-mean C/Fern ratio is 1.736× overall and 1.276× without silence.
+The fixed-suite intervals are 1.715× to 1.760× and 1.259× to 1.294×.
+These results do not establish a universal performance rank.
+
+Fern has lower medians than the baseline in 19 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.021× overall and 1.018× without silence.
+The intervals are 1.006× to 1.035× and 1.003× to 1.032×.
+The report retains every regression.
+The intervals use 2000 paired bootstrap repetitions and seed 417 within this fixed suite.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10.0 | 32768 | PCM16 | 0.998 | 1.601 |
+| 10.0 | 32768 | PCM24 | 1.024 | 1.485 |
+| 10.0 | 32768 | PCM8 | 1.019 | 1.666 |
+| 100.0 | 2048 | PCM16 | 1.057 | 1.948 |
+| 100.0 | 2048 | PCM24 | 1.020 | 1.636 |
+| 100.0 | 2048 | PCM8 | 1.012 | 2.169 |
+
+[The complete report](x86-64-coefficient-runs.json) retains all repetitions, regressions, executable hashes, compiler hashes, oracle checks, and source revisions.
+Use the [unsigned-guard commands](#unsigned-bounds-guards) with candidate source `795b51973b626359e063e3d04668de68a4268145` and baseline source `3fb03cacc6601474db0f53d3e577a0efb157d4e4`.
+Set `--repetitions 120` and use each source's own release compiler and standard library.
+Retain the pinned C and float64 oracle builds.
+
 ## SIMD byte stores
 
 Source `3fb03cacc6601474db0f53d3e577a0efb157d4e4` combines adjacent scalar stores whose bytes come from SIMD values.
