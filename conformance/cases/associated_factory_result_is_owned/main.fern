@@ -1,0 +1,36 @@
+// spec: RH-27
+trait Make {
+  function make(): Self;
+}
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+impl Make for Handle {
+  function make(): Handle {
+    return Handle { fd: 5 };
+  }
+}
+
+function take[T](own value: T): T {
+  return value;
+}
+
+function direct[T: Make](): T {
+  return take(T.make());
+}
+
+function local[T: Make](): T {
+  let value = T.make();
+  return take(value);
+}
+
+function main(): i32 {
+  print(direct[Handle]().close());
+  print(local[Handle]().close());
+  print(take(Handle.make()).close());
+  return 0;
+}
