@@ -7,6 +7,62 @@ Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
+## Unsigned bounds guards
+
+Source `d82c0d664fa6f7add7b6bccb27333093ba3c1d2a` reuses unsigned array guards and rejected-sentinel bounds, places full-range integer tables in constant storage, and folds redundant float32 conversions.
+The baseline is the previous published SIMD-round build, `cd731e4f14fd1b2796a409df79922805a8c6b0c6`.
+The codec source is unchanged; this comparison measures the compiler changes together.
+Both executables were built with their own pinned release compiler and standard library.
+
+The 2026-11-09 run uses CPU 0 of the Xeon Platinum 8573C and one worker.
+Silence, tone, noise, and transients cover all three PCM depths, with ten-second inputs at block size 32768 and hundred-second inputs at block size 2048.
+Every case has thirty repetitions in six balanced execution orders.
+Timing includes process startup and file I/O, with no concurrent local builds or tests.
+Every final Fern WAV equals the baseline byte for byte, and all independent float64 checks pass.
+
+Fern has lower medians than tuned C in 22 of 24 cases.
+The geometric-mean C/Fern ratio is 1.685× overall and 1.243× without silence.
+The corresponding fixed-suite intervals are 1.649× to 1.736× and 1.211× to 1.276×.
+C remains faster on large-block PCM16 noise and PCM24 noise, with C/Fern ratios of 0.989× and 0.885×.
+These results do not establish a universal performance ranking.
+
+Fern has lower medians than the baseline in 20 of 24 cases.
+The geometric-mean baseline/Fern ratio is 1.032× overall and 1.045× without silence.
+The corresponding intervals are 1.008× to 1.065× and 1.017× to 1.066×.
+All four baseline regressions remain in the report.
+The intervals use 2000 paired bootstrap repetitions and seed 417, covering repetition uncertainty within these fixed cases.
+
+| Seconds | Block size | Output | Baseline/Fern | C/Fern |
+| ---: | ---: | --- | ---: | ---: |
+| 10 | 32768 | PCM16 | 0.974 | 1.437 |
+| 10 | 32768 | PCM24 | 1.037 | 1.332 |
+| 10 | 32768 | PCM8 | 0.990 | 1.650 |
+| 100 | 2048 | PCM16 | 1.054 | 2.044 |
+| 100 | 2048 | PCM24 | 1.079 | 1.633 |
+| 100 | 2048 | PCM8 | 1.060 | 2.171 |
+
+[The complete report](x86-64-unsigned-guards.json) retains every repetition, regression, executable hash, compiler hash, oracle check, and build revision.
+Its `build_provenance` identifies both release compilers and the independent oracle.
+
+To reproduce, build source `d82c0d664fa6f7add7b6bccb27333093ba3c1d2a` and baseline `cd731e4f14fd1b2796a409df79922805a8c6b0c6` with `make build`, then build `examples/ulc/ulc.fern` with each release compiler.
+Use the pinned C build from [the FLOAT32/VBR reproduction section](#reproduce-the-float32-and-vbr-suite) and the pinned oracle from [the widening-load reproduction](#widening-loads-for-pcm24).
+Run the benchmark as follows, repeating PCM8, PCM16, and PCM24 for both duration/block-size pairs:
+
+```sh
+python3 /tmp/ulc-guard-source/examples/ulc/bench/run.py \
+  --fern /tmp/ulc-guard-source/examples/ulc/build/ulc \
+  --baseline-fern /tmp/ulc-guard-baseline/examples/ulc/build/ulc \
+  --baseline-source-commit cd731e4f14fd1b2796a409df79922805a8c6b0c6 \
+  --compiler /tmp/ulc-guard-source/bin/fern \
+  --source-commit d82c0d664fa6f7add7b6bccb27333093ba3c1d2a \
+  --oracle /tmp/ulc-load-source/examples/ulc/build/reference64 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --direction decode --seconds 10 --block-size 32768 \
+  --output-format PCM8 --repetitions 30 --cpu 0 \
+  --output /tmp/ulc-guard-10-PCM8.json
+```
+
 ## SIMD round magnitude
 
 Source `cd731e4f14fd1b2796a409df79922805a8c6b0c6` uses a shorter SIMD round sequence on x86-64 and WebAssembly.

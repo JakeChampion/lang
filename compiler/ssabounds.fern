@@ -4,7 +4,7 @@ import "./ssasem";
 import "./typeinfo";
 import "./util";
 
-struct Rel { lo: i32, hi: i32, strict: boolean }
+struct Rel { lo: i32, hi: i32, strict: boolean, nonnegative: boolean }
 
 struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
@@ -235,7 +235,7 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   let x = c.args[0];
   let y = c.args[1];
   if (!g.i32s[x] || !g.i32s[y]) {
-    return g;
+    return learn_unsigned(g, c, truth);
   }
   if (c.str == "<") {
     return fact(g, x, y, truth, true);
@@ -255,11 +255,38 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   return g;
 }
 
+// A strict unsigned guard against a valid length also rejects signed negatives.
+// Only i32-to-u32 casts preserve the exact index used by the later access.
+function unsigned_i32_arg(g: Graph, v: i32): i32 {
+  v = ssa.copy_root(g.defs, v);
+  let d = g.defs[v];
+  if (g.unsigned_max[v] == 4294967295i64 && d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[d.args[0]]) {
+    return ssa.copy_root(g.defs, d.args[0]);
+  }
+  return -1;
+}
+
+function learn_unsigned(g: Graph, c: ssa.SInst, truth: boolean): Graph {
+  let lo = -1;
+  let hi = -1;
+  if (c.str == "<" && truth || c.str == ">=" && !truth) {
+    lo = unsigned_i32_arg(g, c.args[0]);
+    hi = unsigned_i32_arg(g, c.args[1]);
+  } else if (c.str == ">" && truth || c.str == "<=" && !truth) {
+    lo = unsigned_i32_arg(g, c.args[1]);
+    hi = unsigned_i32_arg(g, c.args[0]);
+  }
+  if (lo < 0 || hi < 0 || !is_length(g, hi)) {
+    return g;
+  }
+  return Graph { ...g, rels: g.rels.append(Rel { lo: lo, hi: hi, strict: true, nonnegative: true }) };
+}
+
 function fact(g: Graph, lo: i32, hi: i32, held: boolean, strict: boolean): Graph {
   if (held) {
-    return Graph { ...g, rels: g.rels.append(Rel { lo: lo, hi: hi, strict: strict }) };
+    return Graph { ...g, rels: g.rels.append(Rel { lo: lo, hi: hi, strict: strict, nonnegative: false }) };
   }
-  return Graph { ...g, rels: g.rels.append(Rel { lo: hi, hi: lo, strict: !strict }) };
+  return Graph { ...g, rels: g.rels.append(Rel { lo: hi, hi: lo, strict: !strict, nonnegative: false }) };
 }
 
 function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
@@ -609,6 +636,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     let k = g.first[c];
     while (k < g.first[c] + g.count[c]) {
       let r = g.rels[k];
+      if (r.nonnegative && same(g, r.lo, x)) {
+        return true;
+      }
       if (same(g, r.hi, x)) {
         if (is_const(g, r.lo)) {
           let low = const_value(g, r.lo);

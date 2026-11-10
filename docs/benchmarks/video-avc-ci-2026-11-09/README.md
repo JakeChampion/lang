@@ -29,3 +29,7 @@ The CI repair also incorporates the existing callback ownership fix from PR #150
 `repair-controls.json` records the repeated controls after that integration.
 The repaired compiler SHA-256 is `6428307f7df273cb0bbebd665456a6a68876208ae1fa169808a8424ce5c02775`.
 All six emitted checksums remain identical.
+
+Main `f9904974a7` now includes these measured baseline values.
+The SPS branch preserves the values and tolerances from main without additional baseline changes.
+The controls in this report describe the original compiler and the callback repair integration.
