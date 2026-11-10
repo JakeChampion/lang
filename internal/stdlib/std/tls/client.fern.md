@@ -578,8 +578,12 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
 
 ```fern
 <<15 pub struct Connection>>=
-pub struct Connection { sock: Socket, session: Session, tickets: Ticket[], open: Cell[boolean] }
+// pending is the data that came with the last flight of the handshake.
+// ended is true after the close_notify of the peer.
+pub struct Connection { sock: Socket, session: Session, tickets: Ticket[], pending: u8[], ended: boolean, open: Cell[boolean] }
 
+// ended is true after the close_notify of the peer. A stream that ends
+// with no close_notify gives the error Truncated.
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ```
 
@@ -621,7 +625,7 @@ pub function over(own sock: Socket, config: Config, timeout: Duration): Result[C
 function __handshake_by(own sock: Socket, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
   match (__handshake_on(sock, config, deadline)) {
     Ok(shook) => {
-      return Ok(Connection { sock: sock, session: shook.session, tickets: shook.tickets, open: cell_new(true) });
+      return Ok(Connection { sock: sock, session: shook.session, tickets: shook.tickets, pending: shook.pending, ended: shook.ended, open: cell_new(true) });
     },
     Err(e) => {
       tcp_close(sock);
@@ -631,14 +635,16 @@ function __handshake_by(own sock: Socket, config: Config, deadline: i64): Result
   return Err(tls.ClosedEarly);
 }
 
-struct Shook { session: Session, tickets: Ticket[] }
+struct Shook { session: Session, tickets: Ticket[], pending: u8[], ended: boolean }
 
 function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Shook, tls.TlsError] {
   let step = start(config, random_bytes(entropy(config)), clock.now())?;
   __send_fd(sock, step.output)?;
   let s = step.session;
   let tickets: Ticket[] = [];
-  while (!s.connected()) {
+  let pending: u8[] = [];
+  let ended = false;
+  while (!s.connected() && !ended) {
     let input: u8[] = [];
     match (__await(sock, deadline)?) {
       Some(b) => {
@@ -654,8 +660,10 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
     let step = __exchange_fd(sock, s, input)?;
     s = step.session;
     tickets = __more_tickets(tickets, step.tickets);
+    pending = step.data;
+    ended = step.closed;
   }
-  return Ok(Shook { session: s, tickets: tickets });
+  return Ok(Shook { session: s, tickets: tickets, pending: pending, ended: ended });
 }
 
 function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
@@ -726,10 +734,17 @@ pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError
   if (!c.open.get()) {
     return Err(tls.NetFailed(net.ConnectionAborted));
   }
+  if (c.pending.len() > 0 || c.ended) {
+    return Ok(Received { conn: Connection { ...c, pending: [] }, data: c.pending, ended: c.ended });
+  }
   let deadline = monotonic_ns() + wait.as_nanos();
   if (c.session.offloaded()) {
     return __read_kernel(c, deadline);
   }
+  return __read_until(c, deadline);
+}
+
+function __read_until(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
   let conn = c;
   let s = c.session;
   while (true) {
@@ -761,7 +776,7 @@ pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError
 ```fern
 <<19 function __received(c: Connection, s: Session, data: u8[], ended: boolean): Received>>=
 function __received(c: Connection, s: Session, data: u8[], ended: boolean): Received {
-  return Received { conn: Connection { ...c, session: s }, data: data, ended: ended };
+  return Received { conn: Connection { ...c, session: s, ended: ended }, data: data, ended: ended };
 }
 
 function __read_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
@@ -804,7 +819,7 @@ function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, tls.Tls
       return Ok(Kerneled { session: step.session, data: step.data, ended: step.closed, tickets: step.tickets, done: step.data.len() > 0 || step.closed });
     },
     ktls.StreamEnded => {
-      return Ok(Kerneled { session: s, data: [], ended: true, tickets: [], done: true });
+      return Err(tls.Truncated);
     },
     ktls.NothingYet => {
       return Ok(Kerneled { session: s, data: [], ended: false, tickets: [], done: true });
@@ -837,7 +852,7 @@ function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsErro
   if (s.held.len() > 0) {
     return Err(tls.RecordCut);
   }
-  return Ok(__received(c, s, [], true));
+  return Err(tls.Truncated);
 }
 
 function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.TlsError] {

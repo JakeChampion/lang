@@ -359,6 +359,25 @@ function closes(p: Pair): Result[string, tls.TlsError] {
   return Ok("missed");
 }
 
+function test_a_close_before_the_handshake_ends(): test.TestOutcome {
+  match (begin(client.config("tls.example", roots(ROOT)), WALL_MS)) {
+    Ok(start) => {
+      match (rd(start.session, __codec_bytes(hex.decode("15030300020100")))) {
+        Ok(_) => {
+          return test.fail("the close_notify was taken");
+        },
+        Err(e) => {
+          return test.assert_eq(e.message(), "tls handshake: the peer sent alert 0");
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_close(): test.TestOutcome {
   match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
     Ok(p) => {
@@ -558,6 +577,7 @@ function main(): i32 {
   r = r.it("a forged CertificateVerify", test_forged);
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
+  r = r.it("a close_notify before the handshake ends is an error", test_a_close_before_the_handshake_ends);
   r = r.it("resumption", test_resumption);
   r = r.it("an identity", test_identity);
   return r.finish();

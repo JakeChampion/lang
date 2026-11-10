@@ -465,6 +465,18 @@ function test_round_trips(): test.TestOutcome {
   return test.assert_eq(round_trip(keyschedule.ChaCha20Poly1305Sha256, keyshare.X25519MlKem768), "ping pong");
 }
 
+function test_the_name_goes_out_with_no_trailing_dot(): test.TestOutcome {
+  match (handshake_between(handshake.client_config("example.com."), handshake.server_config([ed_public()], [0x0807]))) {
+    Ok(p) => {
+      return test.assert_eq(p.server.server_name, "example.com");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_defaults_and_alpn(): test.TestOutcome {
   let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["h2", "http/1.1"] };
   let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1", "h2"] };
@@ -1368,6 +1380,7 @@ function main(): i32 {
   r = r.it("the server's ServerHello of RFC 8448", test_server_trace);
   r = r.it("client and server across suites and groups", test_round_trips);
   r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
+  r = r.it("the server name goes out with no trailing dot", test_the_name_goes_out_with_no_trailing_dot);
   r = r.it("HelloRetryRequest", test_hello_retry);
   r = r.it("key shares in two groups", test_two_shares);
   r = r.it("HelloRetryRequest cookie and a second one", test_retry_cookie);
