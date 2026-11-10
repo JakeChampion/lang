@@ -1,0 +1,16 @@
+// spec: RH-27
+trait Echo {
+  function echo(value: Self): Self;
+}
+
+function take[T](own value: T): T {
+  return value;
+}
+
+function borrowed[T: Echo](value: T): T {
+  return take(T.echo(value));
+}
+
+function main(): i32 {
+  return 0;
+}

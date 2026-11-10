@@ -7806,6 +7806,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__atomic_store_release", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__atomic_fetch_add", params: [typeinfo.t_usize(), typeinfo.t_i64()], modes: [v, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__atomic_cas", params: [typeinfo.t_usize(), typeinfo.t_i64(), typeinfo.t_i64()], modes: [v, v, v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__secondary_entry", params: [], modes: [], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__cache_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: typeinfo.t_void() },

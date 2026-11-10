@@ -166,6 +166,13 @@ function test_bad_keys(): test.TestOutcome {
       }
     }
   }
+  let even = "80";
+  for i in 0..255 {
+    even = even + "00";
+  }
+  if (key_refusal(even, "010001") != "rsa: the modulus is even") {
+    return test.fail("an even modulus was accepted");
+  }
   let bad_exponent = "rsa: the exponent must be odd, at least 3 and at most 64 bits";
   if (key_refusal(k2048_n(), "010000") != bad_exponent) {
     return test.fail("an even exponent was accepted");
