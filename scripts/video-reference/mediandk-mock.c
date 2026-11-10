@@ -10,6 +10,8 @@ static int mode, live_formats, live_codecs, output_step, queued, released;
 static unsigned char input_data[512];
 static unsigned char output_data[8] = {99, 99, 1, 2, 3, 99, 99, 99};
 static int active_encoder, named_hardware, surfaces, parameter_calls, fail_queue;
+static int allow_hardware;
+static int64_t last_seek_time;
 static int live_muxers, muxer_started, muxer_writes, muxer_token;
 static int live_extractors, extractor_token, sample_position, sample_reads;
 static int format_token, codec_token;
@@ -20,6 +22,7 @@ void mock_mode(int m) {
     mode = m;
     assert(live_muxers == 0 && surfaces == 0 && live_extractors == 0);
     output_step = queued = released = active_encoder = named_hardware = parameter_calls = fail_queue = muxer_writes = 0;
+    allow_hardware = 0; last_seek_time = -1;
     output_width = 16; output_height = 8; custom_output = 0;
 }
 void mock_output_format(int width, int height, int right, int bottom) {
@@ -33,6 +36,8 @@ int mock_parameters(void) { return parameter_calls; }
 int mock_muxer_writes(void) { return muxer_writes; }
 void mock_fail_next_queue(void) { fail_queue = 1; }
 int mock_sample_reads(void) { return sample_reads; }
+void mock_allow_hardware(void) { allow_hardware = 1; }
+int64_t mock_seek_time(void) { return last_seek_time; }
 void *AMediaFormat_new(void) {
     if (mode == 1) return NULL;
     live_formats++;
@@ -94,7 +99,7 @@ void *AMediaCodec_createCodecByName(const char *name) {
 int AMediaCodec_configure(void *c, void *f, void *w, void *crypto, uint32_t flags) {
     assert(c == &codec_token && f == &format_token && !crypto && live_codecs == 1);
     assert(active_encoder ? (!w && flags == 1) : ((!w || w == (void *)123) && flags == 0));
-    return mode == 3 || (named_hardware && mode != 10) ? -10000 : 0;
+    return mode == 3 || (named_hardware && mode != 10 && !allow_hardware) ? -10000 : 0;
 }
 int AMediaCodec_start(void *c) { assert(c == &codec_token); return mode == 4 ? -10000 : 0; }
 int AMediaCodec_stop(void *c) { assert(c == &codec_token); return mode == 5 ? -10000 : 0; }
@@ -189,4 +194,4 @@ ssize_t AMediaExtractor_readSampleData(void *e, uint8_t *data, size_t capacity) 
     assert(e == &extractor_token && capacity >= 3); memcpy(data,"\1\2\3",3); sample_reads++; return mode == 15 ? 2 : 3;
 }
 bool AMediaExtractor_advance(void *e) { assert(e == &extractor_token); return ++sample_position < 2; }
-int AMediaExtractor_seekTo(void *e, int64_t time, int seek_mode) { assert(e == &extractor_token && (time == 200000 || time == 0) && seek_mode == 0); sample_position = 0; return 0; }
+int AMediaExtractor_seekTo(void *e, int64_t time, int seek_mode) { assert(e == &extractor_token && (time == 200000 || time == 0 || time == 123456) && seek_mode == 0); last_seek_time = time; sample_position = 0; return 0; }

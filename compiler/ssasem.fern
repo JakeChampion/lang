@@ -1109,7 +1109,7 @@ pub function closure_type(c: Contract): typeinfo.Type {
     params = params.append(c.params[i]);
     owns = owns.append(consuming_mode(c.modes, i, c.params[i]));
   }
-  return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
+  return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_own: false, ret_type: c.result, params_known: true };
 }
 
 pub function value_mode(): i32 {

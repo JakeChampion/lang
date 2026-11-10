@@ -31,8 +31,8 @@ function main(): i32 {
   show("union", typeinfo.TypeUnion { name: "Opt", args: [v] });
   show("map-key", typeinfo.TypeMap { key: v, value: n });
   show("map-value", typeinfo.TypeMap { key: n, value: v });
-  show("func-param", typeinfo.TypeFunc { param_types: [n, v], param_own: [], ret_type: n, params_known: true });
-  show("func-result", typeinfo.TypeFunc { param_types: [n], param_own: [], ret_type: v, params_known: true });
+  show("func-param", typeinfo.TypeFunc { param_types: [n, v], param_own: [], ret_own: false, ret_type: n, params_known: true });
+  show("func-result", typeinfo.TypeFunc { param_types: [n], param_own: [], ret_own: false, ret_type: v, params_known: true });
   show("no-child", typeinfo.TypeTuple { elements: [n, n] });
   show("leaf", v);
   return 0;

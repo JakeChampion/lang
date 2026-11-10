@@ -7,6 +7,7 @@ import (
 )
 
 func (c *checker) checkBoundTraitCall(call *ast.Call, method ast.TraitMethod, params []ast.Param, receiver, expected ast.Type, s *scope) ast.Type {
+	c.recordOwnedResult(call, method.ResultOwn)
 	sub := map[string]ast.Type{}
 	bind := func(want, actual ast.Type) {
 		candidate := maps.Clone(sub)

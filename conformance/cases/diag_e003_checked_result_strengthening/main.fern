@@ -1,0 +1,11 @@
+// spec: OR-03
+struct Box { values: u8[] }
+
+function ordinary(own x: Box): Box {
+  return x;
+}
+
+function main(): i32 {
+  let step: (own Box) => own Box = ordinary;
+  return 0;
+}

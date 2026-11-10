@@ -659,6 +659,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 		f.b.WriteString("const ")
 		f.b.WriteString(m.Name)
 		f.b.WriteString(": ")
+		f.b.WriteString(ast.OwnedResultPrefix(m.Result, m.ResultOwn))
 		f.b.WriteString(formatType(m.Result))
 		if v := constBodyValue(m.Body); v != nil {
 			f.b.WriteString(" = ")
@@ -692,6 +693,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.b.WriteByte(')')
 	if m.Result != nil {
 		f.b.WriteString(": ")
+		f.b.WriteString(ast.OwnedResultPrefix(m.Result, m.ResultOwn))
 		f.b.WriteString(formatType(m.Result))
 	}
 	if m.Body != nil {
@@ -770,6 +772,7 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		if fn.ImplWritten != nil {
 			f.b.WriteString(formatType(fn.ImplWritten.Result))
 		} else {
+			f.b.WriteString(ast.OwnedResultPrefix(fn.ReturnType, fn.ReturnOwn))
 			f.b.WriteString(formatType(fn.ReturnType))
 		}
 		if v := constBodyValue(fn.Body); v != nil {
@@ -824,6 +827,7 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.b.WriteByte(')')
 	if result != nil && !fn.ReturnUnannotated {
 		f.b.WriteString(": ")
+		f.b.WriteString(ast.OwnedResultPrefix(result, fn.ReturnOwn))
 		f.b.WriteString(formatType(result))
 	}
 	f.b.WriteByte(' ')
@@ -973,6 +977,7 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	f.b.WriteByte(')')
 	if fn.ReturnType != nil && !fn.ReturnUnannotated {
 		f.b.WriteString(": ")
+		f.b.WriteString(ast.OwnedResultPrefix(fn.ReturnType, fn.ReturnOwn))
 		f.b.WriteString(formatType(fn.ReturnType))
 	}
 	if fn.ImportIface != "" {
@@ -1509,6 +1514,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteByte(')')
 		if x.ReturnType != nil {
 			f.b.WriteString(": ")
+			f.b.WriteString(ast.OwnedResultPrefix(x.ReturnType, x.ReturnOwn))
 			f.b.WriteString(formatType(x.ReturnType))
 		}
 		f.b.WriteByte(' ')
@@ -2204,6 +2210,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 		if !x.ReturnUnannotated && x.ReturnType != nil {
 			f.b.WriteString(": ")
+			f.b.WriteString(ast.OwnedResultPrefix(x.ReturnType, x.ReturnOwn))
 			f.b.WriteString(arrowReturnType(x.ReturnType))
 		}
 		f.b.WriteString(" => ")
@@ -2528,7 +2535,8 @@ func formatType(t ast.Type) string {
 			}
 			out += formatType(p)
 		}
-		return out + ") => " + formatType(x.Result)
+		out += ") => " + ast.OwnedResultPrefix(x.Result, x.ResultOwn)
+		return out + formatType(x.Result)
 	case ast.SelfType:
 		return "Self"
 	case ast.ProjType:

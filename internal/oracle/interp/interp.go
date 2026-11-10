@@ -7180,6 +7180,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			Name:       "",
 			Params:     x.Params,
 			ReturnType: x.ReturnType,
+			ReturnOwn:  x.ReturnOwn,
 			Body:       x.Body,
 		}
 		captures := x.Captures
