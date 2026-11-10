@@ -1,3 +1,4 @@
+# 2026-11-10: handle_nested_fields_close_from_owned_root has zero unpaired allocations under native RC trace.
 # 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
 # 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
 # 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
@@ -448,6 +449,7 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
+handle_nested_fields_close_from_owned_root          0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0

@@ -495,6 +495,8 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		return true
 	})
+	exclusiveFields := exclusiveOwnedFields(body, ownParam, fieldOf, occurrences)
+
 	// A deferred action runs at the exit, so a path it mentions is live until
 	// then: a bare mention of q holds every field, and `q.g` holds g alone.
 	deferBare := map[string]bool{}
@@ -852,7 +854,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok {
 				continue
 			}
+			nested := fa != enclosingField(fa)
+			fa = enclosingField(fa)
 			q, ok := fa.Target.(*ast.Ident)
+			if nested && (!ok || !exclusiveFields[[2]string{q.Name, fa.Field}]) {
+				continue
+			}
 			if !ok || lambdaCaptured[q.Name] || !fieldOwner(q.Name) {
 				continue
 			}
@@ -877,7 +884,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok {
 				continue
 			}
+			nested := fa != enclosingField(fa)
+			fa = enclosingField(fa)
 			q, ok := fa.Target.(*ast.Ident)
+			if nested && (!ok || !exclusiveFields[[2]string{q.Name, fa.Field}]) {
+				continue
+			}
 			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, fa.Field}] || !fieldOwner(q.Name) {
 				continue
 			}
@@ -948,6 +960,44 @@ func argParts(c *ast.Call) []ast.Expr {
 		add(a)
 	}
 	return out
+}
+
+// One read of an unchanged owned field, without a whole-owner read, leaves
+// no earlier projection that could lend the handle being consumed.
+func exclusiveOwnedFields(body ast.Node, own map[string]bool, fields map[*ast.Ident]string, occurrences map[string]int) map[[2]string]bool {
+	assigned := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				assigned[id.Name] = true
+			}
+		}
+		return true
+	})
+	selected := map[string]int{}
+	reads := map[[2]string]int{}
+	for id, field := range fields {
+		selected[id.Name]++
+		reads[[2]string{id.Name, field}]++
+	}
+	out := map[[2]string]bool{}
+	for field, count := range reads {
+		name := field[0]
+		out[field] = own[name] && !assigned[name] && count == 1 && selected[name] == occurrences[name]
+	}
+	return out
+}
+
+// enclosingField is the field of the named owner that contains a projection.
+// Its existing last-use proof also covers a descendant of that field.
+func enclosingField(fa *ast.FieldAccess) *ast.FieldAccess {
+	for {
+		parent, nested := fa.Target.(*ast.FieldAccess)
+		if !nested {
+			return fa
+		}
+		fa = parent
+	}
 }
 
 // mentionsBesideFields counts the mentions of name in c that are not reads
@@ -1760,6 +1810,13 @@ func lastUseArgsOf(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			}
 		}
 	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if fa, ok := n.(*ast.FieldAccess); ok && out[enclosingField(fa)] {
+			out[fa] = true
+		}
+		return true
+	})
+
 	nestedExpr := map[ast.Expr]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch n.(type) {

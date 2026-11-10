@@ -1173,19 +1173,11 @@ function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
 
 function lends_view(f: ssasem.Func): boolean {
   for p in f.params {
-    if (ssasem.holds_view(f, p) && !whole_view(f, p)) {
+    if (ssasem.holds_view(f, p) && !ssasem.is_view(p)) {
       return true;
     }
   }
   return ssasem.holds_view(f, f.result) || loops_view(f);
-}
-
-// A string view, or an array view of elements that hold no view.
-function whole_view(f: ssasem.Func, t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return a.view && !ssasem.holds_view(f, a.elem);
-  }
-  return ssasem.is_view(t);
 }
 
 // A loop that rebinds a view starts from a fresh box of the caller's view on
@@ -1194,7 +1186,7 @@ function whole_view(f: ssasem.Func, t: typeinfo.Type): boolean {
 function loops_view(f: ssasem.Func): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssa.PHI && whole_view(f, f.values[ins.result])) {
+      if (ins.kind_tag == ssa.PHI && ssasem.is_view(f.values[ins.result])) {
         return true;
       }
     }

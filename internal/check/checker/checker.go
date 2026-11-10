@@ -10721,7 +10721,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
-			if id, ok := x.Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
+			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
 				return true
 			}
 			if lit := replaced[x]; lit != nil && isOwnedExpr(lit.Base) {

@@ -64,6 +64,7 @@ on:
 # to build the list it partitions and, by construction, to decide what runs.
 env:
   CATCH_ALL_SKIP: '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)'
+  OWN_JOB_TESTS: "TestExamplesNoCrashX86_64"
 
 jobs:
   test:
@@ -152,6 +153,7 @@ jobs:
             go test -list '.' ./internal/testing/e2e/ |
               grep -E '^Test' |
               grep -vE "$CATCH_ALL_SKIP" |
+              grep -vxE "$OWN_JOB_TESTS" |
               sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" "$W"
           )
@@ -183,3 +185,48 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 1
+
+  # Main run 42749853522 recorded 1331 seconds for this one test.
+  # A shared worker reached its 1500-second limit with other tests unfinished.
+  # This job retains the test and its 25-minute timeout, with all runner CPUs.
+  examples-census:
+    name: examples-census-x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: e2e-other-examples-x86_64
+      - uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-libc: "true"
+          host-gl: "true"
+      - name: build the e2e test binary
+        run: |
+          go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/
+          go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+      - name: check the complete examples corpus
+        env:
+          FERN_REQUIRE_ARM64_TOOLING: "1"
+          FERN_REQUIRE_HOST_GL: "1"
+        run: |
+          cd internal/testing/e2e
+          "$RUNNER_TEMP/ci-test-workers" \
+            -binary "$RUNNER_TEMP/e2e-other.test" \
+            -output "$RUNNER_TEMP/other-examples-results" \
+            -workers 1 -timeout 25m -run '^TestExamplesNoCrashX86_64$'
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/other-examples-results/worker-*.jsonl
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: examples-census-results-x86_64
+          path: ${{ runner.temp }}/other-examples-results
+          if-no-files-found: error

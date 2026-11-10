@@ -1,5 +1,11 @@
 # PPS qualification after the CI repair
 
+These are historical reports for feature head `5944dc03b4` and compiler repair `ffda9726b6`.
+The repair owner withdrew that compiler change after native ARM measurements showed regressions.
+Issue #15093 records the cause and the separate compiler work.
+The current media branch removes that withdrawn code and its 44 baseline updates.
+Current qualification must use the new producer and current source, without these obsolete baseline pins.
+
 PR #15089 reuses the published repair from PR #15087 at `ffda9726b6`.
 The repair corrects array-view inline rules and array reads through lends.
 It also restores the HTTP target fast path and corrects the TLS resumed-client expectation.
