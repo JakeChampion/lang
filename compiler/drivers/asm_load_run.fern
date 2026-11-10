@@ -37,12 +37,10 @@ function part_mods(parts: flatten.PerModule[]): parser.Module[] {
 }
 
 function entry_index(parts: flatten.PerModule[]): i32 {
-  let i = 0;
-  while (i < parts.len()) {
+  for i in 0..parts.len() {
     if (parts[i].is_entry) {
       return i;
     }
-    i += 1;
   }
   return 0;
 }
@@ -170,10 +168,8 @@ function main(): i32 {
     }
     if (pm_mode == "needs") {
       let needs = ircore.all_runtime_need_roots();
-      let no = 0;
-      while (no < needs.len()) {
+      for no in 0..needs.len() {
         print(needs[no] + "\n");
-        no += 1;
       }
       return 0;
     }

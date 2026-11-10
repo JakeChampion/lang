@@ -3,13 +3,11 @@ import "../util";
 
 function render(ops: ir.Op[]): string {
   let s = "";
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (i > 0) {
       s += " ; ";
     }
     s += ir.render_op(ops[i]);
-    i += 1;
   }
   return s;
 }
@@ -559,24 +557,20 @@ function main(): i32 {
     mi += 1;
   }
   let mus64: u64[] = [3u64, 7u64, 10u64, 100u64, 641u64, 1000000007u64, 9223372036854775809u64, 12297829382473034411u64, 18446744073709551557u64, 18446744073709551615u64];
-  mi = 0;
-  while (mi < mus64.len()) {
+  for mi in 0..mus64.len() {
     let mu64 = ir.derive_magic_u(mus64[mi], 64);
     out = out + "magic_u64 " + util.i64_to_string(mus64[mi] as i64) + ": m=" + util.i64_to_string(mu64.m as i64)
       + " s=" + util.i32_to_string(mu64.s) + " add=" + bool_word(mu64.add) + "\n";
-    mi += 1;
   }
 
   let texts: string[] = ["0", "7", "-7", "007", "-0", "", "-", "0x10", "7u8", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967296", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "99999999999999999999"];
-  let ti = 0;
-  while (ti < texts.len()) {
+  for ti in 0..texts.len() {
     let t = texts[ti];
     let r32 = ir.const_i32_readable(ir.op_const_i32_text(t));
     let r64 = ir.const_i64_readable(ir.op_const_i64_text(t));
     let a32 = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
     let a64 = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
     out = out + "readable " + t + ": i32=" + bool_word(r32) + " i64=" + bool_word(r64) + " agree=" + bool_word(a32 && a64) + "\n";
-    ti += 1;
   }
 
   let ds_const: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_const_i32(0), ir.op_return()];

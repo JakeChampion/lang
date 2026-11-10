@@ -24,15 +24,13 @@ function eval_program(prog: ast.Stmt[]): interp.Value {
   let heap = interpheap.create();
   let env = interp.new_env(heap);
   let preassigned = interp.body_assign_names(prog, []);
-  let i = 0;
-  while (i < prog.len()) {
+  for i in 0..prog.len() {
     env = interp.cellify_captures(env, prog[i], preassigned);
     let r = interp.eval_stmt(prog[i], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
     }
-    i += 1;
   }
   return interp.v_err("program reached end without `return`");
 }
@@ -993,8 +991,7 @@ function check_for_in_subjects(): i32 {
     "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
   ];
   let wants: i32[] = [195, 33, 14, 8, 6];
-  let i = 0;
-  while (i < srcs.len()) {
+  for i in 0..srcs.len() {
     let r = run_module(srcs[i]);
     match (r) {
       interp.VInt(got) => {
@@ -1006,7 +1003,6 @@ function check_for_in_subjects(): i32 {
         return 930 + i;
       }
     }
-    i += 1;
   }
   return 0;
 }

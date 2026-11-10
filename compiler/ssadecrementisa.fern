@@ -94,12 +94,10 @@ function branch(name: string): boolean {
 }
 
 function split_at(line: string): i32 {
-  let at = 0;
-  while (at < line.len()) {
+  for at in 0..line.len() {
     if (line[at] == b' ' || line[at] == b'\t') {
       return at;
     }
-    at += 1;
   }
   return -1;
 }

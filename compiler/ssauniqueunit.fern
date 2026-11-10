@@ -22,12 +22,10 @@ function pools_match(tail: string[], architecture: string): boolean {
   if (tail.len() != expected.len() - 1) {
     return false;
   }
-  let i = 0;
-  while (i < tail.len()) {
+  for i in 0..tail.len() {
     if (tail[i] != expected[i]) {
       return false;
     }
-    i += 1;
   }
   return true;
 }
@@ -50,8 +48,7 @@ function text_unit(output: string, architecture: string): Unit {
   let body: string[] = [];
   let tail: string[] = [];
   let in_pools = false;
-  let i = 1;
-  while (i < lines.len()) {
+  for i in 1..lines.len() {
     let line = lines[i];
     if (line == ".section .data") {
       in_pools = true;
@@ -61,7 +58,6 @@ function text_unit(output: string, architecture: string): Unit {
     } else {
       body = body.append(line);
     }
-    i += 1;
   }
   if (!pools_match(tail, architecture)) {
     return Unit { lines: [], ok: false };

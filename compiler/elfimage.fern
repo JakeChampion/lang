@@ -10,13 +10,11 @@ import "std/string";
 pub function arm64_refusals(target: string, stage: string, unknown: string[]): string {
   let msg: string = "fern: -target " + target + ": in-process " + stage
     + " refused " + util.i32_to_string(unknown.len()) + ": ";
-  let i = 0;
-  while (i < unknown.len()) {
+  for i in 0..unknown.len() {
     if (i > 0) {
       msg += ", ";
     }
     msg += unknown[i];
-    i += 1;
   }
   eprint(msg);
   return "";
@@ -245,19 +243,15 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
 }
 
 function reserve_bytes(own data: i32[], n: i32): i32[] {
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     data = data.append(0);
-    i += 1;
   }
   return data;
 }
 
 function store_le64(own data: i32[], at: i32, v: i64): i32[] {
-  let j = 0;
-  while (j < 8) {
+  for j in 0..8 {
     data = data.with(at + j, (v >> 8 * j & 255i64) as i32);
-    j += 1;
   }
   return data;
 }
@@ -273,10 +267,8 @@ function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_a
   }
   let data = a.rodata;
   a = x86_native.X86Asm { ...a, rodata: [] };
-  let i = 0;
-  while (i < a.dfix_offs.len()) {
+  for i in 0..a.dfix_offs.len() {
     data = store_le64(data, reloc_at + 8 * i, (dv + a.dfix_offs[i]) as i64);
-    i += 1;
   }
   data = store_le64(data, list_slot, (dv + reloc_at) as i64);
   data = store_le64(data, count_slot, a.dfix_offs.len() as i64);

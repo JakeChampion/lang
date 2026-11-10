@@ -16,19 +16,15 @@ function main(): i32 {
     "(i32, i32)[]", "i32", "Map[a, b]", "", "(a, (b, c), d)",
   ];
   let out = "";
-  let i = 0;
-  while (i < corpus.len()) {
+  for i in 0..corpus.len() {
     let t = corpus[i];
     let label = t;
     if (label.len() == 0) {
       label = "<empty>";
     }
-    let n = 0;
-    while (n <= 3) {
+    for n in 0..=3 {
       out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm_ir.nth_tuple_type_elem(t, n)) + "\n";
-      n += 1;
     }
-    i += 1;
   }
   write(out);
   return 0;

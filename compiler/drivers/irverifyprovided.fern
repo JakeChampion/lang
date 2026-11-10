@@ -95,8 +95,7 @@ pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverif
   let out: irverify.Problem[] = [];
   let calls = 0;
   let k_calld = ir.kind_id("call_direct");
-  let i = 0;
-  while (i < ops.len()) {
+  for i in 0..ops.len() {
     if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
       calls += 1;
       if (!irverify.index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
@@ -107,7 +106,6 @@ pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverif
         });
       }
     }
-    i += 1;
   }
   return ProvidedResult { problems: out, calls: calls };
 }

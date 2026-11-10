@@ -8,8 +8,7 @@ function main(): i32 {
   let dump_data = false;
   let dump_eh = false;
   let dump_eh_darwin = false;
-  let i = 0;
-  while (i < av.len()) {
+  for i in 0..av.len() {
     if (av[i] == "-words") {
       dump = true;
     }
@@ -22,7 +21,6 @@ function main(): i32 {
     if (av[i] == "-ehframe-darwin") {
       dump_eh_darwin = true;
     }
-    i += 1;
   }
   let src = "";
   match (io.read_all_stdin()) {
@@ -44,10 +42,8 @@ function main(): i32 {
   print("text=" + code.to_string() + " data=" + p.data.len().to_string()
     + " bump=" + __heap_bump_bytes().to_string() + " ro=" + (pa2.text.len() - code).to_string() + "\n");
   if (p.unknown.len() > 0) {
-    let u = 0;
-    while (u < p.unknown.len()) {
+    for u in 0..p.unknown.len() {
       print("unknown=" + p.unknown[u]);
-      u += 1;
     }
   }
   if (dump) {
@@ -60,10 +56,8 @@ function main(): i32 {
     }
   }
   if (dump_data) {
-    let d = 0;
-    while (d < p.data.len()) {
+    for d in 0..p.data.len() {
       print("data " + d.to_string() + " " + p.data[d].to_string());
-      d += 1;
     }
   }
   if (dump_eh) {
@@ -80,18 +74,14 @@ function main(): i32 {
       e += 1;
     }
     let dbg = arm64_native.arm64_debug_frame(p, 4194304 as i64);
-    e = 0;
-    while (e < dbg.len()) {
+    for e in 0..dbg.len() {
       print("dbg " + e.to_string() + " " + dbg[e].to_string());
-      e += 1;
     }
   }
   if (dump_eh_darwin) {
     let deh = arm64_native.arm64_eh_frame_darwin(p, 4194304 as i64, 4194560 as i64);
-    let de = 0;
-    while (de < deh.len()) {
+    for de in 0..deh.len() {
       print("eh " + de.to_string() + " " + deh[de].to_string());
-      de += 1;
     }
   }
   return 0;

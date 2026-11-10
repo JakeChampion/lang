@@ -15,8 +15,7 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
   let g = graph_of(f);
   let blocks: ssa.SBlock[] = [];
   let changed = false;
-  let b = 0;
-  while (b < f.graph.blocks.len()) {
+  for b in 0..f.graph.blocks.len() {
     let blk = f.graph.blocks[b];
     let insts: ssa.SInst[] = [];
     let marked = false;
@@ -36,7 +35,6 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
       changed = true;
     }
     blocks = blocks.append(blk);
-    b += 1;
   }
   if (!changed) {
     return f;
@@ -157,8 +155,7 @@ function graph_of(f: ssasem.Func): Graph {
   let i32s: boolean[] = [];
   let i64s: boolean[] = [];
   let unsigned_max: i64[] = [];
-  let v = 0;
-  while (v < n) {
+  for v in 0..n {
     defs = defs.append(none);
     home = home.append(-1);
     i32s = i32s.append(ssasem.is_i32(f.values[v]));
@@ -173,7 +170,6 @@ function graph_of(f: ssasem.Func): Graph {
       }
     }
     unsigned_max = unsigned_max.append(upper);
-    v += 1;
   }
   let widens = __alloc_i32(n);
   let nb = f.graph.blocks.len();
@@ -190,8 +186,7 @@ function graph_of(f: ssasem.Func): Graph {
   }
   let at = ssa.block_positions(f.graph);
   let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
-  b = 0;
-  while (b < nb) {
+  for b in 0..nb {
     let blk = f.graph.blocks[b];
     let before = g.rels.len();
     if (blk.preds.len() == 1) {
@@ -204,7 +199,6 @@ function graph_of(f: ssasem.Func): Graph {
       }
     }
     g = Graph { ...g, first: g.first.append(before), count: g.count.append(g.rels.len() - before) };
-    b += 1;
   }
   return with_dominators(g, ssadeps.dominates(f.graph), nb);
 }
@@ -302,12 +296,10 @@ function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
   while (order.len() < 2 * nb) {
     order = order.append(-1);
   }
-  b = 0;
-  while (b < nb) {
+  for b in 0..nb {
     if (d.pre[b] >= 0 && d.pre[b] < 2 * nb) {
       order = order.with(d.pre[b], b);
     }
-    b += 1;
   }
   let stack: i32[] = [];
   let sp = 0;
@@ -356,12 +348,10 @@ function equal(g: Graph, a: i32, b: i32, steps: i32): boolean {
   if (da.kind_tag != db.kind_tag || !projection(da.kind_tag) || da.imm != db.imm || da.str != db.str || da.args.len() != db.args.len()) {
     return false;
   }
-  let k = 0;
-  while (k < da.args.len()) {
+  for k in 0..da.args.len() {
     if (!equal(g, da.args[k], db.args[k], steps - 1)) {
       return false;
     }
-    k += 1;
   }
   return da.args.len() > 0;
 }
@@ -929,8 +919,7 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
-  let b = 0;
-  while (b < f.graph.blocks.len()) {
+  for b in 0..f.graph.blocks.len() {
     let blk = f.graph.blocks[b];
     let insts: ssa.SInst[] = [];
     let marked = false;
@@ -957,7 +946,6 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
       changed = true;
     }
     blocks = blocks.append(blk);
-    b += 1;
   }
   if (!changed) {
     return f;
@@ -1048,8 +1036,7 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
     }
     let insts: ssa.SInst[] = [];
     let p = 0;
-    let pos = 0;
-    while (pos < blk.insts.len()) {
+    for pos in 0..blk.insts.len() {
       let ins = blk.insts[pos];
       if (p < plan.at.len() && plan.at[p] == pos) {
         let t = f.values[ins.args[1]];
@@ -1087,7 +1074,6 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
         ins = ssa.SInst { ...ins, imm: 1 };
       }
       insts = insts.append(ins);
-      pos += 1;
     }
     blocks = blocks.append(ssa.SBlock { ...blk, insts: insts });
     changed = true;
@@ -1103,26 +1089,22 @@ struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[
 function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
   let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
   let start = 0;
-  let pos = 0;
-  while (pos <= insts.len()) {
+  for pos in 0..=insts.len() {
     if (pos == insts.len() || !silent(f, insts[pos])) {
       out = probes_in_run(f, defs, insts, start, pos, out);
       start = pos + 1;
     }
-    pos += 1;
   }
   return out;
 }
 
 function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
   let reads: i32[] = [];
-  let k = start;
-  while (k < end) {
+  for k in start..end {
     let ins = insts[k];
     if (checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
       reads = reads.append(k);
     }
-    k += 1;
   }
   let done = __alloc_bool(reads.len());
   let i = 0;
@@ -1136,8 +1118,7 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
     let low = offset_of(f, defs, first.args[1]);
     let high = low;
     let members: i32[] = [reads[i]];
-    let j = i + 1;
-    while (j < reads.len()) {
+    for j in i + 1..reads.len() {
       let r = insts[reads[j]];
       if (!done[j] && r.args[0] == first.args[0] && offset_base(f, defs, r.args[1]) == x) {
         done = done.with(j, true);
@@ -1150,7 +1131,6 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
         }
         members = members.append(reads[j]);
       }
-      j += 1;
     }
     if (members.len() >= 2) {
       let m = 1;
@@ -1199,13 +1179,11 @@ function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (d.kind_tag != ssa.BINARY || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
     return -1;
   }
-  let k = 0;
-  while (k < 2) {
+  for k in 0..2 {
     let a = defs[d.args[k]];
     if (a.kind_tag == ssa.CONST_INT && ssasem.is_i32(f.values[d.args[k]])) {
       return k;
     }
-    k += 1;
   }
   return -1;
 }
@@ -1409,10 +1387,8 @@ function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[
 
 function falses(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.append(false);
-    i += 1;
   }
   return out;
 }

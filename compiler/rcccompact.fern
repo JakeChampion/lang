@@ -57,10 +57,8 @@ function renamed_field(ids: i32[], v: i32): i32 {
 
 function marked(f: ssa.SFunc): i32[] {
   let ids = util.minus_ones(f.nvals);
-  let v = 0;
-  while (v < f.nparams) {
+  for v in 0..f.nparams {
     ids = ids.with(v, 0);
-    v += 1;
   }
   for b in f.blocks {
     for ins in b.insts {

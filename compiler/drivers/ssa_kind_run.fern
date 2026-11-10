@@ -7,8 +7,7 @@ function main(): i32 {
   let failures = 0;
   let ok = 0;
   let retired = 0;
-  let id = 1;
-  while (id <= n) {
+  for id in 1..=n {
     let name = ssa.kind_name(id);
     let back = ssa.kind_id(name);
     if (ssa.kind_retired(id)) {
@@ -22,7 +21,6 @@ function main(): i32 {
     } else {
       ok += 1;
     }
-    id += 1;
   }
 
   let out = "";
@@ -46,8 +44,7 @@ function main(): i32 {
   let tn = ssa.term_count();
   let tfailures = 0;
   let tok = 0;
-  let tid = 1;
-  while (tid <= tn) {
+  for tid in 1..=tn {
     let tname = ssa.term_name(tid);
     let tback = ssa.term_id(tname);
     if (tname == "" || tback != tid) {
@@ -55,7 +52,6 @@ function main(): i32 {
     } else {
       tok += 1;
     }
-    tid += 1;
   }
   out = out + "term_count=" + util.i32_to_string(tn) + "\n";
   out = out + "term_bijection_ok=" + util.i32_to_string(tok) + "\n";

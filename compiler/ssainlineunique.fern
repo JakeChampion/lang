@@ -12,13 +12,11 @@ function label(line: string): boolean {
   if (!line.starts_with(".L") || !line.ends_with(":")) {
     return false;
   }
-  let i = 2;
-  while (i < line.len() - 1) {
+  for i in 2..line.len() - 1 {
     let c = line[i];
     if (!util.is_symbol_byte(c)) {
       return false;
     }
-    i += 1;
   }
   return line.len() > 3;
 }

@@ -156,8 +156,7 @@ function trim_trailing_newlines(s: string): string {
 function unwrap_formatted(formatted: string): string {
   let lines = literate.split_lines(trim_trailing_newlines(formatted));
   let out: string[] = [];
-  let i = 1;
-  while (i < lines.len() - 1) {
+  for i in 1..lines.len() - 1 {
     if (i > 1) {
       out = out.append("\n");
     }
@@ -166,7 +165,6 @@ function unwrap_formatted(formatted: string): string {
       ln = slice_unchecked(ln, 2, ln.len()).to_owned();
     }
     out = out.append(ln);
-    i += 1;
   }
   return util.str_join_chunks(out);
 }
@@ -217,10 +215,8 @@ function append_line(parts: string[], line: string): string[] {
 }
 
 function append_lines(parts: string[], lines: string[], from: i32, to: i32): string[] {
-  let i = from;
-  while (i < to) {
+  for i in from..to {
     parts = append_line(parts, lines[i]);
-    i += 1;
   }
   return parts;
 }
@@ -234,8 +230,7 @@ function literate_output_is_readable(src: string, formatted: string): boolean {
   if (doc_outside_bodies(a) != doc_outside_bodies(b)) {
     return false;
   }
-  let i = 0;
-  while (i < a.blocks.len()) {
+  for i in 0..a.blocks.len() {
     let x = a.blocks[i];
     let y = b.blocks[i];
     if (formats_body(x)) {
@@ -245,7 +240,6 @@ function literate_output_is_readable(src: string, formatted: string): boolean {
         return false;
       }
     }
-    i += 1;
   }
   return true;
 }
@@ -473,26 +467,22 @@ function source_line(path: string, n: i32): string {
     Ok(src) => {
       let cur = 1;
       let start = 0;
-      let i = 0;
-      while (i <= src.len()) {
+      for i in 0..=src.len() {
         if (i == src.len() || src[i] == b'\n') {
           if (cur == n) {
             let out = "";
-            let k = start;
-            while (k < i) {
+            for k in start..i {
               if (src[k] == b'\t') {
                 out += " ";
               } else {
                 out += slice_unchecked(src, k, k + 1);
               }
-              k += 1;
             }
             return out;
           }
           cur += 1;
           start = i + 1;
         }
-        i += 1;
       }
       return "";
     },
@@ -1661,13 +1651,11 @@ function shared_exports(merged: parser.Module, shared: boolean, export_list: str
 }
 
 function export_func_index(merged: parser.Module, name: string): i32 {
-  let i = 0;
-  while (i < merged.funcs.len()) {
+  for i in 0..merged.funcs.len() {
     let f = merged.funcs[i];
     if ((f.name == name || f.name == util.ENTRY_SHADOW_PREFIX + name) && f.receiver_name == "" && f.import_iface == "" && f.import_wit == "") {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -1782,10 +1770,8 @@ function export_entry_arm64(f: parser.FuncDecl, name: string, harden: boolean, l
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
-    i += 1;
   }
   out = out + "    bl __fn_" + f.name + "\n";
   if (f.ret_type == "f64") {
@@ -1956,12 +1942,10 @@ function le64_at(b: i32[], off: i32): i64 {
 struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string, display_queued: boolean }
 
 function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
-  let i = 0;
-  while (i < paths.len()) {
+  for i in 0..paths.len() {
     if (paths[i] == ip && dirs[i] == from_dir) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -1989,8 +1973,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
   let stdlibs = q.stdlibs;
   let unrooted = q.unrooted;
   let display_queued = q.display_queued;
-  let i = 0;
-  while (i < mod.imports.len()) {
+  for i in 0..mod.imports.len() {
     let ip = mod.imports[i].path;
     if (ip == "core/primitive_text" || ip == "core/primitive_text.fern") {
       display_queued = true;
@@ -2005,7 +1988,6 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
       cols = cols.append(mod.imports[i].col);
       stdlibs = stdlibs.append(util.is_stdlib_path(ip) || parent_stdlib && !util.has_str(deps, util.dep_name(ip)));
     }
-    i += 1;
   }
   return queue_display(ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted, display_queued: display_queued }, mod, from_dir, root);
 }
@@ -2049,10 +2031,8 @@ function sanitize_warning(target: string): string {
 
 function dw_file_table(entry: string, files: string[], remaps: PathRemap[]): string {
   let o = "    .file 1 \"" + remap_path(remaps, entry) + "\"\n";
-  let k = 0;
-  while (k < files.len()) {
+  for k in 0..files.len() {
     o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + remap_path(remaps, files[k]) + "\"\n";
-    k += 1;
   }
   return o;
 }
@@ -2274,14 +2254,12 @@ function size_bytes(text: string): i64 {
   }
   let limit = 9223372036854775807i64 / scale;
   let value: i64 = 0i64;
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let d = text[i] as i32 - 48;
     if (d < 0 || d > 9 || value > (limit - d as i64) / 10i64) {
       return 0i64;
     }
     value = value * 10i64 + d as i64;
-    i += 1;
   }
   return value * scale;
 }
@@ -2622,8 +2600,7 @@ function run_manifest(path: string): i32 {
 
 function list_targets(): i32 {
   let all = platforms.targets();
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     let name = all[i];
     let line = name + ": " + platforms.description(name) + "\n";
     line = line + "    capabilities: " + bracket_words(platforms.for_target(name).capabilities) + "\n";
@@ -2632,20 +2609,17 @@ function list_targets(): i32 {
       line = line + "    handlers:     " + bracket_words(kinds) + "\n";
     }
     write(line);
-    i += 1;
   }
   return 0;
 }
 
 function bracket_words(xs: string[]): string {
   let out = "[";
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (i > 0) {
       out += " ";
     }
     out += xs[i];
-    i += 1;
   }
   return out + "]";
 }
@@ -2890,12 +2864,10 @@ function load_diag(code: string, message: string, line: i32, col: i32): util.Dia
 
 function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
   let out: mvs.Req[] = [];
-  let i = 0;
-  while (i < man.deps.len()) {
+  for i in 0..man.deps.len() {
     if (man.deps[i].kind == "version" && man.deps[i].version.len() > 0) {
       out = out.append(mvs.Req { pkg: man.deps[i].name + "", min: man.deps[i].version + "" });
     }
-    i += 1;
   }
   return out;
 }
@@ -2996,10 +2968,8 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
 
   let bans: mvs.Ban[] = [];
-  let bi = 0;
-  while (bi < man.excl_pkg.len()) {
+  for bi in 0..man.excl_pkg.len() {
     bans = bans.append(mvs.Ban { pkg: man.excl_pkg[bi] + "", ver: man.excl_ver[bi] + "" });
-    bi += 1;
   }
 
   let st = mvs.begin(roots, bans, ix);
@@ -3046,10 +3016,8 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     }
   }
   eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
-  let i = 0;
-  while (i < sel.len()) {
+  for i in 0..sel.len() {
     eprint("  " + sel[i].name + " " + sel[i].ver);
-    i += 1;
   }
   return 0;
 }
@@ -3217,12 +3185,10 @@ function grant_list(grant: string): string {
 
 function insert_dependency(src: string, line: string): string {
   let lines = mvs.split_char(src, b'\n');
-  let i = 0;
-  while (i < lines.len()) {
+  for i in 0..lines.len() {
     if (fern_toml.line_content(lines[i]).trim() == "[dependencies]") {
       let out = "";
-      let k = 0;
-      while (k < lines.len()) {
+      for k in 0..lines.len() {
         if (k > 0) {
           out += "\n";
         }
@@ -3230,11 +3196,9 @@ function insert_dependency(src: string, line: string): string {
         if (k == i) {
           out = out + "\n" + line;
         }
-        k += 1;
       }
       return out;
     }
-    i += 1;
   }
   let sep = "\n";
   if (src.len() > 0 && src[src.len() - 1] == b'\n') {
@@ -3399,14 +3363,12 @@ function run_vendor(start: string): i32 {
       return 1;
     }
   }
-  let i = 0;
-  while (i < set.names.len()) {
+  for i in 0..set.names.len() {
     let err = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
     if (err.len() > 0) {
       eprint("vendor: copying " + util.quoted(set.names[i]) + ": " + err);
       return 1;
     }
-    i += 1;
   }
   eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
   return 0;
@@ -3553,12 +3515,10 @@ function has_manifest(dir: string): boolean {
 }
 
 function str_index(xs: string[], want: string): i32 {
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (xs[i] == want) {
       return i;
     }
-    i += 1;
   }
   return -1;
 }
@@ -4316,13 +4276,11 @@ function run_tangle(path: string, out_path: string, chunk: string, weave_it: boo
           return tangle_write_files(o.files, out_path);
         }
         let out = "";
-        let i = 0;
-        while (i < o.files.len()) {
+        for i in 0..o.files.len() {
           if (i > 0) {
             out += "\n";
           }
           out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
-          i += 1;
         }
         return write_generated(out, "");
       },
@@ -4378,14 +4336,12 @@ function write_generated(code: string, out_path: string): i32 {
 }
 
 function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
-  let i = 0;
-  while (i < files.len()) {
+  for i in 0..files.len() {
     let rel = files[i].path;
     let code = write_generated(files[i].code, dir + "/" + rel);
     if (code != 0) {
       return code;
     }
-    i += 1;
   }
   return 0;
 }
@@ -4574,14 +4530,12 @@ function path_base(p: string): string {
 
 function flatten_path(p: string): string {
   let out = "";
-  let i = 0;
-  while (i < p.len()) {
+  for i in 0..p.len() {
     if (p[i] == b'/') {
       out += "_";
     } else {
       out += slice_unchecked(p, i, i + 1);
     }
-    i += 1;
   }
   return out;
 }
@@ -4799,13 +4753,11 @@ function lsp_doc_path(uri: string): string {
 
 function lsp_buffers(s: Server): modloader.Buffers {
   let b = s.stdlib;
-  let i = 0;
-  while (i < s.uris.len()) {
+  for i in 0..s.uris.len() {
     let path = lsp_doc_path(s.uris[i]);
     if (path != "-") {
       b = modloader.Buffers { paths: b.paths.append(path), srcs: b.srcs.append(s.srcs[i]) };
     }
-    i += 1;
   }
   return b;
 }
@@ -4827,15 +4779,13 @@ function lsp_close(s: Server, uri: string): Server {
   let srcs: string[] = [];
   let published: string[] = [];
   let docs: Doc[] = [];
-  let i = 0;
-  while (i < s.uris.len()) {
+  for i in 0..s.uris.len() {
     if (s.uris[i] != uri) {
       uris = uris.append(s.uris[i]);
       srcs = srcs.append(s.srcs[i]);
       published = published.append(s.published[i]);
       docs = docs.append(s.docs[i]);
     }
-    i += 1;
   }
   lsp.send(lsp.publish_diagnostics(uri, "[]"));
   return Server { ...s, uris: uris, srcs: srcs, published: published, docs: docs };
@@ -5015,12 +4965,10 @@ function lsp_doc_modules(d: Doc, path: string): i32[] {
     return [0];
   }
   let out: i32[] = [];
-  let m = 0;
-  while (m < d.maps.len()) {
+  for m in 0..d.maps.len() {
     if (d.maps[m].doc == path) {
       out = out.append(m);
     }
-    m += 1;
   }
   return out;
 }
@@ -5118,8 +5066,7 @@ function lsp_in_range(line: i32, ch: i32, l0: i32, c0: i32, l1: i32, c1: i32): b
 }
 
 function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) {
-  let m = 0;
-  while (m < d.maps.len()) {
+  for m in 0..d.maps.len() {
     let lm = d.maps[m];
     if (lm.doc == path) {
       let k = util.index_of_i32(lm.lits, line);
@@ -5127,7 +5074,6 @@ function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) 
         return (util.line_base(m - 1) + k + 1, col + lm.shifts[k]);
       }
     }
-    m += 1;
   }
   if (d.maps.len() > 0 && d.maps[0].doc.len() == 0) {
     return (line, col);
@@ -5156,12 +5102,10 @@ function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {
 }
 
 function lsp_doc_text(s: Server, path: string): string {
-  let i = 0;
-  while (i < s.uris.len()) {
+  for i in 0..s.uris.len() {
     if (lsp_doc_path(s.uris[i]) == path) {
       return s.srcs[i];
     }
-    i += 1;
   }
   let si = util.index_of_str(s.stdlib.paths, path);
   if (si >= 0) {
@@ -5277,8 +5221,7 @@ function find_on_path(name: string): string {
   match (env("PATH")) {
     Some(path) => {
       let start = 0;
-      let i = 0;
-      while (i <= path.len()) {
+      for i in 0..=path.len() {
         if (i == path.len() || path[i] == b':') {
           if (i > start) {
             let cand = slice_unchecked(path, start, i) + "/" + name;
@@ -5288,7 +5231,6 @@ function find_on_path(name: string): string {
           }
           start = i + 1;
         }
-        i += 1;
       }
     },
     None => {}
@@ -5298,10 +5240,8 @@ function find_on_path(name: string): string {
 
 function exec_and_wait(path: string, argv: string[]): i32 {
   let rest: string[] = [];
-  let i = 1;
-  while (i < argv.len()) {
+  for i in 1..argv.len() {
     rest = rest.append(argv[i]);
-    i += 1;
   }
   let pid = proc_fork();
   if (pid < 0) {
@@ -5766,15 +5706,13 @@ function lint_config(first: string, sets: string[], opts: string[]): (lint.Confi
     }
     let nk: string[] = [];
     let nv: string[] = [];
-    let j = 0;
-    while (j < keys.len()) {
+    for j in 0..keys.len() {
       if (j == at) {
         nk = nk.append(k);
         nv = nv.append(g.man.lint_vals[i]);
       }
       nk = nk.append(keys[j]);
       nv = nv.append(vals[j]);
-      j += 1;
     }
     if (at == keys.len()) {
       nk = nk.append(k);
@@ -5784,14 +5722,12 @@ function lint_config(first: string, sets: string[], opts: string[]): (lint.Confi
     vals = nv;
     i += 1;
   }
-  i = 0;
-  while (i < keys.len()) {
+  for i in 0..keys.len() {
     let (nc, err) = lint.set_pair(c, keys[i], vals[i]);
     if (err.len() > 0) {
       return (c, mpath + ": " + err);
     }
     c = nc;
-    i += 1;
   }
   for sv in sets {
     let eq = util.index_of_sub(sv, "=");
@@ -5829,13 +5765,11 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
     + paint(st, sgr, label + "[" + f.rule + "]") + ": " + f.msg;
   let lines: string[] = [];
   let start = 0;
-  let i = 0;
-  while (i <= src.len()) {
+  for i in 0..=src.len() {
     if (i == src.len() || src[i] == b'\n') {
       lines = lines.append(slice_unchecked(src, start, i).to_owned());
       start = i + 1;
     }
-    i += 1;
   }
   let line = "";
   if (f.line >= 1 && f.line <= lines.len()) {
@@ -5963,8 +5897,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     if (lint.cover_of(cov_files, f) >= 0) {
       covered_files += 1;
     }
-    let mi = 0;
-    while (mi < mods.srcs.len()) {
+    for mi in 0..mods.srcs.len() {
       let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi], cov_files);
       broken = broken || !parsed;
       for fd in fds {
@@ -5974,7 +5907,6 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
         out = out + lint_text(st, fd, src) + "\n";
         all = all.append(fd);
       }
-      mi += 1;
     }
   }
   if (cfg.risk != lint.ALLOW && cov_files.len() > 0 && covered_files == 0) {
@@ -6047,13 +5979,11 @@ function run_format_files(st: DiagStyle, pos: string[], fmt_write: boolean, fmt_
     return 2;
   }
   let code = 0;
-  let fi = 0;
-  while (fi < files.len()) {
+  for fi in 0..files.len() {
     let fc = fmt_file(st, files[fi], fmt_write, fmt_diff, out_path);
     if (fc > code) {
       code = fc;
     }
-    fi += 1;
   }
   return code;
 }
@@ -6623,10 +6553,8 @@ function interpret_bundle(st: DiagStyle, b: Bundle, entry_path: string, target: 
     return 1;
   }
   let argv: string[] = [entry_path];
-  let pa = 0;
-  while (pa < prog_args.len()) {
+  for pa in 0..prog_args.len() {
     argv = argv.append(prog_args[pa]);
-    pa += 1;
   }
   let (status, why) = interp_status(interp.eval_module_argv(merged, argv));
   if (why.len() > 0) {

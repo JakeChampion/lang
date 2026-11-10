@@ -60,14 +60,12 @@ function spelling(): void {
   check(fixture(".S0: .ascii \"\""), ".S0", [], "empty declaration");
   check(fixture(".S0: .ascii \"a\\n\\r\\t\\\"\\\\z\""), ".S0", bytes("a\n\r\t\"\\z"), "named escapes");
   let printable = "";
-  let n = 32;
-  while (n < 127) {
+  for n in 32..127 {
     if (n != 34 && n != 92) {
       unsafe {
         printable += string_from_bytes_unchecked([n as u8]);
       }
     }
-    n += 1;
   }
   check(fixture(".S0: .ascii \"" + printable + "\""), ".S0", bytes(printable), "printable ASCII including syntax characters");
   for arg in ["\"\\0\"", "\"\\00\"", "\"\\400\"", "\"\\777\"", "\"\\078\"", "\"\\x41\"", "\"\\u0041\"", "\"\\a\"", "\"\\b\"", "\"\\f\"", "\"\\v\"", "\"\\q\"", "\"\\'\"", "\"x\" \"y\"", "\"x\",\"y\"", "\"x\"#tail", "\"x\";ret", "\"unterminated", "plain", "\"é\""] {

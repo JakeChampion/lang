@@ -125,25 +125,21 @@ function target_checks(target: string): void {
     mode += 1;
   }
   let physical_reasons = ["unsupported replacement operation", "unsupported replacement operation", "incomplete parent construction", "invalid or duplicate parent initialization", "old parent used after release", "invalid or duplicate parent initialization", "undefined replacement operand"];
-  mode = 0;
-  while (mode < 7) {
+  for mode in 0..7 {
     let changed = physical_mutation(f, mode);
     expect(changed, d, r, false, 20 + mode);
     require(replace.check(changed, d, r, "Parent").message == physical_reasons[mode], 70 + mode);
-    mode += 1;
   }
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 30);
   expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, 31);
   require(body.ops.len() >= 4 && body.ops[0].kind_tag == ir.kind_id("load_local") && body.ops[1].str == r.name && body.ops[2].kind_tag == ir.kind_id("drop"), 32);
   let late: ir.Op[] = [];
-  let i = 3;
-  while (i < body.ops.len()) {
+  for i in 3..body.ops.len() {
     let op = body.ops[i];
     if (op.kind_tag == ir.kind_id("return")) {
       late = late.append(body.ops[0]).append(body.ops[1]).append(body.ops[2]);
     }
     late = late.append(op);
-    i += 1;
   }
   expect(lift(irtables.LowerResult { ...body, ops: late }), d, r, true, 33);
   let duplicate = f.blocks[0].insts[0];

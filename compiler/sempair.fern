@@ -255,12 +255,10 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
 function through_joins(defs: ssa.SInst[], whole0: boolean[]): boolean[] {
   let whole = whole0;
   let work: i32[] = [];
-  let v = 0;
-  while (v < whole.len()) {
+  for v in 0..whole.len() {
     if (whole[v]) {
       work = work.append(v);
     }
-    v += 1;
   }
   let k = 0;
   while (k < work.len()) {
@@ -330,8 +328,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
     calls = calls.append(0);
     other = other.append(false);
   }
-  let j = 0;
-  while (j < funcs.len()) {
+  for j in 0..funcs.len() {
     for b in funcs[j].graph.blocks {
       for ins in b.insts {
         let at = ix.find(ins.str);
@@ -342,7 +339,6 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
         }
       }
     }
-    j += 1;
   }
   return Refs { calls: calls, other: other };
 }
@@ -536,8 +532,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   let f = f0;
   let defs = ssa.inst_defs(f.graph);
   let n = f.graph.blocks.len();
-  let bi = 0;
-  while (bi < n) {
+  for bi in 0..n {
     let b = f.graph.blocks[bi];
     if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       let d = ssa.copy_source(defs, b.term.value);
@@ -551,7 +546,6 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
         f = return_tested(f, bi, sh, defs);
       }
     }
-    bi += 1;
   }
   let calls = f.calls;
   if (sh.pair) {
@@ -684,8 +678,7 @@ function return_tested(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): 
   let n = sh.names.len();
   let first = ssa.next_block_id(f.graph);
   let tests = test_ids(b.id, first + n, n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let a = Arm { f: f, insts: [], tag: -1 };
     let payload: i32[] = [];
     if (sh.has[i]) {
@@ -695,7 +688,6 @@ function return_tested(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): 
     }
     a = arm_return(a, sh, i, payload, defs);
     f = with_new_block(a.f, ssa.SBlock { id: first + i, insts: a.insts, term: ssa.t_ret(a.tag), preds: [tests[arm_test(i, n)]] });
-    i += 1;
   }
   return tests_on(f, bi, tests, first, n, v, sh);
 }
@@ -710,8 +702,7 @@ function calls_paired(f: ssasem.Func, ix: util.NameIndex, paired: boolean[]): bo
 }
 
 function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i32 {
-  let k = 0;
-  while (k < b.insts.len()) {
+  for k in 0..b.insts.len() {
     let ins = b.insts[k];
     if (ins.kind_tag == ssasem.call() && ins.imm == 0) {
       let at = ix.find(ins.str);
@@ -719,7 +710,6 @@ function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i
         return k;
       }
     }
-    k += 1;
   }
   return -1;
 }
@@ -819,10 +809,8 @@ function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
     k += 1;
   }
   let l = semscalarreturn.Lanes { f: f, insts: [ssa.SInst { ...call, result: w, imm: semscalarreturn.capture_imm(w + 1, count) }], value: -1 };
-  k = 0;
-  while (k < count) {
+  for k in 0..count {
     l = semscalarreturn.lane_word(l.f, l.insts, w, words[k], k);
-    k += 1;
   }
   l = semscalarreturn.word_tag(l.f, l.insts, w);
   return Captured { f: l.f, insts: l.insts, tag: l.value, w: w, words: words, lanes: [] };
@@ -871,8 +859,7 @@ function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func
   let head = util.append_all(before(b.insts, k), c.insts);
   let built: i32[] = [];
   let arms: i32[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     let l = semscalarreturn.Lanes { f: f, insts: [], value: -1 };
     let args: i32[] = [];
     if (sh.has[i]) {
@@ -885,7 +872,6 @@ function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func
     f = with_new_block(f, ssa.SBlock { id: first + i, insts: insts, term: ssa.t_br(join), preds: [tests[arm_test(i, n)]] });
     built = built.append(r);
     arms = arms.append(first + i);
-    i += 1;
   }
   let joined: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: call.result, args: built, imm: 0, str: "" }];
   f = with_new_block(f, ssa.SBlock { id: join, insts: util.append_all(joined, after(b.insts, k)), term: b.term, preds: arms });
@@ -897,20 +883,16 @@ function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func
 
 function before(insts: ssa.SInst[], k: i32): ssa.SInst[] {
   let out: ssa.SInst[] = [];
-  let p = 0;
-  while (p < k) {
+  for p in 0..k {
     out = out.append(insts[p]);
-    p += 1;
   }
   return out;
 }
 
 function after(insts: ssa.SInst[], k: i32): ssa.SInst[] {
   let out: ssa.SInst[] = [];
-  let p = k + 1;
-  while (p < insts.len()) {
+  for p in k + 1..insts.len() {
     out = out.append(insts[p]);
-    p += 1;
   }
   return out;
 }
@@ -972,8 +954,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   }
   f = with_value(with_value(with_value(with_value(f, sh.payloads[0]), typeinfo.t_i32()), typeinfo.t_usize()), sh.payloads[1]);
   let insts: ssa.SInst[] = [];
-  let p = 0;
-  while (p < b.insts.len()) {
+  for p in 0..b.insts.len() {
     if (p == k) {
       insts = insts.append(ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 0) });
       insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" });
@@ -983,7 +964,6 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
     } else {
       insts = insts.append(b.insts[p]);
     }
-    p += 1;
   }
   f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
   let calls = f.calls;
@@ -1084,10 +1064,8 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
 
 function test_ids(start: i32, next: i32, n: i32): i32[] {
   let out: i32[] = [start];
-  let j = 1;
-  while (j < n - 1) {
+  for j in 1..n - 1 {
     out = out.append(next + j - 1);
-    j += 1;
   }
   return out;
 }
@@ -1108,8 +1086,7 @@ function tests_on(f0: ssasem.Func, bi: i32, tests: i32[], first: i32, n: i32, v:
     let b = f.graph.blocks[bi];
     return with_block(f, bi, ssa.SBlock { ...b, term: ssa.t_br(first) });
   }
-  let j = 0;
-  while (j < n - 1) {
+  for j in 0..n - 1 {
     let next = first + n - 1;
     if (j + 1 < n - 1) {
       next = tests[j + 1];
@@ -1123,7 +1100,6 @@ function tests_on(f0: ssasem.Func, bi: i32, tests: i32[], first: i32, n: i32, v:
     } else {
       f = with_new_block(f, ssa.SBlock { id: tests[j], insts: t.insts, term: term, preds: [tests[j - 1]] });
     }
-    j += 1;
   }
   return f;
 }
