@@ -181,7 +181,7 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 					if strings.Count(string(text), label) != 1 {
 						t.Fatal("expected exactly one array allocator entry")
 					}
-					words := (n + 7) / 8
+					words := (max(n, 0) + 7) / 8
 					var hook string
 					if target == "x86-64-linux" {
 						hook = fmt.Sprintf("    cmpq $%d, %%rdi\n    jne .Lentropy_capacity_bad\n    movl $42, %%edi\n    jmp .Lentropy_capacity_exit\n.Lentropy_capacity_bad:\n    movl $13, %%edi\n.Lentropy_capacity_exit:\n    movl $60, %%eax\n    syscall\n", words)
