@@ -79,6 +79,7 @@ def main():
     parser.add_argument('--before-stdlib', required=True, type=Path)
     parser.add_argument('--after-stdlib', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--instruction-output', type=Path)
     config = parser.parse_args()
     compiler = config.compiler.resolve()
     source = ROOT / 'scripts/video-reference/mp4-defaults.fern'
@@ -91,6 +92,8 @@ def main():
               'modules_sha256': {key: {name: hashlib.sha256((tree / name).read_bytes()).hexdigest()
                                       for name in ('std/video/mp4.fern.md', 'std/video/mp4/timing.fern.md')}
                                  for key, tree in trees.items()}, 'workloads': []}
+    instructions = {'compiler_sha256': report['compiler_sha256'], 'source_sha256': report['source_sha256'],
+                    'count': 262144, 'cases': []}
     with tempfile.TemporaryDirectory(prefix='fern-mp4-defaults-') as temporary:
         temporary = Path(temporary)
         sampler = temporary / 'sample'
@@ -128,6 +131,22 @@ def main():
                 print(count, composition, sync, entry['summary'], flush=True)
                 report['workloads'].append(entry)
                 config.output.write_text(json.dumps(report, indent=2) + '\n')
+                if config.instruction_output and count == 262144:
+                    case = {'composition_table': composition, 'sync_table': sync,
+                            'input_sha256': entry['input_sha256']}
+                    for key in trees:
+                        trace = temporary / f'{key}.cachegrind'
+                        output = subprocess.check_output(['valgrind', '--tool=cachegrind', '--cache-sim=no', '--branch-sim=no',
+                                                          '--log-file=' + str(temporary / 'valgrind.log'),
+                                                          '--cachegrind-out-file=' + str(trace), str(binaries[key]),
+                                                          str(input_file)], text=True)
+                        actual_count, actual_checksum, allocations = map(int, output.split())
+                        assert (actual_count, actual_checksum) == (count, checksum)
+                        summary = next(line for line in trace.read_text().splitlines() if line.startswith('summary:'))
+                        case[key] = {'instructions': int(summary.split()[1]), 'allocations': allocations}
+                    instructions['cases'].append(case)
+                    print('instructions', case, flush=True)
+                    config.instruction_output.write_text(json.dumps(instructions, indent=2) + '\n')
 
 
 if __name__ == '__main__':

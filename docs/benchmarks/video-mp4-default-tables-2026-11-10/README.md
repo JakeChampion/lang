@@ -31,6 +31,25 @@ Both versions allocate the same number of packet records.
 The report includes each allocation count and every resource sample.
 No general elapsed-time, native ARM, player-throughput, or device-power claim follows from these short shared-host trials.
 
+## Instruction tradeoff
+
+Valgrind 3.24 Cachegrind supplies a separate x86-64 guest instruction comparison at 262,144 packets.
+Each process checks the same packet count and checksum as the memory samples.
+
+| Composition table | Sync table | Before instructions | After instructions | Change |
+| --- | --- | ---: | ---: | ---: |
+| Absent | Absent | 94,739,939 | 91,331,804 | -3.60% |
+| Absent | Present | 95,005,383 | 96,315,962 | +1.38% |
+| Present | Absent | 98,413,333 | 96,053,907 | -2.40% |
+| Present | Present | 98,678,777 | 101,038,065 | +2.39% |
+
+The packet loop trades two default checks for the removed arrays.
+The explicit-table control therefore has an instruction cost, with unchanged memory use.
+These results support the memory claim, rather than a general CPU improvement.
+The counts include startup, file input, the index, and checksum work.
+They are not native ARM retired-instruction measurements.
+Raw values are in `instructions.json`.
+
 The driver reuses `scripts/video-compare/sample.c` for resource measurements.
 The small native sampler starts before the benchmark, so Python memory does not set its RSS floor.
 Each sample includes process startup, file input, the complete index, and a checksum over every packet.
@@ -62,8 +81,12 @@ python3 docs/benchmarks/video-mp4-default-tables-2026-11-10/run.py \
   --compiler build/video/mp4-defaults/compiler \
   --before-stdlib /workspace/lang-mp4-default-control/internal/stdlib \
   --after-stdlib internal/stdlib \
-  --output build/video/mp4-defaults/report.json
+  --output build/video/mp4-defaults/report.json \
+  --instruction-output build/video/mp4-defaults/instructions.json
 ```
+
+The instruction comparison requires Valgrind on PATH and its configured library directory.
+Omit the instruction output option to repeat only the memory measurements.
 
 ## Correctness
 
