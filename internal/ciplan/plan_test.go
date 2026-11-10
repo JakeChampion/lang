@@ -356,3 +356,40 @@ func FuzzDecode(f *testing.F) { consume("fern-image/packages/qoi/qoi.fern") }`)
 		}
 	}
 }
+
+func TestOwnJobTestsRouteToTheirWorkflow(t *testing.T) {
+	for _, tc := range []struct{ lane, pkg, name string }{
+		{"test-e2e-other", "internal/testing/e2e", "TestExamplesNoCrashX86_64"},
+		{"test-e2e-selfhost", "internal/testing/e2ecompiler", "TestOwnCompilerBuild"},
+	} {
+		t.Run(tc.lane, func(t *testing.T) {
+			_, root := fixture(t)
+			file := tc.pkg + "/own_job_test.go"
+			write(t, root, file, "package tests; import \"testing\"; func "+tc.name+"(t *testing.T) {}")
+			write(t, root, ".github/workflows/"+tc.lane+".yml", "env:\n  OWN_JOB_TESTS: \""+tc.name+"\"\n")
+			g, err := Load(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := g.Select([]string{file})
+			if !p.Lanes[tc.lane] || p.Lanes["test-affected"] {
+				t.Fatalf("own-job test lost its workflow: %+v", p)
+			}
+			for lane, selected := range p.Lanes {
+				if selected && lane != tc.lane && lane != "test-units" {
+					t.Errorf("unrelated workflow %s selected", lane)
+				}
+			}
+		})
+	}
+}
+
+func TestOwnJobTestRejectsTwoOwners(t *testing.T) {
+	_, root := fixture(t)
+	for _, lane := range []string{"test-e2e-other", "test-e2e-selfhost"} {
+		write(t, root, ".github/workflows/"+lane+".yml", "env:\n  OWN_JOB_TESTS: \"TestSharedJob\"\n")
+	}
+	if _, err := Load(root); err == nil {
+		t.Fatal("test with two owning workflows was accepted")
+	}
+}
