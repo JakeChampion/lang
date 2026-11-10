@@ -1,8 +1,16 @@
 # Fern on Android — building a JNI `.so` and packaging an APK
 
 An app with no Java code runs in NativeActivity through `std/android`, and
-`fern -apk` writes the signed APK with no Android SDK. `native/` is the
-smallest such app. [`stopwatch/`](stopwatch/README.md),
+`fern -apk` writes the signed APK with no Android SDK.
+
+Start a new app with `std/android/ui`. The app gives a state, a `view` that
+makes a tree of elements from the state, and an `update` that changes the
+state for each message. The module does the layout, the drawing on the GPU,
+the touches, the lists that scroll, the dark theme and the accessibility
+tree. [`counter/`](counter/README.md) is such an app, and
+`std/android/ui/sim` runs it in a test on the host.
+
+`native/` is the smallest app that draws its own pixels. [`stopwatch/`](stopwatch/README.md),
 [`walkie/`](walkie/README.md), [`plex/`](plex/README.md), a Plex client,
 and [`paper/`](paper/README.md), a home screen, are complete apps. They share the dot font of
 `matrix.fern` and the look of `look.fern`.

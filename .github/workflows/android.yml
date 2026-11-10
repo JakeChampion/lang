@@ -22,6 +22,9 @@ name: Android
 # class take the audio focus from each other.
 # tests/android/worker forks two workers from the loop thread and polls
 # them, and one child resolves a name through netd.
+# examples/android/counter is an app of std/android/ui: its check taps the
+# button that the GPU painter draws, and reads the count when the back key
+# closes the app.
 # examples/android/paper is a home screen: its check makes it the home app,
 # opens the app list, finds Paper in it, and goes back with the back key.
 # examples/android/plex is the Plex client: its check runs it against a fake
@@ -84,6 +87,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-counter.apk examples/android/counter/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-paper.apk examples/android/paper/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-plex.apk examples/android/plex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk examples/android/walkie/app.fern
@@ -117,6 +121,7 @@ jobs:
             build/android-stopwatch/fern-focustest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
+            build/android-stopwatch/fern-counter.apk
             build/android-stopwatch/fern-paper.apk
             build/android-stopwatch/fern-plex.apk
             build/android-stopwatch/fern-walkie.apk
@@ -165,6 +170,7 @@ jobs:
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
+            python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter
             python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz

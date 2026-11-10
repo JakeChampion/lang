@@ -241,6 +241,7 @@ jobs:
           mkdir -p dist/apk
           ./bin/fern -apk dist/apk/fern-stopwatch.apk -apk-key "$key" examples/android/stopwatch/app.fern
           ./bin/fern -apk dist/apk/fern-paper.apk -apk-key "$key" examples/android/paper/app.fern
+          ./bin/fern -apk dist/apk/fern-counter.apk -apk-key "$key" examples/android/counter/app.fern
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" examples/android/walkie/app.fern
 
@@ -352,6 +353,7 @@ jobs:
             | Walkie-talkie on the LAN     | `fern-walkie.apk`    |
             | Stopwatch                    | `fern-stopwatch.apk` |
             | Paper, a minimal home screen | `fern-paper.apk`     |
+            | A counter of `std/android/ui` | `fern-counter.apk`   |
             | The smallest NativeActivity  | `fern-native.apk`    |
 
             Each `fern` archive ships a single self-contained binary:
