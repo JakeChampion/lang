@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -27,6 +28,46 @@ const hostWindowStub = `int ANativeWindow_setBuffersGeometry(void* w, int width,
 int ANativeWindow_getWidth(void* w) { return 0; }
 int ANativeWindow_getHeight(void* w) { return 0; }
 `
+
+var libandroidImport = regexp.MustCompile(`@import\("libandroid\.so", "([A-Za-z0-9_]+)"\)`)
+
+// LibandroidStub is C source for libandroid.so on a Linux host: the
+// functions in `defined`, and a function that aborts for each other
+// libandroid.so function that `src` or a std/android module imports. A
+// shared object binds each function that it can reach when it loads.
+func LibandroidStub(t *testing.T, defined, src string) string {
+	t.Helper()
+	stub := "#include <stdlib.h>\n" + defined
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\b(A[A-Za-z]+_[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(defined, -1) {
+		seen[m[1]] = true
+	}
+	docs, err := filepath.Glob(RepoPath("internal", "stdlib", "std", "android*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	more, err := filepath.Glob(RepoPath("internal", "stdlib", "std", "android", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := []string{src}
+	for _, path := range append(docs, more...) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts = append(texts, string(raw))
+	}
+	for _, text := range texts {
+		for _, m := range libandroidImport.FindAllStringSubmatch(text, -1) {
+			if !seen[m[1]] {
+				seen[m[1]] = true
+				stub += "void " + m[1] + "(void) { abort(); }\n"
+			}
+		}
+	}
+	return stub
+}
 
 // HostGL gives a directory to put on LD_LIBRARY_PATH so that a Fern shared
 // object for std/android/gl loads on this Linux host, with Mesa's EGL and
@@ -57,7 +98,7 @@ func HostGL(t *testing.T) string {
 		missing = append(missing, "gcc")
 	} else {
 		src := filepath.Join(dir, "android_stub.c")
-		if err := os.WriteFile(src, []byte(hostWindowStub), 0o644); err != nil {
+		if err := os.WriteFile(src, []byte(LibandroidStub(t, hostWindowStub, "")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", filepath.Join(dir, "libandroid.so"), src).CombinedOutput(); err != nil {

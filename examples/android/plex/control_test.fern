@@ -172,7 +172,9 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     finish: (): void => note(log.calls, "finish"),
     keep_screen_on: (on: boolean): void => {},
     immersive: (on: boolean): void => {},
-    keyboard: (on: boolean): void => note(log.calls, "keyboard " + on.to_string()),
+    show_field: (q: string): void => note(log.calls, "field show [" + q + "]"),
+    set_field: (q: string): void => note(log.calls, "field set [" + q + "]"),
+    hide_field: (): void => note(log.calls, "field hide"),
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => fake_image(w, h),
     play: (uri: string): boolean => {
@@ -382,7 +384,7 @@ function test_search_types_and_asks(): test.TestOutcome {
   defer free_frame(f);
   let home = shown(log, f, "https://up.example:32400", "srv");
   let search = tap(tap(home, log, 100i64, f, "tab:2"), log, 200i64, f, "type");
-  if (!has_call(log, "keyboard true")) {
+  if (!has_call(log, "field show []")) {
     return test.fail("no keyboard");
   }
   let t = search;
@@ -391,6 +393,9 @@ function test_search_types_and_asks(): test.TestOutcome {
   }
   t = at(t, log, 300i64, f, android.Key(67, 0));
   t = at(t, log, 300i64, f, android.Key(67, 1));
+  if (!has_call(log, "field set [inc]")) {
+    return test.fail("the field does not have the typed text: " + log.calls.get().join(" | "));
+  }
   if (has_url(log, "/hubs/search")) {
     return test.fail("a search before the pause in typing");
   }
@@ -400,6 +405,22 @@ function test_search_types_and_asks(): test.TestOutcome {
     return test.fail("no search for inc: " + log.urls.get().join(" | "));
   }
   return test.assert_eq(node(t, "hub:0:0").is_some().to_string(), "true");
+}
+
+// The keyboard of the system types through the text field, and its action
+// key searches at once.
+function test_search_from_text_field(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let t = tap(tap(home, log, 100i64, f, "tab:2"), log, 200i64, f, "type");
+  t = at(t, log, 300i64, f, android.Text("Incep"));
+  t = settle(at(t, log, 300i64, f, android.TextAction(android.ACTION_SEARCH)), log, 300i64, f);
+  if (!has_url(log, "/hubs/search?query=Incep&")) {
+    return test.fail("no search for Incep: " + log.urls.get().join(" | "));
+  }
+  return test.assert_eq(has_call(log, "field hide").to_string() + " " + has_call(log, "field set").to_string(), "true false");
 }
 
 function test_back_and_sign_out(): test.TestOutcome {
@@ -440,6 +461,7 @@ function main(): i32 {
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
+  r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
   r = r.it("a link plays an item at once", test_link_plays_an_item);
   return r.finish();

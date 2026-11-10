@@ -239,6 +239,19 @@ pub function phone_keys_button(w: i32, h: i32): look.Rect {
   return look.Rect { x: w / 10, y: h * 29 / 100, w: w * 8 / 10, h: h * 6 / 100 };
 }
 
+// The name in the text `text` of the keyboard of the phone: its letters as
+// lower case, its digits, "." and "-", up to HOST_MAX of them.
+pub function host_text(text: string): string {
+  let name = "";
+  for c in text.to_lower().chars() {
+    let ch = c.to_string();
+    if (name.len() < HOST_MAX && HOST_CHARS.contains(ch)) {
+      name += ch;
+    }
+  }
+  return name;
+}
+
 // The key of the host keyboard for an Android key code, or -1. The letters
 // come as lower case, as a host name is.
 pub function host_key_of_code(code: i32): i32 {

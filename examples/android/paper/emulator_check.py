@@ -8,8 +8,8 @@ presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a tap on the time that
 opens the clock app, a swipe up that opens the app list in the paper
-colour with the keyboard, a tap on the search field that shows the keyboard
-again after the back key hid it, a search for "pap" that finds Paper and
+colour with the keyboard for its text field, a tap on the search field that
+shows the keyboard again after the back key hid it, a search for "pap" that finds Paper and
 opens it, the back key that goes back to the home screen, a frame section
 in the system trace while the list slides, and no crash in logcat. OUT_DIR
 gets the frames, logcat and the trace.
@@ -52,11 +52,17 @@ def keyboard_shown(timeout=5.0):
 
 
 def check_keyboard(width):
-    """The app list opens with the keyboard. After the back key hides it, a
-    tap on the search field shows it again. The search field is 36 dp below
-    the status bar, so a tap 74 dp from the top is on it."""
+    """The app list opens with the keyboard, which types into the text field
+    of the app: an editor of text with the action Go. After the back key
+    hides the keyboard, a tap on the search field shows it again. The search
+    field is 36 dp below the status bar, so a tap 74 dp from the top is on
+    it."""
     if not keyboard_shown():
         fail("the app list opened without the keyboard")
+        return
+    editor = re.search(r"inputType=0x(\w+) imeOptions=0x(\w+)", adb("shell", "dumpsys", "input_method", check=False))
+    if not editor or editor.group(1) != "1" or editor.group(2) != "10000002":
+        fail("the keyboard does not type into the text field: " + (editor.group(0) if editor else "no editor"))
         return
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     if keyboard_shown(1.5):

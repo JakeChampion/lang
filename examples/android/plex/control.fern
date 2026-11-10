@@ -30,7 +30,9 @@ pub struct Device {
   finish: () => void,
   keep_screen_on: (boolean) => void,
   immersive: (boolean) => void,
-  keyboard: (boolean) => void,
+  show_field: (string) => void,
+  set_field: (string) => void,
+  hide_field: () => void,
   fetch: (plex.Request[]) => worker.Worker[plex.Reply[]],
   decode: (u8[], i32, i32) => Option[draw.Image],
   play: (string) => boolean,
@@ -783,7 +785,7 @@ function open_tab(own s: App, tab: i32): App {
     return s;
   }
   let screen = ui.tab_screens()[tab];
-  s.dev.keyboard(false);
+  s.dev.hide_field();
   let title = [s.server.name, "Libraries", "Search", "Settings"][tab];
   let need_hubs = screen == ui.HOME && s.hubs.len() == 0;
   let need_sections = screen == ui.SECTIONS && s.sections.len() == 0;
@@ -1291,7 +1293,7 @@ function abs_f(v: f32): f32 {
 function tapped(own s: App, x: i32, y: i32): App {
   let Some(n) = ui.hit(s.nodes, x, y) else {
     if (s.typing) {
-      s.dev.keyboard(false);
+      s.dev.hide_field();
       return App { ...s, typing: false, dirty: true };
     }
     return s;
@@ -1333,7 +1335,7 @@ pub function act(own s: App, a: string, n: ui.Node, x: i32): App {
     return toggle_watched(t);
   }
   if (a == "type") {
-    t.dev.keyboard(true);
+    t.dev.show_field(t.query);
     return App { ...t, typing: true, dirty: true };
   }
   if (a == "servers") {
@@ -1359,7 +1361,7 @@ const KEY_DEL: i32 = 67;
 
 function back(own s: App): App {
   if (s.typing) {
-    s.dev.keyboard(false);
+    s.dev.hide_field();
     return App { ...s, typing: false, dirty: true };
   }
   if (s.screen == ui.PLAYER) {
@@ -1387,11 +1389,10 @@ function key(own s: App, code: i32, action: i32): App {
   }
   if (code == KEY_DEL && s.query.len() > 0) {
     let q = drop_last(s.query);
-    return query_changed(s, q);
+    return keyed(s, q);
   }
   if (code == KEY_ENTER) {
-    s.dev.keyboard(false);
-    return App { ...s, typing: false, search_at: s.dev.mono_ms(), dirty: true };
+    return search_now(s);
   }
   return s;
 }
@@ -1409,7 +1410,20 @@ function typed(own s: App, c: i32): App {
     return s;
   }
   let q = s.query + char_string(c);
+  return keyed(s, q);
+}
+
+// A key of a hardware keyboard changes the query, so the field of the
+// keyboard of the system gets the same text.
+function keyed(own s: App, q: string): App {
+  s.dev.set_field(q);
   return query_changed(s, q);
+}
+
+// The typing ends and the search starts at once.
+function search_now(own s: App): App {
+  s.dev.hide_field();
+  return App { ...s, typing: false, search_at: s.dev.mono_ms(), dirty: true };
 }
 
 function char_string(c: i32): string {
@@ -1565,6 +1579,18 @@ function event(own s: App, e: android.Event): App {
     },
     android.Char(c) => {
       return typed(s, c);
+    },
+    android.Text(q) => {
+      if (!s.typing) {
+        return s;
+      }
+      return query_changed(s, q);
+    },
+    android.TextAction(_) => {
+      if (!s.typing) {
+        return s;
+      }
+      return search_now(s);
     },
     _ => {
       return s;
