@@ -62,6 +62,11 @@ AVC and HEVC descriptions use the existing NAL configuration readers.
 The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
 The native decode and encode columns above remain unchanged.
 
+With more than 16 media ranges, the shared sample-table reader validates their order and uses a binary search for each packet.
+Both complete-view and seekable-file indexers supply this order, without a new range array.
+Chunk offsets can move backward between media ranges.
+Direct sample-table callers retain the previous behavior for unordered or overlapping ranges through a linear search.
+
 QuickTime Animation MOV descriptions support 24-bit RGB and 32-bit ARGB packets through the existing native QTRLE codec.
 The description supplies packed depth, dimensions, and an empty NAL configuration.
 AVC and HEVC descriptions report zero packed depth, without a component-precision claim.

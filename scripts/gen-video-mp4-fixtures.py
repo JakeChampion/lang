@@ -40,6 +40,58 @@ def compact_tables(data):
     return bytes(output)
 
 
+def split_tables(data, offsets):
+    output = bytearray()
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from(">I4s", data, at)
+        assert 8 <= size <= len(data) - at
+        body = data[at + 8:at + size]
+        if tag in (b"moov", b"trak", b"mdia", b"minf", b"stbl"):
+            body = split_tables(body, offsets)
+        elif tag in (b"stco", b"co64"):
+            width = "Q" if tag == b"co64" else "I"
+            body = body[:4] + struct.pack(">I", len(offsets)) + struct.pack(">" + width * len(offsets), *offsets)
+        elif tag == b"stsc":
+            # Each packet occupies one chunk with the existing single description.
+            assert struct.unpack_from(">I", body, 16)[0] == 1
+            body = body[:4] + struct.pack(">IIII", 1, 1, 1, 1)
+        output += struct.pack(">I4s", len(body) + 8, tag) + body
+        at += size
+    return bytes(output)
+
+
+def split_media(source, target):
+    original = source.read_bytes()
+    metadata = packets(source)
+    assert len(metadata["streams"]) == 1
+    samples = metadata["packets"]
+    output = bytearray()
+    movie = b""
+    at = 0
+    while at < len(original):
+        size, tag = struct.unpack_from(">I4s", original, at)
+        assert 8 <= size <= len(original) - at
+        if tag == b"moov":
+            movie = original[at:at + size]
+        elif tag != b"mdat":
+            output += original[at:at + size]
+        at += size
+    # Empty payloads and box headers are gaps, not part of neighboring payloads.
+    output += struct.pack(">I4s", 8, b"mdat") * 65
+    offsets = [0] * len(samples)
+    for index in reversed(range(len(samples))):
+        sample = samples[index]
+        pos, size = int(sample["pos"]), int(sample["size"])
+        output += struct.pack(">I4s", size + 8, b"mdat")
+        offsets[index] = len(output)
+        output += original[pos:pos + size]
+        output += struct.pack(">I4s", 8, b"mdat")
+    assert movie
+    output += split_tables(movie, offsets)
+    target.write_bytes(output)
+
+
 def generate(directory):
     cases = []
     for name, encoder, options in (
@@ -70,6 +122,10 @@ def generate(directory):
     assert original.rfind(b"moov") > original.find(b"mdat")
     compact.write_bytes(compact_tables(original))
     cases.append(("avc-compact-co64", compact))
+    for name, source in (("avc-many-mdat", compact), ("hevc-many-mdat", cases[2][1])):
+        target = directory / (name + ".mp4")
+        split_media(source, target)
+        cases.append((name, target))
     return cases
 
 

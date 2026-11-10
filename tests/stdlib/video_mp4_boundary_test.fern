@@ -5,6 +5,7 @@ import "std/audio/pcm";
 import "std/hex";
 import "std/test";
 import "video_mp4_vectors";
+import "video_mp4_range_check" as ranges;
 
 function fixture(name: string): Result[u8[], string] {
   for v in video_mp4_vectors.vectors() {
@@ -207,5 +208,8 @@ function main(): i32 {
   r = r.it("absent and empty sync tables", sync_tables);
   r = r.it("input and cumulative metadata budgets", budgets);
   r = r.it("unsupported sources and encryption", unsupported);
+  r = r.it("media containment matches a linear reference", ranges.reference);
+  r = r.it("media containment preserves 64-bit boundaries", ranges.wide);
+  r = r.it("media search preserves non-monotonic chunk order", ranges.chunk_order);
   return r.finish();
 }
