@@ -1,0 +1,129 @@
+// Tests of the file names of std/android/fonts with a directory of empty
+// files. The font matcher needs a device; the emulator check of
+// examples/android/paper draws its text with the font that it gives.
+import "std/android/fonts";
+import "std/string";
+import "std/test";
+import "std/truetype";
+import "./truetype_var_vectors";
+
+function test_style_weights(): test.TestOutcome {
+  let got = fonts.style_weight("Thin").to_string() + " " + fonts.style_weight("Regular").to_string() + " " + fonts.style_weight("SemiBold").to_string() + " " + fonts.style_weight("Black").to_string() + " " + fonts.style_weight("Italic").to_string() + " " + fonts.style_weight("BoldItalic").to_string();
+  return test.assert_eq(got, "100 400 600 900 -1 -1");
+}
+
+// The files of Roboto on Android 8, with two other families.
+function android8(): string[] {
+  return ["NotoSerif-Regular.ttf", "Roboto-Black.ttf", "Roboto-BlackItalic.ttf", "Roboto-Bold.ttf", "Roboto-BoldItalic.ttf", "Roboto-Italic.ttf", "Roboto-Light.ttf", "Roboto-Medium.ttf", "Roboto-Regular.ttf", "Roboto-Thin.ttf", "RobotoCondensed-Regular.ttf", "DroidSansMono.ttf"];
+}
+
+function picked(names: string[], family: string, weight: i32): string {
+  if let Some((name, w)) = fonts.pick(names, family, weight) {
+    return name + " " + w.to_string();
+  }
+  return "none";
+}
+
+function test_pick_exact(): test.TestOutcome {
+  return test.assert_eq(picked(android8(), "Roboto", 500) + ", " + picked(android8(), "Roboto", 400), "Roboto-Medium.ttf 500, Roboto-Regular.ttf 400");
+}
+
+function test_pick_nearest(): test.TestOutcome {
+  // 600 is between Medium and Bold, and 800 between Bold and Black: the
+  // heavier is nearer. 200 is between Thin and Light: the lighter is.
+  let got = picked(android8(), "Roboto", 600) + ", " + picked(android8(), "Roboto", 800) + ", " + picked(android8(), "Roboto", 200) + ", " + picked(android8(), "Roboto", 650);
+  return test.assert_eq(got, "Roboto-Bold.ttf 700, Roboto-Black.ttf 900, Roboto-Thin.ttf 100, Roboto-Bold.ttf 700");
+}
+
+function test_pick_family(): test.TestOutcome {
+  // A family is the whole name before the hyphen, and a file with no
+  // style is not a weight.
+  let got = picked(android8(), "RobotoCondensed", 700) + ", " + picked(android8(), "Robo", 400) + ", " + picked(android8(), "DroidSansMono", 400);
+  return test.assert_eq(got, "RobotoCondensed-Regular.ttf 400, none, none");
+}
+
+function written(dir: string, names: string[]): boolean {
+  for name in names {
+    if let Err(_) = write_file(dir + "/" + name, "") {
+      return false;
+    }
+  }
+  return true;
+}
+
+function found(dir: string, family: string, weight: i32): string {
+  if let Some(f) = fonts.find_in(dir, family, weight) {
+    return f.path.strip_prefix(dir).unwrap_or("?") + " " + f.weight.to_string() + " " + f.index.to_string() + " " + f.axes.len().to_string();
+  }
+  return "none";
+}
+
+function test_find_in(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-fonts") else {
+    return test.fail("no temporary directory");
+  };
+  if (!written(dir, android8())) {
+    return test.fail("cannot write the font files");
+  }
+  // A family that the directory does not have takes Roboto.
+  let got = found(dir, "Roboto", 700) + ", " + found(dir, "NotoSerif", 700) + ", " + found(dir, "Helvetica", 500) + ", " + found(dir + "/absent", "Roboto", 400);
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(got, "/Roboto-Bold.ttf 700 0 0, /NotoSerif-Regular.ttf 400 0 0, /Roboto-Medium.ttf 500 0 0, none");
+}
+
+function test_find_in_other_default(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-fonts") else {
+    return test.fail("no temporary directory");
+  };
+  if (!written(dir, ["NotoSans-Bold.ttf", "NotoSans-Regular.ttf", "Other.ttf"])) {
+    return test.fail("cannot write the font files");
+  }
+  let got = found(dir, "Roboto", 700);
+  let removed = remove_dir_all(dir);
+  let Ok(empty) = temp_dir("fern-fonts") else {
+    return test.fail("no temporary directory");
+  };
+  got = got + ", " + found(empty, "Roboto", 700);
+  let removed_empty = remove_dir_all(empty);
+  return test.assert_eq(got, "/NotoSans-Bold.ttf 700 0 0, none");
+}
+
+function test_tag_text(): test.TestOutcome {
+  return test.assert_eq(fonts.tag_text(2003265652u32) + " " + fonts.tag_text(1769234796u32), "wght ital");
+}
+
+// The advance of "A" in the variable test font, with the values of a file
+// that the system found: 256 at the weight 100, 320 at 400 and 448 at 900.
+function advance_of(found: fonts.Found, weight: i32): string {
+  let Some(f) = truetype.parse(truetype_var_vectors.variable()) else {
+    return "no font";
+  };
+  let g = fonts.styled(f, found, weight);
+  return g.advance(g.glyph(65)).to_string();
+}
+
+function test_styled(): test.TestOutcome {
+  // The value of the system wins. With no value, the weight of the call
+  // sets the axis. A static font stays as it is.
+  let given = fonts.Found { path: "", index: 0, weight: 400, axes: [fonts.Axis { tag: "wght", value: 900.0 }] };
+  let none = fonts.Found { path: "", index: 0, weight: 400, axes: [] };
+  let fixed = "no font";
+  if let Some(f) = truetype.parse(truetype_var_vectors.static_650()) {
+    let g = fonts.styled(f, none, 100);
+    fixed = (g.advance(g.glyph(65)) == f.advance(f.glyph(65))).to_string();
+  }
+  return test.assert_eq(advance_of(given, 100) + " " + advance_of(none, 100) + " " + advance_of(none, 400) + " " + fixed, "448 256 320 true");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/fonts");
+  r = r.it("a style of a file name has a weight", test_style_weights);
+  r = r.it("pick gives the file of a weight", test_pick_exact);
+  r = r.it("pick gives the nearest weight", test_pick_nearest);
+  r = r.it("pick keeps to the family", test_pick_family);
+  r = r.it("find_in reads a directory", test_find_in);
+  r = r.it("find_in takes another family when the directory has no Roboto", test_find_in_other_default);
+  r = r.it("tag_text gives the letters of a tag", test_tag_text);
+  r = r.it("styled sets the axes of a variable font", test_styled);
+  return r.finish();
+}

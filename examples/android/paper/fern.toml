@@ -11,4 +11,4 @@ icon = "icon.png"
 min_sdk = 26
 home = true
 permissions = ["INTERNET", "ACCESS_COARSE_LOCATION", "EXPAND_STATUS_BAR", "REQUEST_DELETE_PACKAGES", "QUERY_ALL_PACKAGES"]
-assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf", "assets/Roboto-Medium.ttf", "assets/Roboto-SemiBold.ttf", "assets/Roboto-Bold.ttf", "assets/Roboto-ExtraBold.ttf"]
+assets = ["assets/wallpaper.jpg"]

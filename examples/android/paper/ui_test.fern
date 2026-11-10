@@ -2,6 +2,7 @@
 // With PAPER_UI_PNG set to a directory, it writes each screen there as a
 // PNG file.
 import "std/android/draw";
+import "std/android/fonts" as sysfonts;
 import "std/android/testkit";
 import "std/test";
 import "./face";
@@ -16,14 +17,14 @@ pub function frame_of(w: i32, h: i32): draw.Frame {
   return draw.offscreen(w, h);
 }
 
+// The fonts of the tests: the static files of Roboto in testfonts, found by
+// their names as on an Android before version 10.
 pub function fonts(): face.Fonts {
-  let data: u8[][] = [];
-  for name in face.files() {
-    if let Ok(b) = read_file_bytes(dir() + "/assets/" + name) {
-      data = data.append(b);
-    }
+  let found: Option[sysfonts.Found][] = [];
+  for w in face.weights() {
+    found = found.append(sysfonts.find_in(dir() + "/testfonts", face.FAMILY, w));
   }
-  return face.load(data);
+  return face.load(found, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
 }
 
 // The directory of this file: the tests run from the root of the repository
