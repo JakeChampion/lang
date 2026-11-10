@@ -23112,7 +23112,7 @@ pub function clayout_offsets(sd: StructDecl): i32[] {
   return out.append(clayout_round(off, align));
 }
 
-function struct_clayout_derivable(sd: StructDecl): boolean {
+pub function struct_clayout_derivable(sd: StructDecl): boolean {
   if (sd.type_params.len() > 0) {
     return false;
   }

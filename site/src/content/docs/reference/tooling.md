@@ -305,7 +305,8 @@ function log_write(prio: i32, tag: usize, msg: usize): i32;
 
 The object then loads the library at load time. A C import takes up to 14
 integer or `usize` parameters and up to 8 `f32` or `f64` parameters. It
-returns an integer, a `usize`, an `f32`, an `f64` or nothing. With `weak`,
+returns an integer, a `usize`, an `f32`, an `f64` or nothing. A parameter or
+the result can also be a struct by value, as shown below. With `weak`,
 as in `@import("libandroid.so", "ATrace_setCounter", weak)`, the object
 loads also where the library has no such symbol. Do not call the function
 there. An executable cannot import, because a static image has no dynamic
@@ -347,6 +348,24 @@ The derive gives `Rect.c_size()`, `Rect.c_load(p)` and `r.c_store(p)`. For each
 field `f` it also gives `Rect.c_offset_f()`, `Rect.c_load_f(p)` and
 `Rect.c_store_f(p, v)`. A field is `u8`, `i32`, `u32`, `i64`, `u64`, `usize`,
 `f32` or `f64`. The loads and the stores are `unsafe`.
+
+A C import also takes and returns such a struct by value:
+
+```fern
+@derive(ffi.CLayout)
+struct Size { width: f32, height: f32 }
+
+@import("libshape.so", "shape_scale")
+function shape_scale(s: Size, factor: f32): Size;
+```
+
+The call follows the C convention of the target. On x86-64, a struct of 16
+bytes or less travels in registers, and a larger struct travels in memory.
+On arm64, a struct of one to four floats of one type takes one vector
+register for each float. Each other struct of 16 bytes or less takes integer
+registers. The callee gets the address of a copy of a larger struct. The
+arguments that get no register can fill 64 bytes of stack. The compiler
+refuses an import that needs more.
 
 `@jni("dev.fern.demo.Native", "static long add(long, int)")` on a function
 binds it to a Java native method. The compiler checks each Fern type against

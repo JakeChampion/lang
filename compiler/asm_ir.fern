@@ -71,7 +71,8 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
 // kind) loads the eight integer argument registers from `ints` and the eight
 // vector argument registers from `floats`, as the System V ABI assigns them,
 // and calls fn. Unused registers get values the callee ignores. `kind` says
-// which register holds the result: 0 rax, 1 the f32 in xmm0, 2 the f64.
+// which register holds the result: 0 rax, 1 the f32 in xmm0, 2 the f64. Kind
+// 3 is a struct: rax, rdx, xmm0 and xmm1 go to words 0 to 3 of `floats`.
 function emit_ccallv_shim(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("\n__fn___c_callv:\n    pushq %rbp\n    movq %rsp, %rbp\n");
   s = s.write("    movq 16(%rbp), %r11\n    movq 24(%rbp), %rax\n    movq 32(%rbp), %r10\n");
@@ -95,7 +96,9 @@ function emit_ccallv_shim(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(busy_take_x86());
   }
   s = s.write("    movl 40(%rbp), %ecx\n    cmpl $1, %ecx\n    jne .Lfern_ccallv_f64\n    movd %xmm0, %eax\n    jmp .Lfern_ccallv_done\n");
-  s = s.write(".Lfern_ccallv_f64:\n    cmpl $2, %ecx\n    jne .Lfern_ccallv_done\n    movq %xmm0, %rax\n");
+  s = s.write(".Lfern_ccallv_f64:\n    cmpl $2, %ecx\n    jne .Lfern_ccallv_struct\n    movq %xmm0, %rax\n    jmp .Lfern_ccallv_done\n");
+  s = s.write(".Lfern_ccallv_struct:\n    cmpl $3, %ecx\n    jne .Lfern_ccallv_done\n    movq 32(%rbp), %r10\n");
+  s = s.write("    movq %rax, (%r10)\n    movq %rdx, 8(%r10)\n    movq %xmm0, 16(%r10)\n    movq %xmm1, 24(%r10)\n");
   return s.write(".Lfern_ccallv_done:\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
 }
 

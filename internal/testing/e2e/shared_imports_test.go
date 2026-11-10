@@ -271,6 +271,9 @@ func TestSharedCImportRefusals(t *testing.T) {
 		{"nine floats", `@import("libm.so.6", "f") function c(a: f64, b: f64, d: f64, e: f64, g: f64, h: f64, k: f64, l: f64, n: f64): f64;`, "x86-64-linux", true, "at most 14 integer parameters and 8 float parameters"},
 		{"string param", `@import("libc.so.6", "puts") function c(s: string): i32;`, "x86-64-linux", true, "parameter s is string; a C import takes integer, usize, f32 and f64 parameters"},
 		{"string result", `@import("libc.so.6", "getenv") function c(n: usize): string;`, "x86-64-linux", true, "the result is string"},
+		{"struct with no C layout", `struct P { a: i64 } @import("libc.so.6", "f") function c(p: P): i32;`, "x86-64-linux", true, "parameter p is P; a C import takes integer, usize, f32 and f64 parameters, and structs that derive ffi.CLayout"},
+		{"struct result with no C layout", `struct P { a: i64 } @import("libc.so.6", "f") function c(): P;`, "arm64-linux", true, "the result is P; a C import returns an integer, a usize, an f32, an f64, a struct that derives ffi.CLayout, or nothing"},
+		{"structs above the stack block", `import "std/ffi"; @derive(ffi.CLayout) struct B { a: i64, b: i64, c: i64, d: i64, e: i64 } @import("libc.so.6", "f") function c(p: B, q: B): i32;`, "x86-64-linux", true, "the arguments need more than 64 bytes of stack"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -641,6 +644,141 @@ function main(): i32 {
 // struct in C, so C and Fern read and write each other's fields.
 func TestSharedCImportsCLayout(t *testing.T) {
 	runImportLoader(t, clayoutSrc, clayoutLib)
+}
+
+// One struct of each class of the two C conventions, by value: two integer
+// registers, two vector registers, one of each, a homogeneous struct of
+// floats, and a struct in memory. sum_tail takes its last struct on the
+// stack, with the integer registers full.
+const structValueLib = `#include <stdint.h>
+struct pair { int64_t a; int64_t b; };
+struct small { int32_t a; uint8_t b; };
+struct vec2 { double x; double y; };
+struct quad { float a; float b; float c; float d; };
+struct mixed { double d; int64_t i; };
+struct big { int64_t a; int64_t b; int64_t c; double d; };
+int64_t pair_sum(struct pair p) { return p.a * 3 + p.b; }
+struct pair pair_swap(struct pair p) { struct pair r = { p.b, p.a }; return r; }
+struct small small_bump(struct small s) { struct small r = { s.a - 1, (uint8_t)(s.b + 1) }; return r; }
+struct vec2 vec2_scale(struct vec2 v, double k) { struct vec2 r = { v.x * k, v.y * k }; return r; }
+struct quad quad_rotate(struct quad q) { struct quad r = { q.d, q.a, q.b, q.c }; return r; }
+struct mixed mixed_bump(int32_t n, struct mixed m) { struct mixed r = { m.d + n, m.i * n }; return r; }
+struct big big_bump(struct big b, int64_t n) { struct big r = { b.a + n, b.b + n, b.c + n, b.d * 2 }; return r; }
+int64_t sum_tail(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, struct pair p, struct quad q, int64_t f, struct big g) {
+  return a + b + c + d + e + p.a * 10 + p.b * 100 + (int64_t)(q.a + q.b + q.c + q.d) * 1000 + f * 10000 + (g.a + g.b + g.c + (int64_t)g.d) * 100000;
+}
+int64_t late_pair(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, struct pair p, int64_t h) {
+  return a + b + c + d + e + f + g + p.a * 10 + p.b * 100 + h * 1000;
+}
+double late_vec2(double a, double b, double c, double d, double e, double f, double g, struct vec2 v, double z) {
+  return a + b + c + d + e + f + g + v.x * 10 + v.y * 100 + z * 1000;
+}
+`
+
+const structValueSrc = `import "std/ffi";
+
+@derive(ffi.CLayout)
+struct Pair { a: i64, b: i64 }
+
+@derive(ffi.CLayout)
+struct Small { a: i32, b: u8 }
+
+@derive(ffi.CLayout)
+struct Vec2 { x: f64, y: f64 }
+
+@derive(ffi.CLayout)
+struct Quad { a: f32, b: f32, c: f32, d: f32 }
+
+@derive(ffi.CLayout)
+struct Mixed { d: f64, i: i64 }
+
+@derive(ffi.CLayout)
+struct Big { a: i64, b: i64, c: i64, d: f64 }
+
+@import("libmix.so", "pair_sum")
+function c_pair_sum(p: Pair): i64;
+
+@import("libmix.so", "pair_swap")
+function c_pair_swap(p: Pair): Pair;
+
+@import("libmix.so", "small_bump")
+function c_small_bump(s: Small): Small;
+
+@import("libmix.so", "vec2_scale")
+function c_vec2_scale(v: Vec2, k: f64): Vec2;
+
+@import("libmix.so", "quad_rotate")
+function c_quad_rotate(q: Quad): Quad;
+
+@import("libmix.so", "mixed_bump")
+function c_mixed_bump(n: i32, m: Mixed): Mixed;
+
+@import("libmix.so", "big_bump")
+function c_big_bump(b: Big, n: i64): Big;
+
+@import("libmix.so", "sum_tail")
+function c_sum_tail(a: i64, b: i64, c: i64, d: i64, e: i64, p: Pair, q: Quad, f: i64, g: Big): i64;
+
+@import("libmix.so", "late_pair")
+function c_late_pair(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, p: Pair, h: i64): i64;
+
+@import("libmix.so", "late_vec2")
+function c_late_vec2(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, v: Vec2, z: f64): f64;
+
+// A struct that the registers of its kind cannot hold whole goes on the
+// stack. The scalar after it takes a register on x86-64 and the stack on
+// arm64.
+function late(): boolean {
+  let ints = c_late_pair(1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, Pair { a: 2i64, b: 3i64 }, 4i64);
+  let floats = c_late_vec2(1.0f64, 1.0f64, 1.0f64, 1.0f64, 1.0f64, 1.0f64, 1.0f64, Vec2 { x: 2.0f64, y: 3.0f64 }, 4.0f64);
+  return ints == 4327i64 && floats == 4327.0f64;
+}
+
+function registers(): i32 {
+  let n = 0;
+  let swapped = c_pair_swap(Pair { a: 5i64, b: 9i64 });
+  if (c_pair_sum(Pair { a: 4i64, b: 30i64 }) == 42i64 && swapped.a == 9i64 && swapped.b == 5i64) {
+    n += 1;
+  }
+  let small = c_small_bump(Small { a: -7, b: 255u8 });
+  if (small.a == -8 && small.b == 0u8) {
+    n += 10;
+  }
+  let v = c_vec2_scale(Vec2 { x: 1.5f64, y: -2.0f64 }, 4.0f64);
+  let q = c_quad_rotate(Quad { a: 1.0f32, b: 2.0f32, c: 3.0f32, d: 4.0f32 });
+  if (v.x == 6.0f64 && v.y == -8.0f64 && q.a == 4.0f32 && q.b == 1.0f32 && q.c == 2.0f32 && q.d == 3.0f32) {
+    n += 100;
+  }
+  return n;
+}
+
+// Each check is a digit of the result: integer registers, a struct smaller
+// than its registers, vector registers, one register of each kind with a
+// struct in memory, and structs on the stack.
+pub function check(): i32 {
+  let n = registers();
+  let m = c_mixed_bump(3, Mixed { d: 0.5f64, i: 7i64 });
+  let b = c_big_bump(Big { a: 1i64, b: 2i64, c: 3i64, d: 1.25f64 }, 10i64);
+  if (m.d == 3.5f64 && m.i == 21i64 && b.a == 11i64 && b.b == 12i64 && b.c == 13i64 && b.d == 2.5f64) {
+    n += 1000;
+  }
+  let tail = c_sum_tail(1i64, 1i64, 1i64, 1i64, 1i64, Pair { a: 2i64, b: 3i64 }, Quad { a: 1.0f32, b: 1.0f32, c: 1.0f32, d: 1.0f32 }, 6i64, Big { a: 1i64, b: 2i64, c: 3i64, d: 1.0f64 });
+  if (tail == 764325i64 && late()) {
+    n += 10000;
+  }
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+// A C import takes and returns a struct with @derive(ffi.CLayout) by value,
+// in the registers or the memory that the C convention of the target gives
+// its class.
+func TestSharedCImportsStructByValue(t *testing.T) {
+	runImportLoader(t, structValueSrc, structValueLib)
 }
 
 const bytesDataLib = `#include <stddef.h>
