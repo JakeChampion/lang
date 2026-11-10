@@ -106,7 +106,7 @@ pub function (e: RsaError) message(): string {
       return "rsa: the modulus is even";
     },
     BadExponent => {
-      return "rsa: the exponent must be odd, at least 3 and at most 64 bits";
+      return "rsa: the exponent must be odd, at least 3 and at most 31 bits";
     }
   }
   return "";
@@ -163,7 +163,7 @@ pub function public_key(modulus: [u8], exponent: [u8]): Result[PublicKey, RsaErr
   if (!n.bit(0)) {
     return Err(EvenModulus);
   }
-  if (!e.bit(0) || e.bit_length() < 2 || e.bit_length() > 64) {
+  if (!e.bit(0) || e.bit_length() < 2 || e.bit_length() > 31) {
     return Err(BadExponent);
   }
   return Ok(PublicKey { n: n, e: e, bytes: (bits + 7) / 8, bits: bits });

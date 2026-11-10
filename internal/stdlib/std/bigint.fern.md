@@ -610,6 +610,7 @@ pub function (a: BigInt) pow(n: i32): BigInt {
   return result;
 }
 
+// A division by zero answers the quotient 0 and the remainder `a`.
 pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
   if (__bi_is_zero_mag(b.mag)) {
     return (zero(), a);
