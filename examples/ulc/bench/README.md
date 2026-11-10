@@ -101,13 +101,13 @@ Every final Fern WAV equals the baseline byte for byte, and all independent floa
 
 Fern has lower medians than tuned C in 22 of 24 cases.
 The geometric-mean C/Fern ratio is 1.647× overall and 1.224× without silence.
-The fixed-suite intervals are 1.637× to 1.675× and 1.215× to 1.247×.
+The corresponding fixed-suite intervals are 1.637× to 1.675× and 1.215× to 1.247×.
 Large-block PCM8 and PCM24 noise favor C, with C/Fern ratios of 0.989× and 0.916×.
 These results do not establish a universal performance ranking.
 
 Fern has lower medians than the previous Fern build in 19 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.018× overall and 1.021× without silence.
-The intervals are 1.009× to 1.035× and 1.013× to 1.040×.
+The corresponding intervals are 1.009× to 1.035× and 1.013× to 1.040×.
 All five baseline regressions remain in the report.
 The intervals use 2000 paired bootstrap repetitions and seed 417; they estimate repetition uncertainty within this fixed suite.
 Compare the two Fern builds within this sweep: the earlier report ran at a different time and has a different baseline.
@@ -141,13 +141,13 @@ Every final Fern WAV equals the baseline byte for byte, and all independent floa
 
 Fern has lower medians than tuned C in 22 of 24 cases.
 The geometric-mean C/Fern ratio is 1.685× overall and 1.243× without silence.
-The fixed-suite intervals are 1.649× to 1.736× and 1.211× to 1.276×.
+The corresponding fixed-suite intervals are 1.649× to 1.736× and 1.211× to 1.276×.
 C remains faster on large-block PCM16 noise and PCM24 noise, with C/Fern ratios of 0.989× and 0.885×.
 These results do not establish a universal performance ranking.
 
 Fern has lower medians than the baseline in 20 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.032× overall and 1.045× without silence.
-The intervals are 1.008× to 1.065× and 1.017× to 1.066×.
+The corresponding intervals are 1.008× to 1.065× and 1.017× to 1.066×.
 All four baseline regressions remain in the report.
 The intervals use 2000 paired bootstrap repetitions and seed 417, covering repetition uncertainty within these fixed cases.
 
@@ -198,13 +198,13 @@ The report retains the other five complete groups.
 
 Fern has lower medians than the baseline in 17 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.019 overall and 1.011 without silence.
-The fixed-suite intervals are 0.995 to 1.046 and 0.994 to 1.037.
+The corresponding fixed-suite intervals are 0.995 to 1.046 and 0.994 to 1.037.
 Both intervals include 1, so this sweep does not establish an overall speed gain.
 The report retains all seven baseline regressions.
 
 Fern has lower medians than tuned C in 20 of 24 cases.
 The geometric-mean C/Fern ratio is 1.644 overall and 1.187 without silence.
-The intervals are 1.609 to 1.690 and 1.165 to 1.223.
+The corresponding intervals are 1.609 to 1.690 and 1.165 to 1.223.
 C has lower medians for large-block PCM16 noise and large-block PCM24 tone, noise, and transients.
 The intervals use 2000 paired bootstrap repetitions and seed 417 within these fixed cases.
 These results do not establish a universal speed ranking.
@@ -261,12 +261,12 @@ Every final WAV equals the baseline byte for byte, and all six float64 oracle ch
 
 Fern has lower medians than the baseline in 19 of 24 cases.
 The geometric-mean baseline/Fern ratio is 1.055× overall and 1.076× without silence.
-The fixed-suite intervals are 1.023× to 1.086× and 1.053× to 1.105×.
+The corresponding fixed-suite intervals are 1.023× to 1.086× and 1.053× to 1.105×.
 The raw report retains all five baseline regressions.
 
 Fern has lower medians than tuned C in 21 of 24 cases.
 The geometric-mean C/Fern ratio is 1.654× overall and 1.193× without silence.
-The intervals are 1.619× to 1.696× and 1.170× to 1.225×.
+The corresponding intervals are 1.619× to 1.696× and 1.170× to 1.225×.
 C remains faster in the three large-block noise cases.
 Their C/Fern ratios are 0.958× for PCM8, 0.968× for PCM16, and 0.891× for PCM24.
 These results do not establish a universal speed ranking.
@@ -335,7 +335,7 @@ No other local builds or tests run during measurement.
 
 PCM24 has lower medians than the baseline in all eight cases.
 Its geometric-mean baseline/Fern ratio is 1.061×, or 1.069× across the six non-silent cases.
-The fixed-suite intervals are 1.011× to 1.114× and 1.034× to 1.118×.
+The corresponding fixed-suite intervals are 1.011× to 1.114× and 1.034× to 1.118×.
 
 The complete 24-case comparison has fifteen lower Fern medians than the baseline.
 Its geometric-mean baseline/Fern ratio is 1.028×, with an interval of 1.000× to 1.054×.
@@ -343,7 +343,7 @@ The raw report retains nine baseline regressions in PCM8 or PCM16.
 
 Fern has lower medians than tuned C in 18 of 24 cases.
 The geometric-mean C/Fern ratio is 1.592× overall and 1.115× without silence.
-The fixed-suite intervals are 1.558× to 1.630× and 1.094× to 1.148×.
+The corresponding fixed-suite intervals are 1.558× to 1.630× and 1.094× to 1.148×.
 All nine long non-silent cases favor Fern.
 Six large-block cases still favor C, so these results do not establish a universal speed ranking.
 
@@ -425,13 +425,13 @@ No other local builds or tests run during measurement.
 
 Fern has lower medians than the baseline in 21 of 24 cases, including all eighteen non-silent cases.
 The geometric-mean baseline/Fern ratio is 1.166×, or 1.247× without silence.
-The fixed-suite intervals are 1.141× to 1.189× and 1.221× to 1.268×.
+The corresponding fixed-suite intervals are 1.141× to 1.189× and 1.221× to 1.268×.
 Three short silence cases have lower baseline medians.
 The raw report retains those regressions.
 
 Fern has lower medians than tuned native C in 18 of 24 cases.
 The geometric-mean C/Fern ratio is 1.566×, or 1.110× without silence.
-The fixed-suite intervals are 1.532× to 1.590× and 1.086× to 1.124×.
+The corresponding fixed-suite intervals are 1.532× to 1.590× and 1.086× to 1.124×.
 The calculations use 2000 paired bootstrap repetitions and seed 417.
 These intervals cover repetition uncertainty in this fixed suite.
 They do not quantify other inputs, machines, or runs.
