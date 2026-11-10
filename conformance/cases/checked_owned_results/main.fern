@@ -1,6 +1,6 @@
+// spec: OR-01
 import "core/map";
 
-// spec: OR-01
 struct Box { values: u8[] }
 
 struct Callbacks { step: (own Box) => own Box }

@@ -1,3 +1,4 @@
+# 2026-11-10: copied_call_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: checked_owned_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: explicit_type_argument_names_union_or_option is clean under RC trace.
 # 2026-11-10: dyn_conditional_impl_bound_met is clean under RC trace.
@@ -234,6 +235,7 @@ char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
 checked_owned_results                                0
+copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0
 closing_a_watched_socket                             0
 closure_adder                                        0

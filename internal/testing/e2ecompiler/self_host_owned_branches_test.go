@@ -33,6 +33,7 @@ func TestSelfHostOwnedExclusiveBranches(t *testing.T) {
 func TestSelfHostOwnedBranchErrors(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	const prefix = `struct Box { data: i32[] }
+function (own box: Box) close(): void {}
 struct Wrap { state: Box }
 function consume(own box: Box): i32 { return box.data[0]; }
 function keep(own box: Box): Box { return box; }

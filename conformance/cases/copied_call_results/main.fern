@@ -1,0 +1,76 @@
+// spec: OR-04
+import "core/map";
+import "std/pmap";
+import "std/pvec";
+
+function loan(xs: i32[]): i32[] {
+  return xs;
+}
+
+function bump(own xs: i32[]): i32[] {
+  return xs.with(0, xs[0] + 10);
+}
+
+function arrays(xs: i32[]): void {
+  print(bump(loan(xs))[0]);
+  let saved = loan(xs);
+  print(bump(saved)[0]);
+  print(xs[0]);
+}
+
+function callback(xs: i32[], f: (i32[]) => i32[]): void {
+  print(bump(f(xs))[1]);
+  print(xs[0]);
+}
+
+struct Data[T] { value: T }
+
+function loan_data[T](data: Data[T]): Data[T] {
+  return data;
+}
+
+function rewrite(own data: Data[i32[]]): Data[i32[]] {
+  return Data { value: data.value.with(0, 21) };
+}
+
+function records(data: Data[i32[]]): void {
+  let saved = loan_data(data);
+  print(rewrite(saved).value[0]);
+  print(data.value[0]);
+}
+
+function loan_map(m: Map[string, i32]): Map[string, i32] {
+  return m;
+}
+
+function update(own m: Map[string, i32]): Map[string, i32] {
+  return m.insert("k", 9);
+}
+
+function maps(m: Map[string, i32]): void {
+  print(update(loan_map(m)).get_or("k", 0));
+  print(m.get_or("k", 0));
+}
+
+function snapshots(v: pvec.PVec[i32], m: pmap.PMap[i32, i32]): void {
+  let saved = v.to_array();
+  print(bump(saved)[0]);
+  print(v.get_or(0, 0));
+  let values = m.values();
+  print(bump(values)[0]);
+  print(m.get_or(4, 0));
+  print(bump(m.keys())[0]);
+  print(m.contains(4));
+}
+
+function main(): i32 {
+  let xs = [1, 12];
+  arrays(xs);
+  callback(xs, loan);
+  records(Data { value: xs });
+  let empty: Map[string, i32] = map_new(4);
+  maps(empty.insert("k", 7));
+  let persistent = pmap.new[i32, i32]();
+  snapshots(pvec.from_array(xs), persistent.insert(4, 5));
+  return 0;
+}
