@@ -686,20 +686,14 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  a = x86_queue_fixup(a, patch_off, 4, name);
-  return a;
+  return x86_rip_offset(a, name, 0);
 }
 
 function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   util.push_bytes(a.code, x86_rex_opt([], dst, 0, 0));
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  a = x86_queue_fixup(a, patch_off, 4, name);
-  return a;
+  return x86_rip_offset(a, name, 0);
 }
 
 function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: string, imm: i32, imm_bytes: i32): X86Asm {
@@ -708,11 +702,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   }
   buf_push_byte(a.code, opcode);
   buf_push_byte(a.code, x86_modrm(0, 0, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  a = x86_queue_fixup(a, patch_off, 4, name + "");
-  a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
+  a = x86_rip_offset(a, name, imm_bytes);
   if (imm_bytes == 1) {
     buf_push_byte(a.code, imm & 255);
     return a;
@@ -734,10 +724,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   buf_push_byte(a.code, x86_rex(1, src, 0, 0));
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  a = x86_queue_fixup(a, patch_off, 4, name);
-  return a;
+  return x86_rip_offset(a, name, 0);
 }
 
 function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm {
@@ -746,9 +733,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   }
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  return x86_queue_fixup(a, patch_off, 4, name);
+  return x86_rip_offset(a, name, 0);
 }
 
 function x86_rex_opt(own buf: i32[], reg: i32, index: i32, base: i32): i32[] {
@@ -1238,6 +1223,10 @@ function x86_addend_digit(c: i32): i32 {
 }
 
 function x86_symbol_addend_value(token: string): i64 {
+  return x86_unsigned_value(token, 2147483647i64);
+}
+
+function x86_unsigned_value(token: string, limit: i64): i64 {
   let s = x86_gas_trimmed(token);
   let radix: i64 = 10;
   let i = 0;
@@ -1258,7 +1247,7 @@ function x86_symbol_addend_value(token: string): i64 {
   let value: i64 = 0;
   while (i < s.len()) {
     let d = x86_addend_digit(s[i] as i32) as i64;
-    if (d < 0 as i64 || d >= radix || value > (2147483647i64 - d) / radix) {
+    if (d < 0 as i64 || d >= radix || value > (limit - d) / radix) {
       return -1;
     }
     value = value * radix + d;
@@ -1353,10 +1342,7 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, x86_rex(1, dst, 0, 0));
   buf_push_byte(a.code, 141);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
-  util.push_bytes(a.code, util.le32([], 0));
-  let patch_off = buf_len(a.code) - 4;
-  a = x86_queue_fixup(a, patch_off, 4, name);
-  return a;
+  return x86_rip_offset(a, name, 0);
 }
 
 function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
@@ -2837,17 +2823,43 @@ function x86_gas_mem_rex(own buf: i32[], size: i32, reg: i32, m: GasMem, force8:
   return buf;
 }
 
+function x86_rip_constant(token: string): Option[i32] {
+  let s = x86_gas_trimmed(token);
+  if (s.len() == 0) {
+    return Some(0);
+  }
+  let negative = s[0] == b'-';
+  let start = if (negative || s[0] == b'+') { 1 } else { 0 };
+  let limit = if (negative) { 2147483648i64 } else { 2147483647i64 };
+  let value = x86_unsigned_value(slice_unchecked(s, start, s.len()), limit);
+  if (value < 0i64) {
+    return None;
+  }
+  return Some((if (negative) { -value } else { value }) as i32);
+}
+
+function x86_rip_offset(own a: X86Asm, name: string, tail: i32): X86Asm {
+  match (x86_rip_constant(name)) {
+    Some(value) => {
+      util.push_bytes(a.code, util.le32([], value));
+      return a;
+    },
+    None => {}
+  }
+  util.push_bytes(a.code, util.le32([], 0));
+  let patch_off = buf_len(a.code) - 4;
+  a = x86_queue_fixup(a, patch_off, 4, name);
+  if (tail > 0) {
+    a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
+  }
+  return a;
+}
+
 function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm {
   if (m.is_rip) {
     buf_push_byte(a.code, x86_modrm(0, reg, 5));
-    util.push_bytes(a.code, util.le32([], 0));
-    let patch_off = buf_len(a.code) - 4;
-    if (tail > 0) {
-      a = x86_queue_fixup(a, patch_off, 4, m.label);
-      a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
-      return X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
-    }
-    return x86_queue_fixup(a, patch_off, 4, m.label);
+    return x86_rip_offset(a, m.label, tail);
   }
   util.push_bytes(a.code, x86_byte_mem_operand([], reg, m.base, m.has_index, m.index, m.scale, m.disp));
   return a;
@@ -3548,9 +3560,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw", "vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365];
 
 // Each shift by an immediate: its 0F opcode times 8, plus the /digit.
 const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrlq", "vpsllq"];
@@ -3603,6 +3615,10 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     buf_push_byte(a.code, x86_modrm(3, shift % 8, v1 & 15));
     buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
     return a;
+  }
+  let v0 = x86_gas_vreg(ops[0]);
+  if (v0 >= 0 && v0 >= 16 != vd >= 16) {
+    return x86_gas_bad(a, mnem + " " + rest);
   }
   let mo = x86_vex_three_op(mnem);
   let pp = 1;

@@ -2656,22 +2656,23 @@ function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   let ar = ssa_fsrc(reg_of, ins.args[0], "d1");
   let a = "v" + slice_unchecked(ar, 1, ar.len());
+  let d = ssa_fdst(reg_of, ins.result);
+  let vd = "v" + slice_unchecked(d, 1, d.len());
   let mode = asmcore.ssa_lane_index(ins.str);
   if (mode == 0 || mode == 3) {
-    s = s.write("    mov v0.16b, " + a + ".16b\n");
     if (ins.imm == 32 && mode == 0) {
-      s = s.write("    rev64 v0.4s, v0.4s\n");
+      s = s.write("    rev64 " + vd + ".4s, " + a + ".4s\n");
+      s = s.write("    ext " + vd + ".16b, " + vd + ".16b, " + vd + ".16b, #8\n");
+    } else {
+      s = s.write("    ext " + vd + ".16b, " + a + ".16b, " + a + ".16b, #8\n");
     }
-    s = s.write("    ext v0.16b, v0.16b, v0.16b, #8\n");
   } else {
     s = ssa_fread(reg_of, ins.args[1], "d2", s);
     let br = ssa_fsrc(reg_of, ins.args[1], "d2");
     let b = "v" + slice_unchecked(br, 1, br.len());
     let shape = if (ins.imm == 32) { ".4s" } else { ".2d" };
-    s = s.write("    zip" + util.i32_to_string(mode) + " v0" + shape + ", " + a + shape + ", " + b + shape + "\n");
+    s = s.write("    zip" + util.i32_to_string(mode) + " " + vd + shape + ", " + a + shape + ", " + b + shape + "\n");
   }
-  let d = ssa_fdst(reg_of, ins.result);
-  s = s.write("    mov v" + slice_unchecked(d, 1, d.len()) + ".16b, v0.16b\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
