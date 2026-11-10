@@ -303,7 +303,7 @@ func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 		delete(b.borrowed, p.Name)
 	}
 	b.locals = c.borrowedLocals(&ast.FuncDecl{Body: lm.Body}, b)
-	if lambdaRetainsCapture(lm, b) {
+	if c.lambdaRetainsCapture(lm, b) {
 		return true
 	}
 	found := false
@@ -321,16 +321,21 @@ func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 
 // Fresh containers can retain captures too. Keep this proof conservative
 // for aggregates, including aliases built before the callback returns.
-func lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
+func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
 	found := false
 	ast.Walk(lm.Body, func(n ast.Node) bool {
 		if found {
 			return false
 		}
-		switch n.(type) {
+		switch x := n.(type) {
 		case *ast.Lambda:
 			return false
-		case *ast.StructLit, *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
+		case *ast.StructLit:
+			if !c.structLitOwned(x, func(e ast.Expr) bool { return !c.exprBorrows(e, b) }) {
+				found = true
+			}
+			return !found
+		case *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
 			ast.Walk(n, func(part ast.Node) bool {
 				if id, ok := part.(*ast.Ident); ok && (b.borrowed[id.Name] || b.locals[id.Name]) {
 					found = true
