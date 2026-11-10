@@ -462,6 +462,9 @@ function __seal_failed(p: Protection, e: aead.AeadError): RecordError {
     },
     aead.Forged => {
       return BadRecordMac;
+    },
+    aead.CounterRange => {
+      return BadRecordMac;
     }
   }
   return BadRecordMac;

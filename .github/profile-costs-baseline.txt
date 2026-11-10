@@ -1,3 +1,7 @@
+# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
+# http.serialize_response_to and http.serialize_response_to_bytes refuse a
+# field with CR or LF since #15002, so 19 http_hello rows rise 1% to 5%.
+# Pinned at the measured values.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
 # deflate_decode.diagnostic.emit at 12887 after the merge of main d04e79179f.
 # Bank the measured size. Keep all tolerances.
@@ -130,14 +134,14 @@ profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
 profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	127816
-profile/arm64-linux/http_hello.diagnostic.emit	16197
-profile/arm64-linux/http_hello.hardened.bytes	79672
-profile/arm64-linux/http_hello.hardened.emit	17752
-profile/arm64-linux/http_hello.minimal.bytes	60984
-profile/arm64-linux/http_hello.minimal.emit	13056
-profile/arm64-linux/http_hello.safe.bytes	73624
-profile/arm64-linux/http_hello.safe.emit	16228
+profile/arm64-linux/http_hello.diagnostic.bytes	129160
+profile/arm64-linux/http_hello.diagnostic.emit	16493
+profile/arm64-linux/http_hello.hardened.bytes	81064
+profile/arm64-linux/http_hello.hardened.emit	18088
+profile/arm64-linux/http_hello.minimal.bytes	63432
+profile/arm64-linux/http_hello.minimal.emit	13622
+profile/arm64-linux/http_hello.safe.bytes	74936
+profile/arm64-linux/http_hello.safe.emit	16542
 profile/arm64-linux/int_loop.diagnostic.bytes	5312
 profile/arm64-linux/int_loop.diagnostic.emit	565
 profile/arm64-linux/int_loop.hardened.bytes	2744
@@ -223,18 +227,18 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4544
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	116944
-profile/x86-64-linux/http_hello.diagnostic.emit	14950
+profile/x86-64-linux/http_hello.diagnostic.bytes	118384
+profile/x86-64-linux/http_hello.diagnostic.emit	15289
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
-profile/x86-64-linux/http_hello.diagnostic.ir	39724679
-profile/x86-64-linux/http_hello.hardened.bytes	70208
-profile/x86-64-linux/http_hello.hardened.emit	15766
-profile/x86-64-linux/http_hello.hardened.ir	29734736
-profile/x86-64-linux/http_hello.minimal.bytes	54192
-profile/x86-64-linux/http_hello.minimal.emit	12595
-profile/x86-64-linux/http_hello.minimal.ir	23248401
-profile/x86-64-linux/http_hello.safe.bytes	64896
-profile/x86-64-linux/http_hello.safe.emit	15234
+profile/x86-64-linux/http_hello.diagnostic.ir	40308693
+profile/x86-64-linux/http_hello.hardened.bytes	71648
+profile/x86-64-linux/http_hello.hardened.emit	16123
+profile/x86-64-linux/http_hello.hardened.ir	30101992
+profile/x86-64-linux/http_hello.minimal.bytes	56640
+profile/x86-64-linux/http_hello.minimal.emit	13189
+profile/x86-64-linux/http_hello.minimal.ir	23512415
+profile/x86-64-linux/http_hello.safe.bytes	66288
+profile/x86-64-linux/http_hello.safe.emit	15591
 profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5480
 profile/x86-64-linux/int_loop.diagnostic.emit	523
