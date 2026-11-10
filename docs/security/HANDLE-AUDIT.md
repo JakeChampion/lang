@@ -253,3 +253,10 @@ The empty `None` constructor holds no handle and is a fresh value.
 A value match can move an owned source into its result when each arm yields an owned or fresh value.
 That result can form a field of a literal passed to an own parameter.
 A borrowed source, a source with a later read, or a local that shadows `None` does not gain ownership from this rule.
+
+A new slot from `cell_new` retains the borrow of its payload.
+A helper that returns that cell retains the borrow through local aliases.
+The new slot does not turn a borrowed handle into an owned handle.
+A caller can read a snapshot while the external owner remains live.
+A fresh payload or an own helper input still permits an owned cell result.
+The `diag_e051_cell_constructor_*` cases and `cell_constructor_result_ownership` check these rules.
