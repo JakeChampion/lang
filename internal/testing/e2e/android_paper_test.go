@@ -16,8 +16,8 @@ import (
 
 const paperApp = "examples/android/paper"
 
-// The assets of Paper: the wallpaper and the five weights of Roboto.
-var paperAssets = []string{"wallpaper.jpg", "Roboto-Regular.ttf", "Roboto-Medium.ttf", "Roboto-SemiBold.ttf", "Roboto-Bold.ttf", "Roboto-ExtraBold.ttf"}
+// The assets of Paper: the wallpaper. The fonts come from the system.
+var paperAssets = []string{"wallpaper.jpg"}
 
 // runPaperSuite builds one std/test suite of Paper for the host and requires
 // that it passes. The suites read the fonts from the directory of the app.
@@ -50,8 +50,8 @@ func TestAndroidPaperModel(t *testing.T) {
 }
 
 // ui_test.fern draws each screen with the real wallpaper, which std/jpeg
-// decodes, and the Roboto fonts, which std/truetype draws, and checks its
-// layout.
+// decodes, and the Roboto fonts of testfonts, which std/truetype draws, and
+// checks its layout.
 func TestAndroidPaperUI(t *testing.T) {
 	runPaperSuite(t, "ui_test.fern")
 }
@@ -65,8 +65,8 @@ func TestAndroidPaperControl(t *testing.T) {
 
 // fern -apk builds Paper as a home screen from the [android] table of its
 // fern.toml, with no -apk- flag: the home categories, the wallpaper theme,
-// the notification listener service, the fonts and the wallpaper under
-// assets/, and the native methods of its three classes.
+// the notification listener service, the wallpaper under assets/ with no
+// font file, and the native methods of its three classes.
 func TestAndroidPaperApk(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "paper.apk")
@@ -95,6 +95,11 @@ func TestAndroidPaperApk(t *testing.T) {
 	want += " lib/arm64-v8a/libapp.so lib/x86_64/libapp.so"
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("entries = %s, want %s", got, want)
+	}
+	for _, name := range names {
+		if strings.Contains(name, "Roboto") || strings.HasSuffix(name, ".ttf") {
+			t.Errorf("the APK holds the font file %s; Paper takes its fonts from the system", name)
+		}
 	}
 	for _, a := range paperAssets {
 		disk, err := os.ReadFile(e2eharness.RepoPath(paperApp, "assets", a))

@@ -116,7 +116,7 @@ function fake(dir: string, now: i64): control.Device {
     read: (path: string): string => testkit.read_text(path),
     write: (path: string, text: string): void => { let ok = write_file(path, text); },
     size: (window: usize): (i32, i32) => (W, H),
-    wallpaper: (w: i32): draw.Image => ui_test.wallpaper(w),
+    wallpaper: (w: i32): worker.Worker[draw.Image] => worker.spawn((): draw.Image => ui_test.wallpaper(w)),
     apps: (): paper.Entry[] => installed(dir),
     app_keys: (): string[] => keys(dir),
     launch: (key: string, x: i32, y: i32, w: i32, h: i32): boolean => {
@@ -551,8 +551,27 @@ function test_held_notifications(): test.TestOutcome {
   return test.assert_eq(logged(r) + " " + r.s.held.len().to_string(), "held 0|com.whatsapp|7 0");
 }
 
+// The wallpaper comes from a worker: the window shows the paper at once,
+// and the app looks at the worker again soon. When the worker ends, the
+// painter holds the wallpaper at the width of the window, and the app
+// waits for the next minute.
+function test_wallpaper_from_worker(): test.TestOutcome {
+  let r = shown("wallpaper");
+  let first = gpu.wall_width(r.s.painter).to_string() + " " + r.s.wall_job.is_some().to_string() + " " + (control.timeout(r.s, r.now) <= 20).to_string();
+  let steps = 0;
+  while (r.s.wall_job.is_some() && steps < 3000) {
+    sleep_ms(10i64);
+    r = at(r, 10, android.Tick);
+    steps += 1;
+  }
+  let then = gpu.wall_width(r.s.painter).to_string() + " " + (control.timeout(r.s, r.now) > 20).to_string();
+  control.close(r.s);
+  return test.assert_eq(first + ", " + then, "0 true true, " + W.to_string() + " true");
+}
+
 function main(): i32 {
   let r = test.new("android paper control");
+  r = r.it("the wallpaper comes from a worker after the first frame", test_wallpaper_from_worker);
   r = r.it("a swipe up opens the app list, which lists Paper", test_swipe_up_opens_list_with_paper);
   r = r.it("a swipe left or right opens the app list", test_side_swipes_open_list);
   r = r.it("the letter index goes to the apps of a letter", test_letter_index_jumps);

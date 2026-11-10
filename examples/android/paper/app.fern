@@ -8,6 +8,7 @@
 import "std/android";
 import "std/android/access";
 import "std/android/draw";
+import "std/android/fonts";
 import "std/android/keyboard";
 import "std/android/property";
 import "std/fetch";
@@ -764,12 +765,21 @@ function asset_bytes(ctx: usize, name: string): u8[] {
   return [];
 }
 
-function fonts(ctx: usize): face.Fonts {
-  let data: u8[][] = [];
-  for name in face.files() {
-    data = data.append(asset_bytes(ctx, name));
+function file_bytes(path: string): u8[] {
+  if let Ok(b) = read_file_bytes(path) {
+    return b;
   }
-  return face.load(data);
+  log.info("paper: no font file " + path);
+  return [];
+}
+
+// The fonts of the system for the weights of Paper.
+function system_fonts(ctx: usize): face.Fonts {
+  let found: Option[fonts.Found][] = [];
+  for w in face.weights() {
+    found = found.append(fonts.find(ctx, face.FAMILY, w));
+  }
+  return face.load(found, (path: string): u8[] => file_bytes(path));
 }
 
 function window_size(window: usize): (i32, i32) {
@@ -787,7 +797,7 @@ function device(ctx: usize, wall: u8[]): control.Device {
     read: (path: string): string => read_text(path),
     write: (path: string, text: string): void => write_text(path, text),
     size: (window: usize): (i32, i32) => window_size(window),
-    wallpaper: (w: i32): draw.Image => ui.wallpaper(wall, w),
+    wallpaper: (w: i32): worker.Worker[draw.Image] => worker.spawn((): draw.Image => ui.wallpaper(wall, w)),
     apps: (): paper.Entry[] => query_apps(ctx, true),
     app_keys: (): string[] => app_keys(ctx),
     launch: (key: string, x: i32, y: i32, w: i32, h: i32): boolean => launch(ctx, key, x, y, w, h),
@@ -853,7 +863,7 @@ function step(own s: control.App, e: android.Event): control.App {
 }
 
 function app_main(ctx: usize): usize {
-  let first = control.with_theme(control.with_density(control.new(device(ctx, asset_bytes(ctx, "wallpaper.jpg")), android.data_dir(ctx), fonts(ctx)), android.density(ctx)), android.night_mode(ctx));
+  let first = control.with_theme(control.with_density(control.new(device(ctx, asset_bytes(ctx, "wallpaper.jpg")), android.data_dir(ctx), system_fonts(ctx)), android.density(ctx)), android.night_mode(ctx));
   let last = android.run(ctx, first, (own s: control.App, e: android.Event): control.App => step(s, e), (s: control.App): i32 => control.timeout(s, monotonic_ns() / 1000000i64));
   control.close(last);
   return 0 as usize;

@@ -40,7 +40,7 @@ const WEATHER_MAX_AGE_MS: i64 = 1800000;
 // The input and output of the app. `property` gives the value of a system
 // property, or "". `attach_gpu` puts the painter on a
 // window, `present` draws a frame of passes with it, `detach_gpu` takes it
-// off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
+// off the window with its images kept, and `close_gpu` frees it. `wallpaper` starts a worker that decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
 // `open` starts a screen of the system: "clock", "calendar", "search" (with
@@ -55,7 +55,7 @@ pub struct Device {
   read: (string) => string,
   write: (string, string) => void,
   size: (usize) => (i32, i32),
-  wallpaper: (i32) => draw.Image,
+  wallpaper: (i32) => worker.Worker[draw.Image],
   apps: () => paper.Entry[],
   app_keys: () => string[],
   launch: (string, i32, i32, i32, i32) => boolean,
@@ -130,6 +130,8 @@ pub struct App {
   weather: Option[paper.Weather],
   weather_at: i64,
   job: Option[worker.Worker[string]],
+  wall_job: Option[worker.Worker[draw.Image]],
+  wall_for: i32,
   note: string,
   note_until: i64,
   shown: boolean,
@@ -160,7 +162,7 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, wall_job: None, wall_for: 0, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
@@ -1188,7 +1190,7 @@ function refresh_weather(own s: App, force: boolean): App {
   return App { ...s, job: Some(s.dev.fetch(url)) };
 }
 
-function poll_job(own j: Option[worker.Worker[string]]): (Option[worker.Worker[string]], Option[string]) {
+function poll_job[T: worker.Send](own j: Option[worker.Worker[T]]): (Option[worker.Worker[T]], Option[T]) {
   match (j) {
     Some(w) => {
       match (w.poll()) {
@@ -1241,10 +1243,37 @@ function placed(own s: App, window: usize): App {
   if (window != s.window || !gpu.attached(p)) {
     p = s.dev.attach_gpu(p, window);
   }
-  if (w != s.w || h != s.h || gpu.wall_width(p) != w) {
-    p = gpu.with_screen(p, ui.wallpaper_layer(ui.themed(s.dev.wallpaper(w), ui.palette(s.dark))), w, h, s.d, ui.palette(s.dark));
+  if (w != s.w || h != s.h) {
+    p = gpu.with_size(p, w, h, s.d, ui.palette(s.dark));
   }
-  return App { ...s, window: window, w: w, h: h, painter: p, dirty: true };
+  return wanted_wall(App { ...s, window: window, w: w, h: h, painter: p, dirty: true });
+}
+
+// Starts a worker for the wallpaper at the width of the window, when the
+// app has no wallpaper of that width and no worker runs. Until the worker
+// ends, the painter has no wallpaper and a frame shows the paper.
+function wanted_wall(own s: App): App {
+  if (s.wall_for == s.w || s.w <= 0 || s.wall_job.is_some()) {
+    return s;
+  }
+  let p = gpu.with_screen(s.painter, draw.offscreen(0, 0), s.w, s.h, s.d, ui.palette(s.dark));
+  return App { ...s, painter: p, wall_job: Some(s.dev.wallpaper(s.w)), wall_for: s.w };
+}
+
+// Gives the painter the wallpaper when its worker ends. A wallpaper for a
+// width that the window no longer has starts a new worker.
+function poll_wall(own s: App): App {
+  let (job, done) = poll_job(s.wall_job);
+  let t = App { ...s, wall_job: job };
+  let Some(img) = done else {
+    return t;
+  };
+  if (img.width != t.w) {
+    return wanted_wall(App { ...t, wall_for: 0 });
+  }
+  let pal = ui.palette(t.dark);
+  let p = gpu.with_screen(t.painter, ui.wallpaper_layer(ui.themed(img, pal)), t.w, t.h, t.d, pal);
+  return App { ...t, painter: p, dirty: true };
 }
 
 function event(own s: App, e: android.Event): App {
@@ -1482,7 +1511,7 @@ function frame(own s: App, ns: i64): App {
 // the screen changed or moves.
 pub function step(own s: App, e: android.Event): App {
   let now = now_ms(s);
-  let t = sync_bars(poll_weather(timers(event(s, e), now)));
+  let t = sync_bars(poll_wall(poll_weather(timers(event(s, e), now))));
   if (t.dirty || animating(t)) {
     t.dev.request_frame();
   }
@@ -1494,6 +1523,9 @@ pub function step(own s: App, e: android.Event): App {
 pub function timeout(s: App, now: i64): i32 {
   if (s.press.active && !s.press.moved && !s.press.fired) {
     return clamp((LONG_PRESS_MS - (now - s.press.at)) as i32, 1, 500);
+  }
+  if (s.wall_job.is_some()) {
+    return WALL_POLL_MS;
   }
   if (job_running(s)) {
     return 200;
@@ -1514,10 +1546,17 @@ pub function timeout(s: App, now: i64): i32 {
   return clamp(wait, 1, 60050);
 }
 
-// Waits for the weather request, if one runs, and frees the painter.
+// The time between two looks at the worker of the wallpaper.
+const WALL_POLL_MS: i32 = 20;
+
+// Waits for the weather request and the wallpaper, if their workers run,
+// and frees the painter.
 pub function close(own s: App): void {
   if let Some(w) = s.job {
     let body = w.join();
+  }
+  if let Some(w) = s.wall_job {
+    let img = w.join();
   }
   let p = s.dev.close_gpu(s.painter);
 }

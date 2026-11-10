@@ -1,10 +1,12 @@
 // The text of Paper: Roboto, the sans-serif face of Android, in the five
-// weights that the screens use. std/truetype draws each glyph once for each
+// weights that the screens use. The fonts come from the system. std/truetype draws each glyph once for each
 // size, weight and quarter of a pixel, and each label once into a sprite,
 // a coverage map that `draw.Frame.mask` puts on a frame. A Cache keeps both,
 // so a frame draws its text with no rasterizing.
 import "core/map";
 import "std/android/draw";
+import "std/android/fonts";
+import "std/option";
 import "std/truetype";
 import "std/utf8";
 
@@ -18,25 +20,66 @@ pub const BOLD: i32 = 3;
 
 pub const EXTRABOLD: i32 = 4;
 
-// The asset of each weight, in the order of the constants.
-pub function files(): string[] {
-  return ["Roboto-Regular.ttf", "Roboto-Medium.ttf", "Roboto-SemiBold.ttf", "Roboto-Bold.ttf", "Roboto-ExtraBold.ttf"];
+// The family of the text.
+pub const FAMILY: string = "Roboto";
+
+// The weight of each constant, in the order of the constants.
+pub function weights(): i32[] {
+  return [400, 500, 600, 700, 800];
 }
 
 pub struct Fonts { faces: truetype.Font[] }
 
-// The fonts in the bytes of each file of `files`, in its order. A weight
-// that does not parse takes the first font that does.
-pub function load(data: u8[][]): Fonts {
-  let faces: truetype.Font[] = [];
-  for d in data {
-    if let Some(f) = truetype.parse(d) {
-      faces = faces.append(f);
-    } else if (faces.len() > 0) {
-      faces = faces.append(faces[0]);
+// The fonts of the files in `found`, one for each weight of `weights`.
+// `read` gives the bytes of a file. One file can hold more than one weight,
+// so each file is read and parsed one time. A weight with no font takes the
+// first font that there is.
+pub function load(found: Option[fonts.Found][], read: (string) => u8[]): Fonts {
+  let ws = weights();
+  let paths: string[] = [];
+  let parsed: Option[truetype.Font][] = [];
+  let got: Option[truetype.Font][] = [];
+  for i in 0..found.len().min(ws.len()) {
+    let face: Option[truetype.Font] = None;
+    if let Some(f) = found[i] {
+      let at = place(paths, f.path);
+      if (at < 0) {
+        at = paths.len();
+        paths = paths.append(f.path);
+        parsed = parsed.append(truetype.parse(read(f.path)));
+      }
+      if let Some(font) = parsed[at] {
+        face = Some(fonts.styled(font, f, ws[i]));
+      }
+    }
+    got = got.append(face);
+  }
+  return Fonts { faces: filled(got) };
+}
+
+// The index of `path` in `paths`, or -1.
+function place(paths: string[], path: string): i32 {
+  for i in 0..paths.len() {
+    if (paths[i] == path) {
+      return i;
     }
   }
-  return Fonts { faces: faces };
+  return -1;
+}
+
+// Each font of `got`, with the first font that there is in each gap, or no
+// fonts when there is none.
+function filled(got: Option[truetype.Font][]): truetype.Font[] {
+  let faces: truetype.Font[] = [];
+  for g in got {
+    if let Some(first) = g {
+      for h in got {
+        faces = faces.append(h.unwrap_or(first));
+      }
+      return faces;
+    }
+  }
+  return faces;
 }
 
 function has(fs: Fonts): boolean {

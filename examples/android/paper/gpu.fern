@@ -100,6 +100,12 @@ pub function with_screen(p: Painter, wall: draw.Frame, w: i32, h: i32, d: f64, p
   return Painter { ...p, wall: wall, w: w, h: h, d: d, pal: pal };
 }
 
+// The painter for a screen of `w` by `h` pixels, with the wallpaper that it
+// holds.
+pub function with_size(p: Painter, w: i32, h: i32, d: f64, pal: ui.Palette): Painter {
+  return Painter { ...p, w: w, h: h, d: d, pal: pal };
+}
+
 // The width of the wallpaper that the painter holds.
 pub function wall_width(p: Painter): i32 {
   return p.wall.width;
