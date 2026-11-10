@@ -209,7 +209,11 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 
 func checkedOwnedResultBorrowFixtures(t *testing.T, bin string, runner []string, dir string) {
 	t.Helper()
-	for _, name := range []string{"diag_e051_literal_match_arm_returns_a_borrow", "diag_e051_match_binder_of_a_borrowed_scrutinee"} {
+	for _, name := range []string{
+		"diag_e051_literal_match_arm_returns_a_borrow",
+		"diag_e051_match_binder_of_a_borrowed_scrutinee",
+		"diag_e051_through_a_type_parameter",
+	} {
 		t.Run(name, func(t *testing.T) {
 			source, err := os.ReadFile(e2eharness.RepoPath("conformance", "cases", name, "main.fern"))
 			if err != nil {
