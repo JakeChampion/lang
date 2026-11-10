@@ -37,7 +37,7 @@ func TestSelfHostOwnInTypePositionCheck(t *testing.T) {
 		{"own in a nested function-type argument", "function f(o: Option[(own) => i32]): i32 { return 0; }", false},
 		{"consuming slot in a type argument", "function f(o: Option[(own i32[]) => i32]): i32 { return 0; }", true},
 		{"own in a view", "function f(v: [own i32]): i32 { return 0; }", false},
-		{"own in a function-type result", "function f(g: (i32) => own string): i32 { return 0; }", false},
+		{"own in a function-type result", "function f(g: (i32) => own string): i32 { return 0; }", true},
 		{"own before a struct", "struct Foo { v: i32 }\nfunction f(x: own Foo): i32 { return 0; }", false},
 		{"borrow before a type parameter", "function f[T](x: borrow T): i32 { return 0; }", false},
 		{"own in a struct field", "struct Foo { v: i32 }\nstruct S { h: own Foo }", false},

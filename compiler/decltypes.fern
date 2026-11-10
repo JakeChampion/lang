@@ -108,7 +108,11 @@ pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
       }
       params = params.append(param);
     }
-    return fn_param_decl(name, params, capture_spelling(f.ret_type));
+    let result = capture_spelling(f.ret_type);
+    if (f.ret_own) {
+      result = "own " + result;
+    }
+    return fn_param_decl(name, params, result);
   }
   return declined(name);
 }

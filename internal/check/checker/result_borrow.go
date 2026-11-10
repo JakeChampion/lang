@@ -6,6 +6,17 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
+func (c *checker) recordOwnedResult(call *ast.Call, own bool) {
+	if own {
+		if c.callOwnResults == nil {
+			c.callOwnResults = map[*ast.Call]bool{}
+		}
+		c.callOwnResults[call] = true
+	} else {
+		delete(c.callOwnResults, call)
+	}
+}
+
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
 	c.resultAnalysed = make(map[string]bool, len(prog.Funcs))
@@ -39,11 +50,15 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 }
 
 func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
+	return c.funcResultBorrowsWith(fn, false)
+}
+
+func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool {
 	// A scalar result is a copy, so it cannot borrow from a parameter.
 	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType)}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType), ownedResult: ownedResult}
 	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
@@ -135,6 +150,7 @@ func valueElementIterable(e ast.Expr, values map[string]bool) bool {
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
 	handlesOnly              bool
+	ownedResult              bool
 }
 
 // binding is the scope inside a pattern that binds names. They shadow the
@@ -143,7 +159,7 @@ func (b borrowScope) binding(names []string, lends bool) borrowScope {
 	if len(names) == 0 {
 		return b
 	}
-	out := borrowScope{borrowed: map[string]bool{}, locals: map[string]bool{}, values: b.values, handlesOnly: b.handlesOnly}
+	out := borrowScope{borrowed: map[string]bool{}, locals: map[string]bool{}, values: b.values, handlesOnly: b.handlesOnly, ownedResult: b.ownedResult}
 	for k, v := range b.borrowed {
 		out.borrowed[k] = v
 	}
@@ -174,6 +190,53 @@ func elemType(t ast.Type) ast.Type {
 }
 
 func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
+	if b.ownedResult {
+		if c.scalarArgs[e] || c.valueArgs[e] {
+			return false
+		}
+		switch x := e.(type) {
+		case *ast.BlockExpr:
+			return x.Tail == nil || c.exprBorrows(x.Tail, b)
+		case *ast.StructLit:
+			if x.Base != nil && c.exprBorrows(x.Base, b) {
+				return true
+			}
+			for _, f := range x.Fields {
+				if c.exprBorrows(f.Value, b) {
+					return true
+				}
+			}
+			return false
+		case *ast.ArrayLit:
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.exprBorrows(e, b) })
+		case *ast.TupleLit:
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.exprBorrows(e, b) })
+		case *ast.MapLit:
+			for _, entry := range x.Entries {
+				if c.exprBorrows(entry.Key, b) || c.exprBorrows(entry.Value, b) {
+					return true
+				}
+			}
+			return false
+		case *ast.Call:
+			if c.callOwnResults[x] {
+				return false
+			}
+			if c.exprBorrows(x.Callee, b) {
+				return true
+			}
+			flags := c.callOwnFlags[x]
+			if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
+				flags = c.ownFuncs[id.Name]
+			}
+			for i, arg := range x.Args {
+				if (i >= len(flags) || !flags[i]) && c.exprBorrows(arg, b) {
+					return true
+				}
+			}
+			return false
+		}
+	}
 	switch x := e.(type) {
 	case nil:
 		return false
@@ -242,6 +305,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 }
 
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
+	if c.callOwnResults[x] {
+		return false
+	}
 	if freshAssociatedResult(x) {
 		return false
 	}
@@ -317,14 +383,14 @@ func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
 // A callback can return a captured handle without consuming its capture.
 func (c *checker) callbackCanLend(t ast.Type) bool {
 	fn, ok := t.(*ast.FuncType)
-	return ok && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
+	return ok && !fn.ResultOwn && (c.callbackCanLend(fn.Result) || mayRetainBorrow(fn.Result) && !c.holdsNoHandle(fn.Result))
 }
 
 func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType)}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType), ownedResult: outer.ownedResult}
 	for name := range outer.borrowed {
 		b.borrowed[name] = true
 	}
@@ -478,6 +544,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	sig, ok := c.info.FuncSigs[name]
 	if !ok {
 		return true
+	}
+	if sig.ResultOwn {
+		return false
 	}
 	flags := c.ownFuncs[name]
 	for i := range sig.Params {

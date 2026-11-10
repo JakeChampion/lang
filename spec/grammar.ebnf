@@ -44,7 +44,7 @@ FuncMod     = 'fip' [ NUMBER ] | 'fbip' [ NUMBER ] | 'async' ;
 UnsafeMod   = 'unsafe' ;
 
 FuncDecl    = { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypeParams ]
-              '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
+              '(' [ ParamList ] ')' [ ':' FnResult ] ( Block | ';' ) ;
 # A method is written `function (self: T) name(...)`. The receiver
 # introduces the type parameters that its type names. A RecvBound writes the
 # bound of one of them, and only a receiver type can hold a RecvBound:
@@ -105,7 +105,7 @@ TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' 
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
             | 'const' IDENT ':' Type [ '=' Expr ] ';'
             | { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypeParams ]
-              '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
+              '(' [ ParamList ] ')' [ ':' FnResult ] ( Block | ';' )
             ;
 
 ImplDecl    = 'impl' [ TypeParams ] Type 'for' Type '{' { ImplItem } '}' [ ';' ] ;
@@ -127,13 +127,15 @@ DynType     = 'dyn' Bound { '+' Bound }
 
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
-            = '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' Type
+            = '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' FnResult
             | '(' TypeSlot { ',' TypeSlot } [ ',' ] ')' { TypeSuffix }
             | SliceType
             ;
 TypeSlot    = RecvBound | Type ;
 # `own` opening a function type's parameter slot marks it consuming.
 FnParam     = 'own' Type | Type ;
+# An owned result is checked at each return and retained in the function type.
+FnResult    = [ 'own' ] Type ;
 SliceType   = '[' TypeSlot ']' { TypeSuffix }
             | PrimaryType { '::' IDENT } { TypeSuffix }
             ;
@@ -441,8 +443,8 @@ MatchExprArm
 # would fail rather than the annotation being re-read. The two readings
 # are therefore whole alternatives of ArrowLambda itself, greedy first,
 # so a failure to find the lambda's arrow backtracks into the second.
-ArrowLambda = '(' [ LambdaParams ] ')' ':' Type '=>' Expr
-            | '(' [ LambdaParams ] ')' ':' RetType '=>' Expr
+ArrowLambda = '(' [ LambdaParams ] ')' ':' [ 'own' ] Type '=>' Expr
+            | '(' [ LambdaParams ] ')' ':' [ 'own' ] RetType '=>' Expr
             | '(' [ LambdaParams ] ')' '=>' Expr
             ;
 

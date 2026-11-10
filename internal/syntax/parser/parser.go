@@ -920,7 +920,9 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		}
 		assoc := len(params) == 0 || params[0].Name != "self"
 		var ret ast.Type = ast.VoidType{}
+		retOwn := false
 		if _, ok := p.accept(lexer.Punct, ":"); ok {
+			_, retOwn = p.accept(lexer.Ident, "own")
 			t, err := p.parseType()
 			if err != nil {
 				return nil, err
@@ -941,7 +943,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			return nil, p.errorf(mkw.Pos, "trait method %q declares its own type parameters, so it must have a default body", mname.Text)
 		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
-			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
+			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, ResultOwn: retOwn, Assoc: assoc, Body: body,
 			TypeParams: mtps, Bounds: mbounds, BoundArgs: mbargs, Unsafe: isUnsafe,
 		})
 	}
@@ -1095,7 +1097,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 				"impl method %q has no body (only @import functions may omit a body)", fn.Name)
 		}
 		assoc := len(fn.Params) == 0 || fn.Params[0].Name != "self"
-		written := &ast.ImplSig{Result: fn.ReturnType}
+		written := &ast.ImplSig{Result: fn.ReturnType, ResultOwn: fn.ReturnOwn}
 		for _, prm := range fn.Params {
 			written.Params = append(written.Params, prm.Type)
 		}
@@ -1684,7 +1686,9 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 
 	var ret ast.Type = ast.VoidType{}
 	retAnnotated := false
+	retOwn := false
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		_, retOwn = p.accept(lexer.Ident, "own")
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err
@@ -1722,6 +1726,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		BoundArgs:         boundArgs,
 		Params:            params,
 		ReturnType:        ret,
+		ReturnOwn:         retOwn,
 		ReturnUnannotated: !retAnnotated && body != nil,
 		Unsafe:            isUnsafe,
 		Body:              body,
@@ -2195,11 +2200,12 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			return nil, err
 		}
 		if _, isArrow := p.acceptIf(topArrow, lexer.Punct, "=>"); isArrow {
+			_, retOwn := p.accept(lexer.Ident, "own")
 			ret, err := p.parseType()
 			if err != nil {
 				return nil, err
 			}
-			base = &ast.FuncType{Params: elems, ParamOwn: ast.OwnFlags(owns, len(elems)), Result: ret}
+			base = &ast.FuncType{Params: elems, ParamOwn: ast.OwnFlags(owns, len(elems)), Result: ret, ResultOwn: retOwn}
 		} else if len(elems) >= 2 {
 			base = ast.TupleType{Elems: elems}
 		} else if len(elems) == 1 {
@@ -2744,7 +2750,9 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	}
 	var ret ast.Type = ast.VoidType{}
 	unannotated := true
+	retOwn := false
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		_, retOwn = p.accept(lexer.Ident, "own")
 		mark, refs := p.i, len(p.typeRefs)
 		t, err := p.parseType()
 		if err != nil || !p.match(lexer.Punct, "=>") {
@@ -2768,7 +2776,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	prependParamDestructures(body, paramDestrs)
-	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnOwn: retOwn, ReturnUnannotated: unannotated, Body: body}, nil
 }
 
 func (p *parser) parseArrowBody(pos ast.Position, statementBranches bool) (*ast.Block, error) {
