@@ -27,7 +27,8 @@ Add the annotation to check and expose that guarantee.
 A parameter keeps its ownership mode during assignment.
 
 A borrowed parameter cannot become an owned result.
-An aggregate or local alias cannot hide that loan.
+An aggregate or local alias cannot hide a resource loan.
+A fresh aggregate can contain copied data parts when those parts cannot hold a handle.
 A reusable closure borrows its captures.
 This rule also applies to an outer owned parameter.
 The closure cannot return such a capture as an owned result.

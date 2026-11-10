@@ -189,6 +189,10 @@ func elemType(t ast.Type) ast.Type {
 	return nil
 }
 
+func (c *checker) resultPartBorrows(e ast.Expr, b borrowScope) bool {
+	return !c.resultCopyParts[e] && c.exprBorrows(e, b)
+}
+
 func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	if b.ownedResult {
 		if c.scalarArgs[e] || c.valueArgs[e] {
@@ -198,22 +202,22 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		case *ast.BlockExpr:
 			return x.Tail == nil || c.exprBorrows(x.Tail, b)
 		case *ast.StructLit:
-			if x.Base != nil && c.exprBorrows(x.Base, b) {
+			if x.Base != nil && c.resultPartBorrows(x.Base, b) {
 				return true
 			}
 			for _, f := range x.Fields {
-				if c.exprBorrows(f.Value, b) {
+				if c.resultPartBorrows(f.Value, b) {
 					return true
 				}
 			}
 			return false
 		case *ast.ArrayLit:
-			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.exprBorrows(e, b) })
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.resultPartBorrows(e, b) })
 		case *ast.TupleLit:
-			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.exprBorrows(e, b) })
+			return slices.ContainsFunc(x.Elems, func(e ast.Expr) bool { return c.resultPartBorrows(e, b) })
 		case *ast.MapLit:
 			for _, entry := range x.Entries {
-				if c.exprBorrows(entry.Key, b) || c.exprBorrows(entry.Value, b) {
+				if c.resultPartBorrows(entry.Key, b) || c.resultPartBorrows(entry.Value, b) {
 					return true
 				}
 			}
@@ -230,7 +234,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 				flags = c.ownFuncs[id.Name]
 			}
 			for i, arg := range x.Args {
-				if (i >= len(flags) || !flags[i]) && c.exprBorrows(arg, b) {
+				if (i >= len(flags) || !flags[i]) && c.resultPartBorrows(arg, b) {
 					return true
 				}
 			}
@@ -434,6 +438,10 @@ func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
 			}
 			return !found
 		case *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
+			if b.ownedResult {
+				found = c.exprBorrows(x.(ast.Expr), b)
+				return false
+			}
 			ast.Walk(n, func(part ast.Node) bool {
 				if id, ok := part.(*ast.Ident); ok && (b.borrowed[id.Name] || b.locals[id.Name]) {
 					found = true

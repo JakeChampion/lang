@@ -11,10 +11,21 @@ function next(own box: Box): own Box {
   return Box { ...box, values: box.values.append(9u8) };
 }
 
+struct Data { bytes: u8[] }
+
+function wrap(data: Data): own Data[] {
+  return [data];
+}
+
 function main(): i32 {
   let calls = Callbacks { step: next };
   let box = fold(Box { values: [7u8] }, (own x: Box): own Box => calls.step(x));
   print(box.values.len());
   print(box.values[1]);
+  let data = Data { bytes: [4u8] };
+  let copies = wrap(data);
+  let changed = Data { bytes: data.bytes.with(0, 8u8) };
+  print(copies[0].bytes[0]);
+  print(changed.bytes[0]);
   return 0;
 }

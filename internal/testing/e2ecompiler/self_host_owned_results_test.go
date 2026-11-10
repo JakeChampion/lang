@@ -15,6 +15,7 @@ func checkedOwnedResultCases(t *testing.T, bin string, runner []string, dir stri
 	t.Helper()
 	const prefix = `struct Box { values: u8[] }
 function take(own box: Box): Box { return box; }
+function (own box: Box) close(): void {}
 `
 	for _, tc := range []struct{ name, body, code string }{
 		{"fresh scalar field", `function fresh(x: Box): own Box { return Box { values: [x.values.len() as u8] }; }`, ""},
@@ -26,11 +27,16 @@ function take(own box: Box): Box { return box; }
 		{"borrowed conditional", `function pass(x: Box, b: boolean): own Box { return if (b) { x } else { Box { values: [] } }; }`, "E051"},
 		{"bound factory", `trait Factory { function make(): own Self; } impl Factory for Box { function make(): own Self { return Box { values: [] }; } } function make[T: Factory](): own T { return T.make(); }`, ""},
 		{"trait promise", `trait Factory { function make(): own Self; } impl Factory for Box { function make(): Self { return Box { values: [] }; } }`, "E021"},
+		{"copied array element", `struct Data { bytes: u8[] } function wrap(data: Data): own Data[] { return [data]; }`, ""},
+		{"copied tuple field", `struct Data { bytes: u8[] } function wrap(data: Data): own (Data, i32) { return (data, 1); }`, ""},
+		{"copied record field", `struct Data { bytes: u8[] } struct Outer { data: Data } function wrap(data: Data): own Outer { return Outer { data: data }; }`, ""},
+		{"copied captured element", `struct Data { bytes: u8[] } function wrap(data: Data): void { let f = (): own Data[] => [data]; }`, ""},
 		{"generic input", `function pass[T](own x: T): own T { return x; }`, ""},
 		{"callback result", `function pass[T](own x: T, f: (own T) => own T): own T { return f(x); }`, ""},
 		{"lambda result", `function run(): void { let f: (own Box) => own Box = (own x: Box): own Box => x; }`, ""},
 		{"weaken result", `function pass(own x: Box): own Box { return x; } function run(): void { let f: (own Box) => Box = pass; }`, ""},
 		{"nested aggregate capture", `function run(x: Box): void { let f = (): own Box[] => { let xs = [x]; return xs; }; }`, "E051"},
+		{"borrowed data root", `struct Data { bytes: u8[] } function bad(data: Data): own Data { return data; }`, "E051"},
 		{"borrowed receiver", `function (x: Box) bad(): own Box[] { return [x]; }`, "E051"},
 		{"aggregate loan", `function pass(x: Box): own Box[] { return [x]; }`, "E051"},
 		{"aggregate local loan", `function pass(x: Box): own Box[] { let xs = [x]; return xs; }`, "E051"},

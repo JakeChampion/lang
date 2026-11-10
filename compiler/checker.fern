@@ -24198,6 +24198,9 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
     }
     if (children.len() > 0) {
       for child in children {
+        if (ow_holds_no_handle(typeinfo.spelling(check_expr(child, scope)), lenders.lenders.decls)) {
+          continue;
+        }
         if (ow_expr_borrows(child, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
           return true;
         }
@@ -24381,8 +24384,10 @@ function ow_lambda_result_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed
   }
   let spine = ow_spine_stmts(lm.body);
   let bound = ow_borrowed_locals(spine, ofuncs, captured, values, borrows, builtins, lenders, handles_only);
-  if (ow_lambda_retains_capture(lm, captured, bound, lenders.lenders.decls)) {
-    return true;
+  if let None = lenders.result_scope {
+    if (ow_lambda_retains_capture(lm, captured, bound, lenders.lenders.decls)) {
+      return true;
+    }
   }
   for st in spine {
     if let ast.StmtReturn(r) = st {
