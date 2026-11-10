@@ -101,6 +101,15 @@ func RunSortByteCases(t *testing.T, bin string, runner []string, census func(*te
 		t.Skip("requires GNU coreutils 9.4 or newer")
 	}
 	t.Logf("reference: %s", first)
+	RunSortByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunSortByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU sort reference command")
+	}
+	oraclePath := oracle[len(oracle)-1]
 	censusTrailer := regexp.MustCompile(`leakcheck: allocs=[0-9]+ frees=[0-9]+ live_bytes=[0-9]+\n$`)
 	for _, tc := range SortByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -133,7 +142,7 @@ func RunSortByteCases(t *testing.T, bin string, runner []string, census func(*te
 					if strings.HasPrefix(line, "leakcheck:") {
 						continue
 					}
-					for _, program := range []string{bin, filepath.Base(bin), oracle, filepath.Base(oracle), "sort", "gsort"} {
+					for _, program := range []string{bin, filepath.Base(bin), oraclePath, filepath.Base(oraclePath), "sort", "gsort"} {
 						if strings.HasPrefix(line, program+": ") {
 							line = strings.TrimPrefix(line, program+": ")
 							break
@@ -154,7 +163,7 @@ func RunSortByteCases(t *testing.T, bin string, runner []string, census func(*te
 				}
 				diagnostic = label + ":1: invalid UTF-8 file name\n"
 			} else {
-				want, diagnostic, code = run([]string{oracle})
+				want, diagnostic, code = run(oracle)
 				diagnostic = normalize(diagnostic)
 			}
 			out, stderr, gotCode := run(append(append([]string{}, runner...), bin))
