@@ -20,6 +20,7 @@ type laneFile = string
 
 var selectorLanes = map[string][]laneFile{
 	"internal/testing/e2e": {
+		"test-e2e-other.yml",
 		"test-e2e-arm64.yml",
 		"test-e2e-x86_64.yml",
 		"test-e2e-wasm.yml",
@@ -204,6 +205,9 @@ func e2eCatchAllLane(t *testing.T, root string) lane {
 			"run nowhere", file)
 	}
 	skip := envValue(t, src, "CATCH_ALL_SKIP")
+	if own := envValue(t, src, "OWN_JOB_TESTS"); own != "" {
+		skip += "|^(" + own + ")$"
+	}
 	return lane{
 		name:    file,
 		pkgs:    []string{"internal/testing/e2e"},
