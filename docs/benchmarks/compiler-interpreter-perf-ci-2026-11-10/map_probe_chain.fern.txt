@@ -1,0 +1,17 @@
+import "core/map";
+
+function main(): i32 {
+  let n = 190000;
+  let m: Map[i32, i32] = Map { };
+  for i in 0..n {
+    m = m.insert(i * 2, i);
+  }
+  let total = 0i64;
+  for _ in 0..3 {
+    for j in 0..n {
+      total += m.get_or(j * 2, 0) as i64;
+      total += m.get_or(j * 2 + 1, -1) as i64;
+    }
+  }
+  return (total % 97i64) as i32;
+}

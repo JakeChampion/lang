@@ -1,0 +1,13 @@
+{
+  "source": "206df7eeb094f5540ce1bd25cc2bd8090dae5df2",
+  "base": "f9904974a77249949607f3b6196e489bf53c3602",
+  "run_id": 42743098908,
+  "job_id": 129589649703,
+  "metric": "aarch64/map_probe_chain.ir",
+  "previous": 233221143,
+  "measured": 230251856,
+  "tolerance_percent": 1,
+  "original_log_sha256": "62ed7b70a4fb7f598336a92aa0e97cfd9e9a35a238b0489022b9784adfad8aeb",
+  "original_log_bytes": 76747,
+  "note": "Exact native ARM64 CI count. No local ARM64 instruction execution or causal attribution to the interpreter change. This strict lane rejects a decrease outside tolerance until the measured baseline is recorded."
+}
