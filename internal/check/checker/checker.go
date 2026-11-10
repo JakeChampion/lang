@@ -2470,6 +2470,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__boot_info"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
+	c.info.FuncSigs["__secondary_entry"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	c.info.FuncSigs["__sysreg_read"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: i64T}
 	c.info.FuncSigs["__sysreg_write"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}, i64T}, Result: ast.VoidType{}}
@@ -3107,6 +3108,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.checkNoRCFunctions(prog)
 	c.checkInterruptFunctions(prog)
 	c.checkEarlyFunctions(prog)
+	c.checkSecondaryFunctions(prog)
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {

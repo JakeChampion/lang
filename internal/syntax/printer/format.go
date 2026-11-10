@@ -856,6 +856,9 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	} else if fn.Early {
 		f.indent(depth)
 		f.b.WriteString("@early\n")
+	} else if fn.Secondary {
+		f.indent(depth)
+		f.b.WriteString("@secondary\n")
 	} else if fn.NoRC {
 		f.indent(depth)
 		f.b.WriteString("@norc\n")

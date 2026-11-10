@@ -152,6 +152,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "__atomic_store_release", capability: "privileged" },
     BuiltinCap { builtin: "__atomic_fetch_add", capability: "privileged" },
     BuiltinCap { builtin: "__atomic_cas", capability: "privileged" },
+    BuiltinCap { builtin: "__secondary_entry", capability: "privileged" },
     BuiltinCap { builtin: "__irq_pending", capability: "privileged" },
     BuiltinCap { builtin: "__port_in8", capability: "privileged" },
     BuiltinCap { builtin: "__port_in16", capability: "privileged" },
