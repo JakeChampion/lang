@@ -192,15 +192,22 @@ mbytes_per_second() {
 # SERVER: the body is the first line of what each answers GET /hello
 # with, the protocol what each agrees to by ALPN (bssl has no flag for
 # it), and only the servers with a /bulk to give are asked for one.
+# bssl's -www server ends its body at the close and sends no close_notify.
+# So std/fetch refuses its response as cut (RFC 9112 section 9.8), and
+# the socket cases report the end beside the body.
 expected_client() {
   local body alpn=" http/1.1" bulk="bulk: 16777216 bytes
-"
+" get cut=""
   case "$1" in
     openssl | go) body=hello ;;
     rustls) body="Hello world from rustls tlsserver"; bulk="" ;;
-    bssl) body="Version: TLSv1.3"; alpn=""; bulk="" ;;
+    bssl) body="Version: TLSv1.3"; alpn=""; bulk=""; cut=" (no close_notify)" ;;
   esac
-  printf 'get: 200 %s\nsocket: 200 %s%s\nresume: resumed 200 %s%s\nmtls: 200 %s%s\nnocert: refused\n%shandshakes: 20\n' "$body" "$body" "$alpn" "$body" "$alpn" "$body" "$alpn" "$bulk"
+  get="200 $body"
+  if [ -n "$cut" ]; then
+    get="error TLS: the peer closed the connection with no close_notify"
+  fi
+  printf 'get: %s\nsocket: 200 %s%s%s\nresume: resumed 200 %s%s%s\nmtls: 200 %s%s%s\nnocert: refused\n%shandshakes: 20\n' "$get" "$body" "$alpn" "$cut" "$body" "$alpn" "$cut" "$body" "$alpn" "$cut" "$bulk"
 }
 
 for server in openssl go rustls bssl; do

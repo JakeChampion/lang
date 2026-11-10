@@ -31,6 +31,10 @@ import "core/int";
 
 struct Outcome { answer: string, tickets: client.Ticket[], resumed: boolean }
 
+// Raw is what a read loop got: the bytes, and whether the peer ended the
+// stream with no close_notify after them.
+struct Raw { conn: client.Connection, data: u8[], truncated: boolean }
+
 function setting(name: string, fallback: string): string {
   return match (env(name)) { Some(v) => v, None => fallback };
 }
@@ -85,26 +89,38 @@ function answered(raw: u8[]): string {
   return code + " " + first_line(body);
 }
 
-function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tls.TlsError] {
+// A server that closes with no close_notify gives Truncated at the end.
+// The bytes before it are kept, and the end is reported beside them.
+function exchange(conn: client.Connection): Result[Raw, tls.TlsError] {
   let c = conn.write("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
   let out: u8[] = [];
   loop {
-    let got = c.read(time.duration_seconds(10))?;
-    out = out.concat(got.data);
-    c = got.conn;
-    if (got.ended) {
-      break;
+    match (c.read(time.duration_seconds(10))) {
+      Ok(got) => {
+        out = out.concat(got.data);
+        c = got.conn;
+        if (got.ended) {
+          return Ok(Raw { conn: c, data: out, truncated: false });
+        }
+      },
+      Err(tls.Truncated) => {
+        return Ok(Raw { conn: c, data: out, truncated: true });
+      },
+      Err(e) => {
+        return Err(e);
+      }
     }
   }
-  return Ok((c, out));
 }
 
 function over(cfg: client.Config, port: i32): Result[Outcome, tls.TlsError] {
   let conn = client.connect("localhost", port, cfg, time.duration_seconds(10))?;
-  let (c, raw) = exchange(conn)?;
+  let raw = exchange(conn)?;
+  let c = raw.conn;
   c.close();
   let alpn = if (c.session.alpn().len() > 0) { " " + c.session.alpn() } else { "" };
-  return Ok(Outcome { answer: answered(raw) + alpn, tickets: c.tickets, resumed: c.session.resumed() });
+  let cut = if (raw.truncated) { " (no close_notify)" } else { "" };
+  return Ok(Outcome { answer: answered(raw.data) + alpn + cut, tickets: c.tickets, resumed: c.session.resumed() });
 }
 
 function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string {
