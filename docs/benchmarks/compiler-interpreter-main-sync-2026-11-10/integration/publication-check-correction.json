@@ -1,0 +1,11 @@
+{
+  "corrected": "2026-11-10T09:03:40.953063+00:00",
+  "failure": "The staged whitespace check rejected the archived historical conflict markers. The shell then committed because it did not stop after the failed check. No push occurred.",
+  "action": "Store the three historical conflict files with lossless gzip and preserve the uncompressed originals in the ignored evidence directory. Rerun the whole PR diff check before push.",
+  "records": [
+    "integration/perf-baseline.txt.conflicted.gz",
+    "integration/perf-baseline-selfhost.txt.conflicted.gz",
+    "integration/profile-costs-baseline.txt.conflicted.gz"
+  ],
+  "source_changes": "None. The compiler, standard library, tests, and numerical baselines are unchanged by this archive correction."
+}

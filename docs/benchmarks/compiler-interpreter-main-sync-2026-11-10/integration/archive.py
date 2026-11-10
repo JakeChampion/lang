@@ -36,7 +36,7 @@ def retain(path, name):
     raw = path.read_bytes()
     target = dst / name
     target.parent.mkdir(parents=True, exist_ok=True)
-    if any(line.endswith((b' ', b'\t', b'\r')) for line in raw.split(b'\n')) or raw.endswith(b'\n\n'):
+    if any(line.endswith((b' ', b'\t', b'\r')) for line in raw.split(b'\n')) or raw.endswith(b'\n\n') or any(line.startswith((b'<<<<<<<', b'=======', b'>>>>>>>')) for line in raw.split(b'\n')):
         target = target.with_name(target.name + '.gz')
         target.write_bytes(gzip.compress(raw, mtime=0))
         compressed[str(target.relative_to(dst))] = {'original_path': str(path), 'original_sha256': sha(raw), 'original_bytes': len(raw)}
