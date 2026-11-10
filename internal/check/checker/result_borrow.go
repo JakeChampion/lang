@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -95,13 +96,31 @@ func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool
 		return false
 	}
 	b.locals = c.borrowedLocals(fn, b)
+	return c.resultBlockBorrows(fn.Body, b)
+}
+
+func (c *checker) resultBlockBorrows(body *ast.Block, b borrowScope) bool {
 	found := false
-	ast.Walk(fn.Body, func(n ast.Node) bool {
+	ast.Walk(body, func(n ast.Node) bool {
 		if found {
 			return false
 		}
 		switch s := n.(type) {
 		case *ast.Lambda:
+			return false
+		case *ast.Match:
+			if !b.ownedResult {
+				return true
+			}
+			lends := c.exprBorrows(s.Tag, b)
+			for _, arm := range s.Arms {
+				inner := b.binding(arm.Binders(), lends)
+				inner.locals = c.borrowedLocals(&ast.FuncDecl{Body: arm.Body}, inner)
+				if c.resultBlockBorrows(arm.Body, inner) {
+					found = true
+					break
+				}
+			}
 			return false
 		case *ast.Return:
 			if s.Value != nil && c.exprBorrows(s.Value, b) {
@@ -114,7 +133,10 @@ func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool
 }
 
 func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]bool {
-	b.locals = map[string]bool{}
+	b.locals = maps.Clone(b.locals)
+	if b.locals == nil {
+		b.locals = map[string]bool{}
+	}
 	mark := func(name string, init ast.Expr) bool {
 		if name == "" || b.locals[name] || init == nil {
 			return false

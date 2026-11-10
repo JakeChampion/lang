@@ -1642,7 +1642,7 @@ function __serve_read[D: async.Driver](drv: D, own c: __Conns, at: i32, scratch:
   return __serve_read_plain(drv, c, at, scratch, opts);
 }
 
-function __awaiting(t: __Tls): __Tls {
+function __awaiting(own t: __Tls): own __Tls {
   let none: u8[] = [];
   match (t) {
     Secured(s) => {
