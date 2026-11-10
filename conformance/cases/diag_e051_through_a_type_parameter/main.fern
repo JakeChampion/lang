@@ -3,13 +3,16 @@
 
 
 
-function consume(own xs: i32[]): i32 { return xs[0]; }
+struct Res { xs: i32[] }
+function (own r: Res) close(): void {}
+
+function consume(own r: Res): i32 { return r.xs[0]; }
 
 function same[A](a: A): A { return a; }
 
-function relay(xs: i32[]): i32[] { return same(xs); }
+function relay(r: Res): Res { return same(r); }
 
 function main(): i32 {
-    let xs: i32[] = [1];
-    return consume(relay(xs));
+    let r = Res { xs: [1] };
+    return consume(relay(r));
 }
