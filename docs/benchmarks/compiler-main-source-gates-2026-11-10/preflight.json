@@ -1,0 +1,20 @@
+{
+  "source": "93942727d19bcad77d7aef70da15b36c58056bf8",
+  "cases": 1566,
+  "original_reference_sha256": "11c8bfafc6dda7556c04e139ae7fd32aa8276ef96868504fed61ce031bb01434",
+  "current_reference_sha256": "aa59c49eeffa3a085f8e8557774716d1a46cd0d29bf71ff84f593d30013bb64f",
+  "non_provenance_content_identical": true,
+  "driver_identical": true,
+  "legacy_before": {
+    "compiler/ssacapacityvalue.fern": "a27dced6895a29824c142485345b6dc40da91a7f62ed69420a412ec268b4bed2",
+    "compiler/ssalargearrayvalue.fern": "63b48a12dee3ea8c97ba909cf989220d9384c4017e293d65eaf371a8cf92de73",
+    "compiler/ssalargepushranges.fern": "4b7139d6ef3d25de913226dda3033edf13c8be843aa62b1271a85a99b5b0a06b",
+    "compiler/ssastringvalue.fern": "045f3ffc07c85123f38d6ce515e4416c69bd162cb073a55fa133b884fe84db36"
+  },
+  "legacy_after": {
+    "compiler/ssalargearrayvalue.fern": "63b48a12dee3ea8c97ba909cf989220d9384c4017e293d65eaf371a8cf92de73",
+    "compiler/ssastringvalue.fern": "045f3ffc07c85123f38d6ce515e4416c69bd162cb073a55fa133b884fe84db36",
+    "compiler/ssacapacityvalue.fern": "29ef46595e76002077216ac155a0ae433860b787d2e7547c8a7b51582be3396f",
+    "compiler/ssalargepushranges.fern": "fe8526010ddad1b8737fb49d08fb4c4ee1d0c8e742c7ea895b8815a4135eba32"
+  }
+}

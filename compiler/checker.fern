@@ -32317,6 +32317,18 @@ function lit_match_arms(m: ast.StmtMatch, s: Scope, ids: i32[], st: LitInfer): (
   return (n, kids, out);
 }
 
+// An assignment does not widen its target: a wide literal in the value
+// must fit the type that the local has.
+function lit_not_wide(ids: i32[]): i32[] {
+  let out: i32[] = [];
+  for k in ids {
+    if (k != LIT_WIDE) {
+      out = out.append(k);
+    }
+  }
+  return out;
+}
+
 function lit_find(st: LitInfer, k: i32): i32 {
   let r = k;
   while (st.parent[r] != r) {
@@ -33587,7 +33599,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       }
       let (seed2, ids2, ast2) = lit_seed(a.value, s, st);
       if (seed2) {
-        return (s, lit_link(ast2, ids2.append(tk)));
+        return (s, lit_link(ast2, lit_not_wide(ids2).append(tk)));
       }
       let walked = lit_expr(a.value, s, st);
       return (s, lit_fix(walked, [tk], check_expr(a.value, s)));

@@ -1,0 +1,11 @@
+// An assignment does not widen a literal local. Each literal that is
+// assigned to the local must fit the type that the local has.
+function main(): i32 {
+    let n = 5;
+    n = 5000000000;
+    let m = 1;
+    m += 5000000000;
+    let k = 2;
+    k = k * 5000000000;
+    return n + m + k;
+}
