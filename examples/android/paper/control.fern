@@ -64,6 +64,7 @@ pub struct Device {
   show_field: (string, i32) => void,
   set_field: (string) => void,
   hide_field: () => void,
+  access: (android.AccessItem[]) => void,
   bars: (boolean, boolean) => void,
   has_location: () => boolean,
   ask_location: () => void,
@@ -1038,6 +1039,20 @@ function slide_frame(own s: App, ns: i64): App {
   return home(s);
 }
 
+// --- accessibility
+
+// The action `action` of an accessibility service on the item `id`: a tap,
+// or a long press on a node that has one.
+function accessed(own s: App, id: i32, action: i32): App {
+  let Some(n) = ui.access_node(s.nodes, id) else {
+    return s;
+  };
+  if (action == android.ACCESS_LONG_CLICK && n.long.len() > 0) {
+    return act(s, n.long, n);
+  }
+  return act(s, n.act, n);
+}
+
 // --- keys and typing
 
 function key(own s: App, code: i32, action: i32): App {
@@ -1287,6 +1302,9 @@ function event(own s: App, e: android.Event): App {
       }
       return enter(s);
     },
+    android.Access(id, action) => {
+      return accessed(s, id, action);
+    },
     android.Posted(kind, _) => {
       if (kind == KIND_HOME) {
         return home(s);
@@ -1403,6 +1421,10 @@ function draw_frame(own s: App, ns: i64): App {
   }
   let framed = with_overlay(s, passes);
   let p = s.dev.present(s.painter, framed);
+  // The list keeps its items while it slides.
+  if (!s.slide.active) {
+    s.dev.access(ui.access_items(shown));
+  }
   return App { ...s, painter: p, nodes: shown, dirty: false };
 }
 

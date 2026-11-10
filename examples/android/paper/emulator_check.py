@@ -7,7 +7,8 @@ It installs the APK, which fern -apk wrote, makes Paper the home app, and
 presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a tap on the time that
-opens the clock app, a swipe up that opens the app list in the paper
+opens the clock app, the clock as a button for an accessibility service, a
+swipe up that opens the app list in the paper
 colour with the keyboard for its text field, a tap on the search field that
 shows the keyboard again after the back key hid it, a search for "pap" that
 finds Paper and opens it, Back that hides the keyboard, then Back that goes
@@ -99,6 +100,19 @@ def check_keyboard(width):
         fail("a tap on the search field did not show the keyboard")
 
 
+def check_access(out):
+    """An accessibility service reads the home screen: uiautomator dumps the
+    window through the accessibility layer, and the dump has the clock of
+    Paper as a button with the time as its text."""
+    adb("shell", "uiautomator", "dump", "/sdcard/paper-ui.xml", check=False)
+    dump = adb("shell", "cat", "/sdcard/paper-ui.xml", check=False)
+    with open(f"{out}/ui.xml", "w") as f:
+        f.write(dump)
+    clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"', dump)
+    if not clock:
+        fail("the accessibility layer has no clock button of Paper")
+
+
 def open_clock():
     """Taps the time, which opens the clock app, and goes home again. The
     first frame logs the middle of the time."""
@@ -137,6 +151,7 @@ def main(apk, out):
     # shows the paper colour.
     if part < 0.05 or part > 0.7:
         fail(f"the home screen has {part:.3f} of the paper colour, not paper above the wallpaper")
+    check_access(out)
     open_clock()
 
     adb("shell", "atrace", "--async_start", "-c", "-b", "4096", "-a", PACKAGE, check=False)
