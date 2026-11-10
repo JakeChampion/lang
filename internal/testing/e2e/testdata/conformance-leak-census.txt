@@ -1,3 +1,4 @@
+# 2026-11-10: aead_in_place_refuses_overlapping_additional_data is clean under RC trace.
 # 2026-11-10: usize_mixes_through_an_explicit_cast is clean under RC trace.
 # 2026-11-10: rand_bytes_negative_count_stops stops in the runtime with no buffer live.
 # 2026-11-10: literal_local_typed_by_its_uses is clean under RC trace.
@@ -76,6 +77,7 @@ a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
+aead_in_place_refuses_overlapping_additional_data    0
 aliased_and_used_twice                               0
 alloc_count_sees_recycling                           0
 alloc_flat_array_push_bound_elem                     0
