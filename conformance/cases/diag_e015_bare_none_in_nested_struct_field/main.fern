@@ -1,0 +1,7 @@
+struct Slot { held: Option[i32], n: i32 }
+
+function f(o: Option[Slot]): i32 {
+    return match (o) { Some(Slot { held: None, n }) => n, _ => 0 };
+}
+
+function main(): i32 { return f(Some(Slot { held: Some(5), n: 1 })); }

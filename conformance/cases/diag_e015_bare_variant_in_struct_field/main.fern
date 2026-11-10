@@ -1,0 +1,9 @@
+enum Colour { Red, Green }
+
+struct Pixel { c: Colour, n: i32 }
+
+function f(p: Pixel): i32 {
+    return match (p) { Pixel { c: Red, n } => n };
+}
+
+function main(): i32 { return f(Pixel { c: Colour.Green, n: 42 }); }

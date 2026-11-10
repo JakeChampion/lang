@@ -7,5 +7,11 @@ import (
 )
 
 func TestTacBytes(t *testing.T) {
-	e2eharness.RunTacByteCases(t, fernBin(t, "tac"), nil, nil)
+	e2eharness.RunTacByteCasesAgainst(t, fernBin(t, "tac"), crossPrefix(), crossArgv(referenceBin(t, "tac")), nil)
+}
+
+func TestTacBytesReferenceCommand(t *testing.T) {
+	oracle, marker := digestReferenceCommand(t, "tac")
+	e2eharness.RunTacByteCasesAgainst(t, fernBin(t, "tac"), crossPrefix(), oracle, nil)
+	requireDigestReferenceCommand(t, marker)
 }
