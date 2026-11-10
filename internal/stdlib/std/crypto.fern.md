@@ -743,18 +743,18 @@ pub function (h: Sha1) finish(): u8[] {
   return out;
 }
 
-// sha1 calculates the digest of `s`.
-pub function sha1(s: [u8]): u8[] {
-  let last = sha1_new().update(s);
-  return __sha1_last(last);
-}
-
 // The buffer of the state holds the tail of the message, so it is zeroed
 // after the digest is made.
 function __sha1_last(own h: Sha1): u8[] {
   let out = h.finish();
   erase(h.buf);
   return out;
+}
+
+// sha1 calculates the digest of `s`.
+pub function sha1(s: [u8]): u8[] {
+  let last = sha1_new().update(s);
+  return __sha1_last(last);
 }
 
 // === SHA-224 and SHA-256 (FIPS 180-4) ===
@@ -2401,18 +2401,18 @@ pub function (h: Sm3) finish(): u8[] {
   return out;
 }
 
-// sm3 calculates the digest of `s`.
-pub function sm3(s: [u8]): u8[] {
-  let last = sm3_new().update(s);
-  return __sm3_last(last);
-}
-
 // The buffer of the state holds the tail of the message, so it is zeroed
 // after the digest is made.
 function __sm3_last(own h: Sm3): u8[] {
   let out = h.finish();
   erase(h.buf);
   return out;
+}
+
+// sm3 calculates the digest of `s`.
+pub function sm3(s: [u8]): u8[] {
+  let last = sm3_new().update(s);
+  return __sm3_last(last);
 }
 
 // === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===
@@ -3345,18 +3345,18 @@ pub function (h: Blake2b) finish(): u8[] {
   return out;
 }
 
-// blake2b calculates an `out_len`-byte digest of `s`.
-pub function blake2b(s: [u8], out_len: i32): u8[] {
-  let last = blake2b_new(out_len).update(s);
-  return __blake2b_last(last);
-}
-
 // The buffer of the state holds the tail of the message, so it is zeroed
 // after the digest is made.
 function __blake2b_last(own h: Blake2b): u8[] {
   let out = h.finish();
   erase(h.buf);
   return out;
+}
+
+// blake2b calculates an `out_len`-byte digest of `s`.
+pub function blake2b(s: [u8], out_len: i32): u8[] {
+  let last = blake2b_new(out_len).update(s);
+  return __blake2b_last(last);
 }
 
 // <<< generated
