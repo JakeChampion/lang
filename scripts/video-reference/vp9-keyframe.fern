@@ -1,0 +1,22 @@
+// Emit VP9 keyframe metadata for independent syntax comparisons.
+import "std/video/vp9";
+import "std/video/frame";
+import "../../tests/stdlib/video_vp9_check" as check;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let result = match (vp9.inspect_keyframe(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for value in check.values(result) {
+    print(value.to_string());
+  }
+  return 0;
+}
