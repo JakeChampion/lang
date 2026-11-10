@@ -4,6 +4,8 @@
 # http.serialize_response_to and http.serialize_response_to_bytes refuse a
 # field with CR or LF since #15002, so 19 http_hello rows rise 1% to 5%.
 # Pinned at the measured values.
+# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
+# HTTP and video emitted sizes include changes from main. Keep all tolerances.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
 # deflate_decode.diagnostic.emit at 12887 after the merge of main d04e79179f.
 # Bank the measured size. Keep all tolerances.

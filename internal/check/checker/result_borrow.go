@@ -43,7 +43,7 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType)}
 	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
@@ -134,6 +134,7 @@ func valueElementIterable(e ast.Expr, values map[string]bool) bool {
 
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
+	handlesOnly              bool
 }
 
 // A type parameter can hold a handle after substitution.
@@ -195,8 +196,14 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.Method != nil && c.exprBorrows(fa.Target, b) {
 			return true
 		}
-		for _, a := range x.Args {
-			if c.exprBorrows(a, b) {
+		var sig *ast.FuncType
+		var flags []bool
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			sig = c.info.FuncSigs[id.Name]
+			flags = c.ownFuncs[id.Name]
+		}
+		for i, a := range x.Args {
+			if (!b.handlesOnly || c.paramCanLend(sig, flags, i)) && c.exprBorrows(a, b) {
 				return true
 			}
 		}
@@ -288,7 +295,7 @@ func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 	if lm.ReturnType != nil && definitelyScalar(lm.ReturnType) {
 		return false
 	}
-	b := borrowScope{borrowed: map[string]bool{}, values: outer.values}
+	b := borrowScope{borrowed: map[string]bool{}, values: outer.values, handlesOnly: lm.ReturnType != nil && !c.holdsNoHandle(lm.ReturnType)}
 	for name := range outer.borrowed {
 		b.borrowed[name] = true
 	}
@@ -299,6 +306,9 @@ func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 		delete(b.borrowed, p.Name)
 	}
 	b.locals = c.borrowedLocals(&ast.FuncDecl{Body: lm.Body}, b)
+	if c.lambdaRetainsCapture(lm, b) {
+		return true
+	}
 	found := false
 	ast.Walk(lm.Body, func(n ast.Node) bool {
 		if _, nested := n.(*ast.Lambda); nested || found {
@@ -312,8 +322,72 @@ func (c *checker) lambdaResultBorrows(lm *ast.Lambda, outer borrowScope) bool {
 	return found
 }
 
+// Fresh containers can retain captures too. Keep this proof conservative
+// for aggregates, including aliases built before the callback returns.
+func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
+	found := false
+	ast.Walk(lm.Body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda:
+			return false
+		case *ast.StructLit:
+			if !c.structLitOwned(x, func(e ast.Expr) bool { return !c.exprBorrows(e, b) }) {
+				found = true
+			}
+			return !found
+		case *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
+			ast.Walk(n, func(part ast.Node) bool {
+				if id, ok := part.(*ast.Ident); ok && (b.borrowed[id.Name] || b.locals[id.Name]) {
+					found = true
+				}
+				return !found
+			})
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// An actual callback that returns its own input or a fresh value cannot lend
+// a capture. Keep other borrowed arguments conservative at direct own calls.
+func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	sig := c.info.FuncSigs[id.Name]
+	if sig == nil {
+		return false
+	}
+	flags := c.ownFuncs[id.Name]
+	found := false
+	for i, arg := range call.Args {
+		if !c.paramCanLend(sig, flags, i) {
+			continue
+		}
+		if i >= len(sig.Params) {
+			return false
+		}
+		if _, callback := sig.Params[i].(*ast.FuncType); !callback {
+			return false
+		}
+		lm, literal := arg.(*ast.Lambda)
+		if !literal || c.argMayBorrow(lm) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 func (c *checker) argMayBorrow(e ast.Expr) bool {
 	switch x := e.(type) {
+	case *ast.Lambda:
+		return c.lambdaResultBorrows(x, borrowScope{borrowed: lambdaFreeNames(x)})
 	case *ast.BlockExpr:
 		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
 			return c.argMayBorrow(x.Tail)

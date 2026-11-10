@@ -10745,7 +10745,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
-					if !c.calleeResultBorrows(x) {
+					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) {
 						return true
 					}
 				}
