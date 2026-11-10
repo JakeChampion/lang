@@ -3074,6 +3074,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.ownFuncs["tcp_close"] = []bool{true}
 	c.info.OwnFuncs = c.ownFuncs
+	// Type declarations and consuming methods are complete.
+	c.handleFreeTypes = map[handleTypeKey]bool{}
 	c.checkValueTypes(prog)
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
@@ -5940,6 +5942,7 @@ type checker struct {
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
 	handleFreeResults map[string]bool
+	handleFreeTypes   map[handleTypeKey]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
 	consumingTypes  map[string]bool
@@ -9907,15 +9910,17 @@ type viewSummary struct {
 
 func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]viewSummary) viewRoots) map[string]viewSummary {
 	sums := map[string]viewSummary{}
-	for _, fn := range fns {
+	returns := make([][]*ast.Return, len(fns))
+	for i, fn := range fns {
 		sums[fn.Name] = viewSummary{params: map[int]bool{}, carried: map[int]bool{}}
+		forEachReturn(fn, func(ret *ast.Return) { returns[i] = append(returns[i], ret) })
 	}
 	for changed := true; changed; {
 		changed = false
-		for _, fn := range fns {
+		for i, fn := range fns {
 			cur := sums[fn.Name]
 			owned := !isViewReturn(fn.ReturnType)
-			forEachReturn(fn, func(ret *ast.Return) {
+			for _, ret := range returns[i] {
 				roots := rootsOf(fn, ret.Value, sums)
 				changed = addFlags(cur.params, roots.params) || changed
 				changed = addFlags(cur.carried, roots.carried) || changed
@@ -9924,7 +9929,7 @@ func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Ex
 					sums[fn.Name] = cur
 					changed = true
 				}
-			})
+			}
 		}
 	}
 	return sums
