@@ -116,12 +116,18 @@ pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
   if (iv.len() != 12) {
     return Err(aead.NonceLength(iv.len()));
   }
+  if (aead.overlaps(aad_at, aad_n, at, n)) {
+    return Err(aead.Overlap);
+  }
   return Ok(__aes_gcm_seal_into(k.rk, k.h, iv, seq, buf, aad_at, aad_n, at, n));
 }
 
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   if (iv.len() != 12) {
     return Err(aead.NonceLength(iv.len()));
+  }
+  if (aead.overlaps(aad_at, aad_n, at, n)) {
+    return Err(aead.Overlap);
   }
   buf = __aes_gcm_open_into(k.rk, k.h, iv, seq, buf, aad_at, aad_n, at, n);
   __ct_public(buf[at + n:at + n + 1]);

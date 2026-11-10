@@ -561,6 +561,9 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
 // tag at buf[at + n:at + n + 16]: the in-place form std/crypto/aes_gcm's Key.seal_in_place has.
 pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let st = __stream_seq(k, iv, seq)?;
+  if (aead.overlaps(aad_at, aad_n, at, n)) {
+    return Err(aead.Overlap);
+  }
   let text = buf[at:at + n].len();
   buf = __xor_into(st, 1, buf, at, text);
   let tag = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, text);
@@ -571,6 +574,9 @@ pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
 // before anything is decrypted.
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let st = __stream_seq(k, iv, seq)?;
+  if (aead.overlaps(aad_at, aad_n, at, n)) {
+    return Err(aead.Overlap);
+  }
   let text = buf[at:at + n].len();
   let want = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, text);
   let diff = 0;
