@@ -16,6 +16,8 @@ The derive makes these functions for a struct `S`:
 - `S.c_offset_f()` for each field `f`: the offset of the field in bytes. Give `p + S.c_offset_f()` to a C function that writes the field.
 - `S.c_load_f(p)` and `S.c_store_f(p, v)` for each field `f`: one field of the struct at the address `p`.
 
+A C import can take a parameter of the type `S` and return an `S`. The call passes the struct by value, as the C convention of the target does.
+
 The functions that read or write memory are `unsafe`. Call them in an `unsafe` block. Use the functions of one field when a second thread can write the other fields at the same time.
 
 ## Contracts

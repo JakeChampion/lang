@@ -21,6 +21,7 @@ import "./pkggrants";
 import "./modloader";
 import "./visibility";
 import "./asmcore";
+import "./cabi";
 import "./rtprofile";
 import "./fern_toml";
 import "./literate";
@@ -793,46 +794,34 @@ function import_stub(k: i32): string {
   return "__fern_import_" + util.i32_to_string(k);
 }
 
-function c_import_int(t: string): boolean {
-  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
-}
-
-function c_import_float(t: string): boolean {
-  return t == "f32" || t == "f64";
-}
-
 function c_import_floats(f: parser.FuncDecl): i32 {
   let n = 0;
   for p in f.params {
-    if (c_import_float(p.type_name)) {
+    if (cabi.is_float(p.type_name)) {
       n += 1;
     }
   }
   return n;
 }
 
-function c_import_refusal(f: parser.FuncDecl): string {
+function c_import_refusal(f: parser.FuncDecl, structs: parser.StructDecl[], target: string): string {
   let what = "@import " + f.name + ": ";
   let floats = c_import_floats(f);
   let ints = f.params.len() - floats;
   if (ints > 14 || floats > 8) {
     return what + "a C import takes at most 14 integer parameters and 8 float parameters (it has " + util.i32_to_string(ints) + " and " + util.i32_to_string(floats) + ")";
   }
-  for p in f.params {
-    if (!c_import_int(p.type_name) && !c_import_float(p.type_name)) {
-      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer, usize, f32 and f64 parameters";
-    }
-  }
-  if (f.ret_type != "" && f.ret_type != "void" && f.ret_type != "f32" && f.ret_type != "f64" && !c_import_int(f.ret_type)) {
-    return what + "the result is " + f.ret_type + "; a C import returns an integer, a usize, an f32, an f64 or nothing";
+  let bad = cabi.refusal(f, structs, is_native_target(target), target.starts_with("arm64"));
+  if (bad.len() > 0) {
+    return what + bad;
   }
   return "";
 }
 
-pub function native_import_refusal(m: parser.Module): string {
+pub function native_import_refusal(m: parser.Module, target: string): string {
   for f in m.funcs {
     if (is_c_library(f.import_iface)) {
-      let bad = c_import_refusal(f);
+      let bad = c_import_refusal(f, m.structs, target);
       if (bad.len() > 0) {
         return bad;
       }
@@ -986,10 +975,9 @@ function stub_decl(f: parser.FuncDecl, k: i32): string {
 }
 
 // The source of the body that calls C import `f` through stub `k`.
-function c_import_body(f: parser.FuncDecl, k: i32): string {
-  let floats = c_import_floats(f);
-  if (floats > 0 || f.params.len() - floats > 6) {
-    return c_import_body_mem(f, k);
+function c_import_body(f: parser.FuncDecl, k: i32, structs: parser.StructDecl[], arm64: boolean): string {
+  if (c_import_floats(f) > 0 || f.params.len() > 6 || cabi.has_struct(f)) {
+    return cabi.body(f, structs, arm64, "body_" + util.i32_to_string(k), import_stub(k) + "()") + stub_decl(f, k);
   }
   let args = import_stub(k) + "()";
   let params = "";
@@ -1015,51 +1003,6 @@ function c_import_body(f: parser.FuncDecl, k: i32): string {
     + stub_decl(f, k);
 }
 
-// The body of a C import with float parameters or more than 6 integer
-// parameters. The integer arguments go in one block of memory and the bits
-// of the float arguments in another, each in the order of its kind.
-// __c_callv loads each into the argument register that the ABI gives it,
-// and puts the integers after the last register on the stack.
-function c_import_body_mem(f: parser.FuncDecl, k: i32): string {
-  let params = "";
-  let stores = "";
-  let ni = 0;
-  let nf = 0;
-  for p in f.params {
-    if (params.len() > 0) {
-      params += ", ";
-    }
-    params = params + p.name + ": " + p.type_name;
-    if (c_import_float(p.type_name)) {
-      stores = stores + "    __store_i64(floats + " + util.i32_to_string(8 * nf) + " as usize, " + p.type_name + "_bits(" + p.name + ") as i64);\n";
-      nf += 1;
-    } else {
-      stores = stores + "    __store_i64(ints + " + util.i32_to_string(8 * ni) + " as usize, " + p.name + " as i64);\n";
-      ni += 1;
-    }
-  }
-  let kind = "0";
-  let ret = "";
-  let result = "";
-  if (f.ret_type == "f32") {
-    kind = "1";
-    ret = ": f32";
-    result = "    return f32_from_bits(r as i32);\n";
-  } else if (f.ret_type == "f64") {
-    kind = "2";
-    ret = ": f64";
-    result = "    return f64_from_bits(r as i64);\n";
-  } else if (f.ret_type != "" && f.ret_type != "void") {
-    ret = ": " + f.ret_type;
-    result = "    return r as " + f.ret_type + ";\n";
-  }
-  let body = "    let ints: usize = __alloc(128);\n    let floats: usize = __alloc(64);\n" + stores
-    + "    let r: usize = __c_callv(" + import_stub(k) + "(), ints, floats, " + kind + ");\n"
-    + "    __free(ints, 128);\n    __free(floats, 64);\n" + result;
-  return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n" + body + "  }\n}\n"
-    + stub_decl(f, k);
-}
-
 function has_c_imports(m: parser.Module): boolean {
   for f in m.funcs {
     if (is_c_library(f.import_iface)) {
@@ -1079,7 +1022,7 @@ pub function native_imports(m: parser.Module, target: string, shared: boolean): 
     if (!is_c_library(f.import_iface)) {
       funcs = funcs.append(f);
     } else {
-      let gen = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
+      let gen = parser.parse_module(lexer.tokenize(c_import_body(f, k, m.structs, target.starts_with("arm64"))));
       let body = gen.funcs[0];
       let stub = gen.funcs[1];
       funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "", import_weak: false });
@@ -1331,7 +1274,7 @@ function native_bindings(m: parser.Module, target: string, shared: boolean, java
   if (callback_bad.len() > 0) {
     return (m, none, callback_bad);
   }
-  let import_bad = native_import_refusal(m);
+  let import_bad = native_import_refusal(m, target);
   if (import_bad.len() > 0) {
     return (m, none, import_bad);
   }

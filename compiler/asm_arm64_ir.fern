@@ -7061,7 +7061,8 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
 
 // The arm64 form of emit_ccallv_shim: the eight integer argument registers
 // from `ints` and the eight vector argument registers from `floats`, as
-// AAPCS64 assigns them.
+// AAPCS64 assigns them. For kind 3, x8 comes from word 8 of `floats`, and x0,
+// x1 and d0 to d3 go to words 0 to 5 of `floats`.
 function emit_ccallv_shim_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("\n__fn___c_callv:\n" + rt_frame(s) + "    mov x29, sp\n");
   s = s.write("    ldr x9, [x29, #16]\n    ldr x10, [x29, #32]\n    ldr x11, [x29, #48]\n");
@@ -7076,6 +7077,7 @@ function emit_ccallv_shim_arm64(s: asmcore.EmitState): asmcore.EmitState {
     let off = util.i32_to_string(16 * i);
     s = s.write("    ldp x12, x13, [x10, #" + util.i32_to_string(64 + 16 * i) + "]\n    stp x12, x13, [sp, #" + off + "]\n");
   }
+  s = s.write("    ldr x12, [x29, #64]\n    cmp w12, #3\n    b.ne .Lfern_ccallv_call\n    ldr x8, [x11, #64]\n.Lfern_ccallv_call:\n");
   if (s.shared) {
     s = s.write(busy_give_arm64());
   }
@@ -7084,7 +7086,9 @@ function emit_ccallv_shim_arm64(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(busy_take_arm64());
   }
   s = s.write("    ldr x10, [x29, #64]\n    cmp w10, #1\n    b.ne .Lfern_ccallv_f64\n    fmov w0, s0\n    b .Lfern_ccallv_done\n");
-  s = s.write(".Lfern_ccallv_f64:\n    cmp w10, #2\n    b.ne .Lfern_ccallv_done\n    fmov x0, d0\n");
+  s = s.write(".Lfern_ccallv_f64:\n    cmp w10, #2\n    b.ne .Lfern_ccallv_struct\n    fmov x0, d0\n    b .Lfern_ccallv_done\n");
+  s = s.write(".Lfern_ccallv_struct:\n    cmp w10, #3\n    b.ne .Lfern_ccallv_done\n    ldr x11, [x29, #48]\n");
+  s = s.write("    stp x0, x1, [x11]\n    stp d0, d1, [x11, #16]\n    stp d2, d3, [x11, #32]\n");
   return s.write(".Lfern_ccallv_done:\n    mov sp, x29\n" + rt_unframe(s) + "    ret\n");
 }
 

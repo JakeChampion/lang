@@ -1,0 +1,395 @@
+// The C calling convention of an @import that takes or returns a value the
+// integer shims cannot carry: a float, more integers than the registers
+// hold, or a struct with @derive(ffi.CLayout) by value. The System V ABI of
+// x86-64 and AAPCS64 of arm64 Linux are the two conventions.
+
+import "./util";
+import "./parser";
+
+// A struct with the layout of C: the type and the offset of each field, and
+// the size in bytes. `ok` is false for a type that is not such a struct.
+pub struct Agg { ok: boolean, types: string[], offs: i32[], size: i32 }
+
+// How a struct travels. `memory` is true where the ABI gives it no
+// registers. Each other struct is a list of pieces, and piece `i` holds the
+// bytes at `offs[i]`: kind PIECE_INT is 8 bytes for an integer register,
+// PIECE_F64 is 8 bytes for a vector register, and PIECE_F32 is 4 bytes for
+// a vector register. `regs[i]` is the place of the piece among the
+// registers of its kind.
+struct Passing { memory: boolean, kinds: i32[], offs: i32[], regs: i32[] }
+
+const PIECE_INT: i32 = 0;
+
+const PIECE_F64: i32 = 1;
+
+const PIECE_F32: i32 = 2;
+
+// The stack words that __c_callv copies.
+const STACK_WORDS: i32 = 8;
+
+// The result kind of __c_callv that keeps every result register.
+const KIND_STRUCT: string = "3";
+
+pub function is_int(t: string): boolean {
+  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
+}
+
+pub function is_float(t: string): boolean {
+  return t == "f32" || t == "f64";
+}
+
+function is_scalar(t: string): boolean {
+  return is_int(t) || is_float(t);
+}
+
+function derives_clayout(sd: parser.StructDecl): boolean {
+  for d in sd.derives {
+    if (parser.derive_simple_name(d) == "CLayout") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The C layout of the struct `name`, where it derives ffi.CLayout and has a
+// field.
+pub function agg_of(structs: parser.StructDecl[], name: string): Agg {
+  let none: string[] = [];
+  let bad = Agg { ok: false, types: none, offs: [], size: 0 };
+  for sd in structs {
+    if (sd.name == name) {
+      if (!derives_clayout(sd) || !parser.struct_clayout_derivable(sd) || sd.fields.len() == 0) {
+        return bad;
+      }
+      let offs = parser.clayout_offsets(sd);
+      let types: string[] = [];
+      for f in sd.fields {
+        types = types.append(f.type_name);
+      }
+      return Agg { ok: true, types: types, offs: offs, size: offs[sd.fields.len()] };
+    }
+  }
+  return bad;
+}
+
+function words(a: Agg): i32 {
+  return (a.size + 7) / 8;
+}
+
+// True when each field that has a byte in the 8 bytes at `at` is a float.
+function all_float(a: Agg, at: i32): boolean {
+  for i in 0..a.types.len() {
+    if (a.offs[i] >= at && a.offs[i] < at + 8 && !is_float(a.types[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// System V: a struct above 16 bytes is in memory. Each 8 bytes of a smaller
+// struct take a vector register when all their fields are floats, and an
+// integer register when not.
+function passing_sysv(a: Agg): Passing {
+  let kinds: i32[] = [];
+  let offs: i32[] = [];
+  let regs: i32[] = [];
+  if (a.size > 16) {
+    return Passing { memory: true, kinds: kinds, offs: offs, regs: regs };
+  }
+  for w in 0..words(a) {
+    let kind = PIECE_INT;
+    if (all_float(a, 8 * w)) {
+      kind = PIECE_F64;
+    }
+    let reg = 0;
+    if (w == 1 && kinds[0] == kind) {
+      reg = 1;
+    }
+    kinds = kinds.append(kind);
+    offs = offs.append(8 * w);
+    regs = regs.append(reg);
+  }
+  return Passing { memory: false, kinds: kinds, offs: offs, regs: regs };
+}
+
+// AAPCS64: a struct of one to four floats of one type is homogeneous.
+function homogeneous(a: Agg): boolean {
+  if (a.types.len() > 4 || !is_float(a.types[0])) {
+    return false;
+  }
+  for t in a.types {
+    if (t != a.types[0]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// AAPCS64: each member of a homogeneous struct takes a vector register. Each
+// 8 bytes of another struct of 16 bytes or less take an integer register.
+// A larger struct is in memory.
+function passing_aapcs(a: Agg): Passing {
+  let kinds: i32[] = [];
+  let offs: i32[] = [];
+  let regs: i32[] = [];
+  if (homogeneous(a)) {
+    let kind = PIECE_F64;
+    if (a.types[0] == "f32") {
+      kind = PIECE_F32;
+    }
+    for i in 0..a.types.len() {
+      kinds = kinds.append(kind);
+      offs = offs.append(a.offs[i]);
+      regs = regs.append(i);
+    }
+    return Passing { memory: false, kinds: kinds, offs: offs, regs: regs };
+  }
+  if (a.size > 16) {
+    return Passing { memory: true, kinds: kinds, offs: offs, regs: regs };
+  }
+  for w in 0..words(a) {
+    kinds = kinds.append(PIECE_INT);
+    offs = offs.append(8 * w);
+    regs = regs.append(w);
+  }
+  return Passing { memory: false, kinds: kinds, offs: offs, regs: regs };
+}
+
+function passing(a: Agg, arm64: boolean): Passing {
+  if (arm64) {
+    return passing_aapcs(a);
+  }
+  return passing_sysv(a);
+}
+
+function int_pieces(p: Passing): i32 {
+  let n = 0;
+  for k in p.kinds {
+    if (k == PIECE_INT) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// The call under construction. `ni` and `nf` count the integer and the
+// vector argument registers in use, and `ns` the stack words. `pre` makes
+// the copies of the struct arguments, `stores` fills the blocks of
+// __c_callv, and `post` frees the copies.
+struct Call { arm64: boolean, ni: i32, nf: i32, ns: i32, pre: string, stores: string, post: string }
+
+function int_regs(c: Call): i32 {
+  if (c.arm64) {
+    return 8;
+  }
+  return 6;
+}
+
+function num(n: i32): string {
+  return util.i32_to_string(n);
+}
+
+function store(block: string, off: i32, value: string): string {
+  return "    __store_i64(" + block + " + " + num(off) + " as usize, " + value + ");\n";
+}
+
+function to_stack(c: Call, value: string): Call {
+  return Call { ...c, ns: c.ns + 1, stores: c.stores + store("__ints", 8 * (int_regs(c) + c.ns), value) };
+}
+
+function to_int(c: Call, value: string): Call {
+  if (c.ni >= int_regs(c)) {
+    return to_stack(c, value);
+  }
+  return Call { ...c, ni: c.ni + 1, stores: c.stores + store("__ints", 8 * c.ni, value) };
+}
+
+function to_float(c: Call, value: string): Call {
+  if (c.nf >= 8) {
+    return to_stack(c, value);
+  }
+  return Call { ...c, nf: c.nf + 1, stores: c.stores + store("__floats", 8 * c.nf, value) };
+}
+
+// The bits of piece `i` of the struct copy at `copy`, as an i64.
+function piece_bits(p: Passing, i: i32, copy: string): string {
+  let at = copy + " + " + num(p.offs[i]) + " as usize";
+  if (p.kinds[i] == PIECE_F32) {
+    return "__load_i32(" + at + ") as i64";
+  }
+  return "__load_i64(" + at + ")";
+}
+
+function pieces_to_regs(c: Call, p: Passing, copy: string): Call {
+  for i in 0..p.kinds.len() {
+    if (p.kinds[i] == PIECE_INT) {
+      c = to_int(c, piece_bits(p, i, copy));
+    } else {
+      c = to_float(c, piece_bits(p, i, copy));
+    }
+  }
+  return c;
+}
+
+// A struct that got no registers goes on the stack, 8 bytes in each word.
+// On arm64 it also closes the registers of its kind to later arguments.
+function agg_to_stack(c: Call, a: Agg, p: Passing, copy: string): Call {
+  if (c.arm64 && int_pieces(p) == 0) {
+    c = Call { ...c, nf: 8 };
+  } else if (c.arm64) {
+    c = Call { ...c, ni: 8 };
+  }
+  for w in 0..words(a) {
+    c = to_stack(c, "__load_i64(" + copy + " + " + num(8 * w) + " as usize)");
+  }
+  return c;
+}
+
+// Struct argument `index`, the parameter `name`.
+function agg_arg(c: Call, a: Agg, name: string, index: i32): Call {
+  let copy = "__agg" + num(index);
+  let bytes = num(8 * words(a));
+  c = Call { ...c, pre: c.pre + "    let " + copy + ": usize = __alloc(" + bytes + ");\n    " + name + ".c_store(" + copy + ");\n", post: c.post + "    __free(" + copy + ", " + bytes + ");\n" };
+  let p = passing(a, c.arm64);
+  if (p.memory && c.arm64) {
+    return to_int(c, copy + " as i64");
+  }
+  let ints = int_pieces(p);
+  if (!p.memory && c.ni + ints <= int_regs(c) && c.nf + p.kinds.len() - ints <= 8) {
+    return pieces_to_regs(c, p, copy);
+  }
+  return agg_to_stack(c, a, p, copy);
+}
+
+function args(c: Call, f: parser.FuncDecl, structs: parser.StructDecl[]): Call {
+  for i in 0..f.params.len() {
+    let p = f.params[i];
+    if (is_float(p.type_name)) {
+      c = to_float(c, p.type_name + "_bits(" + p.name + ") as i64");
+    } else if (is_int(p.type_name)) {
+      c = to_int(c, p.name + " as i64");
+    } else {
+      c = agg_arg(c, agg_of(structs, p.type_name), p.name, i);
+    }
+  }
+  return c;
+}
+
+// The statements that copy the result registers, which __c_callv left in
+// `__floats`, to the struct at `__ret`: x0 and x1 (rax and rdx) are words 0
+// and 1, and the vector registers follow from word 2.
+function result_copies(p: Passing): string {
+  let out = "";
+  for i in 0..p.kinds.len() {
+    let to = "__ret + " + num(p.offs[i]) + " as usize";
+    let from = "__floats + " + num(16 + 8 * p.regs[i]) + " as usize";
+    if (p.kinds[i] == PIECE_INT) {
+      from = "__floats + " + num(8 * p.regs[i]) + " as usize";
+    }
+    if (p.kinds[i] == PIECE_F32) {
+      out = out + "    __store_i32(" + to + ", __load_i32(" + from + "));\n";
+    } else {
+      out = out + "    __store_i64(" + to + ", __load_i64(" + from + "));\n";
+    }
+  }
+  return out;
+}
+
+// The parts of the body that depend on the result: the type after the
+// parameters, the kind for __c_callv, and the statements after the call.
+struct Result { ret: string, kind: string, after: string }
+
+function scalar_result(t: string): Result {
+  if (t == "f32") {
+    return Result { ret: ": f32", kind: "1", after: "    let __out: f32 = f32_from_bits(__r as i32);\n" };
+  }
+  if (t == "f64") {
+    return Result { ret: ": f64", kind: "2", after: "    let __out: f64 = f64_from_bits(__r as i64);\n" };
+  }
+  if (t == "" || t == "void") {
+    return Result { ret: "", kind: "0", after: "" };
+  }
+  return Result { ret: ": " + t, kind: "0", after: "    let __out: " + t + " = __r as " + t + ";\n" };
+}
+
+function agg_result(t: string, p: Passing): Result {
+  return Result { ret: ": " + t, kind: KIND_STRUCT, after: result_copies(p) + "    let __out: " + t + " = " + t + ".c_load(__ret);\n" };
+}
+
+// A struct result gets the block `__ret`. Where the result is in memory, the
+// callee gets the address of the block: as the first integer argument on
+// x86-64, and in x8 on arm64, which __c_callv loads from word 8 of
+// `__floats`.
+function result_block(c: Call, a: Agg, p: Passing): Call {
+  let bytes = num(8 * words(a));
+  c = Call { ...c, pre: c.pre + "    let __ret: usize = __alloc(" + bytes + ");\n", post: c.post + "    __free(__ret, " + bytes + ");\n" };
+  if (!p.memory) {
+    return c;
+  }
+  if (c.arm64) {
+    return Call { ...c, stores: c.stores + store("__floats", 64, "__ret as i64") };
+  }
+  return to_int(c, "__ret as i64");
+}
+
+struct Built { call: Call, result: Result }
+
+function build(f: parser.FuncDecl, structs: parser.StructDecl[], arm64: boolean): Built {
+  let c = Call { arm64: arm64, ni: 0, nf: 0, ns: 0, pre: "", stores: "", post: "" };
+  if (f.ret_type == "" || f.ret_type == "void" || is_scalar(f.ret_type)) {
+    return Built { call: args(c, f, structs), result: scalar_result(f.ret_type) };
+  }
+  let a = agg_of(structs, f.ret_type);
+  let p = passing(a, arm64);
+  return Built { call: args(result_block(c, a, p), f, structs), result: agg_result(f.ret_type, p) };
+}
+
+// True when `f` has a struct parameter or a struct result.
+pub function has_struct(f: parser.FuncDecl): boolean {
+  for p in f.params {
+    if (!is_scalar(p.type_name)) {
+      return true;
+    }
+  }
+  return f.ret_type != "" && f.ret_type != "void" && !is_scalar(f.ret_type);
+}
+
+// The source of the function `name` that calls the C function at the
+// address `callee` with the parameters of `f`. The integer arguments go in
+// the block `__ints`: the argument registers, and then the stack words. The
+// bits of the float arguments go in the block `__floats`.
+pub function body(f: parser.FuncDecl, structs: parser.StructDecl[], arm64: boolean, name: string, callee: string): string {
+  let b = build(f, structs, arm64);
+  let params = "";
+  for p in f.params {
+    if (params.len() > 0) {
+      params += ", ";
+    }
+    params = params + p.name + ": " + p.type_name;
+  }
+  let out = "";
+  if (b.result.after.len() > 0) {
+    out = "    return __out;\n";
+  }
+  return "function " + name + "(" + params + ")" + b.result.ret + " {\n  unsafe {\n"
+    + "    let __ints: usize = __alloc(128);\n    let __floats: usize = __alloc(80);\n" + b.call.pre + b.call.stores
+    + "    let __r: usize = __c_callv(" + callee + ", __ints, __floats, " + b.result.kind + ");\n"
+    + b.result.after + b.call.post + "    __free(__ints, 128);\n    __free(__floats, 80);\n" + out + "  }\n}\n";
+}
+
+// Why `f` cannot be a C import, or "". `sized` is false where the target has
+// no C convention, and then the stack limit is not checked.
+pub function refusal(f: parser.FuncDecl, structs: parser.StructDecl[], sized: boolean, arm64: boolean): string {
+  for p in f.params {
+    if (!is_scalar(p.type_name) && !agg_of(structs, p.type_name).ok) {
+      return "parameter " + p.name + " is " + p.type_name + "; a C import takes integer, usize, f32 and f64 parameters, and structs that derive ffi.CLayout";
+    }
+  }
+  if (f.ret_type != "" && f.ret_type != "void" && !is_scalar(f.ret_type) && !agg_of(structs, f.ret_type).ok) {
+    return "the result is " + f.ret_type + "; a C import returns an integer, a usize, an f32, an f64, a struct that derives ffi.CLayout, or nothing";
+  }
+  if (sized && has_struct(f) && build(f, structs, arm64).call.ns > STACK_WORDS) {
+    return "the arguments need more than " + num(8 * STACK_WORDS) + " bytes of stack";
+  }
+  return "";
+}
