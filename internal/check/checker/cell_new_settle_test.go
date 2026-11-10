@@ -43,3 +43,14 @@ function main(): i32 { return mk().get() as i32; }`},
 		}
 	}
 }
+
+func TestCellNewUsesResolvedLocalCallee(t *testing.T) {
+	for name, source := range map[string]string{
+		"zero arguments":      `function main(): i32 { let cell_new = (): i32 => 7; return cell_new(); }`,
+		"different signature": `function main(): i32 { let cell_new = (a: string, b: string): string => a + b; return cell_new("a", "b").len(); }`,
+		"parameter":           `function run(cell_new: (i32) => string): string { return cell_new(7); } function main(): i32 { return run((n: i32): string => "ok").len(); }`,
+		"captured callback":   `function main(): i32 { let cell_new = (n: i32): i32 => n + 1; let call = (): i32 => cell_new(7); return call(); }`,
+	} {
+		t.Run(name, func(t *testing.T) { wantOK(t, name, source) })
+	}
+}

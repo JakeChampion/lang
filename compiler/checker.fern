@@ -5079,6 +5079,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   let recv_ty = t_unknown("");
   match (c.callee) {
     ast.ExprIdent(id) => {
+      if (!id.builtin && s.is_bound(id.name)) {
+        return call_through_fn_value(c, s);
+      }
       name = id.name;
     },
     ast.ExprFieldAccess(fa) => {
@@ -14395,7 +14398,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       if ((id.name == "__set_field" || id.name == "__set_index") && c.args.len() == 2) {
         out = util.append_diags(out, place_assign_diags(c.args[0], c.args[1], c.line, c.col, s));
       }
-      if (id.name == "cell_new" && c.args.len() == 1) {
+      if (id.name == "cell_new" && c.args.len() == 1 && s.ident_binding(id) < 0) {
         let cnat = check_expr(c.args[0], s);
         out = util.append_diags(out, e057_diag(type_label(named_tparams(cnat)), cnat, s, expr_line(c.args[0]), expr_col(c.args[0])));
       }
