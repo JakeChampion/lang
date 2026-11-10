@@ -103,7 +103,26 @@ function hash_element(ty: typeinfo.Type, value: ast.Expr, suffix: string): ast.S
   if (ssasem.is_bool(ty)) {
     return [parser.s_assign("h", multiplied_hash()), parser.s_if(value, [increment("h")], [])];
   }
+  if (ssasem.is_wide(ty)) {
+    let high = parser.e_binary(">>", parser.e_unary("as_i64", value), parser.e_unary("as_i64", number(32)));
+    return [add_hash(parser.e_unary("as_i32", value)), add_hash(parser.e_unary("as_i32", high))];
+  }
   return [add_hash(parser.e_unary("as_i32", value))];
+}
+
+function hash_shift(n: i32): ast.Expr {
+  return parser.e_unary("as_i32", parser.e_binary(">>", parser.e_unary("as_u32", ident("h")), parser.e_unary("as_u32", number(n))));
+}
+
+function hash_mix(): ast.Stmt[] {
+  return [
+    parser.s_assign("h", parser.e_binary("^", ident("h"), number(61))),
+    parser.s_assign("h", parser.e_binary("^", ident("h"), hash_shift(16))),
+    parser.s_assign("h", parser.e_binary("+", ident("h"), parser.e_binary("<<", ident("h"), number(3)))),
+    parser.s_assign("h", parser.e_binary("^", ident("h"), hash_shift(4))),
+    parser.s_assign("h", parser.e_binary("*", ident("h"), number(668265261))),
+    parser.s_assign("h", parser.e_binary("^", ident("h"), hash_shift(15))),
+  ];
 }
 
 function hash_body(key: typeinfo.Type): ast.Stmt[] {
@@ -119,5 +138,5 @@ function hash_body(key: typeinfo.Type): ast.Stmt[] {
       body = util.append_all(body, hash_element(tup.elements[i], parser.e_field_access(ident("a"), field), "e" + field));
     }
   }
-  return body.append(parser.s_return(ident("h")));
+  return util.append_all(body, hash_mix()).append(parser.s_return(ident("h")));
 }
