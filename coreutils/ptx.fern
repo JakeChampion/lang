@@ -916,6 +916,25 @@ function tex_special(c: i32): boolean {
   return c < 128 && (mask >> ((c & 63) as u64) & 1u64) != 0u64;
 }
 
+struct TexText { bytes: u8[], plain: boolean }
+
+function tex_plain(text: u8[]): boolean {
+  for c in text {
+    if (tex_special(c as i32)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function tex_field(h: usize, text: TexText, a: i32, n: i32): void {
+  if (text.plain) {
+    buf_push_bytes_range(h, text.bytes, a, n);
+  } else {
+    tex_quote(h, text.bytes, a, n);
+  }
+}
+
 function tex_quote(h: usize, s: u8[], a: i32, n: i32): void {
   let i = a;
   let run = a;
@@ -1128,19 +1147,19 @@ function render_roff(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: 
   buf_push_byte(h, 10);
 }
 
-function render_tex(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): void {
+function render_tex(h: usize, text: TexText, f: Fields, ref: u8[], g: Geom, opts: Opts): void {
   buf_push_byte(h, 92);
   buf_push(h, opts.macro);
   buf_push(h, " {");
-  tex_quote(h, text, span_lo(f.tail), span_hi(f.tail));
+  tex_field(h, text, span_lo(f.tail), span_hi(f.tail));
   buf_push(h, "}{");
-  tex_quote(h, text, span_lo(f.before), span_hi(f.before));
+  tex_field(h, text, span_lo(f.before), span_hi(f.before));
   buf_push(h, "}{");
-  tex_quote(h, text, span_lo(f.keyword), span_hi(f.keyword));
+  tex_field(h, text, span_lo(f.keyword), span_hi(f.keyword));
   buf_push(h, "}{");
-  tex_quote(h, text, span_lo(f.after), span_hi(f.after));
+  tex_field(h, text, span_lo(f.after), span_hi(f.after));
   buf_push(h, "}{");
-  tex_quote(h, text, span_lo(f.head), span_hi(f.head));
+  tex_field(h, text, span_lo(f.head), span_hi(f.head));
   buf_push_byte(h, 125);
   if (g.has_ref) {
     buf_push_byte(h, 123);
@@ -1493,6 +1512,11 @@ pub function main(): i32 {
 
   let order = sort_occs(buf, occs, o.fold);
   let nbuf = norm_all(buf);
+  let plain_tex = false;
+  if (o.format == 2) {
+    plain_tex = tex_plain(nbuf);
+  }
+  let tex = TexText { bytes: nbuf, plain: plain_tex };
   let h = w.handle();
   let ln = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
   let j = 0;
@@ -1502,7 +1526,7 @@ pub function main(): i32 {
     if (o.format == 1) {
       render_roff(h, nbuf, f, oc.ref, geom, o);
     } else if (o.format == 2) {
-      render_tex(h, nbuf, f, oc.ref, geom, o);
+      render_tex(h, tex, f, oc.ref, geom, o);
     } else {
       ln = render_dumb(ln, nbuf, f, oc.ref, geom, o);
     }

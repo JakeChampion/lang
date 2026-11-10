@@ -31,6 +31,7 @@ func PtxByteCases() []PtxByteCase {
 	cases := []PtxByteCase{
 		{Name: "all bytes", Data: all.String()},
 		{Name: "tex all bytes", Data: all.String(), Args: []string{"-G", "-T"}},
+		{Name: "tex escaped reference with plain input", Data: "alpha beta\n", Args: []string{"-A", "-T"}, Files: map[string]string{"escaped$_{\\}": "gamma delta\n"}, Extra: []string{"escaped$_{\\}"}},
 		{Name: "traditional all bytes", Data: all.String(), Args: []string{"-G"}},
 		{Name: "empty", Data: ""},
 		{Name: "unterminated", Data: raw[:len(raw)-1]},
