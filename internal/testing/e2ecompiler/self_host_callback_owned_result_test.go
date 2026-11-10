@@ -20,13 +20,16 @@ function transition(own state: Handle, read: () => Result[i32,string]): Result[H
 function tick(own state: Handle, other: Handle): Result[Handle,string] {
  return transition(state, (): Result[i32,string] => Ok(other.fd));
 }
+function fresh_from(h: Handle): Handle { return call((): Handle => Handle { fd: h.fd }); }
+function copied(h: Handle): i32 { return keep(fresh_from(h)); }
 function main(): i32 {
  let state = advance(Handle { fd: 7 }, (own s: Handle): Handle => s);
  if (keep(state) != 7) { return 1; }
  if (keep(call((): Handle => Handle { fd: 9 })) != 9) { return 2; }
  let other = Handle { fd: 11 };
  let final_state = match (tick(Handle { fd: 13 }, other)) { Ok(value) => value, Err(_) => { return 3; } };
- if (keep(final_state) != 13 || other.close() != 11) { return 4; }
+ if (keep(final_state) != 13) { return 4; }
+ if (copied(other) != 11 || other.close() != 11) { return 5; }
  return 0;
 }
 `
