@@ -5484,12 +5484,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_MOVQD) {
-    if (x86_gas_is_xmm(dst)) {
-      util.push_bytes(a.code, x86_movd_gpr_to_xmm([], x86_gas_xmm(dst), x86_gas_reg32(src)));
-    } else {
-      util.push_bytes(a.code, x86_movd_xmm_to_gpr([], x86_gas_xmm(src), x86_gas_reg32(dst)));
-    }
-    return a;
+    return x86_gas_movd(a, src, dst);
   }
   if (k == GK_MOVEXT) {
     let mx = l.ext;
@@ -7020,4 +7015,39 @@ pub function cfi_profile_x86(): gas.CfiProfile {
     ],
     reg_nums: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   };
+}
+
+function x86_gas_movd(own a: X86Asm, src: string, dst: string): X86Asm {
+  if (x86_gas_has_paren(src)) {
+    let m = x86_gas_parse_mem(src);
+    let d = x86_gas_xmm(dst);
+    if (!x86_gas_mem_ok(m) || d < 0) {
+      return x86_gas_bad(a, "movd " + src + ", " + dst);
+    }
+    return x86_gas_sse_mem(a, 102, 110, d, m, 0);
+  }
+  if (x86_gas_has_paren(dst)) {
+    let m = x86_gas_parse_mem(dst);
+    let x = x86_gas_xmm(src);
+    if (!x86_gas_mem_ok(m) || x < 0) {
+      return x86_gas_bad(a, "movd " + src + ", " + dst);
+    }
+    return x86_gas_sse_mem(a, 102, 126, x, m, 0);
+  }
+  if (x86_gas_is_xmm(dst)) {
+    let x = x86_gas_xmm(dst);
+    let r = x86_gas_reg32(src);
+    if (x < 0 || r < 0) {
+      return x86_gas_bad(a, "movd " + src + ", " + dst);
+    }
+    util.push_bytes(a.code, x86_movd_gpr_to_xmm([], x, r));
+  } else {
+    let x = x86_gas_xmm(src);
+    let r = x86_gas_reg32(dst);
+    if (x < 0 || r < 0) {
+      return x86_gas_bad(a, "movd " + src + ", " + dst);
+    }
+    util.push_bytes(a.code, x86_movd_xmm_to_gpr([], x, r));
+  }
+  return a;
 }

@@ -593,3 +593,17 @@ function main(): i32 {
 }
 `)
 }
+
+func TestSelfHostX86GasMOVDMemoryGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "movd_memory", `
+function main(): i32 {
+ let a=x86_gas_assemble(".text\nmovd %xmm0, (%rax)\nmovd %xmm15, -16(%r8,%r9,4)\nmovd (%r12), %xmm13\nmovd 32(%rsp), %xmm2\nmovd %r9d, %xmm14\nmovd %xmm13, %r10d\n");
+ let expected: i32[]=[102,15,126,0,102,71,15,126,124,136,240,102,69,15,110,44,36,102,15,110,84,36,32,102,69,15,110,241,102,69,15,126,234];
+ if (a.unknown.len()!=0 || a.text.len()!=expected.len()) { return 1; }
+ for i in 0..expected.len() { if (a.text[i] as i32!=expected[i]) { return 2; } }
+ for invalid in ["movd %rax, %xmm0", "movd %xmm0, %xmm1", "movd (%rax), %eax", "movd %eax, (%rax)"] {
+  if (x86_gas_assemble(invalid).unknown.len()!=1) { return 3; }
+ }
+ return 0;
+}`)
+}
