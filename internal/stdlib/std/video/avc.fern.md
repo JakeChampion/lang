@@ -44,6 +44,7 @@ Without a picture extension, the second chroma offset inherits the first offset.
 The map type is `-1` for one slice group.
 Change rate and explicit map size are zero when their syntax is absent.
 A mismatched sequence identifier or invalid context returns `Header`.
+
 A byte prefix can itself be a complete shorter PPS when the optional extension is absent.
 The caller must preserve packet boundaries to detect transport truncation.
 The NAL view excludes surrounding zero bytes.
