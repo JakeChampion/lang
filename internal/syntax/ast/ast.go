@@ -1971,6 +1971,9 @@ type FuncDecl struct {
 	// Early is @early: the reset entry calls the function before the heap
 	// starts. It implies NoRC.
 	Early bool
+	// Secondary is @secondary: the secondary entry of another core calls the
+	// function with the context id of the start. It implies NoRC.
+	Secondary bool
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
 	JNIClass                 string

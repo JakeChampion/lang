@@ -2,6 +2,10 @@
 # aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
 # Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
 # Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
+# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
+# http.serialize_response_to and http.serialize_response_to_bytes refuse a
+# field with CR or LF since #15002, so x86_64/http_hello.text rises 2.34%.
+# Pinned at the measured value. The .ir row moved 0.90% and stays.
 # 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
 # string_count_byte after main updates. Bank the reported size and work counts.
 # Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
@@ -271,7 +275,7 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15234
+x86_64/http_hello.text	15591
 x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077

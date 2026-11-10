@@ -19,7 +19,7 @@ var noRCIntrinsics = map[string]bool{
 	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__fence": true, "__wfi": true, "__hvc": true, "__smc": true, "__boot_info": true, "__sysreg_read": true, "__sysreg_write": true,
 	"__cache_clean": true, "__cache_flush": true, "__cache_sync_code": true, "__tlb_flush": true,
-	"__atomic_load_acquire": true, "__atomic_store_release": true, "__atomic_fetch_add": true, "__atomic_cas": true, "__tlb_flush_all": true, "__breakpoint": true,
+	"__atomic_load_acquire": true, "__atomic_store_release": true, "__atomic_fetch_add": true, "__atomic_cas": true, "__secondary_entry": true, "__user_run": true, "__tlb_flush_all": true, "__breakpoint": true,
 	"__irq_mask": true, "__irq_unmask": true, "__irq_wait": true, "__irq_pending": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
@@ -97,6 +97,33 @@ func (c *checker) checkEarlyFunctions(prog *ast.Program) {
 	}
 }
 
+// checkSecondaryFunctions reports E105: the @secondary entry takes one usize,
+// the context id, and returns void, and a program has at most one.
+// compiler/norc.fern also refuses it on a target other than arm64-kernel.
+func (c *checker) checkSecondaryFunctions(prog *ast.Program) {
+	first := ""
+	for _, fn := range prog.Funcs {
+		if !fn.Secondary {
+			continue
+		}
+		what := fmt.Sprintf("`@secondary` function %q", fn.Name)
+		if first != "" {
+			c.errfCode(fn.P, "E105", "%s is a second entry: %q is the first, and the secondary entry calls one", what, first)
+		} else {
+			first = fn.Name
+		}
+		_, void := fn.ReturnType.(ast.VoidType)
+		usize := false
+		if len(fn.Params) == 1 {
+			n, ok := fn.Params[0].Type.(ast.NumberType)
+			usize = ok && n.Width == ast.WidthPtr && !n.Signed
+		}
+		if !usize || (fn.ReturnType != nil && !void) {
+			c.errfCode(fn.P, "E105", "%s must take one usize, the context id, and return void", what)
+		}
+	}
+}
+
 // checkNoRCFunctions reports E102 in each @norc function: a value that is not
 // a scalar, or a call to a function that is not @norc. Such a function
 // allocates nothing and does no RC operation.
@@ -128,6 +155,8 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 		attr = "interrupt"
 	} else if fn.Early {
 		attr = "early"
+	} else if fn.Secondary {
+		attr = "secondary"
 	}
 	bad := func(p ast.Position, format string, args ...any) {
 		c.errfCode(p, "E102", "`@%s` function %q %s", attr, fn.Name, fmt.Sprintf(format, args...))

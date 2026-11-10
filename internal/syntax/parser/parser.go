@@ -337,6 +337,7 @@ func (p *parser) parseProgram() *ast.Program {
 		noRC := false
 		interrupt := ""
 		early := false
+		secondary := false
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -363,6 +364,7 @@ func (p *parser) parseProgram() *ast.Program {
 			noRC = attr.noRC
 			interrupt = attr.interrupt
 			early = attr.early
+			secondary = attr.secondary
 		}
 		isPub := false
 		isPackage := false
@@ -634,9 +636,10 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Async = isAsync
 			fn.InlineHint = inlineHint
 			fn.Provides = provides
-			fn.NoRC = noRC || interrupt != "" || early
+			fn.NoRC = noRC || interrupt != "" || early || secondary
 			fn.Interrupt = interrupt
 			fn.Early = early
+			fn.Secondary = secondary
 			if importIface != "" {
 				if fn.Body != nil {
 					attr := "@import"
@@ -1151,6 +1154,7 @@ type declAttr struct {
 	noRC        bool
 	interrupt   string
 	early       bool
+	secondary   bool
 }
 
 func (p *parser) parseAttribute() (declAttr, error) {
@@ -1198,6 +1202,8 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, noRC: true}, nil
 	case "early":
 		return declAttr{name: attr, early: true}, nil
+	case "secondary":
+		return declAttr{name: attr, secondary: true}, nil
 	case "import":
 		iface, name, weak, err := p.parseImportArgs()
 		if err != nil {
@@ -1232,7 +1238,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{name: attr, interrupt: slot}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1266,7 +1272,7 @@ func attrMisplaced(name string) string {
 		return "@callback only applies to a function declaration"
 	case "provide":
 		return "@provide only applies to a function declaration"
-	case "norc", "interrupt", "early":
+	case "norc", "interrupt", "early", "secondary":
 		return "@" + name + " only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"

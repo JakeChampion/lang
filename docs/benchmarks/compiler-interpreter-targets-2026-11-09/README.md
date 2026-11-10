@@ -2,6 +2,11 @@
 
 Status: [experiment] completed diagnostic subset comparison from 2026-11-09.
 
+Publication note from 2026-11-10: four raw records now use lossless gzip storage.
+The [compression record](compression-identities.json) retains their original byte counts and SHA-256 hashes from commit `67180afb`.
+The manifest now records 223 data hashes.
+Measurements and original execution records stay unchanged.
+
 The baseline compiler source is `ebb50c78c0ca714180704352881da7e39efb570f`.
 The candidate source is `424fe24f`.
 Both use producer `a19e87208c5931d2600fdb75cc966fd179ae8c8f`.
@@ -29,7 +34,7 @@ The candidate omits searches whose result neither path uses.
 The actual dispatch and argument order stay unchanged.
 The two addressability checks retain their declaration searches.
 
-The [implementation patch](implementation.patch) includes five regression cases.
+The [implementation patch](implementation.patch.gz) includes five regression cases.
 They cover explicit type arguments, zero arguments, implicit constant type arguments, and nested generic method and associated calls.
 Both normal binaries return the expected results for all five cases.
 They also return identical failures and diagnostics for five negative cases.

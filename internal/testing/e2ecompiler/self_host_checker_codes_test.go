@@ -3740,6 +3740,7 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		"reaches_a.fern":    "import \"./a\";\npub function h(): i32 { return 0; }\n",
 		"indep_a.fern":      "pub enum IA { Hit, Miss }\npub function f(): i32 { let v = Hit; return 0; }\n",
 		"indep_b.fern":      "pub enum IB { Hit, Stay }\npub function g(): i32 { let v = Hit; return 0; }\n",
+		"stops.fern":        "pub enum Stop { Output(i32), Done, Interrupted }\npub enum Wrap { Hold(Stop), Empty }\n",
 	}
 	e036 := []string{"E036"}
 	cases := []struct {
@@ -3763,6 +3764,12 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		{"local-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let Hit: i32 = 1; return Hit; }\n", nil},
 		{"pattern-settled-by-scrutinee", "import \"./a\";\nimport \"./b\";\nfunction pick(): b.B { return b.Stay; }\nfunction main(): i32 { match (pick()) { Hit => { return 1; }, Stay => { return 0; } } }\n", nil},
 		{"modules-that-do-not-see-each-other", "import \"./indep_a\";\nimport \"./indep_b\";\nfunction main(): i32 { return indep_a.f() + indep_b.g(); }\n", nil},
+		// IoError also has Interrupted, so a lookup by the bare name finds the
+		// other enum.
+		{"imported-payloadless-variant-in-an-option-is-a-binder", "import \"./stops\";\nfunction f(e: Option[stops.Stop]): i32 { match (e) { Some(Interrupted) => { return 2; }, _ => { return 0; } } }\nfunction main(): i32 { return f(None); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-in-a-tuple-is-a-binder", "import \"./stops\";\nfunction f(t: (stops.Stop, i32)): i32 { match (t) { (Interrupted, n) => { return n; } } }\nfunction main(): i32 { return f((stops.Done, 1)); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-in-a-payload-is-a-binder", "import \"./stops\";\nfunction f(w: stops.Wrap): i32 { match (w) { Hold(Interrupted) => { return 1; }, _ => { return 0; } } }\nfunction main(): i32 { return f(stops.Empty); }\n", []string{"E015"}},
+		{"imported-payloadless-variant-with-parentheses-matches-it", "import \"./stops\";\nfunction f(e: Option[stops.Stop]): i32 { match (e) { Some(Interrupted()) => { return 2; }, _ => { return 0; } } }\nfunction main(): i32 { return f(None); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

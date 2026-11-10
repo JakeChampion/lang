@@ -67,6 +67,7 @@ import "core/cmp";
 pub enum RsaError {
   ModulusTooSmall(i32),
   ModulusTooLarge(i32),
+  EvenModulus,
   BadExponent,
 }
 ```
@@ -100,6 +101,9 @@ pub function (e: RsaError) message(): string {
     },
     ModulusTooLarge(bits) => {
       return "rsa: the modulus is " + bits.to_string() + " bits, want at most 16384";
+    },
+    EvenModulus => {
+      return "rsa: the modulus is even";
     },
     BadExponent => {
       return "rsa: the exponent must be odd, at least 3 and at most 64 bits";
@@ -155,6 +159,9 @@ pub function public_key(modulus: [u8], exponent: [u8]): Result[PublicKey, RsaErr
   }
   if (bits > 16384) {
     return Err(ModulusTooLarge(bits));
+  }
+  if (!n.bit(0)) {
+    return Err(EvenModulus);
   }
   if (!e.bit(0) || e.bit_length() < 2 || e.bit_length() > 64) {
     return Err(BadExponent);

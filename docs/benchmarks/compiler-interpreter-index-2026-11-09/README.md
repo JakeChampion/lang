@@ -2,6 +2,11 @@
 
 Status: [experiment] initial completed controls from 2026-11-09.
 
+Publication note from 2026-11-10: two raw records now use lossless gzip storage.
+The [compression record](compression-identities.json) retains their original byte counts and SHA-256 hashes from commit `67180afb`.
+The manifest now records 146 data hashes.
+Measurements and original execution records stay unchanged.
+
 The [unused-search shortcut](../compiler-interpreter-targets-2026-11-09/README.md) improves two subsets but does not complete the full corpus within its diagnostic deadline.
 Its candidate CPU profile still attributes 49.43% of exclusive samples to `call_target`.
 The index addresses this residual declaration search.
@@ -23,7 +28,7 @@ Free and method argument-target searches use the index.
 Constant and function-value resolution also use the index.
 Other helpers receive the table and retain their declaration scans.
 The parser dispatch helper still receives the raw declaration array.
-The [patch](implementation.patch) retains the complete change.
+The [patch](implementation.patch.gz) retains the complete change.
 
 ## Completed comparison
 

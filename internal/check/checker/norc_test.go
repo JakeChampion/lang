@@ -28,6 +28,14 @@ function sum(n: i32): i32 {
   return t as i32;
 }
 @norc
+function run_user(frame: usize): i64 {
+  unsafe {
+    let kind = __user_run(frame);
+    __atomic_store_release(frame, kind);
+    return kind;
+  }
+}
+@norc
 function after_shadow(): i32 {
   if (true) { let sum = 1; }
   return sum(2);
@@ -156,6 +164,25 @@ func TestEarlyHookRules(t *testing.T) {
 		"a result":      {"@early\nfunction h(): i32 { return 1; }" + main, "must take no parameters and return void"},
 		"two hooks":     {"@early\nfunction a(): void {}\n@early\nfunction b(): void {}" + main, "is a second hook"},
 		"implies @norc": {"@early\nfunction h(): void { let s = \"x\"; }" + main, "`@early` function \"h\""},
+	} {
+		errs := checkErrors(t, c.src)
+		if len(errs) == 0 || !strings.Contains(fmt.Sprint(errs), c.want) {
+			t.Errorf("%s: errors %v, want %q", name, errs, c.want)
+		}
+	}
+}
+
+func TestSecondaryEntryRules(t *testing.T) {
+	const main = "\nfunction main(): i32 { return 0; }\n"
+	if errs := checkErrors(t, "@secondary\nfunction run(context: usize): void {}"+main); len(errs) != 0 {
+		t.Fatalf("a well-formed @secondary entry refused: %v", errs)
+	}
+	for name, c := range map[string]struct{ src, want string }{
+		"no parameter":  {"@secondary\nfunction s(): void {}" + main, "must take one usize, the context id, and return void"},
+		"an i32":        {"@secondary\nfunction s(n: i32): void {}" + main, "must take one usize, the context id, and return void"},
+		"a result":      {"@secondary\nfunction s(c: usize): i32 { return 1; }" + main, "must take one usize, the context id, and return void"},
+		"two entries":   {"@secondary\nfunction a(c: usize): void {}\n@secondary\nfunction b(c: usize): void {}" + main, "is a second entry"},
+		"implies @norc": {"@secondary\nfunction s(c: usize): void { let t = \"x\"; }" + main, "`@secondary` function \"s\""},
 	} {
 		errs := checkErrors(t, c.src)
 		if len(errs) == 0 || !strings.Contains(fmt.Sprint(errs), c.want) {
