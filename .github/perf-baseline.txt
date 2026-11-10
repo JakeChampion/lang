@@ -571,7 +571,8 @@ aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8497
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8507
-aarch64/map_probe_chain.ir	233221143
+# 2026-11-10: PR #15077, perf-aarch64 job 129585637063 measures map_probe_chain.ir 1.27% lower on main. #15077 changes only -g images.
+aarch64/map_probe_chain.ir	230251856
 aarch64/map_string.text	9472
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
