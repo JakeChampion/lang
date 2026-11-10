@@ -1,5 +1,6 @@
 import "core/cmp";
 import "core/error";
+import "std/array";
 import "std/cpio";
 import "std/option";
 import "std/test";
@@ -103,6 +104,34 @@ function test_read(): test.TestOutcome {
     return test.fail("no entry motd");
   };
   return test.assert_eq(text(a.read(a.entries[1])) + "|" + text(a.read(link)), "hello from fern\n|etc/motd");
+}
+
+// A directory, a file, a symbolic link and an empty file.
+function items(): cpio.Item[] {
+  return [
+    cpio.Item { name: "etc", mode: 0o40755 as u32, data: [] },
+    cpio.Item { name: "etc/motd", mode: 0o100644 as u32, data: bytes_of("hello from fern\n") },
+    cpio.Item { name: "motd", mode: 0o120777 as u32, data: bytes_of("etc/motd") },
+    cpio.Item { name: "empty", mode: 0o100600 as u32, data: [] },
+  ];
+}
+
+function test_write_round_trip(): test.TestOutcome {
+  let Ok(a) = cpio.parse(cpio.write(items())) else {
+    return test.fail("parse refused the written archive");
+  };
+  let got = "";
+  for e in a.entries {
+    got += e.name + " " + e.mode.to_string_radix(8) + " " + e.inode.to_string() + " " + e.size.to_string() + " " + text(a.read(e)) + "|";
+  }
+  return test.assert_eq(got, "etc 40755 1 0 |etc/motd 100644 2 16 hello from fern\n|motd 120777 3 8 etc/motd|empty 100600 4 0 |");
+}
+
+function test_write_header(): test.TestOutcome {
+  let b = cpio.write([cpio.Item { name: "a", mode: 0o100644 as u32, data: bytes_of("xyz") }]);
+  let fields = hex8(1) + hex8(0o100644) + hex8(0) + hex8(0) + hex8(1) + hex8(0) + hex8(3) + hex8(0) + hex8(0) + hex8(0) + hex8(0) + hex8(2) + hex8(0);
+  // The entry takes 116 bytes, and the trailer 124.
+  return test.assert_eq(text(array.slice(b, 0, 110)) + " " + b.len().to_string(), "070701" + fields + " 240");
 }
 
 function found(a: cpio.Archive, path: string): string {
@@ -247,5 +276,7 @@ function main(): i32 {
   r = r.it("parse refuses a bad name", test_name_refusals);
   r = r.it("parse refuses a file that ends past the bytes", test_file_past_the_bytes);
   r = r.it("errors support Display and Error", test_error_traits);
+  r = r.it("write gives an archive that parse reads back", test_write_round_trip);
+  r = r.it("write gives the fields of a newc header", test_write_header);
   return r.finish();
 }
