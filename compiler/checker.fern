@@ -3601,7 +3601,7 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
 
 function (s: Scope) receives(i: i32, recv_type: string): boolean {
   let ms = s.methods.methods[i];
-  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || s.unions.is_variant_of(recv_type, ms.receiver_type);
+  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);
 }
 
 function (s: Scope) lookup_method(name: string, recv_type: string): Option[MethodSig] {
@@ -3763,7 +3763,7 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
     if (s.methods.bases[i] == recv_type) {
       return true;
     }
-    if (s.unions.is_variant_of(recv_type, s.methods.methods[i].receiver_type)) {
+    if (is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {
       return true;
     }
     i = s.methods.names.next[i];
@@ -4281,14 +4281,6 @@ function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
     }
   }
   return t_unknown("`?` operand is not a resolved `?`-able enum");
-}
-
-function (ut: UnionTable) is_variant_of(struct_name: string, union_name: string): boolean {
-  let at = ut.index.find(union_name);
-  if (at < 0) {
-    return false;
-  }
-  return util.has_str(ut.unions[at].variants, struct_name);
 }
 
 function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {
