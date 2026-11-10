@@ -474,18 +474,25 @@ def emit_blake2b(p):
     p("        if (last && blk == nblocks - 1) { v14 ^= 0xffffffffffffffff as u64; }")
     for r in range(12):
         s = BLAKE2B_SIGMA[r % 10]
+        groups = []
         for gi, (a, b, c, d) in enumerate([(0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
                                            (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)]):
             x, y = f"({load_word(s[2 * gi], 8, False, 'u64', 64)})", f"({load_word(s[2 * gi + 1], 8, False, 'u64', 64)})"
             va, vb, vc, vd = f"v{a}", f"v{b}", f"v{c}", f"v{d}"
-            p(f"        {va} = {va} + {vb} + {x};")
-            p(f"        {vd} = {rotr(f'({vd} ^ {va})', 32, 64)};")
-            p(f"        {vc} += {vd};")
-            p(f"        {vb} = {rotr(f'({vb} ^ {vc})', 24, 64)};")
-            p(f"        {va} = {va} + {vb} + {y};")
-            p(f"        {vd} = {rotr(f'({vd} ^ {va})', 16, 64)};")
-            p(f"        {vc} += {vd};")
-            p(f"        {vb} = {rotr(f'({vb} ^ {vc})', 63, 64)};")
+            groups.append([
+                f"        {va} = {va} + {vb} + {x};",
+                f"        {vd} = {rotr(f'({vd} ^ {va})', 32, 64)};",
+                f"        {vc} += {vd};",
+                f"        {vb} = {rotr(f'({vb} ^ {vc})', 24, 64)};",
+                f"        {va} = {va} + {vb} + {y};",
+                f"        {vd} = {rotr(f'({vd} ^ {va})', 16, 64)};",
+                f"        {vc} += {vd};",
+                f"        {vb} = {rotr(f'({vb} ^ {vc})', 63, 64)};",
+            ])
+        for half in [groups[:4], groups[4:]]:
+            for phase in zip(*half):
+                for step in phase:
+                    p(step)
     for i in range(8):
         p(f"        h{i} = h{i} ^ v{i} ^ v{i + 8};")
     p("        counter += 128 as u64;")

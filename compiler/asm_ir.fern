@@ -7060,7 +7060,8 @@ function ssa_bin_in_slot(ext: i32, b: i32, disp: i32, reg_of: i32[], fr: SsaFram
   if (fr.imm.is_imm[b] && ssa.imm_sym(fr.imm, b) == "") {
     return ssa_alu_im(s, ext, 64, fr.imm.value[b] as i32, "%rbp", disp);
   }
-  let r = ssa_src(reg_of, b, "%rcx");
+  // Spilled binary operations reserve r11. rcx can hold a live value.
+  let r = ssa_src(reg_of, b, "%r11");
   s = ssa_load(reg_of, b, r, s);
   return ssa_alu_rm(s, ext, 64, false, r, "%rbp", disp);
 }

@@ -7,5 +7,11 @@ import (
 )
 
 func TestDigestBytes(t *testing.T) {
-	e2eharness.RunDigestByteCases(t, fernBin(t, "cksum"), crossPrefix(), nil)
+	e2eharness.RunDigestByteCasesAgainst(t, fernBin(t, "cksum"), crossPrefix(), crossArgv(referenceBin(t, "cksum")), nil)
+}
+
+func TestDigestBytesReferenceCommand(t *testing.T) {
+	oracle, marker := digestReferenceCommand(t, "cksum")
+	e2eharness.RunDigestByteCasesAgainst(t, fernBin(t, "cksum"), crossPrefix(), oracle, nil)
+	requireDigestReferenceCommand(t, marker)
 }
