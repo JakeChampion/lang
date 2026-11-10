@@ -1,0 +1,62 @@
+{
+  "input_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "entry_sha256": "e8cc6eedf993cdb610cb91349559936c0414c58a3e29dec02b83cf3ede423410",
+  "pr_head": "7bd045eb04c8ea0b5980f0526e778ae107571d05",
+  "code_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "note": "Paired correctness diagnosis for CI Android E051. No performance measurement. Fixed main4a entry and standard library, normal qualified binaries. The callback repair remains owned by PR15060.",
+  "runs": [
+    {
+      "label": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261109-2320/baseline-normal",
+        "-target",
+        "arm64-android",
+        "-stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/internal/stdlib",
+        "-check",
+        "/workspace/lang-interpreter-main-base-20261109-2320/examples/android/plex/app.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261109-2320",
+      "binary_sha256": "48978406291c39f67a96b1a6e428e511c5cd1614c7ed0c2788f343811b8677ff",
+      "fern_environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T01:12:19.479156+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T01:12:23.877452+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "c001649922e47e408cf2bc3c5df6dfd03a4f4980ae67de7a1fcdb1993c853985"
+    },
+    {
+      "label": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261109-2320/candidate-normal",
+        "-target",
+        "arm64-android",
+        "-stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/internal/stdlib",
+        "-check",
+        "/workspace/lang-interpreter-main-base-20261109-2320/examples/android/plex/app.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261109-2320",
+      "binary_sha256": "eea6e6b57c6a767cffc6e98394738c9c110b5c6270504d97610eab0bb2c5692a",
+      "fern_environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T01:12:23.947610+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-10T01:12:28.087173+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "c001649922e47e408cf2bc3c5df6dfd03a4f4980ae67de7a1fcdb1993c853985"
+    }
+  ],
+  "identical_diagnostics": true,
+  "finished": "2026-11-10T01:12:28.087963+00:00"
+}

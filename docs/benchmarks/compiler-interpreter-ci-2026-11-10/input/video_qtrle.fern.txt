@@ -1,0 +1,33 @@
+import "std/video/frame";
+import "std/video/qtrle";
+import "std/hex";
+import "../tests/stdlib/video_vectors";
+
+function main(): i32 {
+  let v = video_vectors.vectors()[5];
+  let packets: u8[][] = [];
+  for text in v.packets {
+    let Ok(p) = hex.decode(text) else {
+      return 1;
+    };
+    packets = packets.append(p);
+  }
+  let format = frame.Format { width: v.width, height: v.height };
+  let limits = frame.default_limits();
+  let Ok(initial) = frame.create(format, limits) else {
+    return 2;
+  };
+  let pixels = initial.pixels;
+  let total = 0u64;
+  let before = __heap_alloc_count();
+  for i in 0..100000 {
+    let Ok(decoded) = qtrle.decode_into(packets[i % 4], format, 32, pixels, limits) else {
+      return 3;
+    };
+    pixels = decoded.pixels;
+    total += pixels[i % pixels.len()] as u64;
+  }
+  let allocations = __heap_alloc_count() - before;
+  print(total.to_string() + " " + allocations.to_string());
+  return 0;
+}

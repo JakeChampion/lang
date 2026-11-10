@@ -13,6 +13,7 @@ The [interpreter target-search experiment](benchmarks/compiler-interpreter-targe
 Five alternating pairs reduce CPU time by 11.18% to 20.48% on a 32-record Opus diagnostic subset.
 Both binaries produce identical TAP output.
 Both full-corpus controls reach their 33-minute diagnostic limit without completion.
+
 The shortcut does not repair that timeout.
 Complete cold and warm compilation controls produce identical native output, with variable timings that establish no performance change.
 The candidate diagnostic profile still attributes 49.43% of exclusive samples to `call_target`.
@@ -21,6 +22,7 @@ The [function-name index experiment](benchmarks/compiler-interpreter-index-2026-
 Five pairs reduce CPU time by 16.83% to 25.60% on the first 32-record diagnostic subset, relative to the shortcut version.
 All eight targeted suites pass, including a same-count REPL replacement on three targets.
 Three further pairs reduce CPU time by 60.72% to 61.93% on the larger 32-record group.
+
 The indexed normal interpreter completes all 1,896 reference records in 527.217 seconds with exit zero.
 The original Go oracle/native `opus_delimited` subtest also passes in 439.89 seconds under its unchanged 33-minute package timeout.
 The index removes 22.56% of guest instructions on the first diagnostic group, relative to the shortcut version.
@@ -32,6 +34,11 @@ Ten targeted suites report 387 passes and zero skips.
 The combined shortcut and index remove 648,690 allocation events on the first group and 20,027,874 on the second group.
 All allocation controls balance their frees and report zero live bytes.
 The separate cold and warm compilation controls retain identical native output and establish no compiler timing gain.
+
+The [later CI controls](benchmarks/compiler-interpreter-ci-2026-11-10/README.md) include two complete interpreter shards.
+The current Opus shard passes all 72 selected subtests in 814.060 seconds under the unchanged 33-minute package budget.
+The complete source gate also passes.
+The archive records an inherited ARM64 assembly-size decrease and the separately owned Plex ownership diagnostic.
 
 | Workload | Main measurements | Required controls |
 | --- | --- | --- |

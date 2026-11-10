@@ -1,0 +1,78 @@
+{
+  "baseline_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "candidate_code_source": "6f6bddfc2af38b6c7e85d23d9338a10c8fb9c307",
+  "pr_head": "7bd045eb04c8ea0b5980f0526e778ae107571d05",
+  "fixed_input_source": "4a04428264dd4641ca1032cf5edc84762a883dd5",
+  "entry_sha256": "c74854b770a47d6763d288bd009966392d8f28c528a525bf1bff2518c122a782",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "ci_run": 42723690303,
+  "ci_job": 129524617582,
+  "metric": "aarch64/video_qtrle.text",
+  "recorded_baseline": 5682,
+  "ci_measured": 5600,
+  "runs": [
+    {
+      "label": "baseline",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261109-2320/baseline-normal",
+        "-target",
+        "arm64-linux",
+        "-stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/internal/stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/bench/video_qtrle.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261109-2320",
+      "binary_sha256": "48978406291c39f67a96b1a6e428e511c5cd1614c7ed0c2788f343811b8677ff",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T01:15:34.661798+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T01:15:34.927424+00:00",
+      "asm_sha256": "6b8a995a9f2369ecc87656f882fc0ac81d9d39dd3181ebf54c56eab90f95a80c",
+      "count_command": [
+        "grep",
+        "-c",
+        "^[[:space:]]",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-ci-20261110/reproduce/qtrle-baseline.s"
+      ],
+      "text_count": 5600
+    },
+    {
+      "label": "candidate",
+      "args": [
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-main-qualification-20261109-2320/candidate-normal",
+        "-target",
+        "arm64-linux",
+        "-stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/internal/stdlib",
+        "/workspace/lang-interpreter-main-base-20261109-2320/bench/video_qtrle.fern"
+      ],
+      "cwd": "/workspace/lang-interpreter-main-base-20261109-2320",
+      "binary_sha256": "eea6e6b57c6a767cffc6e98394738c9c110b5c6270504d97610eab0bb2c5692a",
+      "environment": {
+        "FERN_PROFILE": "0",
+        "FERN_LEAKCHECK": "0",
+        "FERN_RC_CERTIFY": "1",
+        "FERN_RC_CERTIFY_MEMO": "0"
+      },
+      "started": "2026-11-10T01:15:34.960581+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T01:15:35.226057+00:00",
+      "asm_sha256": "6b8a995a9f2369ecc87656f882fc0ac81d9d39dd3181ebf54c56eab90f95a80c",
+      "count_command": [
+        "grep",
+        "-c",
+        "^[[:space:]]",
+        "/workspace/lang-interpreter-dispatch-20261109/build/interpreter-ci-20261110/reproduce/qtrle-candidate.s"
+      ],
+      "text_count": 5600
+    }
+  ],
+  "note": "Static emitted-assembly count, using the same whitespace-line rule as scripts/perf-bench. Not native execution or a timing sample. Both source pairs already include the main change that moved this output.",
+  "identical_assembly": true,
+  "finished": "2026-11-10T01:15:35.230663+00:00"
+}

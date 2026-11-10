@@ -1,3 +1,7 @@
+# 2026-11-10: PR #15022 at 7bd045eb. CI job 129524617582 measures
+# aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
+# Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
+# Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
 # 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
 # string_count_byte after main updates. Bank the reported size and work counts.
 # Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
@@ -632,7 +636,7 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # Pin the measured x86-64 reduction. No performance limit increases.
 x86_64/video_qtrle.text 5371
 x86_64/video_qtrle.ir 1717224731
-aarch64/video_qtrle.text 5682
+aarch64/video_qtrle.text 5600
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.
 # Pinned to local native Callgrind and cross-target assembly measurements.
