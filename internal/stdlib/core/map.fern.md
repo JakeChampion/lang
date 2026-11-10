@@ -104,7 +104,7 @@ function __map_buf_bytes(cap: i32, hdr: i32): i32 {
 }
 
 function __map_ctrl_base(buf: usize, cap: i32): usize {
-  return buf + __map_hdr(buf) + cap * (4 + 2 * __ptr_width());
+  return buf + __map_hdr(buf) as usize + (cap * (4 + 2 * __ptr_width())) as usize;
 }
 
 function __map_h2(h: i32): i32 {
@@ -129,9 +129,9 @@ function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
     while (p < cap + 8) {
       let wordOff = p & 0 - 4;
       let shift = (p & 3) * 8;
-      let word = __load_i32(ctrlBase + wordOff);
+      let word = __load_i32(ctrlBase + wordOff as usize);
       let keep = 255 << shift ^ 0 - 1;
-      __store_i32(ctrlBase + wordOff, word & keep | v << shift);
+      __store_i32(ctrlBase + wordOff as usize, word & keep | v << shift);
       p += cap;
     }
   }
@@ -203,7 +203,7 @@ pub(package) function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): us
     }
     __store_i32(buf + 16, seed);
     __store_i32(buf + 20, keyTag >> 8);
-    __memset(buf + hdr, 255, cap * 4);
+    __memset(buf + hdr as usize, 255, cap * 4);
     __memset(__map_ctrl_base(buf, cap), 128, cap + 8);
     let base = __alloc(16);
     __store_i32(base, 1);
@@ -257,10 +257,10 @@ function __map_own_copied_cols(buf: usize): void {
     let len_ = __load_i32(buf + 4);
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let i = 0;
     while (i < len_) {
-      let slot = entriesBase + i * entryStride;
+      let slot = entriesBase + (i * entryStride) as usize;
       if (ownKeys) {
         __store_ptr(slot, __map_own_str_slot(__load_ptr(slot)));
       }
@@ -268,15 +268,15 @@ function __map_own_copied_cols(buf: usize): void {
         __fern_rc_inc(__load_ptr(slot));
       }
       if (ownVals) {
-        __store_ptr(slot + ptrW, __map_own_str_slot(__load_ptr(slot + ptrW)));
+        __store_ptr(slot + ptrW as usize, __map_own_str_slot(__load_ptr(slot + ptrW as usize)));
       }
       if (retainVals) {
-        __map_retain_val(buf, __load_ptr(slot + ptrW));
+        __map_retain_val(buf, __load_ptr(slot + ptrW as usize));
       }
       if (cellBytes != 0) {
         let fresh = __alloc(cellBytes);
-        __memcpy(fresh, __load_ptr(slot + ptrW), cellBytes);
-        __store_ptr(slot + ptrW, fresh);
+        __memcpy(fresh, __load_ptr(slot + ptrW as usize), cellBytes);
+        __store_ptr(slot + ptrW as usize, fresh);
       }
       if (keyCellBytes != 0) {
         let freshKey = __alloc(keyCellBytes);
@@ -294,7 +294,7 @@ function __map_own_str_slot(slot: usize): usize {
     if (boxed == slot) {
       return __fern_rc_inc(slot);
     }
-    if (__load_i32(boxed + (2 * __ptr_width() - 4)) < 0) {
+    if (__load_i32(boxed + (2 * __ptr_width() - 4) as usize) < 0) {
       return boxed;
     }
     __fern_rc_inc(__load_ptr(boxed));
@@ -516,8 +516,8 @@ function __map_val_at(m: usize, idx: i32): usize {
     let buf = __load_ptr(m);
     let cap = __load_i32(buf);
     let ptrW = __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
-    return __load_ptr(entriesBase + idx * (2 * ptrW) + ptrW);
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
+    return __load_ptr(entriesBase + (idx * (2 * ptrW)) as usize + ptrW as usize);
   }
 }
 ```
@@ -599,11 +599,11 @@ pub(package) function __map_i32_column(m: usize, kvOffset: i32): i32[] {
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: i32[] = [];
     let i = 0;
     while (i < len_) {
-      out = out.append(__load_i32(entriesBase + i * entryStride + kvOffset));
+      out = out.append(__load_i32(entriesBase + (i * entryStride) as usize + kvOffset as usize));
       i += 1;
     }
     return out;
@@ -677,11 +677,11 @@ pub(package) function __map_cell_column(m: usize, kvOffset: i32): i64[] {
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: i64[] = [];
     let i = 0;
     while (i < len_) {
-      out = out.append(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset)));
+      out = out.append(__load_i64(__load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize)));
       i += 1;
     }
     return out;
@@ -699,11 +699,11 @@ pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: f64[] = [];
     let i = 0;
     while (i < len_) {
-      out = out.append(f64_from_bits(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset))));
+      out = out.append(f64_from_bits(__load_i64(__load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize))));
       i += 1;
     }
     return out;
@@ -716,11 +716,11 @@ pub(package) function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: boolean[] = [];
     let i = 0;
     while (i < len_) {
-      out = out.append(__load_i32(entriesBase + i * entryStride + kvOffset) != 0);
+      out = out.append(__load_i32(entriesBase + (i * entryStride) as usize + kvOffset as usize) != 0);
       i += 1;
     }
     return out;
@@ -733,11 +733,11 @@ pub(package) function __map_u8_column(m: usize, kvOffset: i32): u8[] {
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out = __alloc_u8(len_);
     let i = 0;
     while (i < len_) {
-      let v32 = __load_i32(entriesBase + i * entryStride + kvOffset);
+      let v32 = __load_i32(entriesBase + (i * entryStride) as usize + kvOffset as usize);
       out = out.with(i, v32 as u8);
       i += 1;
     }
@@ -783,7 +783,7 @@ pub(package) function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32)
     let len_ = __load_i32(buf + 4);
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let base = __alloc(16 + len_ * ptrW);
     __store_i32(base + 4, len_);
     __store_i32(base + 8, 1);
@@ -791,11 +791,11 @@ pub(package) function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32)
     let data = base + 16;
     let i = 0;
     while (i < len_) {
-      let vp = __load_ptr(entriesBase + i * entryStride + kvOffset);
+      let vp = __load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize);
       if (retainVals == 1) {
         vp = __fern_rc_inc(vp);
       }
-      __store_ptr(data + i * ptrW, vp);
+      __store_ptr(data + (i * ptrW) as usize, vp);
       i += 1;
     }
     return data;
@@ -809,11 +809,11 @@ pub(package) function __map_string_column(m: usize, kvOffset: i32): usize {
     let len_ = __load_i32(buf + 4);
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: string[] = [];
     let i = 0;
     while (i < len_) {
-      let cellPtr = __load_ptr(entriesBase + i * entryStride + kvOffset);
+      let cellPtr = __load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize);
       let s = cellPtr as string;
       out = out.append(s);
       i += 1;
@@ -828,11 +828,11 @@ pub(package) function __map_box_column(m: usize, kvOffset: i32, retain: boolean)
     let cap = __load_i32(buf);
     let len_ = __load_i32(buf + 4);
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let out: usize[] = [];
     let i = 0;
     while (i < len_) {
-      let slot = __load_ptr(entriesBase + i * entryStride + kvOffset);
+      let slot = __load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize);
       if (retain) {
         slot = __fern_rc_inc(slot);
       }
@@ -865,10 +865,10 @@ pub(package) function __map_drop_values(m: usize): usize {
     let len_ = __load_i32(buf + 4);
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let i = 0;
     while (i < len_) {
-      __map_dec_value(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
+      __map_dec_value(buf, __load_ptr(entriesBase + (i * entryStride) as usize + ptrW as usize));
       i += 1;
     }
     return m;
@@ -885,10 +885,10 @@ pub(package) function __map_drop_impl(m: usize): usize {
       if (buf != 0 && __load_i32(buf + 8) != 1 && __map_key_cell_bytes(buf) != 0) {
         let len_ = __load_i32(buf + 4);
         let entryStride = 2 * __ptr_width();
-        let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+        let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
         let i = 0;
         while (i < len_) {
-          __map_free_key_cell(buf, __load_ptr(entriesBase + i * entryStride));
+          __map_free_key_cell(buf, __load_ptr(entriesBase + (i * entryStride) as usize));
           i += 1;
         }
       }
@@ -932,8 +932,8 @@ pub(package) function __map_key_of(m: usize, k: usize): usize {
       return 0;
     }
     let buf = __load_ptr(m);
-    let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
-    return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
+    let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
+    return __load_ptr(entriesBase + (idx * (2 * __ptr_width())) as usize);
   }
 }
 
@@ -944,8 +944,8 @@ pub(package) function __map_key_of_keyed(m: usize, k: usize, hash_fn: (usize) =>
       return 0;
     }
     let buf = __load_ptr(m);
-    let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
-    return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
+    let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
+    return __load_ptr(entriesBase + (idx * (2 * __ptr_width())) as usize);
   }
 }
 
@@ -958,12 +958,12 @@ pub(package) function __map_drop_keyed_impl(m: usize, key_release: (usize) => us
       let buf = __load_ptr(m);
       let len_ = __load_i32(buf + 4);
       let ptrW = __ptr_width();
-      let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+      let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
       let i = 0;
       while (i < len_) {
-        let slot = entriesBase + i * (2 * ptrW);
+        let slot = entriesBase + (i * (2 * ptrW)) as usize;
         key_release(__load_ptr(slot));
-        val_release(__load_ptr(slot + ptrW));
+        val_release(__load_ptr(slot + ptrW as usize));
         i += 1;
       }
     }
@@ -982,19 +982,19 @@ pub(package) function __map_drop_strcols_impl(m: usize): usize {
       let vals = __map_val_kind(buf) == 5;
       let len_ = __load_i32(buf + 4);
       let ptrW = __ptr_width();
-      let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+      let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
       let i = 0;
       while (i < len_) {
-        let slot = entriesBase + i * (2 * ptrW);
+        let slot = entriesBase + (i * (2 * ptrW)) as usize;
         if (keys) {
           __fern_str_dec(__load_ptr(slot) as string);
         } else {
           __map_free_key_cell(buf, __load_ptr(slot));
         }
         if (vals) {
-          __fern_str_dec(__load_ptr(slot + ptrW) as string);
+          __fern_str_dec(__load_ptr(slot + ptrW as usize) as string);
         } else {
-          __map_free_val_cell(buf, __load_ptr(slot + ptrW));
+          __map_free_val_cell(buf, __load_ptr(slot + ptrW as usize));
         }
         i += 1;
       }
@@ -1013,16 +1013,16 @@ pub(package) function __map_drop_boxes_impl(m: usize, release: (usize) => usize)
       let keys = __load_i32(buf + 8) == 1;
       let len_ = __load_i32(buf + 4);
       let ptrW = __ptr_width();
-      let entriesBase = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+      let entriesBase = buf + __map_hdr(buf) as usize + (__load_i32(buf) * 4) as usize;
       let i = 0;
       while (i < len_) {
-        let slot = entriesBase + i * (2 * ptrW);
+        let slot = entriesBase + (i * (2 * ptrW)) as usize;
         if (keys) {
           __fern_str_dec(__load_ptr(slot) as string);
         } else {
           __map_free_key_cell(buf, __load_ptr(slot));
         }
-        release(__load_ptr(slot + ptrW));
+        release(__load_ptr(slot + ptrW as usize));
         i += 1;
       }
     }
@@ -1051,16 +1051,16 @@ pub(package) function __map_clear_impl(m: usize): void {
       let len_ = __load_i32(buf + 4);
       let ptrW = __ptr_width();
       let entryStride = 2 * ptrW;
-      let entriesBase = buf + __map_hdr(buf) + cap * 4;
+      let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
       let i = 0;
       while (i < len_) {
-        __map_free_val_cell(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
-        __map_free_key_cell(buf, __load_ptr(entriesBase + i * entryStride));
+        __map_free_val_cell(buf, __load_ptr(entriesBase + (i * entryStride) as usize + ptrW as usize));
+        __map_free_key_cell(buf, __load_ptr(entriesBase + (i * entryStride) as usize));
         i += 1;
       }
     }
     __store_i32(buf + 4, 0);
-    __memset(buf + __map_hdr(buf), 255, cap * 4);
+    __memset(buf + __map_hdr(buf) as usize, 255, cap * 4);
     __memset(__map_ctrl_base(buf, cap), 128, cap + 8);
   }
 }
@@ -1076,13 +1076,13 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
     let cap = __load_i32(buf);
     let mask = cap - 1;
     let entryStride = 2 * __ptr_width();
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
 
     let len_ = __load_i32(buf + 4);
     if (len_ <= 8) {
       let j = 0;
       while (j < len_) {
-        let scanK = __load_ptr(entriesBase + j * entryStride);
+        let scanK = __load_ptr(entriesBase + (j * entryStride) as usize);
         if (eq_fn(scanK, k)) {
           return j;
         }
@@ -1093,12 +1093,12 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
 
     let h = __map_bucket_hash(k, hash_fn, __map_seed(buf));
     let bucket = h & mask;
-    let homeB = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    let homeB = __load_i32(buf + __map_hdr(buf) as usize + (bucket * 4) as usize);
     if (homeB == -1) {
       return -1;
     }
     if (homeB >= 0) {
-      if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
+      if (eq_fn(__load_ptr(entriesBase + (homeB * entryStride) as usize), k)) {
         return homeB;
       }
     }
@@ -1110,13 +1110,13 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
     let eb = 128 as u64 * lo;
     let probed = 0;
     while (probed < cap) {
-      let w = __load_i64(ctrlBase + bucket) as u64;
+      let w = __load_i64(ctrlBase + bucket as usize) as u64;
       let x = w ^ h2b;
       let hits = x - lo & (x ^ all) & hi;
       while (hits != 0 as u64) {
         let pos = bucket + (__ctz64(hits) >> 3) & mask;
-        let b = __load_i32(buf + __map_hdr(buf) + pos * 4);
-        let entryK = __load_ptr(entriesBase + b * entryStride);
+        let b = __load_i32(buf + __map_hdr(buf) as usize + (pos * 4) as usize);
+        let entryK = __load_ptr(entriesBase + (b * entryStride) as usize);
         if (eq_fn(entryK, k)) {
           return b;
         }
@@ -1186,7 +1186,7 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     let hdr = __map_hdr_bytes(oldKK);
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let oldEntries = oldBuf + hdr + oldCap * 4;
+    let oldEntries = oldBuf + hdr as usize + (oldCap * 4) as usize;
     let newCap = 4;
     if (oldCap != 0) {
       newCap = oldCap << 1;
@@ -1199,22 +1199,22 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     __store_i32(newBuf + 12, oldVK);
     __store_i32(newBuf + 16, seed);
     __store_i32(newBuf + 20, __load_i32(oldBuf + 20));
-    __memset(newBuf + hdr, 255, newCap * 4);
+    __memset(newBuf + hdr as usize, 255, newCap * 4);
     let newCtrl = __map_ctrl_base(newBuf, newCap);
     __memset(newCtrl, 128, newCap + 8);
-    let newEntries = newBuf + hdr + newCap * 4;
+    let newEntries = newBuf + hdr as usize + (newCap * 4) as usize;
     let i = 0;
     while (i < oldLen) {
-      let key = __load_ptr(oldEntries + i * entryStride);
-      let val = __load_ptr(oldEntries + i * entryStride + ptrW);
-      __store_ptr(newEntries + i * entryStride, key);
-      __store_ptr(newEntries + i * entryStride + ptrW, val);
+      let key = __load_ptr(oldEntries + (i * entryStride) as usize);
+      let val = __load_ptr(oldEntries + (i * entryStride) as usize + ptrW as usize);
+      __store_ptr(newEntries + (i * entryStride) as usize, key);
+      __store_ptr(newEntries + (i * entryStride) as usize + ptrW as usize, val);
       let h = __map_bucket_hash(key, hash_fn, seed);
       let bucket = h & newMask;
       while (true) {
-        let b = __load_i32(newBuf + hdr + bucket * 4);
+        let b = __load_i32(newBuf + hdr as usize + (bucket * 4) as usize);
         if (b == -1) {
-          __store_i32(newBuf + hdr + bucket * 4, i);
+          __store_i32(newBuf + hdr as usize + (bucket * 4) as usize, i);
           __map_ctrl_set(newCtrl, newCap, bucket, __map_h2(h));
           break;
         }
@@ -1253,19 +1253,19 @@ pub(package) function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (us
     let mask = cap - 1;
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let h = __map_bucket_hash(k, hash_fn, __map_seed(buf));
     let bucket = h & mask;
     let h2 = __map_h2(h);
     let ctrlBase = __map_ctrl_base(buf, cap);
     let insertSlot: i32 = 0 - 1;
-    let homeB = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    let homeB = __load_i32(buf + __map_hdr(buf) as usize + (bucket * 4) as usize);
     if (homeB == 0 - 1) {
       insertSlot = bucket;
-    } else if (homeB >= 0 && eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
-      let old = __load_ptr(entriesBase + homeB * entryStride + ptrW);
+    } else if (homeB >= 0 && eq_fn(__load_ptr(entriesBase + (homeB * entryStride) as usize), k)) {
+      let old = __load_ptr(entriesBase + (homeB * entryStride) as usize + ptrW as usize);
       __map_dec_value(buf, old);
-      __store_ptr(entriesBase + homeB * entryStride + ptrW, v);
+      __store_ptr(entriesBase + (homeB * entryStride) as usize + ptrW as usize, v);
       return old;
     }
     let lo = __map_swar_lo();
@@ -1277,17 +1277,17 @@ pub(package) function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (us
     let probed = 0;
     let done: boolean = insertSlot != 0 - 1;
     while (!done && probed < cap) {
-      let w = __load_i64(ctrlBase + bucket) as u64;
+      let w = __load_i64(ctrlBase + bucket as usize) as u64;
       let x = w ^ h2b;
       let hits = x - lo & (x ^ all) & hi;
       while (hits != 0 as u64) {
         let pos = bucket + (__ctz64(hits) >> 3) & mask;
-        let b = __load_i32(buf + __map_hdr(buf) + pos * 4);
-        let entryK = __load_ptr(entriesBase + b * entryStride);
+        let b = __load_i32(buf + __map_hdr(buf) as usize + (pos * 4) as usize);
+        let entryK = __load_ptr(entriesBase + (b * entryStride) as usize);
         if (eq_fn(entryK, k)) {
-          let old = __load_ptr(entriesBase + b * entryStride + ptrW);
+          let old = __load_ptr(entriesBase + (b * entryStride) as usize + ptrW as usize);
           __map_dec_value(buf, old);
-          __store_ptr(entriesBase + b * entryStride + ptrW, v);
+          __store_ptr(entriesBase + (b * entryStride) as usize + ptrW as usize, v);
           return old;
         }
         hits = hits & hits - 1 as u64;
@@ -1308,9 +1308,9 @@ pub(package) function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (us
         probed += 8;
       }
     }
-    __store_ptr(entriesBase + len_ * entryStride, k);
-    __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
-    __store_i32(buf + __map_hdr(buf) + insertSlot * 4, len_);
+    __store_ptr(entriesBase + (len_ * entryStride) as usize, k);
+    __store_ptr(entriesBase + (len_ * entryStride) as usize + ptrW as usize, v);
+    __store_i32(buf + __map_hdr(buf) as usize + (insertSlot * 4) as usize, len_);
     __map_ctrl_set(ctrlBase, cap, insertSlot, h2);
     __store_i32(buf + 4, len_ + 1);
     return 0;
@@ -1331,19 +1331,19 @@ pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usiz
     let mask = cap - 1;
     let ptrW = __ptr_width();
     let entryStride = 2 * ptrW;
-    let entriesBase = buf + __map_hdr(buf) + cap * 4;
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
     let h = __map_bucket_hash(k, hash_fn, seed);
     let bucket = h & mask;
     let ctrlBase = __map_ctrl_base(buf, cap);
     let foundBucket: i32 = 0 - 1;
     let idx = 0;
-    let homeB = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    let homeB = __load_i32(buf + __map_hdr(buf) as usize + (bucket * 4) as usize);
     if (homeB == 0 - 1) {
       return false;
     }
     let done = false;
     if (homeB >= 0) {
-      if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
+      if (eq_fn(__load_ptr(entriesBase + (homeB * entryStride) as usize), k)) {
         foundBucket = bucket;
         idx = homeB;
         done = true;
@@ -1356,13 +1356,13 @@ pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usiz
     let eb = 128 as u64 * lo;
     let probed = 0;
     while (!done && probed < cap) {
-      let w = __load_i64(ctrlBase + bucket) as u64;
+      let w = __load_i64(ctrlBase + bucket as usize) as u64;
       let x = w ^ h2b;
       let hits = x - lo & (x ^ all) & hi;
       while (hits != 0 as u64) {
         let pos = bucket + (__ctz64(hits) >> 3) & mask;
-        let b = __load_i32(buf + __map_hdr(buf) + pos * 4);
-        let entryK = __load_ptr(entriesBase + b * entryStride);
+        let b = __load_i32(buf + __map_hdr(buf) as usize + (pos * 4) as usize);
+        let entryK = __load_ptr(entriesBase + (b * entryStride) as usize);
         if (eq_fn(entryK, k)) {
           foundBucket = pos;
           idx = b;
@@ -1385,21 +1385,21 @@ pub(package) function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usiz
     if (foundBucket == 0 - 1) {
       return false;
     }
-    __map_free_val_cell(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
-    __map_free_key_cell(buf, __load_ptr(entriesBase + idx * entryStride));
-    __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
+    __map_free_val_cell(buf, __load_ptr(entriesBase + (idx * entryStride) as usize + ptrW as usize));
+    __map_free_key_cell(buf, __load_ptr(entriesBase + (idx * entryStride) as usize));
+    __store_i32(buf + __map_hdr(buf) as usize + (foundBucket * 4) as usize, 0 - 2);
     __map_ctrl_set(ctrlBase, cap, foundBucket, 254);
     let last = len_ - 1;
     if (idx != last) {
-      let lastKey = __load_ptr(entriesBase + last * entryStride);
+      let lastKey = __load_ptr(entriesBase + (last * entryStride) as usize);
       let lastBucket = __map_bucket_hash(lastKey, hash_fn, seed) & mask;
-      while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
+      while (__load_i32(buf + __map_hdr(buf) as usize + (lastBucket * 4) as usize) != last) {
         lastBucket = lastBucket + 1 & mask;
       }
-      let lastVal = __load_ptr(entriesBase + last * entryStride + ptrW);
-      __store_ptr(entriesBase + idx * entryStride, lastKey);
-      __store_ptr(entriesBase + idx * entryStride + ptrW, lastVal);
-      __store_i32(buf + __map_hdr(buf) + lastBucket * 4, idx);
+      let lastVal = __load_ptr(entriesBase + (last * entryStride) as usize + ptrW as usize);
+      __store_ptr(entriesBase + (idx * entryStride) as usize, lastKey);
+      __store_ptr(entriesBase + (idx * entryStride) as usize + ptrW as usize, lastVal);
+      __store_i32(buf + __map_hdr(buf) as usize + (lastBucket * 4) as usize, idx);
     }
     __store_i32(buf + 4, last);
     return true;

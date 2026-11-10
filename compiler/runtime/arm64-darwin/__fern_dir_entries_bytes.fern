@@ -35,7 +35,7 @@ function __fern_dir_entries_bytes(fd: i32): Result[i32[][], IoError] {
           if (skip == 0) {
             let nbuf = __raw_arr_box((nlen + 7) / 8);
             __store_i64(nbuf, nlen as i64);
-            __memcpy(nbuf + 8, buf + pos + 21, nlen);
+            __memcpy(nbuf + 8, buf + pos as usize + 21, nlen);
             let name_bytes = __raw_array(nbuf);
             names = names.append(name_bytes);
           }

@@ -26,7 +26,7 @@ function __fern_mounts(): Result[MountEntry[], IoError] {
       buf = nb;
       cap *= 2;
     }
-    let n = __syscall3(0, fd as i64, (buf + got) as i64, (cap - got) as i64) as i32;
+    let n = __syscall3(0, fd as i64, (buf + got as usize) as i64, (cap - got) as i64) as i32;
     if (n < 0 && (n != -4 || got == 0)) {
       bad = n;
       done = 1;

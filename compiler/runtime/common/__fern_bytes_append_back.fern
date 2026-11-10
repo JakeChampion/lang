@@ -4,9 +4,9 @@ function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] {
     let total = len as i64 + n as i64;
     if (total <= 2147483647i64 && total + 8i64 <= __load_i64(__raw_arr_ptr(a) - 16) * 8i64) {
       let base = __raw_arr_ptr(a) + 8;
-      let p = base + len;
-      let end = base + total as i32;
-      let q = p - dist;
+      let p = base + len as usize;
+      let end = base + (total as i32) as usize;
+      let q = p - dist as usize;
       while (p < end) {
         __store_i64(p, __load_i64(q));
         p += 8;

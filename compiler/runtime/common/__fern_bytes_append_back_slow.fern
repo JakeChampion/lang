@@ -37,12 +37,12 @@ function __fern_bytes_append_back_slow(own a: i32[], dist: i32, n: i32): i32[] {
       stop = total;
     }
     while (at < stop) {
-      __store_u8(base + at, __load_u8(base + at - dist));
+      __store_u8(base + at as usize, __load_u8(base + at as usize - dist as usize));
       at += 1;
     }
   }
   while (at < total) {
-    __store_i64(base + at, __load_i64(base + at - step));
+    __store_i64(base + at as usize, __load_i64(base + at as usize - step as usize));
     at += 8;
   }
   __store_i64(__raw_arr_ptr(out), total64);
