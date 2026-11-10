@@ -758,6 +758,14 @@ function coefficient_parser_tests(): void {
     check_packed_coefficients(data, 16, word as u32 * 2654435761u32);
   }
   let ordinary = [2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14];
+  for first in 0..27 {
+    let initial = if (first < 14) { [first] } else { [14, first - 14] };
+    for next in 0..27 {
+      let changed = if (next < 14) { [next] } else { [14, next - 14] };
+      let codes = initial.concat(ordinary).concat([15]).concat(changed).concat(ordinary).concat([15, 14, 15]);
+      check_packed_coefficients(nybbles(codes), 32, 1234567u32);
+    }
+  }
   for extended in [false, true] {
     for count in 0..25 {
       let codes = if (extended) { [14, 12] } else { [0] };
