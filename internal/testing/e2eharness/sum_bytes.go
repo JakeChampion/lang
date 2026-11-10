@@ -26,7 +26,7 @@ func SumByteCases() []SumByteCase {
 		all[i] = byte(i)
 	}
 	var cases []SumByteCase
-	for _, size := range []int{0, 1, 511, 512, 513, 1023, 1024, 1025, 65535, 65536, 65537, 131073} {
+	for _, size := range []int{0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 65535, 65536, 65537, 131073} {
 		input := string(bytes.Repeat(all, (size+255)/256)[:size])
 		for _, mode := range []string{"-r", "-s"} {
 			label := fmt.Sprintf("%s size %d", mode, size)
@@ -78,6 +78,14 @@ func RunSumByteCases(t *testing.T, bin string, runner []string, census func(*tes
 		t.Skip("requires GNU coreutils 9.4 or newer")
 	}
 	t.Logf("reference: %s (%s)", oracle, strings.SplitN(string(version), "\n", 2)[0])
+	RunSumByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunSumByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU sum reference command")
+	}
 	for _, tc := range SumByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -92,8 +100,11 @@ func RunSumByteCases(t *testing.T, bin string, runner []string, census func(*tes
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			env := append(os.Environ(), "LC_ALL=C")
-			ref := exec.CommandContext(ctx, oracle, args...)
+			refArgv := append(append([]string{}, oracle...), args...)
+			ref := exec.CommandContext(ctx, refArgv[0], refArgv[1:]...)
 			ref.Dir, ref.Env, ref.Stdin = dir, env, strings.NewReader(tc.Input)
+			var refDiagnostic bytes.Buffer
+			ref.Stderr = &refDiagnostic
 			want, err := ref.Output()
 			if err != nil {
 				t.Fatalf("GNU run: %v", err)
@@ -111,6 +122,16 @@ func RunSumByteCases(t *testing.T, bin string, runner []string, census func(*tes
 			}
 			if census != nil {
 				census(t, diagnostic.String())
+			}
+			var clean strings.Builder
+			for _, line := range strings.SplitAfter(diagnostic.String(), "\n") {
+				if census != nil && (strings.HasPrefix(line, "leakcheck:") || strings.HasPrefix(line, "fern-sanitizer: leak ")) {
+					continue
+				}
+				clean.WriteString(line)
+			}
+			if clean.String() != refDiagnostic.String() {
+				t.Fatalf("stderr differs: got %q, want %q", clean.String(), refDiagnostic.String())
 			}
 		})
 	}

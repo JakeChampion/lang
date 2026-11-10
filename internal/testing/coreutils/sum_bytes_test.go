@@ -7,5 +7,11 @@ import (
 )
 
 func TestSumBytesParity(t *testing.T) {
-	e2eharness.RunSumByteCases(t, fernBin(t, "sum"), crossPrefix(), nil)
+	e2eharness.RunSumByteCasesAgainst(t, fernBin(t, "sum"), crossPrefix(), crossArgv(referenceBin(t, "sum")), nil)
+}
+
+func TestSumBytesReferenceCommand(t *testing.T) {
+	oracle, marker := digestReferenceCommand(t, "sum")
+	e2eharness.RunSumByteCasesAgainst(t, fernBin(t, "sum"), crossPrefix(), oracle, nil)
+	requireDigestReferenceCommand(t, marker)
 }
