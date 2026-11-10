@@ -434,6 +434,8 @@ func ptxCases(t *testing.T) []invocation {
 
 		{name: "stdout closed", args: []string{in1}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{in1}, stdout: stdoutFull},
+		{name: "tex stdout closed", args: []string{"-T", in1}, stdout: stdoutClosed},
+		{name: "tex stdout full", args: []string{"-T", in1}, stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a usage error", args: []string{"-w", "0", in1}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
