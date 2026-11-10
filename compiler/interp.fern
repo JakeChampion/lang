@@ -869,13 +869,11 @@ function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
   return -1;
 }
 
-function user_func_exists(name: string, funcs: FuncTable): boolean {
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && funcs.decls[i].receiver_type.len() == 0) {
+function user_func_exists(name: string, funcs: Funcs): boolean {
+  for at in funcs.named(name) {
+    if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -938,25 +936,43 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-struct FuncTable { decls: parser.FuncDecl[], index: util.NameIndex, sites: i32[] }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
 
-function new_func_table(decls: parser.FuncDecl[]): FuncTable {
+// The program's functions in declaration order, indexed by the name a call
+// uses: the declared name, except that a Map `__iterator` is `iter`.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex }
+
+function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
-  let sites: i32[] = [];
-  for i in 0..decls.len() {
-    let fd = decls[i];
-    names = names.append(fd.name);
-    sites = sites.append(i);
-    let alias = runtime_method_name(fd);
-    if (alias != fd.name) {
-      names = names.append(alias);
-      sites = sites.append(i);
-    }
+  for fd in decls {
+    names = names.append(runtime_method_name(fd));
   }
-  return FuncTable { decls: decls, index: util.name_index(names), sites: sites };
+  return Funcs { decls: decls, runtime_names: util.name_index(names) };
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
+// The positions of the functions that a call of `name` can reach, in
+// declaration order: those declared or called as `name`.
+function (f: Funcs) named(name: string): i32[] {
+  let out: i32[] = [];
+  if (name == "__iterator") {
+    let k = 0;
+    while (k < f.decls.len()) {
+      if (f.decls[k].name == name) {
+        out = out.append(k);
+      }
+      k += 1;
+    }
+    return out;
+  }
+  let i = f.runtime_names.chain(name);
+  while (i >= 0) {
+    if (f.runtime_names.names[i] == name) {
+      out = out.append(i);
+    }
+    i = f.runtime_names.next[i];
+  }
+  return out;
+}
 
 pub function new_env(heap: interpheap.Heap): Env {
   let ns: string[] = [];
@@ -965,10 +981,10 @@ pub function new_env(heap: interpheap.Heap): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: new_func_table(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
 }
 
-function new_module_env(heap: interpheap.Heap, fs: FuncTable, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
+function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
@@ -1042,20 +1058,19 @@ function (e: Env) static_type_of(x: ast.Expr): string {
   }
 }
 
-function method_ret_type(funcs: FuncTable, recv_ty: string, name: string): string {
+function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   let found = "";
   let seen = false;
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && receiver_matches(funcs.decls[i].receiver_type, recv_ty)) {
-      let rt = applied_ret_type(funcs.decls[i], recv_ty);
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && receiver_matches(fd.receiver_type, recv_ty)) {
+      let rt = applied_ret_type(fd, recv_ty);
       if (seen && rt != found) {
         return "";
       }
       found = rt;
       seen = true;
     }
-    i += 1;
   }
   return found;
 }
@@ -1102,17 +1117,16 @@ function (e: Env) binds_name(name: string): boolean {
 
 // func_ret_type is the declared result type of function `name`, with the
 // call's written type arguments put in.
-function func_ret_type(funcs: FuncTable, name: string, targs: string[]): string {
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && funcs.decls[i].receiver_type.len() == 0) {
+function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       let refs: parser.TypeRef[] = [];
       for ta in targs {
         refs = refs.append(parser.parse_type_ref(ta));
       }
-      return applied_spelling(funcs.decls[i].ret_type, funcs.decls[i].all_type_params, refs);
+      return applied_spelling(fd.ret_type, fd.all_type_params, refs);
     }
-    i += 1;
   }
   return "";
 }
@@ -4865,22 +4879,19 @@ function eval_int_literal(t: string): Value {
 function resolve_ident_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
-    let ci = env.funcs.index.chain(name);
-    while (ci >= 0) {
-      let fd = env.funcs.decls[env.funcs.sites[ci]];
-      if (fd.name == name && fd.receiver_type.len() == 0 && fd.params.len() == 0 && fd.is_const) {
+    for ci in env.funcs.named(name) {
+      let cfd = env.funcs.decls[ci];
+      if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
         let no_args: Value[] = [];
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
-      ci = env.funcs.index.next[ci];
     }
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
-    let vfi = env.funcs.index.chain(name);
-    while (vfi >= 0) {
-      let vfd = env.funcs.decls[env.funcs.sites[vfi]];
+    for vfi in env.funcs.named(name) {
+      let vfd = env.funcs.decls[vfi];
       if (vfd.name == name && vfd.receiver_type.len() == 0) {
         let no_names: string[] = [];
         let no_values: Value[] = [];
@@ -4899,7 +4910,6 @@ function resolve_ident_value(name: string, env: Env): Value {
           generic_name: generic_name,
         };
       }
-      vfi = env.funcs.index.next[vfi];
     }
   }
   return idv;
@@ -5193,15 +5203,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       match (fa.obj) {
         ast.ExprIdent(ns_id) => {
           let qname = ns_id.name + "." + fa.field;
-          let qi = 0;
-          let qfound = false;
-          while (qi < env.funcs.decls.len()) {
-            if (env.funcs.decls[qi].name == qname && env.funcs.decls[qi].receiver_type.len() == 0) {
-              qfound = true;
-            }
-            qi += 1;
-          }
-          if (qfound) {
+          if (user_func_exists(qname, env.funcs)) {
             name = qname;
             qualified_handled = true;
           }
@@ -5392,27 +5394,21 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
     return assoc_index(env.funcs, tv.name, name);
   }
   let rt = value_type_name(recv);
-  let i = env.funcs.index.chain(name);
-  while (i >= 0) {
-    let at = env.funcs.sites[i];
+  for at in env.funcs.named(name) {
     let fd = env.funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return at;
     }
-    i = env.funcs.index.next[i];
   }
   return -1;
 }
 
 function free_target_index(name: string, env: Env): i32 {
-  let i = env.funcs.index.chain(name);
-  while (i >= 0) {
-    let at = env.funcs.sites[i];
+  for at in env.funcs.named(name) {
     let fd = env.funcs.decls[at];
     if (fd.name == name && fd.receiver_name.len() == 0 && fd.receiver_type.len() == 0) {
       return at;
     }
-    i = env.funcs.index.next[i];
   }
   return -1;
 }
@@ -5798,11 +5794,11 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
   return out;
 }
 
-function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_closure_mode(heap, cv, args, funcs, aliases, type_decls, false);
 }
 
-function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
+function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
   let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5846,14 +5842,13 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   return coerce_int_width(unwrap_try(step.ret), fv.ret_type);
 }
 
-function assoc_index(funcs: FuncTable, type_name: string, name: string): i32 {
+function assoc_index(funcs: Funcs, type_name: string, name: string): i32 {
   let base = util.base_type_name(type_name);
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && funcs.decls[i].receiver_name.len() == 0 && util.base_type_name(funcs.decls[i].receiver_type) == base) {
-      return i;
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_name.len() == 0 && util.base_type_name(fd.receiver_type) == base) {
+      return at;
     }
-    i += 1;
   }
   return -1;
 }
@@ -5893,7 +5888,7 @@ function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[
   return none;
 }
 
-function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let ai = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
@@ -6142,8 +6137,9 @@ function runtime_method_name(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function has_receiver_method(funcs: FuncTable, recv_type: string, name: string): boolean {
-  for fd in funcs.decls {
+function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
       return true;
     }
@@ -6168,7 +6164,7 @@ function runtime_receiver_name(spelling: string): string {
   return util.base_type_name(spelling);
 }
 
-function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: FuncTable): string {
+function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: Funcs): string {
   let traits = parser.dyn_trait_set(decl_ty);
   if (traits.len() == 0) {
     return name;
@@ -6188,7 +6184,7 @@ function dispatch_type_name(v: Value): string {
   return value_type_name(v);
 }
 
-function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
+function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq = has_key_eq(k, funcs, aliases);
   let i = 0;
   while (i < m.keys.len()) {
@@ -6208,9 +6204,10 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: FuncTabl
 
 // `==` on a struct or an enum value calls an `eq` method of its type, as
 // the compiled code does, whether an impl declares it or the type itself.
-function has_eq_method(v: Value, funcs: FuncTable, aliases: parser.TypeAlias[]): boolean {
+function has_eq_method(v: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = v {
-    for fd in funcs.decls {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && (base == sv.type_name || variant_of_enum(v, base, aliases))) {
         return true;
@@ -6220,9 +6217,10 @@ function has_eq_method(v: Value, funcs: FuncTable, aliases: parser.TypeAlias[]):
   return false;
 }
 
-function has_key_eq(k: Value, funcs: FuncTable, aliases: parser.TypeAlias[]): boolean {
+function has_key_eq(k: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = k {
-    for fd in funcs.decls {
+    for at in funcs.named("eq") {
+      let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || variant_of_enum(k, base, aliases))) {
         return true;
@@ -6232,7 +6230,7 @@ function has_key_eq(k: Value, funcs: FuncTable, aliases: parser.TypeAlias[]): bo
   return false;
 }
 
-function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_method_targs(heap, recv, "", name, args, [], funcs, aliases, type_decls);
 }
 
@@ -6365,7 +6363,7 @@ function reserved_concat(heap: interpheap.Heap, av: VArr, args: Value[]): Option
   return None;
 }
 
-function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
       return call_assoc(heap, tv.name, name, args, funcs, aliases, type_decls);
@@ -6493,15 +6491,14 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
   return call_declared_method(heap, recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
-function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   let own_method = has_receiver_method(funcs, recv_type, name);
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    let fd = funcs.decls[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     let receiver_base = runtime_receiver_name(fd.receiver_type);
     let rt_match = receiver_base == recv_type;
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
@@ -6529,7 +6526,6 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   if (name == "to_string" && args.len() == 0) {
     match (recv) {
@@ -7725,11 +7721,11 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_func_targs(heap, name, args, [], "", funcs, aliases, type_decls);
 }
 
-function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: FuncTable, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
@@ -8330,10 +8326,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
   }
-  let i = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && funcs.decls[i].receiver_type.len() == 0) {
-      let fd = funcs.decls[i];
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
+    if (fd.name == name && fd.receiver_type.len() == 0) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
@@ -8351,7 +8346,6 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       }
       return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
     }
-    i += 1;
   }
   return call_host(heap, name, args);
 }
@@ -9146,9 +9140,10 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
-function receiver_has_method(funcs: FuncTable, recv: Value, name: string): boolean {
+function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
   let rt = value_type_name(recv);
-  for fd in funcs.decls {
+  for at in funcs.named(name) {
+    let fd = funcs.decls[at];
     if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return true;
     }
@@ -9271,14 +9266,10 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let mod = lowered(raw_mod);
   let all_variants = module_type_decls(mod.structs);
   let all_aliases = aliases_with_enums(mod.aliases, all_variants, mod.enums);
-  let funcs = new_func_table(mod.funcs);
-  let i = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
-      let empty_args: Value[] = [];
-      return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
-    }
-    i += 1;
+  let funcs = funcs_of(mod.funcs);
+  if (funcs.named("main").len() > 0) {
+    let empty_args: Value[] = [];
+    return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
   let env = new_module_env(heap, funcs, all_aliases, all_variants);
   let mreassigned = body_assign_names(mod.top_stmts, []);
@@ -9300,7 +9291,7 @@ pub struct Session { decls: parser.Module, env: Env }
 pub function new_session(): Session {
   let heap = interpheap.create();
   set_args(["-"]);
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, new_func_table([]), [], module_type_decls([])) };
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, funcs_of([]), [], module_type_decls([])) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -9334,7 +9325,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod = lowered(decls);
   let types = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: new_func_table(mod.funcs), aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: funcs_of(mod.funcs), aliases: aliases_with_enums(mod.aliases, types, mod.enums), type_decls: types } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {

@@ -575,6 +575,7 @@ aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8497
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8507
+# 2026-11-10: PR #15077, perf-aarch64 job 129585637063 measures map_probe_chain.ir 1.27% lower on main. #15077 changes only -g images.
 # 2026-11-10: PR #15022 at 206df7ee, ARM64 CI job 129589649703.
 # Bank 230251856 guest instructions from run 42743098908. Keep the 1% tolerance.
 aarch64/map_probe_chain.ir	230251856

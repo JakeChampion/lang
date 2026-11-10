@@ -1,0 +1,31 @@
+// spec: DI-14
+function zero(): i32 {
+  let cell_new = (): i32 => 7;
+  return cell_new();
+}
+
+function two(): i32 {
+  let cell_new = (a: i32, b: i32): i32 => a + b;
+  return cell_new(4, 5);
+}
+
+function parameter(cell_new: (i32) => i32): i32 {
+  return cell_new(3);
+}
+
+function captured(): i32 {
+  let cell_new = (n: i32): i32 => n * 2;
+  let nested = (): i32 => cell_new(4);
+  return nested();
+}
+
+function main(): i32 {
+  let ordinary = cell_new(5);
+  ordinary.set(6);
+  print(ordinary.get());
+  print(zero());
+  print(two());
+  print(parameter((n: i32): i32 => n * 4));
+  print(captured());
+  return 0;
+}

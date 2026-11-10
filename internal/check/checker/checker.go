@@ -14826,35 +14826,37 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
-			if len(n.Args) != 1 {
-				c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
-				return ast.StructType{Name: "Cell"}
-			}
-			var want ast.Type
-			if ct, ok := callExpected.(ast.StructType); ok && ct.Name == "Cell" && len(ct.Args) == 1 {
-				want = ct.Args[0]
-			}
-			c.setElemHintFor(n.Args[0], want)
-			c.expectedType = want
-			at := c.checkExpr(n.Args[0], s)
-			c.expectedType = nil
-			c.elemHint = nil
-			if want != nil {
-				c.settleNumeric(n.Args[0], want)
-				at = c.postSettleType(n.Args[0], at)
-				c.stampStructTypeArgs(n.Args[0], want)
-				c.refineCallTypeArgsFromDest(n.Args[0], want)
-				if at != nil && c.assignable(want, at) {
-					at = want
+			if _, local := c.calleeBinding(id, s); !local {
+				if len(n.Args) != 1 {
+					c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
+					return ast.StructType{Name: "Cell"}
 				}
+				var want ast.Type
+				if ct, ok := callExpected.(ast.StructType); ok && ct.Name == "Cell" && len(ct.Args) == 1 {
+					want = ct.Args[0]
+				}
+				c.setElemHintFor(n.Args[0], want)
+				c.expectedType = want
+				at := c.checkExpr(n.Args[0], s)
+				c.expectedType = nil
+				c.elemHint = nil
+				if want != nil {
+					c.settleNumeric(n.Args[0], want)
+					at = c.postSettleType(n.Args[0], at)
+					c.stampStructTypeArgs(n.Args[0], want)
+					c.refineCallTypeArgsFromDest(n.Args[0], want)
+					if at != nil && c.assignable(want, at) {
+						at = want
+					}
+				}
+				at = c.postSettleType(n.Args[0], at)
+				if at == nil {
+					return ast.StructType{Name: "Cell"}
+				}
+				c.cellElemError(n.Args[0].Pos(), at)
+				n.TypeArgs = []ast.Type{at}
+				return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 			}
-			at = c.postSettleType(n.Args[0], at)
-			if at == nil {
-				return ast.StructType{Name: "Cell"}
-			}
-			c.cellElemError(n.Args[0].Pos(), at)
-			n.TypeArgs = []ast.Type{at}
-			return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
@@ -17612,7 +17614,7 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 
 func isCellNew(call *ast.Call) bool {
 	id, ok := call.Callee.(*ast.Ident)
-	return ok && id.Name == "cell_new"
+	return ok && id.Name == "cell_new" && !id.Local
 }
 
 func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {

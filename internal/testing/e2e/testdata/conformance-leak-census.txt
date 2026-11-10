@@ -1,3 +1,4 @@
+# 2026-11-10: cell_constructor_shadowed_callbacks has zero unpaired allocations under native RC trace.
 # 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
 # 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
 # 2026-11-09: lambda_every_path_returns is clean under RC trace.
@@ -205,6 +206,7 @@ cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_constructor_result_ownership                    0
+cell_constructor_shadowed_callbacks                  0
 cell_in_container                                    0
 cell_native_descriptor_snapshots                     0
 cell_settles_to_its_declaration                      0
