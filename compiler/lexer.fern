@@ -402,19 +402,30 @@ function punct_double(b0: i32, b1: i32): string {
   return "";
 }
 
-// The bytes of the one-byte punctuation tokens, and the text of each one
-// in the same order.
-const PUNCT_BYTES: string = "+-*/%=<>!~&|^?(){}[],;:.@";
+// PUNCT_TEXTS holds the text of each one-byte punctuation token.
+// PUNCT_SLOT[b] is one more than the index of the byte b in PUNCT_TEXTS, or 0.
+const PUNCT_SLOT: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 9u8, 0u8, 0u8, 0u8, 5u8, 11u8, 0u8, 15u8, 16u8, 3u8, 1u8, 21u8, 2u8, 24u8, 4u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 23u8, 22u8, 7u8, 6u8, 8u8, 14u8,
+  25u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 19u8, 0u8, 20u8, 13u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 17u8, 12u8, 18u8, 10u8, 0u8,
+];
 
 const PUNCT_TEXTS: string[] = ["+", "-", "*", "/", "%", "=", "<", ">", "!", "~", "&", "|", "^", "?", "(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "@"];
 
 function single_punct(b: i32): string {
-  for i in 0..PUNCT_BYTES.len() {
-    if (PUNCT_BYTES[i] as i32 == b) {
-      return PUNCT_TEXTS[i];
-    }
+  if (b < 0 || b >= PUNCT_SLOT.len()) {
+    return "";
   }
-  return "";
+  let k = PUNCT_SLOT[b] as i32;
+  if (k == 0) {
+    return "";
+  }
+  return PUNCT_TEXTS[k - 1];
 }
 
 pub struct Comment { line: i32, col: i32, text: string, trailing: boolean }
@@ -1410,18 +1421,14 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     }
     let mp = match_multipunct(l.src, l.i, l.n);
     if (mp.len() > 0) {
-      let i = 0;
-      while (i < mp.len()) {
-        l = l.advance();
-        i += 1;
-      }
+      l = l.skip(mp.len());
       out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
       after_dot = false;
       continue;
     }
     let text = single_punct(b);
     if (text.len() > 0) {
-      l = l.advance();
+      l = l.skip(1);
       out = out.append(TokPunct { text: text, line: start_line, col: start_col });
       after_dot = b == 46;
       continue;

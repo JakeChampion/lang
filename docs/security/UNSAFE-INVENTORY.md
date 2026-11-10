@@ -55,6 +55,17 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `share_unchecked(v)` | `T -> T` | The result shares what `v` holds, and an own parameter accepts it through local aliases and helper returns. The caller must prevent use of a handle after a holder closes it. |
 | `__fern_rc_inc(p)`, `__fern_arr_dec(p, n)`, `__fern_box_free(p, n)`, `__fern_drop_arr_ptr(p, n)`, `__fern_str_dec(s)` | box pointer and count | `p` must be a live box with a correct count. A wrong count double-frees or leaks. |
 
+The TLS identity constructor shares only its `PrivateKey` value.
+`EcdsaKey` contains a curve tag and a scalar byte array.
+`Ed25519Seed` contains a seed byte array.
+Neither variant holds a descriptor, a connection, a record counter, or a mutable external resource.
+Key reads do not invalidate another holder.
+Erase uses copy-on-write and preserves every other holder's bytes.
+
+The identity probe erases the source holder, then signs and verifies with the identity.
+The unique-key storage scans and stale-secret controls establish a separate erase obligation.
+This assertion does not authorize shared TLS session state or a shared-cell ownership transfer.
+
 The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).
 The arena checks each obligation above, and a broken obligation stops the run with an error.
 The arena holds only `__alloc` blocks, so it cannot read the layout of a value.

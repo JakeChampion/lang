@@ -64,6 +64,7 @@ It does not support WAVE_FORMAT_EXTENSIBLE or RF64.
 - `ulc.fern` implements command-line file I/O.
 
 The transform cost is `O(N log N)`.
+Transform plans advance cosine and sine together in two double lanes, with direct evaluation every 32 steps.
 Each decoder owns its xorshift seed and overlap buffers.
 Packed float SIMD computes the FFT.
 The block API retains double precision for window and overlap operations.

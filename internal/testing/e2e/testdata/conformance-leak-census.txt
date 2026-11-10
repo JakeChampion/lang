@@ -1,3 +1,4 @@
+# 2026-11-09: union_widens_in_a_literal_slot is clean under RC trace.
 # 2026-11-10: cell_constructor_result_ownership has zero unpaired allocations under RC trace.
 # 2026-11-09: lambda_every_path_returns is clean under RC trace.
 # 2026-11-10: associated_factory_result_is_owned has zero unpaired allocations under native RC trace.
@@ -1304,6 +1305,7 @@ union_eval                                           0
 union_lambda_param                                   0
 union_member_expected_type                           0
 union_member_widens_in_variant_payload               0
+union_widens_in_a_literal_slot                       0
 unit_variant_through_generic_call_settles            0
 unsafe_block_accepts_obligations                     0
 unsafe_block_accepts_pointer_casts                   0
