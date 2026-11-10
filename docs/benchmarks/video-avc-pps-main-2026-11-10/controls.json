@@ -1,0 +1,83 @@
+{
+  "compiler_sha256": "bead6a81a9a0d0f31d5b84afc85e907e6cc28cfc9f07e488e0d94d9baf0d62c0",
+  "compiler_source_main": "c9547605f513b81cb1c26d1cb4deaf37b20648bd",
+  "repair_stdlib_commit": "449ddc4ac13dc83e7c006abe9022a988d951ae4c",
+  "feature": "1fa7bfb82326371ba958ede43f651daa406d41a1",
+  "matches": [
+    {
+      "benchmark": "http_hello",
+      "target": "x86-64-linux",
+      "sha256": "b2eb2713ad9d6980b9a3bd630635dd1b73bfe514d0be997d0cacf159b495b380"
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "arm64-linux",
+      "sha256": "2ce981aa50eec0b3c5a60036c62ed489b8e73c196e3732ed474b8767cde3eb7c"
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "wasm32-wasi",
+      "sha256": "f4168e7e8a9209554b2d2e9ae9aaae9b3544dbc80718be9513ce94ea075ae3c7"
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "x86-64-linux",
+      "sha256": "24bc56924951782eeb4be2016bb86fb821a56f971071f424e6b35007af48da01"
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "arm64-linux",
+      "sha256": "6b8a995a9f2369ecc87656f882fc0ac81d9d39dd3181ebf54c56eab90f95a80c"
+    },
+    {
+      "benchmark": "video_qtrle",
+      "target": "wasm32-wasi",
+      "sha256": "66fba2d4db59c08c2310c5e088593608a106e58789d79fbbd116f9200f1c85a4"
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "x86-64-linux",
+      "sha256": "b5946f8c676a5bce4c2a248a13a8c66a2e407ffdffba569ba020a1cf736f1d17"
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "arm64-linux",
+      "sha256": "9d526c4899295f3618b2301cd7d0bf52286eb388dbca2fe107d1019d3dc91b80"
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "wasm32-wasi",
+      "sha256": "4114f6af6b4dcf19e146dd255fcaf8508baab393938670f447e9e41ce7bf7386"
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "x86-64-linux",
+      "sha256": "90470dd717599df98f9e76e66090c0631f0705f34d579d4466552beced7d250b"
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "arm64-linux",
+      "sha256": "fcba7a95a293c2afc0c5f3c9635e52f994fcab8f4264869e394c10a301c5276b"
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "wasm32-wasi",
+      "sha256": "b8c8dc0e5ec89c67bf21265b36aa928ad4368ba933ed8f7e2e36e59bf149d90c"
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "x86-64-linux",
+      "sha256": "f34640e836b63de8592ae6017e55f30e32c72c3fc0c75ba3cf9e5e11e46df2f4"
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "arm64-linux",
+      "sha256": "b21e52dc55cc5ab70089b70f7725b805cff331d8c90a08ee3227d8e1e8ff2400"
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "wasm32-wasi",
+      "sha256": "a9e3c8dc741a2cbde815e7c4957093c1183a711e7b233fc0daf7df76ea7b7ab1"
+    }
+  ]
+}

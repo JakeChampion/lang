@@ -692,7 +692,7 @@ function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, 
 function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): boolean {
   for b in below {
     for d in b.dns_names {
-      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns)) {
+      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns) || __wildcard_reaches(d, ca.excluded_dns)) {
         return false;
       }
     }
@@ -703,6 +703,25 @@ function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): bool
     }
   }
   return true;
+}
+
+// A wildcard name matches each name one label below its base, so it reaches
+// an excluded subtree that lies below that base.
+function __wildcard_reaches(name: string, subtrees: string[]): boolean {
+  match (__normal(name).strip_prefix("*")) {
+    Some(below) => {
+      for t in subtrees {
+        if (below.starts_with(".") && __normal(t).ends_with(below)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
 }
 
 function __dns_within_any(name: string, subtrees: string[]): boolean {

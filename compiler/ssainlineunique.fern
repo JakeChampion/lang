@@ -41,7 +41,7 @@ function program(text: string, arm: boolean): Program {
       let name = "";
       let decoded = isa.Op { kind: 30, a: "", b: "", target: "" };
       if (label(line)) {
-        name = slice_unchecked(line, 0, line.len() - 1) + "";
+        name = slice_unchecked(line, 0, line.len() - 1).to_owned();
       } else {
         decoded = isa.decode(line, arm);
         if (decoded.kind == 0) {

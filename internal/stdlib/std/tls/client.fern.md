@@ -447,6 +447,14 @@ function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: messa
   return tickets;
 }
 
+// RFC 8446 section 4.6.1: a client keeps a ticket seven days at most.
+function __ticket_seconds(lifetime: i64): i64 {
+  if (lifetime > 604800 as i64) {
+    return 604800 as i64;
+  }
+  return lifetime;
+}
+
 function __max_early(t: message.NewSessionTicket): u32 {
   match (message.find(t.extensions, message.EXT_EARLY_DATA)) {
     Some(d) => {
@@ -464,7 +472,7 @@ function __max_early(t: message.NewSessionTicket): u32 {
 pub function ticket_from(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp): Option[Ticket] {
   match (c.resumption_psk(t.nonce)) {
     Ok(psk) => {
-      return Some(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(t.lifetime as i64), age_add: t.age_add, received: now, server_name: server_name, max_early: __max_early(t) });
+      return Some(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: time.duration_seconds(__ticket_seconds(t.lifetime as i64)), age_add: t.age_add, received: now, server_name: server_name, max_early: __max_early(t) });
     },
     Err(_) => {
       return None;

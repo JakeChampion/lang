@@ -59,13 +59,13 @@ pub function operation(name: string): string {
     while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
       end += 1;
     }
-    return slice_unchecked(name, prefix.len(), end) + "";
+    return slice_unchecked(name, prefix.len(), end).to_owned();
   }
   if (name.starts_with("ndarray__NdArray__")) {
     let k = 0;
     while (k < name.len()) {
       if (name[k] == b'.') {
-        return slice_unchecked(name, k + 1, name.len()) + "";
+        return slice_unchecked(name, k + 1, name.len()).to_owned();
       }
       k += 1;
     }

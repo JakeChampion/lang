@@ -1,5 +1,6 @@
 import "./ast";
 import "./util";
+import "std/string";
 
 pub function fold_expr[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_expr_pruned(e, acc, visit, descend_all);
@@ -1078,9 +1079,9 @@ pub function append_bound_name(own acc: string[], name: string): string[] {
   let i = 0;
   while (i <= name.len()) {
     if (i == name.len() || name[i] == b',' && depth == 0) {
-      let piece = slice_unchecked(name, start, i) + "";
+      let piece = slice_unchecked(name, start, i).to_owned();
       if (util.is_tuple_type_name(piece)) {
-        acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1) + "");
+        acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1).to_owned());
       } else if (piece.len() > 0 && piece != "_") {
         acc = acc.append(piece);
       }

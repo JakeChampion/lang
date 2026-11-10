@@ -36,7 +36,7 @@ pub function read_frame(inp: Input): Frame {
     }
     at = util.index_of_sub(inp.pending, "\r\n\r\n");
   }
-  let n = content_length(slice_unchecked(inp.pending, 0, at) + "");
+  let n = content_length(slice_unchecked(inp.pending, 0, at).to_owned());
   if (n < 0) {
     return Frame { inp: inp, body: "", done: true, err: "missing or malformed Content-Length header" };
   }
@@ -48,8 +48,8 @@ pub function read_frame(inp: Input): Frame {
       return Frame { inp: inp, body: "", done: true, err: "input ended inside a message" };
     }
   }
-  let body = slice_unchecked(inp.pending, start, start + n) + "";
-  let rest = slice_unchecked(inp.pending, start + n, inp.pending.len()) + "";
+  let body = slice_unchecked(inp.pending, start, start + n).to_owned();
+  let rest = slice_unchecked(inp.pending, start + n, inp.pending.len()).to_owned();
   return Frame { inp: Input { r: inp.r, pending: rest }, body: body, done: false, err: "" };
 }
 
@@ -61,10 +61,10 @@ function content_length(headers: string): i32 {
     if (end < 0) {
       end = rest.len();
     }
-    let line = slice_unchecked(rest, 0, end) + "";
+    let line = slice_unchecked(rest, 0, end).to_owned();
     let colon = util.index_of_sub(line, ":");
-    if (colon > 0 && lower_ascii((slice_unchecked(line, 0, colon) + "").trim()) == "content-length") {
-      let v = (slice_unchecked(line, colon + 1, line.len()) + "").trim();
+    if (colon > 0 && lower_ascii(slice_unchecked(line, 0, colon).to_owned().trim()) == "content-length") {
+      let v = slice_unchecked(line, colon + 1, line.len()).to_owned().trim();
       if (util.is_all_digits(v) && v.len() <= 9) {
         n = util.digits_to_i32(v);
       } else {
@@ -74,7 +74,7 @@ function content_length(headers: string): i32 {
     if (end + 2 >= rest.len()) {
       return n;
     }
-    rest = slice_unchecked(rest, end + 2, rest.len()) + "";
+    rest = slice_unchecked(rest, end + 2, rest.len()).to_owned();
   }
   return n;
 }
@@ -457,7 +457,7 @@ function position_json(line: i32, character: i32): string {
 pub function whole_document_edit(src: string, text: string): string {
   let t = text_of(src);
   let last = t.starts.len() - 1;
-  let tail = slice_unchecked(src, t.starts[last], src.len()) + "";
+  let tail = slice_unchecked(src, t.starts[last], src.len()).to_owned();
   return text_edit(range_json(0, 0, last, utf16_units(tail, tail.len())), text);
 }
 
@@ -487,7 +487,7 @@ pub function line_text(t: Text, n: i32): string {
   if (end > start && t.src[end - 1] == b'\r') {
     end -= 1;
   }
-  return slice_unchecked(t.src, start, end) + "";
+  return slice_unchecked(t.src, start, end).to_owned();
 }
 
 pub function utf16_col(line: string, col: i32): i32 {
@@ -546,12 +546,12 @@ pub function uri_path(uri: string): string {
   if (uri.len() <= scheme.len() || slice_unchecked(uri, 0, scheme.len()) != scheme) {
     return "";
   }
-  let rest = slice_unchecked(uri, scheme.len(), uri.len()) + "";
+  let rest = slice_unchecked(uri, scheme.len(), uri.len()).to_owned();
   let slash = util.index_of_sub(rest, "/");
   if (slash < 0) {
     return "";
   }
-  return percent_decode(slice_unchecked(rest, slash, rest.len()) + "");
+  return percent_decode(slice_unchecked(rest, slash, rest.len()).to_owned());
 }
 
 pub function file_uri(path: string): string {

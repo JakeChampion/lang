@@ -271,7 +271,7 @@ function html_title(d: literate.Doc): string {
       for line in literate.split_lines(b.raw) {
         let h = line.trim();
         if (h.starts_with("# ")) {
-          return (slice_unchecked(h, 2, h.len()) + "").trim();
+          return slice_unchecked(h, 2, h.len()).to_owned().trim();
         }
       }
     }
@@ -297,7 +297,7 @@ function toc_html(d: literate.Doc): string {
         } else if (in_fence == 0 && heading_level(t) > 0) {
           let n = heading_level(t);
           levels = levels.append(n);
-          texts = texts.append((slice_unchecked(t, n + 1, t.len()) + "").trim());
+          texts = texts.append(slice_unchecked(t, n + 1, t.len()).to_owned().trim());
         }
       }
     }
@@ -406,7 +406,7 @@ pub function markdown_to_html(prose: string): string {
     } else if (heading_level(t) > 0) {
       h = flush_para(h);
       let n = heading_level(t);
-      let text = (slice_unchecked(t, n + 1, t.len()) + "").trim();
+      let text = slice_unchecked(t, n + 1, t.len()).to_owned().trim();
       let tag = "h" + util.i32_to_string(n);
       h = Html { ...h, out: h.out + "<" + tag + " id=\"" + text.slugify() + "\">" + inline_markdown(text) + "</" + tag + ">\n" };
       i += 1;
@@ -431,7 +431,7 @@ pub function markdown_to_html(prose: string): string {
 function fenced_html(lines: string[], i: i32): (string, i32) {
   let t = lines[i].trim();
   let open = run_len(t, b'`');
-  let lang = (slice_unchecked(t, open, t.len()) + "").trim();
+  let lang = slice_unchecked(t, open, t.len()).to_owned().trim();
   let s = "<pre class=\"code display\"><code>";
   let k = i + 1;
   while (k < lines.len()) {
@@ -461,7 +461,7 @@ function quote_html(lines: string[], i: i32): (string, i32) {
     if (k > i) {
       s += " ";
     }
-    s += inline_markdown((slice_unchecked(q, 1, q.len()) + "").trim());
+    s += inline_markdown(slice_unchecked(q, 1, q.len()).to_owned().trim());
     k += 1;
   }
   return ("<blockquote>" + s + "</blockquote>\n", k);
@@ -481,7 +481,7 @@ function list_html(lines: string[], i: i32, unordered: boolean): (string, i32) {
       if (!is_unordered_item(t)) {
         break;
       }
-      item = (slice_unchecked(t, 1, t.len()) + "").trim();
+      item = slice_unchecked(t, 1, t.len()).to_owned().trim();
     } else if (item.len() == 0) {
       break;
     }
@@ -531,7 +531,7 @@ function ordered_item(t: string): string {
   while (k < t.len() && is_space(t[k])) {
     k += 1;
   }
-  return slice_unchecked(t, k, t.len()) + "";
+  return slice_unchecked(t, k, t.len()).to_owned();
 }
 
 function is_space(c: u8): boolean {
@@ -547,13 +547,13 @@ pub function inline_markdown(s: string): string {
       while (j < s.len() && s[j] != b'`') {
         j += 1;
       }
-      out += emphasis(slice_unchecked(s, i, j) + "");
+      out += emphasis(slice_unchecked(s, i, j).to_owned());
       i = j;
     } else {
-      let n = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
+      let n = run_len(slice_unchecked(s, i, s.len()).to_owned(), b'`');
       let close = find_closer(s, i + n, n);
       if (close >= 0) {
-        out = out + "<code>" + html_escape(trim_code_span(slice_unchecked(s, i + n, close) + "")) + "</code>";
+        out = out + "<code>" + html_escape(trim_code_span(slice_unchecked(s, i + n, close).to_owned())) + "</code>";
         i = close + n;
       } else {
         out += slice_unchecked(s, i, i + n);
@@ -568,7 +568,7 @@ function find_closer(s: string, from: i32, want: i32): i32 {
   let i = from;
   while (i < s.len()) {
     if (s[i] == b'`') {
-      let run = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
+      let run = run_len(slice_unchecked(s, i, s.len()).to_owned(), b'`');
       if (run == want) {
         return i;
       }
@@ -582,7 +582,7 @@ function find_closer(s: string, from: i32, want: i32): i32 {
 
 function trim_code_span(c: string): string {
   if (c.len() >= 2 && c[0] == b' ' && c[c.len() - 1] == b' ' && c.trim().len() > 0) {
-    return slice_unchecked(c, 1, c.len() - 1) + "";
+    return slice_unchecked(c, 1, c.len() - 1).to_owned();
   }
   return c;
 }
@@ -626,8 +626,8 @@ function links(s: string): string {
       if (tc > i + 1 && tc + 1 < s.len() && s[tc + 1] == b'(') {
         let uc = index_from(s, tc + 2, b')');
         if (uc > tc + 2) {
-          let text = slice_unchecked(s, i + 1, tc) + "";
-          let url = slice_unchecked(s, tc + 2, uc) + "";
+          let text = slice_unchecked(s, i + 1, tc).to_owned();
+          let url = slice_unchecked(s, tc + 2, uc).to_owned();
           if (safe_link_url(url)) {
             out = out + "<a href=\"" + url + "\">" + text + "</a>";
           } else {
@@ -673,7 +673,7 @@ function safe_link_url(url: string): boolean {
     if (!is_alphanumeric(c) && c != b'+' && c != b'-' && c != b'.') {
       return true;
     }
-    scheme = scheme + (slice_unchecked(url, i, i + 1) + "");
+    scheme = scheme + slice_unchecked(url, i, i + 1).to_owned();
     i += 1;
   }
   return true;
@@ -700,7 +700,7 @@ pub function highlight_fern(line: string): string {
   let i = 0;
   while (i < line.len()) {
     let j = token_end(line, i);
-    out += token_html(slice_unchecked(line, i, j) + "");
+    out += token_html(slice_unchecked(line, i, j).to_owned());
     i = j;
   }
   return out;

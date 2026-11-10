@@ -145,7 +145,7 @@ function semantic_names_symbol(id: i32): boolean {
 
 pub function plain_str(ins: SInst): string {
   if ((ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT) && ins.str.len() >= 2 && slice_unchecked(ins.str, ins.str.len() - 2, ins.str.len()) == "rc") {
-    return slice_unchecked(ins.str, 0, ins.str.len() - 2) + "";
+    return slice_unchecked(ins.str, 0, ins.str.len() - 2).to_owned();
   }
   return ins.str;
 }
@@ -1121,7 +1121,7 @@ pub function lane_base(op: string): string {
   let k = 0;
   while (k < op.len()) {
     if (op[k] == b':') {
-      return slice_unchecked(op, 0, k) + "";
+      return slice_unchecked(op, 0, k).to_owned();
     }
     k += 1;
   }

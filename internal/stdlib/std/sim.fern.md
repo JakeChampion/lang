@@ -551,7 +551,7 @@ function __next_slot(s: Sim): i32 {
 
 function __resume_slot(s: Sim, index: i32): void {
   let slot = s.workers.get()[index];
-  let t = async.Task { id: slot.id, entry: __adopt_thunk(slot.root as usize) };
+  let t = async.task_adopted(slot.id, __adopt_thunk(slot.root as usize));
   s.clock_ns.set(__wait_due(async.Wait { set: slot.set, until: slot.until }, s.clock_ns.get(), None));
   __slot_set(s, index, __turned(t, async.task_resume(t, async.Wake.TimedOut)));
 }

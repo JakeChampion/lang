@@ -2,6 +2,7 @@ import "./fern_toml";
 import "./caps";
 import "./modloader";
 import "./util";
+import "std/string";
 
 pub struct ManifestAt { dir: string, man: fern_toml.Manifest }
 
@@ -233,7 +234,7 @@ function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holdi
   for h in held {
     if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
       dir = h.dir;
-      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
+      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()).to_owned();
     }
   }
   let at = holding_index(held, dir);

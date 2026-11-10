@@ -1,5 +1,6 @@
 import "./util";
 import "./docsummary";
+import "std/string";
 
 pub struct Version { major: i64, minor: i64, patch: i64 }
 
@@ -17,7 +18,7 @@ pub function parse(text: string): Result[Version, string] {
     while (at + 1 < part.len() && part[at] == b'0') {
       at += 1;
     }
-    let digits = slice_unchecked(part, at, part.len()) + "";
+    let digits = slice_unchecked(part, at, part.len()).to_owned();
     if (!util.is_decimal_i64(digits)) {
       return Err(invalid_version(text));
     }

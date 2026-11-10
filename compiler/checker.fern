@@ -424,10 +424,10 @@ function names_resource_handle(name: string, tn: TypeNames): boolean {
 
 function handle_resource(name: string): string {
   if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") {
-    return slice_unchecked(name, 4, name.len()) + "";
+    return slice_unchecked(name, 4, name.len()).to_owned();
   }
   if (name.len() > 7 && slice_unchecked(name, 0, 7) == "borrow ") {
-    return slice_unchecked(name, 7, name.len()) + "";
+    return slice_unchecked(name, 7, name.len()).to_owned();
   }
   return name;
 }
@@ -1672,7 +1672,7 @@ function same_views(a: typeinfo.Type, b: typeinfo.Type): boolean {
 // for the import. A type that no module can implement the trait for gets
 // advice on its parts, not an impl that the orphan rule refuses.
 function cmp_hint(t: typeinfo.Type, trait_name: string): string {
-  let short = slice_unchecked(trait_name, 4, trait_name.len()) + "";
+  let short = slice_unchecked(trait_name, 4, trait_name.len()).to_owned();
   let label = util.demangle(type_label(t));
   let parts = cmp_parts(t);
   if (trait_name != "cmp.Display") {
@@ -2096,7 +2096,7 @@ function declared_by_entry(u: UnionSig): boolean {
 function unprefixed_variant(name: string, module: string): string {
   let m = module.len();
   if (m > 0 && name.len() > m + 2 && name[m] == b'_' && name[m + 1] == b'_' && slice_unchecked(name, 0, m) == module) {
-    return slice_unchecked(name, m + 2, name.len()) + "";
+    return slice_unchecked(name, m + 2, name.len()).to_owned();
   }
   return name;
 }
@@ -2375,22 +2375,22 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
 
 function struct_destr_fields(type_name: string): (string[], boolean) {
   let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()) + "";
+  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
   let colon = util.index_of_sub(rest, ":");
   if (colon < 0) {
     return ([], false);
   }
-  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + ""), true);
+  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()).to_owned()), true);
 }
 
 function struct_destr_name(type_name: string): string {
   let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()) + "";
+  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
   let colon = util.index_of_sub(rest, ":");
   if (colon < 0) {
     return "";
   }
-  return slice_unchecked(rest, 0, colon) + "";
+  return slice_unchecked(rest, 0, colon).to_owned();
 }
 
 function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, col: i32): util.Diag[] {
@@ -2452,7 +2452,7 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
       et = elems[i];
     }
     if (util.is_tuple_type_name(nm)) {
-      out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
+      out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1).to_owned()), et);
     } else if (nm.len() > 0) {
       out = out.bind(nm, et);
     }
@@ -2469,7 +2469,7 @@ pub function split_pattern_names(encoded: string): string[] {
   while (i <= encoded.len()) {
     if (i == encoded.len() || encoded[i] == b',' && depth == 0) {
       if (i > start) {
-        out = out.append(slice_unchecked(encoded, start, i) + "");
+        out = out.append(slice_unchecked(encoded, start, i).to_owned());
       }
       start = i + 1;
     } else if (encoded[i] == b'(') {
@@ -2486,7 +2486,7 @@ function bind_names(s: Scope, name: string): Scope {
   let out = s;
   for nm in split_pattern_names(name) {
     if (util.is_tuple_type_name(nm)) {
-      out = bind_names(out, slice_unchecked(nm, 1, nm.len() - 1) + "");
+      out = bind_names(out, slice_unchecked(nm, 1, nm.len() - 1).to_owned());
     } else if (nm.len() > 0) {
       out = out.bind(nm, t_unknown("binding"));
     }
@@ -3195,7 +3195,7 @@ function spelling_qualifier(spelling: string, name: string): string {
   if (spelling.len() <= name.len()) {
     return "";
   }
-  return slice_unchecked(spelling, 0, spelling.len() - name.len() - 1) + "";
+  return slice_unchecked(spelling, 0, spelling.len() - name.len() - 1).to_owned();
 }
 
 function bound_trait_display(base: string, module: string, reqs: parser.TraitReq[]): string {
@@ -3786,8 +3786,8 @@ function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
   if (dot <= 0) {
     return -1;
   }
-  let tname = method_simple_name(slice_unchecked(name, 0, dot) + "");
-  let simple = slice_unchecked(name, dot + 1, name.len()) + "";
+  let tname = method_simple_name(slice_unchecked(name, 0, dot).to_owned());
+  let simple = slice_unchecked(name, dot + 1, name.len()).to_owned();
   let i = s.methods.simple.chain(simple);
   while (i >= 0) {
     let m = s.methods.methods[i];
@@ -4172,7 +4172,7 @@ function (s: Scope) array_method_candidates(recv: typeinfo.Type): string[] {
 // Whether the element of `recv` meets the bounds that `method` puts on the
 // type parameter of its receiver `rt`.
 function (s: Scope) element_meets_bounds(method: MethodSig, rt: string, recv: typeinfo.Type): boolean {
-  let tp = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  let tp = slice_unchecked(rt, 0, rt.len() - 2).to_owned();
   let at = util.index_of_str(method.type_params, tp);
   if (at < 0 || at >= method.type_bounds.len()) {
     return true;
@@ -4848,14 +4848,14 @@ pub function builtin_sig(name: string): typeinfo.Type {
     return t_unknown("not a builtin: " + name);
   }
   let close = util.index_of_sub(row, "): ");
-  let inner = slice_unchecked(row, name.len() + 1, close) + "";
+  let inner = slice_unchecked(row, name.len() + 1, close).to_owned();
   let params: typeinfo.Type[] = [];
   if (inner.len() > 0) {
     for p in parser.split_top_commas(inner) {
       params = params.append(type_from_name(p));
     }
   }
-  return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
+  return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()).to_owned()));
 }
 
 // Primitive display signatures are completed by private runtime source bodies.
@@ -6482,13 +6482,13 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
     return bitwise_not_type(ot);
   }
   if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-    return s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
+    return s.resolve_type(slice_unchecked(u.op, 3, u.op.len()).to_owned());
   }
   if (u.op == "try_") {
     return try_success_type(s, ot);
   }
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
-    return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
+    return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()).to_owned())] };
   }
   return t_unknown("unknown unary op:" + u.op);
 }
@@ -7499,7 +7499,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   }
   let name = parser.render_type_ref(r);
   if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
-    return t_dyn(slice_unchecked(name, 4, name.len()) + "");
+    return t_dyn(slice_unchecked(name, 4, name.len()).to_owned());
   }
   if (names_resource_handle(name, tn)) {
     return resource_handle(name);
@@ -7644,7 +7644,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     }
     let sep = util.index_of_sub(r.base, "::");
     if (sep > 0) {
-      let opi = util.index_of_str(tparams, slice_unchecked(r.base, 0, sep) + "");
+      let opi = util.index_of_str(tparams, slice_unchecked(r.base, 0, sep).to_owned());
       if (opi >= 0 && opi < targs.len() && is_type_variable(targs[opi]) && !is_unknown(targs[opi])) {
         return typeinfo.TypeErased { name: r.base };
       }
@@ -7752,10 +7752,10 @@ const UNRESOLVED_MARK: string = "unrecognised type name: ";
 
 pub function typevar_reason_name(reason: string): string {
   if (reason.len() > TPARAM_MARK.len() && reason.starts_with(TPARAM_MARK)) {
-    return slice_unchecked(reason, TPARAM_MARK.len(), reason.len()) + "";
+    return slice_unchecked(reason, TPARAM_MARK.len(), reason.len()).to_owned();
   }
   if (reason.len() > UNRESOLVED_MARK.len() && reason.starts_with(UNRESOLVED_MARK)) {
-    return slice_unchecked(reason, UNRESOLVED_MARK.len(), reason.len()) + "";
+    return slice_unchecked(reason, UNRESOLVED_MARK.len(), reason.len()).to_owned();
   }
   return "";
 }
@@ -11863,7 +11863,7 @@ function variant_pattern_name(name: string): string {
   if (d < 0) {
     return name;
   }
-  return slice_unchecked(name, d + 1, name.len()) + "";
+  return slice_unchecked(name, d + 1, name.len()).to_owned();
 }
 
 function variant_pattern_owner(name: string): string {
@@ -11871,13 +11871,13 @@ function variant_pattern_owner(name: string): string {
   if (d < 0) {
     return "";
   }
-  return slice_unchecked(name, 0, d) + "";
+  return slice_unchecked(name, 0, d).to_owned();
 }
 
 function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
   while (t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
-    t = slice_unchecked(t, 0, t.len() - 2) + "";
+    t = slice_unchecked(t, 0, t.len() - 2).to_owned();
   }
   let nargs = count_type_args(t);
   if (nargs < 0) {
@@ -12452,7 +12452,7 @@ function int_lit_as_written(text: string, negated: boolean): string {
     while (i + 1 < text.len() && text[i] as i32 == 48) {
       i += 1;
     }
-    out = slice_unchecked(text, i, text.len()) + "";
+    out = slice_unchecked(text, i, text.len()).to_owned();
   }
   if (negated && !magnitude_is_zero(text, start)) {
     return "-" + out;
@@ -12606,7 +12606,7 @@ function numeral_spelling(n: ast.ExprNumber): string {
   if (n.raw.len() == 0) {
     return n.text;
   }
-  return slice_unchecked(n.raw, 0, n.raw.len() - n.suffix.len()) + "";
+  return slice_unchecked(n.raw, 0, n.raw.len() - n.suffix.len()).to_owned();
 }
 
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
@@ -13482,11 +13482,11 @@ function dyn_ret_at_spelling(ret: string, spelling: string, tparams: string[]): 
   }
   let args: string[] = [];
   let out = ret;
-  for raw in parser.split_top_commas(slice_unchecked(spelling, open + 1, spelling.len() - 1) + "") {
+  for raw in parser.split_top_commas(slice_unchecked(spelling, open + 1, spelling.len() - 1).to_owned()) {
     let entry = raw.trim();
     let eq = pin_eq(entry);
     if (eq > 0) {
-      out = subst_self_proj(out, (slice_unchecked(entry, 0, eq) + "").trim(), (slice_unchecked(entry, eq + 1, entry.len()) + "").trim());
+      out = subst_self_proj(out, slice_unchecked(entry, 0, eq).to_owned().trim(), slice_unchecked(entry, eq + 1, entry.len()).to_owned().trim());
     } else {
       args = args.append(entry);
     }
@@ -14952,11 +14952,11 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
         _ => {}
       }
     }
-    let target_errors = cast_target_diags(slice_unchecked(u.op, 3, u.op.len()) + "", u, s);
+    let target_errors = cast_target_diags(slice_unchecked(u.op, 3, u.op.len()).to_owned(), u, s);
     if (target_errors.len() > 0) {
       return util.append_diags(out, target_errors);
     }
-    let tgt = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
+    let tgt = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()).to_owned());
     if (bare_numeric_literal(u.operand)) {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
     }
@@ -14964,7 +14964,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   }
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     let aot = check_expr(u.operand, s);
-    let target = slice_unchecked(u.op, 4, u.op.len()) + "";
+    let target = slice_unchecked(u.op, 4, u.op.len()).to_owned();
     let target_errors = cast_target_diags(target, u, s);
     if (target_errors.len() > 0) {
       return util.append_diags(out, target_errors);
@@ -18180,7 +18180,7 @@ function method_simple_name(name: string): string {
   while (i >= 0 && name[i] != b'.') {
     i -= 1;
   }
-  return slice_unchecked(name, i + 1, name.len()) + "";
+  return slice_unchecked(name, i + 1, name.len()).to_owned();
 }
 
 function ambiguous_method_diag(mod: parser.Module, pending: parser.FuncDecl, other: parser.FuncDecl): util.Diag {
@@ -18588,7 +18588,7 @@ function ow_moved_prefix(m: MovedEntry[], name: string): string {
 }
 
 function ow_path_field(path: string, name: string): string {
-  return slice_unchecked(path, name.len() + 1, path.len()) + "";
+  return slice_unchecked(path, name.len() + 1, path.len()).to_owned();
 }
 
 function ow_moved_del_prefix(m: MovedEntry[], name: string): MovedEntry[] {
@@ -19429,7 +19429,7 @@ function lu_destr_unpacked(v: ast.StmtVar, own acc: LuVar[]): LuVar[] {
 
 function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1) + "") {
+  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1).to_owned()) {
     if (util.is_tuple_type_name(nm)) {
       vars = lu_nested_vars(nm, vars);
     } else {
@@ -23530,7 +23530,7 @@ function ow_last_segment(name: string): string {
   if (dot < 0) {
     return name;
   }
-  return slice_unchecked(name, dot + 1, name.len()) + "";
+  return slice_unchecked(name, dot + 1, name.len()).to_owned();
 }
 
 // The enum the scrutinee's type names for the arm's variant, which a same-named variant elsewhere must not stand in for.
@@ -23769,7 +23769,7 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
     if (fn.receiver_own) {
       let open = util.index_of_sub(fn.receiver_type, "[");
       if (open > 0) {
-        names = names.append(slice_unchecked(fn.receiver_type, 0, open) + "");
+        names = names.append(slice_unchecked(fn.receiver_type, 0, open).to_owned());
       } else {
         names = names.append(fn.receiver_type);
       }
@@ -23834,13 +23834,13 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
     return true;
   }
   if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
-    return ow_no_handle_in(slice_unchecked(tn, 0, n - 2) + "", dx, free, seen);
+    return ow_no_handle_in(slice_unchecked(tn, 0, n - 2).to_owned(), dx, free, seen);
   }
   if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
-    return ow_no_handle_in(slice_unchecked(tn, 1, n - 1) + "", dx, free, seen);
+    return ow_no_handle_in(slice_unchecked(tn, 1, n - 1).to_owned(), dx, free, seen);
   }
   if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
-    return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""), dx, free, seen);
+    return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1).to_owned()), dx, free, seen);
   }
   if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || util.has_str(free, tn)) {
     return true;
@@ -23848,8 +23848,8 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
   let name = tn;
   let open = util.index_of_sub(tn, "[");
   if (open > 0 && tn[n - 1] == b']') {
-    name = slice_unchecked(tn, 0, open) + "";
-    if (!ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1) + ""), dx, free, seen)) {
+    name = slice_unchecked(tn, 0, open).to_owned();
+    if (!ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1).to_owned()), dx, free, seen)) {
       return false;
     }
   }
@@ -24048,10 +24048,10 @@ function ow_sig_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFunc
 function ow_elem_type_name(tn: string): string {
   let n = tn.len();
   if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
-    return slice_unchecked(tn, 0, n - 2) + "";
+    return slice_unchecked(tn, 0, n - 2).to_owned();
   }
   if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
-    return slice_unchecked(tn, 1, n - 1) + "";
+    return slice_unchecked(tn, 1, n - 1).to_owned();
   }
   return "";
 }
@@ -25182,7 +25182,7 @@ function e049_type_reaches_fn(ty: string, tparams: string[], mod: parser.Module,
       start = i;
     }
     if (!word && start >= 0) {
-      let w = slice_unchecked(ty, start, i) + "";
+      let w = slice_unchecked(ty, start, i).to_owned();
       start = -1;
       if (w == "fn" || w == "dyn" || util.has_str(tparams, w)) {
         return true;
@@ -25239,7 +25239,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
 function unresolved_qualifier(type_name: string, tn: TypeNames): boolean {
   for i in 0..type_name.len() {
     if (type_name[i] == b'.') {
-      let q = slice_unchecked(type_name, 0, i) + "";
+      let q = slice_unchecked(type_name, 0, i).to_owned();
       return plain_ident(q) && !tn.unions.has(q) && !tn.structs.has(q) && !tn.unloaded.has(q);
     }
   }
@@ -25650,7 +25650,7 @@ function handle_leaves(tr: parser.TypeRef, own acc: string[]): string[] {
 
 function without_slot_marker(slot: parser.TypeRef): parser.TypeRef {
   if (slot.base.starts_with("own ")) {
-    return parser.TypeRef { ...slot, base: slice_unchecked(slot.base, 4, slot.base.len()) + "" };
+    return parser.TypeRef { ...slot, base: slice_unchecked(slot.base, 4, slot.base.len()).to_owned() };
   }
   return slot;
 }
@@ -25717,7 +25717,7 @@ function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: stri
     typeinfo.TypeUnknown(u) => {
       let n = TPARAM_MARK.len();
       if (u.reason.len() > n && slice_unchecked(u.reason, 0, n) == TPARAM_MARK) {
-        let tp = slice_unchecked(u.reason, n, u.reason.len()) + "";
+        let tp = slice_unchecked(u.reason, n, u.reason.len()).to_owned();
         if (!util.has_str(own, tp)) {
           return tp;
         }
@@ -25786,7 +25786,7 @@ function named_tparams(t: typeinfo.Type): typeinfo.Type {
     typeinfo.TypeUnknown(u) => {
       let n = TPARAM_MARK.len();
       if (u.reason.len() > n && slice_unchecked(u.reason, 0, n) == TPARAM_MARK) {
-        return t_struct(slice_unchecked(u.reason, n, u.reason.len()) + "");
+        return t_struct(slice_unchecked(u.reason, n, u.reason.len()).to_owned());
       }
     },
     typeinfo.TypeArray(a) => {
@@ -26970,7 +26970,7 @@ function e021_source_qualifier_visible(mod: parser.Module, module: string, spell
   if (dot < 0) {
     return true;
   }
-  let qual = slice_unchecked(spelling, 0, dot) + "";
+  let qual = slice_unchecked(spelling, 0, dot).to_owned();
   if (mod.sights.len() > 0) {
     for sight in mod.sights {
       if (sight.module == module) {
@@ -27125,8 +27125,8 @@ function derive_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
   let q = "";
   let name = tr;
   if (dot >= 0) {
-    q = slice_unchecked(tr, 0, dot) + "";
-    name = slice_unchecked(tr, dot + 1, tr.len()) + "";
+    q = slice_unchecked(tr, 0, dot).to_owned();
+    name = slice_unchecked(tr, dot + 1, tr.len()).to_owned();
   }
   let i = 0;
   while (i < trait_reqs.len()) {
@@ -27146,7 +27146,7 @@ function derive_import_unloaded(mod: parser.Module, tr: string): boolean {
   if (dot < 0) {
     return false;
   }
-  let q = slice_unchecked(tr, 0, dot) + "";
+  let q = slice_unchecked(tr, 0, dot).to_owned();
   for r in mod.trait_reqs {
     if (r.module == q) {
       return false;
@@ -27159,7 +27159,7 @@ function derive_import_unloaded(mod: parser.Module, tr: string): boolean {
       while (sl >= 0 && im.path[sl] != b'/') {
         sl -= 1;
       }
-      qual = slice_unchecked(im.path, sl + 1, im.path.len()) + "";
+      qual = slice_unchecked(im.path, sl + 1, im.path.len()).to_owned();
     }
     if (qual == q) {
       return true;
@@ -27386,7 +27386,7 @@ function e021_dyn_target(type_name: string): string {
   let t = e021_dyn_element(type_name);
   let cut = e021_bracket_open(t);
   if (cut > 0) {
-    return slice_unchecked(t, 0, cut) + "";
+    return slice_unchecked(t, 0, cut).to_owned();
   }
   return t;
 }
@@ -27429,7 +27429,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
   if (open < 0) {
     return out;
   }
-  let inner = slice_unchecked(t, open + 1, t.len() - 1) + "";
+  let inner = slice_unchecked(t, open + 1, t.len() - 1).to_owned();
   let start = 0;
   let depth = 0;
   let i = 0;
@@ -27449,7 +27449,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
       }
     }
     if (is_sep) {
-      let seg = slice_unchecked(inner, start, i) + "";
+      let seg = slice_unchecked(inner, start, i).to_owned();
       let eq: i32 = -1;
       let j = 0;
       while (j < seg.len()) {
@@ -27459,7 +27459,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
         j += 1;
       }
       if (eq > 0) {
-        out = out.append((slice_unchecked(seg, 0, eq) + "").trim());
+        out = out.append(slice_unchecked(seg, 0, eq).to_owned().trim());
       }
       start = i + 1;
     }
@@ -27648,7 +27648,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
       bar += 1;
     }
     if (slice_unchecked(e, 0, bar) == name) {
-      return slice_unchecked(e, bar + 1, e.len()) + "";
+      return slice_unchecked(e, bar + 1, e.len()).to_owned();
     }
   }
   return "";
@@ -28682,7 +28682,7 @@ pub function func_type_params(s: Scope, name: string): string[] {
   if (dot <= 0) {
     return [];
   }
-  if let Some(msig) = s.lookup_method(slice_unchecked(name, dot + 1, name.len()) + "", slice_unchecked(name, 0, dot) + "") {
+  if let Some(msig) = s.lookup_method(slice_unchecked(name, dot + 1, name.len()).to_owned(), slice_unchecked(name, 0, dot).to_owned()) {
     return msig.all_type_params;
   }
   return [];
@@ -28917,7 +28917,7 @@ pub function builtin_method_names(recv: string): string[] {
   for row in builtinsigs.builtin_sigs() {
     let open = util.index_of_sub(row, "(");
     if (open > head.len() && row.starts_with(head)) {
-      out = out.append(slice_unchecked(row, head.len(), open) + "");
+      out = out.append(slice_unchecked(row, head.len(), open).to_owned());
     }
   }
   return out;
@@ -30387,7 +30387,7 @@ function annotate_variant_struct(name: string, s: Scope): string {
     return "";
   }
   let bare = variant_pattern_name(name);
-  if (!is_variant_of(bare, slice_unchecked(name, 0, d) + "", s.unions.unions)) {
+  if (!is_variant_of(bare, slice_unchecked(name, 0, d).to_owned(), s.unions.unions)) {
     return "";
   }
   if (s.has_struct(bare)) {
@@ -31375,7 +31375,7 @@ function variant_bare_name(name: string): string {
   let i = name.len() - 2;
   while (i > 0) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      return slice_unchecked(name, i + 2, name.len()) + "";
+      return slice_unchecked(name, i + 2, name.len()).to_owned();
     }
     i -= 1;
   }
@@ -32123,7 +32123,7 @@ function lit_struct_of(t: typeinfo.Type): (string, i32[]) {
       }
       i += 1;
     }
-    return (slice_unchecked(u.reason, n, bar) + "", ids);
+    return (slice_unchecked(u.reason, n, bar).to_owned(), ids);
   }
   return ("", none);
 }
@@ -34079,7 +34079,7 @@ function lit_payload_shape(c: ast.ExprCall, p: i32, owner: string, s: Scope, st:
   let spelled = payload_spelling(s, us, vname, p);
   if let typeinfo.TypeArray(a) = arg {
     if (spelled.ends_with("[]")) {
-      let elem_slot = util.index_of_str(us.type_params, slice_unchecked(spelled, 0, spelled.len() - 2) + "");
+      let elem_slot = util.index_of_str(us.type_params, slice_unchecked(spelled, 0, spelled.len() - 2).to_owned());
       if (elem_slot >= 0) {
         return (LitPayloadShape { slot: elem_slot, param: a.elem, arg: arg }, next);
       }

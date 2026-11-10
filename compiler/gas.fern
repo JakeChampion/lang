@@ -3,6 +3,7 @@
 // helpers x86_native and arm64_native both use.
 
 import "./util";
+import "std/string";
 
 pub function escape(line: string, i: i32): (i32, i32) {
   let e = line[i + 1] as i32;
@@ -51,7 +52,7 @@ pub function dw_fields(line: string): string[] {
       i += 1;
     }
     if (i > start) {
-      out = out.append(slice_unchecked(line, start, i) + "");
+      out = out.append(slice_unchecked(line, start, i).to_owned());
     }
   }
   return out;
@@ -186,7 +187,7 @@ function cfi_trim(s: string): string {
   while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
     j -= 1;
   }
-  return slice_unchecked(s, i, j) + "";
+  return slice_unchecked(s, i, j).to_owned();
 }
 
 function cfi_split_ops(rest: string): string[] {
@@ -208,7 +209,7 @@ function cfi_split_ops(rest: string): string[] {
   let k = 0;
   while (k < out.len()) {
     if (out[k].len() > 0 && out[k][0] == b'%') {
-      out = out.with(k, slice_unchecked(out[k], 1, out[k].len()) + "");
+      out = out.with(k, slice_unchecked(out[k], 1, out[k].len()).to_owned());
     }
     k += 1;
   }
@@ -329,10 +330,10 @@ pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
   while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') {
     sp += 1;
   }
-  let d = slice_unchecked(t, 0, sp) + "";
+  let d = slice_unchecked(t, 0, sp).to_owned();
   let rest = "";
   if (sp < t.len()) {
-    rest = cfi_trim(slice_unchecked(t, sp, t.len()) + "");
+    rest = cfi_trim(slice_unchecked(t, sp, t.len()).to_owned());
   }
   let ops = cfi_split_ops(rest);
 
@@ -410,7 +411,7 @@ function cfi_uleb_text(v: i32): string {
   if (v >= 10) {
     return cfi_uleb_text(v / 10) + cfi_uleb_text(v % 10);
   }
-  return slice_unchecked("0123456789", v, v + 1) + "";
+  return slice_unchecked("0123456789", v, v + 1).to_owned();
 }
 
 function cfi_offset_rule(own s: CfiState, reg: string, r: i32, n: i32, off: i32): CfiState {

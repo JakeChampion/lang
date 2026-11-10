@@ -537,8 +537,8 @@ function qual_type_parts(tn: string): (string, string) {
   if (dot < 0) {
     return ("", "");
   }
-  let q = slice_unchecked(tn, 0, dot) + "";
-  let rest = slice_unchecked(tn, dot + 1, tn.len()) + "";
+  let q = slice_unchecked(tn, 0, dot).to_owned();
+  let rest = slice_unchecked(tn, dot + 1, tn.len()).to_owned();
   let cut = rest.len();
   let j = 0;
   while (j < rest.len()) {
@@ -548,7 +548,7 @@ function qual_type_parts(tn: string): (string, string) {
     }
     j += 1;
   }
-  return (q, slice_unchecked(rest, 0, cut) + "");
+  return (q, slice_unchecked(rest, 0, cut).to_owned());
 }
 
 function declares_private_type(mod: parser.Module, name: string): boolean {

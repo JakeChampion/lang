@@ -109,7 +109,7 @@ function field(part: string, prefix: string, lo: i32, hi: i32): boolean {
 }
 
 function number(part: string, from: i32): i32 {
-  return util.digits_to_i32(slice_unchecked(part, from, part.len()) + "");
+  return util.digits_to_i32(slice_unchecked(part, from, part.len()).to_owned());
 }
 
 struct X86Msr { name: string, index: i64 }

@@ -4,6 +4,7 @@ import "./parser";
 import "./platforms";
 import "./treeshake";
 import "./util";
+import "std/string";
 
 pub struct Violation {
   handler: string,
@@ -202,7 +203,7 @@ function method_base_name(name: string): string {
   if (last_dot < 0) {
     return name;
   }
-  return slice_unchecked(name, last_dot + 1, name.len()) + "";
+  return slice_unchecked(name, last_dot + 1, name.len()).to_owned();
 }
 
 function by_capability(vs: Violation[]): Violation[] {

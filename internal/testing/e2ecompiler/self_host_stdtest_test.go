@@ -443,6 +443,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"audio_ogg", langSrcAbs(t, "tests/stdlib/audio_ogg_test.fern"), ""},
 		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"video_avc", langSrcAbs(t, "tests/stdlib/video_avc_test.fern"), ""},
+		{"video_avc_pps", langSrcAbs(t, "tests/stdlib/video_avc_pps_test.fern"), ""},
 		{"video_annex_b", langSrcAbs(t, "tests/stdlib/video_annex_b_test.fern"), ""},
 		{"video_mp4", langSrcAbs(t, "tests/stdlib/video_mp4_test.fern"), ""},
 		{"video_mp4_boundary", langSrcAbs(t, "tests/stdlib/video_mp4_boundary_test.fern"), ""},

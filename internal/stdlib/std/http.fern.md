@@ -118,7 +118,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<45 const ASTERISK_FORM: i32>>
 
-<<46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32>>
+<<46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32>>
 
 <<47 function __plain_path(buf: [u8], from: i32, end: i32): boolean>>
 
@@ -1991,7 +1991,10 @@ function __declared(f: __BodyFraming): i32 {
 ```fern
 <<43 pub function request_target(method: string, target: string): Result[string, i32]>>=
 pub function request_target(method: string, target: string): Result[string, i32] {
-  let buf = target.as_bytes();
+  if (__plain_origin(target.as_bytes())) {
+    return Ok(target);
+  }
+  let buf = target.bytes();
   let end = target.len();
   let path_from = __target_start(buf, 0, end, method == "OPTIONS");
   if (path_from == BAD_TARGET) {
@@ -2011,6 +2014,19 @@ pub function request_target(method: string, target: string): Result[string, i32]
     return Ok(slice_unchecked(target, path_from, end).to_owned());
   }
   return __decoded_path(buf, path_from, path_end, end);
+}
+
+// __plain_origin says the target is an origin-form path that request_target
+// hands back as it is: a plain path, then a valid query or none.
+function __plain_origin(view: [u8]): boolean {
+  if (view.len() == 0 || view[0] != 47 as u8) {
+    return false;
+  }
+  let q = __find_char(view, 0, view.len(), 63 as u8);
+  if (q < 0) {
+    return __plain_path(view, 0, view.len());
+  }
+  return __query_ok(view, q + 1, view.len()) && __plain_path(view, 0, q);
 }
 ```
 
@@ -2046,11 +2062,11 @@ const ASTERISK_FORM: i32 = 0 - 1;
 const BAD_TARGET: i32 = 0 - 2;
 ```
 
-### `46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32`
+### `46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32`
 
 ```fern
-<<46 function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32>>=
-function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32 {
+<<46 function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32>>=
+function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
   if (end == from + 1 && buf[from] == 42 as u8) {
     if (options) {
       return ASTERISK_FORM;
@@ -2067,7 +2083,7 @@ function __target_start(buf: [u8], from: i32, end: i32, options: boolean): i32 {
   return path_from;
 }
 
-function __path_end(buf: [u8], from: i32, end: i32): i32 {
+function __path_end(buf: u8[], from: i32, end: i32): i32 {
   let q = __find_char(buf, from, end, 63 as u8);
   if (q < 0) {
     return end;
@@ -2211,7 +2227,7 @@ function __dot_segment(s: [u8], from: i32, end: i32): i32 {
   return n;
 }
 
-function __decoded_path(buf: [u8], from: i32, path_end: i32, end: i32): Result[string, i32] {
+function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[string, i32] {
   let out: u8[] = [];
   let w = 0;
   let trailing = false;
@@ -2246,7 +2262,7 @@ function __decoded_path(buf: [u8], from: i32, path_end: i32, end: i32): Result[s
   return __finished_path(out, w, trailing, escaped_high, buf, path_end, end);
 }
 
-function __path_byte(buf: [u8], at: i32, end: i32): i32 {
+function __path_byte(buf: u8[], at: i32, end: i32): i32 {
   let b = buf[at] as i32;
   if (b == 37) {
     b = __pct_byte(buf, at, end);
@@ -2285,7 +2301,7 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
   return prev;
 }
 
-function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: [u8], from: i32, end: i32): Result[string, i32] {
+function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: u8[], from: i32, end: i32): Result[string, i32] {
   if (w == 0 || trailing) {
     out = __put_byte(out, w, 47 as u8);
     w += 1;

@@ -2,6 +2,7 @@ import "./util";
 import "./docprintable";
 import "std/utf8";
 import "std/unicode";
+import "std/string";
 
 function decoded(s: string, i: i32): (i32, i32) {
   match (utf8.decode_at(s, i)) {
@@ -61,16 +62,16 @@ pub function summary(intro: string): string {
   let para = intro;
   let end = util.index_of_sub(para, "\n\n");
   if (end >= 0) {
-    para = slice_unchecked(para, 0, end) + "";
+    para = slice_unchecked(para, 0, end).to_owned();
   }
   let s = words(para);
   let label = util.index_of_sub(s, " — ");
   if (label >= 0) {
-    s = slice_unchecked(s, label + 5, s.len()) + "";
+    s = slice_unchecked(s, label + 5, s.len()).to_owned();
   }
   let sentence = util.index_of_sub(s, ". ");
   if (sentence >= 0) {
-    s = slice_unchecked(s, 0, sentence + 1) + "";
+    s = slice_unchecked(s, 0, sentence + 1).to_owned();
   }
   return capitalize(s);
 }

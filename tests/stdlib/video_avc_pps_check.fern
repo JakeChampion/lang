@@ -1,0 +1,15 @@
+import "std/video/avc";
+
+function flag(value: boolean): i64 {
+  return if (value) { 1i64 } else { 0i64 };
+}
+
+pub function values(p: avc.PictureParameters): i64[] {
+  return [
+    p.parameter_id as i64, p.sequence_id as i64, flag(p.entropy_coding_mode), flag(p.bottom_field_pic_order_in_frame_present),
+    p.slice_group_count as i64, p.slice_group_map_type as i64, flag(p.slice_group_change_direction), p.slice_group_change_rate as i64, p.explicit_map_units as i64,
+    p.default_reference_l0 as i64, p.default_reference_l1 as i64, flag(p.weighted_pred), p.weighted_bipred_idc as i64,
+    p.initial_qp as i64, p.initial_qs as i64, p.chroma_qp_offset as i64, p.second_chroma_qp_offset as i64,
+    flag(p.deblocking_filter_control_present), flag(p.constrained_intra_pred), flag(p.redundant_pic_cnt_present), flag(p.transform_8x8_mode), flag(p.scaling_matrix_present),
+  ];
+}

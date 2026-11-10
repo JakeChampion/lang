@@ -493,6 +493,9 @@ const TICKET_AAD: string = "fern tls ticket";
 
 const TICKET_VERSION: i32 = 3;
 
+// RFC 8446 section 4.6.1: a ticket lives seven days at most.
+const TICKET_LIFETIME_MAX: i64 = 604800;
+
 // The most bytes of client certificates that a ticket holds.
 const TICKET_CHAIN_MAX: i32 = 16384;
 
@@ -507,6 +510,9 @@ pub const TICKET_ENTROPY: i32 = 16;
 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket {
   let nonce = [0 as u8];
   let seconds = lifetime.as_millis() / (1000 as i64);
+  if (seconds > TICKET_LIFETIME_MAX) {
+    seconds = TICKET_LIFETIME_MAX;
+  }
   let body = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);

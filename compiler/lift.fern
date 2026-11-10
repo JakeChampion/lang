@@ -10,6 +10,7 @@ import "./callsubst";
 import "./capturebox";
 import "./captureflow";
 import "./irtables";
+import "std/string";
 
 function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
   return decltypes.fn_param_decl(name, tys, ret);
@@ -51,7 +52,7 @@ function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string
           if (mkid.name.len() <= 8 || slice_unchecked(mkid.name, 0, 8) != "__mkclo$") {
             return "";
           }
-          let tgt = slice_unchecked(mkid.name, 8, mkid.name.len()) + "";
+          let tgt = slice_unchecked(mkid.name, 8, mkid.name.len()).to_owned();
           for fn in funcs {
             if (fn.name == tgt) {
               let p = fn_param_from_func(v.name, fn, 1);
