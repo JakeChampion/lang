@@ -24,6 +24,16 @@ import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
 import "std/crypto/x25519";
+// Bytes that differ from each other, so a part of them matches at one place only.
+function mixed(n: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, (i * 7 + 3) as u8);
+    i = i + 1;
+  }
+  return b;
+}
 function filled(n: i32, v: u8): u8[] {
   let b: u8[] = __alloc_u8(n);
   let i: i32 = 0;
@@ -113,6 +123,18 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     crypto.erase(okm);
     return n - 80;
   }
+  if (mode == "hkdf-full") {
+    let okm: u8[] = crypto.hkdf_sha256(nonce12, key, msg, 80);
+    let n: i32 = okm.len();
+    crypto.erase(okm);
+    return n - 80;
+  }
+  if (mode == "sha256") {
+    let secret: u8[] = mixed(40);
+    let n: i32 = crypto.sha256(secret).len();
+    crypto.erase(secret);
+    return n - 32;
+  }
   if (mode == "x25519") {
     let Ok(pk) = x25519.public_key(key) else { return 9; };
     return pk.len() - 32;
@@ -144,6 +166,15 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
     let okm: u8[] = crypto.hkdf_sha256_expand(key, msg, 80);
     let out: u8[][] = [copy_of(okm, 0, 32), copy_of(okm, 32, 32)];
     crypto.erase(okm);
+    return out;
+  }
+  if (mode == "hkdf-full") {
+    return [crypto.hkdf_sha256_extract(nonce12, key)];
+  }
+  if (mode == "sha256") {
+    let secret: u8[] = mixed(40);
+    let out: u8[][] = [copy_of(secret, 0, 32)];
+    crypto.erase(secret);
     return out;
   }
   if (mode == "x25519") {
@@ -238,7 +269,7 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 			if got := run("plant"); got < 1 {
 				t.Fatalf("plant: the scan found %d stale copies of a released block, want at least 1: the scan does not see the arena", got)
 			}
-			for _, mode := range []string{"hmac", "hkdf", "x25519", "chacha", "ed25519"} {
+			for _, mode := range []string{"hmac", "hkdf", "hkdf-full", "sha256", "x25519", "chacha", "ed25519"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}

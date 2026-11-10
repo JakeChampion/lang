@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/check/checker"
 )
 
 const selfHostCapsSrc = "../../../compiler/caps.fern"
@@ -94,6 +96,45 @@ func TestSelfHostUngatedMatch(t *testing.T) {
 	for name := range found {
 		if !Ungated[name] {
 			t.Errorf("the self-host ungates %q, which is not in Ungated here", name)
+		}
+	}
+}
+
+func TestSelfHostDirectPrivilegedMatch(t *testing.T) {
+	found := map[string]bool{}
+	for _, name := range fernList(t, readSelfHostCaps(t), "direct_privileged") {
+		found[name] = true
+	}
+	for name := range DirectPrivileged {
+		if !found[name] {
+			t.Errorf("builtin %q is direct-privileged here but absent from the self-host's direct_privileged()", name)
+		}
+	}
+	for name := range found {
+		if !DirectPrivileged[name] {
+			t.Errorf("the self-host lists %q in direct_privileged(), which is not in DirectPrivileged here", name)
+		}
+	}
+}
+
+// Each raw builtin that only an unsafe block accepts has one class: a
+// capability, the direct-use class, or the ungated list.
+func TestEachUnsafeIntrinsicHasOneClass(t *testing.T) {
+	for name := range checker.UnsafeIntrinsics {
+		_, tagged := BuiltinCaps[name]
+		n := 0
+		for _, in := range []bool{tagged, DirectPrivileged[name], Ungated[name]} {
+			if in {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("unsafe intrinsic %q is in %d of BuiltinCaps, DirectPrivileged and Ungated, want 1", name, n)
+		}
+	}
+	for name := range DirectPrivileged {
+		if !checker.UnsafeIntrinsics[name] {
+			t.Errorf("%q is in DirectPrivileged but is not an unsafe intrinsic", name)
 		}
 	}
 }
