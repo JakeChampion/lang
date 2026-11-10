@@ -100,22 +100,14 @@ function compare(s: State, family: i32, op: isa.Op): State {
 }
 
 function step(s: State, family: i32, register_entry: boolean, op: isa.Op): State {
-  if (op.kind == 1) {
-    return s;
-  }
-  if (op.kind == 2) {
-    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
-  }
-  if (op.kind == 3) {
-    return load(s, family, register_entry, op);
-  }
-  if (op.kind == 26) {
-    return test(s, op);
-  }
-  if (op.kind == 16) {
-    return compare(s, family, op);
-  }
-  return State { ...s, ok: false };
+  return match (op.kind) {
+    1 => s,
+    2 => write(s, op.destination, narrowed(s.regs[op.source], op.width)),
+    3 => load(s, family, register_entry, op),
+    26 => test(s, op),
+    16 => compare(s, family, op),
+    _ => State { ...s, ok: false },
+  };
 }
 
 function invert(v: i32): i32 {

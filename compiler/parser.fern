@@ -6,6 +6,7 @@ import "./lexer";
 import "./builtinsigs";
 import "./typeinfo";
 import "std/envflag";
+import "std/option";
 
 struct ParamDestr { names: string, marker: string, synth: string, line: i32, col: i32 }
 
@@ -2996,13 +2997,13 @@ function parse_lit_alts(p: Par): (ast.Expr[], ast.Expr[], boolean[], boolean[], 
   return (lits, his, hrs, incs, p);
 }
 
-function bool_closing_arm(arms: ast.LitArm[]): i32 {
+function bool_closing_arm(arms: ast.LitArm[]): Option[i32] {
   let t = false;
   let f = false;
   for i in 0..arms.len() {
     let a = arms[i];
     if (a.is_wild && !a.has_guard) {
-      return -1;
+      return None;
     }
     if let ast.ExprBool(b) = a.lit {
       if (!a.is_wild && !a.has_guard && !a.has_range && a.at_binding.len() == 0) {
@@ -3011,17 +3012,16 @@ function bool_closing_arm(arms: ast.LitArm[]): i32 {
       }
     }
     if (t && f) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function close_bool_arms(arms: ast.LitArm[]): ast.LitArm[] {
-  let k = bool_closing_arm(arms);
-  if (k < 0) {
+  let Some(k) = bool_closing_arm(arms) else {
     return arms;
-  }
+  };
   let out: ast.LitArm[] = [];
   for i in 0..k {
     out = out.append(arms[i]);
@@ -6968,7 +6968,7 @@ function matching_bracket(s: string, start: i32): i32 {
   return -1;
 }
 
-function matching_close(s: string, start: i32): i32 {
+function matching_close(s: string, start: i32): Option[i32] {
   let depth = 0;
   for i in start..s.len() {
     let c = s[i] as i32;
@@ -6977,11 +6977,11 @@ function matching_close(s: string, start: i32): i32 {
     } else if (c == b')' as i32) {
       depth -= 1;
       if (depth == 0) {
-        return i;
+        return Some(i);
       }
     }
   }
-  return -1;
+  return None;
 }
 
 function group_has_top_comma(s: string, start: i32, close: i32): boolean {
@@ -7038,10 +7038,9 @@ pub function canonicalise_type_args(s: string): string {
     return s;
   }
   let head = slice_unchecked(s, 0, i).to_owned();
-  let close = matching_close(s, i);
-  if (close < 0) {
+  let Some(close) = matching_close(s, i) else {
     return s;
-  }
+  };
   let inner = slice_unchecked(s, i + 1, close).to_owned();
   let rest_from = close + 1;
   let group_is_tuple = group_has_top_comma(s, i, close);
@@ -11814,10 +11813,9 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
   if (cts.len() != ed.type_params.len()) {
     return none;
   }
-  let vi = variant_struct_index(fns.structs, pat_variant_bare(vname), ed.name);
-  if (vi < 0) {
+  let Some(vi) = variant_struct_index(fns.structs, pat_variant_bare(vname), ed.name) else {
     return none;
-  }
+  };
   let fields = fns.structs[vi].fields;
   let out: string[] = [];
   for fi in 0..fields.len() {
@@ -12445,10 +12443,9 @@ function bound_method(ty: string, m: string, receiver: boolean, ctx: BoundUse): 
   if (k < 0) {
     return m;
   }
-  let at = trait_provider_index(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m, receiver);
-  if (at < 0) {
+  let Some(at) = trait_provider_index(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m, receiver) else {
     return m;
-  }
+  };
   let fd = ctx.funcs.decls[at];
   if (ctx.by_trait && receiver && fd.impl_trait.len() > 0) {
     return fd.impl_trait + "." + derive_simple_name(fd.name);
@@ -15433,13 +15430,13 @@ function me_collect_slot(ty: string, fn_ret: string, fn_params: string, enums: E
   return cur;
 }
 
-function variant_struct_index(structs: StructDecl[], vname: string, owner: string): i32 {
+function variant_struct_index(structs: StructDecl[], vname: string, owner: string): Option[i32] {
   for i in 0..structs.len() {
     if (structs[i].name == vname && structs[i].enum_owner == owner) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
@@ -15447,7 +15444,7 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
   if (fromAnno.len() > 0) {
     return fromAnno;
   }
-  if (variant_struct_index(structs, vname, ed.name) < 0) {
+  if (variant_struct_index(structs, vname, ed.name).is_none()) {
     return "";
   }
   let binds = me_variant_binds(ed, vname, args, env, structs, funcs);
@@ -15473,10 +15470,9 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
 
 function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): MEnv {
   let binds = MEnv { mnames: [], mtypes: [] };
-  let vidx = variant_struct_index(structs, vname, ed.name);
-  if (vidx < 0) {
+  let Some(vidx) = variant_struct_index(structs, vname, ed.name) else {
     return binds;
-  }
+  };
   let fields = structs[vidx].fields;
   let fi = 0;
   while (fi < fields.len() && fi < args.len()) {
@@ -15587,10 +15583,9 @@ function me_variant_field_expectations(ed: EnumDecl, vname: string, expected: st
   if (cts.len() != ed.type_params.len()) {
     return none;
   }
-  let vidx = variant_struct_index(structs, vname, ed.name);
-  if (vidx < 0) {
+  let Some(vidx) = variant_struct_index(structs, vname, ed.name) else {
     return none;
-  }
+  };
   let fields = structs[vidx].fields;
   let out: string[] = [];
   for fi in 0..fields.len() {
@@ -16094,10 +16089,9 @@ function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, cts: string[], structs
           simple = slice_unchecked(pv.type_name, k + 1, pv.type_name.len()).to_owned();
         }
       }
-      let vidx = variant_struct_index(structs, simple, ed.name);
-      if (vidx < 0) {
+      let Some(vidx) = variant_struct_index(structs, simple, ed.name) else {
         return env;
-      }
+      };
       let fs = structs[vidx].fields;
       let names: string[] = [];
       if (pv.binding.len() > 0) {
@@ -16650,8 +16644,7 @@ pub function monomorphize_enums(mod: Module): Module {
       for vi2 in 0..ed.variant_names.len() {
         let vn0 = ed.variant_names[vi2];
         nvn = nvn.append(vn0 + "__" + key);
-        let vidx = variant_struct_index(mod.structs, vn0, base);
-        if (vidx >= 0) {
+        if let Some(vidx) = variant_struct_index(mod.structs, vn0, base) {
           let vs = mod.structs[vidx];
           let nf: StructFieldDecl[] = [];
           for fj2 in 0..vs.fields.len() {
@@ -19875,13 +19868,13 @@ function fda_known_func(name: string, funcs: FuncDecl[]): boolean {
   return false;
 }
 
-function fda_param_index(params: ast.ParamDecl[], name: string): i32 {
+function fda_param_index(params: ast.ParamDecl[], name: string): Option[i32] {
   for i in 0..params.len() {
     if (params[i].name == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (string, string) {
@@ -19908,10 +19901,9 @@ function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (s
     if (fda_is_named_marker(c.args[i])) {
       seen_named = true;
       let name = fda_marker_name(c.args[i]);
-      let idx = fda_param_index(params, name);
-      if (idx < 0) {
+      let Some(idx) = fda_param_index(params, name) else {
         return ("E077", "\"" + callee + "\" has no parameter named \"" + name + "\"");
-      }
+      };
       if (filled[idx]) {
         return ("E077", "duplicate argument for parameter \"" + name + "\"");
       }
@@ -22250,26 +22242,25 @@ pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: str
 }
 
 function trait_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): string {
-  let at = trait_provider_index(funcs, recv_type, traits, method, receiver);
-  if (at < 0) {
+  let Some(at) = trait_provider_index(funcs, recv_type, traits, method, receiver) else {
     return method;
-  }
+  };
   return funcs[at].name;
 }
 
-function trait_provider_index(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): i32 {
+function trait_provider_index(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): Option[i32] {
   if (recv_type.len() == 0) {
-    return -1;
+    return None;
   }
   for i in 0..funcs.len() {
     let fd = funcs[i];
     if (util.base_type_name(fd.receiver_type) == recv_type
       && fd.receiver_name.len() > 0 == receiver
       && answers_traits(fd, traits, method)) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function route_inherited_defaults(mod: Module): Module {
@@ -23108,28 +23099,16 @@ function cl_call(name: string, args: ast.Expr[]): ast.Expr {
 
 // The value of type `t` at the address `addr`.
 function cl_load(t: string, addr: ast.Expr): ast.Expr {
-  if (t == "u8") {
-    return e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0);
-  }
-  if (t == "i32") {
-    return cl_call("__load_i32", [addr]);
-  }
-  if (t == "u32") {
-    return e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0);
-  }
-  if (t == "f32") {
-    return cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]);
-  }
-  if (t == "i64") {
-    return cl_call("__load_i64", [addr]);
-  }
-  if (t == "u64") {
-    return e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0);
-  }
-  if (t == "f64") {
-    return cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]);
-  }
-  return cl_call("__load_ptr", [addr]);
+  return match (t) {
+    "u8" => e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0),
+    "i32" => cl_call("__load_i32", [addr]),
+    "u32" => e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0),
+    "f32" => cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]),
+    "i64" => cl_call("__load_i64", [addr]),
+    "u64" => e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0),
+    "f64" => cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]),
+    _ => cl_call("__load_ptr", [addr]),
+  };
 }
 
 // The statement that writes `v` of type `t` at the address `addr`.

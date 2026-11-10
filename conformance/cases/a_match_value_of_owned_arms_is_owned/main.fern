@@ -1,0 +1,30 @@
+// A match value is owned when each arm gives an owned value, so it can move
+// into an `own` parameter. A binder of an owned scrutinee is owned too.
+struct St { xs: i32[] }
+enum Slot { Full(St), Empty }
+
+function take(own s: St, n: i32): St {
+  return St { xs: s.xs.append(n) };
+}
+
+function by_literal(own s: St, k: string): St {
+  return match (k) {
+    "a" => take(s, 1),
+    "b" => take(s, 2),
+    _ => take(s, 3),
+  };
+}
+
+function by_variant(own slot: Slot): St {
+  return match (slot) {
+    Full(inner) => inner,
+    Empty => St { xs: [] },
+  };
+}
+
+function main(): i32 {
+  let a = take(by_literal(St { xs: [] }, "b"), 9);
+  let b = take(by_variant(Full(St { xs: [5] })), 6);
+  print(f"{a.xs[0]} {a.xs[1]} {b.xs[0]} {b.xs[1]}");
+  return 0;
+}

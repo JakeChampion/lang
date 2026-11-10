@@ -144,7 +144,7 @@ func TestSelfHostListingMatches(t *testing.T) {
 		t.Fatalf("no description() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
 	}
 	descs := map[string]string{}
-	for _, m := range regexp.MustCompile(`if \(name == "([^"]+)"\) \{\s*return "([^"]*)";`).FindAllStringSubmatch(descBody[1], -1) {
+	for _, m := range regexp.MustCompile(`"([^"]+)" => "([^"]*)",`).FindAllStringSubmatch(descBody[1], -1) {
 		descs[m[1]] = m[2]
 	}
 	kindsBody := regexp.MustCompile(`(?s)pub function handler_kinds\(name: string\): string\[\] \{(.*?)\n\}`).FindStringSubmatch(src)

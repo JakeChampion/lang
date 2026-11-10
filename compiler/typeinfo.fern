@@ -514,25 +514,15 @@ function lane_operands(v: string, lt: Type): Type[] {
 pub function lane_builtin_result(name: string): Type {
   let w = lane_builtin_width(name);
   let v = lane_builtin_verb(name);
-  if (v == "lane_bits") {
-    return TypeI32 { is_char: false, width: w, unsigned: true, polymorphic: false };
-  }
-  if (v == "store") {
-    return TypeVoid { tag: 0 };
-  }
-  if (v == "bitmask") {
-    return TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
-  }
-  if (v == "lane") {
-    return TypeFloat { width: w, polymorphic: false };
-  }
-  if (v == "with_bytes") {
-    return TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false };
-  }
-  if (v == "with") {
-    return TypeArray { elem: TypeFloat { width: w, polymorphic: false }, view: false };
-  }
-  return TypeLanes { width: w };
+  return match (v) {
+    "lane_bits" => TypeI32 { is_char: false, width: w, unsigned: true, polymorphic: false },
+    "store" => TypeVoid { tag: 0 },
+    "bitmask" => TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false },
+    "lane" => TypeFloat { width: w, polymorphic: false },
+    "with_bytes" => TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false },
+    "with" => TypeArray { elem: TypeFloat { width: w, polymorphic: false }, view: false },
+    _ => TypeLanes { width: w },
+  };
 }
 
 pub function spelling(t: Type): string {

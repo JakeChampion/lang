@@ -5,6 +5,7 @@ import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
 import "./ssacreditreuse" as reuse;
+import "std/option";
 
 pub function metadata(row: ssaprepare.Emitted): physicalbody.Metadata {
   let selected = row.body.selected;
@@ -26,7 +27,7 @@ function ordinary(m: physicalbody.Metadata, t: typeinfo.Type): boolean {
     return false;
   }
   if let typeinfo.TypeStruct(s) = t {
-    return ssasem.finalizer_index(m.finalizers, s.name) < 0;
+    return ssasem.finalizer_index(m.finalizers, s.name).is_none();
   }
   return false;
 }

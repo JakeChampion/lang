@@ -14368,9 +14368,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		n.Trait = dt.Trait0()
 		n.Traits = dt.Traits
 		tn, hasName := methodTypeName(n.Target)
-		_, isStruct := n.Target.(ast.StructType)
-		_, isEnum := n.Target.(ast.EnumType)
-		if !hasName || !(isStruct || isEnum) {
+		st, isStruct := n.Target.(ast.StructType)
+		et, isEnum := n.Target.(ast.EnumType)
+		// The type tag of a trait object names the declaration, not its type arguments.
+		if !hasName || !(isStruct || isEnum) || len(st.Args) > 0 || len(et.Args) > 0 {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
