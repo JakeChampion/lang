@@ -900,6 +900,18 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
   return count;
 }
 
+function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32, number: i64): void {
+  let l = line_on(out);
+  if (c.num_prefix > 0 && count > 0) {
+    l = l.to(c.offset, c);
+    l = put_number(l, c, c.offset, number);
+  }
+  for col in 0..count {
+    l = put_column(l, c, col, rows[from + col], number, c.numbering && c.num_prefix == 0);
+  }
+  buf_push_byte(out, 10);
+}
+
 function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): i32 {
   let count = 0;
   let nrows = 0;
@@ -908,15 +920,7 @@ function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_width
   }
   let r = 0;
   while (r < nrows) {
-    let texts: u8[][] = [];
-    let nums: i64[] = [];
-    let col = 0;
-    while (col < row_widths[r]) {
-      texts = texts.append(rows[r * width + col]);
-      nums = nums.append(wrap32(first_no + r as i64));
-      col += 1;
-    }
-    row_into(out, c, texts, nums, c.numbering);
+    merge_row_into(out, c, rows, r * width, row_widths[r], wrap32(first_no + r as i64));
     count += 1;
     if (c.double_space) {
       buf_push_byte(out, 10);
@@ -1159,7 +1163,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     let page_ff = false;
     let r = 0;
     while (r < rows) {
-      let row: u8[][] = [];
+      let row_width = 0;
       let any = false;
       let col = 0;
       while (col < width) {
@@ -1194,7 +1198,14 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         if (any && active == 0 && !present) {
           break;
         }
-        row = row.append(cell);
+        if (any) {
+          while (row_width < col) {
+            cells = cells.append([]);
+            row_width += 1;
+          }
+          cells = cells.append(cell);
+          row_width += 1;
+        }
         col += 1;
         if (any && active == 0) {
           break;
@@ -1206,15 +1217,10 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         }
         break;
       }
-      let col2 = 0;
-      row_widths = row_widths.append(row.len());
-      while (col2 < width) {
-        if (col2 < row.len()) {
-          cells = cells.append(row[col2]);
-        } else {
-          cells = cells.append([]);
-        }
-        col2 += 1;
+      row_widths = row_widths.append(row_width);
+      while (row_width < width) {
+        cells = cells.append([]);
+        row_width += 1;
       }
       filled += 1;
       r += 1;
