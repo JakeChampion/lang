@@ -1375,3 +1375,6 @@ worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0
+
+# VT-01: checked value cleanup retains COW aliases.
+value_cleanup_keeps_cow_aliases                    0

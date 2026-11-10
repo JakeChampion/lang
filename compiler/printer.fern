@@ -3041,6 +3041,9 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
 
 function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
   let out = "";
+  if (sd.value_type) {
+    out += "@value\n";
+  }
   if (sd.derives.len() > 0) {
     out += "@derive(";
     for di in 0..sd.derives.len() {

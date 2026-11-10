@@ -3074,6 +3074,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.ownFuncs["tcp_close"] = []bool{true}
 	c.info.OwnFuncs = c.ownFuncs
+	c.checkValueTypes(prog)
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
@@ -5933,6 +5934,7 @@ type checker struct {
 	consumingTypes map[string]bool
 	callOwnFlags   map[*ast.Call][]bool
 	scalarArgs     map[ast.Expr]bool
+	valueArgs      map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -10698,7 +10700,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
-		if c.scalarArgs[e] {
+		if c.scalarArgs[e] || c.valueArgs[e] {
 			return true
 		}
 		switch x := e.(type) {
@@ -15388,6 +15390,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.expectedType = nil
 			}
 			c.elemHint = nil
+			if st, ok := at.(ast.StructType); ok && c.valueType(st.Name) && c.valueData(at, map[string]bool{}) {
+				if c.valueArgs == nil {
+					c.valueArgs = map[ast.Expr]bool{}
+				}
+				c.valueArgs[n.Args[i]] = true
+			}
 			if definitelyScalar(at) {
 				if c.scalarArgs == nil {
 					c.scalarArgs = map[ast.Expr]bool{}
