@@ -1,6 +1,6 @@
 # Compiler performance
 
-Status: [plan] measurement process and priorities, updated 2026-11-09.
+Status: [plan] measurement process and priorities, updated 2026-11-10.
 
 Fern aims to have one of the fastest parsers and self-hosted compilers in the world.
 Correct diagnostics, ownership proofs, and generated code remain requirements.
@@ -31,6 +31,17 @@ Exact-head CI remains the merge gate.
 Main now supplies the broader `Funcs` Map index from PR #15080.
 This index replaces the earlier `NameIndex` alternative.
 The earlier archives retain their original code and source identities.
+
+The [fixed timing control](benchmarks/compiler-interpreter-path-control-2026-11-10/README.md) rejects the remaining lazy argument-target shortcut.
+Eight balanced pairs per proof-cache mode retain higher candidate compilation medians, with substantial paired variation.
+The instruction and allocation reductions do not justify the unresolved compilation cost.
+The timing cause remains unknown.
+The final source retains eager lookup and the upstream Map index.
+
+The two regression files still cover generic calls and same-count REPL replacement.
+Fresh validation reports 413 test and subtest passes with zero skips.
+The production rebuild matches main `c9547605` byte for byte and completes the full 1,896-record correctness control.
+The lazy lookup records below remain historical comparisons of their exact rejected candidates.
 
 The [argument prepass comparison](benchmarks/compiler-interpreter-map-shortcut-2026-11-10/README.md) tests the remaining unused-search shortcut against that Map index.
 Four of five first-group pairs increase CPU time, despite fewer allocation events.
