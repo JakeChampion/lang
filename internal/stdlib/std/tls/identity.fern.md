@@ -10,6 +10,11 @@ An identity combines a certificate chain with a private key. Parsers accept supp
 
 The key parser validates structure and algorithm support. Certificate trust and peer authorization require the separate verification policy.
 
+`pair` shares the key with the returned identity.
+The caller retains its key holder.
+ECDSA erase and byte-array erase use copy-on-write, so erase of one holder preserves the identity key.
+The caller must erase all secret holders and separate input copies to remove their secret bytes.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -409,7 +414,7 @@ pub function pair(chain: u8[][], key: PrivateKey): Result[Identity, KeyError] {
       return Err(Certificate(e));
     }
   }
-  return Ok(Identity { chain: chain, key: key });
+  return Ok(Identity { chain: chain, key: unsafe { share_unchecked(key) } });
 }
 
 pub function from_pem(chain_text: string, key_text: string): Result[Identity, KeyError] {
