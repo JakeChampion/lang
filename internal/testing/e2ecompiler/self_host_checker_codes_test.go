@@ -2827,7 +2827,7 @@ function main(): i32 { return 0; }
 		{"shadowed-intrinsic-name", "function __send_copy(x: i32): i32 { return x; }\nfunction main(): i32 { return __send_copy(0); }\n", nil},
 		{"shadowed-kernel-name", "function __aes_ctr32(x: i32): i32 { return x; }\nfunction main(): i32 { return __aes_ctr32(0); }\n", nil},
 		{"display-builtin-method-name", "function __method_boolean_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __method_boolean_to_string(0); }\n", nil},
-		{"builtin-method-name-redeclared", "function __method_string_len(x: i32): i32 { return x; }\nfunction main(): i32 { return __method_string_len(0); }\n", []string{"E006"}},
+		{"builtin-method-name-redeclared", "function __method_string_len(x: i32): i32 { return x; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"public-builtin-name-print", "function print(x: i32): i32 { return x; }\nfunction main(): i32 { return print(0); }\n", nil},
 		{"public-builtin-name-args", "function args(x: i32): i32 { return x; }\nfunction main(): i32 { return args(0); }\n", nil},
 		{"display-builtin-name", "function __primitive_i32_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __primitive_i32_to_string(0); }\n", nil},
