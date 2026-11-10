@@ -5007,6 +5007,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
   let required = __alloc_i32(f.nvals);
+  let prop = __alloc_bool(f.nvals);
   let i = 0;
   while (i < f.nvals) {
     def_b = def_b.with(i, -1);
@@ -5023,6 +5024,9 @@ pub function drop_low_wraps(f: SFunc): Formed {
       if (r >= 0 && r < f.nvals) {
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
+        if (demand_propagates(ins)) {
+          prop = prop.with(r, true);
+        }
         if (low_wrap(ins)) {
           wraps = wraps.append(r);
           wrap_arg = wrap_arg.append(ins.args[0]);
@@ -5031,21 +5035,25 @@ pub function drop_low_wraps(f: SFunc): Formed {
     }
   }
   let work: i32[] = [];
-  // Seed observations that do not depend on an instruction's result. Pure
-  // low-bit operations propagate their consumers' requirements below.
+  // Fixed operand requirements are seeded once. Only operations whose
+  // operands depend on result demand need to enter the worklist.
   for blk in f.blocks {
     for ins in blk.insts {
-      for ai in 0..ins.args.len() {
-        let a = ins.args[ai];
-        let bits = operand_bits(ins, ai, 0, f, def_b, def_k);
-        if (a >= 0 && a < f.nvals && bits > required[a]) {
-          required = required.with(a, bits);
-          work = work.append(a);
+      if (ins.result < 0 || ins.result >= f.nvals || !prop[ins.result]) {
+        for ai in 0..ins.args.len() {
+          let a = ins.args[ai];
+          if (a >= 0 && a < f.nvals && prop[a]) {
+            let bits = operand_bits(ins, ai, 0, f, def_b, def_k);
+            if (bits > required[a]) {
+              required = required.with(a, bits);
+              work = work.append(a);
+            }
+          }
         }
       }
     }
     let tv = term_operand(blk.term);
-    if (tv >= 0 && tv < f.nvals && required[tv] < 64) {
+    if (tv >= 0 && tv < f.nvals && prop[tv] && required[tv] < 64) {
       required = required.with(tv, 64);
       work = work.append(tv);
     }
@@ -5057,10 +5065,12 @@ pub function drop_low_wraps(f: SFunc): Formed {
     let ins = def_at(f, def_b, def_k, v);
     for ai in 0..ins.args.len() {
       let a = ins.args[ai];
-      let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
-      if (a >= 0 && a < f.nvals && bits > required[a]) {
-        required = required.with(a, bits);
-        work = work.append(a);
+      if (a >= 0 && a < f.nvals && prop[a]) {
+        let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
+        if (bits > required[a]) {
+          required = required.with(a, bits);
+          work = work.append(a);
+        }
       }
     }
   }
@@ -5254,6 +5264,16 @@ function low_wrap(ins: SInst): boolean {
 
 function low_half_binary(op: string): boolean {
   return op == "add" || op == "sub" || op == "mul" || op == "and" || op == "or" || op == "xor";
+}
+
+function demand_propagates(ins: SInst): boolean {
+  if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
+    return true;
+  }
+  if (ins.kind_tag == BINARY) {
+    return low_half_binary(ins.str) || ins.str == "shl" || ins.str == "shr_s" || ins.str == "shr_u";
+  }
+  return ins.kind_tag == UNARY && (low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend");
 }
 
 // A five-level lattice bounds worklist growth even when shifts feed a phi.
