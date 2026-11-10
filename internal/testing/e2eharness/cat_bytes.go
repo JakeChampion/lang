@@ -87,6 +87,14 @@ func RunCatByteCases(t *testing.T, bin string, runner []string, census func(*tes
 		t.Skip("requires GNU coreutils 9.4 or newer")
 	}
 	t.Logf("reference: %s (%s)", oracle, strings.SplitN(string(version), "\n", 2)[0])
+	RunCatByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunCatByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU cat reference command")
+	}
 	for _, tc := range CatByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -101,8 +109,11 @@ func RunCatByteCases(t *testing.T, bin string, runner []string, census func(*tes
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			env := append(os.Environ(), "LC_ALL=C")
-			ref := exec.CommandContext(ctx, oracle, args...)
+			refArgv := append(append([]string{}, oracle...), args...)
+			ref := exec.CommandContext(ctx, refArgv[0], refArgv[1:]...)
 			ref.Dir, ref.Env, ref.Stdin = dir, env, strings.NewReader(tc.Input)
+			var refDiagnostic bytes.Buffer
+			ref.Stderr = &refDiagnostic
 			want, err := ref.Output()
 			if err != nil {
 				t.Fatalf("GNU run: %v", err)
@@ -120,6 +131,16 @@ func RunCatByteCases(t *testing.T, bin string, runner []string, census func(*tes
 			}
 			if census != nil {
 				census(t, diagnostic.String())
+			}
+			var clean strings.Builder
+			for _, line := range strings.SplitAfter(diagnostic.String(), "\n") {
+				if census != nil && (strings.HasPrefix(line, "leakcheck:") || strings.HasPrefix(line, "fern-sanitizer: leak ")) {
+					continue
+				}
+				clean.WriteString(line)
+			}
+			if clean.String() != refDiagnostic.String() {
+				t.Fatalf("stderr differs: got %q, want %q", clean.String(), refDiagnostic.String())
 			}
 		})
 	}

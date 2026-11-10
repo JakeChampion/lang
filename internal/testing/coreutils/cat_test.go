@@ -215,8 +215,11 @@ func TestCatProcFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(fernBin(t, "cat"), "/proc/version")
-	cmd.Args[0] = "cat"
+	argv := append(crossArgv(fernBin(t, "cat")), "/proc/version")
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if len(crossPrefix()) == 0 {
+		cmd.Args[0] = "cat"
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("cat /proc/version: %v", err)
