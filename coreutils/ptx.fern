@@ -913,7 +913,7 @@ function tex_special(c: i32): boolean {
   if (c >= 64) {
     mask = 2882303763933036544u64;
   }
-  return c < 128 && (mask >> ((c & 63) as u64) & 1u64) != 0u64;
+  return c < 128 && (mask >> (c & 63) as u64 & 1u64) != 0u64;
 }
 
 struct TexText { bytes: u8[], plain: boolean }
