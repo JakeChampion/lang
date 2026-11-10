@@ -55,7 +55,10 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 	mirror := mirrorCorpus(t, root)
 
 	checked, unchanged := 0, 0
-	for _, rel := range files {
+	for i, rel := range files {
+		if i%25 == 0 {
+			t.Logf("check file %d/%d: %s", i+1, len(files), rel)
+		}
 		src, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatal(err)
