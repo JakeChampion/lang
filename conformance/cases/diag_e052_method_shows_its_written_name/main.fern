@@ -1,0 +1,7 @@
+struct S { n: i32 }
+
+function (s: S) m(): i32 {
+    if (s.n > 0) { return 1; }
+}
+
+function main(): i32 { return 0; }

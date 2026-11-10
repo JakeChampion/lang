@@ -1,0 +1,1 @@
+main.fern:3:1: error[E052]: missing return: "m" has return type i32 but can fall off the end without returning a value

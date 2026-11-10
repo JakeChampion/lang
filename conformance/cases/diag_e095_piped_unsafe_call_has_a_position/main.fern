@@ -1,0 +1,9 @@
+unsafe function danger(n: i32): i32 { return n; }
+
+unsafe function two(n: i32, m: i32): i32 { return n + m; }
+
+function main(): i32 {
+    let a = 1 |> danger;
+    let b = 2 |> two(3);
+    return a + b;
+}

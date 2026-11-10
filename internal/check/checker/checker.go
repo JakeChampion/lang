@@ -5538,6 +5538,15 @@ func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	}
 }
 
+// funcDisplayName gives the name that the source wrote for fn: a method has
+// its simple name, not the mangled one.
+func (c *checker) funcDisplayName(fn *ast.FuncDecl) string {
+	if fn.MethodSimpleName != "" {
+		return fn.MethodSimpleName
+	}
+	return fn.Name
+}
+
 func demangle(s string) string {
 	if rest, ok := strings.CutPrefix(s, ast.EntryShadowPrefix); ok {
 		return rest
@@ -9620,7 +9629,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 	c.checkMustConsume(fn)
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
-		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", c.funcDisplayName(fn), fn.ReturnType.String())
 	}
 	c.checkCaptureCycleStores()
 }
@@ -14285,7 +14294,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 
 	c.checkBlock(fn.Body, root)
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
-		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", c.funcDisplayName(fn), fn.ReturnType.String())
 	}
 
 	fn.Captures = nil
