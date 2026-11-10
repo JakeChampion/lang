@@ -3857,10 +3857,21 @@ function __recv_records[T: Transport](tr: T, conn: __Conn, s: client.Session, ti
   return Ok(__Got { conn: conn, bytes: [] });
 }
 
+// A read of a kernel TLS socket fails with EIO when the next record is not
+// application data. An empty answer sends the caller to the record path.
+function __kernel_data(got: Result[u8[], FetchError]): Result[u8[], FetchError] {
+  if let Err(Io(e)) = got {
+    if (e.eq(net.error_from_host(5))) {
+      return Ok([]);
+    }
+  }
+  return got;
+}
+
 function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
   let session = s;
   while (true) {
-    let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
+    let raw = __kernel_data(__recv_raw(tr, conn.fd, timeouts, started, size))?;
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }

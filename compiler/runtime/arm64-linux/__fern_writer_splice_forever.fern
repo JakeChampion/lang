@@ -17,10 +17,10 @@ function __fern_writer_splice_forever(fd: i32, s: string): Result[void, IoError]
   let buf = m as usize;
   let c: i32 = 0;
   while (c < copies) {
-    __memcpy(buf + c * n, __raw_data(s), n);
+    __memcpy(buf + (c * n) as usize, __raw_data(s), n);
     c += 1;
   }
-  let iov = buf + pages;
+  let iov = buf + pages as usize;
   let out = fd;
   let pr: i32 = -1;
   __syscall3(25, fd as i64, 1031, 524288);
@@ -28,7 +28,7 @@ function __fern_writer_splice_forever(fd: i32, s: string): Result[void, IoError]
   let moved = 0 as i64;
   let err: i32 = 0;
   while (err == 0) {
-    __store_i64(iov, (buf + off) as i64);
+    __store_i64(iov, (buf + off as usize) as i64);
     __store_i64(iov + 8, (len - off) as i64);
     let gift: i32 = 0;
     if (off % 4096 == 0 && (len - off) % 4096 == 0) {

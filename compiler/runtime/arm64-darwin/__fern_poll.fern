@@ -17,7 +17,7 @@ function __fern_poll(fds: i32[], timeout_ms: i32): i32 {
     return -1;
   }
   let buf = __raw_alloc(count * 64);
-  let events = buf + count * 32;
+  let events = buf + (count * 32) as usize;
   let i = n - 1;
   let c: i32 = 0;
   while (i >= 0) {

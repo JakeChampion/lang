@@ -1,0 +1,19 @@
+// An operator does not mix `usize` with a type that `usize` cannot hold
+// on each target. The compare, the arithmetic and the bitwise operators
+// each refuse the mix. An unsigned type of 32 bits or less is not a mix.
+function main(): i32 {
+    let z: usize = 3;
+    let n: i32 = -1;
+    let l: i64 = -2;
+    let w: u64 = 5000000000;
+    let small: u32 = 7;
+    if (z > n) {
+        print("greater");
+    }
+    let sum = z + l;
+    let wide = z + w;
+    let bits = z & n;
+    let fits = z + small;
+    let lit = z + 8;
+    return 0;
+}

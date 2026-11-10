@@ -21,7 +21,7 @@ function __fern_dir_entries_bytes(fd: i32): Result[i32[][], IoError] {
         let room = reclen - 19;
         let scan = 1;
         while (scan == 1 && nlen + 8 <= room) {
-          let w = __load_i64(buf + pos + 19 + nlen);
+          let w = __load_i64(buf + pos as usize + 19 + nlen as usize);
           let z = w - 72340172838076673 as i64 & (w ^ (-1) as i64) & (-9187201950435737472) as i64;
           if (z != 0 as i64) {
             nlen += __ctz64(z as u64) >> 3;
@@ -52,7 +52,7 @@ function __fern_dir_entries_bytes(fd: i32): Result[i32[][], IoError] {
           if (skip == 0) {
             let nbuf = __raw_arr_box((nlen + 7) / 8);
             __store_i64(nbuf, nlen as i64);
-            __memcpy(nbuf + 8, buf + pos + 19, nlen);
+            __memcpy(nbuf + 8, buf + pos as usize + 19, nlen);
             let name_bytes = __raw_array(nbuf);
             names = names.append(name_bytes);
           }

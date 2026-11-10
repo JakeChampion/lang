@@ -1,0 +1,4 @@
+10:11: error[E009]: operator ">" requires both operands to share an integer type; got usize and i32 — use `as` for explicit conversion
+13:17: error[E009]: operator "+" requires both operands to share an integer type; got usize and i64 — use `as` for explicit conversion
+14:18: error[E009]: operator "+" requires both operands to share an integer type; got usize and u64 — use `as` for explicit conversion
+15:18: error[E009]: operator "&" requires both operands to share an integer type; got usize and i32 — use `as` for explicit conversion

@@ -25,7 +25,7 @@ function __fern_write_file_bytes_u8(path: string, bytes: i32[]): Result[void, Io
   let at = 0;
   let bad = 0;
   while (at < n && bad == 0) {
-    let w = __syscall3(64, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    let w = __syscall3(64, fd as i64, (p + at as usize) as i64, (n - at) as i64) as i32;
     if (w == 0) {
       bad = 5;
     } else {

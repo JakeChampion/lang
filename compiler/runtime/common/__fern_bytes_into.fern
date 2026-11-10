@@ -24,6 +24,6 @@ function __fern_bytes_into(n: i32, from: i32, src: usize, at: i32, dst: usize): 
     __fern_rc_dec(d);
     d = b;
   }
-  __memcpy(d + 8 + at, sp + from, n);
+  __memcpy(d + 8 + at as usize, sp + from as usize, n);
   return __raw_array(d);
 }
