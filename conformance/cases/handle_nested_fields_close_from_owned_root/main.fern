@@ -1,0 +1,18 @@
+// spec: RH-07
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Box { value: Handle }
+struct Pair { a: Box, b: Box }
+
+function consume(own p: Pair): i32 {
+  return p.a.value.close() + p.b.value.close();
+}
+struct Generic[T] { value: T }
+function generic(own p: Generic[Box]): i32 {
+  return p.value.value.close();
+}
+function main(): i32 {
+  print(consume(Pair { a: Box { value: Handle { fd: 3 } }, b: Box { value: Handle { fd: 8 } } }));
+  print(generic(Generic { value: Box { value: Handle { fd: 17 } } }));
+  return 0;
+}
