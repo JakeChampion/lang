@@ -10245,7 +10245,7 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 		if c.holdsViewAggregate(fn.ReturnType) {
 			return c.aggregateViewRoots(ret, fn.ReturnType, envs[fn], sums, c.sliceLeaf(envs[fn], sums))
 		}
-		return c.sliceSourceRoots(ret, envs[fn], sums)
+		return viewRoots{params: map[int]bool{}}
 	})
 	for _, fn := range prog.Funcs {
 		env, ok := envs[fn]
@@ -10271,7 +10271,7 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 		if e.IsString {
 			return out
 		}
-		out.merge(c.slicedRoots(e.Source, env, sums))
+		out.merge(c.slicedRoots(e, env, sums))
 	case *ast.FieldAccess:
 		out.merge(c.holderViewRoots(e.Target, env, sums, c.sliceLeaf(env, sums)))
 	case *ast.Index:
@@ -10321,6 +10321,9 @@ func (c *checker) viewArgRoots(callee string, i int, arg ast.Expr, env *escapeEn
 		if _, isString := sig.Params[i].(ast.StringType); isString {
 			return c.bytesSourceRoots(arg, env, sums)
 		}
+		if _, isArray := sig.Params[i].(ast.ArrayType); isArray && c.ownedCallResult(arg) {
+			return viewRoots{params: map[int]bool{}, local: true}
+		}
 	}
 	return c.sliceSourceRoots(arg, env, sums)
 }
@@ -10332,14 +10335,40 @@ func (c *checker) bytesSourceRoots(str ast.Expr, env *escapeEnv, sums map[string
 	if id, ok := str.(*ast.Ident); ok && env.reassigned[id.Name] {
 		return viewRoots{params: map[int]bool{}}
 	}
+	if c.ownedCallResult(str) {
+		return viewRoots{params: map[int]bool{}, local: true}
+	}
 	return c.stringSourceRoots(str, env, sums)
 }
 
-// slicedRoots is the storage of the source of a slice expression. The result
-// of a builtin is new storage: the analysis has no summary for a builtin.
-func (c *checker) slicedRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
-	out := c.sliceSourceRoots(src, env, sums)
-	call, ok := src.(*ast.Call)
+// ownedCallResult reports storage that a call returns owned, or a part of it:
+// the function that makes the call releases that storage when it returns.
+func (c *checker) ownedCallResult(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.FieldAccess:
+		return c.ownedCallResult(v.Target)
+	case *ast.Index:
+		return c.ownedCallResult(v.Array)
+	case *ast.Call:
+		id, ok := v.Callee.(*ast.Ident)
+		if !ok || id.Name == "__method_string_as_bytes" {
+			return false
+		}
+		sig := c.info.FuncSigs[id.Name]
+		return sig != nil && !isViewReturn(sig.Result)
+	}
+	return false
+}
+
+// slicedRoots is the storage of the source of a slice expression. An owned
+// call result, or a part of it, is storage that the function releases. The
+// result of a builtin is new storage: the analysis has no summary for a builtin.
+func (c *checker) slicedRoots(e *ast.SliceExpr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if !e.SourceIsSlice && c.ownedCallResult(e.Source) {
+		return viewRoots{params: map[int]bool{}, local: true}
+	}
+	out := c.sliceSourceRoots(e.Source, env, sums)
+	call, ok := e.Source.(*ast.Call)
 	if !ok {
 		return out
 	}
@@ -10365,7 +10394,7 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		if s.IsString {
 			return out
 		}
-		out.merge(c.slicedRoots(s.Source, env, sums))
+		out.merge(c.slicedRoots(s, env, sums))
 	case *ast.FieldAccess:
 		out.merge(c.partSourceRoots(s, s.Target, env, sums))
 	case *ast.Index:
@@ -10380,9 +10409,7 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {
 				return c.bytesSourceRoots(s.Args[0], env, sums)
 			}
-			sum := sums[id.Name]
-			out.local = out.local || sum.fresh
-			for i := range sum.params {
+			for i := range sums[id.Name].params {
 				if i < len(s.Args) {
 					out.merge(c.viewArgRoots(id.Name, i, s.Args[i], env, sums))
 				}
