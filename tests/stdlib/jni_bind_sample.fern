@@ -19,7 +19,7 @@ pub function (x: Point) as_shape(): Shape {
 pub const POINT_ORIGIN: string = "0,0";
 
 // The class dev.fern.Point and the IDs of its members.
-pub struct PointClass { class: usize, id_new: usize, id_new_int_string: usize, id_area: usize, id_set_int: usize, id_set_string_long: usize, id_match_: usize, id_low: usize, id_middle: usize, id_letter: usize, id_half: usize, id_parts: usize, id_parse: usize, id_made: usize, id_x: usize, id_label: usize, id_outline: usize, id_weights: usize }
+pub struct PointClass { class: usize, id_new: usize, id_new_int_string: usize, id_area: usize, id_half: usize, id_letter: usize, id_low: usize, id_match_: usize, id_middle: usize, id_parse: usize, id_parts: usize, id_set_int: usize, id_set_string_long: usize, id_label: usize, id_made: usize, id_outline: usize, id_weights: usize, id_x: usize }
 
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
   let local = jni.find_class(e, "dev/fern/Point");
@@ -32,35 +32,35 @@ pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
   jni.check(e)?;
   let id_area = jni.get_method_id(e, class, "area", "()D");
   jni.check(e)?;
+  let id_half = jni.get_method_id(e, class, "half", "()F");
+  jni.check(e)?;
+  let id_letter = jni.get_method_id(e, class, "letter", "()C");
+  jni.check(e)?;
+  let id_low = jni.get_method_id(e, class, "low", "()B");
+  jni.check(e)?;
+  let id_match_ = jni.get_method_id(e, class, "match", "(Ldev/fern/Point;F)Z");
+  jni.check(e)?;
+  let id_middle = jni.get_method_id(e, class, "middle", "()S");
+  jni.check(e)?;
+  let id_parse = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Ldev/fern/Point;");
+  jni.check(e)?;
+  let id_parts = jni.get_method_id(e, class, "parts", "(Ljava/lang/Object;)[Ldev/fern/Shape;");
+  jni.check(e)?;
   let id_set_int = jni.get_method_id(e, class, "set", "(I)V");
   jni.check(e)?;
   let id_set_string_long = jni.get_method_id(e, class, "set", "(Ljava/lang/String;J)V");
   jni.check(e)?;
-  let id_match_ = jni.get_method_id(e, class, "match", "(Ldev/fern/Point;F)Z");
-  jni.check(e)?;
-  let id_low = jni.get_method_id(e, class, "low", "()B");
-  jni.check(e)?;
-  let id_middle = jni.get_method_id(e, class, "middle", "()S");
-  jni.check(e)?;
-  let id_letter = jni.get_method_id(e, class, "letter", "()C");
-  jni.check(e)?;
-  let id_half = jni.get_method_id(e, class, "half", "()F");
-  jni.check(e)?;
-  let id_parts = jni.get_method_id(e, class, "parts", "(Ljava/lang/Object;)[Ldev/fern/Shape;");
-  jni.check(e)?;
-  let id_parse = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Ldev/fern/Point;");
+  let id_label = jni.get_field_id(e, class, "label", "Ljava/lang/String;");
   jni.check(e)?;
   let id_made = jni.get_static_field_id(e, class, "made", "J");
-  jni.check(e)?;
-  let id_x = jni.get_field_id(e, class, "x", "I");
-  jni.check(e)?;
-  let id_label = jni.get_field_id(e, class, "label", "Ljava/lang/String;");
   jni.check(e)?;
   let id_outline = jni.get_field_id(e, class, "outline", "Ldev/fern/Shape;");
   jni.check(e)?;
   let id_weights = jni.get_field_id(e, class, "weights", "[D");
   jni.check(e)?;
-  return Ok(PointClass { class: class, id_new: id_new, id_new_int_string: id_new_int_string, id_area: id_area, id_set_int: id_set_int, id_set_string_long: id_set_string_long, id_match_: id_match_, id_low: id_low, id_middle: id_middle, id_letter: id_letter, id_half: id_half, id_parts: id_parts, id_parse: id_parse, id_made: id_made, id_x: id_x, id_label: id_label, id_outline: id_outline, id_weights: id_weights });
+  let id_x = jni.get_field_id(e, class, "x", "I");
+  jni.check(e)?;
+  return Ok(PointClass { class: class, id_new: id_new, id_new_int_string: id_new_int_string, id_area: id_area, id_half: id_half, id_letter: id_letter, id_low: id_low, id_match_: id_match_, id_middle: id_middle, id_parse: id_parse, id_parts: id_parts, id_set_int: id_set_int, id_set_string_long: id_set_string_long, id_label: id_label, id_made: id_made, id_outline: id_outline, id_weights: id_weights, id_x: id_x });
 }
 
 // dev.fern.Point.<init>()V
@@ -94,6 +94,75 @@ pub function (c: PointClass) area(e: usize, self: Point): Result[f64, jni.JavaEr
   return Ok(got);
 }
 
+// dev.fern.Point.half()F
+pub function (c: PointClass) half(e: usize, self: Point): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_half, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// dev.fern.Point.letter()C
+pub function (c: PointClass) letter(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 9, self.ref, c.id_letter, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 65535 as usize) as i32);
+}
+
+// dev.fern.Point.low()B
+pub function (c: PointClass) low(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 6, self.ref, c.id_low, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32 << 24 >> 24);
+}
+
+// dev.fern.Point.match(Ldev/fern/Point;F)Z
+pub function (c: PointClass) match_(e: usize, self: Point, a0: Point, a1: f32): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_f32(args, 1, a1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_match_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// dev.fern.Point.middle()S
+pub function (c: PointClass) middle(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 12, self.ref, c.id_middle, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32 << 16 >> 16);
+}
+
+// dev.fern.Point.parse(Ljava/lang/String;)Ldev/fern/Point;
+pub function (c: PointClass) parse(e: usize, a0: string): Result[Point, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Point { ref: got });
+}
+
+// dev.fern.Point.parts(Ljava/lang/Object;)[Ldev/fern/Shape;
+pub function (c: PointClass) parts(e: usize, self: Point, a0: jni.Object): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_parts, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
 // dev.fern.Point.set(I)V
 pub function (c: PointClass) set_int(e: usize, self: Point, a0: i32): Result[void, jni.JavaError] {
   let args = jni.jvalue_alloc(1);
@@ -117,89 +186,6 @@ pub function (c: PointClass) set_string_long(e: usize, self: Point, a0: string, 
   return Ok(());
 }
 
-// dev.fern.Point.match(Ldev/fern/Point;F)Z
-pub function (c: PointClass) match_(e: usize, self: Point, a0: Point, a1: f32): Result[boolean, jni.JavaError] {
-  let args = jni.jvalue_alloc(2);
-  jni.jvalue_set_int(args, 0, a0.ref);
-  jni.jvalue_set_f32(args, 1, a1);
-  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_match_, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok((got & 255 as usize) != 0 as usize);
-}
-
-// dev.fern.Point.low()B
-pub function (c: PointClass) low(e: usize, self: Point): Result[i32, jni.JavaError] {
-  let args = jni.jvalue_alloc(0);
-  let got = jni.invoke(e, jni.CALL_METHOD + 6, self.ref, c.id_low, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok(got as i32 << 24 >> 24);
-}
-
-// dev.fern.Point.middle()S
-pub function (c: PointClass) middle(e: usize, self: Point): Result[i32, jni.JavaError] {
-  let args = jni.jvalue_alloc(0);
-  let got = jni.invoke(e, jni.CALL_METHOD + 12, self.ref, c.id_middle, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok(got as i32 << 16 >> 16);
-}
-
-// dev.fern.Point.letter()C
-pub function (c: PointClass) letter(e: usize, self: Point): Result[i32, jni.JavaError] {
-  let args = jni.jvalue_alloc(0);
-  let got = jni.invoke(e, jni.CALL_METHOD + 9, self.ref, c.id_letter, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok((got & 65535 as usize) as i32);
-}
-
-// dev.fern.Point.half()F
-pub function (c: PointClass) half(e: usize, self: Point): Result[f32, jni.JavaError] {
-  let args = jni.jvalue_alloc(0);
-  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_half, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok(got);
-}
-
-// dev.fern.Point.parts(Ljava/lang/Object;)[Ldev/fern/Shape;
-pub function (c: PointClass) parts(e: usize, self: Point, a0: jni.Object): Result[jni.Object, jni.JavaError] {
-  let args = jni.jvalue_alloc(1);
-  jni.jvalue_set_int(args, 0, a0.ref);
-  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_parts, args);
-  jni.free_buffer(args);
-  jni.check(e)?;
-  return Ok(jni.Object { ref: got });
-}
-
-// dev.fern.Point.parse(Ljava/lang/String;)Ldev/fern/Point;
-pub function (c: PointClass) parse(e: usize, a0: string): Result[Point, jni.JavaError] {
-  let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
-  jni.jvalue_set_int(args, 0, s0);
-  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
-  jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.check(e)?;
-  return Ok(Point { ref: got });
-}
-
-// dev.fern.Point.made
-pub function (c: PointClass) made(e: usize): Result[i64, jni.JavaError] {
-  let got = jni.invoke(e, jni.GET_STATIC_FIELD + 6, c.class, c.id_made, 0 as usize);
-  jni.check(e)?;
-  return Ok(got as i64);
-}
-
-// dev.fern.Point.x
-pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError] {
-  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_x, 0 as usize);
-  jni.check(e)?;
-  return Ok(got as i32);
-}
-
 // dev.fern.Point.label
 pub function (c: PointClass) label(e: usize, self: Point): Result[string, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_label, 0 as usize);
@@ -207,6 +193,13 @@ pub function (c: PointClass) label(e: usize, self: Point): Result[string, jni.Ja
   let text = jni.string_of(e, got);
   jni.delete_local_ref(e, got);
   return Ok(text);
+}
+
+// dev.fern.Point.made
+pub function (c: PointClass) made(e: usize): Result[i64, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_STATIC_FIELD + 6, c.class, c.id_made, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i64);
 }
 
 // dev.fern.Point.outline
@@ -221,6 +214,13 @@ pub function (c: PointClass) weights(e: usize, self: Point): Result[jni.Object, 
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_weights, 0 as usize);
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
+}
+
+// dev.fern.Point.x
+pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_x, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
 }
 
 // A dev.fern.Shape.

@@ -13,7 +13,7 @@ The result is the text of one Fern module. For a class such as `android/content/
 - A function of `IntentClass` for each method, each constructor and each field.
 - A constant for each field that is a compile-time constant.
 
-A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
+The members of a class are in the order of their names, so the module does not change with the order of the JAR. A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
 
 The primitive types change as follows. A Java `boolean` is a `boolean`. A `byte`, a `short`, a `char` and an `int` are each an `i32`. A `long` is an `i64`, a `float` is an `f32` and a `double` is an `f64`.
 
@@ -236,22 +236,54 @@ function is_public(access: i32): boolean {
   return classfile.has(access, classfile.PUBLIC) && !classfile.has(access, classfile.SYNTHETIC);
 }
 
-function methods_of(c: classfile.Class, r: Request): classfile.Method[] {
-  let out: classfile.Method[] = [];
-  for m in c.methods {
-    if (is_public(m.access) && m.name != "<clinit>" && wanted(r, m.name, m.descriptor)) {
-      out = out.append(m);
+// The places of `keys` in the order of the keys. Two JAR files can hold
+// the members of one class in different orders, and the module must not
+// change with the JAR.
+function sorted(keys: string[]): i32[] {
+  let out: i32[] = [];
+  for i in 0..keys.len() {
+    let at = out.len();
+    out = out.append(i);
+    while (at > 0 && keys[out[at - 1]] > keys[i]) {
+      out = out.with(at, out[at - 1]);
+      at -= 1;
     }
+    out = out.with(at, i);
   }
   return out;
 }
 
+// The methods of the request, in the order of their names and
+// descriptors.
+function methods_of(c: classfile.Class, r: Request): classfile.Method[] {
+  let picked: classfile.Method[] = [];
+  let keys: string[] = [];
+  for m in c.methods {
+    if (is_public(m.access) && m.name != "<clinit>" && wanted(r, m.name, m.descriptor)) {
+      picked = picked.append(m);
+      keys = keys.append(m.name + m.descriptor);
+    }
+  }
+  let out: classfile.Method[] = [];
+  for i in sorted(keys) {
+    out = out.append(picked[i]);
+  }
+  return out;
+}
+
+// The fields of the request, in the order of their names.
 function fields_of(c: classfile.Class, r: Request): classfile.Field[] {
-  let out: classfile.Field[] = [];
+  let picked: classfile.Field[] = [];
+  let keys: string[] = [];
   for f in c.fields {
     if (is_public(f.access) && wanted(r, f.name, f.descriptor)) {
-      out = out.append(f);
+      picked = picked.append(f);
+      keys = keys.append(f.name);
     }
+  }
+  let out: classfile.Field[] = [];
+  for i in sorted(keys) {
+    out = out.append(picked[i]);
   }
   return out;
 }
