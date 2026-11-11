@@ -1,0 +1,22 @@
+// A typed destination of a nested part of a literal local gives that part
+// its type, at each depth of arrays and tuples.
+function main(): i32 {
+    let rows = [[1], [2]];
+    let k: u8 = rows[0][0];
+    print(k + rows[1][0]);
+    let cube = [[[1]], [[2]]];
+    let c: i64 = cube[1][0][0];
+    print(c + 5000000000);
+    let pairs = [(1, 2), (3, 4)];
+    let p: u8 = pairs[0].1;
+    print(p + pairs[1].1);
+    let lists = [(1, [2]), (3, [4])];
+    let l: i64 = lists[0].1[0];
+    print(l + lists[1].1[0] + 5000000000);
+    let t = ((1, 2), [3, 4]);
+    let inner: u8 = t.0.1;
+    let elem: i64 = t.1[0];
+    print(inner + t.0.1);
+    print(elem + t.1[1] + 5000000000);
+    return 0;
+}
