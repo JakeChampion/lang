@@ -1,5 +1,6 @@
 // A module declares `total` two times, and only the second declaration
-// is exported. The diagnostic is the redeclaration. It is not E087 for
+// is exported. The diagnostic is the redeclaration. The first declaration
+// stands, so the call with two arguments is E004. It is not E087 for
 // the call: the name has an exported declaration.
 import "./lib";
 
