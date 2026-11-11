@@ -1,11 +1,58 @@
 # ULC benchmarks
 
-These FLOAT32/VBR measurements date from 2026-11-08 on an Intel Xeon Platinum 8573C with a four-CPU container quota.
-The FLOAT32/VBR suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
-The geometric mean of C/Fern ratios is 1.374×, with equal weights for all cases.
-Without silence, the ratio is 1.253× across 108 cases.
-Several cases still favor C, particularly large-block noise decode.
-These results do not establish a universal performance ranking.
+The 2026-11-10 release VBR sweep records 137 lower Fern medians across 144 comparisons against tuned upstream C.
+The geometric mean of C/Fern ratios is 1.450×, with equal weights for all cases.
+Without silence, the ratio is 1.350× across 108 cases.
+Seven cases retain lower C medians. These results do not establish a universal performance rank.
+The earlier measurements below remain historical results from their stated sources and dates.
+
+## Release VBR refresh
+
+Source `b556d128be5d1dd032653cc270c03d8b5afe1d58` includes exact coefficient runs and direct SIMD permutation destinations.
+The compiler and codec use the canonical release build.
+This complete VBR sweep dates from 2026-11-10 on the Xeon Platinum 8573C.
+It compares the current release with tuned upstream C, not with the earlier Fern executable.
+
+Each case has 31 repetitions. Execution order alternates.
+Four signal types cover all eight block sizes at ten seconds, plus block size 2048 at one hundred seconds.
+Both tools use CPU 0 in the one-worker suite and CPUs 0 through 3 in the four-worker suite.
+
+Fern uses the selected worker count. The upstream C tools remain single-threaded.
+Measurements include process startup and file I/O. No local builds or tests run during measurement.
+The C build uses GCC 14.2.0 and the same SIMD configuration as the earlier reports.
+
+| Scope | Cases | Lower Fern medians | Geometric-mean C/Fern | Paired 95% interval |
+| --- | ---: | ---: | ---: | --- |
+| All cases | 144 | 137 | 1.450 | 1.440 to 1.463 |
+| Without silence | 108 | 101 | 1.350 | 1.336 to 1.362 |
+| Encoding | 72 | 69 | 1.363 | 1.345 to 1.378 |
+| Decoding | 72 | 68 | 1.543 | 1.529 to 1.564 |
+
+The intervals use 2000 paired bootstrap repetitions, seed 417, and the NumPy PCG64 generator.
+They measure repetition uncertainty within these fixed cases. They do not establish a universal performance rank.
+All decoder checks against the float64 oracle pass, with a maximum error of `2.38e-7`.
+The report also retains encoder sizes, RMS errors, and signal-to-noise ratios.
+
+These seven ten-second cases have lower C medians. The report retains all of them.
+
+| Block size | Workers | Signal | Operation | C/Fern | Paired 95% interval |
+| ---: | ---: | --- | --- | ---: | --- |
+| 16384 | 4 | noise | decode | 0.948 | 0.867 to 1.018 |
+| 2048 | 4 | noise | encode | 0.866 | 0.724 to 1.195 |
+| 256 | 1 | tone | encode | 0.994 | 0.965 to 1.029 |
+| 256 | 1 | noise | encode | 1.000 | 0.804 to 1.534 |
+| 32768 | 1 | noise | decode | 0.912 | 0.883 to 0.956 |
+| 32768 | 4 | noise | decode | 0.881 | 0.756 to 1.049 |
+| 8192 | 4 | tone | decode | 0.910 | 0.611 to 1.111 |
+
+Only the single-worker noise decode at block size 32768 has an interval entirely below 1.
+A small median difference with an interval across 1 does not establish a stable order.
+[The complete report](x86-64-vbr-refresh.json) contains all durations, hashes, source revisions, accuracy checks, and intervals.
+
+Use the [FLOAT32 and VBR commands](#reproduce-the-float32-and-vbr-suite) at source `b556d128be5d1dd032653cc270c03d8b5afe1d58`.
+Set `--repetitions 31`. Use `--compiler` with the release compiler and `--source-commit` with that revision.
+Retain the pinned C and float64 oracle builds.
+For the one-hundred-second cases, use block size 2048 and each worker count.
 
 ## Exact coefficient runs
 
