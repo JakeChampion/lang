@@ -122,7 +122,7 @@ Other extensions and nonzero profile spaces return `Unsupported`.
 Profile constraint bits remain opaque. The reader does not resolve VPS references or validate pictures, level constraints, or decoder support.
 The native pixel-decode table remains unchanged.
 
-The same module inspects a PPS with its matching parsed sequence.
+`std/video/avc` also inspects a PPS with its matching parsed sequence.
 It reports entropy and prediction flags, reference defaults, quantizers, slice-group metadata, and optional scaling flags.
 The reader validates all seven slice-group map types without a retained map allocation.
 The caller's packet budget and a 64 KiB PPS ceiling apply before the unescaped copy.
