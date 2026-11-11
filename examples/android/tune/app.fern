@@ -22,6 +22,40 @@ function read(path: string): u8[] {
   return read_file_bytes(path).unwrap_or([]);
 }
 
+function size(path: string): i64 {
+  match (stat(path)) {
+    Ok(s) => {
+      return s.size as i64;
+    },
+    Err(_) => {
+      return 0i64;
+    }
+  }
+}
+
+// At most `n` bytes of the file from the offset `at`.
+function part(path: string, at: i64, n: i32): u8[] {
+  let Ok(reader) = open_reader(path) else {
+    return [];
+  };
+  let out: u8[] = [];
+  if let Ok(_) = reader.seek(at, 0) {
+    while (out.len() < n) {
+      let Ok(chunk) = reader.read_chunk_bytes(n - out.len()) else {
+        break;
+      };
+      if (chunk.len() == 0) {
+        break;
+      }
+      for b in chunk {
+        out = out.append(b);
+      }
+    }
+  }
+  let closed = reader.close();
+  return out;
+}
+
 function stream(s: tune.Sound): audio.Music {
   return audio.Music { ptr: s.ptr, rate: s.rate, channels: s.channels };
 }
@@ -67,6 +101,8 @@ function device(ctx: usize, dir: string, roots: string[]): player.Device {
     grant: (): void => grant(ctx),
     files: (): string[] => found(dir, roots),
     roots: roots,
+    size: (path: string): i64 => size(path),
+    part: (path: string, at: i64, n: i32): u8[] => part(path, at, n),
     read: (path: string): u8[] => read(path),
     open: (rate: i32, channels: i32): tune.Sound => open(rate, channels),
     start: (s: tune.Sound): void => { let started = stream(s).start(); },

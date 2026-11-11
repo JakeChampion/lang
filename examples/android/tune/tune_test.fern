@@ -88,6 +88,8 @@ function device(): player.Device {
     grant: (): void => {},
     files: (): string[] => paths(),
     roots: ["music"],
+    size: (path: string): i64 => read(path).len() as i64,
+    part: (path: string, at: i64, n: i32): u8[] => library.parts_of(read(path))(at, n),
     read: (path: string): u8[] => read(path),
     open: (rate: i32, channels: i32): tune.Sound => tune.Sound { ptr: 1 as usize, rate: rate, channels: channels },
     start: (s: tune.Sound): void => {},

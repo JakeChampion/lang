@@ -11,14 +11,17 @@ import "./tune";
 
 // `grant` asks the person for the permission to read the music of the
 // phone. `files` gives the paths of the files of the library, and `roots` the
-// directories that they are in. `read` gives the bytes of a file, or no
-// bytes. `open` gives a stream at
+// directories that they are in. `size` gives the number of bytes of a
+// file, `part` gives at most a number of its bytes from an offset, and
+// `read` gives each byte of it, or no bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
 // tells how many it took.
 pub struct Device {
   grant: () => void,
   files: () => string[],
   roots: string[],
+  size: (string) => i64,
+  part: (string, i64, i32) => u8[],
   read: (string) => u8[],
   open: (i32, i32) => tune.Sound,
   start: (tune.Sound) => void,
@@ -94,7 +97,7 @@ function scanned(dev: Device, own m: tune.Model): tune.Model {
     left = left.append(m.scan[i]);
   }
   let next = tune.Model { ...m, scan: left };
-  if let Some(t) = library.track(dev.roots, path, dev.read(path)) {
+  if let Some(t) = library.track(dev.roots, path, dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n)) {
     return tune.update(next, tune.Found(t));
   }
   return next;
