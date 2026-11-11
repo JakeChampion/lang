@@ -10,7 +10,9 @@ for some seconds, and presses the back key. Then it requires the line of
 the app in logcat: the library has the three tunes or more, a track plays,
 and its time went on. Before that, Android has the media session of the
 player, the media keys stop and start the track, and the player runs a
-foreground service. So the decoder
+foreground service. The check goes to the home screen and back: the track
+plays on, and the app draws its screen again and takes the back key. Then
+the check starts the app a second time. So the decoder
 gave its samples to the sound of the device in time. It fails on a crash
 in logcat. OUT_DIR gets the frames and logcat.
 """
@@ -22,7 +24,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
-from emulator import adb, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
+from emulator import adb, count, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
 
 PACKAGE = "dev.fern.tune"
 
@@ -74,6 +76,24 @@ def main(apk, out):
     if "isForeground=true" not in adb("shell", "dumpsys", "activity", "services", PACKAGE):
         fail("the player has no foreground service")
 
+    # The person goes to the home screen and comes back. The track plays on
+    # while the app is away, and the app then draws its screen again.
+    adb("shell", "input", "keyevent", "3")
+    time.sleep(5)
+    if session_state() != 3:
+        fail("the track does not play while the app is away: " + session_text()[:400])
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    time.sleep(4)
+    width, height, pixels = screen(out, "returned")
+    same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
+    total = len(pixels) // 4 // 7
+    if same * 100 > total * 99:
+        fail(f"the screen is blank after the app comes back: {same} of {total} pixels have one colour")
+
+    # The media key for the track before starts a track at its start, so
+    # the time of the track is 2 seconds or more at the back key.
+    adb("shell", "input", "keyevent", "88")
+    time.sleep(2.5)
     adb("shell", "input", "keyevent", "4")
     m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
     if not m:
@@ -88,7 +108,23 @@ def main(apk, out):
         elif played < 1:
             fail(f"the time of the track did not go on: {m.group(0)!r}")
 
-    log = logcat()
+    # The person starts the app again after the back key closed it: the
+    # process of the app can be the same one. The app draws its screen and
+    # takes the back key again.
+    first = logcat()
+    adb("logcat", "-c")
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    time.sleep(8)
+    width, height, pixels = screen(out, "again")
+    same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
+    total = len(pixels) // 4 // 7
+    if same * 100 > total * 99:
+        fail(f"the screen is blank at the second start: {same} of {total} pixels have one colour")
+    adb("shell", "input", "keyevent", "4")
+    if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
+        fail("the back key did not close the app at its second start")
+
+    log = first + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
     for line in crashes(log):
