@@ -1,0 +1,22 @@
+// Emit independently comparable metadata for one AV1 sequence-header OBU.
+import "std/video/av1/sequence";
+import "std/video/frame";
+import "../../tests/stdlib/video_av1_sequence_fields" as fields;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let value = match (sequence.inspect(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for field in fields.values(value) {
+    print(field.to_string());
+  }
+  return 0;
+}

@@ -1,0 +1,36 @@
+// Independent FFmpeg CBS sequence references. Regenerate with scripts/gen-video-av1-sequence-fixtures.py.
+pub struct Vector { name: string, bytes: string, values: i32[], minimum: i32, trailing_bit: i32, sample_bit: i32, tick_bit: i32, scale_bit: i32, decoder_tick_bit: i32 }
+
+pub function vectors(): Vector[] {
+  return [
+    Vector { name: "encoded-yuv420p", bytes: "0a0a00000002aff19b5f3008", values: [0, 64, 36, 8, 0, 1, 1, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 92, sample_bit: 88, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "encoded-yuv420p10le", bytes: "0a0a00000002aff19b5f3808", values: [0, 64, 36, 10, 0, 1, 1, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 92, sample_bit: 88, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "encoded-yuv444p", bytes: "0a0a20000002aff19b5f3040", values: [1, 64, 36, 8, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 89, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "encoded-yuv444p10le", bytes: "0a0a20000002aff19b5f3840", values: [1, 64, 36, 10, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 89, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "encoded-yuv422p10le", bytes: "0a0a40000002aff19b5f3810", values: [2, 64, 36, 10, 0, 1, 0, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 91, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "encoded-yuv420p12le", bytes: "0a0a40000002aff19b5f3c61", values: [2, 64, 36, 12, 0, 1, 1, 0, 2, 2, 2, 0, 0, 0, 1, 0, 7, 0, 0, 1, 1, 0], minimum: 10, trailing_bit: 95, sample_bit: 91, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "reduced-still", bytes: "0a0618157f8ff0b8", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1], minimum: 6, trailing_bit: 60, sample_bit: 56, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "monochrome", bytes: "0a0b00000002aff1e2ffffeb80", values: [0, 64, 36, 8, 1, 1, 1, 0, 2, 2, 2, 1, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 11, trailing_bit: 96, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "rgb", bytes: "0a0d20000002aff1e2fffff8086807", values: [1, 64, 36, 10, 0, 0, 0, 0, 1, 13, 0, 1, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 13, trailing_bit: 119, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "rgb12", bytes: "0a0e40000002aff1e2fffffa021a01c0", values: [2, 64, 36, 12, 0, 0, 0, 0, 1, 13, 0, 1, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 14, trailing_bit: 121, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "wide", bytes: "0a0c0000000787fffb17ffff0b80", values: [0, 65536, 1, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 12, trailing_bit: 104, sample_bit: 100, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "model32", bytes: "0af9010400000007fffffffe00000003fffffffffffffffffffff10145710247ffffffffffffffff081a2b88223ffffffffffffffff841515c4191ffffffffffffffffc20e8ae2108ffffffffffffffffe10945710a47ffffffffffffffff085a2b88623ffffffffffffffff843515c4391ffffffffffffffffc21e8ae2208ffffffffffffffffe11145711247ffffffffffffffff089a2b88a23ffffffffffffffff845515c4591ffffffffffffffffc22e8ae2308ffffffffffffffffe11945711a47ffffffffffffffff08da2b88e23ffffffffffffffff847515c4791ffffffffffffffffc23e8ae2408ffffffffffffffffe55fe3c5ffffc2e0", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 32, 16, 8, 1, 1, 1, 1, 1], minimum: 249, trailing_bit: 2010, sample_bit: 2006, tick_bit: 30, scale_bit: 62, decoder_tick_bit: 164 },
+    Vector { name: "no-order-no-screen", bytes: "0a0a00000002aff1e2ff002e", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 1, 16, 0, 1, 0, 0, 0, 1], minimum: 10, trailing_bit: 94, sample_bit: 90, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "integer-force", bytes: "0a0b00000002aff1e2ffebf85c", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 11, trailing_bit: 101, sample_bit: 97, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "twelve-444", bytes: "0a0b40000002aff1e2fffff870", values: [2, 64, 36, 12, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 11, trailing_bit: 99, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "twelve-422", bytes: "0a0b40000002aff1e2fffff8b8", values: [2, 64, 36, 12, 0, 1, 0, 0, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 11, trailing_bit: 100, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "monochrome12", bytes: "0a0b40000002aff1e2fffffdc0", values: [2, 64, 36, 12, 1, 1, 1, 0, 2, 2, 2, 1, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 11, trailing_bit: 97, sample_bit: -1, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+    Vector { name: "timing-only", bytes: "0a130400000007ffffffff00000055fe3c5ffffc2e", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 19, trailing_bit: 166, sample_bit: 162, tick_bit: 22, scale_bit: 54, decoder_tick_bit: -1 },
+    Vector { name: "variable-timing", bytes: "0a130400000007fffffffc000000abfc78bffff85c", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 19, trailing_bit: 165, sample_bit: 161, tick_bit: 22, scale_bit: 54, decoder_tick_bit: -1 },
+    Vector { name: "model-one-bit", bytes: "0a1d0400000007ffffffff83ffffffffff8440515c4091f2aff1e2ffffe170", values: [0, 64, 36, 8, 0, 1, 1, 2, 2, 2, 2, 0, 0, 0, 2, 16, 8, 1, 1, 1, 1, 1], minimum: 29, trailing_bit: 243, sample_bit: 239, tick_bit: 22, scale_bit: 54, decoder_tick_bit: 94 },
+    Vector { name: "bt2020", bytes: "0a0e40000002aff1e2fffffa122012ee", values: [2, 64, 36, 12, 0, 1, 1, 2, 9, 16, 9, 0, 0, 0, 1, 16, 8, 1, 1, 1, 1, 1], minimum: 14, trailing_bit: 126, sample_bit: 122, tick_bit: -1, scale_bit: -1, decoder_tick_bit: -1 },
+  ];
+}
+
+pub function invalid_constraints(): string[] {
+  return ["0a1a0400000003ffffffffffffffffffff8000115d57f8f17ffff0b8", "0a220400000007fffffffe00000001ffffffffffffffffffff8000115d57f8f17ffff0b8", "0a0b00000002aff1ffffffe170", "0a0e00000002aff1e2ffffe404340380", "0a0e40000002aff1e2fffff2021a01c0"];
+}
+
+pub function excessive_area(): string {
+  return "0a0d00000007fffffffffe2ffffe17";
+}
