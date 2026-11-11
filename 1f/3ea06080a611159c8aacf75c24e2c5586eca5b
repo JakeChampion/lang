@@ -44,3 +44,8 @@ tls/server/go.bulk_mbytes_per_s	161.3
 tls/server/curl.bulk_mbytes_per_s	184.1
 tls/server/handshakes_per_s	647.8
 tls/server/resumed_handshakes_per_s	677.7
+
+# lane: net-h3spec
+h3spec/passed	86
+h3spec/failed	0
+h3spec/pending	0
