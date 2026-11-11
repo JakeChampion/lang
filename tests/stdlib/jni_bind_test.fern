@@ -169,6 +169,37 @@ function test_members(): test.TestOutcome {
   );
 }
 
+// The member "-" gives the struct of a class with no function, so the
+// class can be the type of an argument or of a result.
+function test_type_only(): test.TestOutcome {
+  let text = generated([bind.Request { class: "dev/fern/Point", members: ["outline"] }, bind.Request { class: "dev/fern/Shape", members: ["-"] }]);
+  if (text.contains("id_area")) {
+    return test.fail("a class with the member \"-\" has a function");
+  }
+  return test.assert_eq(
+    absent(text, [
+      "pub struct ShapeClass { class: usize }",
+      "pub function (c: PointClass) outline(e: usize, self: Point): Result[Shape, jni.JavaError] {",
+    ]),
+    "",
+  );
+}
+
+// The struct Classes holds the struct of IDs of each class. When a class
+// gives an error, the function releases the classes before it.
+function test_all_classes(): test.TestOutcome {
+  let text = generated([all("dev/fern/Point"), all("dev/fern/Shape")]);
+  return test.assert_eq(
+    absent(text, [
+      "pub struct Classes { point: PointClass, shape: ShapeClass }",
+      "pub function classes(e: usize): Result[Classes, jni.JavaError] {",
+      "  let shape = match (shape_class(e)) {\n    Ok(c) => c,\n    Err(err) => {\n      point.release(e);\n      return Err(err);\n    },\n  };",
+      "pub function (c: Classes) release(e: usize): void {\n  c.point.release(e);\n  c.shape.release(e);\n}",
+    ]),
+    "",
+  );
+}
+
 function test_errors(): test.TestOutcome {
   let got = generated([all("dev/fern/Absent")]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["nothing"] }]) + "; " + generated([bind.Request { class: "dev/fern/Sample", members: ["rows"] }]) + "; " + generated([all("dev/fern/Point"), all("dev/fern/Point")]);
   return test.assert_eq(got, "error: the classes do not have dev/fern/Absent; error: dev/fern/Point has no public member nothing; error: dev/fern/Sample has no public member rows; error: two requests have a class with the name Point");
@@ -185,6 +216,8 @@ function main(): i32 {
   r = r.it("a constant field is a constant of the module", test_constants);
   r = r.it("the module of the sample has its constants", test_sample_module);
   r = r.it("a request with members binds only them", test_members);
+  r = r.it("the member - binds a class with no function", test_type_only);
+  r = r.it("the struct Classes holds each class", test_all_classes);
   r = r.it("generate refuses a request that is not correct", test_errors);
   return r.finish();
 }

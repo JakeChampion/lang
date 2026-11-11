@@ -26,7 +26,8 @@ name: Android
 # writes: a constructor, methods, fields and static members of classes of
 # the system, and a Java exception as an error. The job also writes the
 # wrappers again from the android.jar of the SDK, and they must be the
-# committed bindings.fern.
+# committed bindings.fern. It does the same for the bindings.fern of
+# examples/android/paper.
 # examples/android/counter is an app of std/android/ui: its check taps the
 # button that the GPU painter draws, and reads the count when the back key
 # closes the app.
@@ -175,6 +176,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # Each check runs, also after a check that failed, so one app does not
+      # hide the result of the apps after it. The last line fails the job and
+      # names each check that failed.
       - name: Run the APK on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -183,27 +187,30 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           script: |
-            python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
-            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped
-            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-compressed.apk dev.fern.nativez build/android-stopwatch/emulator/native-compressed extracted
-            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-hardened.apk dev.fern.nativeh build/android-stopwatch/emulator/native-hardened mapped
-            python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
-            python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
-            python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video
-            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4
-            python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
-            python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
-            python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
-            python3 tests/android/jnibind/emulator_check.py build/android-stopwatch/fern-jnibindtest.apk build/android-stopwatch/emulator/jnibind
+            mkdir -p build/android-stopwatch/emulator
+            python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report || echo "examples/android/stopwatch" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped || echo "examples/android/native dev.fern.native" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-compressed.apk dev.fern.nativez build/android-stopwatch/emulator/native-compressed extracted || echo "examples/android/native dev.fern.nativez" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-hardened.apk dev.fern.nativeh build/android-stopwatch/emulator/native-hardened mapped || echo "examples/android/native dev.fern.nativeh" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex || echo "tests/android/dex" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio || echo "tests/android/audio" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video || echo "tests/android/video" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4 || echo "tests/android/player" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus || echo "tests/android/focus" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns || echo "tests/android/dns" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker || echo "tests/android/worker" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/jnibind/emulator_check.py build/android-stopwatch/fern-jnibindtest.apk build/android-stopwatch/emulator/jnibind || echo "tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             chmod +x build/android-stopwatch/jnibind
-            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern -
-            python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter
-            python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo
-            python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune
-            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper
-            python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4
-            python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz
-            python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo || echo "examples/android/todo" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4 || echo "examples/android/plex" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz || echo "tests/android/tz" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie || echo "examples/android/walkie" >> build/android-stopwatch/emulator/failed
+            ! test -s build/android-stopwatch/emulator/failed || { echo "failed checks:"; cat build/android-stopwatch/emulator/failed; exit 1; }
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

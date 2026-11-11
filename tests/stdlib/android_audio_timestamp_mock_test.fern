@@ -1,4 +1,5 @@
 import "std/android/audio";
+import "std/option";
 
 @import("libaaudio.so", "mock_timestamp_mode")
 function mode(value: i32): void;
@@ -6,48 +7,50 @@ function mode(value: i32): void;
 @import("libaaudio.so", "mock_timestamp_calls")
 function calls(): i32;
 
-function available(value: i32, position: i64, time_ns: i64): boolean {
+function available(value: i32, position: i64, time_ns: i64, channels: i32): boolean {
   mode(value);
   let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
-  let Some(anchor) = stream.timestamp() else {
+  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels }.timestamp() };
+  let Some(anchor) = stamp else {
     return false;
   };
   return anchor.frame_position == position && anchor.monotonic_ns == time_ns && calls() == 1;
 }
 
-function unavailable(value: i32): boolean {
+function unavailable(value: i32, channels: i32): boolean {
   mode(value);
   let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
-  if let Some(_) = stream.timestamp() {
+  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels }.timestamp() };
+  if let Some(_) = stamp {
     return false;
   }
   return calls() == 1;
 }
 
-function results(): i32 {
-  if (!available(0, 1099511627776i64, 1125899906842624i64)) {
+function results(channels: i32): i32 {
+  if (!available(0, 1099511627776i64, 1125899906842624i64, channels)) {
     return 201;
   }
-  if (!available(1, 0i64, 0i64)) {
+  if (!available(1, 0i64, 0i64, channels)) {
     return 202;
   }
-  if (!available(8, 9223372036854775807i64, 9223372036854775807i64)) {
+  if (!available(8, 9223372036854775807i64, 9223372036854775807i64, channels)) {
     return 203;
   }
   for value in [2, 3, 4, 5, 6, 7, 9] {
-    if (!unavailable(value)) {
+    if (!unavailable(value, channels)) {
       return 300 + value;
     }
   }
   return 0;
 }
 
-function repeated(): i32 {
+function repeated(channels: i32): i32 {
   for _ in 0..512 {
-    if (!available(0, 1099511627776i64, 1125899906842624i64)) {
+    if (!available(0, 1099511627776i64, 1125899906842624i64, channels)) {
       return 401;
     }
-    if (!unavailable(2) || !unavailable(6) || !unavailable(7)) {
+    if (!unavailable(2, channels) || !unavailable(6, channels) || !unavailable(7, channels)) {
       return 402;
     }
   }
@@ -55,17 +58,20 @@ function repeated(): i32 {
 }
 
 function main(): i32 {
-  mode(0);
-  let missing = audio.Stream { ptr: 0 as usize, rate: 0 };
-  if let Some(_) = missing.timestamp() {
-    return 101;
+  for channels in [0, 1, 2] {
+    mode(0);
+    let absent = if (channels == 0) { audio.Stream { ptr: 0 as usize, rate: 0 }.timestamp() } else { audio.Music { ptr: 0 as usize, rate: 0, channels: channels }.timestamp() };
+    if (absent.is_some() || calls() != 0) {
+      return 101;
+    }
+    let result = results(channels);
+    if (result != 0) {
+      return result;
+    }
+    let repeat = repeated(channels);
+    if (repeat != 0) {
+      return repeat;
+    }
   }
-  if (calls() != 0) {
-    return 102;
-  }
-  let result = results();
-  if (result != 0) {
-    return result;
-  }
-  return repeated();
+  return 0;
 }

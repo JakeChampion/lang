@@ -25,6 +25,7 @@ A stream with `ptr` 0 did not open. Close each other stream once.
 `timestamp` returns a frame position and its `CLOCK_MONOTONIC` time in nanoseconds.
 Frame zero is the first frame played or captured by the stream.
 The stream's actual sample rate supplies the units for later frame-to-media-time conversion.
+Both `Stream` and `Music` supply `timestamp`. Its position counts frames, without a multiplier for the channel count.
 The query does not start, stop, read, or write the stream.
 
 The platform supplies timestamps only while the stream is started, after an initial delay.
@@ -233,14 +234,18 @@ pub function (s: Stream) close(): void {
 
 // Query the platform audio anchor in CLOCK_MONOTONIC units.
 pub function (s: Stream) timestamp(): Option[Timestamp] {
-  if (s.ptr == 0 as usize) {
+  return read_timestamp(s.ptr);
+}
+
+function read_timestamp(ptr: usize): Option[Timestamp] {
+  if (ptr == 0 as usize) {
     return None;
   }
   unsafe {
     let bytes = Timestamp.c_size() as i32;
     let slot = __alloc(bytes);
     Timestamp { frame_position: -1i64, monotonic_ns: -1i64 }.c_store(slot);
-    let status = c_timestamp(s.ptr, 1, slot + Timestamp.c_offset_frame_position(), slot + Timestamp.c_offset_monotonic_ns());
+    let status = c_timestamp(ptr, 1, slot + Timestamp.c_offset_frame_position(), slot + Timestamp.c_offset_monotonic_ns());
     let value = Timestamp.c_load(slot);
     __free(slot, bytes);
     if (status != 0 || value.frame_position < 0i64 || value.monotonic_ns < 0i64) {
@@ -307,6 +312,11 @@ function write_frames(ptr: usize, samples: [i32], frames: i32, timeout_ms: i32):
 // A playback stream of music. `channels` is 1 or 2, and the samples of a
 // frame are one after the other.
 pub struct Music { ptr: usize, rate: i32, channels: i32 }
+
+// The position counts frames, each of which contains all channel samples.
+pub function (m: Music) timestamp(): Option[Timestamp] {
+  return read_timestamp(m.ptr);
+}
 
 // A playback stream of music at `rate` frames a second with `channels`
 // channels: 1 or 2. The device can choose another rate, which `rate` of the

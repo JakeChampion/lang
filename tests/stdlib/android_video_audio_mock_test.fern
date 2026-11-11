@@ -46,6 +46,13 @@ function stream(): audio.Stream {
   return audio.Stream { ptr: 123 as usize, rate: 48000 };
 }
 
+function synchronize(own p: player.Player, source: audio.Stream, channels: i32, start: playback_clock.AudioOrigin): player.Tick {
+  if (channels == 0) {
+    return p.synchronize_audio(source, start);
+  }
+  return p.synchronize_music(audio.Music { ptr: source.ptr, rate: source.rate, channels: channels }, start);
+}
+
 function opened(): Result[player.Player, frame.VideoError] {
   mode(17);
   jni_mode(0);
@@ -117,7 +124,7 @@ function rendered(result: player.Tick): boolean {
   return scheduled(result.event) && result.player.pending.is_none() && result.player.scheduled_frames == 2 && last_deadline() == 9906543210i64;
 }
 
-function deadline(): i32 {
+function deadline(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 101;
   };
@@ -127,7 +134,7 @@ function deadline(): i32 {
   let before = output_fields(p);
   let count = queued();
   audio_value(48000i64, 10683087210i64);
-  let synced = p.synchronize_audio(stream(), origin());
+  let synced = synchronize(p, stream(), channels, origin());
   if (!synchronized(synced, before, count)) {
     return 103;
   }
@@ -139,82 +146,102 @@ function deadline(): i32 {
   return finish(next.player, 105);
 }
 
-function unavailable(): i32 {
+function rate_frames(channels: i32): i32 {
+  let Ok(p) = pending() else {
+    return 111;
+  };
+  let before = output_fields(p);
+  let count = queued();
+  audio_value(88200i64, 15000000000i64);
+  let start = playback_clock.AudioOrigin { frame_position: 22050i64, media_us: 500000i64 };
+  let synced = synchronize(p, audio.Stream { ptr: 123 as usize, rate: 44100 }, channels, start);
+  if (!synchronized(synced, before, count) || !anchor_matches(synced.player, 2000000i64, 15000000000i64)) {
+    return 112;
+  }
+  expect_deadline(13223456000i64);
+  let next = synced.player.tick(13223456000i64);
+  if (!scheduled(next.event) || next.player.pending.is_some() || last_deadline() != 13223456000i64) {
+    return 113;
+  }
+  return finish(next.player, 114);
+}
+
+function unavailable(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 201;
   };
   let before = snapshot(p);
   for value in [2, 3, 4, 5, 6, 7, 9] {
     audio_mode(value);
-    let result = p.synchronize_audio(stream(), origin());
+    let result = synchronize(p, stream(), channels, origin());
     if (!idle(result.event) || !unchanged(result, before, 1, 1)) {
       return 202;
     }
     p = result.player;
   }
   audio_mode(0);
-  let absent = p.synchronize_audio(audio.Stream { ptr: 0 as usize, rate: 48000 }, origin());
+  let absent = synchronize(p, audio.Stream { ptr: 0 as usize, rate: 48000 }, channels, origin());
   if (!idle(absent.event) || !unchanged(absent, before, 0, 1)) {
     return 203;
   }
   return finish(absent.player, 204);
 }
 
-function stale(): i32 {
+function stale(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 301;
   };
   let before = snapshot(p);
   audio_mode(1);
-  let result = p.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 1i64, media_us: 0i64 });
+  let result = synchronize(p, stream(), channels, playback_clock.AudioOrigin { frame_position: 1i64, media_us: 0i64 });
   if (!failure(result.event, frame.Header) || !unchanged(result, before, 1, 1)) {
     return 302;
   }
   return finish(result.player, 303);
 }
 
-function invalid(): i32 {
+function invalid(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 311;
   };
   let before = snapshot(p);
   for bad in [playback_clock.AudioOrigin { frame_position: -1i64, media_us: 0i64 }, playback_clock.AudioOrigin { frame_position: 0i64, media_us: -1i64 }] {
     audio_mode(0);
-    let result = p.synchronize_audio(stream(), bad);
+    let result = synchronize(p, stream(), channels, bad);
     if (!failure(result.event, frame.Header) || !unchanged(result, before, 0, 1)) {
       return 312;
     }
     p = result.player;
   }
   audio_mode(0);
-  let rate = p.synchronize_audio(audio.Stream { ...stream(), rate: 0 }, origin());
+  let rate = synchronize(p, audio.Stream { ...stream(), rate: 0 }, channels, origin());
   if (!failure(rate.event, frame.Header) || !unchanged(rate, before, 0, 1)) {
     return 313;
   }
   return finish(rate.player, 314);
 }
 
-function overflow(): i32 {
+function overflow(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 401;
   };
   let before = snapshot(p);
   audio_value(1i64, 0i64);
-  let result = p.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 0i64, media_us: 9223372036854775807i64 });
+  let result = synchronize(p, stream(), channels, playback_clock.AudioOrigin { frame_position: 0i64, media_us: 9223372036854775807i64 });
   if (!failure(result.event, frame.Limit) || !unchanged(result, before, 1, 1)) {
     return 402;
   }
   return finish(result.player, 403);
 }
 
-function states(): i32 {
+function states(channels: i32): i32 {
   let Ok(p) = opened() else {
     return 501;
   };
   for invalid in [player.Player { ...p, paused: true }, player.Player { ...p, failed: true }, player.Player { ...p, decoder_live: false }, player.Player { ...p, output_eos: true }] {
     let before = snapshot(invalid);
     audio_mode(0);
-    let result = invalid.synchronize_audio(stream(), origin());
+    let result = synchronize(invalid, stream(), channels, origin());
     if (!failure(result.event, frame.State) || !unchanged(result, before, 0, 0) || queued() != 0) {
       return 502;
     }
@@ -226,38 +253,40 @@ function anchor_matches(p: player.Player, us: i64, ns: i64): boolean {
   return match (p.clock) { Some(c) => c.media_us == us && c.monotonic_ns == ns, None => false };
 }
 
-function after_seek(own p: player.Player): i32 {
+function after_seek(own p: player.Player, channels: i32): i32 {
   let sought = p.seek(200000i64);
   if (sought.player.clock.is_some() || sought.player.pending.is_some() || sought.player.target_us != 200000i64) {
     return 604;
   }
   audio_value(96000i64, 14000000000i64);
-  let result = sought.player.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 96000i64, media_us: 200000i64 });
+  let result = synchronize(sought.player, stream(), channels, playback_clock.AudioOrigin { frame_position: 96000i64, media_us: 200000i64 });
   if (!idle(result.event) || !anchor_matches(result.player, 200000i64, 14000000000i64) || result.player.target_us != 200000i64) {
     return 605;
   }
   return finish(result.player, 606);
 }
 
-function seek_and_zero(): i32 {
+function seek_and_zero(channels: i32): i32 {
   let Ok(p) = pending() else {
     return 601;
   };
   let before = output_fields(p);
   audio_mode(1);
-  let result = p.synchronize_audio(stream(), origin());
+  let result = synchronize(p, stream(), channels, origin());
   if (!idle(result.event) || !anchor_matches(result.player, 0i64, 0i64) || output_fields(result.player) != before) {
     return 602;
   }
-  return after_seek(result.player);
+  return after_seek(result.player, channels);
 }
 
 function main(): i32 {
-  let checks = [deadline, unavailable, stale, invalid, overflow, states, seek_and_zero];
-  for check in checks {
-    let code = check();
-    if (code != 0) {
-      return code;
+  let checks = [deadline, rate_frames, unavailable, stale, invalid, overflow, states, seek_and_zero];
+  for channels in [0, 1, 2] {
+    for check in checks {
+      let code = check(channels);
+      if (code != 0) {
+        return code;
+      }
     }
   }
   return 0;
