@@ -38,7 +38,7 @@ def main(apk, out):
     width, height, _ = screen(out, "library")
     # The first rows of the list are below the title, the search field and
     # the tabs.
-    adb("shell", "input", "tap", str(width // 2), str(height * 30 // 100))
+    adb("shell", "input", "tap", str(width // 2), str(height * 45 // 100))
     time.sleep(4)
     screen(out, "playing")
 

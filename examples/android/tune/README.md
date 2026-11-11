@@ -11,6 +11,10 @@ looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
 of the phone.
 
+The "Folder" button shows the directories of the phone. The person goes
+into a directory and taps "Use". The library then has the files of that
+folder only, and the player keeps the folder for its next start.
+
 The library has three lists: the songs, the artists and the albums. An
 artist shows its albums, and an album shows its songs in the order of their
 numbers.
