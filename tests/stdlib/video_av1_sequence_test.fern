@@ -1,0 +1,209 @@
+import "std/video/av1/sequence";
+import "std/video/av1";
+import "std/video/frame";
+import "std/wasm/leb128";
+import "std/hex";
+import "std/test";
+import "video_av1_sequence_vectors" as vectors;
+import "video_av1_sequence_fields" as fields;
+
+function wrap(payload: [u8], extension: boolean): u8[] {
+  let out: u8[] = if (extension) { [14, 0] } else { [10] };
+  out = leb128.uleb_u32(out, payload.len() as u32);
+  for byte in payload {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+function field(bytes: u8[], at: i32, width: i32, value: u32): u8[] {
+  for i in 0..width {
+    let pos = at + i;
+    let mask = (128u32 >> (pos % 8) as u32) as u8;
+    let one = (value >> (width - 1 - i) as u32 & 1u32) != 0u32;
+    let old = bytes[pos / 8];
+    bytes = bytes.with(pos / 8, if (one) { old | mask } else { old & (255u8 ^ mask) });
+  }
+  return bytes;
+}
+
+function header_error(bytes: [u8]): boolean {
+  return match (sequence.inspect(bytes, frame.default_limits())) { Err(frame.Header) => true, _ => false };
+}
+
+function reference(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(value) = sequence.inspect(bytes, frame.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (fields.values(value) != v.values) {
+      return test.fail("independent sequence metadata " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+      return test.fail("fixture envelope");
+    };
+    for cut in 0..unit.size {
+      let result = sequence.inspect(wrap(bytes[unit.offset:unit.offset + cut], false), frame.default_limits());
+      if (result.is_ok() != cut >= v.minimum) {
+        return test.fail("CBS syntax extent " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function exact_limits(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let exact = frame.Limits { max_pixels: v.values[1] * v.values[2], max_packet_bytes: bytes.len() };
+    if (sequence.inspect(bytes, exact).is_err()) {
+      return test.fail("exact limits");
+    }
+    for bad in [frame.Limits { ...exact, max_pixels: exact.max_pixels - 1 }, frame.Limits { ...exact, max_packet_bytes: exact.max_packet_bytes - 1 }] {
+      if let Err(frame.Limit) = sequence.inspect(bytes, bad) {} else {
+        return test.fail("maximum area and packet budget");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function envelope(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture hex");
+  };
+  let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+    return test.fail("fixture envelope");
+  };
+  if (!header_error(wrap(bytes[unit.offset:], true)) || !header_error(bytes.append(18u8).append(0u8))) {
+    return test.fail("single non-layer-specific sequence OBU");
+  }
+  if let Err(frame.Unsupported) = sequence.inspect(bytes.with(0, 42u8), frame.default_limits()) {} else {
+    return test.fail("OBU type");
+  }
+  for profile in 3..8 {
+    if let Err(frame.Unsupported) = sequence.inspect(field(bytes, unit.offset * 8, 3, profile as u32), frame.default_limits()) {} else {
+      return test.fail("reserved profile");
+    }
+  }
+  if let Err(frame.Truncated) = sequence.inspect([], frame.default_limits()) {} else {
+    return test.fail("empty sequence");
+  }
+  return test.pass();
+}
+
+function syntax_fields(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    if (!header_error(field(bytes, v.trailing_bit, 1, 0u32))) {
+      return test.fail("trailing one bit");
+    }
+    if (v.sample_bit >= 0 && !header_error(field(bytes, v.sample_bit, 2, 3u32))) {
+      return test.fail("reserved chroma position");
+    }
+    for at in [v.tick_bit, v.scale_bit, v.decoder_tick_bit] {
+      if (at >= 0 && !header_error(field(bytes, at, 32, 0u32))) {
+        return test.fail("nonzero clock denominators");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function timing_and_still(): test.TestOutcome {
+  for text in vectors.invalid_constraints() {
+    let Ok(bytes) = hex.decode(text) else {
+      return test.fail("fixture hex");
+    };
+    if (!header_error(bytes)) {
+      return test.fail("timing bounds and frame-ID widths");
+    }
+  }
+  for v in vectors.vectors() {
+    if (v.values[13] == 1) {
+      let Ok(bytes) = hex.decode(v.bytes) else {
+        return test.fail("fixture hex");
+      };
+      let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+        return test.fail("fixture envelope");
+      };
+      if (!header_error(field(bytes, unit.offset * 8 + 3, 1, 0u32))) {
+        return test.fail("reduced header requires still picture");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ceiling(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture hex");
+  };
+  let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+    return test.fail("fixture envelope");
+  };
+  let padding: u8[] = [];
+  for byte in bytes[unit.offset:] {
+    padding = padding.append(byte);
+  }
+  while (padding.len() < sequence.MAX_SEQUENCE_BYTES) {
+    padding = padding.append(0u8);
+  }
+  let Ok(value) = sequence.inspect(wrap(padding, false), frame.default_limits()) else {
+    return test.fail("exact header ceiling and zero padding");
+  };
+  if (fields.values(value) != vectors.vectors()[0].values) {
+    return test.fail("padded metadata");
+  }
+  if (!header_error(wrap(padding.with(padding.len() - 1, 1u8), false))) {
+    return test.fail("nonzero trailing data");
+  }
+  if let Err(frame.Limit) = sequence.inspect(wrap(padding.append(0u8), false), frame.default_limits()) {} else {
+    return test.fail("header ceiling before syntax");
+  }
+  return test.pass();
+}
+
+function resource_errors(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(vectors.excessive_area()) else {
+    return test.fail("fixture hex");
+  };
+  if let Err(frame.Limit) = sequence.inspect(bytes, frame.default_limits()) {} else {
+    return test.fail("wide area multiplication");
+  }
+  for bad in [frame.Limits { max_pixels: -1, max_packet_bytes: 10 }, frame.Limits { max_pixels: 1, max_packet_bytes: -1 }] {
+    if let Err(frame.Limit) = sequence.inspect([], bad) {} else {
+      return test.fail("limits before envelope access");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded AV1 sequence metadata");
+  r = r.it("independent sequence metadata", reference);
+  r = r.it("every declared syntax prefix", prefixes);
+  r = r.it("exact maximum area and packet limits", exact_limits);
+  r = r.it("single sequence envelope and profiles", envelope);
+  r = r.it("trailing, color, and clock fields", syntax_fields);
+  r = r.it("timing and reduced-still constraints", timing_and_still);
+  r = r.it("bounded header window and trailing zeros", ceiling);
+  r = r.it("overflow and invalid budgets", resource_errors);
+  return r.finish();
+}

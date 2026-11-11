@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Compare bounded AV1 sequence inspection with FFmpeg CBS and real streams."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('av1_sequence_fixtures', ROOT / 'scripts/gen-video-av1-sequence-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/av1-sequence-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/av1-sequence.fern'], check=True)
+
+
+def run(directory, name, data, error=None):
+    path = directory / (name + '.obu')
+    path.write_bytes(data)
+    native = subprocess.run([str(binary), str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name],
+                          cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (name, native)
+    assert wasi.returncode == (1 if error else 0), (name, wasi)
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, name
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error
+        return []
+    values = list(map(int, native.stdout.splitlines()))
+    assert len(values) == 22, (name, values)
+    return values
+
+
+def field(data, at, width, value):
+    result = bytearray(data)
+    for i in range(width):
+        bit = at + i
+        mask = 128 >> (bit % 8)
+        result[bit // 8] &= 255 ^ mask
+        result[bit // 8] |= ((value >> (width - 1 - i)) & 1) * mask
+    return bytes(result)
+
+
+def decode(path, decoder, pixel_format):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-c:v', decoder, '-i', str(path),
+                                    '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    cases, streams, carrier = fixtures.generate(directory)
+    by_name = {}
+    for name, data, expected, positions, _ in cases:
+        actual = run(directory, name, data)
+        assert actual == expected, (name, actual, expected)
+        by_name[name] = (data, actual, positions)
+        print(name + ': native/real-WASI 22 sequence fields match FFmpeg CBS', flush=True)
+    for path, pixel_format, _, _ in streams:
+        info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries',
+                                                  'stream=width,height,pix_fmt', '-of', 'json', str(path)]))['streams'][0]
+        values = by_name['encoded-' + pixel_format][1]
+        assert [info['width'], info['height']] == values[1:3] == [64, 36]
+        assert info['pix_fmt'] == pixel_format
+        assert values[3] == (12 if '12' in pixel_format else 10 if '10' in pixel_format else 8)
+        samples = 64 * 36 * (3 if '444' in pixel_format else 2 if '422' in pixel_format else 1.5)
+        expected_bytes = int(samples) * (1 if pixel_format.endswith('p') else 2) * 3
+        planes = decode(path, 'libaom-av1', pixel_format)
+        assert len(planes) == expected_bytes and decode(path, 'libdav1d', pixel_format) == planes
+        print(pixel_format + ': FFprobe dimensions/precision agree and external decoders match every plane', flush=True)
+    base, _, positions = by_name['model32']
+    mutations = [('trailing', 'trailing_one_bit', 1), ('display-tick', 'num_units_in_display_tick', 32),
+                 ('time-scale', 'time_scale', 32), ('decoder-tick', 'num_units_in_decoding_tick', 32)]
+    for name, key, width in mutations:
+        invalid = field(base, positions[key], width, 0)
+        run(directory, name, invalid, 'invalid video header or packet')
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.packets.ivf(carrier, [(0, invalid)]))
+        result = subprocess.run(['ffmpeg', '-v', 'verbose', '-i', str(path), '-c:v', 'copy',
+                                 '-bsf:v', 'trace_headers', '-f', 'null', '-'], capture_output=True, text=True)
+        assert key in result.stderr and ('out of range' in result.stderr or 'must be positive' in result.stderr), result.stderr
+        assert 'Failed to read unit' in result.stderr or 'Failed to parse temporal unit' in result.stderr, result.stderr
+    print('Four malformed sequence controls fail independent parsing without an exit-status-only verdict', flush=True)
