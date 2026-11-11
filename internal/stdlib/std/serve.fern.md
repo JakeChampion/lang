@@ -1113,16 +1113,16 @@ function __flight_filler[D: async.Driver](drv: D, own c: __Conns, fls: __Flights
   let fl = fls.all[fi];
   let at = __conns_index(c, fl.fd);
   if (at < 0) {
-    return (c, __flights_put(fls, fi, __Flight { ...fl, idle: -1i64 }));
+    return (c, __flights_idle(fls, fi, -1i64));
   }
   let piece: u8[] = [];
   match (c.tails[at]) {
     ParkedTail(producer, _, end) => {
       piece = __chunk_framed(producer.filler, end);
-      fls = __flights_put(fls, fi, __Flight { ...fl, idle: __idle_due(producer, monotonic_ns()) });
+      fls = __flights_idle(fls, fi, __idle_due(producer, monotonic_ns()));
     },
     _ => {
-      return (c, __flights_put(fls, fi, __Flight { ...fl, idle: -1i64 }));
+      return (c, __flights_idle(fls, fi, -1i64));
     }
   }
   if (c.pending[at].len() > 0) {
@@ -4554,13 +4554,8 @@ function __flights_add(fls: __Flights, fl: __Flight): __Flights {
   return __Flights { ...fls, all: fls.all.append(fl), soonest: __flight_soonest(fls.soonest, fl) };
 }
 
-function __flights_put(fls: __Flights, at: i32, fl: __Flight): __Flights {
-  let old = fls.all[at];
-  if (old.fd != fl.fd || !__same_pairs(old.set, fl.set)) {
-    fls = __flights_room(fls, __flight_keys(fl));
-    fls = __flights_uncount_all(fls, old, at);
-    fls = __flights_count_all(fls, fl, at);
-  }
+function __flights_idle(fls: __Flights, at: i32, idle: i64): __Flights {
+  let fl = __Flight { ...fls.all[at], idle: idle };
   return __Flights { ...fls, all: fls.all.with(at, fl), soonest: __flight_soonest(fls.soonest, fl) };
 }
 
@@ -4573,18 +4568,6 @@ function __flights_remove(fls: __Flights, at: i32): __Flights {
     fls = __Flights { ...fls, all: fls.all.with(at, moved) };
   }
   return __Flights { ...fls, all: fls.all.truncate(last) };
-}
-
-function __same_pairs(a: i32[], b: i32[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  for i in 0..a.len() {
-    if (a[i] != b[i]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function __flight_key(kind: i64, k: i32): i64 {
