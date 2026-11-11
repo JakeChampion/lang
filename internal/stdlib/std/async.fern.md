@@ -1254,7 +1254,7 @@ function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
   for i in 0..n {
     if (__first_pair(set, i)) {
       let refused = drv.watch(set[i * 2], __all_interest(set, n, set[i * 2]));
-      if (refused == 0 - __ebadf() && hit < 0) {
+      if (refused == -__ebadf() && hit < 0) {
         hit = i;
       }
     }
@@ -1284,7 +1284,7 @@ function __all_interest(set: i32[], n: i32, fd: i32): i32 {
   let all = 0;
   for i in 0..n {
     if (set[i * 2] == fd) {
-      all = all | interest_bits(set[i * 2 + 1]);
+      all |= interest_bits(set[i * 2 + 1]);
     }
   }
   return all;

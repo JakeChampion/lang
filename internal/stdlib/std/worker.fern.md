@@ -143,7 +143,7 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
     // The kernel ends the worker when its parent ends, so no worker runs
     // detached. A parent that ended before this call sends nothing, so the
     // worker also ends when its parent is not the process that made it.
-    let linked = reactor_ctl(0 - 1, 6, 0, 0);
+    let linked = reactor_ctl(-1, 6, 0, 0);
     let now = __stat_pid(true);
     if (parent > 0 && now > 0 && now != parent) {
       unsafe {
