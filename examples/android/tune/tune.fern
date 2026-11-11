@@ -70,7 +70,8 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // from. While `choosing` is true the screen shows the directories `dirs`
 // of the directory `dir`. `told` names the track and the state that the
 // player told Android last, and `awake` has the locks that keep the phone
-// awake.
+// awake. `asked` tells that the player asked for the permission and did
+// not look again after it. `made` tells that the player made its tunes.
 pub struct Model {
   fresh: boolean,
   tracks: Track[],
@@ -98,11 +99,13 @@ pub struct Model {
   dirs: string[],
   told: string,
   awake: Awake,
+  asked: boolean,
+  made: boolean,
 }
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize } };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -251,7 +254,8 @@ function with_track(m: Model, t: Track): Model {
   return Model { ...m, tracks: all, current: current };
 }
 
-// The player with the files that it did not read yet.
+// The player with the files and the directories that it did not read
+// yet.
 function with_files(m: Model, files: string[]): Model {
   let scan = m.scan;
   for f in files {
@@ -546,7 +550,7 @@ function chose(m: Model): Model {
   if (m.folder.len() > 0) {
     dir = m.folder;
   }
-  return shown_dir(Model { ...m, wants: m.wants.append(Grant) }, dir);
+  return shown_dir(Model { ...m, asked: true, wants: m.wants.append(Grant) }, dir);
 }
 
 // The directory above the one that shows, down to `home`.
@@ -569,15 +573,15 @@ function used(m: Model): Model {
 }
 
 function returned(m: Model): Model {
-  // The person can give the permission while the app is away. A player
-  // that did not look for its files yet looks at its first Beat.
-  if (m.fresh) {
+  // The person can give the permission while the app is away: the player
+  // looks again one time after it asked.
+  if (m.fresh || !m.asked) {
     return m;
   }
   if (m.choosing) {
-    return shown_dir(m, m.dir);
+    return shown_dir(Model { ...m, asked: false }, m.dir);
   }
-  return Model { ...m, wants: m.wants.append(Scan) };
+  return Model { ...m, asked: false, wants: m.wants.append(Scan) };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -646,7 +650,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return with_files(m, files);
     },
     Rescan => {
-      return Model { ...m, fresh: false, error: "", wants: m.wants.append(Grant).append(Scan) };
+      return Model { ...m, fresh: false, error: "", asked: true, wants: m.wants.append(Grant).append(Scan) };
     },
     Returned => {
       return returned(m);

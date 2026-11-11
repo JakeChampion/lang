@@ -155,22 +155,14 @@ function is_dir(path: string): boolean {
   }
 }
 
-// The files of sound of each directory of the library.
-function files(roots: string[]): string[] {
-  let out: string[] = [];
-  for root in roots {
-    for f in library.files(root, 6, names, is_dir) {
-      out = out.append(f);
-    }
-  }
-  return out;
-}
-
 function device(ctx: usize, dir: string, roots: string[], media: Media): player.Device {
   return player.Device {
     grant: (): void => grant(ctx),
-    files: (folder: string): string[] => found(dir, roots, folder),
     roots: roots,
+    names: (at: string): string[] => names(at),
+    is_dir: (path: string): boolean => is_dir(path),
+    demo: (): string[] => demo(dir),
+    now: (): i64 => monotonic_ns(),
     dirs: (at: string): string[] => dirs(at),
     keep: (folder: string): void => { let kept = write_file(dir + "/../folder.txt", folder); },
     show: (now: tune.Now): void => show(ctx, media, now),
@@ -209,29 +201,20 @@ function dirs(at: string): string[] {
   return out;
 }
 
-// The files of the library: those of `folder`, or those of `roots` for "".
-// The player makes its three tunes in `dir` when no directory of `roots`
-// has a file of sound.
-function found(dir: string, roots: string[], folder: string): string[] {
-  if (folder.len() > 0) {
-    let chosen = library.files(folder, 8, names, is_dir);
-    log.info("tune: found " + chosen.len().to_string() + " files in the folder");
-    return chosen;
-  }
-  let have = files(roots);
-  log.info("tune: found " + have.len().to_string() + " files");
-  if (have.len() > 0) {
-    return have;
-  }
+// Makes the three tunes of the player in `dir`, and gives their paths.
+function demo(dir: string): string[] {
+  let out: string[] = [];
   for which in 0..3 {
     if let Ok(file) = library.demo_file(which) {
       let path = dir + "/" + library.demo_name(which);
       let made = create_dir_all(path.take(path.len() - path.split("/").last().unwrap_or("").len() - 1));
-      let written = write_file_bytes(path, file);
+      if let Ok(_) = write_file_bytes(path, file) {
+        out = out.append(path);
+      }
     }
   }
   log.info("tune: made its tunes");
-  return files(roots);
+  return out;
 }
 
 // The message of a media button of Android.

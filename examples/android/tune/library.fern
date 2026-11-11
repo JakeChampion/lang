@@ -1,6 +1,5 @@
 // The library of the player: the tracks of a directory, and the tunes that
 // the player makes when the directory has none.
-import "core/cmp";
 import "std/audio/flac";
 import "std/audio/mp3";
 import "std/audio/pcm";
@@ -283,22 +282,17 @@ pub function parts_of(bytes: u8[]): (i64, i32) => u8[] {
   };
 }
 
-// The paths of the files of sound in `dir` and in the directories below
-// it, at most `depth` directories down. `list` gives the names in a
-// directory, and `is_dir` tells that a path is a directory.
-pub function files(dir: string, depth: i32, list: (string) => string[], is_dir: (string) => boolean): string[] {
-  let out: string[] = [];
-  for name in cmp.sort(list(dir)) {
-    let path = dir + "/" + name;
-    if (format_of(name).len() > 0) {
-      out = out.append(path);
-    } else if (depth > 0 && !name.starts_with(".") && is_dir(path)) {
-      for f in files(path, depth - 1, list, is_dir) {
-        out = out.append(f);
-      }
+// True for a name that ends as a file that is not sound, such as a
+// picture or a document. The scan does not ask the device about such a
+// name, because the answer costs time for each file of a large directory.
+pub function other_file(name: string): boolean {
+  let lower = name.to_lower();
+  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
+    if (lower.ends_with(end)) {
+      return true;
     }
   }
-  return out;
+  return false;
 }
 
 // The file of the tune of a number: the first one is a FLAC file, and each

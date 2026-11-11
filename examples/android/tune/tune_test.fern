@@ -83,12 +83,15 @@ function paths(): string[] {
   return ["music/" + library.demo_name(2), "music/loose/x1.wav", "music/" + library.demo_name(0), "music/" + library.demo_name(1), "music/Fern/cover.mp3"];
 }
 
-// The files of the test below `folder`, or each one for "".
-function in_folder(folder: string): string[] {
+// The names in the directory `at` of the files of the test.
+function names_in(at: string): string[] {
   let out: string[] = [];
   for p in paths() {
-    if (folder.len() == 0 || p.starts_with(folder + "/")) {
-      out = out.append(p);
+    if (p.starts_with(at + "/")) {
+      let name = p.drop(at.len() + 1).split("/")[0].to_owned();
+      if (!out.contains(name)) {
+        out = out.append(name);
+      }
     }
   }
   return out;
@@ -109,8 +112,11 @@ function dirs_of(at: string): string[] {
 function device(): player.Device {
   return player.Device {
     grant: (): void => {},
-    files: (folder: string): string[] => in_folder(folder),
     roots: ["music"],
+    names: (at: string): string[] => names_in(at),
+    is_dir: (path: string): boolean => names_in(path).len() > 0,
+    demo: (): string[] => [],
+    now: (): i64 => 0i64,
     dirs: (at: string): string[] => dirs_of(at),
     keep: (folder: string): void => {},
     show: (now: tune.Now): void => {},

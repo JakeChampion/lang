@@ -76,7 +76,8 @@ the sound. The sound stops when Android stops the activity, because the app
 has no service.
 
 The player keeps the whole file of the track that plays in memory. For
-the library, it reads the first 128 KB of each file, a file at each tick,
+the library, it reads one directory or the first 128 KB of one file at a
+time, for 8 ms of each tick,
 for its tags and its length. It reads more only for a tag that is longer,
 or for a tag after the sound. It keeps no list of the library between two
 starts.

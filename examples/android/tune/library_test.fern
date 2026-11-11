@@ -1,38 +1,19 @@
-// Tests of the library of the player on the host: the files below a
-// directory, and the track of a file from its tags or from its path.
+// Tests of the library of the player on the host: the names that the
+// scan does not ask about, and the track of a file from its tags or from
+// its path.
 import "std/result";
 import "std/test";
 import "./fixture";
 import "./library";
 import "./tune";
 
-// A tree of directories: music has two files, one directory of an artist
-// with an album, one directory whose name starts with a dot, and one file
-// that is not sound.
-function names(dir: string): string[] {
-  if (dir == "music") {
-    return ["b.mp3", "Fern", ".trash", "notes.txt", "a.WAV"];
+// The scan asks the device about a name only when it can be a directory.
+function test_other_files(): test.TestOutcome {
+  let got = "";
+  for name in ["cover.JPG", "notes.txt", "film.mp4", "Mr. Bungle", "Vol. 2", "First Light", "a.wav"] {
+    got = got + library.other_file(name).to_string() + " ";
   }
-  if (dir == "music/Fern") {
-    return ["First Light", "cover.png"];
-  }
-  if (dir == "music/Fern/First Light") {
-    return ["02 Slow Water.wav", "01 Morning Fern.flac"];
-  }
-  if (dir == "music/.trash") {
-    return ["old.mp3"];
-  }
-  return [];
-}
-
-function is_dir(path: string): boolean {
-  return path == "music/Fern" || path == "music/Fern/First Light" || path == "music/.trash";
-}
-
-function test_files(): test.TestOutcome {
-  let all = library.files("music", 6, names, is_dir).join(" ");
-  let flat = library.files("music", 0, names, is_dir).join(" ");
-  return test.assert_eq(all + " | " + flat, "music/Fern/First Light/01 Morning Fern.flac music/Fern/First Light/02 Slow Water.wav music/a.WAV music/b.mp3 | music/a.WAV music/b.mp3");
+  return test.assert_eq(got.trim(), "true true true false false false false");
 }
 
 function test_numbered(): test.TestOutcome {
@@ -108,7 +89,7 @@ function test_a_scan_reads_parts_of_a_file(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("examples/android/tune library");
-  r = r.it("the files of sound below a directory", test_files);
+  r = r.it("a name that ends as a file that is not sound", test_other_files);
   r = r.it("a file name starts with a number", test_numbered);
   r = r.it("a file with no tags takes its artist and its album from its path", test_a_file_with_no_tags_takes_its_path);
   r = r.it("an MP3 file tells its length, or its bytes and its bit rate do", test_the_length_of_an_mp3_file);
