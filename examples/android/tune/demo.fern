@@ -1,0 +1,77 @@
+// The tunes that the player makes for an empty library: a melody as
+// samples, with no file of sound in the app.
+import "std/f64";
+import "std/i32";
+
+pub const RATE: i32 = 44100;
+
+// A note: its pitch in half steps from the A of 440 Hz, and its length in
+// beats.
+pub struct Note { pitch: i32, beats: f64 }
+
+function hz(pitch: i32): f64 {
+  return 440.0 * 2.0.pow(pitch as f64 / 12.0);
+}
+
+// One note as stereo samples: two partials with a fast start and a slow
+// end, a little to the left or to the right.
+function voice(n: Note, beat_s: f64, left: f64): i32[] {
+  let frames = (n.beats * beat_s * (RATE as f64)) as i32;
+  let f = hz(n.pitch);
+  let out: i32[] = [];
+  for i in 0..frames {
+    let t = i as f64 / (RATE as f64);
+    let rise = (t / 0.01).min(1.0);
+    let fall = (-3.0 * t / (n.beats * beat_s)).exp();
+    let v = ((6.283185307179586 * f * t).sin() * 0.6 + (12.566370614359172 * f * t).sin() * 0.25) * rise * fall * 9000.0;
+    out = out.append((v * left) as i32).append((v * (1.3 - left)) as i32);
+  }
+  return out;
+}
+
+// The melody `notes` at `bpm` beats a minute, as stereo samples at RATE.
+pub function render(notes: Note[], bpm: i32): i32[] {
+  let out: i32[] = [];
+  let k = 0;
+  for n in notes {
+    let left = 0.8;
+    if (k % 2 == 1) {
+      left = 0.5;
+    }
+    for v in voice(n, 60.0 / (bpm as f64), left) {
+      out = out.append(v);
+    }
+    k += 1;
+  }
+  return out;
+}
+
+function line(pitches: i32[], beats: f64): Note[] {
+  let out: Note[] = [];
+  for p in pitches {
+    out = out.append(Note { pitch: p, beats: beats });
+  }
+  return out;
+}
+
+// The melodies of the tunes, by number.
+pub function melody(which: i32): Note[] {
+  if (which == 0) {
+    return line([3, 7, 10, 15, 10, 7, 3, 7, 5, 8, 12, 17, 12, 8, 5, 8, 3, 7, 10, 15, 19, 15, 10, 3], 0.5);
+  }
+  if (which == 1) {
+    return line([-9, -5, -2, 3, -2, -5, -9, -2, -7, -4, 0, 5, 0, -4, -7, 0], 1.0);
+  }
+  let bar = [10, 12, 15, 12, 10, 7, 10, 12, 15, 17, 15, 12, 10, 7, 3, 7];
+  let all: i32[] = [];
+  for turn in 0..4 {
+    for p in bar {
+      all = all.append(p + turn % 2 * 5);
+    }
+  }
+  return line(all, 0.25);
+}
+
+pub function names(): string[] {
+  return ["Morning Fern", "Slow Water", "Quick Light"];
+}
