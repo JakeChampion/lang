@@ -5717,6 +5717,9 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   }
   let out: string = f.file + ":" + util.i32_to_string(f.line) + ":" + util.i32_to_string(f.col) + ": "
     + paint(st, sgr, label + "[" + f.rule + "]") + ": " + f.msg;
+  if (st.terse) {
+    return out;
+  }
   let lines: string[] = [];
   let start = 0;
   for i in 0..=src.len() {
@@ -5855,7 +5858,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi], cov_files);
       broken = broken || !parsed;
       for fd in fds {
-        if (all.len() > 0) {
+        if (all.len() > 0 && !st.terse) {
           out += "\n";
         }
         out = out + lint_text(st, fd, src) + "\n";
@@ -5871,7 +5874,9 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
   if (sum.len() > 0) {
     out = out + sum + "\n";
   }
-  write(out);
+  if (out.len() > 0) {
+    eprint(slice_unchecked(out, 0, out.len() - 1));
+  }
   if (broken || lint.failed(all)) {
     return 1;
   }

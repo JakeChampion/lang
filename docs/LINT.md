@@ -14,6 +14,10 @@ each finding is reported at its line in the document (`lint_module`). A
 chunk library, a document with no root chunk and no `file=` blocks, has no
 module to lint: a directory walk skips it, and naming it is an error.
 
+The findings and the summary line go to stderr, as the diagnostics of the
+checker do. `-q`, or `FERN_DIAG_FORMAT=terse`, prints one line for each
+finding, without the source line and the help.
+
 ## Why it runs on the parse tree
 
 A lint sees `parser.parse_module` output and nothing else — no type-check,

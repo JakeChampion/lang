@@ -147,13 +147,17 @@ func runLiterate(doc, mode, out, chunk string, html bool) int {
 }
 
 func runSelfHostTool(args []string, w io.Writer) int {
+	return runSelfHostToolTo(args, w, os.Stderr)
+}
+
+func runSelfHostToolTo(args []string, stdout, stderr io.Writer) int {
 	compiler, err := launcher.Compiler()
 	if err != nil {
 		io.WriteString(os.Stderr, err.Error()+"\n")
 		return 2
 	}
 	cmd := exec.Command(compiler, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, w, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

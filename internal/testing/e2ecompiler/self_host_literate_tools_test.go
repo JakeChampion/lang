@@ -32,13 +32,13 @@ func TestSelfHostLiterateLintAndDoc(t *testing.T) {
 	t.Run("lint-document", func(t *testing.T) {
 		out, errs, code := run("-lint", "-lint-opt", "cyclomatic-complexity.max=1", "lit/shapes.fern.md")
 		want := "lit/shapes.fern.md:8:5: warning[cyclomatic-complexity]: function `area` has a cyclomatic complexity of 2"
-		if code != 0 || !strings.HasPrefix(out, want) || !strings.Contains(out, "\n    pub function area(w: i32, h: i32): i32 {\n") {
+		if code != 0 || out != "" || !strings.HasPrefix(errs, want) || !strings.Contains(errs, "\n    pub function area(w: i32, h: i32): i32 {\n") {
 			t.Errorf("exit %d, stdout %q, stderr %q; want it to open %q and show the document line", code, out, errs, want)
 		}
 	})
 	t.Run("lint-directory", func(t *testing.T) {
 		out, errs, code := run("-lint", "-lint-opt", "cyclomatic-complexity.max=1", "lit")
-		if code != 0 || errs != "" || !strings.Contains(out, "lit/shapes.fern.md:8:5:") {
+		if code != 0 || out != "" || !strings.Contains(errs, "lit/shapes.fern.md:8:5:") || strings.Contains(errs, "library.fern.md") {
 			t.Errorf("exit %d, stdout %q, stderr %q; want the .fern.md linted and the chunk library passed over", code, out, errs)
 		}
 	})
