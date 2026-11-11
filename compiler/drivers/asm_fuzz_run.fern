@@ -1,5 +1,6 @@
 import "../x86_native";
 import "../arm64_native";
+import "../elf";
 import "../elfimage";
 import "../util";
 
@@ -48,7 +49,7 @@ function main(): i32 {
     for kind in ["static", "pie", "g"] {
       let image = "";
       if (x86) {
-        image = elfimage.x86_elf_binary(src, words, kind == "g", "input.s", "/fuzz", kind == "pie");
+        image = elfimage.x86_elf_binary(src, words, kind == "g", "input.s", "/fuzz", kind == "pie", elf.elf_x86_page_align());
       } else {
         image = elfimage.arm64_elf_binary(src, words, kind == "g", "input.s", "/fuzz", false, kind == "pie");
       }
