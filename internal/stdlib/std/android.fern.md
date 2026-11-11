@@ -10,7 +10,7 @@ The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern
 
 When `timeout` gives 0, `run` gives `Tick` after the event that is ready, if one is. So an app that gives the time that is left to its next Tick gets that Tick while events come all the time.
 
-The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
+The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back. A thread that waits for the lock gets the next turn, so a loop thread that is busy does not keep the UI thread out.
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
