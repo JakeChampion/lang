@@ -1,0 +1,55 @@
+// Serialize HEVC PPS metadata for independent comparisons.
+import "std/video/hevc/pps";
+
+function flag(value: boolean): i64 {
+  return if (value) { 1i64 } else { 0i64 };
+}
+
+pub function values(p: pps.PictureParameters): i64[] {
+  return [
+    p.picture_id as i64,
+    p.sequence_id as i64,
+    flag(p.dependent_slice_segments),
+    flag(p.output_flag_present),
+    p.extra_slice_header_bits as i64,
+    flag(p.sign_data_hiding),
+    flag(p.cabac_init_present),
+    p.default_l0_references as i64,
+    p.default_l1_references as i64,
+    p.initial_qp as i64,
+    flag(p.constrained_intra),
+    flag(p.transform_skip),
+    flag(p.cu_qp_delta),
+    p.qp_delta_depth as i64,
+    p.cb_qp_offset as i64,
+    p.cr_qp_offset as i64,
+    flag(p.slice_chroma_qp_offsets),
+    flag(p.weighted_prediction),
+    flag(p.weighted_biprediction),
+    flag(p.transquant_bypass),
+    flag(p.tiles),
+    flag(p.entropy_coding_sync),
+    p.tile_columns as i64,
+    p.tile_rows as i64,
+    flag(p.uniform_spacing),
+    flag(p.loop_filter_across_tiles),
+    flag(p.loop_filter_across_slices),
+    flag(p.deblock_control),
+    flag(p.deblock_override),
+    flag(p.deblock_disabled),
+    p.beta_offset_div2 as i64,
+    p.tc_offset_div2 as i64,
+    flag(p.scaling_lists),
+    flag(p.lists_modification),
+    p.parallel_merge_log2 as i64,
+    flag(p.slice_header_extension),
+    flag(p.range_extension),
+    p.transform_skip_log2 as i64,
+    flag(p.cross_component_prediction),
+    flag(p.chroma_qp_offset_list),
+    p.chroma_qp_depth as i64,
+    p.chroma_qp_entries as i64,
+    p.sao_luma_scale as i64,
+    p.sao_chroma_scale as i64,
+  ];
+}

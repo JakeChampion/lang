@@ -122,6 +122,15 @@ Other extensions and nonzero profile spaces return `Unsupported`.
 Profile constraint bits remain opaque. The reader does not resolve VPS references or validate pictures, level constraints, or decoder support.
 The native pixel-decode table remains unchanged.
 
+`std/video/hevc/pps` inspects one base-layer PPS with its matching complete SPS NAL.
+It reports prediction, quantizer, tile, filter, scaling, and range-extension metadata through exact trailing bits.
+The reader reuses the SPS syntax and checks its sequence identifier, coding-block geometry, and precision bounds.
+It validates explicit tile extents without a retained map or coefficient array.
+
+Each NAL has its own packet budget. The existing 8 KiB SPS ceiling and a 64 KiB PPS ceiling apply before unescape.
+The pixel budget covers the SPS coded picture before crop.
+Other PPS extensions return `Unsupported`. This is parameter metadata, without picture reconstruction or full profile and level conformance.
+
 `std/video/avc` also inspects a PPS with its matching parsed sequence.
 It reports entropy and prediction flags, reference defaults, quantizers, slice-group metadata, and optional scaling flags.
 The reader validates all seven slice-group map types without a retained map allocation.
@@ -449,6 +458,10 @@ Eight libx265 streams cover 8-, 10-, and 12-bit precision, monochrome, chroma fo
 FFprobe metadata and every decoded sample from all three lossless frames must agree with the original raw input.
 Fifteen synthetic SPS headers cover seven sublayers, scaling lists, predicted reference sets, PCM, and HRD bounds.
 Synthetic headers establish syntax only. Four malformed controls require explicit independent parser diagnostics.
+
+`scripts/check-video-hevc-pps-interop` compares 44 native and real WASI metadata fields with FFmpeg CBS.
+Eight lossless streams preserve all three source frames. Thirty-two synthetic parameter pairs cover tiles, quantizers, scaling, and range extensions.
+Synthetic pairs contain no coded pictures. Four malformed controls require explicit independent field and parse-failure diagnostics.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 

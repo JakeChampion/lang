@@ -1243,13 +1243,17 @@ pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[]
 pub function scalar_params(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalarized {
   let ix = util.name_index(names);
   let split = param_candidates(funcs, names, ix, rewrite, unnamed, modes);
-  split = params_kept_apart(funcs, ix, split, modes);
+  let read: ssasem.Func[] = [];
+  for i in 0..funcs.len() {
+    read = read.append(params_forwarded(funcs[i], split[i]));
+  }
+  split = params_kept_apart(read, ix, split, modes);
   let sites = Sites { funcs: funcs, modes: modes, ix: ix, split: split, lay: no_layout() };
   let out: ssasem.Func[] = [];
   let out_modes: i32[][] = [];
   let changed: boolean[] = [];
   for i in 0..funcs.len() {
-    let f = funcs[i];
+    let f = params_forwarded(funcs[i], split[i]);
     let m = modes[i];
     let c = false;
     if (rewrite[i] && has_sites(f, sites)) {
@@ -1271,6 +1275,87 @@ pub function scalar_params(funcs: ssasem.Func[], names: string[], rewrite: boole
     changed = changed.append(c);
   }
   return Scalarized { funcs: out, modes: out_modes, changed: changed };
+}
+
+// The slot phi of a self tail call that hands parameter `p` on unchanged, or -1.
+function forward_phi(f: ssasem.Func, p: i32): i32 {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PHI && ins.str == f.graph.name && ins.imm == p && ins.args.len() > 0 && ins.args[0] == p) {
+        for a in ins.args {
+          if (a != p && a != ins.result) {
+            return -1;
+          }
+        }
+        return ins.result;
+      }
+    }
+  }
+  return -1;
+}
+
+// `f` with each such phi of the parameters in `which` replaced by its
+// parameter, so that a read of the phi is a read of the parameter.
+function params_forwarded(f: ssasem.Func, which: boolean[]): ssasem.Func {
+  let alias = util.minus_ones(f.graph.nvals);
+  let any = false;
+  for p in 0..which.len() {
+    if (which[p]) {
+      let r = forward_phi(f, p);
+      if (r >= 0) {
+        alias = alias.with(r, p);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return f;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.result < 0 || alias[ins.result] < 0) {
+        insts = insts.append(forwarded_inst(ins, alias));
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: forwarded_term(b.term, alias) });
+  }
+  let dbg_vals: i32[] = [];
+  for v in f.dbg_vals {
+    dbg_vals = dbg_vals.append(forwarded_value(alias, v));
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks }, dbg_vals: dbg_vals };
+}
+
+function forwarded_value(alias: i32[], v: i32): i32 {
+  if (v >= 0 && v < alias.len() && alias[v] >= 0) {
+    return alias[v];
+  }
+  return v;
+}
+
+function forwarded_inst(ins: ssa.SInst, alias: i32[]): ssa.SInst {
+  let args: i32[] = [];
+  for a in ins.args {
+    args = args.append(forwarded_value(alias, a));
+  }
+  let imm = ins.imm;
+  let donor = ssasem.update_base(ins);
+  if (donor >= 0) {
+    imm = forwarded_value(alias, donor) + 1;
+  }
+  return ssa.SInst { ...ins, args: args, imm: imm };
+}
+
+function forwarded_term(t: ssa.STerm, alias: i32[]): ssa.STerm {
+  if (t.kind_tag == ssa.TERM_RET && t.value >= 0) {
+    return ssa.STerm { ...t, value: forwarded_value(alias, t.value) };
+  }
+  if (t.kind_tag == ssa.TERM_BRIF) {
+    return ssa.STerm { ...t, cond: forwarded_value(alias, t.cond) };
+  }
+  return t;
 }
 
 function param_candidates(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[], modes: i32[][]): boolean[][] {

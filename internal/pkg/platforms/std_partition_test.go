@@ -91,7 +91,7 @@ var stdModuleReach = map[string]string{
 	"std/regex":         "",
 	"std/result":        "",
 	"std/semver":        "",
-	"std/serve":         "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,proc,random,reactor,sysinfo,tcp,unix,uring",
+	"std/serve":         "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,proc,random,reactor,signal,sysinfo,tcp,unix,uring",
 	"std/signal":        "signal",
 	"std/sim":           "arena,fs,log,mmio,now,pollable,privileged,proc,random,reactor,tcp,uring",
 	"std/sim_fetch":     "arena,config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,proc,random,reactor,tcp,unix,uring",

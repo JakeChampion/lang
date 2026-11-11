@@ -267,7 +267,7 @@ type selfHostStdTestCase struct {
 
 func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
 	t.Helper()
-	selected, err := corpus.Shard(cases, os.Getenv("FERN_STDTEST_SHARD"))
+	selected, err := corpus.ShardBy(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,6 +449,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"video_av1", langSrcAbs(t, "tests/stdlib/video_av1_test.fern"), ""},
 		{"video_av1_sequence", langSrcAbs(t, "tests/stdlib/video_av1_sequence_test.fern"), ""},
 		{"video_hevc", langSrcAbs(t, "tests/stdlib/video_hevc_test.fern"), ""},
+		{"video_hevc_pps", langSrcAbs(t, "tests/stdlib/video_hevc_pps_test.fern"), ""},
 		{"video_vp9_packet", langSrcAbs(t, "tests/stdlib/video_vp9_packet_test.fern"), ""},
 		{"video_qtrle_mov", langSrcAbs(t, "tests/stdlib/video_qtrle_mov_test.fern"), ""},
 		{"video_annex_b", langSrcAbs(t, "tests/stdlib/video_annex_b_test.fern"), ""},

@@ -814,6 +814,20 @@ function test_an_area_shows_the_lines_at_the_caret(): test.TestOutcome {
   return test.assert_eq(texts(out) + " " + texts(at_end), "A|AA|AAA AAA|AAAA|AAAAA");
 }
 
+// The meter is one line of text on a rectangle, below the top inset.
+function test_the_meter_shows_the_cost_of_a_frame(): test.TestOutcome {
+  let sc = ui.Screen { ...screen(), top: 24 };
+  let ns = ui.meter(fonts(), sc, ui.Cost { view: 3, layout: 12, paint: 40, access: 7, frame: 62, step: 1234, since: 0 });
+  let got = ns.len().to_string() + " " + ns[0].y.to_string() + " " + ns[0].w.to_string();
+  match (ns[1].paint) {
+    scene.Label(line, px, face, track, color) => {
+      got = got + " " + line;
+    },
+    _ => {}
+  }
+  return test.assert_eq(got, "2 24 200 view 3  layout 12  paint 40  access 7  frame 62  step 1234 ms");
+}
+
 function main(): i32 {
   let r = test.new("std/android/ui");
   r = r.it("a column puts its elements one below the other", test_column);
@@ -862,5 +876,6 @@ function main(): i32 {
   r = r.it("a slider has a track and a thumb", test_slider_layout);
   r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
   r = r.it("the effects run after each message", test_effects_run_after_each_message);
+  r = r.it("the meter shows the cost of a frame", test_the_meter_shows_the_cost_of_a_frame);
   return r.finish();
 }

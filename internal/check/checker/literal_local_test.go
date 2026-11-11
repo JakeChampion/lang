@@ -188,6 +188,43 @@ func TestArrayLiteralWideIntegerLiteralWidensTheValueBesideIt(t *testing.T) {
 	}
 }
 
+// A typed destination of a nested part of a literal local gives that part
+// its type. A tuple literal in an array literal takes a typed destination.
+func TestLiteralCompositeTakesTheTypeOfANestedPart(t *testing.T) {
+	const head = "function main(): i32 {\nlet i: i32 = 1;\n"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an element of an inner array", "let a = [[1], [2]]; let k: u8 = a[0][0]; let z: string = a;", "got u8[][]"},
+		{"three levels", "let a = [[[1]], [[2]]]; let k: i64 = a[1][0][0]; let z: string = a;", "got i64[][][]"},
+		{"a tuple part of an element", "let a = [(1, 2), (3, 4)]; let k: u8 = a[0].1; let z: string = a;", "got (i32, u8)[]"},
+		{"an array in a tuple", "let t = (1, [2, 3]); let k: u8 = t.1[0]; let z: string = t;", "got (i32, u8[])"},
+		{"a tuple in a tuple", "let t = ((1, 2), 3); let k: u8 = t.0.1; let z: string = t;", "got ((i32, u8), i32)"},
+		{"a literal that does not fit", "let a = [[200], [300]]; let k: u8 = a[0][0];", "literal 300 does not fit in u8"},
+		{"a flat array", "let a = [1, 2]; let k: u8 = a[0]; let z: string = a;", "got u8[]"},
+		{"a tuple destination", "let a: (i32, i64)[] = [(i, i)];", ""},
+		{"a nested tuple destination", "let a: (i64, (i32, i64[]))[] = [(i, (i, [i]))];", ""},
+		{"a tuple local keeps its type", "let t = (i, i); let a: (i32, i64)[] = [t];", "expected (i32, i64)[], got (i32, i32)[]"},
+		{"a narrower tuple destination", "let a: (i32, u8)[] = [(i, i)];", "expected (i32, u8)[], got (i32, i32)[]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, head+c.body+"\nreturn 0;\n}\n")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("rejected, want accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error with %q", err, c.want)
+			}
+		})
+	}
+}
+
 // The inner literals of a nested array literal take the wider element type.
 // An inner array that is not a literal keeps its type.
 func TestNestedArrayLiteralsTakeTheWiderElementType(t *testing.T) {

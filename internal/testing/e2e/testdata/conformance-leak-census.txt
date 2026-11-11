@@ -1,3 +1,4 @@
+# 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
 # 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
@@ -131,6 +132,7 @@ alloc_grows_when_retained                            0
 an_at_binding_binds_its_own_alternative              0
 an_empty_map_arm_takes_the_type_of_the_other_arm     0
 an_empty_map_takes_the_type_of_its_first_use         0
+an_impl_for_one_instance_of_a_generic_struct         0
 an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
 an_index_read_gives_a_literal_array_its_element_type 0
@@ -176,6 +178,7 @@ array_none_basic                                     0
 array_none_empty_and_all_match                       0
 array_none_module                                    0
 array_of_structs                                     0
+array_of_tuple_literals_takes_its_destination_and_float_literals 0
 array_pair_truncates                                 0
 array_param_threaded_reassign                        0
 array_reverse                                        0
@@ -628,6 +631,7 @@ let_else_pattern_forms                               0
 let_else_payload_copy                                0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
+literal_composite_takes_the_type_of_a_nested_part    0
 literal_local_read_at_two_widths                    0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
@@ -735,6 +739,7 @@ nested_pattern_tuple_in_payload_irrefutable_with_fallthrough 0
 nested_pattern_wildcard_fallthrough                  0
 nested_payloadless_constructor                       0
 nested_value_expr_width                              0
+nested_workers_keep_private_heaps                   0
 none_branch                                          0
 none_equal_none                                      0
 nul_byte_in_a_path_is_refused                        0
@@ -1326,7 +1331,7 @@ target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
 task_handle_with_a_made_up_id                        7
 task_resumed_after_it_ended                          6
-task_resumed_with_another_function                   13
+task_resumed_with_another_function                   11
 task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
@@ -1440,6 +1445,7 @@ zero_width_slice                                     0
 value_cleanup_keeps_cow_aliases                    0
 
 # 2026-11-11: a_function_named_like_a_safe_intrinsic_shadows_it is clean under RC trace.
+# 2026-11-11: an_impl_for_one_instance_of_a_generic_struct is clean under RC trace.
 a_function_named_like_a_safe_intrinsic_shadows_it    0
 
 # 2026-11-11: Main 38399ecf removed the raw-builtin shadow fixture.

@@ -4054,6 +4054,11 @@ func (c *checker) normalizeEnumKinds(t ast.Type) ast.Type {
 		for i, a := range x.Args {
 			args[i] = c.normalizeEnumKinds(a)
 		}
+		if _, isEnum := c.info.Enums[x.Name]; !isEnum {
+			if _, isStruct := c.info.Structs[x.Name]; isStruct {
+				return ast.StructType{Name: x.Name, Args: args}
+			}
+		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: c.normalizeEnumKinds(x.Elem)}
@@ -5888,6 +5893,9 @@ func isScalarBuiltinMethod(mangled string) bool {
 func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
+	// failedExprs holds each expression that has no type because its check
+	// reported an error.
+	failedExprs map[ast.Expr]bool
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
@@ -9863,6 +9871,7 @@ func (c *checker) checkEscapes(prog *ast.Program) {
 
 type escapeEnv struct {
 	params     map[string]int
+	paramTypes []ast.Type
 	locals     map[string]*ast.Var
 	armViews   map[string]ast.Expr
 	visiting   map[string]bool
@@ -9882,6 +9891,7 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 	}
 	for i, p := range fn.Params {
 		env.params[p.Name] = i
+		env.paramTypes = append(env.paramTypes, p.Type)
 	}
 	for _, v := range c.info.Locals[fn] {
 		env.locals[v.Name] = v
@@ -10071,6 +10081,15 @@ func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, 
 		} else {
 			out.merge(c.aggregateCallRoots(e, env, sums, leaf))
 		}
+	case *ast.FieldAccess:
+		out.merge(c.holderViewRoots(e.Target, env, sums, leaf))
+	case *ast.Index:
+		out.merge(c.holderViewRoots(e.Array, env, sums, leaf))
+	case *ast.IfExpr:
+		part(e.Then, t)
+		part(e.Else, t)
+	case *ast.BlockExpr:
+		part(e.Tail, t)
 	case *ast.Ident:
 		if i, ok := env.params[e.Name]; ok {
 			out.carried = map[int]bool{i: true}
@@ -10083,6 +10102,49 @@ func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, 
 		}
 	}
 	return out
+}
+
+// projType is the declared type of a parameter or a local, or of a field, a
+// tuple element or an array element reached from one.
+func (c *checker) projType(e ast.Expr, env *escapeEnv) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if i, ok := env.params[x.Name]; ok {
+			return env.paramTypes[i]
+		}
+		if v, ok := env.locals[x.Name]; ok {
+			return v.Type
+		}
+	case *ast.FieldAccess:
+		return c.declaredFieldType(c.projType(x.Target, env), x.Field)
+	case *ast.Index:
+		switch t := c.projType(x.Array, env).(type) {
+		case ast.ArrayType:
+			return t.Elem
+		case ast.SliceType:
+			return t.Elem
+		}
+	}
+	return nil
+}
+
+// holderViewRoots is the roots of every view in the value that a field or an
+// element is read from. The part that is read can hold any of them.
+func (c *checker) holderViewRoots(holder ast.Expr, env *escapeEnv, sums map[string]viewSummary, leaf viewLeaf) viewRoots {
+	t := c.projType(holder, env)
+	if t == nil {
+		return viewRoots{params: map[int]bool{}}
+	}
+	return c.aggregateViewRoots(holder, t, env, sums, leaf)
+}
+
+// partSourceRoots is the storage of a field or an element: the storage that a
+// view part views, and otherwise the storage of the value that holds the part.
+func (c *checker) partSourceRoots(part, holder ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if _, isSlice := c.projType(part, env).(ast.SliceType); isSlice {
+		return c.sliceViewRoots(part, env, sums)
+	}
+	return c.sliceSourceRoots(holder, env, sums)
 }
 
 func (c *checker) structLitParts(e *ast.StructLit, t ast.Type, part func(ast.Expr, ast.Type)) {
@@ -10209,7 +10271,16 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 		if e.IsString {
 			return out
 		}
-		out.merge(c.sliceSourceRoots(e.Source, env, sums))
+		out.merge(c.slicedRoots(e.Source, env, sums))
+	case *ast.FieldAccess:
+		out.merge(c.holderViewRoots(e.Target, env, sums, c.sliceLeaf(env, sums)))
+	case *ast.Index:
+		out.merge(c.holderViewRoots(e.Array, env, sums, c.sliceLeaf(env, sums)))
+	case *ast.IfExpr:
+		out.merge(c.sliceViewRoots(e.Then, env, sums))
+		out.merge(c.sliceViewRoots(e.Else, env, sums))
+	case *ast.BlockExpr:
+		out.merge(c.sliceViewRoots(e.Tail, env, sums))
 	case *ast.Call:
 		if id, ok := e.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(e.Args) == 1 {
@@ -10218,6 +10289,12 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
 					out.merge(c.viewArgRoots(id.Name, i, e.Args[i], env, sums))
+				}
+			}
+			sig := c.info.FuncSigs[id.Name]
+			for i := range sums[id.Name].carried {
+				if i < len(e.Args) && sig != nil && i < len(sig.Params) {
+					out.merge(c.aggregateViewRoots(e.Args[i], sig.Params[i], env, sums, c.sliceLeaf(env, sums)))
 				}
 			}
 		}
@@ -10258,16 +10335,46 @@ func (c *checker) bytesSourceRoots(str ast.Expr, env *escapeEnv, sums map[string
 	return c.stringSourceRoots(str, env, sums)
 }
 
+// slicedRoots is the storage of the source of a slice expression. The result
+// of a builtin is new storage: the analysis has no summary for a builtin.
+func (c *checker) slicedRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := c.sliceSourceRoots(src, env, sums)
+	call, ok := src.(*ast.Call)
+	if !ok {
+		return out
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Name == "__method_string_as_bytes" {
+		return out
+	}
+	_, summarised := sums[id.Name]
+	_, isParam := env.params[id.Name]
+	_, isLocal := env.locals[id.Name]
+	if !summarised && !isParam && !isLocal {
+		out.local = true
+	}
+	return out
+}
+
 func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch s := src.(type) {
-	case *ast.ArrayLit:
+	case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
 		out.local = true
 	case *ast.SliceExpr:
 		if s.IsString {
 			return out
 		}
-		out.merge(c.sliceSourceRoots(s.Source, env, sums))
+		out.merge(c.slicedRoots(s.Source, env, sums))
+	case *ast.FieldAccess:
+		out.merge(c.partSourceRoots(s, s.Target, env, sums))
+	case *ast.Index:
+		out.merge(c.partSourceRoots(s, s.Array, env, sums))
+	case *ast.IfExpr:
+		out.merge(c.sliceSourceRoots(s.Then, env, sums))
+		out.merge(c.sliceSourceRoots(s.Else, env, sums))
+	case *ast.BlockExpr:
+		out.merge(c.sliceSourceRoots(s.Tail, env, sums))
 	case *ast.Call:
 		if id, ok := s.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {
@@ -10293,17 +10400,39 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		if !ok {
 			return out
 		}
-		if _, isArr := v.Type.(ast.ArrayType); isArr {
-			out.local = true
-			return out
-		}
-		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+		switch v.Type.(type) {
+		case ast.ArrayType, ast.StructType, ast.TupleType:
+			if !namesPlaces(v.Init) || env.reassigned[s.Name] {
+				out.local = true
+				return out
+			}
+			// A local that only names places has the storage of those places.
 			env.visiting[s.Name] = true
 			defer delete(env.visiting, s.Name)
-			out.merge(c.sliceViewRoots(v.Init, env, sums))
+			out.merge(c.sliceSourceRoots(v.Init, env, sums))
+		case ast.SliceType:
+			if v.Init != nil {
+				env.visiting[s.Name] = true
+				defer delete(env.visiting, s.Name)
+				out.merge(c.sliceViewRoots(v.Init, env, sums))
+			}
 		}
 	}
 	return out
+}
+
+// namesPlaces reports an initialiser that only names places: a name, a field
+// or an element, or a choice between such values.
+func namesPlaces(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Ident, *ast.FieldAccess, *ast.Index:
+		return true
+	case *ast.IfExpr:
+		return namesPlaces(x.Then) && namesPlaces(x.Else)
+	case *ast.BlockExpr:
+		return len(x.Stmts) == 0 && namesPlaces(x.Tail)
+	}
+	return false
 }
 
 func (c *checker) checkStrEscapes(prog *ast.Program) {
@@ -14561,7 +14690,14 @@ func (c *checker) checkExprAt(e ast.Expr, s *scope, want ast.Type) ast.Type {
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
-	t := c.checkExprInner(e, s)
+	before := len(c.errors)
+	t := c.boundedType(e, c.checkExprInner(e, s))
+	if t == nil && len(c.errors) > before {
+		if c.failedExprs == nil {
+			c.failedExprs = map[ast.Expr]bool{}
+		}
+		c.failedExprs[e] = true
+	}
 	switch t.(type) {
 	case ast.NumberType, ast.FloatType:
 		if c.numericTypes == nil {
@@ -14971,13 +15107,20 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
+		originalElemExpected := elemExpected
 		elemTypes := []ast.Type{elemT}
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
 		toFloat = toFloat && !floatDest.Polymorphic
 		var prefix litPrefixScan
 		for i, el := range n.Elems[1:] {
+			// A call with no argument has only its place to give it a type:
+			// it takes the type of the first element as its expected type.
+			if call, isCall := el.(*ast.Call); isCall && len(call.Args) == 0 && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
+				elemExpected = elemT
+			}
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
+			elemExpected = originalElemExpected
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
@@ -17195,7 +17338,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.fixLitLocal(ll, hn, fa.P)
 			}
 		}
-		c.settleLitTupleByField(fa, hint)
+		c.settleLitPlace(fa, hint)
 		c.settleGenericCallByHint(fa, hint)
 		return
 	}
@@ -17203,7 +17346,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		c.settleLitCompositeLocal(id, hint)
 	}
 	if ix, ok := e.(*ast.Index); ok && !ix.IsString && !ix.IsSlice {
-		c.settleLitArrayByIndex(ix, hint)
+		c.settleLitPlace(ix, hint)
 	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
@@ -17475,6 +17618,16 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
 			for i := range h.Args {
 				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	if h, ok := have.(ast.TupleType); ok {
+		if w, ok := want.(ast.TupleType); ok && len(h.Elems) == len(w.Elems) {
+			for i := range h.Elems {
+				if !c.elemSettleable(h.Elems[i], w.Elems[i]) {
 					return false
 				}
 			}

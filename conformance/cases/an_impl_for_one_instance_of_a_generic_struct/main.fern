@@ -1,0 +1,24 @@
+trait Total {
+    function total(self: Self): i32;
+}
+
+struct Box[X] {
+    x: X,
+}
+
+impl Total for Box[i32] {
+    function total(self: Box[i32]): i32 {
+        return self.x + 1;
+    }
+}
+
+function through[V: Total](v: V): i32 {
+    return v.total();
+}
+
+function main(): i32 {
+    let b = Box[i32] { x: 41 };
+    print(through(b).to_string());
+    print(b.total().to_string());
+    return 0;
+}

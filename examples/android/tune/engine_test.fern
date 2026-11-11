@@ -7,6 +7,7 @@ import "std/result";
 import "std/test";
 import "./demo";
 import "./engine";
+import "./fixture";
 
 function limits(): pcm.Limits {
   return pcm.Limits { max_input_bytes: 1073741824, max_samples: 4194304 };
@@ -110,11 +111,23 @@ function test_other_bytes_do_not_open(): test.TestOutcome {
   return test.assert_eq(engine.open(text).is_none().to_string() + " " + engine.open(empty).is_none().to_string(), "true true");
 }
 
+// 100 frames of 1152 samples at 44100 Hz: the deck tells 2612 ms, and
+// plays 115200 frames of two samples.
+function test_mp3_length(): test.TestOutcome {
+  let Some(deck) = engine.open(fixture.silent_mp3(100, true)) else {
+    return test.fail("the MP3 file did not open");
+  };
+  let length = deck.duration_ms();
+  let (all, parts, last) = drained(deck);
+  return test.assert_eq(length.to_string() + " " + all.len().to_string() + " " + last.position_ms().to_string(), "2612 230400 2612");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune engine");
   r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
   r = r.it("a FLAC file plays each sample", test_flac_plays_each_sample);
   r = r.it("a deck starts at a part of its file", test_seek);
   r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
+  r = r.it("an MP3 file tells its length in frames of samples", test_mp3_length);
   return r.finish();
 }

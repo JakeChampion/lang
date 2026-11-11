@@ -3,10 +3,12 @@ package e2ecompiler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,22 +45,76 @@ type fuzzRun struct {
 func runUnderBudget(cmd *exec.Cmd) fuzzRun {
 	ctx, cancel := context.WithTimeout(context.Background(), fuzzTimeBudget)
 	defer cancel()
-	bounded := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	self, err := os.Executable()
+	if err != nil {
+		return fuzzRun{code: -1, state: err.Error()}
+	}
+	status, report, err := os.Pipe()
+	if err != nil {
+		return fuzzRun{code: -1, state: err.Error()}
+	}
+	defer status.Close()
+	defer report.Close()
+	bounded := exec.CommandContext(ctx, self, append([]string{"--fern-budget-child", cmd.Path}, cmd.Args[1:]...)...)
 	bounded.Env = cmd.Env
 	bounded.Dir = cmd.Dir
+	bounded.Stdin = cmd.Stdin
+	bounded.ExtraFiles = []*os.File{report}
+	bounded.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	bounded.Cancel = func() error { return syscall.Kill(-bounded.Process.Pid, syscall.SIGKILL) }
+	bounded.WaitDelay = time.Second
 	var so, se bytes.Buffer
 	bounded.Stdout, bounded.Stderr = &so, &se
-	err := bounded.Run()
+	err = bounded.Run()
+	report.Close()
 	r := fuzzRun{stdout: so.String(), stderr: se.String(), code: -1, timedOut: ctx.Err() == context.DeadlineExceeded}
-	if ps := bounded.ProcessState; ps != nil {
-		r.exited, r.code, r.state = ps.Exited(), ps.ExitCode(), ps.String()
-		if ru, ok := ps.SysUsage().(*syscall.Rusage); ok {
-			r.maxRSS = ru.Maxrss << 10
-		}
-	} else if err != nil {
+	var child budgetStatus
+	if err != nil {
 		r.state = err.Error()
+	} else if err = json.NewDecoder(status).Decode(&child); err != nil {
+		r.state = "child status: " + err.Error()
+	} else {
+		r.exited, r.code, r.state, r.maxRSS = child.Exited, child.Code, child.State, child.MaxRSS
 	}
 	return r
+}
+
+type budgetStatus struct {
+	Exited bool
+	Code   int
+	State  string
+	MaxRSS int64
+}
+
+// Linux can include the parent's RSS before exec in the child's high-water mark.
+// This fresh process forks the target from its small resident image.
+// A separate descriptor keeps the status out of the target's output.
+func budgetChild(args []string) int {
+	if len(args) == 0 {
+		return 2
+	}
+	syscall.CloseOnExec(3)
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err := cmd.Run()
+	r := budgetStatus{Code: -1}
+	if ps := cmd.ProcessState; ps != nil {
+		r.Exited, r.Code, r.State = ps.Exited(), ps.ExitCode(), ps.String()
+		if ru, ok := ps.SysUsage().(*syscall.Rusage); ok {
+			r.MaxRSS = ru.Maxrss
+			if runtime.GOOS != "darwin" {
+				r.MaxRSS <<= 10
+			}
+		} else {
+			return 2
+		}
+	} else if err != nil {
+		r.State = err.Error()
+	}
+	if err := json.NewEncoder(os.NewFile(3, "budget-status")).Encode(r); err != nil {
+		return 2
+	}
+	return 0
 }
 
 // failOutsideBudget reports an input that hung, died by signal or exceeded
