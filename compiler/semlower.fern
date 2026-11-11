@@ -610,6 +610,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let inf = produced_rows(mod, structs, opts);
   let built = inf.built;
   let r = inf.rows;
+  report_rows(r, "");
   let decl = declaration_bodies(built, r);
   let inst = instance_bodies(built, r, decl.helpers);
   let helpers = inst.helpers;
@@ -619,15 +620,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let unspliced = inst.unspliced;
   util.arr_push_cliff_report("sem:substituted", 0);
   let refused_n = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
-  if (refused_n > 0) {
-    // A view that escapes its source is an error of the program, so it has
-    // its diagnostic and not the rows of the refusal.
-    let views = semsource.view_escape_diags(mod, built);
-    if (views.len() > 0) {
-      return ircore.Sub { ...ircore.no_sub(), refused: views };
-    }
-  }
-  report_rows(r, "");
   if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);

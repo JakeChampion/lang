@@ -115,13 +115,12 @@ func TestSelfHostNdarrayInnerPlan(t *testing.T) {
 	shadowSrc := ndarrayInnerPlanSrc + `
 function __inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] { return [99.0]; }
 `
-	// The program's function is renamed, so the kernel still calls the builtin.
 	shadowASM, shadow, shadowDir := compileProductReport(t, runner, driver, shadowSrc, "1", "0")
-	if !strings.Contains(shadow, "reason=inner-mul-add-kernel ") || strings.Contains(shadow, "reason=builtin-shadowed ") {
-		t.Fatalf("shadowed inner lost its kernel:\n%s", shadow)
+	if strings.Contains(shadow, "reason=inner-mul-add-kernel ") || !strings.Contains(shadow, "reason=builtin-shadowed ") {
+		t.Fatalf("shadowed inner reported a kernel:\n%s", shadow)
 	}
-	if !reachesCall(emittedBody(t, shadowASM, "__fn_packed"), "__fn_ndarray__inner_kernel") {
-		t.Fatal("shadowed inner did not call its kernel")
+	if strings.Contains(shadowASM, "__fn_ndarray__inner_kernel:") {
+		t.Fatal("shadowed inner retained its unused adapter")
 	}
 	_, shadowDisabled, _ := compileProductReport(t, runner, driver, shadowSrc, "1", "1")
 	assertArrayReportRefusalsPreserved(t, shadow, shadowDisabled, "ndarray kernels", "inner-mul-add-kernel")

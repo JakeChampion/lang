@@ -1,4 +1,4 @@
-# 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
+# 2026-11-11: remove the raw-builtin fixture row after main reverted that fixture.
 # 2026-11-10: copied_call_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
 # 2026-11-10: nul_byte_in_a_program_or_argument_is_refused is clean under RC trace.
@@ -66,7 +66,6 @@ a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_float_literal_array_takes_the_width_of_its_first_use 0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
-a_function_named_like_a_raw_builtin_shadows_it       0
 a_function_named_like_an_intrinsic_is_a_plain_call   0
 a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0

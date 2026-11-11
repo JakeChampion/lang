@@ -6,7 +6,6 @@ import "./astwalk";
 import "./lexical";
 import "./ownmatch";
 import "./builtinsigs";
-import "./caps";
 import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
@@ -17997,9 +17996,8 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it. So
-  // does one with the mangled name of a built-in method.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || f2.name.starts_with("__method_") && f2.name != "__method_boolean_to_string" && caps.is_builtin(f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
     earlier = true;
   }
   return earlier;
