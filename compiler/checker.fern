@@ -23029,6 +23029,22 @@ function send_unsafe_reason_list(ts: typeinfo.Type[], s: Scope, seen: string[]):
   return "";
 }
 
+function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx, prior: util.Diag[]): util.Diag[] {
+  if (prior.len() > 0) {
+    return prior;
+  }
+  let out: util.Diag[] = [];
+  if let ast.ExprIdent(id) = c.callee {
+    out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
+  }
+  for arg in c.args {
+    if let ast.ExprIdent(id) = arg {
+      out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
+    }
+  }
+  return out;
+}
+
 function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   let d = ow_guard_call(c, ctx);
   let oc = ow_own_call(c, ctx);
@@ -23050,6 +23066,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
   }
+  d = ow_call_capture_diags(c, m, ctx, d);
   if let ast.ExprLambda(lm) = c.callee {
     let lctx = ow_nested_ctx(ctx, lm, false);
     let inner = ow_stmts(lm.body, ow_nested_moved(m, lm.params), lctx);

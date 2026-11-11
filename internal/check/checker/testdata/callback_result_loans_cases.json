@@ -738,5 +738,25 @@
     "name": "captured aggregate retains its transfer guard",
     "source": "struct H { n: i32 } function (own h: H) close(): void {} struct Owner { h: H, n: i32 } function run(own owner: Owner): i32 { let read = (): i32 => owner.n; owner.h.close(); return read(); }",
     "want": "E051"
+  },
+  {
+    "name": "callback argument consumes captured owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H): i32 { let read = (delta: i32): i32 => h.read() + delta; return read(h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback owned input aliases captured owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H): i32 { let read = (own other: H): i32 => { let n = h.read(); other.close(); return n; }; return read(h); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback argument aliases consuming helper input",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, own h: H): i32 { let n = f(); h.close(); return n; } function run(own h: H): i32 { let read = (): i32 => h.read(); return invoke(read, h); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback read precedes cleanup in one expression",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H): i32 { let read = (): i32 => h.read(); return read() + h.close(); }",
+    "want": ""
   }
 ]
