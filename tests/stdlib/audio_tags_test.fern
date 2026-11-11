@@ -130,6 +130,50 @@ function test_bytes_that_are_not_tags(): test.TestOutcome {
   return test.assert_eq(short.empty().to_string() + " " + show(cut) + " " + tags.read(nothing).empty().to_string() + " " + tags.read(bytes_of("fLaC")).empty().to_string() + " " + tags.read(bytes_of("RIFF....WAVELIST")).empty().to_string(), "true Whole|||" + "|0|0 true true true");
 }
 
+// A box of an MP4 file: its size, its type and its content.
+function box(kind: u8[], body: u8[]): u8[] {
+  return joined([wire.put_be([], (body.len() + 8) as u64, 4), kind, body]);
+}
+
+// An item of `ilst` with a `data` box: 8 bytes of type and locale, then
+// the value.
+function item(kind: u8[], value: u8[]): u8[] {
+  return box(kind, box(bytes_of("data"), joined([[0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8], value])));
+}
+
+function named(name: string): u8[] {
+  return joined([[169u8], bytes_of(name)]);
+}
+
+function test_mp4(): test.TestOutcome {
+  let list = joined([item(named("nam"), bytes_of("Morning Fern")), item(named("ART"), bytes_of("Fern")), item(named("alb"), bytes_of("First Light")), item(bytes_of("aART"), bytes_of("Fern and Friends")), item(bytes_of("trkn"), [0u8, 0u8, 0u8, 3u8, 0u8, 12u8, 0u8, 0u8]), item(named("day"), bytes_of("2026-11-11"))]);
+  let moov = box(bytes_of("moov"), joined([box(bytes_of("mvhd"), [0u8, 0u8, 0u8, 0u8]), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("hdlr"), [0u8]), box(bytes_of("ilst"), list)])))]));
+  let file = joined([box(bytes_of("ftyp"), bytes_of("M4A ")), moov]);
+  // The moov box only gives the same tags, and a file that ends before its
+  // last item gives the items before it.
+  let cut: u8[] = [];
+  for i in 0..file.len() - 34 {
+    cut = cut.append(file[i]);
+  }
+  return test.assert_eq(show(tags.read(file)) + " / " + show(tags.mp4(moov)) + " / " + show(tags.read(cut)), "Morning Fern|Fern|First Light|Fern and Friends|3|2026 / Morning Fern|Fern|First Light|Fern and Friends|3|2026 / Morning Fern|Fern|First Light|Fern and Friends|3|0");
+}
+
+// An Ogg page with the packets `packets`, each of less than 255 bytes.
+function page(packets: u8[][]): u8[] {
+  let head: u8[] = joined([bytes_of("OggS"), [0u8, 0u8], wire.put_le([], 0u64, 8), wire.put_le([], 7u64, 4), wire.put_le([], 0u64, 4), wire.put_le([], 0u64, 4), [packets.len() as u8]]);
+  for p in packets {
+    head = head.append(p.len() as u8);
+  }
+  return joined([head, joined(packets)]);
+}
+
+function test_ogg(): test.TestOutcome {
+  let list = joined([comment("fern encoder"), wire.put_le([], 3u64, 4), comment("TITLE=Morning Fern"), comment("ARTIST=Fern"), comment("TRACKNUMBER=4")]);
+  let vorbis = joined([page([joined([[1u8], bytes_of("vorbis"), [0u8, 0u8, 0u8, 0u8]])]), page([joined([[3u8], bytes_of("vorbis"), list]), [5u8]])]);
+  let opus = joined([page([bytes_of("OpusHead")]), page([joined([bytes_of("OpusTags"), list])])]);
+  return test.assert_eq(show(tags.read(vorbis)) + " / " + show(tags.read(opus)), "Morning Fern|Fern|||4|0 / Morning Fern|Fern|||4|0");
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -138,6 +182,8 @@ function main(): i32 {
   r = r.it("an ID3v1 tag is the last 128 bytes", test_id3v1);
   r = r.it("a FLAC file has Vorbis comments", test_flac);
   r = r.it("a WAV file has an INFO list or an id3 chunk", test_wav);
+  r = r.it("an MP4 file has items in an ilst box", test_mp4);
+  r = r.it("an Ogg file has Vorbis comments in its second packet", test_ogg);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

@@ -9,6 +9,8 @@ This module reads the title, the artist, the album and the track number that an 
 - An MP3 file has an ID3v2 tag at its start, in the versions 2.2, 2.3 and 2.4. A text is in Latin-1, in UTF-16 or in UTF-8. When the file has no ID3v2 tag, `read` takes the ID3v1 tag of its last 128 bytes.
 - A FLAC file has a Vorbis comment block: a list of `NAME=value` texts in UTF-8.
 - A WAV file has a `LIST` chunk of the type `INFO`, or an `id3 ` chunk that holds an ID3v2 tag.
+- An MP4 or M4A file has an `ilst` box in its `moov` box. `mp4` reads it from the whole file, or from the `moov` box only.
+- An Ogg file with Vorbis or Opus sound has its Vorbis comments in its second packet.
 
 A field that the file does not give is "" or 0. The module reads texts only. It reads no picture, and it does not decode the sound.
 
@@ -68,6 +70,10 @@ function main(): i32 {
 <<Vorbis comments>>
 
 <<RIFF>>
+
+<<MP4>>
+
+<<Ogg>>
 
 <<files>>
 ```
@@ -496,6 +502,131 @@ pub function wav(input: [u8]): Tags {
 }
 ```
 
+### `MP4`
+
+The items of the `ilst` box have a name of four bytes and a `data` box. The value of the `data` box starts after 8 bytes of type and locale. The item `trkn` has the track number in the bytes 2 and 3 of its value.
+
+```fern
+<<MP4>>=
+// The content of the first box of the type `kind` in the boxes from `from`
+// to `to`: its start and its end, or -1 and -1. A box that goes past `to`
+// ends at `to`.
+function box_in(input: [u8], from: i32, to: i32, kind: string): (i32, i32) {
+  let at = from;
+  while (at >= from && at + 8 <= to) {
+    let size = wire.be(input, at, 4) as i32;
+    if (size < 8) {
+      return (-1, -1);
+    }
+    if (wire.tag(input, at + 4, kind)) {
+      return (at + 8, (at + size).min(to));
+    }
+    at += size;
+  }
+  return (-1, -1);
+}
+
+// The field of the item of `ilst` at `at`, or -1.
+function mp4_field(input: [u8], at: i32): i32 {
+  if (wire.tag(input, at, "aART")) {
+    return ALBUM_ARTIST;
+  }
+  if (wire.tag(input, at, "trkn")) {
+    return TRACK;
+  }
+  if (input[at] != 169u8) {
+    return -1;
+  }
+  for pair in [("nam", TITLE), ("ART", ARTIST), ("alb", ALBUM), ("day", YEAR)] {
+    let (name, field) = pair;
+    if (wire.tag(input, at + 1, name)) {
+      return field;
+    }
+  }
+  return -1;
+}
+
+// The tags of the `ilst` box of an MP4 file. The input is the file, or its
+// `moov` box.
+pub function mp4(input: [u8]): Tags {
+  let t = none();
+  let (moov, moov_end) = box_in(input, 0, input.len(), "moov");
+  let (udta, udta_end) = box_in(input, moov, moov_end, "udta");
+  let (meta, meta_end) = box_in(input, udta, udta_end, "meta");
+  if (moov < 0 || udta < 0 || meta < 0) {
+    return t;
+  }
+  let (at, end) = box_in(input, meta + 4, meta_end, "ilst");
+  while (at >= 0 && at + 8 <= end) {
+    let size = wire.be(input, at, 4) as i32;
+    if (size < 8) {
+      return t;
+    }
+    let field = mp4_field(input, at + 4);
+    let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
+    if (field == TRACK && value >= 0 && value + 12 <= value_end) {
+      t = Tags { ...t, track: wire.be(input, value + 10, 2) as i32 };
+    } else if (field >= 0 && value >= 0 && value + 8 <= value_end) {
+      t = with_field(t, field, utf8_text(input, value + 8, value_end));
+    }
+    at += size;
+  }
+  return t;
+}
+```
+
+### `Ogg`
+
+An Ogg file is a list of pages. A page has a table of segments, and a segment of less than 255 bytes ends a packet. The second packet of a Vorbis stream starts with the type 3 and `vorbis`. That of an Opus stream starts with `OpusTags`.
+
+```fern
+<<Ogg>>=
+// The bytes of the second packet of the Ogg stream `input`, or the part of
+// it that the input has.
+function second_packet(input: [u8]): u8[] {
+  let out: u8[] = [];
+  let packet = 0;
+  let at = 0;
+  while (at + 27 <= input.len() && wire.tag(input, at, "OggS")) {
+    let segments = input[at + 26] as i32;
+    let data = at + 27 + segments;
+    for i in 0..segments {
+      if (at + 27 + i >= input.len()) {
+        return out;
+      }
+      let n = input[at + 27 + i] as i32;
+      if (packet == 1) {
+        for k in data..(data + n).min(input.len()) {
+          out = out.append(input[k]);
+        }
+      }
+      data += n;
+      if (n < 255) {
+        packet += 1;
+      }
+      if (packet > 1) {
+        return out;
+      }
+    }
+    at = data;
+  }
+  return out;
+}
+
+// The tags of the Vorbis comments of an Ogg file with Vorbis or Opus
+// sound.
+pub function ogg(input: [u8]): Tags {
+  let packet = second_packet(input);
+  if (packet.len() > 8 && wire.tag(packet, 0, "OpusTags")) {
+    return comments(packet, 8, packet.len());
+  }
+  if (packet.len() > 7 && packet[0] == 3u8 && wire.tag(packet, 1, "vorbis")) {
+    return comments(packet, 7, packet.len());
+  }
+  return none();
+}
+```
+
 ### `files`
 
 ```fern
@@ -507,6 +638,12 @@ pub function read(input: [u8]): Tags {
   }
   if (wire.tag(input, 0, "RIFF")) {
     return wav(input);
+  }
+  if (wire.tag(input, 0, "OggS")) {
+    return ogg(input);
+  }
+  if (input.len() >= 8 && wire.tag(input, 4, "ftyp")) {
+    return mp4(input);
   }
   let t = id3v2(input);
   if (!t.empty()) {
