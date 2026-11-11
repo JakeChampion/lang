@@ -389,6 +389,12 @@ func prCases(t *testing.T) []invocation {
 		{name: "double space one line", args: []string{"-t", "-d", f}},
 
 		{name: "control bytes pass through", args: []string{"-t", ctrl}},
+		{name: "octal display preserves printable ASCII", args: []string{"-t", "-v"}, stdin: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\nlast ASCII"},
+		{name: "hat display preserves printable ASCII", args: []string{"-t", "-c"}, stdin: "  punctuation \\ remains literal  \nlast ASCII"},
+		{name: "octal display retains control byte conversion", args: []string{"-t", "-v"}, stdin: "ASCII\nzero\x00one\x01delete\x7fhigh\xff\nlast\n"},
+		{name: "hat display retains control byte conversion", args: []string{"-t", "-c"}, stdin: "ASCII\nback\bspace\rtab\tdelete\x7f\n"},
+		{name: "octal display scans a split printable line", args: []string{"-t", "-v"}, stdin: strings.Repeat("z", 65537) + "\nnext\n"},
+		{name: "octal display scans a split nonprintable line", args: []string{"-t", "-v"}, stdin: strings.Repeat("z", 65536) + "\x7f\nnext\n"},
 		{name: "hat notation", args: []string{"-t", "-c", ctrl}},
 		{name: "octal notation", args: []string{"-t", "-v", ctrl}},
 		{name: "octal beats hat", args: []string{"-t", "-v", "-c", ctrl}},

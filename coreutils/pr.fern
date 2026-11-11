@@ -833,14 +833,27 @@ function column_lengths(n: i32, c: Cfg): i32[] {
   return out;
 }
 
+function printable_ascii(bytes: u8[]): boolean {
+  let i = 0;
+  while (i < bytes.len()) {
+    if (bytes[i] < 32 as u8 || bytes[i] > 126 as u8) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
 function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
   let count = 0;
   let n = lines.len();
   if (c.columns == 1 && !c.merge) {
-    let verbatim = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
+    let direct = !c.numbering && c.offset == 0 && !c.truncate && !c.untabify && !c.tabify;
+    let verbatim = direct && !c.ctrl && !c.nonprint;
+    let displayed = direct && (c.ctrl || c.nonprint);
     let i = 0;
     while (i < n) {
-      if (verbatim && __memchr_bytes(lines[i], 8, 0) < 0) {
+      if (verbatim && __memchr_bytes(lines[i], 8, 0) < 0 || displayed && printable_ascii(lines[i])) {
         append_bytes(out, lines[i]);
         buf_push_byte(out, 10);
       } else {
