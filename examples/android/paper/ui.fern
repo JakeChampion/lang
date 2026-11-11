@@ -1,11 +1,12 @@
-// The look of Paper. `nodes` lays out a screen as a list of nodes: a
-// rectangle, what it shows, and the actions of a tap and of a long press on
-// it. `render` draws the nodes on a frame and `hit` finds the node under a
-// touch, so the drawing and the touches use one layout. The sizes are those
-// of Paper's Android views: text in sp and boxes in dp. Every function is
-// pure except `render`, which writes only into the frame.
+// The look of Paper. `nodes` lays out a screen as a list of nodes of
+// std/android/ui/scene: a rectangle, what it shows, and the actions of a
+// tap and of a long press on it. The drawing and the touches use that one
+// layout. The sizes are those of Paper's Android views: text in sp and
+// boxes in dp. Every function is pure: a paint writes only into the frame
+// that it gets.
 import "std/android";
 import "std/android/draw";
+import "std/android/ui/scene";
 import "std/jpeg";
 import "./face";
 import "./paper";
@@ -147,6 +148,8 @@ pub struct View {
   sheet: Option[Sheet],
   pause: Pause,
   note: string,
+  // The layer of the wallpaper at the width of the window.
+  wall: draw.Frame,
 }
 
 pub function no_pause(): Pause {
@@ -155,51 +158,144 @@ pub function no_pause(): Pause {
 
 // --- nodes
 
-// What a node shows. A Label has its text, its size in pixels, its weight,
-// its letter spacing in thousandths of the em, and its colour.
-pub enum Paint {
-  Fill(i32, i32),
-  Outline(i32, i32, i32),
-  Label(string, i32, i32, i32, i32),
-  Shadowed(string, i32, i32, i32, i32),
-  Wallpaper,
-  Fade(boolean),
-  Weather(paper.Sky),
-  Gauge(string, string, f64),
-  Music,
-  Ridge,
-  Breath(f64),
-  Check(boolean),
-  Underline(i32),
-  Blank,
+// The nodes are those of std/android/ui/scene. The name of the action of a
+// tap or of a long press tells the app what to do: "" for none. A node
+// with a group is in a list that scrolls. What Paper draws itself is a
+// Custom paint, with a key that names its pixels.
+
+function node(x: i32, y: i32, w: i32, h: i32, paint: scene.Paint): scene.Node {
+  return scene.node(x, y, w, h, paint);
 }
 
-// A rectangle of the screen, what it shows, and the actions of a tap and of
-// a long press: "" for none. `group` names a list that scrolls, or is "".
-// The node draws only between `clip0` and `clip1`, rows of the window.
-pub struct Node { x: i32, y: i32, w: i32, h: i32, paint: Paint, act: string, long: string, group: string, clip0: i32, clip1: i32 }
-
-function node(x: i32, y: i32, w: i32, h: i32, paint: Paint): Node {
-  return Node { x: x, y: y, w: w, h: h, paint: paint, act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 };
+function fill(x: i32, y: i32, w: i32, h: i32, color: i32, r: i32): scene.Node {
+  return node(x, y, w, h, scene.Fill(color, r));
 }
 
-function fill(x: i32, y: i32, w: i32, h: i32, color: i32, r: i32): Node {
-  return node(x, y, w, h, Fill(color, r));
+function label(f: face.Fonts, x: i32, y: i32, s: string, px: i32, weight: i32, color: i32): scene.Node {
+  return node(x, y, face.width(f, weight, px, s), face.line(f, weight, px), scene.Label(s, px, weight, 0, color));
 }
 
-function label(f: face.Fonts, x: i32, y: i32, s: string, px: i32, weight: i32, color: i32): Node {
-  return node(x, y, face.width(f, weight, px, s), face.line(f, weight, px), Label(s, px, weight, 0, color));
+function tap(n: scene.Node, act: string): scene.Node {
+  return scene.Node { ...n, tap: scene.Action { name: act, arg: 0 } };
 }
 
-function tap(n: Node, act: string): Node {
-  return Node { ...n, act: act };
+function held(n: scene.Node, act: string, long: string): scene.Node {
+  return scene.Node { ...n, tap: scene.Action { name: act, arg: 0 }, long: scene.Action { name: long, arg: 0 } };
 }
 
-function in_list(n: Node, group: string, c0: i32, c1: i32): Node {
-  return Node { ...n, group: group, clip0: c0, clip1: c1 };
+// A node that takes the touches, so they do not go to the nodes below it.
+function barrier(n: scene.Node): scene.Node {
+  return scene.Node { ...n, barrier: true };
 }
 
-function cat(a: Node[], b: Node[]): Node[] {
+function in_list(n: scene.Node, group: string, c0: i32, c1: i32): scene.Node {
+  return scene.Node { ...n, group: group, clip0: c0, clip1: c1 };
+}
+
+// A node that `draw` draws in its box. It can draw `margin` pixels past the
+// box. `key` names the pixels.
+function shape(x: i32, y: i32, w: i32, h: i32, key: string, margin: i32, draw: (draw.Frame, scene.Node) => void): scene.Node {
+  return node(x, y, w, h, scene.Custom(key, margin, (fr: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => draw(fr, scene.node(bx, by, bw, bh, scene.Blank))));
+}
+
+// The margin of the shapes: the round ends of their lines go past the box.
+function shape_margin(m: Metrics): i32 {
+  return (8.0 * m.d) as i32;
+}
+
+function sky_index(sky: paper.Sky): i32 {
+  match (sky) {
+    paper.Clear => {
+      return 0;
+    },
+    paper.Partly => {
+      return 1;
+    },
+    paper.Cloudy => {
+      return 2;
+    },
+    paper.Fog => {
+      return 3;
+    },
+    paper.Rain => {
+      return 4;
+    },
+    paper.Snow => {
+      return 5;
+    },
+    paper.Storm => {
+      return 6;
+    }
+  }
+}
+
+// The key of the colours of `pal`.
+function pal_key(pal: Palette): string {
+  return pal.paper.to_string() + "," + pal.ink.to_string();
+}
+
+// Text with a soft shadow, which an accessibility service reads.
+pub function shadowed(m: Metrics, f: face.Fonts, x: i32, y: i32, w: i32, h: i32, s: string, px: i32, weight: i32, color: i32, blur: i32): scene.Node {
+  let d = m.d;
+  let key = "shadow|" + px.to_string() + "|" + weight.to_string() + "|" + color.to_string() + "|" + blur.to_string() + "|" + s;
+  let n = shape(x, y, w, h, key, 3 * blur + d.ceil() as i32 + 4, (fr: draw.Frame, b: scene.Node): void => { let c = paint_shadowed(face.new_cache(), fr, f, b, s, px, weight, color, blur, d); });
+  return scene.Node { ...n, say: s };
+}
+
+// The wallpaper on the paper colour, on the whole window.
+function wallpaper_node(m: Metrics, wall: draw.Frame): scene.Node {
+  let paper_color = m.pal.paper;
+  let key = "wall|" + wall.width.to_string() + "x" + wall.height.to_string() + "|" + paper_color.to_string();
+  return shape(0, 0, m.w, m.h, key, 0, (fr: draw.Frame, b: scene.Node): void => {
+    fr.store(b.x, b.y, b.w, b.h, paper_color);
+    fr.blit(wall, b.x, b.y + b.h - wall.height);
+  });
+}
+
+// The wallpaper drawn back over the edge of a list: all of it at the edge
+// of the list, and none of it `h` pixels in.
+function fade_node(m: Metrics, wall: draw.Frame, x: i32, y: i32, w: i32, h: i32, top: boolean): scene.Node {
+  let paper_color = m.pal.paper;
+  let win_h = m.h;
+  let key = "fade|" + top.to_string() + "|" + x.to_string() + "," + y.to_string() + "|" + wall.width.to_string() + "x" + wall.height.to_string() + "|" + win_h.to_string() + "|" + paper_color.to_string();
+  return shape(x, y, w, h, key, 0, (fr: draw.Frame, b: scene.Node): void => paint_fade(fr, b, x, y, wall, win_h, top, paper_color));
+}
+
+pub function weather_node(m: Metrics, x: i32, y: i32, w: i32, h: i32, sky: paper.Sky): scene.Node {
+  let ink = m.pal.ink;
+  return shape(x, y, w, h, "sky|" + sky_index(sky).to_string() + "|" + ink.to_string(), shape_margin(m), (fr: draw.Frame, b: scene.Node): void => paint_sky(fr, b, sky, ink));
+}
+
+function gauge_node(m: Metrics, f: face.Fonts, x: i32, y: i32, w: i32, h: i32, now: string, range: string, frac: f64): scene.Node {
+  let pal = m.pal;
+  let key = "gauge|" + now + "|" + range + "|" + ((frac * 1000.0).round() as i32).to_string() + "|" + pal_key(pal);
+  return shape(x, y, w, h, key, shape_margin(m), (fr: draw.Frame, b: scene.Node): void => { let c = paint_gauge(face.new_cache(), fr, f, b, now, range, frac, pal); });
+}
+
+function music_node(m: Metrics, x: i32, y: i32, w: i32, h: i32): scene.Node {
+  let pal = m.pal;
+  return shape(x, y, w, h, "music|" + pal_key(pal), shape_margin(m), (fr: draw.Frame, b: scene.Node): void => paint_music(fr, b, pal));
+}
+
+function ridge_node(m: Metrics, x: i32, y: i32, w: i32, h: i32): scene.Node {
+  let d = m.d;
+  return shape(x, y, w, h, "ridge", shape_margin(m), (fr: draw.Frame, b: scene.Node): void => paint_ridge(fr, b, d));
+}
+
+function breath_node(m: Metrics, x: i32, y: i32, w: i32, h: i32, scale: f64): scene.Node {
+  let d = m.d;
+  return shape(x, y, w, h, "breath|" + ((scale * 1000.0).round() as i32).to_string(), shape_margin(m), (fr: draw.Frame, b: scene.Node): void => paint_breath(fr, b, scale, d));
+}
+
+// The check box of a row. The app draws the image of such a node again when
+// its key changes.
+pub function check_node(m: Metrics, x: i32, y: i32, w: i32, h: i32, on: boolean): scene.Node {
+  let d = m.d;
+  let pal = m.pal;
+  return shape(x, y, w, h, "check|" + on.to_string() + "|" + pal_key(pal), shape_margin(m), (fr: draw.Frame, b: scene.Node): void => paint_check(fr, b, on, d, pal));
+}
+
+function cat(a: scene.Node[], b: scene.Node[]): scene.Node[] {
   let out = a;
   for n in b {
     out = out.append(n);
@@ -295,8 +391,8 @@ pub function fav_scroll_limit(m: Metrics, f: face.Fonts, v: View): i32 {
   return over;
 }
 
-function home_base(m: Metrics, f: face.Fonts, v: View): Node[] {
-  let ns: Node[] = [node(0, 0, m.w, m.h, Wallpaper)];
+function home_base(m: Metrics, f: face.Fonts, v: View): scene.Node[] {
+  let ns: scene.Node[] = [wallpaper_node(m, v.wall)];
   let date_px = dp(m, 21.0);
   let dw = face.spaced_width(f, face.BOLD, date_px, -10, v.date);
   ns = ns.append(tap(node((m.w - dw) / 2, date_y(m), dw, face.line(f, face.BOLD, date_px), Label(v.date, date_px, face.BOLD, -10, m.pal.ink)), "calendar"));
@@ -308,7 +404,7 @@ function home_base(m: Metrics, f: face.Fonts, v: View): Node[] {
 }
 
 // The hint of a home screen with no apps on it.
-function hint(m: Metrics, f: face.Fonts, v: View): Node[] {
+function hint(m: Metrics, f: face.Fonts, v: View): scene.Node[] {
   if (!v.hint || v.favourites.len() > 0) {
     return [];
   }
@@ -317,10 +413,10 @@ function hint(m: Metrics, f: face.Fonts, v: View): Node[] {
   let spx = dp(m, 16.0);
   let lh = face.line(f, face.MEDIUM, spx) + dp(m, 4.0);
   let soft = draw.rgba(255, 244, 230, 204);
-  return [node(x, top + dp(m, 8.0), m.w - 2 * x, lh, Shadowed("Swipe up for all apps.", spx, face.MEDIUM, soft, dp(m, 6.0))), node(x, top + dp(m, 8.0) + lh, m.w - 2 * x, lh, Shadowed("Long-press anywhere to pick home apps.", spx, face.MEDIUM, soft, dp(m, 6.0)))];
+  return [shadowed(m, f, x, top + dp(m, 8.0), m.w - 2 * x, lh, "Swipe up for all apps.", spx, face.MEDIUM, soft, dp(m, 6.0)), shadowed(m, f, x, top + dp(m, 8.0) + lh, m.w - 2 * x, lh, "Long-press anywhere to pick home apps.", spx, face.MEDIUM, soft, dp(m, 6.0))];
 }
 
-function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
+function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): scene.Node[] {
   let px = dp(m, 19.0);
   let x = dp(m, 40.0);
   let gauge = dp(m, 62.0);
@@ -328,7 +424,7 @@ function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
   let gx = m.w - dp(m, 40.0) - gauge;
   let mx = gx - dp(m, 22.0) - music;
   let room = mx - x;
-  let ns: Node[] = [];
+  let ns: scene.Node[] = [];
   let sky = paper.Cloudy;
   let first = "--°";
   let second = "Tap for";
@@ -346,13 +442,13 @@ function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
   let line = face.line(f, face.SEMIBOLD, px) + dp(m, 3.0);
   let ix = dp(m, 24.0);
   let iy = dp(m, 18.0);
-  ns = ns.append(node(x, y + (top_line - iy) / 2, ix, iy, Weather(sky)));
+  ns = ns.append(weather_node(m, x, y + (top_line - iy) / 2, ix, iy, sky));
   ns = ns.append(label(f, x + ix + dp(m, 4.0), y, first, px, face.BOLD, m.pal.ink));
   ns = ns.append(label(f, x, y + top_line + dp(m, 3.0), face.fit(f, face.SEMIBOLD, px, second, room), px, face.SEMIBOLD, m.pal.ink));
   ns = ns.append(label(f, x, y + top_line + dp(m, 3.0) + line, face.fit(f, face.SEMIBOLD, px, third, room), px, face.SEMIBOLD, m.pal.ink));
   let block_h = widget_h(m, f);
-  ns = ns.append(tap(node(x, y, room, block_h, Blank), "weather"));
-  ns = ns.append(Node { ...node(mx, y + (block_h - music) / 2, music, music, Music), act: "music", long: "pick-music" });
+  ns = ns.append(tap(node(x, y, room, block_h, scene.Blank), "weather"));
+  ns = ns.append(scene.Node { ...held(music_node(m, mx, y + (block_h - music) / 2, music, music), "music", "pick-music"), say: "Music" });
   let now = "--";
   let range = "";
   let frac = -1.0;
@@ -364,18 +460,18 @@ function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
       frac = (w.temp - w.low) / (w.high - w.low);
     }
   }
-  ns = ns.append(tap(node(gx, y + (block_h - dp(m, 70.0)) / 2, gauge, dp(m, 70.0), Gauge(now, range, frac)), "weather"));
+  ns = ns.append(scene.Node { ...tap(gauge_node(m, f, gx, y + (block_h - dp(m, 70.0)) / 2, gauge, dp(m, 70.0), now, range, frac), "weather"), say: "Weather" });
   return ns;
 }
 
-function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
+function favourites(m: Metrics, f: face.Fonts, v: View): scene.Node[] {
   let top = favourites_top(m, f);
   let bottom = favourites_bottom(m);
   let px = dp(m, 27.0);
   let row = fav_row(m, f);
   let x = dp(m, 36.0);
   let width = m.w - 2 * x;
-  let ns: Node[] = [];
+  let ns: scene.Node[] = [];
   let y = top - v.fav_scroll;
   let widest = 0;
   let cream_text = cream();
@@ -386,8 +482,8 @@ function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
       widest = w;
     }
     if (y + row > top && y < bottom) {
-      let n = node(x, y, w, row, Shadowed(text, px, face.SEMIBOLD, cream_text, dp(m, 8.0)));
-      ns = ns.append(in_list(Node { ...n, act: "open:" + a.key, long: "menu:" + a.key }, "fav", top, bottom));
+      let n = shadowed(m, f, x, y, w, row, text, px, face.SEMIBOLD, cream_text, dp(m, 8.0));
+      ns = ns.append(in_list(held(n, "open:" + a.key, "menu:" + a.key), "fav", top, bottom));
     }
     y += row;
   }
@@ -397,7 +493,7 @@ function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
     if (v.held == 1) {
       text = "1 held notification";
     }
-    let n = node(x, y + dp(m, 14.0), face.width(f, face.SEMIBOLD, spx, text), held_h(m, f) - dp(m, 14.0), Shadowed(text, spx, face.SEMIBOLD, draw.rgba(255, 244, 230, 204), dp(m, 6.0)));
+    let n = shadowed(m, f, x, y + dp(m, 14.0), face.width(f, face.SEMIBOLD, spx, text), held_h(m, f) - dp(m, 14.0), text, spx, face.SEMIBOLD, draw.rgba(255, 244, 230, 204), dp(m, 6.0));
     ns = ns.append(in_list(tap(n, "held"), "fav", top, bottom));
   }
   if (ns.len() == 0) {
@@ -405,15 +501,15 @@ function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
   }
   // The scroll area covers the rows only, so a long press beside them opens
   // the settings.
-  let area = node(x, top, widest, bottom - top, Blank);
+  let area = node(x, top, widest, bottom - top, scene.Blank);
   ns = cat([in_list(area, "fav", top, bottom)], ns);
   // The faded edges of a list that scrolls, as Android's ScrollView draws.
   let edge = dp(m, 24.0);
   if (v.fav_scroll > 0) {
-    ns = ns.append(node(x - dp(m, 12.0), top, width + dp(m, 24.0), edge, Fade(true)));
+    ns = ns.append(fade_node(m, v.wall, x - dp(m, 12.0), top, width + dp(m, 24.0), edge, true));
   }
   if (v.fav_scroll < fav_scroll_limit(m, f, v)) {
-    ns = ns.append(node(x - dp(m, 12.0), bottom - edge, width + dp(m, 24.0), edge, Fade(false)));
+    ns = ns.append(fade_node(m, v.wall, x - dp(m, 12.0), bottom - edge, width + dp(m, 24.0), edge, false));
   }
   return ns;
 }
@@ -449,8 +545,8 @@ pub function list_scroll_limit(m: Metrics, f: face.Fonts, n: i32): i32 {
 }
 
 // The top of the app list: the search field and the ridge.
-function drawer_head(m: Metrics, f: face.Fonts, v: View): Node[] {
-  let ns: Node[] = [fill(0, 0, m.w, m.h, m.pal.paper, 0)];
+function drawer_head(m: Metrics, f: face.Fonts, v: View): scene.Node[] {
+  let ns: scene.Node[] = [fill(0, 0, m.w, m.h, m.pal.paper, 0)];
   let x = dp(m, 32.0);
   let spx = search_px(m);
   let sy = search_y(m);
@@ -468,20 +564,20 @@ function drawer_head(m: Metrics, f: face.Fonts, v: View): Node[] {
     }
     ns = ns.append(fill(x + qw + dp(m, 1.0), sy, dp(m, 2.0), face.line(f, face.EXTRABOLD, spx), m.pal.ink, 0));
   }
-  ns = ns.append(tap(node(0, m.top, m.w, sy + face.line(f, face.EXTRABOLD, spx) - m.top, Blank), "type"));
+  ns = ns.append(tap(node(0, m.top, m.w, sy + face.line(f, face.EXTRABOLD, spx) - m.top, scene.Blank), "type"));
   let ridge_y = sy + face.line(f, face.EXTRABOLD, spx) + dp(m, 6.0);
-  return ns.append(node(0, ridge_y, m.w, dp(m, 22.0), Ridge));
+  return ns.append(ridge_node(m, 0, ridge_y, m.w, dp(m, 22.0)));
 }
 
 // The rows of the app list.
-function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
+function drawer_rows(m: Metrics, f: face.Fonts, v: View): scene.Node[] {
   let x = dp(m, 32.0);
-  let ns: Node[] = [];
+  let ns: scene.Node[] = [];
   let top = list_top(m, f);
   let bottom = list_bottom(m);
   let row = list_row(m, f);
   let px = dp(m, 25.0);
-  ns = ns.append(in_list(node(0, top, m.w, bottom - top, Blank), "list", top, bottom));
+  ns = ns.append(in_list(node(0, top, m.w, bottom - top, scene.Blank), "list", top, bottom));
   if (v.results.len() == 0) {
     let epx = dp(m, 17.0);
     ns = ns.append(label(f, x, top + dp(m, 12.0), "No matching apps.", epx, face.MEDIUM, m.pal.ink_soft));
@@ -504,7 +600,7 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
     let ty = y + (row - face.line(f, face.SEMIBOLD, px)) / 2;
     let n = node(x, ty, m.w - x, face.line(f, face.SEMIBOLD, px), Label(face.fit(f, face.SEMIBOLD, px, text, m.w - 2 * x), px, face.SEMIBOLD, 0, color));
     ns = ns.append(in_list(n, "list", top, bottom));
-    ns = ns.append(in_list(Node { ...node(0, y, m.w, row, Blank), act: "open:" + a.key, long: "menu:" + a.key }, "list", top, bottom));
+    ns = ns.append(in_list(held(node(0, y, m.w, row, scene.Blank), "open:" + a.key, "menu:" + a.key), "list", top, bottom));
     y += row;
     i += 1;
   }
@@ -555,7 +651,7 @@ pub function letter_scroll(m: Metrics, f: face.Fonts, apps: paper.Entry[], lette
 
 // A column of the letters of the apps on each edge of the app list. A tap
 // or a drag on a letter goes to its apps.
-function letter_index(m: Metrics, f: face.Fonts, apps: paper.Entry[], top: i32, bottom: i32): Node[] {
+function letter_index(m: Metrics, f: face.Fonts, apps: paper.Entry[], top: i32, bottom: i32): scene.Node[] {
   let ls = letters(apps);
   if (ls.len() < 2) {
     return [];
@@ -565,12 +661,12 @@ function letter_index(m: Metrics, f: face.Fonts, apps: paper.Entry[], top: i32, 
   let slot = ((bottom - top) / ls.len()).min(dp(m, 26.0));
   let y = top + (bottom - top - slot * ls.len()) / 2;
   let lh = face.line(f, face.SEMIBOLD, px);
-  let ns: Node[] = [];
+  let ns: scene.Node[] = [];
   for l in ls {
     let w = face.width(f, face.SEMIBOLD, px, l);
     for x in [0, m.w - col] {
       ns = ns.append(label(f, x + (col - w) / 2, y + (slot - lh) / 2, l, px, face.SEMIBOLD, m.pal.ink_soft));
-      ns = ns.append(Node { ...node(x, y, col, slot, Blank), act: "jump:" + l, group: "index" });
+      ns = ns.append(scene.Node { ...tap(node(x, y, col, slot, scene.Blank), "jump:" + l), group: "index" });
     }
     y += slot;
   }
@@ -640,12 +736,12 @@ pub function sheet_scroll_limit(m: Metrics, f: face.Fonts, s: Sheet): i32 {
   return over;
 }
 
-function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
-  let ns: Node[] = [tap(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 82), 0), "dismiss")];
+function dialog(m: Metrics, f: face.Fonts, s: Sheet): scene.Node[] {
+  let ns: scene.Node[] = [barrier(tap(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 82), 0), "dismiss"))];
   let (top, h, r0, r1) = dialog_box(m, f, s);
   let w = dialog_width(m);
   let left = (m.w - w) / 2;
-  ns = ns.append(tap(fill(left, top, w, h, m.pal.dialog, dp(m, 28.0)), "none"));
+  ns = ns.append(barrier(tap(fill(left, top, w, h, m.pal.dialog, dp(m, 28.0)), "none")));
   let pad = dp(m, 24.0);
   let x = left + pad;
   let inner = w - 2 * pad;
@@ -656,7 +752,7 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
     let fpx = dp(m, 18.0);
     let fy = y + dp(m, 8.0);
     let fh = dp(m, 48.0);
-    ns = ns.append(tap(node(x, fy, inner, fh, Blank), "type"));
+    ns = ns.append(tap(node(x, fy, inner, fh, scene.Blank), "type"));
     let ty = fy + (fh - face.line(f, face.REGULAR, fpx)) / 2;
     let room = inner - dp(m, 8.0);
     let shown = face.fit_end(f, face.REGULAR, fpx, s.text, room);
@@ -670,19 +766,19 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
       tw = face.width(f, face.REGULAR, fpx, shown);
     }
     ns = ns.append(fill(x + dp(m, 4.0) + tw + dp(m, 1.0), ty, dp(m, 2.0), face.line(f, face.REGULAR, fpx), m.pal.ink, 0));
-    ns = ns.append(node(x, fy + fh - dp(m, 8.0), inner, dp(m, 2.0), Underline(m.pal.ink)));
+    ns = ns.append(fill(x, fy + fh - dp(m, 8.0), inner, dp(m, 2.0), m.pal.ink, 0));
   }
   let rpx = dp(m, 16.0);
-  ns = ns.append(in_list(node(left, r0, w, r1 - r0, Blank), "sheet", r0, r1));
+  ns = ns.append(in_list(node(left, r0, w, r1 - r0, scene.Blank), "sheet", r0, r1));
   let ry = r0 - s.scroll;
   for r in s.rows {
     let rh = row_height(m, f, r);
     if (ry + rh > r0 && ry < r1) {
-      ns = ns.append(in_list(tap(node(left, ry, w, rh, Blank), r.act), "sheet", r0, r1));
+      ns = ns.append(in_list(tap(node(left, ry, w, rh, scene.Blank), r.act), "sheet", r0, r1));
       let tx = x;
       if (r.check >= 0) {
         let c = dp(m, 18.0);
-        ns = ns.append(in_list(node(x, ry + (rh - c) / 2, c, c, Check(r.check == 1)), "sheet", r0, r1));
+        ns = ns.append(in_list(check_node(m, x, ry + (rh - c) / 2, c, c, r.check == 1), "sheet", r0, r1));
         tx = x + dp(m, 32.0) + dp(m, 2.0);
       }
       let lines = row_lines(r);
@@ -714,7 +810,7 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
       if (neutral && k == 0) {
         at = left + pad - dp(m, 12.0);
       }
-      ns = ns.append(tap(node(at, by, bw, bh, Blank), b.act));
+      ns = ns.append(tap(node(at, by, bw, bh, scene.Blank), b.act));
       ns = ns.append(label(f, at + dp(m, 12.0), by + (bh - face.line(f, face.MEDIUM, bpx)) / 2, b.text, bpx, face.MEDIUM, m.pal.ink));
       bx = at - dp(m, 8.0);
       k -= 1;
@@ -725,8 +821,8 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
 
 // --- the pause before an app
 
-function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): Node[] {
-  let ns: Node[] = [tap(fill(0, 0, m.w, m.h, night(), 0), "none")];
+function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): scene.Node[] {
+  let ns: scene.Node[] = [barrier(tap(fill(0, 0, m.w, m.h, night(), 0), "none"))];
   let tpx = dp(m, 34.0);
   let spx = dp(m, 18.0);
   let bpx = dp(m, 18.0);
@@ -739,7 +835,7 @@ function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): Node[] {
   }
   let total = circle + dp(m, 48.0) + face.line(f, face.EXTRABOLD, tpx) + dp(m, 12.0) + p.lines.len() * sub_line + dp(m, 56.0) + buttons;
   let y = m.top + (m.h - m.top - m.bottom - total) / 2;
-  ns = ns.append(node((m.w - circle) / 2, y, circle, circle, Breath(p.breath)));
+  ns = ns.append(breath_node(m, (m.w - circle) / 2, y, circle, circle, p.breath));
   y = y + circle + dp(m, 48.0);
   let tw = face.width(f, face.EXTRABOLD, tpx, p.title);
   ns = ns.append(label(f, (m.w - tw) / 2, y, p.title, tpx, face.EXTRABOLD, cream()));
@@ -771,7 +867,7 @@ function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): Node[] {
   if (blocked) {
     cancel = "Back home";
   }
-  ns = ns.append(tap(node(bx, y, bw, bh, Outline(cream(), bh / 2, dp(m, 1.5))), "pause-cancel"));
+  ns = ns.append(tap(node(bx, y, bw, bh, scene.Outline(cream(), bh / 2, dp(m, 1.5))), "pause-cancel"));
   let cw = face.width(f, face.BOLD, bpx, cancel);
   ns = ns.append(label(f, bx + (bw - cw) / 2, y + ty, cancel, bpx, face.BOLD, cream()));
   return ns;
@@ -780,7 +876,7 @@ function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): Node[] {
 // --- the screen
 
 // A message at the bottom of the screen, as Android's toast shows it.
-function note(m: Metrics, f: face.Fonts, text: string): Node[] {
+function note(m: Metrics, f: face.Fonts, text: string): scene.Node[] {
   if (text.len() == 0) {
     return [];
   }
@@ -797,7 +893,7 @@ function note(m: Metrics, f: face.Fonts, text: string): Node[] {
 // frame. The key names what the base shows, so a new key means a new base.
 // The nodes of the screen, in the order they draw: the screen, the dialog
 // over it, and the note over both.
-pub function nodes(f: face.Fonts, v: View): Node[] {
+pub function nodes(f: face.Fonts, v: View): scene.Node[] {
   let all = screen_nodes(f, v);
   if let Some(s) = v.sheet {
     all = cat(all, dialog(v.m, f, s));
@@ -807,19 +903,16 @@ pub function nodes(f: face.Fonts, v: View): Node[] {
 
 // The nodes of the screen of the layer of `v`. The breathing circle of the
 // pause draws over the rest of the pause.
-function screen_nodes(f: face.Fonts, v: View): Node[] {
+function screen_nodes(f: face.Fonts, v: View): scene.Node[] {
   let m = v.m;
   if (v.layer == PAUSE || v.layer == BLOCKED) {
-    let still: Node[] = [];
-    let breath: Node[] = [];
+    let still: scene.Node[] = [];
+    let breath: scene.Node[] = [];
     for n in pause(m, f, v.pause, v.layer == BLOCKED) {
-      match (n.paint) {
-        Breath(_) => {
-          breath = breath.append(n);
-        },
-        _ => {
-          still = still.append(n);
-        }
+      if (scene.paint_key(n).starts_with("custom|breath|")) {
+        breath = breath.append(n);
+      } else {
+        still = still.append(n);
       }
     }
     return cat(still, breath);
@@ -830,433 +923,37 @@ function screen_nodes(f: face.Fonts, v: View): Node[] {
   return cat(home_base(m, f, v), favourites(m, f, v));
 }
 
-// The topmost node under x and y with an action.
-pub function hit(ns: Node[], x: i32, y: i32): Option[Node] {
-  let k = ns.len() - 1;
-  while (k >= 0) {
-    let n = ns[k];
-    if (x >= n.x && x < n.x + n.w && y >= n.y && y < n.y + n.h && y >= n.clip0 && y < n.clip1 && (n.act.len() > 0 || n.long.len() > 0)) {
-      return Some(n);
-    }
-    k -= 1;
-  }
-  return None;
-}
-
-// The list that scrolls under x and y, or "".
-pub function group_at(ns: Node[], x: i32, y: i32): string {
-  let k = ns.len() - 1;
-  while (k >= 0) {
-    let n = ns[k];
-    if (n.group.len() > 0 && x >= n.x && x < n.x + n.w && y >= n.clip0 && y < n.clip1 && y >= n.y && y < n.y + n.h) {
-      return n.group;
-    }
-    if (n.act == "dismiss" || n.act == "none") {
-      return "";
-    }
-    k -= 1;
-  }
-  return "";
-}
-
-// --- accessibility
-
-// The text that a node shows, or "".
-function shown_text(n: Node): string {
-  match (n.paint) {
-    Label(text, _, _, _, _) => {
-      return text;
-    },
-    Shadowed(text, _, _, _, _) => {
-      return text;
-    },
-    _ => {
-      return "";
-    }
-  }
-}
-
-// The name of a node with an action and no text of its own.
-function action_name(act: string): string {
-  if (act.starts_with("jump:")) {
-    return act.drop(5).to_owned();
-  }
-  if (act == "music") {
-    return "Music";
-  }
-  if (act == "weather") {
-    return "Weather";
-  }
-  if (act == "type") {
-    return "Search apps";
-  }
-  if (act == "held") {
-    return "Held notifications";
-  }
-  return act;
-}
-
-// The part of node `n` that shows, between its clip rows, as x, y, w, h.
-function visible(n: Node): (i32, i32, i32, i32) {
-  let y0 = n.y.max(n.clip0);
-  let y1 = (n.y + n.h).min(n.clip1);
-  return (n.x, y0, n.w, (y1 - y0).max(0));
-}
-
-function holds(r: (i32, i32, i32, i32), n: Node): boolean {
-  let (x, y, w, h) = r;
-  let cx = n.x + n.w / 2;
-  let cy = n.y + n.h / 2;
-  return cx >= x && cx < x + w && cy >= y && cy < y + h;
-}
-
-// The nodes that an accessibility service can reach: those after the last
-// scrim, which covers the screen behind a sheet or the pause.
-function reachable(ns: Node[]): Node[] {
-  let start = 0;
-  for k in 0..ns.len() {
-    if (ns[k].act == "dismiss" || ns[k].act == "none") {
-      start = k + 1;
-    }
-  }
-  return ns.drop(start);
-}
-
-// A stable id for the key `key`, which no id in `used` has.
-function access_id(key: string, used: i32[]): i32 {
-  let id = (key.hash_fnv32() & 1073741823u32) as i32;
-  while (used.contains(id)) {
-    id = id + 1 & 1073741823;
-  }
-  return id;
-}
-
-// The items that an accessibility service reads, with the node of each
-// one: each node with an action, named by the text of the labels in it,
-// and each label in no such node.
-function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
-  let reach = reachable(ns);
-  let out: (android.AccessItem, Node)[] = [];
-  let used: i32[] = [];
-  let named: boolean[] = [];
-  for n in reach {
-    named = named.append(false);
-  }
-  for n in reach {
-    if (n.act.len() == 0 && n.long.len() == 0) {
-      continue;
-    }
-    let r = visible(n);
-    let (x, y, w, h) = r;
-    if (h == 0) {
-      continue;
-    }
-    let parts: string[] = [];
-    for k in 0..reach.len() {
-      let t = shown_text(reach[k]);
-      if (t.len() > 0 && holds(r, reach[k])) {
-        parts = parts.append(t);
-        named = named.with(k, true);
-      }
-    }
-    let text = parts.join(", ");
-    if (text.len() == 0) {
-      text = action_name(n.act);
-    }
-    let actions = 0;
-    if (n.act.len() > 0) {
-      actions |= android.ACCESS_CLICK;
-    }
-    if (n.long.len() > 0) {
-      actions |= android.ACCESS_LONG_CLICK;
-    }
-    let id = access_id(n.act + "|" + n.long, used);
-    used = used.append(id);
-    out = out.append((android.AccessItem { id: id, x: x, y: y, w: w, h: h, text: text, actions: actions }, n));
-  }
-  for k in 0..reach.len() {
-    let n = reach[k];
-    let t = shown_text(n);
-    let (x, y, w, h) = visible(n);
-    if (t.len() == 0 || named[k] || h == 0) {
-      continue;
-    }
-    let id = access_id("text|" + t, used);
-    used = used.append(id);
-    out = out.append((android.AccessItem { id: id, x: x, y: y, w: w, h: h, text: t, actions: 0 }, n));
-  }
-  return out;
-}
-
-// The items of the nodes `ns` for an accessibility service.
-pub function access_items(ns: Node[]): android.AccessItem[] {
-  let out: android.AccessItem[] = [];
-  for (item, _) in access_pairs(ns) {
-    out = out.append(item);
-  }
-  return out;
-}
-
-// The node of the item `id` of the nodes `ns`, or None.
-pub function access_node(ns: Node[], id: i32): Option[Node] {
-  for (item, n) in access_pairs(ns) {
-    if (item.id == id) {
-      return Some(n);
-    }
-  }
-  return None;
-}
-
 // --- drawing
 
-// The nodes of one screen, moved down `dy` rows, with one alpha for all of
-// them: a screen that fades draws as one image.
-pub struct Pass { nodes: Node[], dy: i32, alpha: f64 }
-
-// The key of what node `n` shows at its size, which names its image on the
-// GPU, or "" for a node that the GPU draws with no image of its own: the
-// wallpaper, the fade of a list edge, and a blank node.
-pub function paint_key(n: Node): string {
-  let size = "|" + n.w.to_string() + "x" + n.h.to_string();
-  match (n.paint) {
-    Fill(color, r) => {
-      return "fill|" + color.to_string() + "|" + r.to_string() + size;
-    },
-    Outline(color, r, width) => {
-      return "outline|" + color.to_string() + "|" + r.to_string() + "|" + width.to_string() + size;
-    },
-    Label(text, px, weight, track, color) => {
-      return "label|" + px.to_string() + "|" + weight.to_string() + "|" + track.to_string() + "|" + color.to_string() + "|" + text + size;
-    },
-    Shadowed(text, px, weight, color, blur) => {
-      return "shadow|" + px.to_string() + "|" + weight.to_string() + "|" + color.to_string() + "|" + blur.to_string() + "|" + text + size;
-    },
-    _ => {
-      return shape_key(n.paint, size);
-    }
-  }
-}
-
-function shape_key(p: Paint, size: string): string {
-  match (p) {
-    Weather(sky) => {
-      return "sky|" + sky_index(sky).to_string() + size;
-    },
-    Gauge(now, range, frac) => {
-      return "gauge|" + now + "|" + range + "|" + ((frac * 1000.0).round() as i32).to_string() + size;
-    },
-    Music => {
-      return "music" + size;
-    },
-    Ridge => {
-      return "ridge" + size;
-    },
-    Breath(scale) => {
-      return "breath|" + ((scale * 1000.0).round() as i32).to_string() + size;
-    },
-    Check(on) => {
-      return "check|" + on.to_string() + size;
-    },
-    Underline(color) => {
-      return "fill|" + color.to_string() + "|0" + size;
-    },
-    _ => {
-      return "";
-    }
-  }
-}
-
-function sky_index(sky: paper.Sky): i32 {
-  match (sky) {
-    paper.Clear => {
-      return 0;
-    },
-    paper.Partly => {
-      return 1;
-    },
-    paper.Cloudy => {
-      return 2;
-    },
-    paper.Fog => {
-      return 3;
-    },
-    paper.Rain => {
-      return 4;
-    },
-    paper.Snow => {
-      return 5;
-    },
-    paper.Storm => {
-      return 6;
-    }
-  }
-}
-
-// The pixels around node `n` that its image keeps, for the parts of glyphs
-// and shadows that go past the box of the node.
-pub function margin(n: Node, d: f64): i32 {
-  match (n.paint) {
-    Label(_, _, _, _, _) => {
-      return 4;
-    },
-    Shadowed(_, _, _, _, blur) => {
-      return 3 * blur + d.ceil() as i32 + 4;
-    },
-    _ => {
-      return (8.0 * d) as i32;
-    }
-  }
-}
-
-// Draws node `n` alone on the transparent frame `fr`, with its top left
-// corner `m` pixels in from the corner of the frame. The pixels of the frame
-// are then premultiplied.
-pub function raster(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, m: i32, wall: draw.Frame, d: f64, pal: Palette): face.Cache {
-  fr.store(0, 0, fr.width, fr.height, 0);
-  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: 1 << 30 }, wall, d, pal, 0);
-}
-
-// The rows of `fr` from y0 to y1, as a frame of its own.
-function band(fr: draw.Frame, y0: i32, y1: i32): draw.Frame {
-  let a = y0;
-  if (a < 0) {
-    a = 0;
-  }
-  let b = y1;
-  if (b > fr.height) {
-    b = fr.height;
-  }
-  if (b <= a) {
-    return draw.Frame { ...fr, height: 0 };
-  }
-  return draw.Frame { ...fr, bits: fr.bits + (a * fr.stride * 4) as usize, height: b - a };
-}
-
-// Draws the nodes. `wall` is the layer of the wallpaper at the width of the
-// frame. It gives the cache with the sprites it made.
-pub function render(fr: draw.Frame, f: face.Fonts, own c: face.Cache, ns: Node[], wall: draw.Frame, d: f64, pal: Palette): face.Cache {
-  let cache = c;
-  for n in ns {
-    if (n.clip0 > 0 || n.clip1 < fr.height) {
-      let top = n.clip0;
-      if (top < 0) {
-        top = 0;
-      }
-      let b = band(fr, top, n.clip1);
-      if (b.height > 0) {
-        cache = paint(b, f, cache, Node { ...n, y: n.y - top }, wall, d, pal, top);
-      }
-    } else {
-      cache = paint(fr, f, cache, n, wall, d, pal, 0);
-    }
-  }
-  return cache;
-}
-
-// `y0` is the row of the window where the frame `fr` starts.
-function paint(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, wall: draw.Frame, d: f64, pal: Palette, y0: i32): face.Cache {
-  match (n.paint) {
-    Label(s, px, weight, track, color) => {
-      return face.text(c, fr, f, weight, px, track, n.x, n.y + face.ascent(f, weight, px), s, color);
-    },
-    Shadowed(s, px, weight, color, blur) => {
-      return shadowed(c, fr, f, n, s, px, weight, color, blur, d);
-    },
-    Gauge(now, range, frac) => {
-      return paint_gauge(c, fr, f, n, now, range, frac, pal);
-    },
-    _ => {
-      paint_shape(fr, n, wall, d, pal, y0);
-      return c;
-    }
-  }
-}
-
-function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, pal: Palette, y0: i32): void {
-  match (n.paint) {
-    Fill(color, r) => {
-      if (r > 0) {
-        fr.round_rect(n.x, n.y, n.w, n.h, r, color);
-      } else {
-        fr.fill(n.x, n.y, n.w, n.h, color);
-      }
-    },
-    Outline(color, r, width) => {
-      outline(fr, n, color, r, width);
-    },
-    Wallpaper => {
-      fr.store(0, 0, fr.width, fr.height, pal.paper);
-      fr.blit(wall, 0, fr.height - wall.height);
-    },
-    Fade(top) => {
-      fade(fr, n, wall, top, pal.paper, y0);
-    },
-    Weather(sky) => {
-      paint_sky(fr, n, sky, pal.ink);
-    },
-    Music => {
-      paint_music(fr, n, pal);
-    },
-    Ridge => {
-      paint_ridge(fr, n, d);
-    },
-    Breath(scale) => {
-      paint_breath(fr, n, scale, d);
-    },
-    Check(on) => {
-      paint_check(fr, n, on, d, pal);
-    },
-    Underline(color) => {
-      fr.fill(n.x, n.y, n.w, n.h, color);
-    },
-    _ => {}
-  }
-}
-
-// The wallpaper drawn back over the edge of a list, from all of it at the
-// edge to none of it `n.h` pixels in. The frame starts at row `y0` of the
-// window, where the wallpaper sits on the bottom edge.
-function fade(fr: draw.Frame, n: Node, wall: draw.Frame, top: boolean, paper: i32, y0: i32): void {
+// The wallpaper drawn back over the box `n` of the frame, which is at wx
+// and wy of a window of `win_h` rows: all of it at the edge of the list,
+// and none of it at the other edge of the box. The wallpaper sits on the
+// bottom edge of the window.
+function paint_fade(fr: draw.Frame, n: scene.Node, wx: i32, wy: i32, wall: draw.Frame, win_h: i32, top: boolean, paper_color: i32): void {
   if (wall.width <= 0) {
     return;
   }
-  let wall_top = fr.height + y0 - wall.height;
+  let wall_top = win_h - wall.height;
   for row in 0..n.h {
-    let y = n.y + row;
-    if (y < 0 || y >= fr.height) {
-      continue;
-    }
     let part = row as f64 / (n.h as f64);
     if (!top) {
       part = 1.0 - part;
     }
     let a = ((1.0 - part) * 255.0) as i32;
-    let iy = y + y0 - wall_top;
-    for x in n.x..n.x + n.w {
-      if (x >= 0 && x < fr.width) {
-        let color = paper;
-        if (iy >= 0 && iy < wall.height && x < wall.width) {
-          color = wall.pixel(x, iy);
-        }
-        fr.cover(x, y, color, a);
+    let iy = wy + row - wall_top;
+    for col in 0..n.w {
+      let color = paper_color;
+      if (iy >= 0 && iy < wall.height && wx + col >= 0 && wx + col < wall.width) {
+        color = wall.pixel(wx + col, iy);
       }
+      fr.cover(n.x + col, n.y + row, color, a);
     }
   }
 }
 
-// A rounded outline of `width` pixels.
-function outline(fr: draw.Frame, n: Node, color: i32, r: i32, width: i32): void {
-  fr.round_rect(n.x, n.y, n.w, n.h, r, color);
-  let inner = r - width;
-  if (inner < 0) {
-    inner = 0;
-  }
-  fr.round_rect(n.x + width, n.y + width, n.w - 2 * width, n.h - 2 * width, inner, night());
-}
-
 // Text with a soft shadow below it, at 67% black and 1 dp down: the blur of
 // Android's text shadows of radius `blur`.
-function shadowed(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, s: string, px: i32, weight: i32, color: i32, blur: i32, d: f64): face.Cache {
+function paint_shadowed(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: scene.Node, s: string, px: i32, weight: i32, color: i32, blur: i32, d: f64): face.Cache {
   let r = (blur as f64 * 0.577 / 1.5 + 0.5) as i32;
   if (r < 1) {
     r = 1;
@@ -1299,7 +996,7 @@ function disc(fr: draw.Frame, cx: f64, cy: f64, r: f64, color: i32): void {
   }
 }
 
-function paint_sky(fr: draw.Frame, n: Node, sky: paper.Sky, ink: i32): void {
+function paint_sky(fr: draw.Frame, n: scene.Node, sky: paper.Sky, ink: i32): void {
   let w = n.w as f64;
   let h = n.h as f64;
   let x = n.x as f64;
@@ -1370,7 +1067,7 @@ function arc(fr: draw.Frame, cx: f64, cy: f64, r: f64, a0: f64, a1: f64, half: f
 
 // Today's temperature as a knob on the arc from the low to the high, with
 // the temperature in the middle and the range in the gap at the bottom.
-function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, now: string, range: string, frac: f64, pal: Palette): face.Cache {
+function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: scene.Node, now: string, range: string, frac: f64, pal: Palette): face.Cache {
   let w = n.w as f64;
   let s = w * 0.06;
   let r = w / 2.0 - s;
@@ -1398,7 +1095,7 @@ function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, 
 }
 
 // A round ink button with three sound-wave arcs.
-function paint_music(fr: draw.Frame, n: Node, pal: Palette): void {
+function paint_music(fr: draw.Frame, n: scene.Node, pal: Palette): void {
   let r = n.w as f64 / 2.0;
   let cx = n.x as f64 + r;
   let cy = n.y as f64 + n.h as f64 / 2.0;
@@ -1422,7 +1119,7 @@ function paint_music(fr: draw.Frame, n: Node, pal: Palette): void {
 }
 
 // The yellow mountain line of the wallpaper, as a divider.
-function paint_ridge(fr: draw.Frame, n: Node, d: f64): void {
+function paint_ridge(fr: draw.Frame, n: scene.Node, d: f64): void {
   let pts = [0.0, 0.7, 0.07, 0.55, 0.16, 0.62, 0.26, 0.42, 0.34, 0.08, 0.4, 0.3, 0.5, 0.38, 0.58, 0.6, 0.66, 0.92, 0.76, 0.88, 0.86, 0.7, 0.94, 0.4, 1.0, 0.3];
   let half = 1.25 * d;
   let w = n.w as f64;
@@ -1440,7 +1137,7 @@ function paint_ridge(fr: draw.Frame, n: Node, d: f64): void {
 
 // The breathing circle: a pale disc in a ridge-coloured ring, at `scale` of
 // its full size.
-function paint_breath(fr: draw.Frame, n: Node, scale: f64, d: f64): void {
+function paint_breath(fr: draw.Frame, n: scene.Node, scale: f64, d: f64): void {
   let r = n.w as f64 / 2.0 * scale;
   let cx = n.x as f64 + n.w as f64 / 2.0;
   let cy = n.y as f64 + n.h as f64 / 2.0;
@@ -1450,7 +1147,7 @@ function paint_breath(fr: draw.Frame, n: Node, scale: f64, d: f64): void {
 
 // A check box of Android's dialogs: a rounded square with a 2 dp border,
 // filled with a tick when it is on.
-function paint_check(fr: draw.Frame, n: Node, on: boolean, d: f64, pal: Palette): void {
+function paint_check(fr: draw.Frame, n: scene.Node, on: boolean, d: f64, pal: Palette): void {
   let r = (2.0 * d) as i32;
   let b = (2.0 * d) as i32;
   if (on) {

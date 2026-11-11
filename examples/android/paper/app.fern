@@ -11,6 +11,8 @@ import "std/android/draw";
 import "std/android/fonts";
 import "std/android/keyboard";
 import "std/android/property";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
 import "std/fetch";
 import "std/jni";
 import "std/log";
@@ -19,7 +21,6 @@ import "std/utf8";
 import "std/worker";
 import "./control";
 import "./face";
-import "./gpu";
 import "./paper";
 import "./ui";
 
@@ -817,25 +818,25 @@ function device(ctx: usize, wall: u8[]): control.Device {
     open_held: (pkg: string, key: string): void => open_held(ctx, pkg, key),
     request_frame: (): void => android.request_frame(ctx),
     property: (name: string): string => property.get(name).unwrap_or(""),
-    attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => attach_gpu(p, window),
-    present: (own p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => gpu.present(p, passes),
-    detach_gpu: (p: gpu.Painter): gpu.Painter => gpu.detach(p),
-    close_gpu: (p: gpu.Painter): gpu.Painter => gpu.close(p),
+    attach_gpu: (p: painter.Painter, window: usize): painter.Painter => attach_gpu(p, window),
+    present: (own p: painter.Painter, passes: scene.Pass[], background: i32): painter.Painter => painter.present(p, passes, background),
+    detach_gpu: (p: painter.Painter): painter.Painter => painter.detach(p),
+    close_gpu: (p: painter.Painter): painter.Painter => painter.close(p),
   };
 }
 
-function attach_gpu(p: gpu.Painter, window: usize): gpu.Painter {
-  let q = gpu.attach(p, window);
-  if (!gpu.attached(q)) {
+function attach_gpu(p: painter.Painter, window: usize): painter.Painter {
+  let q = painter.attach(p, window);
+  if (!painter.attached(q)) {
     log.error("paper: the window has no OpenGL ES 2 canvas");
   }
   return q;
 }
 
 // The middle of the clock among `ns`, for the emulator check to tap, or "".
-function clock_place(ns: ui.Node[]): string {
+function clock_place(ns: scene.Node[]): string {
   for n in ns {
-    if (n.act == "clock") {
+    if (n.tap.name == "clock") {
       return ", clock at " + (n.x + n.w / 2).to_string() + " " + (n.y + n.h / 2).to_string();
     }
   }
