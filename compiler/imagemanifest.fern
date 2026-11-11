@@ -2,6 +2,8 @@
 // `key=value` fields after the FERNBUILD1 magic. `fern -manifest` prints it,
 // and drivers/manifest_fuzz_run.fern feeds hostile files to it.
 
+import "std/string";
+
 // The fields of the manifest of an image, each as `key: value`, or none
 // when the image carries no manifest. Two spaces in a row make no field.
 pub function manifest_fields(image: u8[]): string[] {
@@ -85,8 +87,8 @@ function manifest_field(field: string): string {
   if (eq < 0) {
     return field;
   }
-  let key = slice_unchecked(field, 0, eq) + "";
-  let value = slice_unchecked(field, eq + 1, field.len()) + "";
+  let key = slice_unchecked(field, 0, eq).to_owned();
+  let value = slice_unchecked(field, eq + 1, field.len()).to_owned();
   if (value == "1") {
     value = "yes";
   } else if (value == "0") {

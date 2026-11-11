@@ -8162,7 +8162,7 @@ function arm64_gas_dec(n: i32): string {
   let v = n;
   while (v > 0) {
     let d = v % 10;
-    out = slice_unchecked("0123456789", d, d + 1) + "" + out;
+    out = slice_unchecked("0123456789", d, d + 1).to_owned() + out;
     v /= 10;
   }
   return out;

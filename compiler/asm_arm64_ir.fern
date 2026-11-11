@@ -12980,7 +12980,7 @@ function ssa_vstore_shuffle(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   s = ssa_fread(reg_of, ins.args[2], "d2", s);
   s = s.write("    mov v0.16b, " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d1")) + "\n");
   s = s.write("    mov v2.16b, " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[2], "d2")) + "\n    mov v1.16b, v0.16b\n");
-  let pool = asmcore.shuffle_mask(s, slice_unchecked(ins.str, 15, ins.str.len()) + "");
+  let pool = asmcore.shuffle_mask(s, slice_unchecked(ins.str, 15, ins.str.len()).to_owned());
   let label = asmcore.shuffle_mask_label(pool.state, pool.idx);
   s = pool.state.write("    adrp x16, " + label + "\n    add x16, x16, :lo12:" + label + "\n    ldr q0, [x16]\n    tbl v0.16b, {v1.16b-v2.16b}, v0.16b\n");
   if (ins.imm == 16) {
