@@ -5,6 +5,7 @@
 import "std/android";
 import "std/android/audio";
 import "std/android/draw";
+import "std/android/ui/scene";
 import "std/log";
 import "./screen";
 import "./stopwatch";
@@ -508,33 +509,15 @@ function moved(own s: App, w: i32, h: i32, x: f32, y: f32): App {
   return App { ...s, press: p };
 }
 
+// A tap at x and y: the action of the node of the screen that it is on.
+// A tap on no node starts or pauses the stopwatch when the finger went
+// down on the dial, and else shows the title and the MENU button.
 function tap(own s: App, w: i32, h: i32, x: f32, y: f32, on_dial: boolean, now: i64): App {
-  if (s.page == screen.SETTINGS) {
-    let ly = y + s.scroll as f32;
-    return settings_tap(s, w, h, x, ly);
+  if let Some(n) = scene.hit(ui.nodes(view(s), w, h), x as i32, y as i32) {
+    return acted(s, n.tap.name, n.tap.arg, now);
   }
-  if (s.page == screen.ABOUT) {
-    if (screen.contains(screen.corner_button(w, h, "BACK"), x, y + s.scroll as f32)) {
-      return to_main(s);
-    }
+  if (s.page != screen.MAIN) {
     return s;
-  }
-  if (s.menu) {
-    if (screen.contains(screen.menu_item(w, h, 0), x, y)) {
-      log.info("stopwatch: page settings");
-      return App { ...s, page: screen.SETTINGS, menu: false, scroll: 0 };
-    }
-    if (screen.contains(screen.menu_item(w, h, 1), x, y)) {
-      log.info("stopwatch: page about");
-      return App { ...s, page: screen.ABOUT, menu: false, scroll: 0 };
-    }
-    if (screen.contains(screen.menu_panel(w, h), x, y)) {
-      return s;
-    }
-  }
-  if (now < s.chrome_until && screen.contains(screen.corner_button(w, h, "MENU"), x, y)) {
-    log.info("stopwatch: menu " + (!s.menu).to_string());
-    return show_chrome(App { ...s, menu: !s.menu }, now);
   }
   if (on_dial) {
     return toggle(App { ...s, menu: false });
@@ -542,22 +525,34 @@ function tap(own s: App, w: i32, h: i32, x: f32, y: f32, on_dial: boolean, now: 
   return show_chrome(App { ...s, menu: false }, now);
 }
 
-// A tap on the settings screen, at y in list coordinates: BACK, or the card
-// of a toggle.
-function settings_tap(own s: App, w: i32, h: i32, x: f32, y: f32): App {
-  if (screen.contains(screen.corner_button(w, h, "BACK"), x, y)) {
-    return to_main(s);
-  }
-  let all = stopwatch.settings();
-  for k in 0..all.len() {
-    if (all[k].toggle && screen.contains(ui.setting_card(w, h, k), x, y)) {
-      let t = App { ...s, values: with_value(s.values, k, 1 - s.values[k]) };
+// The app after the action `name` of a node, with its number `arg`.
+function acted(own s: App, name: string, arg: i32, now: i64): App {
+  match (name) {
+    "back" => {
+      return to_main(s);
+    },
+    "toggle" => {
+      let t = App { ...s, values: with_value(s.values, arg, 1 - s.values[arg]) };
       save_settings(t);
-      log.info("stopwatch: setting " + all[k].key + " " + t.values[k].to_string());
+      log.info("stopwatch: setting " + stopwatch.settings()[arg].key + " " + t.values[arg].to_string());
       return t;
+    },
+    "settings" => {
+      log.info("stopwatch: page settings");
+      return App { ...s, page: screen.SETTINGS, menu: false, scroll: 0 };
+    },
+    "about" => {
+      log.info("stopwatch: page about");
+      return App { ...s, page: screen.ABOUT, menu: false, scroll: 0 };
+    },
+    "menu" => {
+      log.info("stopwatch: menu " + (!s.menu).to_string());
+      return show_chrome(App { ...s, menu: !s.menu }, now);
+    },
+    _ => {
+      return s;
     }
   }
-  return s;
 }
 
 function view(s: App): ui.View {
