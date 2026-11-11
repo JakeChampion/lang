@@ -15605,11 +15605,24 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			own      bool
 		}
 		var deferredArgs []deferredEmptyArg
+		// The expected type of the call binds type parameters for the
+		// expected types of the arguments only. The arguments bind sub.
+		hintSub := sub
+		if genericFn != nil && callExpected != nil {
+			fromResult := map[string]ast.Type{}
+			c.unifyType(ft.Result, callExpected, fromResult)
+			hintSub = maps.Clone(sub)
+			for tp, bound := range fromResult {
+				if _, ok := hintSub[tp]; !ok {
+					hintSub[tp] = bound
+				}
+			}
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				hp := ft.Params[i]
-				if sub != nil {
-					hp = substituteType(hp, sub)
+				if hintSub != nil {
+					hp = substituteType(hp, hintSub)
 				}
 				if !containsParamType(hp) {
 					c.setElemHintFor(n.Args[i], hp)
@@ -15621,8 +15634,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if !(recvIsArg0 && i == 0) {
 				if i < len(ft.Params) {
 					pt := ft.Params[i]
-					if sub != nil {
-						pt = substituteType(pt, sub)
+					if hintSub != nil {
+						pt = substituteType(pt, hintSub)
 					}
 					if _, isEnum := pt.(ast.EnumType); isEnum {
 						c.expectedType = pt
@@ -15634,7 +15647,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						}
 					} else if _, isFn := pt.(*ast.FuncType); isFn {
 						if _, isName := n.Args[i].(*ast.Ident); isName {
-							c.expectedType = pt
+							// A function value binds its result. The
+							// expected type of the call does not.
+							c.expectedType = ft.Params[i]
+							if sub != nil {
+								c.expectedType = substituteType(ft.Params[i], sub)
+							}
 						}
 					}
 				}
