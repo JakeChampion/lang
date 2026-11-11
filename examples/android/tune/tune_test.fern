@@ -14,6 +14,7 @@ import "std/i32";
 import "std/i64";
 import "std/result";
 import "std/test";
+import "./fixture";
 import "./library";
 import "./player";
 import "./tune";
@@ -69,6 +70,15 @@ function tagged(file: u8[], title: string, artist: string, album: string, number
 // of their artist and their albums, one file with tags, and one file that
 // is not sound.
 function read(path: string): u8[] {
+  if (path.ends_with("Painted.mp3")) {
+    return fixture.joined(fixture.id3v2_picture("Painted", 300), fixture.silent_mp3(100, true));
+  }
+  if (path.ends_with("cover.jpg")) {
+    return [255u8, 216u8, 255u8, 224u8];
+  }
+  if (path.ends_with("Boxed.wav")) {
+    return library.demo_file(2).unwrap_or([]);
+  }
   for which in 0..3 {
     if (path.ends_with(library.demo_name(which))) {
       return library.demo_file(which).unwrap_or([]);
@@ -84,10 +94,16 @@ function paths(): string[] {
   return ["music/" + library.demo_name(2), "music/loose/x1.wav", "music/" + library.demo_name(0), "music/" + library.demo_name(1), "music/Fern/cover.mp3"];
 }
 
+// A directory that the library of the test does not have at its start: an
+// album with an image file, and a file with a picture in its tag.
+function boxed(): string[] {
+  return ["extra/Box/01 Boxed.wav", "extra/Box/cover.jpg", "extra/Painted.mp3"];
+}
+
 // The names in the directory `at` of the files of the test.
 function names_in(at: string): string[] {
   let out: string[] = [];
-  for p in paths() {
+  for p in paths().concat(boxed()) {
     if (p.starts_with(at + "/")) {
       let name = p.drop(at.len() + 1).split("/")[0].to_owned();
       if (!out.contains(name)) {
@@ -110,6 +126,21 @@ function dirs_of(at: string): string[] {
   return [];
 }
 
+// The device of the test decodes the bytes that start as a JPEG file: the
+// image has one pixel for each 100 pixels of the side that the player asks
+// for.
+function decoded(bytes: u8[], w: i32, h: i32): Option[draw.Image] {
+  if (bytes.len() < 2 || bytes[0] != 255u8 || bytes[1] != 216u8) {
+    return None;
+  }
+  let side = (w / 100).max(1);
+  let pixels: u8[] = [];
+  for i in 0..side * side * 4 {
+    pixels = pixels.append(200u8);
+  }
+  return Some(draw.Image { width: side, height: side, pixels: pixels });
+}
+
 function device(): player.Device {
   return player.Device {
     grant: (): void => {},
@@ -120,6 +151,7 @@ function device(): player.Device {
     now: (): i64 => 0i64,
     dirs: (at: string): string[] => dirs_of(at),
     keep: (folder: string): void => {},
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
     show: (now: tune.Now): void => {},
     wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
     sleep: (a: tune.Awake): void => {},
@@ -373,6 +405,27 @@ function test_a_list_is_the_queue(): test.TestOutcome {
   return test.assert_eq(album + " | " + whole + " | " + m.queue.len().to_string() + " " + m.queue[1].to_string() + " " + m.spot.to_string() + " " + cmp.sort(m.queue).len().to_string() + " | " + order(back.shell.app.model), "1,2@0 | 0,1,2,3@1 | 4 1 1 4 | 0,1,2,3@1");
 }
 
+// The player reads the directory "extra" with the music of the phone. An
+// album gets its picture from the tag of a file, or from an image file of
+// its directory. A track that plays has its picture at the size of its
+// screen. An album with no picture has none.
+function test_the_picture_of_an_album(): test.TestOutcome {
+  let s = sim.after(sim.start(player.wrap(tune.start(["extra"])), player.program(device()), test_fonts(), 1080, 2400, 2.75), 100i64);
+  let m = s.shell.app.model;
+  let keys: string[] = [];
+  for c in m.covers {
+    keys = keys.append(c.key.replace("\n", "/") + ":" + c.image.width.to_string());
+  }
+  saved(s, "tune-covers");
+  let plays = sim.after(sim.tap(s, "Painted"), 100i64);
+  let art = 0;
+  if let Some(img) = plays.shell.app.model.art {
+    art = img.width;
+  }
+  let plain = started().shell.app.model;
+  return test.assert_eq(titles(m) + " " + keys.join(",") + " " + m.pictures.len().to_string() + " " + art.to_string() + " | " + plain.covers.len().to_string() + " " + plain.bare.len().to_string(), "Tagged Song|Boxed|Morning Fern|Slow Water|Quick Light|Painted Unknown artist/extra:1,extra/Box:1 1 7 | 0 3");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -390,5 +443,6 @@ function main(): i32 {
   r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
   r = r.it("the menu of a song puts it in the queue", test_the_queue);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
+  r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   return r.finish();
 }

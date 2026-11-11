@@ -98,6 +98,17 @@ function test_m4a_ogg_and_opus_files(): test.TestOutcome {
   return test.assert_eq(tagged("a.m4a", fixture.m4a()) + " | " + tagged("b.ogg", fixture.ogg()) + " | " + tagged("c.opus", fixture.opus()), "M4A Short m4a,Fixture,Formats,2 true | OGG Short ogg,Fixture,Formats,2 true | OPUS Short opus,Fixture,Formats,2 true");
 }
 
+// A picture of 200 KB is before the title of the tag: the scan reads the
+// title and the picture from more than the first 128 KB of the file.
+function test_a_picture_in_a_tag(): test.TestOutcome {
+  let file = fixture.joined(fixture.id3v2_picture("Painted", 200000), fixture.silent_mp3(100, true));
+  let small = fixture.joined(fixture.id3v2_picture("Small", 500), fixture.silent_mp3(100, true));
+  let bare = fixture.silent_mp3(100, true);
+  let got = of("p.mp3", file) + " " + library.picture(file.len() as i64, library.parts_of(file)).len().to_string() + " " + library.picture(small.len() as i64, library.parts_of(small)).len().to_string() + " " + library.picture(bare.len() as i64, library.parts_of(bare)).len().to_string();
+  let names = library.picture_name("Cover.JPG").to_string() + " " + library.picture_name("folder.png").to_string() + " " + library.picture_name("back.jpg").to_string();
+  return test.assert_eq(got + " | " + names, "Painted 2612 200000 500 0 | true true false");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -106,5 +117,6 @@ function main(): i32 {
   r = r.it("an MP3 file tells its length, or its bytes and its bit rate do", test_the_length_of_an_mp3_file);
   r = r.it("a scan reads parts of a file", test_a_scan_reads_parts_of_a_file);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file give their tags and their length", test_m4a_ogg_and_opus_files);
+  r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
   return r.finish();
 }

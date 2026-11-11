@@ -12,6 +12,12 @@ looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
 of the phone.
 
+An album has its picture from the tag of one of its files, or from an
+image file of its directory, such as `cover.jpg`. `std/audio/tags` gives the
+bytes of the picture, and `std/android/image` decodes them. A list shows the
+picture at a small size, and the screen of the track shows it at a large
+size. An album with no picture shows rings in the colors of its name.
+
 A tap on a song makes the list that shows the queue of the player. A long
 press on a song shows its menu: "Play next" and "Add to queue". The screen
 of the track has the "Queue" button, which shows the queue.

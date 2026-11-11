@@ -5,7 +5,9 @@
 import "core/cmp";
 import "std/android";
 import "std/android/audio";
+import "std/android/draw";
 import "std/android/focus";
+import "std/android/image";
 import "std/android/service";
 import "std/android/session";
 import "std/android/ui/app";
@@ -177,6 +179,7 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     now: (): i64 => monotonic_ns(),
     dirs: (at: string): string[] => dirs(at),
     keep: (folder: string): void => { let kept = write_file(dir + "/../folder.txt", folder); },
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     show: (now: tune.Now): void => show(ctx, media, now),
     wake: (): tune.Awake => wake(ctx),
     sleep: (a: tune.Awake): void => service.release_awake(ctx, service.Awake { wake: a.wake, wifi: a.wifi }),

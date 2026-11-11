@@ -152,6 +152,11 @@ function mp3_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
     return None;
   };
   let found = tags.id3v2(head);
+  if (found.title.len() == 0 && skip > head.len() as i64) {
+    // A picture before the texts of a tag can make the tag longer than
+    // `head`.
+    found = tags.id3v2(start_of(head, skip, part));
+  }
   if (found.empty() && size >= 128i64) {
     found = tags.id3v1(part(size - 128i64, 128));
   }
@@ -236,6 +241,66 @@ function wav_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
   return Some((found, sound.bytes * 1000i64 / sound.second));
 }
 
+// The bytes of a file that the player reads for its picture, at most.
+const PICTURE_BYTES: i64 = 8388608i64;
+
+// The byte after the last metadata block of a FLAC file.
+function flac_tags_end(head: u8[], size: i64, part: (i64, i32) => u8[]): i64 {
+  let at = 4i64;
+  let turns = 0;
+  while (at + 4i64 <= size && turns < 256) {
+    let block = bytes_at(head, at, 4, part);
+    if (block.len() < 4) {
+      return at;
+    }
+    at += 4i64 + wire.be(block, 1, 3) as i64;
+    if ((block[0] & 128u8) != 0u8) {
+      return at;
+    }
+    turns += 1;
+  }
+  return at;
+}
+
+// The start of the file of `size` bytes as far as `end`, or as far as the
+// limit of a picture.
+function start_of(head: u8[], end: i64, part: (i64, i32) => u8[]): u8[] {
+  if (end <= head.len() as i64) {
+    return head;
+  }
+  return part(0i64, end.min(PICTURE_BYTES) as i32);
+}
+
+// The bytes of the picture that the file of `size` bytes holds for its
+// album: a JPEG or a PNG image, or no bytes.
+pub function picture(size: i64, part: (i64, i32) => u8[]): u8[] {
+  let head = part(0i64, HEAD);
+  if (wire.tag(head, 0, "fLaC")) {
+    return tags.picture(start_of(head, flac_tags_end(head, size, part), part));
+  }
+  if (wire.tag(head, 0, "OggS")) {
+    return tags.picture(start_of(head, size.min(2097152i64), part));
+  }
+  if (head.len() >= 8 && wire.tag(head, 4, "ftyp")) {
+    return tags.picture(moov_of(head, size, part));
+  }
+  return tags.picture(start_of(head, id3_bytes(head), part));
+}
+
+// True for the name of an image file that holds the picture of the album
+// of its directory.
+pub function picture_name(name: string): boolean {
+  let lower = name.to_lower();
+  for stem in ["cover", "folder", "front", "album", "albumart"] {
+    for end in [".jpg", ".jpeg", ".png", ".webp"] {
+      if (lower == stem + end) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // The bytes of the file from `at`, at most `n`: from `head` when it has
 // them, or from the device.
 function bytes_at(head: u8[], at: i64, n: i32, part: (i64, i32) => u8[]): u8[] {
@@ -272,15 +337,25 @@ function moov_ms(moov: [u8]): i64 {
   return 0i64;
 }
 
-// The tags of an M4A file and its length in ms, from its `moov` box. The
-// box is at the start of the file or after its sound.
+// The tags of an M4A file and its length in ms, from its `moov` box.
 function m4a_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let moov = moov_of(head, size, part);
+  let ms = moov_ms(moov);
+  if (ms <= 0i64) {
+    return None;
+  }
+  return Some((tags.mp4(moov), ms));
+}
+
+// The `moov` box of an M4A file, or no bytes. The box is at the start of
+// the file or after its sound.
+function moov_of(head: u8[], size: i64, part: (i64, i32) => u8[]): u8[] {
   let at = 0i64;
   let turns = 0;
   while (at + 8i64 <= size && turns < 64) {
     let box = bytes_at(head, at, 16, part);
     if (box.len() < 16) {
-      return None;
+      return [];
     }
     let length = wire.be(box, 0, 4) as i64;
     if (length == 1i64) {
@@ -290,20 +365,15 @@ function m4a_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
       length = size - at;
     }
     if (length < 8i64) {
-      return None;
+      return [];
     }
     if (wire.tag(box, 4, "moov")) {
-      let moov = bytes_at(head, at, length.min(8388608i64) as i32, part);
-      let ms = moov_ms(moov);
-      if (ms <= 0i64) {
-        return None;
-      }
-      return Some((tags.mp4(moov), ms));
+      return bytes_at(head, at, length.min(PICTURE_BYTES) as i32, part);
     }
     at += length;
     turns += 1;
   }
-  return None;
+  return [];
 }
 
 // The byte of the last Ogg page that starts in `tail`, or -1.

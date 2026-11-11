@@ -46,6 +46,10 @@ pub struct Group { name: string, by: string, songs: i32, albums: i32, year: i32 
 // A stream of sound of the device. `ptr` is 0 when the player has none.
 pub struct Sound { ptr: usize, rate: i32, channels: i32 }
 
+// The picture of an album at the size of a row of a list. `key` is the
+// key of the album.
+pub struct Cover { key: string, image: draw.Image }
+
 // What the player tells Android about the track that plays.
 pub struct Now { title: string, artist: string, album: string, length_ms: i64, at_ms: i64, playing: boolean }
 
@@ -85,7 +89,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // awake. `asked` tells that the player asked for the permission and did
 // not look again after it. `made` tells that the player made its tunes.
 // `lost` tells that the player stopped because a call or a different app
-// took the sound of the phone.
+// took the sound of the phone. `covers` has the pictures of the albums,
+// and `bare` has the keys of the albums that have none. `pictures` has the
+// paths of the image files that the scan found in the directories. `art`
+// is the picture of the track that plays, at the size of its screen.
 pub struct Model {
   fresh: boolean,
   tracks: Track[],
@@ -119,11 +126,15 @@ pub struct Model {
   asked: boolean,
   made: boolean,
   lost: boolean,
+  covers: Cover[],
+  bare: string[],
+  pictures: string[],
+  art: Option[draw.Image],
 }
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -148,6 +159,37 @@ pub function start_in(home: string, folder: string): Model {
 // track in the queue. `Lined` shows the queue or not. `Jump` plays the
 // track at a place of the queue, and `Drop` takes that place out.
 pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32) }
+
+// The key of the album of a track: the artist that the album is under,
+// and its name.
+pub function album_key(by: string, album: string): string {
+  return by + "\n" + album;
+}
+
+// The picture of the album of the key `key`, or None.
+pub function cover_of(m: Model, key: string): Option[draw.Image] {
+  for c in m.covers {
+    if (c.key == key) {
+      return Some(c.image);
+    }
+  }
+  return None;
+}
+
+// True when the player has the picture of the album or knows that the
+// album has none.
+pub function knows_cover(m: Model, key: string): boolean {
+  return m.bare.contains(key) || cover_of(m, key).is_some();
+}
+
+// The player with the picture `image` for the album of the key `key`, or
+// with the fact that the album has none.
+pub function with_cover(m: Model, key: string, image: Option[draw.Image]): Model {
+  if let Some(img) = image {
+    return Model { ...m, covers: m.covers.append(Cover { key: key, image: img }) };
+  }
+  return Model { ...m, bare: m.bare.append(key) };
+}
 
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
@@ -325,6 +367,20 @@ function lines(name: string, detail: string, color: i32): ui.El[Msg] {
   return ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
 }
 
+// The picture of the album of the key `key` at `side` dp, or rings in the
+// colors of `name` for an album with no picture.
+function thumb(m: Model, key: string, name: string, side: f64): ui.El[Msg] {
+  if let Some(img) = cover_of(m, key) {
+    return ui.picture("cover:" + key, img).width(side).height(side).rounded(6.0);
+  }
+  return ui.canvas("rings:" + name, art(name)).width(side).height(side);
+}
+
+// A row of a list: a picture, then a name over a detail.
+function entry(picture: ui.El[Msg], name: string, detail: string, color: i32): ui.El[Msg] {
+  return ui.row([picture, ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).wide()]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
+}
+
 function track_row(m: Model, i: i32): ui.El[Msg] {
   let t = m.tracks[i];
   let color = ui.INK;
@@ -340,7 +396,7 @@ function track_row(m: Model, i: i32): ui.El[Msg] {
       name = t.number.to_string() + ". " + t.title;
     }
   }
-  return lines(name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
+  return entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
 }
 
 function count(n: i32, one: string): string {
@@ -351,15 +407,15 @@ function count(n: i32, one: string): string {
 }
 
 function artist_row(g: Group): ui.El[Msg] {
-  return lines(g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
+  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
 }
 
-function album_row(g: Group): ui.El[Msg] {
+function album_row(m: Model, g: Group): ui.El[Msg] {
   let detail = g.by + " · " + count(g.songs, "song");
   if (g.year > 0) {
     detail = detail + " · " + g.year.to_string();
   }
-  return lines(g.name, detail, ui.INK).on_tap(Album(g.by, g.name));
+  return entry(thumb(m, album_key(g.by, g.name), g.name, 44.0), g.name, detail, ui.INK).on_tap(Album(g.by, g.name));
 }
 
 function tab(m: Model, name: string, which: i32): ui.El[Msg] {
@@ -410,7 +466,7 @@ function chooser(m: Model): ui.El[Msg] {
 function listing(m: Model): (ui.El[Msg], string) {
   if (m.album.len() == 0 && (m.tab == ALBUMS || m.artist.len() > 0)) {
     let groups = albums(m);
-    return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(groups[row])), count(groups.len(), "album"));
+    return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(m, groups[row])), count(groups.len(), "album"));
   }
   if (m.album.len() == 0 && m.tab == ARTISTS) {
     let groups = artists(m);
@@ -500,7 +556,7 @@ function line(m: Model): ui.El[Msg] {
     if (row == m.spot) {
       color = ui.PRIMARY;
     }
-    return lines(t.title, t.artist + " · " + t.album, color).on_tap(Jump(row)).on_long(Drop(row));
+    return entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), t.title, t.artist + " · " + t.album, color).on_tap(Jump(row)).on_long(Drop(row));
   });
   let top: ui.El[Msg][] = [ui.text("Queue").sized(28.0).weighted(700), ui.text(count(queue.len(), "song") + " · hold a song to take it out").colored(ui.MUTED).clamped(1)];
   return ui.column([ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Close", Lined(false))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
@@ -513,10 +569,14 @@ function now_playing(m: Model): ui.El[Msg] {
     let t = m.tracks[m.current];
     format = t.artist + " · " + t.album;
   }
+  let big: ui.El[Msg] = ui.canvas("art:" + name, art(name)).width(240.0).height(240.0);
+  if let Some(img) = m.art {
+    big = ui.picture("art:" + format, img).width(280.0).height(280.0).rounded(12.0);
+  }
   return ui.column(
     [
       ui.row([ui.text_button("Library", Closed)]),
-      ui.column([ui.canvas("art:" + name, art(name)).width(240.0).height(240.0)]).centered().grow(1.0),
+      ui.column([big]).centered().grow(1.0),
       ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
@@ -747,7 +807,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {

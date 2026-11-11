@@ -2,9 +2,11 @@
 // the file of a track, and gives its samples to a stream of sound. The
 // device is a set of functions, so a test gives one that plays nothing.
 import "core/cmp";
+import "std/android/draw";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
+import "std/audio/tags";
 import "std/option";
 import "./engine";
 import "./library";
@@ -15,7 +17,8 @@ import "./tune";
 // gives the names in a directory, and `is_dir` tells that a path is a
 // directory. `demo` makes the tunes of the player and gives their paths.
 // `now` is the time in ns. `dirs` gives the names of the directories in a directory, and
-// `keep` keeps the folder of the library for the next start. `show` tells
+// `keep` keeps the folder of the library for the next start. `decode` gives an
+// image from the bytes of a JPEG or a PNG file, at a size. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
 // awake until `sleep`. `size` gives the number of bytes of a
 // file, `part` gives at most a number of its bytes from an offset, and
@@ -31,6 +34,7 @@ pub struct Device {
   now: () => i64,
   dirs: (string) => string[],
   keep: (string) => void,
+  decode: (u8[], i32, i32) => Option[draw.Image],
   show: (tune.Now) => void,
   wake: () => tune.Awake,
   sleep: (tune.Awake) => void,
@@ -60,7 +64,16 @@ pub function wrap(own model: tune.Model): Player {
 
 function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   dev.close(m.sound);
-  let Some(deck) = engine.open(dev.read(m.tracks[i].path)) else {
+  let file = dev.read(m.tracks[i].path);
+  let picture = tags.picture(file);
+  if (picture.len() == 0) {
+    picture = folder_picture(dev, m, m.tracks[i].path);
+  }
+  let art: Option[draw.Image] = None;
+  if (picture.len() > 0) {
+    art = dev.decode(picture, ART, ART);
+  }
+  let Some(deck) = engine.open(file) else {
     return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
   let sound = dev.open(deck.rate, deck.channels);
@@ -69,7 +82,7 @@ function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   }
   dev.start(sound);
   let length = deck.duration_ms();
-  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length }, deck: Some(deck) };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art }, deck: Some(deck) };
 }
 
 function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Deck], part: f64): Player {
@@ -125,9 +138,54 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
   }
 }
 
-// Reads the next path of the library. A file of sound is a track. A
-// directory gives its entries to the scan, with no entry whose name starts
-// with a dot. Each other path adds nothing.
+// The side in pixels of the picture of an album in a list, and of the
+// picture of the track that plays.
+const THUMB: i32 = 112;
+
+const ART: i32 = 720;
+
+// The directory of a path.
+function dir_of(path: string): string {
+  let cut = path.len();
+  for i in 0..path.len() {
+    if (path[i] == b'/') {
+      cut = i;
+    }
+  }
+  return path.take(cut).to_owned();
+}
+
+// The bytes of the image file of the directory of `path`, or no bytes.
+function folder_picture(dev: Device, m: tune.Model, path: string): u8[] {
+  let dir = dir_of(path);
+  for p in m.pictures {
+    if (dir_of(p) == dir) {
+      return dev.read(p);
+    }
+  }
+  return [];
+}
+
+// The player with the picture of the album of the key `key`, from the
+// file `path` of that album or from an image file of its directory. An
+// album gets its picture one time.
+function covered(dev: Device, own m: tune.Model, key: string, path: string): tune.Model {
+  if (tune.knows_cover(m, key)) {
+    return m;
+  }
+  let bytes = library.picture(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n));
+  if (bytes.len() == 0) {
+    bytes = folder_picture(dev, m, path);
+  }
+  if (bytes.len() == 0) {
+    return tune.with_cover(m, key, None);
+  }
+  return tune.with_cover(m, key, dev.decode(bytes, THUMB, THUMB));
+}
+
+// Reads the next path of the library. A file of sound is a track, and its
+// album gets its picture. A directory gives its entries to the scan. Each
+// other path adds nothing.
 function scanned(dev: Device, own m: tune.Model): tune.Model {
   let path = m.scan[0];
   let left: string[] = [];
@@ -141,20 +199,30 @@ function scanned(dev: Device, own m: tune.Model): tune.Model {
   let next = tune.Model { ...m, scan: left };
   if (library.format_of(path).len() > 0) {
     if let Some(t) = library.track(roots, path, dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n)) {
-      return tune.update(next, tune.Found(t));
+      return covered(dev, tune.update(next, tune.Found(t)), tune.album_key(t.by, t.album), path);
     }
     return next;
   }
   if (library.other_file(path) || path.len() > 1024 || !dev.is_dir(path)) {
     return next;
   }
+  return listed(dev, next, path);
+}
+
+// The player with the entries of the directory `path` in its scan. An
+// image file with the name of a picture of an album goes to `pictures`,
+// and an entry whose name starts with a dot goes nowhere.
+function listed(dev: Device, own m: tune.Model, path: string): tune.Model {
   let below: string[] = [];
+  let pictures = m.pictures;
   for name in cmp.sort(dev.names(path)) {
-    if (!name.starts_with(".")) {
+    if (library.picture_name(name)) {
+      pictures = pictures.append(path + "/" + name);
+    } else if (!name.starts_with(".")) {
       below = below.append(path + "/" + name);
     }
   }
-  return tune.update(next, tune.Files(below));
+  return tune.update(tune.Model { ...m, pictures: pictures }, tune.Files(below));
 }
 
 // The milliseconds of one step that the scan can use.

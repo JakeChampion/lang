@@ -51,6 +51,38 @@ pub function id3v2(title: string, padding: i32): u8[] {
   return out;
 }
 
+// An ID3v2.3 tag with a picture frame before its title: the image has
+// `size` bytes and starts as a JPEG file.
+pub function id3v2_picture(title: string, size: i32): u8[] {
+  let image: u8[] = [255u8, 216u8, 255u8, 224u8];
+  while (image.len() < size) {
+    image = image.append(7u8);
+  }
+  // The encoding, "image/jpeg", the type 3 of a front cover, and no
+  // description.
+  let body: u8[] = [0u8, 105u8, 109u8, 97u8, 103u8, 101u8, 47u8, 106u8, 112u8, 101u8, 103u8, 0u8, 3u8, 0u8];
+  for b in image {
+    body = body.append(b);
+  }
+  let n = body.len();
+  let frames: u8[] = [65u8, 80u8, 73u8, 67u8, (n >> 24) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8, 0u8, 0u8];
+  for b in body {
+    frames = frames.append(b);
+  }
+  for b in [84u8, 73u8, 84u8, 50u8, 0u8, 0u8, 0u8, (title.len() + 1) as u8, 0u8, 0u8, 0u8] {
+    frames = frames.append(b);
+  }
+  for i in 0..title.len() {
+    frames = frames.append(title[i]);
+  }
+  let total = frames.len();
+  let out: u8[] = [73u8, 68u8, 51u8, 3u8, 0u8, 0u8, (total >> 21 & 127) as u8, (total >> 14 & 127) as u8, (total >> 7 & 127) as u8, (total & 127) as u8];
+  for b in frames {
+    out = out.append(b);
+  }
+  return out;
+}
+
 // An ID3v1 tag with the title `title`.
 pub function id3v1(title: string): u8[] {
   let out: u8[] = [84u8, 65u8, 71u8];
