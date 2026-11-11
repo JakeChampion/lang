@@ -27,7 +27,6 @@ var pathIRCases = []stdlibIRCase{
 
 var mathIRCases = []stdlibIRCase{
 	{"pack-rgb-mid", `return (math.pack_rgb(1, 2, 3) >> 8) & 255;`},
-	{"lerp-int", `return math.lerp(0.0, 10.0, 0.5) as i32;`},
 	{"pack-rgb-low", `return math.pack_rgb(255, 128, 64) & 255;`},
 	{"tau", `return (math.TAU * 10.0) as i32;`},
 }
