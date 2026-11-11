@@ -7,6 +7,7 @@ import "std/hex";
 import "std/test";
 import "video_mp4_vectors";
 import "video_mp4_range_check" as ranges;
+import "video_mp4_composition_check" as compositions;
 
 function fixture(name: string): Result[u8[], string] {
   for v in video_mp4_vectors.vectors() {
@@ -429,5 +430,34 @@ function main(): i32 {
   r = r.it("public timing readers preserve negative and zero counts", timing_limits);
   r = r.it("every explicit sync pattern preserves packet fields and public arrays", explicit_sync_patterns);
   r = r.it("explicit sync errors preserve public and index rejection", explicit_sync_errors);
+  r = r.it("composition run views match every partition and public array", composition_patterns);
+  r = r.it("composition run views validate complete coverage before indexing", composition_errors);
   return r.finish();
+}
+
+function composition_case(errors: boolean): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let parents: boxes.Box[] = [];
+  let path: string[] = [];
+  for tag in ["moov", "trak", "mdia", "minf", "stbl"] {
+    path = path.append(tag);
+    let Ok(box) = locate(bytes, path) else {
+      return test.fail("composition parent");
+    };
+    parents = parents.append(box);
+  }
+  let Ok(table) = sample_box(bytes, "ctts") else {
+    return test.fail("composition table");
+  };
+  return if (errors) { compositions.errors(bytes, table, parents) } else { compositions.patterns(bytes, table, parents) };
+}
+
+function composition_patterns(): test.TestOutcome {
+  return composition_case(false);
+}
+
+function composition_errors(): test.TestOutcome {
+  return composition_case(true);
 }

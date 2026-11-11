@@ -67,6 +67,11 @@ Each packet range refers to the original byte view, without a payload copy.
 Absent composition and sync tables use packet defaults without per-sample temporary arrays.
 Explicit tables retain their validation, including the distinction between absent and empty sync tables.
 Explicit sync tables use validated sample numbers through a scalar cursor, without a temporary boolean for every packet.
+
+Explicit composition tables retain validated source runs, without a temporary 64-bit offset for every packet.
+The packet loop advances at each run boundary and preserves unsigned version-zero and signed version-one offsets.
+Complete run coverage passes validation before any offset enters a packet.
+When every sample has a run, positive counts and complete coverage prove that each count is one.
 The public timing readers still return one value per sample.
 
 AVC and HEVC descriptions use the existing NAL configuration readers.

@@ -1,0 +1,77 @@
+{
+  "compiler_sha256": "21b5152830af8304308e722e4ac9be637d880c62cf04e5d689c49bdb3b604749",
+  "source_sha256": "179302b922102bc0b07ad1b97976c077ee3977b9a71548d7a0246866c4f9eefc",
+  "modules_sha256": {
+    "before": {
+      "std/video/mp4.fern.md": "c85a8f972e4e237ca28994ee6b7bac492644d991fac6f0dc9409f58330595aff",
+      "std/video/mp4/timing.fern.md": "ed80651f36f3ed7183407c708ade7f075762a7f01e5134911eead3b6325035a3"
+    },
+    "after": {
+      "std/video/mp4.fern.md": "b7f6d079d67e645be27b76c7671d2dba1edadda306a1413b511e2f73704d3d21",
+      "std/video/mp4/timing.fern.md": "bddd092fe62e00d129dedd5c03349077f76a799c3bebf0c0f3555969c27cdeb5"
+    }
+  },
+  "count": 262144,
+  "cases": [
+    {
+      "composition": "absent",
+      "input_sha256": "13d76cc6bf56cd27a215bd1a999c585d7f3f77c6723b159b99b676c526862cae",
+      "before": {
+        "instructions": 95002974,
+        "allocations": 524420
+      },
+      "after": {
+        "instructions": 96051621,
+        "allocations": 524421
+      }
+    },
+    {
+      "composition": "constant",
+      "input_sha256": "aa616d7ae1a8e359d769a6dd644ec242b875b322d119909db2301b897176c7f5",
+      "before": {
+        "instructions": 99725077,
+        "allocations": 524439
+      },
+      "after": {
+        "instructions": 96052671,
+        "allocations": 524423
+      }
+    },
+    {
+      "composition": "clustered",
+      "input_sha256": "6129f28b552482b8daef8f3f3dae508b6f72a4a7c6f01a01b69be2e8280e3242",
+      "before": {
+        "instructions": 102632445,
+        "allocations": 524439
+      },
+      "after": {
+        "instructions": 100199251,
+        "allocations": 524423
+      }
+    },
+    {
+      "composition": "signed-single",
+      "input_sha256": "b81a8876892fec8124bf2a3944750c0c58d1614108d3c7f2ae080fc1646ddf04",
+      "before": {
+        "instructions": 131706518,
+        "allocations": 524439
+      },
+      "after": {
+        "instructions": 131441971,
+        "allocations": 524423
+      }
+    },
+    {
+      "composition": "unsigned-single",
+      "input_sha256": "338703c037ed6d4ca2785ab4f056f036e83761cb29f066c89d53c824110cc3a5",
+      "before": {
+        "instructions": 131706601,
+        "allocations": 524439
+      },
+      "after": {
+        "instructions": 131442054,
+        "allocations": 524423
+      }
+    }
+  ]
+}

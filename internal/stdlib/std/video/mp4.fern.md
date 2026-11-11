@@ -194,13 +194,24 @@ function raw_packets(input: [u8], children: [boxes.Box], scan: Scan, description
 function packets(input: [u8], children: [boxes.Box], scan: Scan, descriptions: i32): Result[Packet[], pcm.AudioError] {
   let raw = raw_packets(input, children, scan, descriptions)?;
   let composition = timing.indexed_composition(input, children, raw.len())?;
+  let composition_at = composition.data;
+  // Positive runs with complete coverage have count one when every sample has a row.
+  let composition_dense = composition.count == raw.len();
+  let run = composition.first;
+  let composition_end = (run >> 32u64) as i32;
+  let offset = timing.composition_offset(run, composition.version);
   let sync = timing.indexed_sync_samples(input, children, raw.len())?;
   let sync_at = 0;
   let next_sync = timing.sync_sample(input, sync, sync_at);
   let output: Packet[] = [];
   for i in 0..raw.len() {
     let packet = raw[i];
-    let offset = if (composition.len() == 0) { 0i64 } else { composition[i] };
+    if (i == composition_end) {
+      composition_at += 8;
+      run = if (composition_dense) { 1u64 << 32u64 | wire.be(input, composition_at + 4, 4) } else { wire.be(input, composition_at, 8) };
+      composition_end += (run >> 32u64) as i32;
+      offset = timing.composition_offset(run, composition.version);
+    }
     let Some(pts) = packet.position +? offset else {
       return Err(pcm.Limit);
     };
