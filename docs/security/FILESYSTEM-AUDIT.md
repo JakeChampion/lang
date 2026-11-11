@@ -90,6 +90,5 @@ An extended attribute value goes to the kernel with its length, not as a C strin
 
 ## Remaining limits
 
-- The `subprocess` routine of arm64-darwin is hand-written assembly and does not refuse a NUL byte yet. #14970 tracks it.
 - A plain `open_writer` follows a symbolic link, including a dangling one, and creates its target. A caller that writes into a directory other users can write uses `open_exclusive` or the no-follow bit.
 - Ownership of a descriptor after `close` is the gap recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md).

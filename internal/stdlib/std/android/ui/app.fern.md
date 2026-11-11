@@ -19,7 +19,7 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
-  let last = app.run(ctx, Model { count: 0 }, ui.program((m: Model, s: ui.Screen): ui.El => view(m, s), (own m: Model, msg: ui.Msg): Model => update(m, msg)));
+  let last = app.run(ctx, Model { count: 0 }, ui.program(view, update));
   return 0 as usize;
 }
 ```

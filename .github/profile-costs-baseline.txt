@@ -254,7 +254,8 @@ profile/x86-64-linux/http_hello.hardened.bytes	71952
 profile/x86-64-linux/http_hello.hardened.emit	16234
 profile/x86-64-linux/http_hello.hardened.ir	30101992
 profile/x86-64-linux/http_hello.minimal.bytes	56864
-profile/x86-64-linux/http_hello.minimal.emit	13297
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/http_hello.minimal.emit at 13440 (was 13297). The tolerance is unchanged.
+profile/x86-64-linux/http_hello.minimal.emit	13440
 profile/x86-64-linux/http_hello.minimal.ir	23776415
 profile/x86-64-linux/http_hello.safe.bytes	66528
 profile/x86-64-linux/http_hello.safe.emit	15691
@@ -273,16 +274,20 @@ profile/x86-64-linux/int_loop.safe.emit	292
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	133784
 profile/x86-64-linux/map_string.diagnostic.emit	10858
-profile/x86-64-linux/map_string.diagnostic.ir	59644087
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.diagnostic.ir at 58707421 (was 59644087). The tolerance is unchanged.
+profile/x86-64-linux/map_string.diagnostic.ir	58707421
 profile/x86-64-linux/map_string.hardened.bytes	42528
 profile/x86-64-linux/map_string.hardened.emit	10022
-profile/x86-64-linux/map_string.hardened.ir	54709670
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.hardened.ir at 53686363 (was 54709670). The tolerance is unchanged.
+profile/x86-64-linux/map_string.hardened.ir	53686363
 profile/x86-64-linux/map_string.minimal.bytes	36176
 profile/x86-64-linux/map_string.minimal.emit	9007
-profile/x86-64-linux/map_string.minimal.ir	54757303
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.minimal.ir at 53726174 (was 54757303). The tolerance is unchanged.
+profile/x86-64-linux/map_string.minimal.ir	53726174
 profile/x86-64-linux/map_string.safe.bytes	37296
 profile/x86-64-linux/map_string.safe.emit	9311
-profile/x86-64-linux/map_string.safe.ir	52903035
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.safe.ir at 51694003 (was 52903035). The tolerance is unchanged.
+profile/x86-64-linux/map_string.safe.ir	51694003
 profile/x86-64-linux/startup.diagnostic.bytes	5024
 profile/x86-64-linux/startup.diagnostic.emit	500
 profile/x86-64-linux/startup.diagnostic.ir	206

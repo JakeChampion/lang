@@ -710,10 +710,17 @@ pub function (s: Streams) on_stream(id: i64, offset: i64, data: [u8], fin: boole
   if (next.list[i].data.overrun) {
     return next.__fail(__error(frames.INTERNAL_ERROR, frames.STREAM, "more ranges of stream data out of order than this side holds"));
   }
-  if (next.list[i].data.delivered() > before || fin && !fin_read && next.list[i].data.delivered() == next.list[i].final_size) {
-    return Streams { ...next, events: next.events.append(Readable(id)) };
+  return next.__readable_after(id, i, before, fin && !fin_read);
+}
+
+// __readable_after reports the stream readable when it delivered more data, or when
+// the frame first ends it and all of its data is delivered.
+function (s: Streams) __readable_after(id: i64, i: i32, before: i64, first_fin: boolean): Streams {
+  let st = s.list[i];
+  if (st.data.delivered() > before || first_fin && st.data.delivered() == st.final_size) {
+    return Streams { ...s, events: s.events.append(Readable(id)) };
   }
-  return next;
+  return s;
 }
 
 // __received takes a STREAM frame's data into the reassembly when keep,

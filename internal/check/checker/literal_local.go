@@ -252,31 +252,81 @@ func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 
 // settleLitArrayByCall gives a literal array local the element type
 // of a typed argument to append or with, as a literal takes the type of the other
-// operand of a binary operator.
-func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *scope) {
-	id, ok := fa.Target.(*ast.Ident)
-	if !ok {
-		return
-	}
-	decl := s.lookupVarDecl(id.Name)
-	if decl == nil || c.litNestedOf[decl] == nil {
-		return
-	}
-	if _, array := decl.Type.(ast.ArrayType); !array {
-		return
-	}
+// operand of a binary operator. For a call on an array literal, the result is
+// the type that a typed destination gives the literal, or nil.
+func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint ast.Type, s *scope) ast.Type {
 	at := litArrayStepArg(call, fa)
 	if at < 0 {
-		return
+		return nil
 	}
-	c.litCompositeReads[id] = decl
 	if c.litArraySteps == nil {
 		c.litArraySteps = map[*ast.Call]litArrayStep{}
 	}
+	if litArrayRooted(fa.Target) {
+		c.litArraySteps[call] = litArrayStep{recv: fa.Target, arg: call.Args[at]}
+		return c.settleLitArrayStepByHint(call, hint, s)
+	}
+	id, ok := fa.Target.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	decl := s.lookupVarDecl(id.Name)
+	if decl == nil || c.litNestedOf[decl] == nil {
+		return nil
+	}
+	if _, array := decl.Type.(ast.ArrayType); !array {
+		return nil
+	}
+	c.litCompositeReads[id] = decl
 	c.litArraySteps[call] = litArrayStep{from: decl}
 	if t := c.checkExpr(call.Args[at], s); settledNumeric(t) {
 		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
+		return nil
 	}
+	for _, ll := range c.litNestedOf[decl] {
+		for _, e := range c.litInitParts(call.Args[at], ll.path[1:]) {
+			c.linkLitPart(ll, e, call.P)
+		}
+	}
+	return nil
+}
+
+// settleLitArrayStepByHint is the type that an append or a with call on an
+// array literal gives the literal: the typed destination hint, or an array of
+// the type of a typed argument. The literal locals that the argument reads
+// get the integer element type of the destination. The result is nil when
+// neither gives a type.
+func (c *checker) settleLitArrayStepByHint(call *ast.Call, hint ast.Type, s *scope) ast.Type {
+	step := c.litArraySteps[call]
+	have, _ := c.checkExpr(step.arg, s).(ast.NumberType)
+	want, ok := hint.(ast.ArrayType)
+	w, integer := want.Elem.(ast.NumberType)
+	if !ok || !integer || w.Polymorphic {
+		if have.Width != 0 && !have.Polymorphic {
+			return ast.ArrayType{Elem: have}
+		}
+		return nil
+	}
+	locals, _ := c.litTreeLocals(step.arg, nil)
+	for _, ll := range locals {
+		if !ll.fixed {
+			c.fixLitLocal(ll, w, step.arg.Pos())
+		}
+	}
+	return want
+}
+
+// litArrayRooted is true for an array literal, and for an append or a with
+// call on one.
+func litArrayRooted(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.ArrayLit:
+		return true
+	case *ast.Call:
+		fa, ok := x.Callee.(*ast.FieldAccess)
+		return ok && litArrayStepArg(x, fa) >= 0 && litArrayRooted(fa.Target)
+	}
+	return false
 }
 
 // litArrayStepArg is the index of the argument that an append or a with call
@@ -291,9 +341,12 @@ func litArrayStepArg(call *ast.Call, fa *ast.FieldAccess) int {
 	return -1
 }
 
-// litArrayStep is an append or a with call on the literal array local from.
+// litArrayStep is an append or a with call on the literal array local from,
+// or on the array literal or the step recv with the stored argument arg.
 type litArrayStep struct {
 	from *ast.Var
+	recv ast.Expr
+	arg  ast.Expr
 }
 
 // linkLitLocals makes two literal locals one group: the width that one of
@@ -311,19 +364,21 @@ func (c *checker) linkLitLocals(a, b *litLocal, pos ast.Position) {
 	}
 }
 
+// linkLitPart links ll with the literal locals that e reads.
+func (c *checker) linkLitPart(ll *litLocal, e ast.Expr, pos ast.Position) {
+	locals, _ := c.litTreeLocals(e, nil)
+	for _, other := range locals {
+		c.linkLitLocals(ll, other, pos)
+	}
+}
+
 // linkLitNestedParts links each part of the literal array or tuple local r
 // with the literal locals that value reads for that part. For an append or a
 // with call on a literal array local, the parts are those of that local.
 func (c *checker) linkLitNestedParts(r *ast.Var, value ast.Expr, pos ast.Position) {
-	link := func(ll *litLocal, e ast.Expr) {
-		locals, _ := c.litTreeLocals(e, nil)
-		for _, other := range locals {
-			c.linkLitLocals(ll, other, pos)
-		}
-	}
 	for _, ll := range c.litNestedOf[r] {
-		for _, e := range litInitParts(value, ll.path) {
-			link(ll, e)
+		for _, e := range c.litInitParts(value, ll.path) {
+			c.linkLitPart(ll, e, pos)
 		}
 	}
 	call, ok := value.(*ast.Call)
@@ -668,8 +723,9 @@ func (c *checker) propagateLitLocals(body *ast.Block) {
 }
 
 // litInitParts is the expressions inside an array or tuple literal that give
-// the part of its type at path.
-func litInitParts(e ast.Expr, path []int) []ast.Expr {
+// the part of its type at path. An append or a with call on an array literal
+// gives the parts of the literal and of the stored argument.
+func (c *checker) litInitParts(e ast.Expr, path []int) []ast.Expr {
 	if len(path) == 0 {
 		return []ast.Expr{e}
 	}
@@ -677,12 +733,16 @@ func litInitParts(e ast.Expr, path []int) []ast.Expr {
 	case *ast.ArrayLit:
 		var out []ast.Expr
 		for _, el := range x.Elems {
-			out = append(out, litInitParts(el, path[1:])...)
+			out = append(out, c.litInitParts(el, path[1:])...)
 		}
 		return out
 	case *ast.TupleLit:
 		if path[0] < len(x.Elems) {
-			return litInitParts(x.Elems[path[0]], path[1:])
+			return c.litInitParts(x.Elems[path[0]], path[1:])
+		}
+	case *ast.Call:
+		if step := c.litArraySteps[x]; step.recv != nil {
+			return append(c.litInitParts(step.recv, path), c.litInitParts(step.arg, path[1:])...)
 		}
 	}
 	return nil
