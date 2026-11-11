@@ -1,3 +1,4 @@
+# 2026-11-11: nested_array_literals_take_the_wider_element_type is clean under RC trace.
 # 2026-11-11: owned_field_match_data is clean under RC trace.
 # 2026-11-11: append_on_a_literal_array_local_takes_the_width_of_its_destination is clean under RC trace.
 # 2026-11-11: owned_field_match_data is clean under RC trace.
@@ -687,6 +688,7 @@ narrowing_cast_of_expression                         0
 negative_abs                                         0
 negative_literal_patterns                            0
 nested_arm_patterns                                  0
+nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
 nested_loops                                         0
 nested_option                                        0

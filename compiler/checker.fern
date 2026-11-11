@@ -15233,20 +15233,28 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
 }
 
 function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
-  let first = a.elements[0];
   for k in 1..a.elements.len() {
     let element = a.elements[k];
     let ty = check_expr(element, s);
     if (!type_contains_unknown(ty) && (!same_element_type(ty, anchor) || !type_assignable(ty, anchor, s.unions.unions)) && !array_mix_settles(element, ty, anchor, s)) {
-      if (array_mix_settles(first, check_expr(first, s), ty, s)) {
+      if (prior_elements_settle(a, k, ty, s)) {
         anchor = ty;
-        first = element;
       } else {
         out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
       }
     }
   }
   return out;
+}
+
+// prior_elements_settle is true when each element before index k can take the type want.
+function prior_elements_settle(a: ast.ExprArray, k: i32, want: typeinfo.Type, s: Scope): boolean {
+  for i in 0..k {
+    if (!array_mix_settles(a.elements[i], check_expr(a.elements[i], s), want, s)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function array_mix_settles(e: ast.Expr, have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
