@@ -667,7 +667,7 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
   return NoTail;
 }
 
-function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, body: __Spans, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Tail {
+function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, body: __Spans, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): own __Tail {
   match (open_reader(path)) {
     Ok(r) => {
       let ranges: i64[] = [];
@@ -3255,7 +3255,7 @@ function __serve_tail_wire(c: __Conns, at: i32, method: string, version: string,
   return __serve_wire(c.out, method, version, resp, keep_alive, clk);
 }
 
-function __zc_wire(c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): Option[__Tail] {
+function __zc_wire(c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): own Option[__Tail] {
   if (c.zc_bytes <= 0 || method == "HEAD" || http.bodiless(resp.status) || !__zc_conn(c, at)) {
     return None;
   }
