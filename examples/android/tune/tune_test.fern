@@ -229,6 +229,15 @@ function test_back_closes_the_track_then_the_app(): test.TestOutcome {
   return test.assert_eq(open.to_string() + " " + closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true true");
 }
 
+function test_a_player_with_no_files_looks_for_them(): test.TestOutcome {
+  // The app starts the player with no file. The first frame shows an empty
+  // library, and the player asks the device for its files after it.
+  let s = sim.start(tune.start([]), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let first = sim.shows(s, "0 songs").to_string() + " " + s.shell.app.tracks.len().to_string();
+  s = sim.after(s, 200i64);
+  return test.assert_eq(first + " " + s.shell.app.tracks.len().to_string() + " " + sim.shows(s, "4 songs").to_string(), "true 0 4 true");
+}
+
 function test_a_scan_adds_no_track_two_times(): test.TestOutcome {
   // The track that plays keeps its place when the player reads the files
   // again.
@@ -247,6 +256,7 @@ function main(): i32 {
   r = r.it("the next track plays at the end, and a bad file stops the player", test_the_next_track_plays_at_the_end);
   r = r.it("a track plays again, and the track before it plays", test_repeat_and_previous);
   r = r.it("the back key closes the track, then the app", test_back_closes_the_track_then_the_app);
+  r = r.it("a player with no files shows its screen, then looks for them", test_a_player_with_no_files_looks_for_them);
   r = r.it("a scan adds no track two times", test_a_scan_adds_no_track_two_times);
   return r.finish();
 }

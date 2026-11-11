@@ -47,6 +47,8 @@ pub function no_sound(): Sound {
 // the files of the library again.
 pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan }
 
+// `fresh` tells that the player did not look for its files yet: it looks
+// at its first Beat, after the screen shows.
 // `tracks` is in the order of the artists, the albums and the numbers.
 // `scan` has the files that the player did not read yet. `tab` is the
 // list that shows. `artist` is the artist whose albums show, and `album`
@@ -55,6 +57,7 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan }
 // `deck` reads its file, `sound` plays it, and `pending` has the samples
 // that the sound did not take yet.
 pub struct Model {
+  fresh: boolean,
   tracks: Track[],
   scan: string[],
   tab: i32,
@@ -77,7 +80,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [] };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [] };
 }
 
 // What a person can do, and what the player tells: `Beat` comes many times
@@ -508,6 +511,9 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, repeat: !m.repeat };
     },
     Beat => {
+      if (m.fresh) {
+        return Model { ...m, fresh: false, wants: m.wants.append(Scan) };
+      }
       return m;
     },
     Finished => {
@@ -545,6 +551,9 @@ pub function update(own m: Model, msg: Msg): Model {
 function beat(m: Model): i32 {
   if (m.scan.len() > 0) {
     return 1;
+  }
+  if (m.fresh) {
+    return 50;
   }
   if (m.playing) {
     return 20;
