@@ -195,8 +195,12 @@ function test_picture_covers_its_box(): test.TestOutcome {
   defer draw.release(fr);
   fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
   let c = scene.render(fr, fonts(), text.new_cache(), [scene.node(10, 10, 16, 16, scene.Picture("p", img, 8))]);
-  let got = (fr.pixel(18, 18) == red()).to_string() + " " + (fr.pixel(10, 10) == red()).to_string() + " " + (count(fr, red()) > 150 && count(fr, red()) < 256).to_string();
-  return test.assert_eq(got, "true false true");
+  // The corner outside the round edge keeps the black of the frame.
+  let got = (fr.pixel(18, 18) == red()).to_string() + " " + (fr.pixel(10, 10) == draw.rgb(0, 0, 0)).to_string() + " " + (count(fr, red()) > 150 && count(fr, red()) < 256).to_string();
+  let blue = draw.rgb(0, 0, 255);
+  fr.fill(0, 0, 40, 40, blue);
+  let d = scene.render(fr, fonts(), text.new_cache(), [scene.node(10, 10, 16, 16, scene.Picture("p", img, 8))]);
+  return test.assert_eq(got + " " + (fr.pixel(10, 10) == blue).to_string() + " " + (fr.pixel(25, 25) == blue).to_string(), "true true true true true");
 }
 
 function main(): i32 {
