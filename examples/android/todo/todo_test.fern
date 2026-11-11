@@ -29,16 +29,16 @@ function test_fonts(): text.Fonts {
 }
 
 // A phone of 1080 by 2400 pixels at 2.75 pixels to the dp.
-function started(): sim.Sim[todo.Model] {
+function started(): sim.Sim[todo.Model, todo.Msg] {
   return sim.start(todo.start(), todo.program(), test_fonts(), 1080, 2400, 2.75);
 }
 
 // The simulator after a person types `text` and taps Add.
-function add(own s: sim.Sim[todo.Model], text: string): sim.Sim[todo.Model] {
-  return sim.tap(sim.type_in(s, "draft", text), "add");
+function add(own s: sim.Sim[todo.Model, todo.Msg], text: string): sim.Sim[todo.Model, todo.Msg] {
+  return sim.tap(sim.type_in(s, "draft", text), "Add");
 }
 
-function saved(s: sim.Sim[todo.Model], name: string): void {
+function saved(s: sim.Sim[todo.Model, todo.Msg], name: string): void {
   if let Some(out) = env("TODO_UI_PNG") {
     let fr = sim.picture(s);
     let ok = testkit.save_png(fr, out + "/" + name + ".png");
@@ -63,9 +63,9 @@ function test_add_with_the_button_and_the_keyboard(): test.TestOutcome {
 
 function test_done_and_remove(): test.TestOutcome {
   let s = add(add(add(started(), "One"), "Two"), "Three");
-  s = sim.tap_with(s, "done", 1);
+  s = sim.tap(s, "Two, off");
   let left = todo.left(s.shell.app);
-  s = sim.tap_with(s, "remove", 0);
+  s = sim.tap(s, "Remove");
   let got = left.to_string() + " " + sim.shows(s, "One").to_string() + " " + sim.shows(s, "1 of 2 left").to_string() + " " + s.shell.app.items[0].text + s.shell.app.items[0].done.to_string();
   return test.assert_eq(got, "2 false true Twotrue");
 }

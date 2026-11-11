@@ -1,0 +1,34 @@
+// A generic call with no argument that binds its type parameter takes its
+// type from the element type of the receiver of `append` or `with`, and from
+// a written type argument of the call that it is an argument of.
+struct Box[T] {
+    v: i32,
+}
+
+function mk[T](n: i32): Box[T] {
+    return Box { v: n };
+}
+
+function count[T](a: Box[T][]): i32 {
+    return a.len();
+}
+
+function first[T](a: Box[T][], b: Box[T]): i32 {
+    return a[0].v + b.v;
+}
+
+function main(): i32 {
+    let ks: Box[i32][] = [];
+    ks = ks.append(mk(1));
+    print(ks.len());
+    ks = ks.with(0, mk(7));
+    print(ks[0].v);
+    let ws = ks.append(mk(2)).append(mk(3));
+    print(ws[2].v);
+    print(count[i64]([mk(1), mk(2)]));
+    print(first[u8]([mk(4)], mk(5)));
+    let nested: Box[i64][][] = [];
+    nested = nested.append([mk(8), mk(9)]);
+    print(nested[0][1].v);
+    return 0;
+}
