@@ -10,6 +10,8 @@ func TestSelfHostX86RIPConstantsMatchGas(t *testing.T) {
 	for _, displacement := range []string{"", "0", "8", "+8", "-8", "010", "0x1234", "0b1000", "2147483647", "-2147483648"} {
 		for _, form := range []string{
 			"vpunpckldq %s(%%rip), %%xmm1, %%xmm0",
+			"vshufps $136, %s(%%rip), %%xmm1, %%xmm0",
+			"vshufps $221, %s(%%rip), %%ymm12, %%ymm13",
 			"vpunpckhdq %s(%%rip), %%ymm12, %%ymm13",
 			"vpunpcklqdq %s(%%rip), %%xmm10, %%xmm9",
 			"vpunpckhqdq %s(%%rip), %%ymm1, %%ymm0",
@@ -30,7 +32,7 @@ func TestSelfHostX86RIPConstantsMatchGas(t *testing.T) {
 
 func TestSelfHostX86VEXRejectsMixedWidths(t *testing.T) {
 	var cases []string
-	for _, op := range []string{"vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpand", "vmulpd", "vfmadd213ps"} {
+	for _, op := range []string{"vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpand", "vmulpd", "vfmadd213ps", "vshufps $136,"} {
 		for _, operands := range []string{
 			"%ymm2, %xmm1, %xmm0", "%xmm2, %ymm1, %ymm0",
 			"%xmm2, %ymm1, %xmm0", "%ymm2, %xmm1, %ymm0",
@@ -66,4 +68,20 @@ function main(): i32 {
  if (b.unknown.len() == 0) { return 3; }
  return 0;
 }`)
+}
+
+func TestSelfHostX86ShuffleFormsMatchGas(t *testing.T) {
+	var cases []string
+	for _, width := range []string{"xmm", "ymm"} {
+		for _, imm := range []int{0, 34, 119, 136, 221, 255} {
+			for _, regs := range [][3]int{{0, 1, 2}, {9, 10, 11}, {3, 2, 3}, {1, 2, 2}, {15, 15, 15}} {
+				cases = append(cases, fmt.Sprintf("vshufps $%d, %%%s%d, %%%s%d, %%%s%d", imm, width, regs[0], width, regs[1], width, regs[2]))
+			}
+			for _, mem := range []string{"16(%r8,%rdx,8)", "-24(%rbp)", "(%r12,%r13,4)"} {
+				cases = append(cases, fmt.Sprintf("vshufps $%d, %s, %%%s12, %%%s13", imm, mem, width, width))
+			}
+		}
+	}
+	cases = append(cases, "vshufps $136, .Lshuffle(%rip), %xmm12, %xmm13\n.Lshuffle:\n.long 0,1,2,3")
+	compareFormCases(t, cases)
 }

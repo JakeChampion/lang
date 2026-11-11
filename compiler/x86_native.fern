@@ -3428,7 +3428,7 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
   return buf.append(c3);
 }
 
-function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean, w: boolean): X86Asm {
+function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean, w: boolean, tail: i32 = 0): X86Asm {
   if (x86_gas_has_paren(rm)) {
     let m = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
@@ -3444,7 +3444,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     }
     util.push_bytes(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, w, vvvv, l, pp));
     buf_push_byte(a.code, op);
-    return x86_gas_membytes(a, reg, m, 0);
+    return x86_gas_membytes(a, reg, m, tail);
   }
   let rv = x86_gas_vreg(rm);
   if (rv < 0) {
@@ -3598,7 +3598,26 @@ function x86_vex_three_op(mnem: string): i32 {
   return -1;
 }
 
+function x86_gas_vex_shuffle(own a: X86Asm, rest: string): X86Asm {
+  let ops = x86_gas_split_ops(rest);
+  if (ops.len() != 4 || !ops[0].starts_with("$")) {
+    return x86_gas_bad(a, "vshufps " + rest);
+  }
+  let first = x86_gas_vreg(ops[2]);
+  let dest = x86_gas_vreg(ops[3]);
+  let second = x86_gas_vreg(ops[1]);
+  if (first < 0 || dest < 0 || first >= 16 != dest >= 16 || second >= 0 && second >= 16 != dest >= 16) {
+    return x86_gas_bad(a, "vshufps " + rest);
+  }
+  a = x86_gas_vex_rm(a, "vshufps", 1, 0, first & 15, 198, dest & 15, ops[1], dest >= 16, false, 1);
+  buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
+  return a;
+}
+
 function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
+  if (mnem == "vshufps") {
+    return x86_gas_vex_shuffle(a, rest);
+  }
   let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
@@ -6472,7 +6491,7 @@ function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdic
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: -1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: -1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: -1 };
-  if (x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
+  if (mnem == "vshufps" || x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   let bmi = x86_gas_bmi_verdict(v, mnem);

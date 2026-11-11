@@ -7373,6 +7373,18 @@ function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   } else {
     s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
     let b = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+    if (mode >= 4) {
+      let mask = if ((mode & 1) == 0) { 136 } else { 221 };
+      let first = a;
+      let second = b;
+      if (mode >= 6) {
+        mask = if ((mode & 1) == 0) { 34 } else { 119 };
+        first = b;
+        second = a;
+      }
+      s = s.write("    vshufps $" + util.i32_to_string(mask) + ", " + second + ", " + first + ", " + d + "\n");
+      return ssa_fput(reg_of, ins.result, d, s);
+    }
     let op = if (mode == 1) { "vpunpckl" } else { "vpunpckh" };
     let suffix = if (ins.imm == 32) { "dq" } else { "qdq" };
     s = s.write("    " + op + suffix + " " + b + ", " + a + ", " + d + "\n");
