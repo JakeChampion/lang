@@ -1,0 +1,154 @@
+import "std/video/vp9";
+import "std/video/frame";
+import "std/audio/wire";
+import "std/hex";
+import "std/test";
+import "video_vp9_packet_vectors";
+
+function fixture(count: i32, width: i32, trailing: i32): u8[] {
+  let bytes: u8[] = [];
+  for i in 0..count {
+    for _ in 0..i + 1 {
+      bytes = bytes.append(130u8);
+    }
+  }
+  for _ in 0..trailing {
+    bytes = bytes.append(99u8);
+  }
+  let marker = (192 + (width - 1) * 8 + count - 1) as u8;
+  bytes = bytes.append(marker);
+  for i in 0..count {
+    bytes = wire.put_le(bytes, (i + 1) as u64, width);
+  }
+  return bytes.append(marker);
+}
+
+function layout(count: i32, width: i32, trailing: i32): boolean {
+  let bytes = fixture(count, width, trailing);
+  let Ok(value) = vp9.split_packet(bytes, frame.default_limits()) else {
+    return false;
+  };
+  if (value.frames.len() != count || value.index_offset != count * (count + 1) / 2 + trailing || value.trailing_bytes != trailing) {
+    return false;
+  }
+  for i in 0..count {
+    if (value.frames[i].offset != i * (i + 1) / 2 || value.frames[i].size != i + 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function configurations(): test.TestOutcome {
+  for count in 1..9 {
+    for width in 1..5 {
+      if (!layout(count, width, 0) || !layout(count, width, 3)) {
+        return test.fail("one through eight frames and all size widths");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function reference(): test.TestOutcome {
+  for v in video_vp9_packet_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("hex");
+    };
+    let Ok(value) = vp9.split_packet(bytes, frame.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (value.frames.len() != v.sizes.len() || value.index_offset != v.index_offset || value.trailing_bytes != v.trailing) {
+      return test.fail("independent packet layout " + v.name);
+    }
+    for i in 0..value.frames.len() {
+      if (value.frames[i].offset != v.offsets[i] || value.frames[i].size != v.sizes[i]) {
+        return test.fail("independent frame range " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function markers(): test.TestOutcome {
+  for bytes in [[192u8], [130u8, 192u8]] {
+    if let Err(frame.Truncated) = vp9.split_packet(bytes, frame.default_limits()) {} else {
+      return test.fail("incomplete marker index");
+    }
+  }
+  for bytes in [[130u8, 0u8, 1u8, 192u8], [192u8, 0u8, 192u8], [192u8, 1u8, 192u8]] {
+    if let Err(frame.Header) = vp9.split_packet(bytes, frame.default_limits()) {} else {
+      return test.fail("matching markers and nonempty bounded frames");
+    }
+  }
+  if let Err(frame.Truncated) = vp9.split_packet([], frame.default_limits()) {} else {
+    return test.fail("empty packet");
+  }
+  return test.pass();
+}
+
+function invalid_sizes(): test.TestOutcome {
+  for count in 1..9 {
+    for width in 1..5 {
+      let bytes = fixture(count, width, 0);
+      let start = bytes.len() - 2 - count * width;
+      for i in 0..count {
+        let bad = bytes.with(start + 1 + i * width, 0u8);
+        if let Err(frame.Header) = vp9.split_packet(bad, frame.default_limits()) {} else {
+          return test.fail("zero size at every index position");
+        }
+      }
+      let bad = bytes.with(start + 1 + (count - 1) * width, 255u8);
+      if let Err(frame.Header) = vp9.split_packet(bad, frame.default_limits()) {} else {
+        return test.fail("late cumulative extent cannot expose partial ranges");
+      }
+    }
+  }
+  for size in [2147483648u64, 4294967295u64] {
+    let bytes = wire.put_le([130u8, 216u8], size, 4).append(216u8);
+    if let Err(frame.Header) = vp9.split_packet(bytes, frame.default_limits()) {} else {
+      return test.fail("unsigned four-byte size cannot wrap signed offsets");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let bytes = fixture(8, 4, 3);
+  let exact = frame.Limits { max_pixels: 0, max_packet_bytes: bytes.len() };
+  if let Ok(_) = vp9.split_packet(bytes, exact) {} else {
+    return test.fail("exact packet limit");
+  }
+  for limits in [frame.Limits { ...exact, max_packet_bytes: bytes.len() - 1 }, frame.Limits { ...exact, max_packet_bytes: -1 }, frame.Limits { ...exact, max_pixels: -1 }] {
+    if let Err(frame.Limit) = vp9.split_packet(bytes, limits) {} else {
+      return test.fail("invalid or exceeded limit");
+    }
+  }
+  return test.pass();
+}
+
+function unindexed_prefixes(): test.TestOutcome {
+  let bytes = fixture(8, 4, 0);
+  for cut in 1..bytes.len() - 1 {
+    if ((bytes[cut - 1] & 224u8) != 192u8) {
+      let Ok(value) = vp9.split_packet(bytes[:cut], frame.default_limits()) else {
+        return test.fail("plain prefix");
+      };
+      if (value.frames.len() != 1 || value.frames[0].size != cut || value.index_offset != cut || value.trailing_bytes != 0) {
+        return test.fail("an unindexed prefix is opaque, not a proven complete frame");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded VP9 packet ranges");
+  r = r.it("all index widths, counts, and trailing-byte reports", configurations);
+  r = r.it("actual encoder packets match independent split ranges", reference);
+  r = r.it("superframe markers require complete matching indices", markers);
+  r = r.it("all sizes pass validation before any range returns", invalid_sizes);
+  r = r.it("packet budgets precede index access", budgets);
+  r = r.it("plain prefixes retain their explicit framing limitation", unindexed_prefixes);
+  return r.finish();
+}

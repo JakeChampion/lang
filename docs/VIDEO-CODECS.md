@@ -307,6 +307,16 @@ It does not parse entropy-coded headers or tiles, establish complete frame bound
 Inter frames and show-existing commands require reference state and return `Unsupported`.
 The caller supplies a single frame without an IVF header or superframe index.
 
+`std/video/vp9.split_packet` extracts byte ranges for up to eight indexed frames from one packet.
+It checks the packet budget before index access and validates every size before it returns ranges.
+The bounded index occupies at most 34 bytes. No payload bytes are copied or retained.
+A packet without an index returns one opaque range, without a complete-frame claim.
+
+Superframe markers require complete, matching indices with positive sizes within the payload.
+The result reports any unindexed bytes before the index separately, without a padding-validity claim.
+Frame payloads, reference state, and separate frame timestamps remain the caller's responsibility.
+The same ranges can select individual keyframes for header inspection without a container or platform codec.
+
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
