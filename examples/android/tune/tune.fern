@@ -43,9 +43,10 @@ pub function no_sound(): Sound {
 }
 
 // What the device must do: load the track of a number and play it, play
-// on, stop the sound, go to a part of the track from 0 to 1, or look for
-// the files of the library again.
-pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan }
+// on, stop the sound, go to a part of the track from 0 to 1, look for the
+// files of the library again, or ask the person for the permission to read
+// the music of the phone.
+pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -87,8 +88,9 @@ pub function start(scan: string[]): Model {
 // a second while a track plays, `Finished` comes at the end of a track,
 // and `Failed` comes for a file that the player cannot read.
 // `Found` comes for each file of sound that the player read, and `Files`
-// comes with the files of the library.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan }
+// comes with the files of the library. `Rescan` is the Scan button, and
+// `Returned` comes when the app shows again.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned }
 
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
@@ -541,7 +543,15 @@ pub function update(own m: Model, msg: Msg): Model {
       return with_files(m, files);
     },
     Rescan => {
-      return Model { ...m, error: "", wants: m.wants.append(Scan) };
+      return Model { ...m, fresh: false, error: "", wants: m.wants.append(Grant).append(Scan) };
+    },
+    Returned => {
+      // The person can give the permission while the app is away. A player
+      // that did not look for its files yet looks at its first Beat.
+      if (m.fresh) {
+        return m;
+      }
+      return Model { ...m, wants: m.wants.append(Scan) };
     }
   }
 }
@@ -553,7 +563,7 @@ function beat(m: Model): i32 {
     return 1;
   }
   if (m.fresh) {
-    return 50;
+    return 300;
   }
   if (m.playing) {
     return 20;

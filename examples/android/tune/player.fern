@@ -9,12 +9,14 @@ import "./engine";
 import "./library";
 import "./tune";
 
-// `files` gives the paths of the files of the library, and `roots` the
+// `grant` asks the person for the permission to read the music of the
+// phone. `files` gives the paths of the files of the library, and `roots` the
 // directories that they are in. `read` gives the bytes of a file, or no
 // bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
 // tells how many it took.
 pub struct Device {
+  grant: () => void,
   files: () => string[],
   roots: string[],
   read: (string) => u8[],
@@ -75,6 +77,10 @@ function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
     },
     tune.Scan => {
       return tune.update(m, tune.Files(dev.files()));
+    },
+    tune.Grant => {
+      dev.grant();
+      return m;
     }
   }
 }

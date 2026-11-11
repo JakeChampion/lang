@@ -85,6 +85,7 @@ function paths(): string[] {
 
 function device(): player.Device {
   return player.Device {
+    grant: (): void => {},
     files: (): string[] => paths(),
     roots: ["music"],
     read: (path: string): u8[] => read(path),
@@ -234,7 +235,7 @@ function test_a_player_with_no_files_looks_for_them(): test.TestOutcome {
   // library, and the player asks the device for its files after it.
   let s = sim.start(tune.start([]), player.program(device()), test_fonts(), 1080, 2400, 2.75);
   let first = sim.shows(s, "0 songs").to_string() + " " + s.shell.app.tracks.len().to_string();
-  s = sim.after(s, 200i64);
+  s = sim.after(s, 500i64);
   return test.assert_eq(first + " " + s.shell.app.tracks.len().to_string() + " " + sim.shows(s, "4 songs").to_string(), "true 0 4 true");
 }
 

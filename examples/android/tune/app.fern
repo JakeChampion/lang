@@ -64,7 +64,8 @@ function files(roots: string[]): string[] {
 
 function device(ctx: usize, dir: string, roots: string[]): player.Device {
   return player.Device {
-    files: (): string[] => found(ctx, dir, roots),
+    grant: (): void => grant(ctx),
+    files: (): string[] => found(dir, roots),
     roots: roots,
     read: (path: string): u8[] => read(path),
     open: (rate: i32, channels: i32): tune.Sound => open(rate, channels),
@@ -76,14 +77,9 @@ function device(ctx: usize, dir: string, roots: string[]): player.Device {
   };
 }
 
-// Asks the person one time for the permission to read the music of the
-// phone. A file in the directory of the app tells that the player asked.
-function asked(ctx: usize, dir: string): void {
-  let mark = dir + "/.asked";
-  if (read_file_bytes(mark).is_ok()) {
-    return;
-  }
-  let written = write_file_bytes(mark, [1u8]);
+// Asks the person for the permission to read the music of the phone, when
+// the app does not have it.
+function grant(ctx: usize): void {
   if (!android.has_permission(ctx, "android.permission.READ_MEDIA_AUDIO") && !android.has_permission(ctx, "android.permission.READ_EXTERNAL_STORAGE")) {
     log.info("tune: asks for the permission to read the music");
     android.request_permissions(ctx, ["android.permission.READ_MEDIA_AUDIO", "android.permission.READ_EXTERNAL_STORAGE"]);
@@ -92,8 +88,7 @@ function asked(ctx: usize, dir: string): void {
 
 // The files of the library. The player makes its three tunes in `dir` when
 // no directory of the library has a file of sound.
-function found(ctx: usize, dir: string, roots: string[]): string[] {
-  asked(ctx, dir);
+function found(dir: string, roots: string[]): string[] {
   let have = files(roots);
   log.info("tune: found " + have.len().to_string() + " files");
   if (have.len() > 0) {
@@ -111,12 +106,12 @@ function found(ctx: usize, dir: string, roots: string[]): string[] {
 }
 
 // The message of an event of Android: the player looks for its files
-// again when the app comes back, because the person can give it the
-// permission to read the music of the phone at that time.
+// again when the app shows again, because the person can give it the
+// permission to read the music of the phone while it is away.
 function system(e: android.Event): Option[tune.Msg] {
   match (e) {
     android.Resume => {
-      return Some(tune.Rescan);
+      return Some(tune.Returned);
     },
     _ => {
       return None;
@@ -130,8 +125,8 @@ function app_main(ctx: usize): usize {
   let roots = [own_music, "/sdcard/Music", "/sdcard/Download"];
   let dev = device(ctx, own_music, roots);
   log.info("tune: starts");
-  // The player looks for its files after the screen shows, so no work is
-  // before the first frame.
+  // The player looks for its files after the screen shows, and asks for
+  // the permission only when the person taps Scan.
   let last = app.run(ctx, tune.start([]), player.program(dev).with_system(system));
   dev.close(last.sound);
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
