@@ -83,11 +83,47 @@ function paths(): string[] {
   return ["music/" + library.demo_name(2), "music/loose/x1.wav", "music/" + library.demo_name(0), "music/" + library.demo_name(1), "music/Fern/cover.mp3"];
 }
 
+// The names in the directory `at` of the files of the test.
+function names_in(at: string): string[] {
+  let out: string[] = [];
+  for p in paths() {
+    if (p.starts_with(at + "/")) {
+      let name = p.drop(at.len() + 1).split("/")[0].to_owned();
+      if (!out.contains(name)) {
+        out = out.append(name);
+      }
+    }
+  }
+  return out;
+}
+
+// The directories of the test: music has Fern and loose, and Fern has two
+// albums.
+function dirs_of(at: string): string[] {
+  if (at == "music") {
+    return ["Fern", "loose"];
+  }
+  if (at == "music/Fern") {
+    return ["First Light", "Second Light"];
+  }
+  return [];
+}
+
 function device(): player.Device {
   return player.Device {
     grant: (): void => {},
-    files: (): string[] => paths(),
     roots: ["music"],
+    names: (at: string): string[] => names_in(at),
+    is_dir: (path: string): boolean => names_in(path).len() > 0,
+    demo: (): string[] => [],
+    now: (): i64 => 0i64,
+    dirs: (at: string): string[] => dirs_of(at),
+    keep: (folder: string): void => {},
+    show: (now: tune.Now): void => {},
+    wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
+    sleep: (a: tune.Awake): void => {},
+    size: (path: string): i64 => read(path).len() as i64,
+    part: (path: string, at: i64, n: i32): u8[] => library.parts_of(read(path))(at, n),
     read: (path: string): u8[] => read(path),
     open: (rate: i32, channels: i32): tune.Sound => tune.Sound { ptr: 1 as usize, rate: rate, channels: channels },
     start: (s: tune.Sound): void => {},
@@ -247,6 +283,53 @@ function test_a_scan_adds_no_track_two_times(): test.TestOutcome {
   return test.assert_eq(s.shell.app.tracks.len().to_string() + " " + s.shell.app.scan.len().to_string() + " " + s.shell.app.current.to_string() + " " + s.shell.app.playing.to_string(), "4 0 2 true");
 }
 
+// The Folder button shows the directories of the phone. The person goes
+// into Fern and then First Light, goes up one time, and uses Fern: the
+// library then has the three tunes of Fern, with the album from the path.
+function test_a_person_chooses_the_folder_of_the_library(): test.TestOutcome {
+  let s = sim.after(sim.start(tune.start_in("music", ""), player.program(device()), test_fonts(), 1080, 2400, 2.75), 400i64);
+  let all = s.shell.app.tracks.len();
+  let a = sim.tap(s, "Folder");
+  let at_home = sim.shows(a, "loose") && !sim.shows(a, "Up") && a.shell.app.wants.len() == 0;
+  let b = sim.tap(sim.tap(a, "Fern"), "First Light");
+  let deep = b.shell.app.dir + " " + sim.shows(b, "Use First Light").to_string();
+  let c = sim.tap(b, "Up");
+  saved(c, "tune-folder");
+  let up = c.shell.app.dir;
+  let d = sim.after(sim.tap(c, "Use Fern"), 50i64);
+  let m = d.shell.app;
+  return test.assert_eq(all.to_string() + " " + at_home.to_string() + " " + deep + " " + up + " | " + m.folder + " " + m.choosing.to_string() + " " + titles(m) + " " + m.tracks[2].album, "4 true music/Fern/First Light true music/Fern | music/Fern false Morning Fern|Slow Water|Quick Light Second Light");
+}
+
+// The media buttons of Android give Play and SeekMs. The player tells
+// Android each new track and state, and keeps the phone awake while a
+// track plays.
+function test_the_media_buttons_of_android(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let on = s.shell.app.told + " " + (s.shell.app.awake.wake != 0 as usize).to_string();
+  let again = sim.send(s, tune.Play(true));
+  let same = again.shell.app.playing;
+  let held = sim.send(again, tune.Play(false));
+  let off = held.shell.app.told + " " + (held.shell.app.awake.wake != 0 as usize).to_string() + " " + held.shell.app.playing.to_string();
+  let length = held.shell.app.length_ms;
+  let moved = sim.send(held, tune.SeekMs(length / 2i64));
+  let at = moved.shell.app.at_ms;
+  let back = sim.send(moved, tune.Play(true));
+  return test.assert_eq(on + " | " + same.to_string() + " | " + off + " | " + near(at, length / 2i64, 200i64).to_string() + " " + back.shell.app.playing.to_string() + " " + back.shell.app.told, "2|true true | true | 2|false false false | true true 2|true");
+}
+
+// A call takes the sound of the phone: the player stops, and plays again
+// when the call ends. A player that the person stopped does not start.
+function test_the_audio_focus(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let away = sim.send(s, tune.Focus(false));
+  let stopped = away.shell.app.playing;
+  let again = sim.send(away, tune.Focus(true));
+  let plays = again.shell.app.playing;
+  let held = sim.send(sim.send(again, tune.Play(false)), tune.Focus(true));
+  return test.assert_eq(stopped.to_string() + " " + plays.to_string() + " " + held.shell.app.playing.to_string(), "false true false");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -259,5 +342,8 @@ function main(): i32 {
   r = r.it("the back key closes the track, then the app", test_back_closes_the_track_then_the_app);
   r = r.it("a player with no files shows its screen, then looks for them", test_a_player_with_no_files_looks_for_them);
   r = r.it("a scan adds no track two times", test_a_scan_adds_no_track_two_times);
+  r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
+  r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
+  r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
   return r.finish();
 }

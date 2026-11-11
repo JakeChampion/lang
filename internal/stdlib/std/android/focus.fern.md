@@ -8,7 +8,9 @@ Android gives the audio focus to one client at a time. A call takes it, and so d
 
 `new` makes one listener of that class, and a focus request for speech in a voice call. `changed` sends each change to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. `event` decodes it.
 
-`request` asks for the focus until `release`. A request is transient: the client that had the focus gets it back after the release. Each listener is a client of its own, also in one app.
+`music` makes a focus request for music in place of speech. That request is not transient: a different app that plays stops, and it does not start again by itself.
+
+`request` asks for the focus until `release`. A request of `new` is transient: the client that had the focus gets it back after the release. Each listener is a client of its own, also in one app.
 
 A `Loss` comes when a call or another app takes the focus. A `Duck` comes when another app plays a short sound, such as a notification. A `Gain` comes when the focus comes back after a loss.
 
@@ -87,7 +89,13 @@ function code_of(change: i32): usize {
 // The global references of the audio manager, the request and the listener.
 pub struct Focus { manager: usize, request: usize, listener: usize }
 
+const GAIN: i32 = 1;
+
 const GAIN_TRANSIENT: i32 = 2;
+
+const USAGE_MEDIA: i32 = 1;
+
+const CONTENT_MUSIC: i32 = 2;
 
 const USAGE_VOICE_COMMUNICATION: i32 = 2;
 
@@ -106,10 +114,10 @@ function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
   return obj;
 }
 
-function attributes(e: usize): usize {
+function attributes(e: usize, purpose: i32, kind: i32): usize {
   let b: usize = new_object(e, jni.find_class(e, ATTRS), "()V", []);
-  let usage: usize = jni.call_object(e, b, "setUsage", "(I)L" + ATTRS + ";", [USAGE_VOICE_COMMUNICATION as usize]);
-  let content: usize = jni.call_object(e, b, "setContentType", "(I)L" + ATTRS + ";", [CONTENT_SPEECH as usize]);
+  let usage: usize = jni.call_object(e, b, "setUsage", "(I)L" + ATTRS + ";", [purpose as usize]);
+  let content: usize = jni.call_object(e, b, "setContentType", "(I)L" + ATTRS + ";", [kind as usize]);
   return jni.call_object(e, b, "build", "()Landroid/media/AudioAttributes;", []);
 }
 
@@ -117,6 +125,17 @@ function attributes(e: usize): usize {
 // @jni class that implements OnAudioFocusChangeListener. It is None when
 // the phone has no audio manager.
 pub function new(ctx: usize, class: string): Option[Focus] {
+  return made(ctx, class, GAIN_TRANSIENT, USAGE_VOICE_COMMUNICATION, CONTENT_SPEECH);
+}
+
+// A focus request for music with one listener of `class`. The request is
+// not transient: a different app that plays stops until the person starts
+// it again.
+pub function music(ctx: usize, class: string): Option[Focus] {
+  return made(ctx, class, GAIN, USAGE_MEDIA, CONTENT_MUSIC);
+}
+
+function made(ctx: usize, class: string, gain: i32, purpose: i32, kind: i32): Option[Focus] {
   let e: usize = android.env(ctx);
   let obj: usize = android.activity_object(ctx);
   let manager: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "audio")]);
@@ -124,8 +143,8 @@ pub function new(ctx: usize, class: string): Option[Focus] {
     return None;
   }
   let listener: usize = new_object(e, jni.load_class(e, obj, class), "()V", []);
-  let b: usize = new_object(e, jni.find_class(e, BUILDER), "(I)V", [GAIN_TRANSIENT as usize]);
-  let with_attrs: usize = jni.call_object(e, b, "setAudioAttributes", "(Landroid/media/AudioAttributes;)L" + BUILDER + ";", [attributes(e)]);
+  let b: usize = new_object(e, jni.find_class(e, BUILDER), "(I)V", [gain as usize]);
+  let with_attrs: usize = jni.call_object(e, b, "setAudioAttributes", "(Landroid/media/AudioAttributes;)L" + BUILDER + ";", [attributes(e, purpose, kind)]);
   let with_listener: usize = jni.call_object(e, b, "setOnAudioFocusChangeListener", "(" + LISTENER_SIG + ")L" + BUILDER + ";", [listener]);
   let request: usize = jni.call_object(e, b, "build", "()Landroid/media/AudioFocusRequest;", []);
   if (request == 0 as usize) {

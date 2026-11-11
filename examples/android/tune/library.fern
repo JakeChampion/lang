@@ -1,10 +1,11 @@
 // The library of the player: the tracks of a directory, and the tunes that
 // the player makes when the directory has none.
-import "core/cmp";
 import "std/audio/flac";
+import "std/audio/mp3";
 import "std/audio/pcm";
 import "std/audio/tags";
 import "std/audio/wav";
+import "std/audio/wire";
 import "std/option";
 import "std/result";
 import "std/string";
@@ -98,22 +99,159 @@ function or_else(text: string, other: string): string {
   return other;
 }
 
-// The track of the file `path` with the bytes `bytes`, or None for a file
-// that is not sound. The tags of the file give its title, its artist, its
+// The bytes that the player reads at the start of a file, and at most
+// after its sound: its tags and the header of its sound are there.
+const HEAD: i32 = 131072;
+
+// The length of an ID3v2 tag at the start of `head`, or 0.
+function id3_bytes(head: [u8]): i64 {
+  if (head.len() < 10 || !wire.tag(head, 0, "ID3")) {
+    return 0i64;
+  }
+  let size = 0i64;
+  for i in 6..10 {
+    size = size << 7i64 | (head[i] & 127u8) as i64;
+  }
+  return size + (if ((head[5] & 16u8) != 0u8) { 20i64 } else { 10i64 });
+}
+
+// The length in ms of an MP3 file of `bytes` bytes of sound that starts
+// with `first`: the number of frames that the file tells, or its bytes at
+// the bit rate of its first frame.
+function mp3_ms(first: [u8], bytes: i64): Option[i64] {
+  let Ok(t) = mp3.inspect_track(first, limits()) else {
+    return None;
+  };
+  let Ok(h) = mp3.inspect(first, t.data_offset, limits()) else {
+    return None;
+  };
+  if (t.channels < 1 || t.channels > 2 || t.sample_rate <= 0) {
+    return None;
+  }
+  if (t.declared_frames == 0u32 && h.bitrate > 0) {
+    return Some(bytes * 8i64 / (h.bitrate as i64));
+  }
+  return Some(t.declared_frames as i64 * (h.frames as i64) * 1000i64 / (t.sample_rate as i64));
+}
+
+// The tags of an MP3 file and its length in ms. The sound starts after an
+// ID3v2 tag, and an ID3v1 tag is in the last 128 bytes.
+function mp3_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let skip = id3_bytes(head);
+  let first = if (skip + 16384i64 <= head.len() as i64 || head.len() as i64 >= size) { head } else { part(skip, HEAD) };
+  let Some(ms) = mp3_ms(first, size - skip) else {
+    return None;
+  };
+  let found = tags.id3v2(head);
+  if (found.empty() && size >= 128i64) {
+    found = tags.id3v1(part(size - 128i64, 128));
+  }
+  return Some((found, ms));
+}
+
+// The tags of a FLAC file and its length in ms. The whole file is read
+// when its tags are longer than `head`.
+function flac_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let bytes = head;
+  let got = flac.inspect(bytes, limits());
+  if (got.is_err() && head.len() as i64 < size && size < 1073741824i64) {
+    bytes = part(0i64, size as i32);
+    got = flac.inspect(bytes, limits());
+  }
+  let Ok(h) = got else {
+    return None;
+  };
+  if (h.format.channels > 2) {
+    return None;
+  }
+  return Some((tags.flac(bytes), h.frames as i64 * 1000i64 / (h.format.sample_rate as i64)));
+}
+
+// The `data` chunk of a WAV file that starts with `head`: the offset of
+// the chunk, the bytes of its sound, and the bytes of sound in a second.
+struct Sound { at: i32, bytes: i64, second: i64 }
+
+// The bytes of sound in a second that the `fmt ` chunk at `at` tells, or 0
+// for a file that has more than two channels.
+function per_second(head: [u8], at: i32): i64 {
+  let channels = wire.le(head, at + 10, 2);
+  if (channels < 1u64 || channels > 2u64) {
+    return 0i64;
+  }
+  return wire.le(head, at + 16, 4) as i64;
+}
+
+function wav_sound(head: [u8]): Option[Sound] {
+  if (head.len() < 12 || !wire.tag(head, 8, "WAVE")) {
+    return None;
+  }
+  let at = 12;
+  let second = 0i64;
+  while (at + 8 <= head.len()) {
+    let length = wire.le(head, at + 4, 4) as i64;
+    if (wire.tag(head, at, "data")) {
+      if (second <= 0i64) {
+        return None;
+      }
+      return Some(Sound { at: at, bytes: length, second: second });
+    }
+    if (length > (head.len() - at - 8) as i64) {
+      return None;
+    }
+    if (wire.tag(head, at, "fmt ") && length >= 16i64) {
+      second = per_second(head, at);
+    }
+    at += 8 + (length + length % 2i64) as i32;
+  }
+  return None;
+}
+
+// The tags of a WAV file and its length in ms. Tags after the sound are
+// read from there.
+function wav_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let Some(sound) = wav_sound(head) else {
+    return None;
+  };
+  let found = tags.wav(head);
+  let after = sound.at as i64 + 8i64 + sound.bytes + sound.bytes % 2i64;
+  if (found.empty() && after + 8i64 <= size && after > head.len() as i64) {
+    let rest: u8[] = [];
+    for i in 0..12 {
+      rest = rest.append(head[i]);
+    }
+    for b in part(after, HEAD) {
+      rest = rest.append(b);
+    }
+    found = tags.wav(rest);
+  }
+  return Some((found, sound.bytes * 1000i64 / sound.second));
+}
+
+// The track of the file `path` of `size` bytes, or None for a file that is
+// not sound. `part` gives the bytes of the file from an offset, at most a
+// number of them. The tags of the file give its title, its artist, its
 // album and its number. A file with no tag for one of them takes it from
 // its path below its root: `Artist/Album/03 Title.flac`.
-pub function track(roots: string[], path: string, bytes: u8[]): Option[tune.Track] {
+pub function track(roots: string[], path: string, size: i64, part: (i64, i32) => u8[]): Option[tune.Track] {
   let dirs = parts(below(roots, path));
   if (dirs.len() == 0) {
     return None;
   }
   let name = dirs[dirs.len() - 1];
   let format = format_of(name);
-  if (format.len() == 0) {
+  if (format.len() == 0 || size <= 0i64) {
     return None;
   }
-  let found = tags.read(bytes);
-  let Some(deck) = engine.open(bytes) else {
+  let head = part(0i64, HEAD);
+  let read: Option[(tags.Tags, i64)] = None;
+  if (wire.tag(head, 0, "RIFF")) {
+    read = wav_file(head, size, part);
+  } else if (wire.tag(head, 0, "fLaC")) {
+    read = flac_file(head, size, part);
+  } else {
+    read = mp3_file(head, size, part);
+  }
+  let Some((found, ms)) = read else {
     return None;
   };
   let (number, title) = numbered(stem(name));
@@ -129,25 +267,32 @@ pub function track(roots: string[], path: string, bytes: u8[]): Option[tune.Trac
   if (found.track > 0) {
     number = found.track;
   }
-  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: deck.duration_ms() });
+  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms });
 }
 
-// The paths of the files of sound in `dir` and in the directories below
-// it, at most `depth` directories down. `list` gives the names in a
-// directory, and `is_dir` tells that a path is a directory.
-pub function files(dir: string, depth: i32, list: (string) => string[], is_dir: (string) => boolean): string[] {
-  let out: string[] = [];
-  for name in cmp.sort(list(dir)) {
-    let path = dir + "/" + name;
-    if (format_of(name).len() > 0) {
-      out = out.append(path);
-    } else if (depth > 0 && !name.starts_with(".") && is_dir(path)) {
-      for f in files(path, depth - 1, list, is_dir) {
-        out = out.append(f);
-      }
+// The function that gives the parts of a file that is in memory.
+pub function parts_of(bytes: u8[]): (i64, i32) => u8[] {
+  return (at: i64, n: i32): u8[] => {
+    let out: u8[] = [];
+    let from = at as i32;
+    for i in from..(from + n).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return out;
+  };
+}
+
+// True for a name that ends as a file that is not sound, such as a
+// picture or a document. The scan does not ask the device about such a
+// name, because the answer costs time for each file of a large directory.
+pub function other_file(name: string): boolean {
+  let lower = name.to_lower();
+  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
+    if (lower.ends_with(end)) {
+      return true;
     }
   }
-  return out;
+  return false;
 }
 
 // The file of the tune of a number: the first one is a FLAC file, and each

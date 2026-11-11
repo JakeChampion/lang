@@ -21,7 +21,8 @@ pub const MP3: i32 = 2;
 const WAV_PART: i32 = 4096;
 
 // A file that plays. `at` is the frame that the next part starts at, and
-// `total` is the number of frames, or 0 when the file does not tell.
+// `total` is the number of frames of samples, or 0 when the file does not
+// tell.
 // `offset` is the byte that the next FLAC or MP3 frame starts at, between
 // `first` and `last`. `done` tells that the file has no more sound.
 pub struct Deck {
@@ -80,7 +81,10 @@ function open_mp3(bytes: u8[]): Option[Deck] {
   let Ok(t) = mp3.inspect_track(bytes, limits()) else {
     return None;
   };
-  return Some(Deck { ...blank(MP3, bytes), rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64, offset: t.data_offset, first: t.data_offset, last: t.data_end });
+  let Ok(h) = mp3.inspect(bytes, t.data_offset, limits()) else {
+    return None;
+  };
+  return Some(Deck { ...blank(MP3, bytes), rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64 * (h.frames as i64), offset: t.data_offset, first: t.data_offset, last: t.data_end });
 }
 
 // A deck for the file `bytes`, or None when it is not a file that the

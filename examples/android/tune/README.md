@@ -11,6 +11,17 @@ looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
 of the phone.
 
+The player has a media session of `std/android/session`. So Android shows
+its track with the media controls of the notification panel and of the
+lock screen. The buttons there play, stop, go to the next track and go to
+a time. The player asks for the audio focus of `std/android/focus`: a
+different app that plays stops, and the player stops for a call. A foreground service of `std/android/service` and a wake lock keep
+the sound on while the window of the app is away.
+
+The "Folder" button shows the directories of the phone. The person goes
+into a directory and taps "Use". The library then has the files of that
+folder only, and the player keeps the folder for its next start.
+
 The library has three lists: the songs, the artists and the albums. An
 artist shows its albums, and an album shows its songs in the order of their
 numbers.
@@ -65,6 +76,9 @@ frame that takes longer than the sound that the stream holds makes a gap in
 the sound. The sound stops when Android stops the activity, because the app
 has no service.
 
-The player keeps the whole file of the track in memory. It reads each
-whole file of the library one time, a file at each tick, for its tags and
-its length. It keeps no list of the library between two starts.
+The player keeps the whole file of the track that plays in memory. For
+the library, it reads one directory or the first 128 KB of one file at a
+time, for 8 ms of each tick,
+for its tags and its length. It reads more only for a tag that is longer,
+or for a tag after the sound. It keeps no list of the library between two
+starts.

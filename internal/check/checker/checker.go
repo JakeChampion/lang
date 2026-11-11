@@ -15092,13 +15092,20 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
+		originalElemExpected := elemExpected
 		elemTypes := []ast.Type{elemT}
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
 		toFloat = toFloat && !floatDest.Polymorphic
 		var prefix litPrefixScan
 		for i, el := range n.Elems[1:] {
+			// A call with no argument has only its place to give it a type:
+			// it takes the type of the first element as its expected type.
+			if call, isCall := el.(*ast.Call); isCall && len(call.Args) == 0 && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
+				elemExpected = elemT
+			}
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
+			elemExpected = originalElemExpected
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
