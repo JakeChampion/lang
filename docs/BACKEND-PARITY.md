@@ -545,6 +545,14 @@ kernel loads at a random base, and a startup loop relocates the absolute
 data words (`docs/security/PIE.md`). Android is position-independent
 without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
 
+### A function on arm64 holds 128 MiB of code at most
+
+A conditional branch on arm64 reaches 1 MiB, and a test-bit branch reaches
+32 KiB. For a target that is farther, the assembler writes the inverted branch
+over an unconditional branch (`arm64_asm_far_branch` in `arm64_native.fern`).
+An unconditional branch reaches 128 MiB. A target that is farther than that is
+a refusal that names the branch and the distance.
+
 ### Load segments align to the largest page of the target
 
 An arm64 ELF image and each `-shared` object align their load segments to
