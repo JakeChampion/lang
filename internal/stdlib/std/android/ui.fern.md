@@ -14,7 +14,7 @@ The executable example below is such an app.
 
 `column` puts its elements one below the other, `row` puts them side by side, and `stack` puts them one over the other. `text` shows a text, which wraps at the width of its box. `picture` shows an image, and `canvas` shows what a function of the app draws. `box` is an empty rectangle, and `space` takes the room that is left.
 
-Each element has a width and a height: `Hug` takes the size of what the element holds, `Grow` takes a share of the room that is left, and `Exact` is a size in dp. The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
+Each element has a width and a height: `Hug` takes the size of what the element holds, `Grow` takes a share of the room that is left, and `Exact` is a size in dp. The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
 `on_tap` gives an element the name of an action, and a number when one name is not enough: the row of a list, for example. A tap on the element comes to `update` as `Tap` with that name and number. `on_long` does the same for a long press.
 
@@ -67,7 +67,7 @@ function update(own m: Model, msg: ui.Msg): Model {
 }
 
 function main(): i32 {
-  let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0 };
+  let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
   let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), "");
   let next = update(Model { count: 0 }, ui.Tap("add", 0));
   if (lay.nodes.len() == 3 && next.count == 1) {
@@ -186,7 +186,9 @@ pub function (t: Theme) color(c: i32): i32 {
 
 // The window of the app: its size in pixels, the pixels of one dp, the
 // theme, and the parts at its edges that the bars of the system cover.
-pub struct Screen { w: i32, h: i32, d: f64, dark: boolean, theme: Theme, left: i32, top: i32, right: i32, bottom: i32 }
+// `font` is the scale of the text of the system: a text of 1 sp is `font`
+// dp high.
+pub struct Screen { w: i32, h: i32, d: f64, dark: boolean, theme: Theme, left: i32, top: i32, right: i32, bottom: i32, font: f64 }
 
 // The width and the height of the part of the screen that is free, in dp.
 pub function (s: Screen) width(): f64 {
@@ -557,10 +559,16 @@ function bounded(v: i32): boolean {
   return v < UNBOUNDED / 2;
 }
 
-struct Env { fonts: text.Fonts, d: f64, theme: Theme, offsets: Map[string, i32], focus: string }
+struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: string }
 
 function px(env: Env, dp: f64): i32 {
   return (dp * env.d).round() as i32;
+}
+
+// The pixels of a text of `size` sp, at the scale of the text of the
+// system.
+function sp(env: Env, size: f64): i32 {
+  return (size * env.d * env.font).round().max(1.0) as i32;
 }
 
 // The exact size of `s` in pixels, or -1.
@@ -592,7 +600,7 @@ function weight_of(s: Size): f64 {
 struct Lines { lines: string[], px: i32, face: i32, line: i32 }
 
 function text_lines(env: Env, e: El, room: i32): Lines {
-  let size = px(env, e.size).max(1);
+  let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
   let lines = text.wrap(env.fonts, face, size, e.content, room);
   if (e.lines > 0 && lines.len() > e.lines) {
@@ -885,7 +893,7 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
 // field that has the focus.
 function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
   let focused = e.field == env.focus;
-  let size = px(env, e.size).max(1);
+  let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
   let line = text.line(env.fonts, face, size);
   let shown = text.fit_end(env.fonts, face, size, e.content, w);
@@ -1048,7 +1056,7 @@ function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own 
 // has how far each list scrolls, by its name. `focus` is the name of the
 // field that has the focus, or "".
 pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: string): Layout {
-  let env = Env { fonts: fonts, d: s.d, theme: s.theme, offsets: offsets, focus: focus };
+  let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
   if (exact(env, root.w) >= 0) {
@@ -1341,7 +1349,8 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 ```fern
 <<shell>>=
 // What the shell does on the device. `size` gives the width and the height
-// of a window. `density` gives the pixels of one dp. `now` gives the time
+// of a window. `density` gives the pixels of one dp. `font_scale` gives
+// the scale of the text of the system. `now` gives the time
 // on the monotonic clock in ns. `present` draws the nodes on the window
 // over a background color. `show_keyboard` shows the keyboard of the system
 // on a text, `set_keyboard` gives it another text, and `hide_keyboard`
@@ -1350,6 +1359,7 @@ pub struct Device {
   size: (usize) => (i32, i32),
   density: () => f64,
   dark: () => boolean,
+  font_scale: () => f64,
   now: () => i64,
   request_frame: () => void,
   finish: () => void,
@@ -1372,7 +1382,7 @@ pub struct Shell[S] { app: S, host: Host }
 
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S](own state: S, fonts: text.Fonts, dev: Device): Shell[S] {
-  let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0 };
+  let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
   return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "" } };
 }
 
@@ -1388,7 +1398,7 @@ function on_window(h: Host, window: usize): Host {
   if (window != h.window || !painter.attached(p)) {
     p = h.dev.attach(p, window);
   }
-  return changed(Host { ...h, paint: painter.with_size(p, w, hh), window: window, screen: Screen { ...h.screen, w: w, h: hh, d: h.dev.density(), dark: h.dev.dark() } });
+  return changed(Host { ...h, paint: painter.with_size(p, w, hh), window: window, screen: Screen { ...h.screen, w: w, h: hh, d: h.dev.density(), dark: h.dev.dark(), font: h.dev.font_scale() } });
 }
 
 // The shell after `update` took the message `m`.
