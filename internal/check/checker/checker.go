@@ -14867,21 +14867,20 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		elemT := checkElem(n.Elems[0])
 		elemTypes := []ast.Type{elemT}
-		invalid, localMismatch := false, false
+		invalid := false
+		floatDest, toFloat := elemExpected.(ast.FloatType)
+		toFloat = toFloat && !floatDest.Polymorphic
 		for i, el := range n.Elems[1:] {
 			t := checkElem(el)
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
-			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil {
-				if !localMismatch {
-					want, got := elemT, t
-					c.afterLitFix(ll, func() {
-						c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
-					})
-				}
-				localMismatch = true
+			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
+				want, got := elemT, t
+				c.afterLitFix(ll, func() {
+					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
+				})
 				continue
 			}
 			if ast.Equal(t, elemT) {
@@ -14905,14 +14904,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if elemT == nil || invalid && elemExpected != nil && c.elemSettleable(elemT, elemExpected) {
 			return nil
 		}
-		if f, float := elemExpected.(ast.FloatType); float && !f.Polymorphic && !localMismatch {
-			for _, el := range n.Elems {
-				if ll := c.intLitLocalIn(el, elemExpected); ll != nil {
-					c.afterLitFix(ll, func() {
-						c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemExpected, ll.width)
-					})
-					return nil
-				}
+		if toFloat {
+			if refused, ok := c.litLocalsInFloatDest(n, elemTypes, floatDest).(ast.ArrayType); ok {
+				n.ElemType = refused.Elem
+				return refused
 			}
 		}
 		n.ElemType = elemT
