@@ -188,11 +188,16 @@ jobs:
 
   # Main run 42749853522 recorded 1331 seconds for this one test.
   # A shared worker reached its 1500-second limit with other tests unfinished.
-  # This job retains the test and its 25-minute timeout, with all runner CPUs.
+  # This job gives the test all runner CPUs. FERN_EXAMPLES_CENSUS_SHARD splits
+  # the corpus across the legs, because one test cannot go to two workers.
   examples-census:
-    name: examples-census-x86_64
+    name: examples-census-x86_64-${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -201,7 +206,7 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/oracle-verdict-cache
         with:
-          slot: e2e-other-examples-x86_64
+          slot: e2e-other-examples-x86_64-${{ matrix.shard }}
       - uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
@@ -215,6 +220,7 @@ jobs:
         env:
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_HOST_GL: "1"
+          FERN_EXAMPLES_CENSUS_SHARD: "${{ matrix.shard }}/2"
         run: |
           cd internal/testing/e2e
           "$RUNNER_TEMP/ci-test-workers" \
@@ -227,6 +233,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: examples-census-results-x86_64
+          name: examples-census-results-x86_64-${{ matrix.shard }}
           path: ${{ runner.temp }}/other-examples-results
           if-no-files-found: error
