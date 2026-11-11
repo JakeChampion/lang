@@ -17422,7 +17422,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !init_fits(v.init, initt, declared, cur)) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !generic_fn_value_arg(v.init, cur) && !init_fits(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {
