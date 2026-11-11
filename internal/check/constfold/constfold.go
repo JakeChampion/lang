@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/pkg/embed"
@@ -28,6 +29,19 @@ type Inputs struct {
 	TargetArch string
 }
 
+// sourceName is the name that the source wrote for a const. The const K
+// of an imported module m has the bundle name m__K, and the source wrote
+// m.K.
+func sourceName(cd *ast.ConstDecl) string {
+	if cd.SourceModule == "" || len(cd.Name) < 2 {
+		return cd.Name
+	}
+	if cut := strings.Index(cd.Name[1:], "__"); cut >= 0 {
+		return cd.Name[:cut+1] + "." + cd.Name[cut+3:]
+	}
+	return cd.Name
+}
+
 func Fold(prog *ast.Program, assets *embed.Set) error {
 	return FoldWith(prog, Inputs{Assets: assets})
 }
@@ -40,7 +54,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 
 	for _, cd := range foldOrder(prog.Consts) {
 		if earlier[cd.Name] {
-			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name), ErrCode: "E006"})
+			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", sourceName(cd)), ErrCode: "E006"})
 			continue
 		}
 		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {

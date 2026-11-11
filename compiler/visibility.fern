@@ -91,8 +91,11 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
     let visible = visible_names(lm.mod, true);
+    // A name with an exported declaration is not private. Its second
+    // declaration is E006, which names the cause.
+    let exported = util.name_index(exported_function_names(lm.mod));
     for f in lm.mod.funcs {
-      if (private_top_function(f)) {
+      if (private_top_function(f) && !exported.has(f.name)) {
         out = out.append(module_key(lm) + "." + f.name);
       }
     }
@@ -111,6 +114,18 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
       if (!al.is_pub && !al.is_package) {
         out = out.append(module_key(lm) + "." + al.name);
       }
+    }
+  }
+  return out;
+}
+
+// The names of the top-level functions and consts of mod that another
+// module can use.
+function exported_function_names(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for f in mod.funcs {
+    if (f.receiver_name.len() == 0 && f.receiver_type.len() == 0 && !private_top_function(f)) {
+      out = out.append(f.name);
     }
   }
   return out;
