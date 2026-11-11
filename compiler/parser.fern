@@ -10259,7 +10259,11 @@ function call_param_spellings(c: ast.ExprCall, env: MEnv, funcs: MFns): string[]
       name = m.name + "." + fa.field;
     }
     if (!has_free_decl(funcs, name)) {
-      return method_param_spellings(c, fa, env, funcs);
+      let spelled = method_param_spellings(c, fa, env, funcs);
+      if (spelled.len() > 0) {
+        return spelled;
+      }
+      return array_step_spellings(c, fa, env, funcs);
     }
   }
   if (name.len() == 0) {
@@ -10336,7 +10340,46 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
   return none;
 }
 
+// The parameters of the builtin append and with of an array. The stored
+// argument has the element type of the receiver.
+function array_step_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string[] {
+  let rt = mono_infer(fa.obj, env, funcs);
+  if (!type_ends_arr(rt)) {
+    return [];
+  }
+  if (fa.field == "append" && c.args.len() == 1) {
+    return [elem_spelling(rt)];
+  }
+  if (fa.field == "with" && c.args.len() == 2) {
+    return ["i32", elem_spelling(rt)];
+  }
+  return [];
+}
+
+// The declaration and the instance key of a call that writes each type
+// argument of a generic function.
+function written_inst(c: ast.ExprCall, funcs: MFns): (i32, string) {
+  let name = "";
+  if let ast.ExprIdent(cid) = c.callee {
+    name = cid.name;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if let ast.ExprIdent(m) = fa.obj {
+      name = m.name + "." + fa.field;
+    }
+  }
+  let at = bg_find(funcs, name);
+  if (at < 0) {
+    return (at, "");
+  }
+  return (at, explicit_inst_key(funcs.decls[at], c.type_args));
+}
+
 function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
+  let (at, key) = written_inst(c, funcs);
+  if (key.len() > 0) {
+    return mono_keyed_args(c, funcs.decls[at], key, env, funcs, ins);
+  }
   let pspell: string[] = [];
   if (call_args_want_expected(c, env, funcs)) {
     pspell = call_param_spellings(c, env, funcs);
