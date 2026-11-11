@@ -149,6 +149,44 @@ func TestAppendOnAnEmptyArrayLiteralIsOneDiagnostic(t *testing.T) {
 	}
 }
 
+// An integer literal that does not fit in i32 widens the narrower value
+// beside it in an array literal.
+func TestArrayLiteralWideIntegerLiteralWidensTheValueBesideIt(t *testing.T) {
+	const head = "function main(): i32 {\nlet i: i32 = 1; let u: u32 = 2; let w: u64 = 3;\n"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an i32 value before the literal", "let ms = [i, 5000000000]; let k: i64 = ms[0];", ""},
+		{"an i32 value after the literal", "let ms = [5000000000, i]; let k: i64 = ms[1];", ""},
+		{"a literal that fits between them", "let ms = [i, 1, 5000000000]; let k: i64 = ms[1];", ""},
+		{"a negative literal beside a u32 value", "let ms = [u, -5000000000]; let k: i64 = ms[0];", ""},
+		{"a typed destination", "let ms: i64[] = [i, 5000000000];", ""},
+		{"a u64 value keeps its type", "let ms = [w, 5000000000]; let k: u64 = ms[1];", ""},
+		{"a literal that fits in u32 keeps u32", "let ms = [u, 4000000000]; let k: u32 = ms[1];", ""},
+		{"two inner literals", "let ms = [[i], [5000000000]]; let k: i64 = ms[0][0];", ""},
+		{"three levels", "let ms = [[[i]], [[5000000000]]]; let k: i64 = ms[0][0][0];", ""},
+		{"the element type is i64", "let ms = [i, 5000000000]; let k: i32 = ms[0];", "expected i32, got i64"},
+		{"the nested element type is i64", "let ms = [[i], [5000000000]]; let k: i32 = ms[0][0];", "expected i32, got i64"},
+		{"a literal that fits keeps i32", "let ms = [i, 5]; let k: i32 = ms[1];", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, head+c.body+"\nreturn 0;\n}\n")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("rejected, want accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error with %q", err, c.want)
+			}
+		})
+	}
+}
+
 // The inner literals of a nested array literal take the wider element type.
 // An inner array that is not a literal keeps its type.
 func TestNestedArrayLiteralsTakeTheWiderElementType(t *testing.T) {

@@ -100,6 +100,35 @@ func arrayLiteralTree(e ast.Expr, want ast.Type) bool {
 	return true
 }
 
+var (
+	i32Type = ast.NumberType{Width: 32, Signed: true}
+	i64Type = ast.NumberType{Width: 64, Signed: true}
+)
+
+// wideLiteralElem gives an unsettled integer type in t the type i64 when a
+// literal of es fits in neither i32 nor the narrower integer type that
+// beside has there. The join of the two types then widens the value beside
+// the literal.
+func (c *checker) wideLiteralElem(t, beside ast.Type, es ...ast.Expr) ast.Type {
+	switch tt := t.(type) {
+	case ast.NumberType:
+		bn, ok := beside.(ast.NumberType)
+		if !ok || !tt.Polymorphic || !losslessNumericWiden(bn, i64Type) {
+			return t
+		}
+		for _, e := range es {
+			if c.unsettledIntLitExceeds(e, false, i32Type) && c.unsettledIntLitExceeds(e, false, bn) {
+				return i64Type
+			}
+		}
+	case ast.ArrayType:
+		if bt, ok := beside.(ast.ArrayType); ok {
+			return ast.ArrayType{Elem: c.wideLiteralElem(tt.Elem, bt.Elem, arrayElemExprs(es)...)}
+		}
+	}
+	return t
+}
+
 func (c *checker) settleArrayLiteral(al *ast.ArrayLit, want ast.Type) {
 	if !c.elemSettleable(al.ElemType, want) {
 		return

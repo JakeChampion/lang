@@ -1,0 +1,3 @@
+main.fern:5:18: error[E047]: literal 300 does not fit in u8
+main.fern:7:19: error[E047]: literal -1 does not fit in u32: unsigned types have no negative values
+main.fern:9:22: error[E047]: literal -1 does not fit in u64: unsigned types have no negative values
