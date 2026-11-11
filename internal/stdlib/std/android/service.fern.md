@@ -334,7 +334,7 @@ function open_intent(e: usize, context: usize): usize {
 // Makes the notification of `builder` the media controls of the session
 // whose token is `session`. A tap on it opens the app.
 function media_style(e: usize, context: usize, builder: usize, session: usize): void {
-  let ret: string = ")Landroid/app/Notification$Builder;";
+  let ret = ")Landroid/app/Notification$Builder;";
   let style_class: usize = jni.find_class(e, "android/app/Notification$MediaStyle");
   let none: usize = jni.jvalue_alloc(0);
   let style: usize = jni.new_object_a(e, style_class, jni.get_method_id(e, style_class, "<init>", "()V"), none);
@@ -355,7 +355,7 @@ function notification_of(e: usize, context: usize, class: usize, n: Notice, sess
   let args: usize = jni.jvalues([context, jni.new_string(e, n.channel)]);
   let builder: usize = jni.new_object_a(e, builder_class, jni.get_method_id(e, builder_class, "<init>", "(Landroid/content/Context;Ljava/lang/String;)V"), args);
   jni.free_buffer(args);
-  let ret: string = ")Landroid/app/Notification$Builder;";
+  let ret = ")Landroid/app/Notification$Builder;";
   build_step(e, builder, "setContentTitle", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.title)]);
   build_step(e, builder, "setContentText", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.text)]);
   build_step(e, builder, "setSmallIcon", "(I" + ret, [ICON]);
