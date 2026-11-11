@@ -11069,6 +11069,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, tag ast.Expr, armMoved movedSet) *ownedBindingScope {
 		taken := takesTag(tag)
 		_, temporary := tag.(*ast.Call)
+		fieldOwner := originalOwnedFieldSource(fn, tag)
+		ownedField := owned[fieldOwner] && !borrowedParam[fieldOwner]
 		scope := shadowOwnedBindings(bindings, owned, borrowedParam, armMoved, deferMoved)
 		scopes = append(scopes, scope)
 		for i, bname := range bindings {
@@ -11077,7 +11079,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			// A copyable payload is a local value. A payload that can hold
 			// a handle keeps its linear ownership.
-			if scrutOwned && c.holdsNoHandle(types[i]) {
+			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) {
 				continue
 			}
 			if scrutOwned {
@@ -15317,6 +15319,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if tt == nil {
 				return nil
 			}
+			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil && litArrayStepArg(n, fa) >= 0 {
+				for _, arg := range n.Args {
+					c.checkExpr(arg, s)
+				}
+				return tt
+			}
 			vlanes, isVec := c.genericVec(tt)
 			if pt, ok := tt.(ast.ParamType); ok || isVec {
 				var tm ast.TraitMethod
@@ -15621,7 +15629,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt
 					} else if _, isArray := pt.(ast.ArrayType); isArray {
-						if litArrayRooted(n.Args[i]) {
+						if litArrayRooted(n.Args[i]) || c.litStepOnLocal(n.Args[i], s) {
 							c.expectedType = pt
 						}
 					} else if _, isFn := pt.(*ast.FuncType); isFn {

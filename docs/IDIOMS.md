@@ -242,7 +242,13 @@ Keep the annotation in these cases:
   that gives the element its width gives the local the same width. The
   argument that `append` or `with` puts in a literal array is an element of
   that array. An `append` or a `with` call on an array literal is a literal
-  array: `[1, 2].append(x)` has the element type of `[1, 2, x]`.
+  array: `[1, 2].append(x)` has the element type of `[1, 2, x]`. A typed
+  destination of an `append` or a `with` call on a literal array local gives
+  the local its element type. An integer literal that does not fit `i32`
+  gives the array the element type `i64`. An integer literal local does not
+  become a float, so a float literal array refuses it as the argument. An
+  `append` on an empty array literal takes its element type from a typed
+  destination only: `let ys = [].append(2);` is an E020.
 - The local holds a member struct of a `type A | B` union, and the code uses
   it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
   annotation, the local has the struct type, and a later assignment of

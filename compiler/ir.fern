@@ -1961,7 +1961,7 @@ pub function const_struct_is_wide_array(packed: string): boolean {
 
 pub function const_struct_fn_body(packed: string): string {
   let t = const_struct_type(packed);
-  if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
+  if (t.len() <= 4 || !t.starts_with("&fn:")) {
     return "";
   }
   return slice_unchecked(t, 4, const_struct_fn_hash_at(t)).to_owned();

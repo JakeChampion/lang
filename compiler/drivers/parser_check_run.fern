@@ -1571,8 +1571,8 @@ function check_struct_patterns(): test.TestOutcome {
     return test.fail("modSP.funcs[0].params.len() != 1");
   }
   let spHolder = modSP.funcs[0].params[0].name;
-  if (spHolder.len() < 9 || slice_unchecked(spHolder, 0, 9) != "__ptuple_") {
-    return test.fail("spHolder.len() < 9 || slice_unchecked(spHolder, 0, 9) != \"__ptuple_\"");
+  if (spHolder.len() < 9 || !spHolder.starts_with("__ptuple_")) {
+    return test.fail("spHolder.len() < 9 || !spHolder.starts_with(\"__ptuple_\")");
   }
   if (modSP.funcs[0].params[0].type_name != "Point") {
     return test.fail("modSP.funcs[0].params[0].type_name != \"Point\"");

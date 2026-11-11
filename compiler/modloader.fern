@@ -94,7 +94,7 @@ pub function dirname(path: string): string {
 }
 
 function rel_path(path: string): string {
-  if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
+  if (path.len() >= 2 && path.starts_with("./")) {
     return util.without_fern_ext(slice_unchecked(path, 2, path.len()).to_owned());
   }
   return util.without_fern_ext(path);

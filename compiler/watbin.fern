@@ -716,30 +716,16 @@ function simd_has_memarg(op: string): boolean {
 }
 
 function simd_has_lane(op: string): boolean {
-  return str_ends_with(op, ".extract_lane") || str_ends_with(op, ".replace_lane");
-}
-
-function str_ends_with(s: string, suffix: string): boolean {
-  if (suffix.len() > s.len()) {
-    return false;
-  }
-  return slice_unchecked(s, s.len() - suffix.len(), s.len()) == suffix;
-}
-
-function str_starts_with(s: string, prefix: string): boolean {
-  if (prefix.len() > s.len()) {
-    return false;
-  }
-  return slice_unchecked(s, 0, prefix.len()) == prefix;
+  return op.ends_with(".extract_lane") || op.ends_with(".replace_lane");
 }
 
 function simd_lane_index(op: string, text: string): i32 {
   let lanes = 16;
-  if (str_starts_with(op, "f64x2.") || str_starts_with(op, "i64x2.")) {
+  if (op.starts_with("f64x2.") || op.starts_with("i64x2.")) {
     lanes = 2;
-  } else if (str_starts_with(op, "f32x4.") || str_starts_with(op, "i32x4.")) {
+  } else if (op.starts_with("f32x4.") || op.starts_with("i32x4.")) {
     lanes = 4;
-  } else if (str_starts_with(op, "i16x8.")) {
+  } else if (op.starts_with("i16x8.")) {
     lanes = 8;
   }
   let idx = parse_dec(text);
@@ -757,7 +743,7 @@ function simd_arity(op: string): i32 {
   if (op == "v128.bitselect") {
     return 3;
   }
-  if (op == "v128.store" || str_ends_with(op, ".replace_lane")) {
+  if (op == "v128.store" || op.ends_with(".replace_lane")) {
     return 2;
   }
   if (simd_binary_verb(op)) {
@@ -767,11 +753,11 @@ function simd_arity(op: string): i32 {
 }
 
 function simd_binary_verb(op: string): boolean {
-  return str_ends_with(op, ".add") || str_ends_with(op, ".sub") || str_ends_with(op, ".mul") || str_ends_with(op, ".div")
-    || str_ends_with(op, ".min") || str_ends_with(op, ".max") || str_ends_with(op, ".pmin") || str_ends_with(op, ".pmax")
-    || str_ends_with(op, ".eq") || str_ends_with(op, ".ne") || str_ends_with(op, ".lt") || str_ends_with(op, ".gt") || str_ends_with(op, ".lt_s")
-    || str_ends_with(op, ".le") || str_ends_with(op, ".ge")
-    || str_ends_with(op, ".and") || str_ends_with(op, ".andnot") || str_ends_with(op, ".or") || str_ends_with(op, ".xor");
+  return op.ends_with(".add") || op.ends_with(".sub") || op.ends_with(".mul") || op.ends_with(".div")
+    || op.ends_with(".min") || op.ends_with(".max") || op.ends_with(".pmin") || op.ends_with(".pmax")
+    || op.ends_with(".eq") || op.ends_with(".ne") || op.ends_with(".lt") || op.ends_with(".gt") || op.ends_with(".lt_s")
+    || op.ends_with(".le") || op.ends_with(".ge")
+    || op.ends_with(".and") || op.ends_with(".andnot") || op.ends_with(".or") || op.ends_with(".xor");
 }
 
 function bulk_mem_opcode(op: string): i32 {
@@ -800,7 +786,7 @@ function is_offset_atom(n: SExpr): boolean {
   if (n.text.len() < 7) {
     return false;
   }
-  return slice_unchecked(n.text, 0, 7) == "offset=";
+  return n.text.starts_with("offset=");
 }
 
 function offset_atom_value(n: SExpr): i32 {
@@ -2145,7 +2131,7 @@ function lowers_realloc(k: i32): boolean {
 
 pub function lowered_name(name: string): string {
   let pre = "[async-lower]";
-  if (name.len() <= pre.len() || slice_unchecked(name, 0, pre.len()) != pre) {
+  if (name.len() <= pre.len() || !name.starts_with(pre)) {
     return name;
   }
   let bytes: u8[] = [];

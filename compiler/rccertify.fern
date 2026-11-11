@@ -92,7 +92,7 @@ pub function (a: Abis) lookup(name: string): Abi {
 
 function env_closure(name: string): boolean {
   let n = name.len();
-  return n > 4 && slice_unchecked(name, n - 4, n) == "$env" && name.starts_with("__sem_");
+  return n > 4 && util.str_range_eq(name, n - 4, n, "$env") && name.starts_with("__sem_");
 }
 
 pub struct Finding { kind: string, value: i32, block: i32, defined: string, message: string }

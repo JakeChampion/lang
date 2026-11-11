@@ -529,7 +529,7 @@ function utf16_units(s: string, n: i32): i32 {
 
 pub function uri_path(uri: string): string {
   let scheme = "file://";
-  if (uri.len() <= scheme.len() || slice_unchecked(uri, 0, scheme.len()) != scheme) {
+  if (uri.len() <= scheme.len() || !uri.starts_with(scheme)) {
     return "";
   }
   let rest = slice_unchecked(uri, scheme.len(), uri.len()).to_owned();

@@ -225,7 +225,7 @@ pub function (t: OpTable) op_lookup(kind: string): Sig {
     return t.sigs[at];
   }
   let n = kind.len();
-  if (n > 3 && slice_unchecked(kind, n - 3, n) == "_u8") {
+  if (n > 3 && kind.ends_with("_u8")) {
     return t.op_lookup(slice_unchecked(kind, 0, n - 3).to_owned());
   }
   return unknown_sig();

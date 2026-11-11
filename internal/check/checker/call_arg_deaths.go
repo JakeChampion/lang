@@ -303,8 +303,13 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	freshInitLocal := map[string]bool{}
 	staleDecl := map[string]bool{}
 	declCount := map[string]int{}
+	assignedNames := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch v := n.(type) {
+		case *ast.Assign:
+			if target, named := v.Target.(*ast.Ident); named {
+				assignedNames[target.Name] = true
+			}
 		case *ast.Var:
 			declCount[v.Name]++
 			if freshInit(info, v.Init) {
@@ -610,7 +615,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if id, ok := tag.(*ast.Ident); ok {
 			return ownParam[id.Name] && declCount[id.Name] == 0
 		}
-		return freshInit(info, tag)
+		return freshInit(info, tag) || originalOwnedFieldSource(fn, tag) != ""
 	}
 	ast.Walk(body, func(n ast.Node) bool {
 		var tag ast.Expr
@@ -646,6 +651,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			return true
 		}
 		taken := moves[tag]
+		ownedField := originalOwnedFieldSource(fn, tag) != ""
 		if id, ok := tag.(*ast.Ident); ok && isParam[id.Name] {
 			taken = false
 		}
@@ -654,7 +660,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		for _, arm := range arms {
 			for i, b := range arm.names {
-				if taken || i < len(arm.types) && arm.types[i] != nil && handleFree(arm.types[i]) {
+				if taken || (!ownedField || !assignedNames[b]) && i < len(arm.types) && arm.types[i] != nil && handleFree(arm.types[i]) {
 					freshInitLocal[b] = true
 				}
 			}

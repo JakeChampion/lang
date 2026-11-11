@@ -1,0 +1,31 @@
+// A typed destination gives an `append` or a `with` call on a literal array
+// local its element type, and the local takes the same type. The destination
+// is a parameter or a declared local. An `append` on an empty array literal
+// takes its element type from a typed destination.
+function sum(xs: i64[]): i64 {
+    let total: i64 = 0;
+    for x in xs {
+        total += x;
+    }
+    return total;
+}
+
+function main(): i32 {
+    let zs = [1, 2];
+    print(sum(zs.append(4)) + 5000000000);
+    print(sum(zs));
+    let ws = [1, 2];
+    print(sum(ws.with(0, 4)));
+    let ys = [1, 2];
+    let b = 3;
+    print(sum(ys.append(4).append(b)));
+    let wide: i64 = b;
+    print(wide + 5000000000);
+    let rs = [1, 2];
+    let qs: i64[] = rs.append(5);
+    print(sum(qs) + sum(rs));
+    let es: i64[] = [].append(1).append(2);
+    print(sum(es));
+    print(sum([].append(7)));
+    return 0;
+}
