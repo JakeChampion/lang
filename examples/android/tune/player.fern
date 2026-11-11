@@ -48,67 +48,79 @@ pub struct Device {
 // The samples that the player keeps ready, as a part of a second.
 const READY_PARTS: i32 = 5;
 
-function loaded(dev: Device, own m: tune.Model, i: i32): tune.Model {
+// The player on a device: the state of tune.fern, and the deck that reads
+// the file of the track that plays. Only one owner uses a deck, so it is
+// not in the state.
+pub struct Player { model: tune.Model, deck: Option[engine.Deck] }
+
+// A player with the state `model` and no deck.
+pub function wrap(own model: tune.Model): Player {
+  return Player { model: model, deck: None };
+}
+
+function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   dev.close(m.sound);
   let Some(deck) = engine.open(dev.read(m.tracks[i].path)) else {
-    return tune.update(tune.Model { ...m, deck: None, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title));
+    return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
   let sound = dev.open(deck.rate, deck.channels);
   if (sound.ptr == 0 as usize) {
-    return tune.update(tune.Model { ...m, deck: None, sound: sound, pending: [] }, tune.Failed("The phone gave no sound"));
+    return wrap(tune.update(tune.Model { ...m, sound: sound, pending: [] }, tune.Failed("The phone gave no sound")));
   }
   dev.start(sound);
   let length = deck.duration_ms();
-  return tune.Model { ...m, deck: Some(deck), sound: sound, pending: [], at_ms: 0i64, length_ms: length };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length }, deck: Some(deck) };
 }
 
-function sought(dev: Device, own m: tune.Model, part: f64): tune.Model {
-  let Some(deck) = m.deck else {
-    return m;
+function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Deck], part: f64): Player {
+  let Some(d) = deck else {
+    return wrap(m);
   };
   dev.pause(m.sound);
   dev.flush(m.sound);
   if (m.playing) {
     dev.start(m.sound);
   }
-  let moved = deck.seek(part);
+  let moved = d.seek(part);
   let at = moved.position_ms();
-  return tune.Model { ...m, deck: Some(moved), pending: [], at_ms: at, told: "" };
+  return Player { model: tune.Model { ...m, pending: [], at_ms: at, told: "" }, deck: Some(moved) };
 }
 
-function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
+// The player after the device did `want`.
+function done(dev: Device, own p: Player, want: tune.Want): Player {
+  let Player { model: m, deck } = p;
   match (want) {
     tune.Load(i) => {
       return loaded(dev, m, i);
     },
     tune.Resume => {
       dev.start(m.sound);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Hold => {
       dev.pause(m.sound);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Seek(part) => {
-      return sought(dev, m, part);
+      return sought(dev, m, deck, part);
     },
     tune.Scan => {
       if (m.folder.len() > 0) {
         let folder = [m.folder];
-        return tune.update(m, tune.Files(folder));
+        return Player { model: tune.update(m, tune.Files(folder)), deck: deck };
       }
-      return tune.update(m, tune.Files(dev.roots));
+      return Player { model: tune.update(m, tune.Files(dev.roots)), deck: deck };
     },
     tune.List(dir) => {
-      return tune.update(m, tune.Dirs(dir, dev.dirs(dir)));
+      return Player { model: tune.update(m, tune.Dirs(dir, dev.dirs(dir))), deck: deck };
     },
     tune.Keep(folder) => {
       dev.keep(folder);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Grant => {
       dev.grant();
-      return m;
+      return Player { model: m, deck: deck };
     }
   }
 }
@@ -174,62 +186,79 @@ function rest(all: i32[], from: i32): i32[] {
   return out;
 }
 
-// Reads the file until the player has enough samples ready, gives the
-// sound what it takes, and tells the time of the track.
-function pumped(dev: Device, own m: tune.Model): tune.Model {
-  let Some(deck) = m.deck else {
-    return m;
-  };
-  let sound = m.sound;
-  let ready = m.pending;
-  let enough = sound.rate * sound.channels / READY_PARTS;
+// The deck after it gave parts until `ready` has `enough` samples or the
+// file ends, and those samples.
+function filled(own deck: engine.Deck, ready: i32[], enough: i32): (engine.Deck, i32[]) {
   let d = deck;
-  while (ready.len() < enough && !d.done) {
+  let out = ready;
+  while (out.len() < enough && !d.done) {
     let (next, part) = d.pull();
     d = next;
     for v in part {
-      ready = ready.append(v);
+      out = out.append(v);
     }
   }
+  return (d, out);
+}
+
+// While a track plays: reads the file until the player has enough samples
+// ready, gives the sound what it takes, and tells the time of the track.
+function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Deck]): Player {
+  if (!m.playing) {
+    return Player { model: m, deck: deck };
+  }
+  let Some(first) = deck else {
+    return wrap(m);
+  };
+  let sound = m.sound;
+  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS);
   let kept = rest(ready, dev.write(sound, ready));
   let waiting = kept.len() as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64);
   let at = (d.position_ms() - waiting).max(0i64);
   let length = d.duration_ms();
   let ended = d.done && kept.len() == 0;
-  let after = tune.Model { ...m, deck: Some(d), pending: kept, at_ms: at, length_ms: length };
+  let after = tune.Model { ...m, pending: kept, at_ms: at, length_ms: length };
   if (ended) {
-    return tune.update(after, tune.Finished);
+    return Player { model: tune.update(after, tune.Finished), deck: Some(d) };
   }
-  return after;
+  return Player { model: after, deck: Some(d) };
 }
 
-// The state after the device did what the state wants, and after the
-// sound got its next samples.
-pub function run(dev: Device, m: tune.Model): tune.Model {
-  let turns = 0;
+// The player after it read paths of the library until the time `until`,
+// and after the sound got its next samples.
+function settled(dev: Device, own p: Player, until: i64): Player {
+  let Player { model, deck } = p;
+  let m = model;
+  if (m.scan.len() > 0) {
+    m = scanned_until(dev, m, until);
+  }
+  return pumped(dev, m, deck);
+}
+
+// The player after the device did each thing that the state wants.
+function turn(dev: Device, own p: Player, until: i64): Player {
+  let Player { model: asked, deck: held } = p;
+  let wants = asked.wants;
+  let state = Player { model: tune.Model { ...asked, wants: [] }, deck: held };
+  for want in wants {
+    state = done(dev, state, want);
+  }
+  return settled(dev, state, until);
+}
+
+// The player after the device did what the state wants. A thing that the
+// device did can make the state want one more thing.
+function run(dev: Device, own p: Player): Player {
   let until = dev.now() + SCAN_MS * 1000000i64;
-  let state = tune.Model { ...m };
-  while (turns < 4) {
-    let wants = state.wants;
-    state = tune.Model { ...state, wants: [] };
-    for want in wants {
-      state = done(dev, state, want);
-    }
-    if (state.scan.len() > 0) {
-      state = scanned_until(dev, state, until);
-    }
-    if (state.playing) {
-      state = pumped(dev, state);
-    }
-    if (state.wants.len() == 0) {
-      return state;
-    }
+  let state = turn(dev, p, until);
+  let turns = 1;
+  while (turns < 4 && state.model.wants.len() > 0) {
+    state = turn(dev, state, until);
     turns += 1;
   }
   return state;
 }
 
-// The program of tune.fern on the device `dev`.
 // Tells Android the track and the state of the player when one of them is
 // new, and keeps the phone awake while a track plays.
 function shown(dev: Device, own m: tune.Model): tune.Model {
@@ -249,6 +278,14 @@ function shown(dev: Device, own m: tune.Model): tune.Model {
   return tune.Model { ...m, told: key, awake: awake };
 }
 
-pub function program(dev: Device): ui.Program[tune.Model, tune.Msg] {
-  return tune.program().with_effects((m: tune.Model): tune.Model => shown(dev, run(dev, m)));
+// The player after the message `msg`: `tune.update` gives the next state,
+// and then the device does what that state wants.
+function stepped(dev: Device, own p: Player, msg: tune.Msg): Player {
+  let Player { model, deck } = p;
+  let Player { model: after, deck: held } = run(dev, Player { model: tune.update(model, msg), deck: deck });
+  return Player { model: shown(dev, after), deck: held };
+}
+
+pub function program(dev: Device): ui.Program[Player, tune.Msg] {
+  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => stepped(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model));
 }

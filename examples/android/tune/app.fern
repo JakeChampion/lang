@@ -295,7 +295,7 @@ function app_main(ctx: usize): usize {
   // The player looks for its files after the screen shows, and asks for
   // the permission only when the person taps Scan.
   let folder = read_file(android.data_dir(ctx) + "/folder.txt").unwrap_or("");
-  let last = app.run(ctx, tune.start_in("/storage/emulated/0", folder), player.program(dev).with_system(system));
+  let last = app.run(ctx, player.wrap(tune.start_in("/storage/emulated/0", folder)), player.program(dev).with_system(system)).model;
   dev.close(last.sound);
   if (last.awake.wake != 0 as usize) {
     dev.sleep(last.awake);

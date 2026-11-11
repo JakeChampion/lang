@@ -5,7 +5,8 @@ The standard library of Fern decodes each file, and AAudio plays the
 samples. The app has a library with a search field. The track that plays has a
 screen of its own, with a bar that goes to a time.
 
-The player reads WAV, FLAC and MP3 files in mono or in stereo. It looks
+The player reads WAV, FLAC, MP3, M4A (AAC), Ogg Vorbis and Opus files in
+mono or in stereo. It looks
 for them in the `music` directory of the private files of the app. It also
 looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
@@ -35,8 +36,9 @@ artist shows its albums, and an album shows its songs in the order of their
 numbers.
 
 `std/audio/tags` reads the title, the artist, the album and the
-number from each file: an ID3 tag of an MP3 file, the Vorbis comments of a
-FLAC file, or the INFO list of a WAV file. A file with no tag takes them
+number from each file. An MP3 file has an ID3 tag, and a FLAC or an Ogg
+file has Vorbis comments. An M4A file has an `ilst` box, and a WAV file has
+an INFO list. A file with no tag takes them
 from its path: `Artist/Album/03 Title.flac`.
 
 When the player finds no file, it makes three tunes in its own directory:

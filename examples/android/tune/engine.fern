@@ -1,9 +1,17 @@
-// The decoder of the player: it reads a WAV, a FLAC or an MP3 file that is
+// The decoder of the player: it reads a WAV, a FLAC, an MP3, an M4A, an Ogg
+// Vorbis or an Opus file that is
 // in memory, and gives its sound a part at a time as 16-bit samples. It has
 // no Android code, so engine_test.fern runs it on the host.
+import "std/audio/aac";
+import "std/audio/aac/config" as aac_config;
 import "std/audio/flac";
 import "std/audio/mp3";
+import "std/audio/mp4";
+import "std/audio/mp4/tables";
+import "std/audio/opusfile";
 import "std/audio/pcm";
+import "std/audio/vorbisfile";
+import "std/audio/vorbisfile/seek" as vorbis_seek;
 import "std/audio/wav";
 import "std/f64";
 import "std/i32";
@@ -17,6 +25,12 @@ pub const FLAC: i32 = 1;
 
 pub const MP3: i32 = 2;
 
+pub const M4A: i32 = 3;
+
+pub const VORBIS: i32 = 4;
+
+pub const OPUS: i32 = 5;
+
 // The frames of one part of a WAV file.
 const WAV_PART: i32 = 4096;
 
@@ -24,7 +38,8 @@ const WAV_PART: i32 = 4096;
 // `total` is the number of frames of samples, or 0 when the file does not
 // tell.
 // `offset` is the byte that the next FLAC or MP3 frame starts at, between
-// `first` and `last`. `done` tells that the file has no more sound.
+// `first` and `last`. `done` tells that the file has no more sound. `codec`
+// is the decoder of an M4A, an Ogg Vorbis or an Opus file.
 pub struct Deck {
   kind: i32,
   bytes: u8[],
@@ -40,7 +55,19 @@ pub struct Deck {
   stream: Option[flac.Header],
   layer3: mp3.Decoder,
   done: boolean,
+  codec: Codec,
 }
+
+// The decoder of an M4A file: its AAC decoder, the configuration that
+// makes a new one, and the place of each packet in the file.
+pub struct Aac { decoder: aac.Decoder, config: aac_config.Config, packets: tables.Packet[] }
+
+// The decoder that a deck owns, for a format whose decoder only one owner
+// can use.
+pub enum Codec { Plain, Packets(Aac), Vorbis(vorbis_seek.Cursor), Opus(opusfile.SeekCursor) }
+
+// The frames of samples of one AAC packet.
+const AAC_FRAMES: i64 = 1024i64;
 
 function limits(): pcm.Limits {
   return pcm.Limits { max_input_bytes: 1073741824, max_samples: 1048576 };
@@ -59,7 +86,7 @@ function starts_with(bytes: [u8], tag: string): boolean {
 }
 
 function blank(kind: i32, bytes: u8[]): Deck {
-  return Deck { kind: kind, bytes: bytes, rate: 0, channels: 0, bits: 16, total: 0i64, at: 0i64, offset: 0, first: 0, last: 0, block: 0, stream: None, layer3: mp3.decoder(), done: false };
+  return Deck { kind: kind, bytes: bytes, rate: 0, channels: 0, bits: 16, total: 0i64, at: 0i64, offset: 0, first: 0, last: 0, block: 0, stream: None, layer3: mp3.decoder(), done: false, codec: Plain };
 }
 
 function open_wav(bytes: u8[]): Option[Deck] {
@@ -87,18 +114,80 @@ function open_mp3(bytes: u8[]): Option[Deck] {
   return Some(Deck { ...blank(MP3, bytes), rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64 * (h.frames as i64), offset: t.data_offset, first: t.data_offset, last: t.data_end });
 }
 
+function open_m4a(bytes: u8[]): Option[Deck] {
+  let Ok(index) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return None;
+  };
+  for track in index.tracks {
+    if (track.enabled && track.configurations.len() > 0 && track.packets.len() > 0) {
+      let config = track.configurations[0];
+      let Ok(decoder) = aac.create(config, limits()) else {
+        return None;
+      };
+      let total = track.packets.len() as i64 * AAC_FRAMES;
+      return Some(Deck { ...blank(M4A, bytes), rate: config.sample_rate, channels: config.channels, total: total, codec: Packets(Aac { decoder: decoder, config: config, packets: track.packets }) });
+    }
+  }
+  return None;
+}
+
+// The bytes of one file that an index of an Ogg file can have.
+const OGG_BYTES: i32 = 1073741824;
+
+function open_vorbis(bytes: u8[]): Option[Deck] {
+  let Ok(index) = vorbis_seek.inspect(bytes, vorbis_seek.Limits { ...vorbis_seek.default_limits(), max_input_bytes: OGG_BYTES }) else {
+    return None;
+  };
+  if (index.links().len() == 0) {
+    return None;
+  }
+  let link = index.links()[0];
+  let info = link.info.audio;
+  return Some(Deck { ...blank(VORBIS, bytes), rate: info.sample_rate, channels: info.channels, total: link.frames, codec: Vorbis(vorbis_seek.cursor(index)) });
+}
+
+function open_opus(bytes: u8[]): Option[Deck] {
+  let Ok(index) = opusfile.inspect_seek(bytes, opusfile.SeekLimits { ...opusfile.default_seek_limits(), max_input_bytes: OGG_BYTES }) else {
+    return None;
+  };
+  if (index.tracks.len() == 0) {
+    return None;
+  }
+  let track = index.tracks[0];
+  return Some(Deck { ...blank(OPUS, bytes), rate: 48000, channels: track.info.header.channels, total: track.frames, codec: Opus(opusfile.seek_reader(index)) });
+}
+
+// An Ogg file has Vorbis sound or Opus sound: its first packet starts at
+// the byte 28 with the name of its codec.
+function open_ogg(bytes: u8[]): Option[Deck] {
+  if (bytes.len() > 36 && bytes[28] == 79u8 && bytes[29] == 112u8 && bytes[30] == 117u8 && bytes[31] == 115u8) {
+    return open_opus(bytes);
+  }
+  return open_vorbis(bytes);
+}
+
+// The deck of the format that the first bytes of the file show. A file
+// that starts as no other format is an MP3 file.
+function opened(bytes: u8[]): Option[Deck] {
+  if (starts_with(bytes, "RIFF")) {
+    return open_wav(bytes);
+  }
+  if (starts_with(bytes, "fLaC")) {
+    return open_flac(bytes);
+  }
+  if (starts_with(bytes, "OggS")) {
+    return open_ogg(bytes);
+  }
+  if (bytes.len() >= 12 && bytes[4] == b'f' && bytes[5] == b't' && bytes[6] == b'y' && bytes[7] == b'p') {
+    return open_m4a(bytes);
+  }
+  return open_mp3(bytes);
+}
+
 // A deck for the file `bytes`, or None when it is not a file that the
 // player reads. A deck has one or two channels.
 pub function open(bytes: u8[]): Option[Deck] {
-  let made: Option[Deck] = None;
-  if (starts_with(bytes, "RIFF")) {
-    made = open_wav(bytes);
-  } else if (starts_with(bytes, "fLaC")) {
-    made = open_flac(bytes);
-  } else {
-    made = open_mp3(bytes);
-  }
-  if let Some(d) = made {
+  if let Some(d) = opened(bytes) {
     if (d.rate > 0 && d.channels >= 1 && d.channels <= 2) {
       return Some(d);
     }
@@ -130,11 +219,11 @@ function from_floats(samples: f32[]): i32[] {
   return out;
 }
 
-function ended(d: Deck): (Deck, i32[]) {
+function ended(own d: Deck): (Deck, i32[]) {
   return (Deck { ...d, done: true }, []);
 }
 
-function pull_wav(d: Deck): (Deck, i32[]) {
+function pull_wav(own d: Deck): (Deck, i32[]) {
   let left = d.total - d.at;
   if (left <= 0i64) {
     return ended(d);
@@ -148,7 +237,7 @@ function pull_wav(d: Deck): (Deck, i32[]) {
   return (Deck { ...d, at: at }, to_16(block.samples, bits));
 }
 
-function pull_flac(d: Deck): (Deck, i32[]) {
+function pull_flac(own d: Deck): (Deck, i32[]) {
   let Some(h) = d.stream else {
     return ended(d);
   };
@@ -181,7 +270,7 @@ function next_mp3(bytes: [u8], from: i32, last: i32): i32 {
   return -1;
 }
 
-function pull_mp3(d: Deck): (Deck, i32[]) {
+function pull_mp3(own d: Deck): (Deck, i32[]) {
   let start = next_mp3(d.bytes, d.offset, d.last);
   if (start < 0) {
     return ended(d);
@@ -194,11 +283,96 @@ function pull_mp3(d: Deck): (Deck, i32[]) {
   return (Deck { ...d, layer3: layer3, at: at, offset: start + frame.bytes_read }, from_floats(frame.samples));
 }
 
+// The deck with no decoder, and the decoder that it had.
+function parted(own d: Deck): (Deck, Codec) {
+  let Deck { kind, bytes, rate, channels, bits, total, at, offset, first, last, block, stream, layer3, done, codec } = d;
+  return (Deck { kind: kind, bytes: bytes, rate: rate, channels: channels, bits: bits, total: total, at: at, offset: offset, first: first, last: last, block: block, stream: stream, layer3: layer3, done: done, codec: Plain }, codec);
+}
+
+// The next packet of an M4A file: 1024 frames of samples.
+function pull_m4a(own d: Deck): (Deck, i32[]) {
+  let (rest, codec) = parted(d);
+  let Packets(a) = codec else {
+    return ended(rest);
+  };
+  let Aac { decoder, config, packets } = a;
+  let n = (rest.at / AAC_FRAMES) as i32;
+  if (n >= packets.len()) {
+    return ended(rest);
+  }
+  let from = packets[n].offset as i32;
+  let Ok((next, frame)) = decoder.decode_packet(rest.bytes[from:from + packets[n].bytes], limits()) else {
+    return ended(rest);
+  };
+  let at = (n + 1) as i64 * AAC_FRAMES;
+  return (Deck { ...rest, at: at, codec: Packets(Aac { decoder: next, config: config, packets: packets }) }, from_floats(frame.samples));
+}
+
+// The deck at the packet of an M4A file that has `part` of the file, with
+// a new decoder: a decoder keeps a part of the packet before.
+function seek_m4a(own d: Deck, part: f64): Deck {
+  let (rest, codec) = parted(d);
+  let Packets(a) = codec else {
+    return rest;
+  };
+  let Aac { decoder: _, config, packets } = a;
+  let Ok(fresh) = aac.create(config, limits()) else {
+    return Deck { ...rest, done: true };
+  };
+  let n = (part * (packets.len() as f64)) as i32;
+  return Deck { ...rest, at: n as i64 * AAC_FRAMES, done: false, codec: Packets(Aac { decoder: fresh, config: config, packets: packets }) };
+}
+
+// The next packet of an Ogg file with Vorbis or Opus sound.
+function pull_ogg(own d: Deck): (Deck, i32[]) {
+  let (rest, codec) = parted(d);
+  match (codec) {
+    Vorbis(cursor) => {
+      let Ok((next, Some(audio))) = cursor.next(rest.bytes) else {
+        return ended(rest);
+      };
+      return (Deck { ...rest, at: audio.position + audio.frames as i64, codec: Vorbis(next) }, from_floats(audio.samples));
+    },
+    Opus(cursor) => {
+      let Ok((next, Some(audio))) = cursor.next(rest.bytes) else {
+        return ended(rest);
+      };
+      return (Deck { ...rest, at: audio.position + audio.frames as i64, codec: Opus(next) }, from_floats(audio.samples));
+    },
+    _ => {
+      return ended(rest);
+    }
+  }
+}
+
+// The deck at `part` of an Ogg file. A deck that cannot go there is done.
+function seek_ogg(own d: Deck, part: f64): Deck {
+  let (rest, codec) = parted(d);
+  let to = (part * (rest.total as f64)) as i64;
+  match (codec) {
+    Vorbis(cursor) => {
+      let Ok(next) = cursor.seek(0, to) else {
+        return Deck { ...rest, done: true };
+      };
+      return Deck { ...rest, at: to, done: false, codec: Vorbis(next) };
+    },
+    Opus(cursor) => {
+      let Ok(next) = cursor.seek(0, to) else {
+        return Deck { ...rest, done: true };
+      };
+      return Deck { ...rest, at: to, done: false, codec: Opus(next) };
+    },
+    _ => {
+      return rest;
+    }
+  }
+}
+
 // The deck after its next part, and the samples of that part: the samples
 // of a frame are one after the other. At the end of the file, the deck is
 // done and the part is empty. A part of an MP3 file can be empty before the
 // end.
-pub function (d: Deck) pull(): (Deck, i32[]) {
+pub function (own d: Deck) pull(): (Deck, i32[]) {
   if (d.done) {
     return (d, []);
   }
@@ -207,6 +381,12 @@ pub function (d: Deck) pull(): (Deck, i32[]) {
   }
   if (d.kind == FLAC) {
     return pull_flac(d);
+  }
+  if (d.kind == M4A) {
+    return pull_m4a(d);
+  }
+  if (d.kind == VORBIS || d.kind == OPUS) {
+    return pull_ogg(d);
   }
   return pull_mp3(d);
 }
@@ -226,7 +406,7 @@ function flac_frame_at(d: Deck, h: flac.Header, i: i32): i64 {
   return frame.number as i64 * (d.block as i64);
 }
 
-function seek_flac(d: Deck, part: f64): Deck {
+function seek_flac(own d: Deck, part: f64): Deck {
   let Some(h) = d.stream else {
     return d;
   };
@@ -241,7 +421,7 @@ function seek_flac(d: Deck, part: f64): Deck {
   return Deck { ...d, done: true };
 }
 
-function seek_mp3(d: Deck, part: f64): Deck {
+function seek_mp3(own d: Deck, part: f64): Deck {
   let from = d.first + (part * ((d.last - d.first) as f64)) as i32;
   let at = (part * (d.total as f64)) as i64;
   return Deck { ...d, layer3: mp3.decoder(), at: at, offset: from, done: false };
@@ -249,7 +429,7 @@ function seek_mp3(d: Deck, part: f64): Deck {
 
 // The deck at `part` of the file, from 0 to 1. A FLAC or an MP3 file
 // starts at the frame that is nearest after that part.
-pub function (d: Deck) seek(part: f64): Deck {
+pub function (own d: Deck) seek(part: f64): Deck {
   let to = part.max(0.0).min(1.0);
   if (d.kind == WAV) {
     let at = (to * (d.total as f64)) as i64;
@@ -257,6 +437,12 @@ pub function (d: Deck) seek(part: f64): Deck {
   }
   if (d.kind == FLAC) {
     return seek_flac(d, to);
+  }
+  if (d.kind == M4A) {
+    return seek_m4a(d, to);
+  }
+  if (d.kind == VORBIS || d.kind == OPUS) {
+    return seek_ogg(d, to);
   }
   return seek_mp3(d, to);
 }

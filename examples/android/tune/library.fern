@@ -31,6 +31,15 @@ pub function format_of(name: string): string {
   if (lower.ends_with(".mp3")) {
     return "MP3";
   }
+  if (lower.ends_with(".m4a")) {
+    return "M4A";
+  }
+  if (lower.ends_with(".ogg") || lower.ends_with(".oga")) {
+    return "OGG";
+  }
+  if (lower.ends_with(".opus")) {
+    return "OPUS";
+  }
   return "";
 }
 
@@ -227,6 +236,134 @@ function wav_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
   return Some((found, sound.bytes * 1000i64 / sound.second));
 }
 
+// The bytes of the file from `at`, at most `n`: from `head` when it has
+// them, or from the device.
+function bytes_at(head: u8[], at: i64, n: i32, part: (i64, i32) => u8[]): u8[] {
+  if (at + n as i64 <= head.len() as i64) {
+    let out: u8[] = [];
+    let from = at as i32;
+    for i in from..from + n {
+      out = out.append(head[i]);
+    }
+    return out;
+  }
+  return part(at, n);
+}
+
+// The length in ms that the `mvhd` box of the `moov` box `moov` tells.
+function moov_ms(moov: [u8]): i64 {
+  let at = 8;
+  while (at + 8 <= moov.len()) {
+    let size = wire.be(moov, at, 4) as i32;
+    if (size < 8) {
+      return 0i64;
+    }
+    if (wire.tag(moov, at + 4, "mvhd") && at + 40 <= moov.len()) {
+      let wide = moov[at + 8] == 1u8;
+      let scale = wire.be(moov, at + (if (wide) { 28 } else { 20 }), 4) as i64;
+      let length = wire.be(moov, at + (if (wide) { 32 } else { 24 }), if (wide) { 8 } else { 4 }) as i64;
+      if (scale <= 0i64) {
+        return 0i64;
+      }
+      return length * 1000i64 / scale;
+    }
+    at += size;
+  }
+  return 0i64;
+}
+
+// The tags of an M4A file and its length in ms, from its `moov` box. The
+// box is at the start of the file or after its sound.
+function m4a_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let at = 0i64;
+  let turns = 0;
+  while (at + 8i64 <= size && turns < 64) {
+    let box = bytes_at(head, at, 16, part);
+    if (box.len() < 16) {
+      return None;
+    }
+    let length = wire.be(box, 0, 4) as i64;
+    if (length == 1i64) {
+      length = wire.be(box, 8, 8) as i64;
+    }
+    if (length == 0i64) {
+      length = size - at;
+    }
+    if (length < 8i64) {
+      return None;
+    }
+    if (wire.tag(box, 4, "moov")) {
+      let moov = bytes_at(head, at, length.min(8388608i64) as i32, part);
+      let ms = moov_ms(moov);
+      if (ms <= 0i64) {
+        return None;
+      }
+      return Some((tags.mp4(moov), ms));
+    }
+    at += length;
+    turns += 1;
+  }
+  return None;
+}
+
+// The byte of the last Ogg page that starts in `tail`, or -1.
+function last_page(tail: [u8]): i32 {
+  let at = tail.len() - 27;
+  while (at >= 0) {
+    if (wire.tag(tail, at, "OggS")) {
+      return at;
+    }
+    at -= 1;
+  }
+  return -1;
+}
+
+// The tags of an Ogg file with Vorbis or Opus sound, and its length in ms:
+// the last page tells the number of its last sample.
+function ogg_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  if (head.len() < 48) {
+    return None;
+  }
+  let rate = 0i64;
+  let skip = 0i64;
+  if (wire.tag(head, 28, "OpusHead")) {
+    rate = 48000i64;
+    skip = wire.le(head, 38, 2) as i64;
+  } else if (head[28] == 1u8 && wire.tag(head, 29, "vorbis")) {
+    rate = wire.le(head, 40, 4) as i64;
+  }
+  if (rate <= 0i64 || head[if (rate == 48000i64 && skip > 0i64) { 37 } else { 39 }] > 2u8) {
+    return None;
+  }
+  let from = (size - 65536i64).max(0i64);
+  let tail = bytes_at(head, from, (size - from) as i32, part);
+  let page = last_page(tail);
+  if (page < 0) {
+    return None;
+  }
+  let last = wire.le(tail, page + 6, 8) as i64;
+  return Some((tags.ogg(head), (last - skip).max(0i64) * 1000i64 / rate));
+}
+
+// The tags and the length in ms of the file that starts with `head`, by
+// the format that its first bytes show. A file that starts as no other
+// format is an MP3 file.
+function described(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  if (wire.tag(head, 0, "RIFF")) {
+    return wav_file(head, size, part);
+  }
+  if (wire.tag(head, 0, "fLaC")) {
+    return flac_file(head, size, part);
+  }
+  if (wire.tag(head, 0, "OggS")) {
+    return ogg_file(head, size, part);
+  }
+  if (head.len() >= 8 && wire.tag(head, 4, "ftyp")) {
+    return m4a_file(head, size, part);
+  }
+  return mp3_file(head, size, part);
+}
+
 // The track of the file `path` of `size` bytes, or None for a file that is
 // not sound. `part` gives the bytes of the file from an offset, at most a
 // number of them. The tags of the file give its title, its artist, its
@@ -242,16 +379,7 @@ pub function track(roots: string[], path: string, size: i64, part: (i64, i32) =>
   if (format.len() == 0 || size <= 0i64) {
     return None;
   }
-  let head = part(0i64, HEAD);
-  let read: Option[(tags.Tags, i64)] = None;
-  if (wire.tag(head, 0, "RIFF")) {
-    read = wav_file(head, size, part);
-  } else if (wire.tag(head, 0, "fLaC")) {
-    read = flac_file(head, size, part);
-  } else {
-    read = mp3_file(head, size, part);
-  }
-  let Some((found, ms)) = read else {
+  let Some((found, ms)) = described(part(0i64, HEAD), size, part) else {
     return None;
   };
   let (number, title) = numbered(stem(name));
@@ -287,7 +415,7 @@ pub function parts_of(bytes: u8[]): (i64, i32) => u8[] {
 // name, because the answer costs time for each file of a large directory.
 pub function other_file(name: string): boolean {
   let lower = name.to_lower();
-  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
+  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".aac", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
     if (lower.ends_with(end)) {
       return true;
     }

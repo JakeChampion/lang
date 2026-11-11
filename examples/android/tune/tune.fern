@@ -8,7 +8,6 @@ import "std/i32";
 import "std/i64";
 import "std/option";
 import "std/unicode";
-import "./engine";
 
 // A file of the library: its title, its artist, its album and its number
 // on the album, from its tags or from its path. `by` is the artist that
@@ -72,8 +71,8 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // list that shows. `artist` is the artist whose albums show, and `album`
 // is the album whose songs show, or "". `open` tells that the screen of the
 // track shows. `current` is the number of the track that plays, or -1.
-// `deck` reads its file, `sound` plays it, and `pending` has the samples
-// that the sound did not take yet.
+// `sound` plays the track, and `pending` has the samples that the sound
+// did not take yet.
 // `queue` has the numbers of the tracks that play, in their order, and
 // `spot` is the place of `current` in it, or -1. `menu` is the number of
 // the track whose menu shows, or -1. `lined` tells that the screen of the
@@ -108,7 +107,6 @@ pub struct Model {
   lined: boolean,
   error: string,
   wants: Want[],
-  deck: Option[engine.Deck],
   sound: Sound,
   pending: i32[],
   folder: string,
@@ -125,7 +123,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -898,7 +896,7 @@ pub function update(own m: Model, msg: Msg): Model {
 
 // The milliseconds to the next Beat: the player reads one file of the
 // library at each one, and gives the sound its samples.
-function beat(m: Model): i32 {
+pub function beat(m: Model): i32 {
   if (m.scan.len() > 0) {
     return 1;
   }
@@ -911,7 +909,7 @@ function beat(m: Model): i32 {
   return -1;
 }
 
-function back(m: Model): Option[Msg] {
+pub function back(m: Model): Option[Msg] {
   if (m.lined) {
     return Some(Lined(false));
   }
@@ -925,10 +923,4 @@ function back(m: Model): Option[Msg] {
     return Some(Up);
   }
   return None;
-}
-
-// The program with no device: `update` only puts what it wants in the
-// state.
-pub function program(): ui.Program[Model, Msg] {
-  return ui.program(view, update).with_tick(beat, Beat).with_back(back);
 }
