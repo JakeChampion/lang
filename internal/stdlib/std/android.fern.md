@@ -14,7 +14,7 @@ Other modules send their own events to the loop thread with `send`, and the loop
 
 ## Contracts
 
-The context `ctx` that `start` gives to the loop thread is valid until `run` returns. A `Window` is valid from its `WindowCreated` event until `step` returns for its `WindowDestroyed` event. A `Frame` is valid until `post`.
+The context `ctx` that `start` gives to the loop thread is valid until `run` returns. The Destroy handler closes resources that need this context. A `Window` is valid from its `WindowCreated` event until `step` returns for its `WindowDestroyed` event. A `Frame` is valid until `post`.
 
 ## Module assembly
 
@@ -687,11 +687,14 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     } else if (ident == POLL_TIMEOUT) {
       state = step(state, Tick);
     }
-    // The frame callback can run in the same poll as another source.
-    if let Some(e) = frame_event(ctx) {
-      trace.begin("frame");
-      state = step(state, e);
-      trace.end();
+    // The UI thread frees the context after the Destroy reply.
+    if (!lp.done) {
+      // The frame callback can run in the same poll as another source.
+      if let Some(e) = frame_event(ctx) {
+        trace.begin("frame");
+        state = step(state, e);
+        trace.end();
+      }
     }
   }
   detach(vm);
@@ -803,9 +806,9 @@ function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
   return c;
 }
 
-// The volume keys and the mute key, which the system handles after the app.
+// The volume and media keys, which Android handles after the app.
 function system_key(code: i32): boolean {
-  return code == 24 || code == 25 || code == 164;
+  return code == 24 || code == 25 || code == 164 || code == 79 || code >= 85 && code <= 90 || code == 126 || code == 127 || code == 130 || code == 222 || code >= 272 && code <= 275;
 }
 
 // JNIInvokeInterface of jni.h, the functions of a JavaVM.
