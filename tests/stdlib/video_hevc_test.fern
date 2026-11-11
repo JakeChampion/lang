@@ -1,0 +1,154 @@
+import "std/video/hevc";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+import "video_hevc_vectors" as vectors;
+import "video_hevc_check" as check;
+
+function error_name(result: Result[hevc.Sequence, frame.VideoError]): string {
+  return match (result) {
+    Err(frame.Header) => "Header",
+    Err(frame.Truncated) => "Truncated",
+    Err(frame.Limit) => "Limit",
+    Err(frame.Unsupported) => "Unsupported",
+    _ => "unexpected success or error",
+  };
+}
+
+function reference(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(value) = hevc.inspect_sps(bytes, frame.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (check.values(value) != v.values) {
+      return test.fail("independent HEVC metadata " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    for cut in 0..bytes.len() {
+      if ((bytes.len() <= 256 || cut % 128 == 0 || cut >= bytes.len() - 8) && hevc.inspect_sps(bytes[:cut], frame.default_limits()).is_ok()) {
+        return test.fail("incomplete SPS " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function exact_limits(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let exact = frame.Limits { max_pixels: (v.values[13] * v.values[14]) as i32, max_packet_bytes: bytes.len() };
+    if (hevc.inspect_sps(bytes, exact).is_err()) {
+      return test.fail("exact SPS limits");
+    }
+    for bad in [frame.Limits { ...exact, max_pixels: exact.max_pixels - 1 }, frame.Limits { ...exact, max_packet_bytes: exact.max_packet_bytes - 1 }] {
+      if (error_name(hevc.inspect_sps(bytes, bad)) != "Limit") {
+        return test.fail("coded area before crop and packet bounds");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function envelope(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(vectors.vectors()[0].bytes) else {
+    return test.fail("fixture hex");
+  };
+  for (first, second, expected) in [(194u8, 1u8, "Header"), (66u8, 0u8, "Header"), (66u8, 2u8, "Header"), (64u8, 1u8, "Unsupported"), (67u8, 1u8, "Unsupported"), (66u8, 9u8, "Unsupported")] {
+    if (error_name(hevc.inspect_sps(bytes.with(0, first).with(1, second), frame.default_limits())) != expected) {
+      return test.fail("NAL type, layer, and temporal identifier");
+    }
+  }
+  for cut in 0..2 {
+    if (error_name(hevc.inspect_sps(bytes[:cut], frame.default_limits())) != "Truncated") {
+      return test.fail("NAL prefix");
+    }
+  }
+  return test.pass();
+}
+
+function syntax_errors(): test.TestOutcome {
+  for v in vectors.invalid() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    if (error_name(hevc.inspect_sps(bytes, frame.default_limits())) != v.error) {
+      return test.fail(v.name);
+    }
+  }
+  return test.pass();
+}
+
+function trailing(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let last = bytes.len() - 1;
+    for invalid in [bytes.with(last, 0u8), bytes.append(0u8), bytes.append(128u8)] {
+      if (hevc.inspect_sps(invalid, frame.default_limits()).is_ok()) {
+        return test.fail("exact trailing bits " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function byte_ceiling(): test.TestOutcome {
+  let bytes: u8[] = [];
+  while (bytes.len() < hevc.MAX_SPS_BYTES) {
+    bytes = bytes.append(255u8);
+  }
+  if (error_name(hevc.inspect_sps(bytes, frame.default_limits())) != "Header") {
+    return test.fail("SPS ceiling admits syntax check");
+  }
+  if (error_name(hevc.inspect_sps(bytes.append(255u8), frame.default_limits())) != "Limit") {
+    return test.fail("SPS ceiling precedes syntax");
+  }
+  for limits in [frame.Limits { max_pixels: -1, max_packet_bytes: 10 }, frame.Limits { max_pixels: 1, max_packet_bytes: -1 }] {
+    if (error_name(hevc.inspect_sps([], limits)) != "Limit") {
+      return test.fail("limits before NAL access");
+    }
+  }
+  return test.pass();
+}
+
+function escape_errors(): test.TestOutcome {
+  for bytes in [[66u8, 1, 0, 0, 0], [66u8, 1, 0, 0, 1], [66u8, 1, 0, 0, 2], [66u8, 1, 0, 0, 3], [66u8, 1, 0, 0, 3, 4]] {
+    if (hevc.inspect_sps(bytes, frame.default_limits()).is_ok()) {
+      return test.fail("emulation prevention");
+    }
+  }
+  let Ok(bytes) = hex.decode(vectors.vectors()[8].bytes) else {
+    return test.fail("fixture hex");
+  };
+  if (error_name(hevc.inspect_sps(bytes.with(3, bytes[3] | 64u8), frame.default_limits())) != "Unsupported") {
+    return test.fail("profile space");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded HEVC SPS metadata");
+  r = r.it("independent sequence metadata", reference);
+  r = r.it("all compact prefixes and large SPS boundaries", prefixes);
+  r = r.it("coded area and packet budgets", exact_limits);
+  r = r.it("NAL envelope", envelope);
+  r = r.it("syntax and extension refusals", syntax_errors);
+  r = r.it("exact trailing bits", trailing);
+  r = r.it("SPS ceiling and invalid budgets", byte_ceiling);
+  r = r.it("escape and profile fields", escape_errors);
+  return r.finish();
+}

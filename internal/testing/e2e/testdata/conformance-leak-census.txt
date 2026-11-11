@@ -1,6 +1,12 @@
 # 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
+# 2026-11-11: generic_call_takes_its_type_from_an_append_receiver is clean under RC trace.
+# 2026-11-11: array_literal_takes_the_join_of_its_typed_values is clean under RC trace.
+# 2026-11-11: a_view_survives_a_park_when_the_task_frame_moves keeps the four blocks of the task runtime's pool.
+# 2026-11-11: generic_call_written_type_variable_empty_array is clean under RC trace.
 # 2026-11-11: array_literal_wide_integer_literal_widens_the_value_beside_it is clean under RC trace.
+# 2026-11-11: task_handle_with_a_made_up_id and task_resumed_with_another_function stop through the runtime abort (status 134), so the task handles, the parked frame and their closures are live at the exit.
 # 2026-11-11: generic_call_gives_its_expected_type_to_an_array_argument is clean under RC trace.
+# 2026-11-11: callback_capture_lifetimes has zero unpaired allocations under native RC trace.
 # 2026-11-11: repeatable_closure_owned_inputs has zero unpaired allocations under native RC trace.
 # 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
 # 2026-11-11: nested_array_literals_take_the_wider_element_type is clean under RC trace.
@@ -97,6 +103,7 @@ a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_value_if_of_literals_takes_the_type_of_its_first_use 0
 a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
+a_view_survives_a_park_when_the_task_frame_moves     4
 ackermann                                            0
 add_sub_pair                                         0
 aead_in_place_refuses_overlapping_additional_data    0
@@ -154,6 +161,7 @@ array_join                                           0
 array_literal_binds_a_generic_view_field             0
 array_literal_into_a_view_field                      0
 array_literal_takes_its_sibling_float_width          0
+array_literal_takes_the_join_of_its_typed_values     0
 array_literal_wide_integer_literal_widens_the_value_beside_it 0
 array_match_wildcard                                 0
 array_methods                                        0
@@ -231,6 +239,7 @@ call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
 call_result_payload_is_a_fresh_local                 0
 call_type_args_user_type                             0
+callback_capture_lifetimes                            0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
@@ -446,8 +455,10 @@ generic_call_gives_its_expected_type_to_an_array_argument 0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
 generic_call_takes_its_type_from_its_destination_inside_a_value 0
+generic_call_takes_its_type_from_an_append_receiver 0
 generic_call_through_fn_value                        0
 generic_call_typed_by_its_destination                0
+generic_call_written_type_variable_empty_array       0
 generic_callback_copies_and_shared_results           0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0
@@ -1309,7 +1320,9 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
+task_handle_with_a_made_up_id                        7
 task_resumed_after_it_ended                          6
+task_resumed_with_another_function                   13
 task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0

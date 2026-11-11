@@ -82,6 +82,34 @@ pub function shown_fn(): i32 { return 1; }
 	}
 }
 
+// A type has no position of its own. The error for a type that a module does
+// not declare has the position of the declaration that holds the type.
+func TestUndeclaredTypeHasThePositionOfItsDeclaration(t *testing.T) {
+	lib := "pub struct Shown { v: i32 }\n"
+	cases := []struct {
+		name string
+		src  string
+		pos  string
+	}{
+		{"return type", "import \"./lib\";\nfunction f(a: i32): lib.Nope { return a; }\nfunction main(): i32 { return 0; }", "2:1"},
+		{"parameter", "import \"./lib\";\n\nfunction f(a: lib.Nope): i32 { return 1; }\nfunction main(): i32 { return 0; }", "3:1"},
+		{"struct field", "import \"./lib\";\nstruct P { a: lib.Nope }\nfunction main(): i32 { return 0; }", "2:1"},
+		{"local", "import \"./lib\";\nfunction main(): i32 {\n  let q: lib.Nope = 0;\n  return 0;\n}", "3:3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadWithLib(t, tc.src, lib)
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			got := err.Error()
+			if !strings.Contains(got, `module "lib" has no type "Nope"`) || !strings.Contains(got, tc.pos) {
+				t.Fatalf("wanted the missing type at %s in:\n%s", tc.pos, got)
+			}
+		})
+	}
+}
+
 func TestUndeclaredNameSuggestsAnExportedNeighbour(t *testing.T) {
 	lib := `pub function shown_fn(): i32 { return 1; }
 pub struct Shown { v: i32 }

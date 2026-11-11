@@ -1,0 +1,1 @@
+closure passed to `send` parameter "body" assigns the captured variable "n": a worker has its own copy, so the write does not reach the variable

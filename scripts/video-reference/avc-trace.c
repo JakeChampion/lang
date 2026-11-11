@@ -1,8 +1,12 @@
-/* Trace H.264 parameter sets with FFmpeg's independent reader. */
+/* Trace NAL parameter sets with FFmpeg's independent reader. */
 #include <stdio.h>
 #include <libavcodec/bsf.h>
 #include <libavcodec/packet.h>
 #include <libavutil/log.h>
+
+#ifndef TRACE_CODEC
+#define TRACE_CODEC AV_CODEC_ID_H264
+#endif
 
 int main(int argc, char **argv) {
     if (argc != 2) return 1;
@@ -13,7 +17,7 @@ int main(int argc, char **argv) {
     int result = 3;
     const AVBitStreamFilter *filter = av_bsf_get_by_name("trace_headers");
     if (!packet || !filter || av_bsf_alloc(filter, &context) < 0) goto done;
-    context->par_in->codec_id = AV_CODEC_ID_H264;
+    context->par_in->codec_id = TRACE_CODEC;
     context->par_in->codec_type = AVMEDIA_TYPE_VIDEO;
     context->time_base_in = (AVRational){1, 25};
     av_log_set_level(AV_LOG_TRACE);

@@ -422,8 +422,10 @@ function ends_control(seg: ir.Op[]): boolean {
 
 function prologue(t: Tx, r: irtables.LowerState): ir.Op[] {
   let out: ir.Op[] = [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(2), ir.op_bin("eq", 0, false), ir.op_if(0)];
-  out = out.append(ir.op_call_direct("__fern_task_pop_w", 0));
-  out = out.append(ir.op_store_local(t.ci));
+  out = util.append_all(out, [ir.op_call_direct("__fern_task_pop_w", 0), ir.op_store_local(t.ci)]);
+  out = util.append_all(out, [ir.op_load_local(t.ci), ir.op_const_i32(frame_tag(r.name)), ir.op_bin("ne", 0, false), ir.op_if(0)]);
+  out = util.append_all(out, [ir.op_call_direct("__fern_oob_abort", 0), ir.op_drop(), ir.op_end()]);
+  out = util.append_all(out, [ir.op_call_direct("__fern_task_pop_w", 0), ir.op_store_local(t.ci)]);
   for k in 0..t.saves.len() {
     let slots = t.saves[k];
     if (slots.len() > 0) {
@@ -443,6 +445,16 @@ function prologue(t: Tx, r: irtables.LowerState): ir.Op[] {
   out = out.append(ir.op_store_local(t.ci));
   out = out.append(ir.op_end());
   return out;
+}
+
+// The word a saved frame ends with. A function restores a frame only when the
+// word is its own, so a frame that another function saved stops the program.
+function frame_tag(name: string): i32 {
+  let h = 5381;
+  for i in 0..name.len() {
+    h = h * 131 + name[i] as i32 + 7 & 1073741823;
+  }
+  return h;
 }
 
 function slot_class(t: Tx, r: irtables.LowerState, s: i32): string {
@@ -498,7 +510,7 @@ function site(t: Tx, r: irtables.LowerState, set: Set, ops: ir.Op[], at: i32, k:
 }
 
 function save_ops(t: Tx, r: irtables.LowerState, saved: i32[], k: i32): ir.Op[] {
-  let out: ir.Op[] = [ir.op_const_i32(saved.len() + 1), ir.op_call_direct("__fern_task_reserve", 1), ir.op_store_local(t.tc)];
+  let out: ir.Op[] = [ir.op_const_i32(saved.len() + 2), ir.op_call_direct("__fern_task_reserve", 1), ir.op_store_local(t.tc)];
   for i in 0..saved.len() {
     out = util.append_all(out, word_at(t, i));
     out = out.append(ir.op_load_local(saved[i]));
@@ -506,7 +518,9 @@ function save_ops(t: Tx, r: irtables.LowerState, saved: i32[], k: i32): ir.Op[] 
     out = util.append_all(out, [ir.op_store_i64(), ir.op_drop()]);
   }
   out = util.append_all(out, word_at(t, saved.len()));
-  return util.append_all(out, [ir.op_const_i64(k as i64), ir.op_store_i64(), ir.op_drop()]);
+  out = util.append_all(out, [ir.op_const_i64(k as i64), ir.op_store_i64(), ir.op_drop()]);
+  out = util.append_all(out, word_at(t, saved.len() + 1));
+  return util.append_all(out, [ir.op_const_i64(frame_tag(r.name) as i64), ir.op_store_i64(), ir.op_drop()]);
 }
 
 function word_at(t: Tx, i: i32): ir.Op[] {

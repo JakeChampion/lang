@@ -1,0 +1,52 @@
+// A task holds views across a park (#15048). The task resumes deeper in the
+// stack than it started, at each of a range of depths, so its frame moves
+// over the frames of the callers that wait for it.
+import "std/async";
+import "std/clock";
+import "std/time";
+
+function nap(ms: i64): void {
+  let none: i32[] = [];
+  let wake = async.wait_any(none, Some(clock.instant().add(time.duration_millis(ms))));
+}
+
+function work(xs: Cell[i32[]], label: string): i32 {
+  let cur: i32[] = xs.get();
+  let v: [i32] = cur[1:];
+  let s: [i32] = cur[:2];
+  let text: str = label[1:4].unwrap_or("");
+  nap(1);
+  return v.len() * 100 + s.len() * 10 + text.len() + v[0] + s[1] + xs.get().len();
+}
+
+// Each level keeps `guard` in its frame while the task below it resumes.
+function resume_at(depth: i32, f: async.Future[i32], guard: i64): i64 {
+  if (depth > 0) {
+    let inner = resume_at(depth - 1, f, guard + 1);
+    return inner + guard;
+  }
+  match (async.block_on(f)) {
+    Some(n) => {
+      return n as i64 + guard;
+    },
+    None => {}
+  }
+  return guard - 1;
+}
+
+function main(): i32 {
+  let xs: Cell[i32[]] = cell_new([10, 20, 30]);
+  let total: i64 = 0;
+  let want: i64 = 0;
+  for depth in 0..48 {
+    let f = async.spawn((): i32 => work(xs, "a view"));
+    total += resume_at(depth, f, 1000);
+    want += 266;
+    for level in 0..depth + 1 {
+      want += 1000 + level as i64;
+    }
+  }
+  print(total == want);
+  print(xs.get().len());
+  return 0;
+}

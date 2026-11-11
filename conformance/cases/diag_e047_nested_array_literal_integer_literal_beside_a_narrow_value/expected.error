@@ -1,0 +1,1 @@
+main.fern:5:23: error[E047]: literal 300 does not fit in u8
