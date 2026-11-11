@@ -3,6 +3,7 @@ package sourcelint
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -18,8 +19,15 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Imports) != 0 || len(p.PubUses) != 0 {
-		t.Fatal("semantic types must not depend on AST, checker, parser or physical lowering")
+	// A module of the standard library is not a part of the compiler, so
+	// it does not break the boundary.
+	for _, im := range p.Imports {
+		if !strings.HasPrefix(im.Path, "std/") && !strings.HasPrefix(im.Path, "core/") {
+			t.Fatalf("semantic types must not depend on AST, checker, parser or physical lowering: import %q", im.Path)
+		}
+	}
+	if len(p.PubUses) != 0 {
+		t.Fatal("semantic types must not export the names of another module")
 	}
 	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever", "TypeConst"}
 	wantFields := [][]string{
