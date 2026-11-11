@@ -3,6 +3,7 @@ package checker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/syntax/diag"
@@ -291,4 +292,35 @@ func TestLiteralLocalSettlesEveryRead(t *testing.T) {
 		}
 		return true
 	})
+}
+
+// The check of an array literal is linear in its element count. Large tables
+// of floats and integers in the stdlib depend on this.
+func TestArrayLiteralCheckIsLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("times large array literals")
+	}
+	elapsed := func(n int, elem string) time.Duration {
+		var b strings.Builder
+		b.WriteString("function main(): i32 {\nlet xs = [")
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(elem)
+		}
+		b.WriteString("];\nreturn 0;\n}\n")
+		src := b.String()
+		start := time.Now()
+		if err := checkSource(t, src); err != nil {
+			t.Fatal(err)
+		}
+		return time.Since(start)
+	}
+	for _, elem := range []string{"1.5", "7", "[1.5, 2.5]"} {
+		small, large := elapsed(5000, elem), elapsed(20000, elem)
+		if large > 8*small {
+			t.Errorf("elements %s: 5000 took %v and 20000 took %v; four times the elements must take less than eight times as long", elem, small, large)
+		}
+	}
 }

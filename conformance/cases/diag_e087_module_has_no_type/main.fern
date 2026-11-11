@@ -1,0 +1,11 @@
+// A type that a module does not declare is an E087 that names the module. The
+// position is that of the declaration that holds the type.
+import "./lib";
+
+function make(v: i32): lib.Showm {
+    return v;
+}
+
+function main(): i32 {
+    return 0;
+}
