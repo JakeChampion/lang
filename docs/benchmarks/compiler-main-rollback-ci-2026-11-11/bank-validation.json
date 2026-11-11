@@ -1,0 +1,79 @@
+{
+  "source": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb",
+  "measured_commit": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+  "run": 42958185608,
+  "job": 130320191632,
+  "artifact": 13830651344,
+  "started": "2026-11-11T06:20:50.849261+00:00",
+  "runs": [
+    {
+      "label": "full-old",
+      "args": [
+        "/workspace/lang-spec-index-pins-20261111-0230/scripts/ci-check-perf",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/before/.github/cliff-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/perf-artifact/cliff-report.txt"
+      ],
+      "expected_exit": 1,
+      "exit_code": 1
+    },
+    {
+      "label": "full-new",
+      "args": [
+        "/workspace/lang-spec-index-pins-20261111-0230/scripts/ci-check-perf",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/after-cliff-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/perf-artifact/cliff-report.txt"
+      ],
+      "expected_exit": 0,
+      "exit_code": 0
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-11T06:20:51.214654+00:00",
+  "row_before": 378075,
+  "row_after": 373796,
+  "all_other_rows_and_tolerances_unchanged": true,
+  "default_tolerance_percent": 1,
+  "full_report_missing_metrics": false,
+  "qualified_controls": {
+    "publication": "7ed25d7e1c1c94d73cae445d61852197c4c4e6aa",
+    "folder": "docs/benchmarks/compiler-method-result-ci-2026-11-11",
+    "verified_data_hashes": 37,
+    "manifest_sha256": "47b2475c8251d7d852dc80f11776edeee9eda4f55c6ab468459631372517449e",
+    "canonical_results": 22,
+    "commands_executed": 0
+  },
+  "protocol": {
+    "scripts/ci-check-perf": {
+      "sha256": "fa5fce8c5cbe004f996c3cfd879b8115197d0e7c47489fff49c4fb9d9bd094ff",
+      "blob": "29fb2ea363c6f2d740d237b81cde302757d4a9e7"
+    },
+    "scripts/flag-lib": {
+      "sha256": "d0b7211480946331591257aa64a4ecc3f796970b1a283ece32dea6e182a68eba",
+      "blob": "7cb9648bb6b93bafa57fcaaf01e487d6968cec09"
+    },
+    "scripts/perf-gate-selftest.mjs": {
+      "sha256": "cf43efd45ea24af40dcfbf895565116a7b404c300a112f40282a396e6e7309c7",
+      "blob": "6c5d2d0818a3f284a87d58506b9fcec2f33ff05b"
+    },
+    "scripts/cliff-bench": {
+      "sha256": "5c9a79a17fe8d0f8c186bff9783c8385479be857e92edf85399329df6e00bb5a",
+      "blob": "c59d67c9eeb16ef51f95a04d8f653923c7988240"
+    },
+    ".github/workflows/perf.yml": {
+      "sha256": "ef7b6c96f0c904449bce455adda04d3f8c9df804a9b09ec2b68ba2bfaaede354",
+      "blob": "9a724c314d0534f77973169be04ed9891bd21f02"
+    },
+    "bootstrap/stage0.lock": {
+      "sha256": "bf10dcab7a95f12aeea13ad2a4a3a0691f8370bc7a2396f00c48b1df865ed73f",
+      "blob": "b23b44713d4bd7f346814779492089faa573b3aa"
+    }
+  },
+  "source_product_trees": {
+    "compiler": "36e3613ce8bb14091aaffa6b311b9f877a6cac4c",
+    "internal/stdlib": "d361682ce2240139563d62135064f4658b3f782b",
+    "internal/check": "30972986fea981043681c7f60495a127e7d919d7",
+    "internal/syntax": "7cdd589261dd042215d1953f36e46f2b584dd4e1",
+    "conformance": "9050ae0581d268c5ed008840ae785e66342254c0"
+  },
+  "limit": "Source-specific counters. Certification disabled by the unchanged protocol. No normal timing or leak claim. Executable hash absent from CI reports."
+}

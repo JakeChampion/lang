@@ -1,0 +1,22 @@
+{
+  "time": "2026-11-11T06:15:18.569937+00:00",
+  "head_before": "ae541bcfb04b763b00d1b526cc3c02c2dbe9d0fd",
+  "incoming_main": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb",
+  "owner_patch_reversed": "e3bd8452c16add0ac0be07a553761dea1ba10567",
+  "restore_paths": [
+    "compiler/semndarray.fern",
+    "internal/testing/e2ecompiler/self_host_ndarray_inner_plan_test.go",
+    "internal/testing/e2ecompiler/self_host_ndarray_product_test.go"
+  ],
+  "compiler_stdlib_checker_syntax_conformance_exact_main": true,
+  "spec_files_exact_main": true,
+  "obsolete_census_row_removed": [
+    "a_function_named_like_a_raw_builtin_shadows_it       0\n"
+  ],
+  "historical_comments_retained": true,
+  "cliff_count_before": 378075,
+  "cliff_count_after": 373796,
+  "counter_artifact": 13830651344,
+  "source_tree": "187b398684070660808d6d05db7d82b08d6e4e96",
+  "no_feature_reintroduced": true
+}

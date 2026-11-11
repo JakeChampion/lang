@@ -1,0 +1,22 @@
+{
+  "source": "4e38d84c7fe34200e300ad55c05ed92d8b67c6b7",
+  "local_commit_before_driver_merge": "c23ff1b13f2ab4d67840af7ec9bbb8521eda6370",
+  "validation_resume_exit": 0,
+  "feature_census": {
+    "arrow_lambdas": 20,
+    "old_pin": 18,
+    "new_pin": 20,
+    "tests": 1,
+    "skips": 0
+  },
+  "resource_census": {
+    "fixtures": 1339,
+    "leaking_fixtures": 12,
+    "unpaired_allocations": 34,
+    "new_owned_field_match_data_row": 0,
+    "tests": 1,
+    "skips": 0
+  },
+  "ci_selftest": "complete exit 0; canonical 22 perf-gate controls pass",
+  "limits": "RC trace and deterministic size counters only. No normal leak, wall-time, physical-cause, or rank claim."
+}

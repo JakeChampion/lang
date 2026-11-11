@@ -1,0 +1,19 @@
+{
+  "time": "2026-11-11T07:54:42.717842+00:00",
+  "concurrent_parent_preserved": "4e8cbe42176f1be18790297ea0dc83ae5aafb1ad",
+  "current_main_parent": "eb264b32a2775d534109f244b83dabe57258949e",
+  "published_source": "34229724c031302b5147b5132333de7e2397579e",
+  "new_mutable": "/workspace/lang-spec-index-pins-concurrent-20261111-0748",
+  "old_mutable_preserved_clean": "/workspace/lang-spec-index-pins-20261111-0230",
+  "worktrees_inspected": 52,
+  "restored_archive_files": 33,
+  "original_data_records_verified": 31,
+  "original_gzip_identities_verified": 20,
+  "later_data_records_verified": 72,
+  "later_gzip_identities_verified": 63,
+  "harness_exact_published": true,
+  "baseline_numeric_changes": false,
+  "all_production_and_upstream_ci_changes_exact_main": true,
+  "ignored_artifact_recovery_claim": false,
+  "stage_tree": "65b2c718ed19e1494c4932ceed938123e4aa10f6"
+}

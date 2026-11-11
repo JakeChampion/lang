@@ -1,0 +1,68 @@
+{
+  "at": "2026-11-11T12:43:18.040188+00:00",
+  "source_publication": "75dbb650647f3e97300c6dc2c9f3f734892f9489",
+  "product_source": "4e38d84c7fe34200e300ad55c05ed92d8b67c6b7",
+  "job_id": 130515952623,
+  "raw_sha256": "bdbb478dc0b57ac2ea1a9a802095464a29389c862956e126a6fb7ccbce0301e2",
+  "report_origin": "Exact integer TSV lines extracted from the complete decoded CI log; not a downloaded artifact.",
+  "measured_drivers": 14,
+  "changes": {
+    "drivers/checker_codes_run.fern": [
+      3663328,
+      3851760
+    ],
+    "drivers/checker_modload_run.fern": [
+      3913968,
+      4147040
+    ],
+    "drivers/asm_run.fern": [
+      9577776,
+      10091776
+    ],
+    "drivers/asm_ir_run.fern": [
+      10449984,
+      11028400
+    ]
+  },
+  "source_lines": [
+    "2026-11-11T12:26:16.4136680Z drivers/interp_run.fern\t2878672",
+    "2026-11-11T12:26:16.4137088Z drivers/checker_codes_run.fern\t3851760",
+    "2026-11-11T12:26:16.4137477Z drivers/checker_modload_run.fern\t4147040",
+    "2026-11-11T12:26:16.4137856Z drivers/wasm_ir_run.fern\t9566912",
+    "2026-11-11T12:26:16.4138210Z drivers/asm_pathprobe_run.fern\t5885936",
+    "2026-11-11T12:26:16.4138583Z drivers/wasm_runio_run.fern\t9552624",
+    "2026-11-11T12:26:16.4138927Z drivers/wasm_run.fern\t9577872",
+    "2026-11-11T12:26:16.4139263Z drivers/asm_modload_run.fern\t11467344",
+    "2026-11-11T12:26:16.4139603Z drivers/asm_run.fern\t10091776",
+    "2026-11-11T12:26:16.4139986Z drivers/asm_ir_run.fern\t11028400",
+    "2026-11-11T12:26:16.4140294Z fern.fern\t16781696",
+    "2026-11-11T12:26:16.4140571Z drivers/runtime_run.fern\t16780400",
+    "2026-11-11T12:26:16.4141196Z drivers/asm_load_run.fern\t12845680",
+    "2026-11-11T12:26:16.4141493Z fern.fern/stage2\t16845056"
+  ],
+  "runs": [
+    {
+      "label": "old",
+      "args": [
+        "bash",
+        "scripts/ci-check-driver-sizes",
+        "/dev/shm/fern-refusal-main-20261111-1215/driver-baseline-before-4b.txt",
+        "/dev/shm/fern-refusal-main-20261111-1215/driver-full-report.tsv"
+      ],
+      "exit_code": 1,
+      "expected": 1
+    },
+    {
+      "label": "updated",
+      "args": [
+        "bash",
+        "scripts/ci-check-driver-sizes",
+        "/dev/shm/fern-refusal-main-20261111-1215/driver-baseline-after-4b.txt",
+        "/dev/shm/fern-refusal-main-20261111-1215/driver-full-report.tsv"
+      ],
+      "exit_code": 0,
+      "expected": 0
+    }
+  ],
+  "exit_code": 0
+}

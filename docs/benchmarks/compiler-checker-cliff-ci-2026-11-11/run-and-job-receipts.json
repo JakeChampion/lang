@@ -1,0 +1,46 @@
+{
+  "observed_at": "2026-11-11 03:17:57 UTC",
+  "run": {
+    "id": 42942829694,
+    "head_sha": "2ca148c6757a95ba419a67751dd3598726f07c56",
+    "event": "push",
+    "status_at_read": "in_progress",
+    "conclusion_at_read": null,
+    "html_url": "https://github.com/JakeChampion/lang/actions/runs/42942829694"
+  },
+  "jobs": [
+    {
+      "id": 130273056323,
+      "run_id": 42942829694,
+      "head_sha": "2ca148c6757a95ba419a67751dd3598726f07c56",
+      "name": "Validate / Full suite / Test e2e self-host / driver-sizes-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T02:12:14Z",
+      "completed_at": "2026-11-11T02:17:05Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42942829694/job/130273056323"
+    },
+    {
+      "id": 130273056388,
+      "run_id": 42942829694,
+      "head_sha": "2ca148c6757a95ba419a67751dd3598726f07c56",
+      "name": "Validate / Full suite / Perf / perf-aarch64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T02:14:44Z",
+      "completed_at": "2026-11-11T02:18:15Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42942829694/job/130273056388"
+    },
+    {
+      "id": 130273056431,
+      "run_id": 42942829694,
+      "head_sha": "2ca148c6757a95ba419a67751dd3598726f07c56",
+      "name": "Validate / Full suite / Perf / perf-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T02:15:30Z",
+      "completed_at": "2026-11-11T02:20:59Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42942829694/job/130273056431"
+    }
+  ]
+}

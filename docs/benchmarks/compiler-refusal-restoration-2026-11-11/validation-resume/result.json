@@ -1,0 +1,77 @@
+{
+  "continuation_of": "../validation/result.json",
+  "fixture_domain_audit": "../fixture-domain-correction.json",
+  "passed_commands_repeated": 0,
+  "source": "eb264b32a2775d534109f244b83dabe57258949e",
+  "concurrent_parent": "4e8cbe42176f1be18790297ea0dc83ae5aafb1ad",
+  "started": "2026-11-11T08:08:46.485723+00:00",
+  "scope": "Current-source correctness after preservation of the concurrent merge and restoration of committed records and refusal validation. No performance claim.",
+  "runs": [
+    {
+      "label": "indexes",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "./internal/testing/sourcelint",
+        "-run",
+        "^(TestDiagnosticsIndexIsAccurate|TestSemanticsIndexIsAccurate|TestConformanceCensusHasARowPerFixture|TestConformanceCorpusFormat)$",
+        "-count=1",
+        "-timeout=12m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:08:46.561287+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:13.079340+00:00",
+      "passes": 1725,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "gofmt",
+      "args": [
+        "gofmt",
+        "-l",
+        "internal/testing/e2ecompiler/self_host_irverify_test.go"
+      ],
+      "started": "2026-11-11T08:10:13.106732+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:13.123590+00:00"
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-11T08:10:13.123874+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:18.734051+00:00"
+    },
+    {
+      "label": "ci-selftest",
+      "args": [
+        "make",
+        "ci-selftest"
+      ],
+      "started": "2026-11-11T08:10:18.735542+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:11:04.103033+00:00"
+    },
+    {
+      "label": "whitespace",
+      "args": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "started": "2026-11-11T08:11:04.104159+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:11:04.137556+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-11T08:11:04.137888+00:00"
+}

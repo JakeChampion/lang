@@ -1,0 +1,434 @@
+{
+  "completed_child_commands": [
+    {
+      "group": "validation",
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "started": "2026-11-11T07:58:15.686768+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T07:59:03.193438+00:00"
+    },
+    {
+      "group": "validation",
+      "label": "go-frontend",
+      "args": [
+        "go",
+        "test",
+        "./internal/check/checker",
+        "./internal/syntax/parser",
+        "-count=1",
+        "-timeout=10m",
+        "-json"
+      ],
+      "started": "2026-11-11T07:59:03.196180+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T07:59:36.550539+00:00",
+      "passes": 2933,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "group": "validation",
+      "label": "current-native",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(CheckerCodesX86_64|CheckEntryShadowOfBuiltin|ImportedRawBuiltinNameIsReserved|ImportedVariantKeepsBuiltinType|SIMDUnzipFusion|IRStrength.*|X86RIP.*|X86GasRIPConstants|X86ShuffleFormsMatchGas|X86VEXRejectsMixedWidths)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-11T07:59:36.609446+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:03:46.088795+00:00",
+      "passes": 4873,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "group": "validation",
+      "label": "refusal-controls",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestProvidedLoweringRefusalVerdict$",
+        "-count=1",
+        "-timeout=5m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:03:46.161995+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:03:47.687250+00:00",
+      "passes": 13,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "group": "validation",
+      "label": "fixtures",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "-run",
+        "^TestFernFixtures(SelfHost(Check|X86_64|Arm64|Wasm))?$/^(diag_e010_raw_builtin_function|diag_e091_range_index|for_loop_continue_steps)$",
+        "-count=1",
+        "-timeout=12m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:03:47.694039+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:04:02.729191+00:00",
+      "passes": 16,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "group": "validation-resume",
+      "label": "indexes",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "./internal/testing/sourcelint",
+        "-run",
+        "^(TestDiagnosticsIndexIsAccurate|TestSemanticsIndexIsAccurate|TestConformanceCensusHasARowPerFixture|TestConformanceCorpusFormat)$",
+        "-count=1",
+        "-timeout=12m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:08:46.561287+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:13.079340+00:00",
+      "passes": 1725,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "group": "validation-resume",
+      "label": "gofmt",
+      "args": [
+        "gofmt",
+        "-l",
+        "internal/testing/e2ecompiler/self_host_irverify_test.go"
+      ],
+      "started": "2026-11-11T08:10:13.106732+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:13.123590+00:00"
+    },
+    {
+      "group": "validation-resume",
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-11T08:10:13.123874+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:10:18.734051+00:00"
+    },
+    {
+      "group": "validation-resume",
+      "label": "ci-selftest",
+      "args": [
+        "make",
+        "ci-selftest"
+      ],
+      "started": "2026-11-11T08:10:18.735542+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:11:04.103033+00:00"
+    },
+    {
+      "group": "validation-resume",
+      "label": "whitespace",
+      "args": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "started": "2026-11-11T08:11:04.104159+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:11:04.137556+00:00"
+    }
+  ],
+  "passes": 10896,
+  "skips": 0,
+  "first_controller_exit": 1,
+  "continuation_controller_exit": 0,
+  "all_completed_child_commands_exit_zero": true,
+  "passed_commands_repeated": 0,
+  "first_native_waiter_workloads": 0,
+  "native_commands": [
+    {
+      "label": "complete-ir-corpus",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHostIRVerifyProvidedCorpusClean$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:11:04.863655+00:00",
+      "pid": 238243,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:13:29.071920+00:00",
+      "passes": 1336,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "baseline-normal-build",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/baseline-normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:13:29.454310+00:00",
+      "pid": 239645,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:15:00.989915+00:00"
+    },
+    {
+      "label": "normal-build",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:15:01.876396+00:00",
+      "pid": 239658,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:16:38.823118+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e010_raw_builtin_function-x86-64-linux",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e010_raw_builtin_function-x86-64-linux",
+        "conformance/cases/diag_e010_raw_builtin_function/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:39.067860+00:00",
+      "pid": 239659,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:39.070892+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e010_raw_builtin_function-arm64-linux",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e010_raw_builtin_function-arm64-linux",
+        "conformance/cases/diag_e010_raw_builtin_function/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:39.293543+00:00",
+      "pid": 239660,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:39.296745+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e010_raw_builtin_function-wasm32-wasi",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e010_raw_builtin_function-wasm32-wasi",
+        "conformance/cases/diag_e010_raw_builtin_function/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:39.507370+00:00",
+      "pid": 239661,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:39.510477+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e091_range_index-x86-64-linux",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e091_range_index-x86-64-linux",
+        "conformance/cases/diag_e091_range_index/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:39.727322+00:00",
+      "pid": 239662,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:39.730535+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e091_range_index-arm64-linux",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e091_range_index-arm64-linux",
+        "conformance/cases/diag_e091_range_index/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:39.936132+00:00",
+      "pid": 239663,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:39.941185+00:00"
+    },
+    {
+      "label": "production-refusal-diag_e091_range_index-wasm32-wasi",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "wasm32-wasi",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/production-refusal-diag_e091_range_index-wasm32-wasi",
+        "conformance/cases/diag_e091_range_index/main.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T08:16:40.157491+00:00",
+      "pid": 239664,
+      "exit_code": 1,
+      "finished": "2026-11-11T08:16:40.161044+00:00"
+    },
+    {
+      "label": "normal-own-source",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:16:40.370699+00:00",
+      "pid": 239665,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:17:22.121680+00:00"
+    },
+    {
+      "label": "baseline-opus-compile",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/baseline-normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/baseline-opus",
+        "tests/stdlib/opus_delimited_test.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:17:22.331740+00:00",
+      "pid": 239666,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:17:25.964062+00:00"
+    },
+    {
+      "label": "opus-compile",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/opus-native",
+        "tests/stdlib/opus_delimited_test.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:17:26.171033+00:00",
+      "pid": 239667,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:17:30.742331+00:00"
+    },
+    {
+      "label": "opus-program",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/opus-native"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:17:30.959600+00:00",
+      "pid": 239668,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:17:30.994420+00:00"
+    },
+    {
+      "label": "stage2",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/normal",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/stage2",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:17:31.201961+00:00",
+      "pid": 239669,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:18:48.608014+00:00"
+    },
+    {
+      "label": "stage3",
+      "args": [
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/stage2",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/dev/shm/fern-refusal-restoration-20261111-0748/images/stage3",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T08:18:48.818022+00:00",
+      "pid": 239678,
+      "exit_code": 0,
+      "finished": "2026-11-11T08:20:10.117501+00:00"
+    }
+  ],
+  "native_controller_exit": 0,
+  "native_expected_exits_match": true,
+  "normal_sha256": "c4e16143f201d624e728ce80a839d37cd0d63160d7f6ddccdc973fc1dce2e359",
+  "baseline_normal_sha256": "c4e16143f201d624e728ce80a839d37cd0d63160d7f6ddccdc973fc1dce2e359",
+  "opus_sha256": "4eceb083ab65e78b7a515c70ecdbe57dc30f99b96cc05d4ddcaafcc8474c3e4c",
+  "stage2_sha256": "3869228fb733b7926a51870ef216c332d2e6ffbb27049a65cdb2eed615fc0236",
+  "stage3_sha256": "3869228fb733b7926a51870ef216c332d2e6ffbb27049a65cdb2eed615fc0236",
+  "full_tap_sha256": "07c2de202ca09462f396f349cbf99df5b0f044194e9314840de8bf6331c29161",
+  "fixpoint_limit": "Secondary correctness only; not a proof against stable miscompilation or performance evidence.",
+  "later_native_controls": "Complete with all expected exits. Six production CLI refusals each require diagnostic exit 1 and no output executable."
+}

@@ -1,0 +1,20 @@
+{
+  "time": "2026-11-11T08:25:37.163417+00:00",
+  "reason": "ENOSPC while the new archive exporter attempted mkdir on the full overlay. The exporter created no archive files. Subsequent copy and verifier commands could not find that directory.",
+  "original_workspace_untouched": "/workspace/lang-spec-index-pins-concurrent-20261111-0748",
+  "original_evidence_untouched": "/workspace/lang-checker-union-index-20261110-1540/build/concurrent-pr15236-20261111-0745",
+  "new_repo": "/dev/shm/fern-refusal-storage-20261111-0825/repo",
+  "new_evidence_copy": "/dev/shm/fern-refusal-storage-20261111-0825/evidence",
+  "new_branch": "fix/e065-spec-index-pins-storage-20261111-0825",
+  "head": "4e8cbe42176f1be18790297ea0dc83ae5aafb1ad",
+  "main_merge_parent": "eb264b32a2775d534109f244b83dabe57258949e",
+  "staged_tree_equal": "65b2c718ed19e1494c4932ceed938123e4aa10f6",
+  "source_objects": "Shared read-only Git object alternates to the existing workspace repository. New Git objects and writes use tmpfs.",
+  "all_native_controls_finished_before_copy": true,
+  "workloads_interrupted": 0,
+  "passed_tests_repeated": 0,
+  "existing_files_deleted": 0,
+  "ignored_recovery_claim": false,
+  "export_failure_raw_output": "Retained in the tool transcript; no separate on-disk error log existed when the filesystem was full.",
+  "copied_evidence_files_verified": 121
+}

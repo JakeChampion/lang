@@ -1,0 +1,12 @@
+{
+  "source": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb",
+  "measured_commit": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+  "run": 42958185608,
+  "job": 130320191632,
+  "artifact": 13830651344,
+  "started": "2026-11-11T06:20:39.202933+00:00",
+  "runs": [],
+  "exit_code": 1,
+  "error": "CalledProcessError(128, ['git', 'rev-parse', 'ca80bd07aba3edc5b60f971ceb76ac3925cdb292^{tree}'])",
+  "traceback": "Traceback (most recent call last):\n  File \"/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/validate-current-bank.py\", line 12, in <module>\n    assert git('rev-parse',source+'^{tree}')==git('rev-parse',measured+'^{tree}')\n                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/lang-checker-union-index-20261110-1540/build/main-integration-20261111-0600/validate-current-bank.py\", line 5, in git\n    def git(*a):return subprocess.check_output(['git',*a],cwd=root)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py\", line 466, in check_output\n    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['git', 'rev-parse', 'ca80bd07aba3edc5b60f971ceb76ac3925cdb292^{tree}']' returned non-zero exit status 128.\n"
+}
