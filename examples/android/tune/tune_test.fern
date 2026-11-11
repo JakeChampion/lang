@@ -113,6 +113,9 @@ function device(): player.Device {
     roots: ["music"],
     dirs: (at: string): string[] => dirs_of(at),
     keep: (folder: string): void => {},
+    show: (now: tune.Now): void => {},
+    wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
+    sleep: (a: tune.Awake): void => {},
     size: (path: string): i64 => read(path).len() as i64,
     part: (path: string, at: i64, n: i32): u8[] => library.parts_of(read(path))(at, n),
     read: (path: string): u8[] => read(path),
@@ -292,6 +295,23 @@ function test_a_person_chooses_the_folder_of_the_library(): test.TestOutcome {
   return test.assert_eq(all.to_string() + " " + at_home.to_string() + " " + deep + " " + up + " | " + m.folder + " " + m.choosing.to_string() + " " + titles(m) + " " + m.tracks[2].album, "4 true music/Fern/First Light true music/Fern | music/Fern false Morning Fern|Slow Water|Quick Light Second Light");
 }
 
+// The media buttons of Android give Play and SeekMs. The player tells
+// Android each new track and state, and keeps the phone awake while a
+// track plays.
+function test_the_media_buttons_of_android(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let on = s.shell.app.told + " " + (s.shell.app.awake.wake != 0 as usize).to_string();
+  let again = sim.send(s, tune.Play(true));
+  let same = again.shell.app.playing;
+  let held = sim.send(again, tune.Play(false));
+  let off = held.shell.app.told + " " + (held.shell.app.awake.wake != 0 as usize).to_string() + " " + held.shell.app.playing.to_string();
+  let length = held.shell.app.length_ms;
+  let moved = sim.send(held, tune.SeekMs(length / 2i64));
+  let at = moved.shell.app.at_ms;
+  let back = sim.send(moved, tune.Play(true));
+  return test.assert_eq(on + " | " + same.to_string() + " | " + off + " | " + near(at, length / 2i64, 200i64).to_string() + " " + back.shell.app.playing.to_string() + " " + back.shell.app.told, "2|true true | true | 2|false false false | true true 2|true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -305,5 +325,6 @@ function main(): i32 {
   r = r.it("a player with no files shows its screen, then looks for them", test_a_player_with_no_files_looks_for_them);
   r = r.it("a scan adds no track two times", test_a_scan_adds_no_track_two_times);
   r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
+  r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
   return r.finish();
 }

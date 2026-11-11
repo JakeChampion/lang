@@ -11,6 +11,12 @@ looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
 of the phone.
 
+The player has a media session of `std/android/session`. So Android shows
+its track with the media controls of the notification panel and of the
+lock screen. The buttons there play, stop, go to the next track and go to
+a time. A foreground service of `std/android/service` and a wake lock keep
+the sound on while the window of the app is away.
+
 The "Folder" button shows the directories of the phone. The person goes
 into a directory and taps "Use". The library then has the files of that
 folder only, and the player keeps the folder for its next start.
