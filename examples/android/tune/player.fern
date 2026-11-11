@@ -7,6 +7,7 @@ import "std/android/ui";
 import "std/i32";
 import "std/i64";
 import "std/audio/tags";
+import "std/audio/wire";
 import "std/option";
 import "./engine";
 import "./library";
@@ -18,7 +19,9 @@ import "./tune";
 // directory. `demo` makes the tunes of the player and gives their paths.
 // `now` is the time in ns. `dirs` gives the names of the directories in a directory, and
 // `keep` keeps the folder of the library for the next start. `decode` gives an
-// image from the bytes of a JPEG or a PNG file, at a size. `show` tells
+// image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
+// the text of the library for the next start. `kept` gives the bytes
+// that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
 // awake until `sleep`. `quit` gives back what the app holds of Android,
 // while the activity is valid. `size` gives the number of bytes of a
@@ -36,6 +39,9 @@ pub struct Device {
   dirs: (string) => string[],
   keep: (string) => void,
   decode: (u8[], i32, i32) => Option[draw.Image],
+  save: (string) => void,
+  kept: (string) => u8[],
+  put: (string, u8[]) => void,
   show: (tune.Now) => void,
   quit: () => void,
   wake: () => tune.Awake,
@@ -124,9 +130,9 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     tune.Scan => {
       if (m.folder.len() > 0) {
         let folder = [m.folder];
-        return Player { model: tune.update(m, tune.Files(folder)), deck: deck };
+        return Player { model: tune.update(m, tune.Walk(folder)), deck: deck };
       }
-      return Player { model: tune.update(m, tune.Files(dev.roots)), deck: deck };
+      return Player { model: tune.update(m, tune.Walk(dev.roots)), deck: deck };
     },
     tune.List(dir) => {
       return Player { model: tune.update(m, tune.Dirs(dir, dev.dirs(dir))), deck: deck };
@@ -156,43 +162,112 @@ const THUMB: i32 = 112;
 
 const ART: i32 = 720;
 
-// The directory of a path.
-function dir_of(path: string): string {
-  let cut = path.len();
-  for i in 0..path.len() {
-    if (path[i] == b'/') {
-      cut = i;
-    }
-  }
-  return path.take(cut).to_owned();
-}
-
 // The bytes of the image file of the directory of `path`, or no bytes.
 function folder_picture(dev: Device, m: tune.Model, path: string): u8[] {
-  let dir = dir_of(path);
+  let dir = tune.dir_of(path);
   for p in m.pictures {
-    if (dir_of(p) == dir) {
+    if (tune.dir_of(p) == dir) {
       return dev.read(p);
     }
   }
   return [];
 }
 
-// The player with the picture of the album of the key `key`, from the
-// file `path` of that album or from an image file of its directory. An
-// album gets its picture one time.
-function covered(dev: Device, own m: tune.Model, key: string, path: string): tune.Model {
-  if (tune.knows_cover(m, key)) {
-    return m;
+// The name that the device keeps the picture of the album of the key
+// `key` under: 16 hexadecimal digits of a hash of the key.
+function cover_name(key: string): string {
+  let h = -3750763034362895579i64;
+  for i in 0..key.len() {
+    h = (h ^ key[i] as i64) * 1099511628211i64;
   }
+  let digits = "0123456789abcdef";
+  let out = "";
+  for k in 0..16 {
+    let d = (h >> (60 - 4 * k) as i64 & 15i64) as i32;
+    out = out + digits.drop(d).take(1);
+  }
+  return out;
+}
+
+// The bytes of a picture that the device keeps: the width and the height
+// in 4 bytes each, and then the pixels. A picture with no pixel tells that
+// the album has no picture.
+function cover_bytes(image: Option[draw.Image]): u8[] {
+  let Some(img) = image else {
+    return wire.put_le(wire.put_le([], 0u64, 4), 0u64, 4);
+  };
+  let out = wire.put_le(wire.put_le([], img.width as u64, 4), img.height as u64, 4);
+  for b in img.pixels {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// A width and a height that a picture of a row can have.
+function sized(w: i32, h: i32): boolean {
+  return w > 0 && h > 0 && w <= 4096 && h <= 4096;
+}
+
+// The picture of bytes of `cover_bytes`: None for bytes that are not one,
+// and Some(None) for an album that has no picture.
+function cover_image(bytes: u8[]): Option[Option[draw.Image]] {
+  if (bytes.len() < 8) {
+    return None;
+  }
+  let w = wire.le(bytes, 0, 4) as i32;
+  let h = wire.le(bytes, 4, 4) as i32;
+  if (w == 0 && h == 0 && bytes.len() == 8) {
+    return Some(None);
+  }
+  if (!sized(w, h) || bytes.len() != 8 + w * h * 4) {
+    return None;
+  }
+  let pixels: u8[] = [];
+  for i in 8..bytes.len() {
+    pixels = pixels.append(bytes[i]);
+  }
+  return Some(Some(draw.Image { width: w, height: h, pixels: pixels }));
+}
+
+// The picture of the album of the file `path`, from that file or from an
+// image file of its directory, at the size of a row.
+function cover_from(dev: Device, m: tune.Model, path: string): Option[draw.Image] {
   let bytes = library.picture(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n));
   if (bytes.len() == 0) {
     bytes = folder_picture(dev, m, path);
   }
   if (bytes.len() == 0) {
-    return tune.with_cover(m, key, None);
+    return None;
   }
-  return tune.with_cover(m, key, dev.decode(bytes, THUMB, THUMB));
+  return dev.decode(bytes, THUMB, THUMB);
+}
+
+// The player with the picture of the album of the first path of `wanted`.
+// The device keeps each picture, so an album gets its picture from its
+// files one time.
+function covered(dev: Device, own m: tune.Model): tune.Model {
+  let path = m.wanted[0];
+  let left: string[] = [];
+  for i in 1..m.wanted.len() {
+    left = left.append(m.wanted[i]);
+  }
+  let next = tune.Model { ...m, wanted: left };
+  let key = "";
+  for t in next.tracks {
+    if (t.path == path) {
+      key = tune.album_key(t.by, t.album);
+    }
+  }
+  if (key.len() == 0 || tune.knows_cover(next, key)) {
+    return next;
+  }
+  let name = cover_name(key);
+  if let Some(image) = cover_image(dev.kept(name)) {
+    return tune.with_cover(next, key, image);
+  }
+  let image = cover_from(dev, next, path);
+  dev.put(name, cover_bytes(image));
+  return tune.with_cover(next, key, image);
 }
 
 // Reads the next path of the library. A file of sound is a track, and its
@@ -211,7 +286,7 @@ function scanned(dev: Device, own m: tune.Model): tune.Model {
   let next = tune.Model { ...m, scan: left };
   if (library.format_of(path).len() > 0) {
     if let Some(t) = library.track(roots, path, dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n)) {
-      return covered(dev, tune.update(next, tune.Found(t)), tune.album_key(t.by, t.album), path);
+      return tune.update(next, tune.Found(t));
     }
     return next;
   }
@@ -234,7 +309,7 @@ function listed(dev: Device, own m: tune.Model, path: string): tune.Model {
       below = below.append(path + "/" + name);
     }
   }
-  return tune.update(tune.Model { ...m, pictures: pictures }, tune.Files(below));
+  return tune.update(tune.Model { ...m, pictures: pictures }, tune.Listed(path, below));
 }
 
 // The milliseconds of one step that the scan can use.
@@ -247,9 +322,31 @@ function scanned_until(dev: Device, own m: tune.Model, until: i64): tune.Model {
   while (state.scan.len() > 0 && dev.now() < until) {
     state = scanned(dev, state);
   }
-  if (state.scan.len() == 0 && state.tracks.len() == 0 && state.folder.len() == 0 && !state.made) {
+  if (state.scan.len() > 0) {
+    return state;
+  }
+  if (state.tracks.len() == 0 && state.folder.len() == 0 && !state.made) {
     let made = dev.demo();
     return tune.update(tune.Model { ...state, made: true }, tune.Files(made));
+  }
+  // The walk is at its end: the library loses the tracks whose files are
+  // not there, and the device keeps the library when it is new.
+  let whole = state;
+  if (whole.walking) {
+    whole = tune.pruned(whole);
+  }
+  if (whole.dirty) {
+    dev.save(library.to_text(whole.tracks));
+    return tune.Model { ...whole, dirty: false };
+  }
+  return whole;
+}
+
+// Gets the pictures of albums until the time `until`, in ns: one or more.
+function covered_until(dev: Device, own m: tune.Model, until: i64): tune.Model {
+  let state = covered(dev, m);
+  while (state.wanted.len() > 0 && dev.now() < until) {
+    state = covered(dev, state);
   }
   return state;
 }
@@ -311,6 +408,8 @@ function settled(dev: Device, own p: Player, until: i64): Player {
   let m = model;
   if (m.scan.len() > 0) {
     m = scanned_until(dev, m, until);
+  } else if (m.wanted.len() > 0) {
+    m = covered_until(dev, m, until);
   }
   return pumped(dev, m, deck);
 }

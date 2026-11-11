@@ -103,7 +103,7 @@ function boxed(): string[] {
 // The names in the directory `at` of the files of the test.
 function names_in(at: string): string[] {
   let out: string[] = [];
-  for p in paths().concat(boxed()) {
+  for p in paths().concat(boxed()).append("music/Gone.mp3") {
     if (p.starts_with(at + "/")) {
       let name = p.drop(at.len() + 1).split("/")[0].to_owned();
       if (!out.contains(name)) {
@@ -152,6 +152,9 @@ function device(): player.Device {
     dirs: (at: string): string[] => dirs_of(at),
     keep: (folder: string): void => {},
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
+    save: (text: string): void => {},
+    kept: (name: string): u8[] => [],
+    put: (name: string, bytes: u8[]): void => {},
     show: (now: tune.Now): void => {},
     quit: (): void => {},
     wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
@@ -267,8 +270,8 @@ function test_pause_and_seek(): test.TestOutcome {
 }
 
 function test_the_next_track_plays_at_the_end(): test.TestOutcome {
-  // The library has one more track, whose file is not sound. It is by no
-  // artist, so it is the last one.
+  // The library has one more track, whose file is in its directory and is
+  // not sound. It is by no artist, so it is the last one.
   let with_gone = tune.update(tune.start(paths()), tune.Found(tune.plain("music/Gone.mp3", "Gone", "MP3", 0i64)));
   let s = sim.tap(started_from(with_gone), "Slow Water");
   let length = s.shell.app.model.length_ms;
@@ -437,6 +440,19 @@ function test_the_player_gives_the_device_back(): test.TestOutcome {
   return test.assert_eq(before + " | " + (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + t.shell.app.deck.is_some().to_string() + " " + m.current.to_string() + " " + m.playing.to_string(), "true true true | false false false 2 true");
 }
 
+// The player starts with the library that it saved. A track whose file is
+// not in its directory leaves the library at the end of the walk, and a
+// file that is new comes in. The device then keeps the new library, and
+// keeps the picture of each album.
+function test_the_saved_library(): test.TestOutcome {
+  let saved = library.from_text(library.to_text([tune.Track { ...tune.plain("music/" + library.demo_name(0), "Morning Fern", "FLAC", 6000i64), artist: "Fern", album: "First Light", by: "Fern", number: 1 }, tune.plain("music/Old.wav", "Old", "WAV", 1000i64)]));
+  let first = sim.start(player.wrap(tune.start_with("music", "", saved)), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let before = titles(first.shell.app.model) + " " + first.shell.app.model.wanted.len().to_string();
+  let s = sim.after(first, 500i64);
+  let m = s.shell.app.model;
+  return test.assert_eq(before + " | " + titles(m) + " " + m.dirty.to_string() + " " + m.walking.to_string() + " " + m.wanted.len().to_string() + " " + m.bare.len().to_string(), "Morning Fern|Old 2 | Tagged Song|Morning Fern|Slow Water|Quick Light false false 0 3");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -456,5 +472,6 @@ function main(): i32 {
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
+  r = r.it("the player starts with the library that it saved", test_the_saved_library);
   return r.finish();
 }

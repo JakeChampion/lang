@@ -109,6 +109,14 @@ function test_a_picture_in_a_tag(): test.TestOutcome {
   return test.assert_eq(got + " | " + names, "Painted 2612 200000 500 0 | true true false");
 }
 
+function test_the_text_of_a_library(): test.TestOutcome {
+  let tracks = [tune.Track { path: "/m/a b/01 x.mp3", title: "A\ttab", artist: "Ar", album: "Al", by: "By", number: 3, year: 1999, format: "MP3", ms: 123456i64 }, tune.plain("/m/y.wav", "Y", "WAV", 0i64)];
+  let text = library.to_text(tracks);
+  let back = library.from_text(text + "\nnot a line\n");
+  let got = back.len().to_string() + " " + back[0].path + "|" + back[0].title + "|" + back[0].by + "|" + back[0].number.to_string() + "|" + back[0].year.to_string() + "|" + back[0].ms.to_string() + " " + back[1].title + "|" + back[1].artist + " " + library.from_text("").len().to_string();
+  return test.assert_eq(got, "2 /m/a b/01 x.mp3|A tab|By|3|1999|123456 Y|Unknown artist 0");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -118,5 +126,6 @@ function main(): i32 {
   r = r.it("a scan reads parts of a file", test_a_scan_reads_parts_of_a_file);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file give their tags and their length", test_m4a_ogg_and_opus_files);
   r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
+  r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
   return r.finish();
 }

@@ -493,6 +493,49 @@ pub function other_file(name: string): boolean {
   return false;
 }
 
+// A text with a space for each tab and each line feed, for one field of a
+// line of the saved library.
+function field(text: string): string {
+  return text.replace("\t", " ").replace("\n", " ");
+}
+
+// The tracks as a text: one line for each track, and a tab between two
+// fields.
+pub function to_text(tracks: tune.Track[]): string {
+  let lines: string[] = [];
+  for t in tracks {
+    lines = lines.append([field(t.path), field(t.title), field(t.artist), field(t.album), field(t.by), t.number.to_string(), t.year.to_string(), t.format, t.ms.to_string()].join("\t"));
+  }
+  return lines.join("\n");
+}
+
+function number_of(text: string): i64 {
+  let n = 0i64;
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9') {
+      return n;
+    }
+    n = n * 10i64 + (text[i] as i64 - 48i64);
+  }
+  return n;
+}
+
+// The tracks of a text of `to_text`. A line that does not have nine fields
+// gives no track.
+pub function from_text(text: string): tune.Track[] {
+  let out: tune.Track[] = [];
+  for line in text.split("\n") {
+    let f: string[] = [];
+    for part in line.split("\t") {
+      f = f.append(part.to_owned());
+    }
+    if (f.len() == 9 && f[0].len() > 0) {
+      out = out.append(tune.Track { path: f[0], title: f[1], artist: f[2], album: f[3], by: f[4], number: number_of(f[5]) as i32, year: number_of(f[6]) as i32, format: f[7], ms: number_of(f[8]) });
+    }
+  }
+  return out;
+}
+
 // The file of the tune of a number: the first one is a FLAC file, and each
 // other one is a WAV file.
 pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {

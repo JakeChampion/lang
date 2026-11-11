@@ -3,6 +3,7 @@
 // player.fern does it. So tune_test.fern runs the player on the host.
 import "std/android/draw";
 import "core/cmp";
+import "core/map";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
@@ -94,6 +95,11 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // and `bare` has the keys of the albums that have none. `pictures` has the
 // paths of the image files that the scan found in the directories. `art`
 // is the picture of the track that plays, at the size of its screen.
+// `have` has the path of each track. While the player goes through its
+// directories, `walking` is true, `seen` has each path that it found and
+// `listed` has each directory that it read. `dirty` tells that the library
+// is not the one that the player saved. `wanted` has the path of a track
+// for each album that has no picture yet.
 pub struct Model {
   fresh: boolean,
   tracks: Track[],
@@ -131,11 +137,36 @@ pub struct Model {
   bare: string[],
   pictures: string[],
   art: Option[draw.Image],
+  have: Map[string, boolean],
+  seen: Map[string, boolean],
+  listed: Map[string, boolean],
+  walking: boolean,
+  dirty: boolean,
+  wanted: string[],
 }
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [] };
+}
+
+// A player with the tracks `tracks` that it saved at an earlier time, in
+// the order of the library. It looks for the files again after the screen
+// shows, and gets the picture of each album.
+pub function start_with(home: string, folder: string, tracks: Track[]): Model {
+  let m = start_in(home, folder);
+  let have = m.have;
+  let wanted: string[] = [];
+  let last = "";
+  for t in tracks {
+    have = have.insert(t.path, true);
+    let key = album_key(t.by, t.album);
+    if (key != last) {
+      wanted = wanted.append(t.path);
+      last = key;
+    }
+  }
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -159,8 +190,10 @@ pub function start_in(home: string, folder: string): Model {
 // `Menu` shows the menu of a track, and `PlayNext` and `Enqueue` put that
 // track in the queue. `Lined` shows the queue or not. `Jump` plays the
 // track at a place of the queue, and `Drop` takes that place out.
-// `Closing` comes when Android destroys the activity.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing }
+// `Closing` comes when Android destroys the activity. `Walk` comes with
+// the directories of the library when the player starts to go through
+// them, and `Listed` comes with the entries of a directory that it read.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]) }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -321,25 +354,86 @@ function with_track(m: Model, t: Track): Model {
   if (at == m.tracks.len()) {
     all = all.append(t);
   }
-  return Model { ...m, tracks: all, current: moved(m.current, at), menu: moved(m.menu, at), queue: m.queue.map((i: i32): i32 => moved(i, at)) };
+  let wanted = m.wanted;
+  if (!knows_cover(m, album_key(t.by, t.album))) {
+    wanted = wanted.append(t.path);
+  }
+  return Model { ...m, tracks: all, current: moved(m.current, at), menu: moved(m.menu, at), queue: m.queue.map((i: i32): i32 => moved(i, at)), have: m.have.insert(t.path, true), dirty: true, wanted: wanted };
 }
 
 // The player with the files and the directories that it did not read
 // yet.
 function with_files(m: Model, files: string[]): Model {
   let scan = m.scan;
+  let seen = m.seen;
   for f in files {
-    let known = scan.contains(f);
-    for t in m.tracks {
-      if (t.path == f) {
-        known = true;
+    if (seen.get(f).is_none()) {
+      seen = seen.insert(f, true);
+      if (m.have.get(f).is_none()) {
+        scan = scan.append(f);
       }
     }
-    if (!known) {
-      scan = scan.append(f);
+  }
+  return Model { ...m, scan: scan, seen: seen };
+}
+
+// The directory of a path.
+pub function dir_of(path: string): string {
+  let cut = path.len();
+  for i in 0..path.len() {
+    if (path[i] == b'/') {
+      cut = i;
     }
   }
-  return Model { ...m, scan: scan };
+  return path.take(cut).to_owned();
+}
+
+// The place that the number `i` of a track has after the tracks changed:
+// `to` has the new number of each old number, or -1.
+function placed(i: i32, to: i32[]): i32 {
+  if (i < 0 || i >= to.len()) {
+    return -1;
+  }
+  return to[i];
+}
+
+// The player at the end of a walk through its directories: it has no
+// track whose file is not in a directory that the walk read. The track
+// that plays stops when its file is not there.
+pub function pruned(m: Model): Model {
+  let kept: Track[] = [];
+  let to: i32[] = [];
+  let have: Map[string, boolean] = map_new(64);
+  for t in m.tracks {
+    if (m.listed.get(dir_of(t.path)).is_some() && m.seen.get(t.path).is_none()) {
+      to = to.append(-1);
+    } else {
+      to = to.append(kept.len());
+      kept = kept.append(t);
+      have = have.insert(t.path, true);
+    }
+  }
+  let done = Model { ...m, walking: false, seen: map_new(64), listed: map_new(64) };
+  if (kept.len() == m.tracks.len()) {
+    return done;
+  }
+  let queue: i32[] = [];
+  let spot = -1;
+  for i in 0..m.queue.len() {
+    let n = placed(m.queue[i], to);
+    if (n >= 0) {
+      if (i == m.spot) {
+        spot = queue.len();
+      }
+      queue = queue.append(n);
+    }
+  }
+  let current = placed(m.current, to);
+  let next = Model { ...done, tracks: kept, have: have, dirty: true, queue: queue, spot: spot, current: current, menu: -1 };
+  if (m.current >= 0 && current < 0) {
+    return Model { ...next, queue: [], spot: -1, playing: false, open: false, at_ms: 0i64, wants: next.wants.append(Hold) };
+  }
+  return next;
 }
 
 // The part of the track that played, from 0 to 1.
@@ -809,7 +903,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {
@@ -937,6 +1031,12 @@ pub function update(own m: Model, msg: Msg): Model {
     Closing => {
       return Model { ...m, wants: m.wants.append(Quit) };
     },
+    Walk(roots) => {
+      return with_files(Model { ...m, walking: true, seen: map_new(64), listed: map_new(64) }, roots);
+    },
+    Listed(dir, entries) => {
+      return with_files(Model { ...m, listed: m.listed.insert(dir, true) }, entries);
+    },
     Play(on) => {
       if (on == m.playing) {
         return Model { ...m, lost: false };
@@ -959,10 +1059,10 @@ pub function update(own m: Model, msg: Msg): Model {
   }
 }
 
-// The milliseconds to the next Beat: the player reads one file of the
-// library at each one, and gives the sound its samples.
+// The milliseconds to the next Beat: the player reads paths of the library
+// or gets pictures of albums at each one, and gives the sound its samples.
 pub function beat(m: Model): i32 {
-  if (m.scan.len() > 0) {
+  if (m.scan.len() > 0 || m.wanted.len() > 0) {
     return 1;
   }
   if (m.fresh) {

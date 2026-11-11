@@ -89,11 +89,14 @@ fern -run examples/android/tune/tune_test.fern
 
 The player decodes on the loop thread of the app, between two frames. A
 frame that takes longer than the sound that the stream holds makes a gap in
-the sound. The sound stops when Android stops the activity, because the app
-has no service.
+the sound. The stream holds a quarter of a second.
 
 The player keeps the whole file of the track that plays in memory. For
 the library, it reads one directory or the first 128 KB of one file at a
-time, for 8 ms of each tick. A file gives its tags and its length. It reads more only for a tag that is longer,
-or for a tag after the sound. It keeps no list of the library between two
-starts.
+time, for 8 ms of each tick. A file gives its tags and its length. It reads
+more only for a tag that is longer, or for a tag after the sound.
+
+The player keeps the library in its private files, so it
+shows the tracks and the pictures of the albums at its next start. It then
+reads the directories again: a file that is new comes in, and a track
+whose file is not there leaves the library.
