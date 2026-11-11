@@ -101,7 +101,7 @@ function main(): i32 {
   print(saved.get_or("k", 0));
   print(updated.get_or("k", 0));
   print(base.get_or("k", 0));
-  match (awaiting_token(SecuredToken(make_token(13, closed)))) {
+  match (awaiting_token(SecuredToken(make_token(13, unsafe { share_unchecked(closed) })))) {
     AwaitingToken(Some(token)) => {
       assert(token.close() == 13);
     },

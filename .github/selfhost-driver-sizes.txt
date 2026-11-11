@@ -1,3 +1,6 @@
+# 2026-11-11: PR #15233 at c9ce8161bd, driver-sizes-x86_64 job 130271740223.
+# Pin runtime_run to 16668464 bytes. The local stock build agrees. The 5% tolerance is unchanged.
+# Evidence: docs/benchmarks/callback-result-ci-2026-11-11/.
 # 2026-11-10: PR #15176 at fafa7fb86a5b, driver-sizes-x86_64 job 130090914655.
 # Pin both compiler images to the CI measurements. The 5% tolerance is unchanged.
 # 2026-11-10: PR #15140 at 3874ad2e39ed, driver-sizes-x86_64 job 129974883103.
@@ -612,7 +615,7 @@
 # 2026-10-31 (#13921): five rows measured by the driver-sizes-x86_64 lane after the pin refresh to stage0-20261031-0c1f501 (asm_modload_run, asm_ir_run, asm_run, asm_pathprobe_run, checker_modload_run, each 5.5% to 7.5% larger).
 fern.fern/stage2 16710816
 fern.fern 16658288
-drivers/runtime_run.fern 15871648
+drivers/runtime_run.fern 16668464
 drivers/asm_load_run.fern 12721632
 drivers/asm_modload_run.fern 10839904
 drivers/asm_ir_run.fern 10449984

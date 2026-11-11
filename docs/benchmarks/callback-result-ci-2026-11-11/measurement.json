@@ -1,0 +1,29 @@
+{
+  "run": 42943752293,
+  "job": 130271740223,
+  "job_url": "https://github.com/JakeChampion/lang/actions/runs/42943752293/job/130271740223",
+  "head": "c9ce8161bd50d213cf330abec869d438d123f0f5",
+  "ci_merge": "083f4d3ea03f79ccdd234b9358cdc6fc294685ce",
+  "identical_head_and_merge_tree": "f85f46a54655b05b5dcb1aca368514b4d6973341",
+  "driver": "drivers/runtime_run.fern",
+  "before_bytes": 15871648,
+  "measured_bytes": 16668464,
+  "tolerance_percent": 5,
+  "local_stock_bytes": 16668464,
+  "local_stock_seconds": 55.692,
+  "stage0": "stage0-20261109-a19e872",
+  "compiler_and_stdlib_changed_after_ci": false,
+  "files": {
+    "driver-size-job.log.gz": "811b5b12d07919c373e8229d3b4a005a108769c6e0240c210db084f5b15283ab",
+    "local-driver.log": "70aded529f5723792118d63877cf924fa09e65da30126201674193abd8cf8df3",
+    "local-driver.tsv": "371af1329f6c797e8ee110172096f6c92c0b942359f0ecefc749174c0f9b8e9f"
+  },
+  "explicit_stdlib_measurements": {
+    "main_commit": "2ca148c6757a95ba419a67751dd3598726f07c56",
+    "main_bytes": 16664672,
+    "callback_bytes": 16668464,
+    "difference_bytes": 3792,
+    "stage0_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751"
+  },
+  "driver_gate_tests_passed": 14
+}
