@@ -6,12 +6,16 @@
 
 static int mode;
 static int calls;
+static int64_t custom_position, custom_time;
 
 typedef struct AAudioStream AAudioStream;
 typedef int32_t aaudio_result_t;
 
 void mock_timestamp_mode(int value) { mode = value; calls = 0; }
 int mock_timestamp_calls(void) { return calls; }
+void mock_timestamp_value(int64_t position, int64_t time_ns) {
+    mode = 10; calls = 0; custom_position = position; custom_time = time_ns;
+}
 
 aaudio_result_t AAudioStream_getTimestamp(AAudioStream *stream, clockid_t clock,
                                         int64_t *position, int64_t *time_ns) {
@@ -32,6 +36,7 @@ aaudio_result_t AAudioStream_getTimestamp(AAudioStream *stream, clockid_t clock,
     case 7: *time_ns = 1000000000; return 0;
     case 8: *position = INT64_MAX; *time_ns = INT64_MAX; return 0;
     case 9: *position = 48000; *time_ns = 1000000000; return 5;
+    case 10: *position = custom_position; *time_ns = custom_time; return 0;
     default: abort();
     }
 }
