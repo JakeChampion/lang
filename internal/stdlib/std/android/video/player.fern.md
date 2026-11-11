@@ -17,9 +17,20 @@ Recovery before the first post-seek frame uses the requested time, including whi
 The last scheduled frame timestamp remains available separately.
 
 This controller plays one unencrypted video track. It does not play audio.
-The surface and file descriptor must remain valid until `close`.
+The current surface and file descriptor must remain valid until `close`.
 Close before the window destruction callback returns.
 Each returned player value replaces the previous value.
+
+`replace_surface` changes the active output window without a seek or codec restart.
+It preserves pause, the presentation clock, and any pending output buffer.
+A successful replacement also supplies the window for later software recovery.
+The caller keeps both compatible windows valid through the call and owns their references.
+After success, the caller can release its old window reference.
+
+A null window returns `Header` without a platform call or state change.
+A platform failure marks the player as failed and preserves its last successful window.
+The caller must close the player or recover its codec after such a failure.
+This method does not detach a surface. If no replacement exists, close before window destruction.
 
 `synchronize_audio` updates the presentation clock from an existing AAudio stream timestamp and an explicit audio media origin.
 An unavailable timestamp leaves the clock unchanged. A rejected anchor leaves the player and pending output buffer unchanged.
@@ -49,6 +60,19 @@ pub struct Player { reader: extractor.Extractor, decoder: video.Decoder, decoder
 pub enum Event { Idle, FrameScheduled(i64), FrameDropped(i64), FormatChanged(video.OutputFormat), Recovered(capabilities.CodecInfo), End, Failure(frame.VideoError) }
 
 pub struct Tick { player: Player, event: Event }
+
+pub function (own player: Player) replace_surface(window: usize): Tick {
+  if (!player.decoder_live || player.failed) {
+    return Tick { player: player, event: Failure(frame.State) };
+  }
+  if (window == 0 as usize) {
+    return Tick { player: player, event: Failure(frame.Header) };
+  }
+  return match (player.decoder.set_output_surface(window)) {
+    Ok(_) => Tick { player: Player { ...player, window: window }, event: Idle },
+    Err(error) => failure(player, error),
+  };
+}
 
 function audio_clock(stream: audio.Stream, origin: playback_clock.AudioOrigin): Result[Option[playback_clock.Clock], frame.VideoError] {
   if (origin.frame_position < 0i64 || origin.media_us < 0i64 || stream.rate <= 0) {

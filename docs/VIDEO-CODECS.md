@@ -284,6 +284,15 @@ Pause preserves the media position. Seek flushes buffers and restores configurat
 
 The player discards preroll frames before the target timestamp.
 
+`replace_surface` changes the output window without a seek, codec restart, or pending-buffer release.
+It preserves pause and the presentation clock. Later codec recovery uses the last successful window.
+The app owns both compatible windows and keeps them valid through the call.
+After success, the app can release its old window reference.
+
+A null window preserves the player and returns `Header` before the platform call.
+A platform error marks the player as failed. The app must close the player or recover its codec.
+This method does not detach a surface. Close the player before window destruction if no replacement exists.
+
 Runtime recovery closes the decoder and retries one software implementation policy.
 It restarts from a sync sample near the recovery point.
 
@@ -478,6 +487,9 @@ The Android workflow builds `tests/android/video/app.fern` and runs it on the AP
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
+
+It also requires the real codec to accept its same output surface while paused.
+Distinct-window replacement and pending-buffer behavior use host ABI controls. The emulator check does not qualify window recreation on physical devices.
 
 The workflow also copies the byte-buffer export into MediaStore and grants the video APK video read permission.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
