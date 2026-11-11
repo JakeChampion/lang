@@ -9130,7 +9130,7 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
   let flags = view_sum_flags(sums, vix, callee.key);
   for i in 0..flags.len() {
     if (flags[i] && i < callee.args.len()) {
-      let at = check_expr(callee.args[i], cur);
+      let at = view_arg_type(c, i, callee.args[i], cur);
       if (holds_view_aggregate(at, cur)) {
         out = merge_view_roots(out, slc_agg_roots(callee.args[i], at, cur, params, localarr, tainted, held, sums, vix));
       } else {
@@ -9139,6 +9139,19 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
     }
   }
   return out;
+}
+
+// An argument that has no type of its own, such as `[]`, has the type of its parameter.
+function view_arg_type(c: ast.ExprCall, i: i32, arg: ast.Expr, s: Scope): typeinfo.Type {
+  let at = check_expr(arg, s);
+  if (!type_contains_unknown(at)) {
+    return at;
+  }
+  let pts = call_param_types(c, s);
+  if (i < pts.len()) {
+    return pts[i];
+  }
+  return at;
 }
 
 // These facts depend on the function and scope, not the call summaries.
