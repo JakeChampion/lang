@@ -2499,6 +2499,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for name := range c.info.FuncSigs {
 		c.builtinFuncs[name] = true
 	}
+	// A reserved function name stops the check, as a reserved type name does.
+	if c.reservedFunctionNames(prog) {
+		sourceNamed(prog, c.errors)
+		return c.info, diag.Errors(c.errors)
+	}
 
 	for _, td := range prog.Traits {
 		if _, dup := c.info.Traits[td.Name]; dup {
@@ -18334,6 +18339,21 @@ func declaredName(fn *ast.FuncDecl) string {
 		return fn.DeclName
 	}
 	return fn.Name
+}
+
+// reservedFunctionNames reports E010 for each free function that takes the
+// name of an unsafe intrinsic, and says whether it reported one. Any other
+// builtin can be shadowed.
+func (c *checker) reservedFunctionNames(prog *ast.Program) bool {
+	found := false
+	for _, fn := range prog.Funcs {
+		name := declaredName(fn)
+		if fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && UnsafeIntrinsics[name] {
+			c.report(fn.BodyModule(), fn.P, "E010", fmt.Sprintf("function %q is a reserved built-in name and cannot be redeclared", name))
+			found = true
+		}
+	}
+	return found
 }
 
 func (c *checker) checkMainSignature(fn *ast.FuncDecl) {
