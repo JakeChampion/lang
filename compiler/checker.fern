@@ -18352,7 +18352,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 
 pub struct OwnFunc { name: string, flags: boolean[], send: boolean[] }
 
-pub struct OwnFuncs { owned_results: util.NameIndex, rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
+pub struct OwnFuncs { owned_results: boolean[], rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32, mcol: i32 }
 
@@ -21844,7 +21844,8 @@ function lu_checked_result_call(fx: LuFn, call: ast.ExprCall): boolean {
     if (lu_decl_count(fx, id.name) > 0) {
       return util.has_str(fx.facts.checked_locals, id.name);
     }
-    return fx.ofuncs.owned_results.has(id.name);
+    let at = fx.ofuncs.funcs.find(id.name);
+    return at >= 0 && fx.ofuncs.owned_results[at];
   }
   return false;
 }
@@ -23666,13 +23667,12 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let methods: string[] = [];
   let all_methods: string[] = [];
   let funcs: string[] = [];
-  let owned_results: string[] = [];
+  // Result flags use the same positions as the global function index.
+  let owned_results: boolean[] = [];
   for func in mod.funcs {
-    if (func.ret_own && func.receiver_name.len() == 0) {
-      owned_results = owned_results.append(func.name);
-    }
     if (func.receiver_name.len() == 0) {
       funcs = funcs.append(func.name);
+      owned_results = owned_results.append(func.ret_own);
     } else {
       all_methods = all_methods.append(func.name);
     }
@@ -23737,7 +23737,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { owned_results: util.name_index(owned_results), rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs), all_methods: util.name_index(all_methods) };
+  return OwnFuncs { owned_results: owned_results, rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs), all_methods: util.name_index(all_methods) };
 }
 
 function ow_takes_own_self(m: parser.FuncDecl): boolean {

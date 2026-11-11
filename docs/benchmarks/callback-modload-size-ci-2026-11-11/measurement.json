@@ -1,0 +1,19 @@
+{
+  "run": 42966994263,
+  "job": 130346696451,
+  "head": "0bea6d21a94fa2ee9081d112b424862de9d14077",
+  "ci_merge": "6e1a110d3d2c4b3dde9d91f0eb1333450891c22a",
+  "identical_head_and_merge_tree": "8bf5edf4cc95d1a47f8b6eaf5d26551e61987934",
+  "driver": "drivers/asm_modload_run.fern",
+  "before_bytes": 10839904,
+  "measured_bytes": 11387536,
+  "tolerance_percent": 5,
+  "local_compacted_bytes": 11387376,
+  "local_compacted_seconds": 32.84,
+  "stage0": "stage0-20261109-a19e872",
+  "files": {
+    "local-driver.tsv": "ed4096b65242dcd0f248b9062ff22c6a666e3964a360355d14f915dd133e2bc9",
+    "local-driver.log": "3ee315809cab8ea945422e05ea2b3bcb1f4f35fcf3400431a122510739846b62",
+    "driver-size-job.log.gz": "2ef2b9beda642db40d5952f97228283c96ef0890330ddc8e8e6bd79ad8277e9b"
+  }
+}
