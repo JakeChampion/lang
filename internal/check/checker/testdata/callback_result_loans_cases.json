@@ -253,5 +253,10 @@
     "name": "checked nested weakened function",
     "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let alias:(own H)=>(Wrap,i32)=pair;let p=alias(h);p.0.h.close();} function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "checked nested ordinary generic after scalar",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Box[T]{value:T} function lend[T](box:Box[T]):(Box[T],i32){return(box,0);} function f(own h:H):void{let warm=lend(Box{value:1});let n=warm.0.value;let p=lend(Box{value:h});p.0.value.close();h.close();} function main():i32{return 0;}",
+    "want": "E051"
   }
 ]

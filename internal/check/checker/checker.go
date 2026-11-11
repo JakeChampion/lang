@@ -14432,6 +14432,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.scalarArgs = map[ast.Expr]bool{}
 		}
 		c.scalarArgs[e] = true
+	} else {
+		delete(c.scalarArgs, e)
 	}
 	if c.current != nil && c.current.ReturnOwn {
 		// Callbacks can lend captured resources, even when their representation
