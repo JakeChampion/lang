@@ -1,10 +1,14 @@
 // The library of the player: the tracks of a directory, and the tunes that
 // the player makes when the directory has none.
-import "core/cmp";
 import "std/audio/flac";
+import "std/audio/mp3";
 import "std/audio/pcm";
+import "std/audio/tags";
 import "std/audio/wav";
+import "std/audio/wire";
+import "std/option";
 import "std/result";
+import "std/string";
 import "std/unicode";
 import "./demo";
 import "./engine";
@@ -30,9 +34,55 @@ pub function format_of(name: string): string {
   return "";
 }
 
-// The title of a file: its name with no format at the end, and a space for
-// each low line.
-pub function title_of(name: string): string {
+// The parts of a path between its `/` characters.
+function parts(path: string): string[] {
+  let out: string[] = [];
+  for p in path.split("/") {
+    if (p.len() > 0) {
+      out = out.append(p.to_owned());
+    }
+  }
+  return out;
+}
+
+// The path below the root that it is in, or the whole path.
+function below(roots: string[], path: string): string {
+  for r in roots {
+    if (r.len() > 0 && path.starts_with(r + "/")) {
+      return path.drop(r.len() + 1).to_owned();
+    }
+  }
+  return path;
+}
+
+// The byte is between a number and a name: a space, a dot, a hyphen or a
+// low line.
+function between(c: u8): boolean {
+  return c == b' ' || c == b'.' || c == b'-' || c == b'_';
+}
+
+// The number at the start of a file name such as "03 Name" or "3. Name",
+// and the name after it. A name with no number gives 0 and itself.
+pub function numbered(name: string): (i32, string) {
+  let n = 0;
+  let at = 0;
+  while (at < name.len() && at < 3 && name[at] >= b'0' && name[at] <= b'9') {
+    n = n * 10 + (name[at] as i32 - 48);
+    at += 1;
+  }
+  let rest = at;
+  while (rest < name.len() && between(name[rest])) {
+    rest += 1;
+  }
+  if (at == 0 || rest == at || rest >= name.len()) {
+    return (0, name);
+  }
+  return (n, name.drop(rest).to_owned());
+}
+
+// The name of a file with no format at the end, and a space for each low
+// line.
+function stem(name: string): string {
   let dot = name.len();
   for i in 0..name.len() {
     if (name[i] == b'.') {
@@ -42,29 +92,207 @@ pub function title_of(name: string): string {
   return name.take(dot).replace("_", " ");
 }
 
-// The track of the file `name` in `dir`, or None for a file that is not
-// sound. `read` gives the bytes of a file.
-pub function track(dir: string, name: string, read: (string) => u8[]): Option[tune.Track] {
-  let format = format_of(name);
-  if (format.len() == 0) {
-    return None;
+function or_else(text: string, other: string): string {
+  if (text.len() > 0) {
+    return text;
   }
-  let path = dir + "/" + name;
-  let Some(deck) = engine.open(read(path)) else {
-    return None;
-  };
-  return Some(tune.Track { path: path, title: title_of(name), format: format, ms: deck.duration_ms() });
+  return other;
 }
 
-// The tracks of the files `names` of `dir`, in the order of their titles.
-pub function tracks(dir: string, names: string[], read: (string) => u8[]): tune.Track[] {
-  let out: tune.Track[] = [];
-  for name in cmp.sort(names) {
-    if let Some(t) = track(dir, name, read) {
-      out = out.append(t);
+// The bytes that the player reads at the start of a file, and at most
+// after its sound: its tags and the header of its sound are there.
+const HEAD: i32 = 131072;
+
+// The length of an ID3v2 tag at the start of `head`, or 0.
+function id3_bytes(head: [u8]): i64 {
+  if (head.len() < 10 || !wire.tag(head, 0, "ID3")) {
+    return 0i64;
+  }
+  let size = 0i64;
+  for i in 6..10 {
+    size = size << 7i64 | (head[i] & 127u8) as i64;
+  }
+  return size + (if ((head[5] & 16u8) != 0u8) { 20i64 } else { 10i64 });
+}
+
+// The length in ms of an MP3 file of `bytes` bytes of sound that starts
+// with `first`: the number of frames that the file tells, or its bytes at
+// the bit rate of its first frame.
+function mp3_ms(first: [u8], bytes: i64): Option[i64] {
+  let Ok(t) = mp3.inspect_track(first, limits()) else {
+    return None;
+  };
+  let Ok(h) = mp3.inspect(first, t.data_offset, limits()) else {
+    return None;
+  };
+  if (t.channels < 1 || t.channels > 2 || t.sample_rate <= 0) {
+    return None;
+  }
+  if (t.declared_frames == 0u32 && h.bitrate > 0) {
+    return Some(bytes * 8i64 / (h.bitrate as i64));
+  }
+  return Some(t.declared_frames as i64 * (h.frames as i64) * 1000i64 / (t.sample_rate as i64));
+}
+
+// The tags of an MP3 file and its length in ms. The sound starts after an
+// ID3v2 tag, and an ID3v1 tag is in the last 128 bytes.
+function mp3_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let skip = id3_bytes(head);
+  let first = if (skip + 16384i64 <= head.len() as i64 || head.len() as i64 >= size) { head } else { part(skip, HEAD) };
+  let Some(ms) = mp3_ms(first, size - skip) else {
+    return None;
+  };
+  let found = tags.id3v2(head);
+  if (found.empty() && size >= 128i64) {
+    found = tags.id3v1(part(size - 128i64, 128));
+  }
+  return Some((found, ms));
+}
+
+// The tags of a FLAC file and its length in ms. The whole file is read
+// when its tags are longer than `head`.
+function flac_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let bytes = head;
+  let got = flac.inspect(bytes, limits());
+  if (got.is_err() && head.len() as i64 < size && size < 1073741824i64) {
+    bytes = part(0i64, size as i32);
+    got = flac.inspect(bytes, limits());
+  }
+  let Ok(h) = got else {
+    return None;
+  };
+  if (h.format.channels > 2) {
+    return None;
+  }
+  return Some((tags.flac(bytes), h.frames as i64 * 1000i64 / (h.format.sample_rate as i64)));
+}
+
+// The `data` chunk of a WAV file that starts with `head`: the offset of
+// the chunk, the bytes of its sound, and the bytes of sound in a second.
+struct Sound { at: i32, bytes: i64, second: i64 }
+
+// The bytes of sound in a second that the `fmt ` chunk at `at` tells, or 0
+// for a file that has more than two channels.
+function per_second(head: [u8], at: i32): i64 {
+  let channels = wire.le(head, at + 10, 2);
+  if (channels < 1u64 || channels > 2u64) {
+    return 0i64;
+  }
+  return wire.le(head, at + 16, 4) as i64;
+}
+
+function wav_sound(head: [u8]): Option[Sound] {
+  if (head.len() < 12 || !wire.tag(head, 8, "WAVE")) {
+    return None;
+  }
+  let at = 12;
+  let second = 0i64;
+  while (at + 8 <= head.len()) {
+    let length = wire.le(head, at + 4, 4) as i64;
+    if (wire.tag(head, at, "data")) {
+      if (second <= 0i64) {
+        return None;
+      }
+      return Some(Sound { at: at, bytes: length, second: second });
+    }
+    if (length > (head.len() - at - 8) as i64) {
+      return None;
+    }
+    if (wire.tag(head, at, "fmt ") && length >= 16i64) {
+      second = per_second(head, at);
+    }
+    at += 8 + (length + length % 2i64) as i32;
+  }
+  return None;
+}
+
+// The tags of a WAV file and its length in ms. Tags after the sound are
+// read from there.
+function wav_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let Some(sound) = wav_sound(head) else {
+    return None;
+  };
+  let found = tags.wav(head);
+  let after = sound.at as i64 + 8i64 + sound.bytes + sound.bytes % 2i64;
+  if (found.empty() && after + 8i64 <= size && after > head.len() as i64) {
+    let rest: u8[] = [];
+    for i in 0..12 {
+      rest = rest.append(head[i]);
+    }
+    for b in part(after, HEAD) {
+      rest = rest.append(b);
+    }
+    found = tags.wav(rest);
+  }
+  return Some((found, sound.bytes * 1000i64 / sound.second));
+}
+
+// The track of the file `path` of `size` bytes, or None for a file that is
+// not sound. `part` gives the bytes of the file from an offset, at most a
+// number of them. The tags of the file give its title, its artist, its
+// album and its number. A file with no tag for one of them takes it from
+// its path below its root: `Artist/Album/03 Title.flac`.
+pub function track(roots: string[], path: string, size: i64, part: (i64, i32) => u8[]): Option[tune.Track] {
+  let dirs = parts(below(roots, path));
+  if (dirs.len() == 0) {
+    return None;
+  }
+  let name = dirs[dirs.len() - 1];
+  let format = format_of(name);
+  if (format.len() == 0 || size <= 0i64) {
+    return None;
+  }
+  let head = part(0i64, HEAD);
+  let read: Option[(tags.Tags, i64)] = None;
+  if (wire.tag(head, 0, "RIFF")) {
+    read = wav_file(head, size, part);
+  } else if (wire.tag(head, 0, "fLaC")) {
+    read = flac_file(head, size, part);
+  } else {
+    read = mp3_file(head, size, part);
+  }
+  let Some((found, ms)) = read else {
+    return None;
+  };
+  let (number, title) = numbered(stem(name));
+  let album = tune.UNKNOWN_ALBUM;
+  let artist = tune.UNKNOWN_ARTIST;
+  if (dirs.len() >= 2) {
+    album = dirs[dirs.len() - 2];
+  }
+  if (dirs.len() >= 3) {
+    artist = dirs[dirs.len() - 3];
+  }
+  let by = or_else(found.artist, artist);
+  if (found.track > 0) {
+    number = found.track;
+  }
+  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms });
+}
+
+// The function that gives the parts of a file that is in memory.
+pub function parts_of(bytes: u8[]): (i64, i32) => u8[] {
+  return (at: i64, n: i32): u8[] => {
+    let out: u8[] = [];
+    let from = at as i32;
+    for i in from..(from + n).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return out;
+  };
+}
+
+// True for a name that ends as a file that is not sound, such as a
+// picture or a document. The scan does not ask the device about such a
+// name, because the answer costs time for each file of a large directory.
+pub function other_file(name: string): boolean {
+  let lower = name.to_lower();
+  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
+    if (lower.ends_with(end)) {
+      return true;
     }
   }
-  return out;
+  return false;
 }
 
 // The file of the tune of a number: the first one is a FLAC file, and each
@@ -78,11 +306,15 @@ pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {
   return wav.encode(samples, format, limits());
 }
 
-// The name of the file of the tune of a number.
+// The path of the file of the tune of a number below the directory of the
+// library: the artist, the album, and the number and the name of the tune.
 pub function demo_name(which: i32): string {
-  let name = demo.names()[which].replace(" ", "_");
+  let name = (which + 1).to_string() + " " + demo.names()[which];
   if (which == 0) {
-    return name + ".flac";
+    return "Fern/First Light/0" + name + ".flac";
   }
-  return name + ".wav";
+  if (which == 1) {
+    return "Fern/First Light/0" + name + ".wav";
+  }
+  return "Fern/Second Light/01 " + demo.names()[which] + ".wav";
 }

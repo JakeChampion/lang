@@ -9,25 +9,78 @@ import "std/option";
 import "std/unicode";
 import "./engine";
 
-// A file of the library: its title, its format, and its length in ms.
-pub struct Track { path: string, title: string, format: string, ms: i64 }
+// A file of the library: its title, its artist, its album and its number
+// on the album, from its tags or from its path. `by` is the artist that
+// the album is under. `format` is the kind of the file, and `ms` is its
+// length.
+pub struct Track { path: string, title: string, artist: string, album: string, by: string, number: i32, year: i32, format: string, ms: i64 }
+
+// A track with a title only, by no artist and on no album.
+pub function plain(path: string, title: string, format: string, ms: i64): Track {
+  return Track { path: path, title: title, artist: UNKNOWN_ARTIST, album: UNKNOWN_ALBUM, by: UNKNOWN_ARTIST, number: 0, year: 0, format: format, ms: ms };
+}
+
+pub const UNKNOWN_ARTIST: string = "Unknown artist";
+
+pub const UNKNOWN_ALBUM: string = "Unknown album";
+
+// The lists of the library.
+pub const SONGS: i32 = 0;
+
+pub const ARTISTS: i32 = 1;
+
+pub const ALBUMS: i32 = 2;
+
+// An artist or an album: its name, the artist that an album is under, the
+// number of its songs and of its albums, and the year of an album.
+pub struct Group { name: string, by: string, songs: i32, albums: i32, year: i32 }
 
 // A stream of sound of the device. `ptr` is 0 when the player has none.
 pub struct Sound { ptr: usize, rate: i32, channels: i32 }
+
+// What the player tells Android about the track that plays.
+pub struct Now { title: string, artist: string, album: string, length_ms: i64, at_ms: i64, playing: boolean }
+
+// The locks of the device that keep the phone awake while a track plays,
+// or 0 for no lock.
+pub struct Awake { wake: usize, wifi: usize }
 
 pub function no_sound(): Sound {
   return Sound { ptr: 0 as usize, rate: 0, channels: 0 };
 }
 
 // What the device must do: load the track of a number and play it, play
-// on, stop the sound, or go to a part of the track from 0 to 1.
-pub enum Want { Load(i32), Resume, Hold, Seek(f64) }
+// on, stop the sound, go to a part of the track from 0 to 1, look for the
+// files of the library again, ask the person for the permission to read
+// the music of the phone, give the directories in a directory, or keep
+// the folder of the library for the next start.
+pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string) }
 
-// `open` tells that the screen of the track shows. `current` is the number
-// of the track that plays, or -1. `deck` reads its file, `sound` plays it,
-// and `pending` has the samples that the sound did not take yet.
+// `fresh` tells that the player did not look for its files yet: it looks
+// at its first Beat, after the screen shows.
+// `tracks` is in the order of the artists, the albums and the numbers.
+// `scan` has the files that the player did not read yet. `tab` is the
+// list that shows. `artist` is the artist whose albums show, and `album`
+// is the album whose songs show, or "". `open` tells that the screen of the
+// track shows. `current` is the number of the track that plays, or -1.
+// `deck` reads its file, `sound` plays it, and `pending` has the samples
+// that the sound did not take yet.
+// `folder` is the directory that the library is in, or "" for the music of
+// the phone. `home` is the directory that the person chooses a folder
+// from. While `choosing` is true the screen shows the directories `dirs`
+// of the directory `dir`. `told` names the track and the state that the
+// player told Android last, and `awake` has the locks that keep the phone
+// awake. `asked` tells that the player asked for the permission and did
+// not look again after it. `made` tells that the player made its tunes.
+// `lost` tells that the player stopped because a call or a different app
+// took the sound of the phone.
 pub struct Model {
+  fresh: boolean,
   tracks: Track[],
+  scan: string[],
+  tab: i32,
+  artist: string,
+  album: string,
   query: string,
   open: boolean,
   current: i32,
@@ -41,16 +94,42 @@ pub struct Model {
   deck: Option[engine.Deck],
   sound: Sound,
   pending: i32[],
+  folder: string,
+  home: string,
+  choosing: boolean,
+  dir: string,
+  dirs: string[],
+  told: string,
+  awake: Awake,
+  asked: boolean,
+  made: boolean,
+  lost: boolean,
 }
 
-pub function start(tracks: Track[]): Model {
-  return Model { tracks: tracks, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [] };
+// A player with no track yet, which reads the files `scan`.
+pub function start(scan: string[]): Model {
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
+}
+
+// A player whose library is in `folder`, and whose person chooses a folder
+// from `home`.
+pub function start_in(home: string, folder: string): Model {
+  return Model { ...start([]), home: home, folder: folder };
 }
 
 // What a person can do, and what the player tells: `Beat` comes many times
 // a second while a track plays, `Finished` comes at the end of a track,
 // and `Failed` comes for a file that the player cannot read.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string) }
+// `Found` comes for each file of sound that the player read, and `Files`
+// comes with the files of the library. `Rescan` is the Scan button, and
+// `Returned` comes when the app shows again. `Choose` is the Folder
+// button. `Into` goes to a directory of the directory that shows, `Out`
+// goes to the directory above it, and `Dirs` comes with the directories of
+// a directory. `Use` makes the directory that shows the folder of the
+// library. `Play` and `SeekMs` come from the media buttons of Android:
+// play or stop, and go to a time in ms. `Focus` comes when a call or a
+// different app takes the sound of the phone, and when it gives it back.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean) }
 
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
@@ -62,16 +141,139 @@ pub function clock(ms: i64): string {
   return (s / 60).to_string() + ":" + rest;
 }
 
-// The numbers of the tracks whose title has the text of the search.
-pub function found(m: Model): i32[] {
-  let want = m.query.trim().to_lower();
+function has(text: string, want: string): boolean {
+  return want.len() == 0 || text.to_lower().contains(want);
+}
+
+function wanted(m: Model): string {
+  return m.query.trim().to_lower();
+}
+
+// The track is on the album that shows, or by the artist that shows.
+function in_view(m: Model, t: Track): boolean {
+  if (m.album.len() > 0) {
+    return t.album == m.album && t.by == m.artist;
+  }
+  return m.artist.len() == 0 || t.by == m.artist;
+}
+
+// The numbers of the tracks that show: those of the album or of the artist
+// that shows, whose title, artist or album has the text of the search.
+pub function songs(m: Model): i32[] {
+  let want = wanted(m);
   let out: i32[] = [];
   for i in 0..m.tracks.len() {
-    if (want.len() == 0 || m.tracks[i].title.to_lower().contains(want)) {
+    let t = m.tracks[i];
+    if (in_view(m, t) && (has(t.title, want) || has(t.artist, want) || has(t.album, want))) {
       out = out.append(i);
     }
   }
   return out;
+}
+
+// The artists whose name has the text of the search, each with the number
+// of its albums and of its songs. The tracks of an artist are one after
+// the other.
+pub function artists(m: Model): Group[] {
+  let want = wanted(m);
+  let out: Group[] = [];
+  let album = "";
+  for t in m.tracks {
+    let n = out.len();
+    if (n > 0 && out[n - 1].name == t.by) {
+      let g = out[n - 1];
+      let albums = g.albums;
+      if (t.album != album) {
+        albums += 1;
+      }
+      out = out.with(n - 1, Group { ...g, songs: g.songs + 1, albums: albums });
+    } else if (has(t.by, want)) {
+      out = out.append(Group { name: t.by, by: t.by, songs: 1, albums: 1, year: 0 });
+    }
+    album = t.album;
+  }
+  return out;
+}
+
+// The albums of the artist that shows, or each album, whose name has the
+// text of the search. The tracks of an album are one after the other.
+pub function albums(m: Model): Group[] {
+  let want = wanted(m);
+  let out: Group[] = [];
+  for t in m.tracks {
+    let n = out.len();
+    if (n > 0 && out[n - 1].name == t.album && out[n - 1].by == t.by) {
+      let g = out[n - 1];
+      out = out.with(n - 1, Group { ...g, songs: g.songs + 1, year: g.year.max(t.year) });
+    } else if ((m.artist.len() == 0 || t.by == m.artist) && has(t.album, want)) {
+      out = out.append(Group { name: t.album, by: t.by, songs: 1, albums: 1, year: t.year });
+    }
+  }
+  return out;
+}
+
+// `a` comes before `b` in the library: by the artist, then the album, then
+// the number, then the title.
+function before(a: Track, b: Track): boolean {
+  let (x, y) = (a.by.to_lower(), b.by.to_lower());
+  if (x != y) {
+    return x < y;
+  }
+  let (p, q) = (a.album.to_lower(), b.album.to_lower());
+  if (p != q) {
+    return p < q;
+  }
+  if (a.number != b.number) {
+    return a.number < b.number;
+  }
+  return a.title.to_lower() < b.title.to_lower();
+}
+
+// The player with the track `t` at its place in the library. A file that
+// the library has already adds nothing.
+function with_track(m: Model, t: Track): Model {
+  let at = m.tracks.len();
+  for i in 0..m.tracks.len() {
+    if (m.tracks[i].path == t.path) {
+      return m;
+    }
+    if (at == m.tracks.len() && before(t, m.tracks[i])) {
+      at = i;
+    }
+  }
+  let all: Track[] = [];
+  for i in 0..m.tracks.len() {
+    if (i == at) {
+      all = all.append(t);
+    }
+    all = all.append(m.tracks[i]);
+  }
+  if (at == m.tracks.len()) {
+    all = all.append(t);
+  }
+  let current = m.current;
+  if (current >= at) {
+    current += 1;
+  }
+  return Model { ...m, tracks: all, current: current };
+}
+
+// The player with the files and the directories that it did not read
+// yet.
+function with_files(m: Model, files: string[]): Model {
+  let scan = m.scan;
+  for f in files {
+    let known = scan.contains(f);
+    for t in m.tracks {
+      if (t.path == f) {
+        known = true;
+      }
+    }
+    if (!known) {
+      scan = scan.append(f);
+    }
+  }
+  return Model { ...m, scan: scan };
 }
 
 // The part of the track that played, from 0 to 1.
@@ -96,17 +298,104 @@ function play_label(m: Model): string {
   return "Play";
 }
 
+// Two lines of a list: a name, and a detail below it.
+function lines(name: string, detail: string, color: i32): ui.El[Msg] {
+  return ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
+}
+
 function track_row(m: Model, i: i32): ui.El[Msg] {
   let t = m.tracks[i];
   let color = ui.INK;
   if (i == m.current) {
     color = ui.PRIMARY;
   }
-  let detail = t.format;
-  if (t.ms > 0i64) {
-    detail = t.format + " · " + clock(t.ms);
+  let name = t.title;
+  let detail = t.artist + " · " + t.album;
+  if (m.album.len() > 0) {
+    // On the screen of an album, a track has its number and its length.
+    detail = clock(t.ms) + " · " + t.format;
+    if (t.number > 0) {
+      name = t.number.to_string() + ". " + t.title;
+    }
   }
-  return ui.column([ui.text(t.title).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED)]).spaced(2.0).justified(ui.CENTER).padding_xy(16.0, 0.0).wide().tall().on_tap(Pick(i));
+  return lines(name, detail, color).on_tap(Pick(i));
+}
+
+function count(n: i32, one: string): string {
+  if (n == 1) {
+    return "1 " + one;
+  }
+  return n.to_string() + " " + one + "s";
+}
+
+function artist_row(g: Group): ui.El[Msg] {
+  return lines(g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
+}
+
+function album_row(g: Group): ui.El[Msg] {
+  let detail = g.by + " · " + count(g.songs, "song");
+  if (g.year > 0) {
+    detail = detail + " · " + g.year.to_string();
+  }
+  return lines(g.name, detail, ui.INK).on_tap(Album(g.by, g.name));
+}
+
+function tab(m: Model, name: string, which: i32): ui.El[Msg] {
+  if (m.tab == which) {
+    return ui.button(name, Tab(which));
+  }
+  return ui.text_button(name, Tab(which));
+}
+
+// The title of the library, or the artist or the album that shows with a
+// button that goes up from it.
+function heading(m: Model, summary: string): ui.El[Msg] {
+  let name = "Tune";
+  if (m.album.len() > 0) {
+    name = m.album;
+  } else if (m.artist.len() > 0) {
+    name = m.artist;
+  }
+  let top: ui.El[Msg][] = [ui.text(name).sized(28.0).weighted(700).clamped(1), ui.text(summary).colored(ui.MUTED).clamped(1)];
+  if (m.artist.len() > 0) {
+    return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  }
+  return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Folder", Choose), ui.text_button("Scan", Rescan)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+}
+
+// The last part of a path.
+function leaf(path: string): string {
+  let parts = path.split("/");
+  return parts[parts.len() - 1].to_owned();
+}
+
+// The screen where the person chooses the folder of the library: the
+// directory that shows, its directories, and the button that uses it.
+function chooser(m: Model): ui.El[Msg] {
+  let top: ui.El[Msg][] = [ui.text("Choose a folder").sized(28.0).weighted(700).clamped(1), ui.text(m.dir).colored(ui.MUTED).clamped(2)];
+  let head: ui.El[Msg][] = [ui.column(top).spaced(4.0).wide()];
+  if (m.dir != m.home) {
+    head = head.append(ui.text_button("Up", Out));
+  }
+  let dirs = m.dirs;
+  let rows = ui.list("dirs", dirs.len(), 56.0, (row: i32): ui.El[Msg] => ui.row([ui.text(dirs[row]).clamped(1)]).padding_xy(16.0, 0.0).aligned(ui.CENTER).on_tap(Into(dirs[row])));
+  let foot = ui.row([ui.text_button("Cancel", Up), ui.space(), ui.button("Use " + leaf(m.dir), Use)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  return ui.column([ui.row(head).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows, foot]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
+// The list of the tab that shows. An artist that shows has its albums, and
+// an album that shows has its songs.
+function listing(m: Model): (ui.El[Msg], string) {
+  if (m.album.len() == 0 && (m.tab == ALBUMS || m.artist.len() > 0)) {
+    let groups = albums(m);
+    return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(groups[row])), count(groups.len(), "album"));
+  }
+  if (m.album.len() == 0 && m.tab == ARTISTS) {
+    let groups = artists(m);
+    return (ui.list("artists", groups.len(), 64.0, (row: i32): ui.El[Msg] => artist_row(groups[row])), count(groups.len(), "artist"));
+  }
+  let shown = songs(m);
+  return (ui.list("tracks", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])), count(shown.len(), "song"));
 }
 
 // The bar at the foot of the library, for the track that plays.
@@ -115,16 +404,17 @@ function mini(m: Model): ui.El[Msg] {
 }
 
 function library(m: Model): ui.El[Msg] {
-  let shown = found(m);
-  let summary = shown.len().to_string() + " tracks";
+  let (list, summary) = listing(m);
   if (m.error.len() > 0) {
     summary = m.error;
+  } else if (m.scan.len() > 0) {
+    summary = summary + " · reading " + count(m.scan.len(), "file");
   }
-  let kids: ui.El[Msg][] = [
-    ui.column([ui.text("Tune").sized(28.0).weighted(700), ui.text(summary).colored(ui.MUTED)]).spaced(4.0).padding_xy(16.0, 0.0),
-    ui.row([ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))]).padding_xy(16.0, 0.0),
-    ui.list("tracks", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])),
-  ];
+  let kids: ui.El[Msg][] = [heading(m, summary), ui.row([ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))]).padding_xy(16.0, 0.0)];
+  if (m.artist.len() == 0) {
+    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Artists", ARTISTS), tab(m, "Albums", ALBUMS)]).spaced(8.0).padding_xy(16.0, 0.0));
+  }
+  kids = kids.append(list);
   if (m.current >= 0) {
     kids = kids.append(mini(m));
   }
@@ -164,13 +454,14 @@ function now_playing(m: Model): ui.El[Msg] {
   let name = title(m);
   let format = "";
   if (m.current >= 0) {
-    format = m.tracks[m.current].format;
+    let t = m.tracks[m.current];
+    format = t.artist + " · " + t.album;
   }
   return ui.column(
     [
       ui.row([ui.text_button("Library", Closed)]),
       ui.column([ui.canvas("art:" + name, art(name)).width(240.0).height(240.0)]).centered().grow(1.0),
-      ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED)]).spaced(4.0),
+      ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
       ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(toggle_label("Repeat", m.repeat), Repeated)]).spaced(8.0).justified(ui.CENTER),
@@ -179,6 +470,9 @@ function now_playing(m: Model): ui.El[Msg] {
 }
 
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
+  if (m.choosing) {
+    return chooser(m);
+  }
   if (m.open && m.current >= 0) {
     return now_playing(m);
   }
@@ -210,9 +504,9 @@ function toggled(m: Model): Model {
     return picked(m, 0);
   }
   if (m.playing) {
-    return Model { ...m, playing: false, wants: m.wants.append(Hold) };
+    return Model { ...m, playing: false, lost: false, wants: m.wants.append(Hold) };
   }
-  return Model { ...m, playing: true, wants: m.wants.append(Resume) };
+  return Model { ...m, playing: true, lost: false, wants: m.wants.append(Resume) };
 }
 
 // The start of the track again, or the track before it in the first 3
@@ -235,6 +529,63 @@ function finished(m: Model): Model {
     return Model { ...m, playing: false, at_ms: 0i64, wants: m.wants.append(Hold).append(Seek(0.0)) };
   }
   return picked(m, after(m));
+}
+
+// The list above the album or the artist that shows: an album of the
+// Albums tab goes to that tab, and each other album goes to its artist.
+function went_up(m: Model): Model {
+  if (m.choosing) {
+    return Model { ...m, choosing: false };
+  }
+  if (m.album.len() > 0 && m.tab != ALBUMS) {
+    return Model { ...m, album: "" };
+  }
+  return Model { ...m, artist: "", album: "" };
+}
+
+// The chooser on the directory `dir`, which the device gives the
+// directories of.
+function shown_dir(m: Model, dir: string): Model {
+  return Model { ...m, choosing: true, dir: dir, dirs: [], wants: m.wants.append(List(dir)) };
+}
+
+function chose(m: Model): Model {
+  let dir = m.home;
+  if (m.folder.len() > 0) {
+    dir = m.folder;
+  }
+  return shown_dir(Model { ...m, asked: true, wants: m.wants.append(Grant) }, dir);
+}
+
+// The directory above the one that shows, down to `home`.
+function went_out(m: Model): Model {
+  if (m.dir == m.home || !m.dir.starts_with(m.home)) {
+    return shown_dir(m, m.home);
+  }
+  let cut = m.dir.len() - leaf(m.dir).len() - 1;
+  return shown_dir(m, m.dir.take(cut.max(m.home.len())).to_owned());
+}
+
+// The player with the directory that shows as the folder of its library:
+// it has no track, and it reads the files of that folder.
+function used(m: Model): Model {
+  let wants = m.wants;
+  if (m.playing) {
+    wants = wants.append(Hold);
+  }
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], current: -1, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+}
+
+function returned(m: Model): Model {
+  // The person can give the permission while the app is away: the player
+  // looks again one time after it asked.
+  if (m.fresh || !m.asked) {
+    return m;
+  }
+  if (m.choosing) {
+    return shown_dir(Model { ...m, asked: false }, m.dir);
+  }
+  return Model { ...m, asked: false, wants: m.wants.append(Scan) };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -273,6 +624,9 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, repeat: !m.repeat };
     },
     Beat => {
+      if (m.fresh) {
+        return Model { ...m, fresh: false, wants: m.wants.append(Scan) };
+      }
       return m;
     },
     Finished => {
@@ -280,13 +634,80 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Failed(why) => {
       return Model { ...m, playing: false, error: why };
+    },
+    Tab(which) => {
+      return Model { ...m, tab: which, artist: "", album: "" };
+    },
+    Artist(name) => {
+      return Model { ...m, artist: name, album: "", query: "" };
+    },
+    Album(by, name) => {
+      return Model { ...m, artist: by, album: name, query: "" };
+    },
+    Up => {
+      return went_up(m);
+    },
+    Found(t) => {
+      return with_track(m, t);
+    },
+    Files(files) => {
+      return with_files(m, files);
+    },
+    Rescan => {
+      return Model { ...m, fresh: false, error: "", asked: true, wants: m.wants.append(Grant).append(Scan) };
+    },
+    Returned => {
+      return returned(m);
+    },
+    Choose => {
+      return chose(m);
+    },
+    Into(name) => {
+      return shown_dir(m, m.dir + "/" + name);
+    },
+    Out => {
+      return went_out(m);
+    },
+    Dirs(dir, names) => {
+      if (dir != m.dir) {
+        return m;
+      }
+      return Model { ...m, dirs: names };
+    },
+    Use => {
+      return used(m);
+    },
+    Play(on) => {
+      if (on == m.playing) {
+        return Model { ...m, lost: false };
+      }
+      return toggled(m);
+    },
+    Focus(have) => {
+      if (have == m.playing || have && !m.lost) {
+        return m;
+      }
+      return Model { ...toggled(m), lost: !have };
+    },
+    SeekMs(ms) => {
+      if (m.length_ms <= 0i64) {
+        return m;
+      }
+      let to = (ms as f64 / (m.length_ms as f64)).min(1.0);
+      return Model { ...m, at_ms: ms.min(m.length_ms), wants: m.wants.append(Seek(to)) };
     }
   }
 }
 
-// The milliseconds to the next Beat: the player gives the sound its
-// samples at each one.
+// The milliseconds to the next Beat: the player reads one file of the
+// library at each one, and gives the sound its samples.
 function beat(m: Model): i32 {
+  if (m.scan.len() > 0) {
+    return 1;
+  }
+  if (m.fresh) {
+    return 300;
+  }
   if (m.playing) {
     return 20;
   }
@@ -296,6 +717,9 @@ function beat(m: Model): i32 {
 function back(m: Model): Option[Msg] {
   if (m.open) {
     return Some(Closed);
+  }
+  if (m.choosing || m.artist.len() > 0) {
+    return Some(Up);
   }
   return None;
 }

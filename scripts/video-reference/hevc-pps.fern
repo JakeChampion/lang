@@ -1,0 +1,25 @@
+// Emit native HEVC PPS metadata for an independent syntax comparison.
+import "std/video/hevc/pps";
+import "std/video/frame";
+import "../../tests/stdlib/video_hevc_pps_check" as check;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let Ok(sps) = read_file_bytes(argv[2]) else {
+    return 2;
+  };
+  let value = match (pps.inspect(bytes, sps, frame.default_limits())) {
+    Ok(found) => found,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for field in check.values(value) {
+    print(field.to_string());
+  }
+  return 0;
+}

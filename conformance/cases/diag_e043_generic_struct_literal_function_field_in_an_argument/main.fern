@@ -1,0 +1,17 @@
+// A type argument that the call binds is the type of the field. The
+// fields of the literal give only the type arguments that the call
+// leaves open.
+
+struct P[S, M] { view: (S) => M }
+
+function run[S, M](p: P[S, M], s: S): M { return p.view(s); }
+function run32(p: P[i32, i32]): i32 { return p.view(1); }
+
+function double(n: i32): i64 { return (n * 2) as i64; }
+function text(s: string): i64 { return s.len() as i64; }
+
+function main(): i32 {
+    let a = run32(P { view: double });
+    let c = run(P { view: text }, 1);
+    return a + c as i32;
+}

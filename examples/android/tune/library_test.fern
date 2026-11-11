@@ -1,0 +1,98 @@
+// Tests of the library of the player on the host: the names that the
+// scan does not ask about, and the track of a file from its tags or from
+// its path.
+import "std/result";
+import "std/test";
+import "./fixture";
+import "./library";
+import "./tune";
+
+// The scan asks the device about a name only when it can be a directory.
+function test_other_files(): test.TestOutcome {
+  let got = "";
+  for name in ["cover.JPG", "notes.txt", "film.mp4", "Mr. Bungle", "Vol. 2", "First Light", "a.wav"] {
+    got = got + library.other_file(name).to_string() + " ";
+  }
+  return test.assert_eq(got.trim(), "true true true false false false false");
+}
+
+function test_numbered(): test.TestOutcome {
+  let got = "";
+  for name in ["03 Song", "7. Song", "12-Song", "1999", "Song 2", "100 Years", "1234 Song"] {
+    let (n, rest) = library.numbered(name);
+    got = got + n.to_string() + ":" + rest + " ";
+  }
+  return test.assert_eq(got.trim(), "3:Song 7:Song 12:Song 0:1999 0:Song 2 100:Years 0:1234 Song");
+}
+
+function show(t: Option[tune.Track]): string {
+  if let Some(k) = t {
+    return k.title + "," + k.artist + "," + k.album + "," + k.by + "," + k.number.to_string() + "," + k.format;
+  }
+  return "none";
+}
+
+function test_a_file_with_no_tags_takes_its_path(): test.TestOutcome {
+  let file = library.demo_file(1).unwrap_or([]);
+  let roots = ["/data/music", "/sdcard/Music"];
+  let deep = show(library.track(roots, "/sdcard/Music/Fern/First Light/02 Slow_Water.wav", file.len() as i64, library.parts_of(file)));
+  let album = show(library.track(roots, "/sdcard/Music/Mixes/Slow Water.wav", file.len() as i64, library.parts_of(file)));
+  let loose = show(library.track(roots, "/data/music/Slow Water.wav", file.len() as i64, library.parts_of(file)));
+  let other = show(library.track(roots, "/sdcard/Music/notes.txt", file.len() as i64, library.parts_of(file))) + " " + show(library.track(roots, "/sdcard/Music/empty.wav", 0i64, library.parts_of([])));
+  return test.assert_eq(deep + " | " + album + " | " + loose + " | " + other, "Slow Water,Fern,First Light,Fern,2,WAV | Slow Water,Unknown artist,Mixes,Unknown artist,0,WAV | Slow Water,Unknown artist,Unknown album,Unknown artist,0,WAV | none none");
+}
+
+function of(name: string, file: u8[]): string {
+  if let Some(t) = library.track(["m"], "m/" + name, file.len() as i64, library.parts_of(file)) {
+    return t.title + " " + t.ms.to_string();
+  }
+  return "none";
+}
+
+// 100 frames of 1152 samples at 44100 Hz are 2612 ms. The bytes of 100
+// frames at 128 kbit/s are 2606 ms.
+function test_the_length_of_an_mp3_file(): test.TestOutcome {
+  let told = of("told.mp3", fixture.silent_mp3(100, true));
+  let rate = of("rate.mp3", fixture.silent_mp3(100, false));
+  let old = of("old.mp3", fixture.joined(fixture.silent_mp3(100, false), fixture.id3v1("Old Tag")));
+  let long = of("long.mp3", fixture.joined(fixture.id3v2("Long Tag", 300000), fixture.silent_mp3(100, true)));
+  return test.assert_eq(told + " | " + rate + " | " + old + " | " + long, "told 2612 | rate 2606 | Old Tag 2614 | Long Tag 2612");
+}
+
+// A function that gives 131072 bytes of a file at most, as the device
+// does for a scan.
+function small_parts(file: u8[]): (i64, i32) => u8[] {
+  let all = library.parts_of(file);
+  return (at: i64, n: i32): u8[] => {
+    if (n > 131072) {
+      return [];
+    }
+    return all(at, n);
+  };
+}
+
+function test_a_scan_reads_parts_of_a_file(): test.TestOutcome {
+  let got = "";
+  for which in 0..3 {
+    let file = library.demo_file(which).unwrap_or([]);
+    let path = "m/" + library.demo_name(which);
+    let Some(whole) = library.track(["m"], path, file.len() as i64, library.parts_of(file)) else {
+      return test.fail("the whole file gave no track");
+    };
+    let Some(part) = library.track(["m"], path, file.len() as i64, small_parts(file)) else {
+      return test.fail("the parts of the file gave no track");
+    };
+    got = got + (file.len() > 262144).to_string() + " " + (whole.ms == part.ms && whole.ms > 1000i64).to_string() + " ";
+  }
+  return test.assert_eq(got.trim(), "true true true true true true");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/tune library");
+  r = r.it("a name that ends as a file that is not sound", test_other_files);
+  r = r.it("a file name starts with a number", test_numbered);
+  r = r.it("a file with no tags takes its artist and its album from its path", test_a_file_with_no_tags_takes_its_path);
+  r = r.it("an MP3 file tells its length, or its bytes and its bit rate do", test_the_length_of_an_mp3_file);
+  r = r.it("a scan reads parts of a file", test_a_scan_reads_parts_of_a_file);
+  return r.finish();
+}

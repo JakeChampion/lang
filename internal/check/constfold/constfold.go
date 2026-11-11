@@ -12,6 +12,48 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
+// maxConstString is the limit of a string that a constant expression makes.
+// A chain of consts that each join the one before with itself doubles the
+// string at each step.
+const maxConstString = 1 << 20
+
+// maxConstElements is the limit of the scalars in an aggregate that a
+// constant expression makes. A chain of consts that each hold the one before
+// two times doubles the aggregate at each step.
+const maxConstElements = 1 << 20
+
+// constSize is the number of scalars in the value of the initializer e: 1 for
+// a scalar, and the sum of the elements for an aggregate. A const that e
+// reads has the size in sizes. The result stops one above the limit.
+func constSize(e ast.Expr, sizes map[string]int) int {
+	var elems []ast.Expr
+	switch n := e.(type) {
+	case *ast.ArrayLit:
+		elems = n.Elems
+	case *ast.TupleLit:
+		elems = n.Elems
+	case *ast.StructLit:
+		for _, f := range n.Fields {
+			elems = append(elems, f.Value)
+		}
+	case *ast.Ident:
+		if size, ok := sizes[n.Name]; ok {
+			return size
+		}
+		return 1
+	default:
+		return 1
+	}
+	total := 0
+	for _, el := range elems {
+		total += constSize(el, sizes)
+		if total > maxConstElements {
+			return maxConstElements + 1
+		}
+	}
+	return total
+}
+
 const (
 	assetBuiltin       = "__fern_asset"
 	assetBytesBuiltin  = "__fern_asset_bytes"
@@ -49,6 +91,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 func FoldWith(prog *ast.Program, in Inputs) error {
 	values := map[string]ast.Expr{}
 	earlier := map[string]bool{}
+	sizes := map[string]int{}
 	var deferred []*ast.ConstDecl
 	var errs []error
 
@@ -63,6 +106,11 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 		if msg := constExprErr(cd.Value, earlier); msg != "" {
 			errs = append(errs, constError(cd, errors.New(msg)))
+			continue
+		}
+		size := constSize(cd.Value, sizes)
+		if size > maxConstElements {
+			errs = append(errs, constError(cd, &Error{Pos: cd.P, Msg: fmt.Sprintf("aggregate of more than %d elements in constant expression", maxConstElements)}))
 			continue
 		}
 		val, err := evalConstTyped(cd.Value, cd.Type, values, in.Assets)
@@ -81,6 +129,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			deferred = append(deferred, cd)
 		default:
 			values[cd.Name] = val
+			sizes[cd.Name] = size
 		}
 		earlier[cd.Name] = true
 	}
@@ -456,6 +505,9 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		}
 		switch n.Op {
 		case "+":
+			if len(ls.Value)+len(rs.Value) > maxConstString {
+				return nil, &Error{Pos: n.P, Msg: fmt.Sprintf("string of more than %d bytes in constant expression", maxConstString)}
+			}
 			return &ast.StringLit{P: n.P, Value: ls.Value + rs.Value}, nil
 		}
 		if v, ok := compare(n.Op, ls.Value, rs.Value); ok {

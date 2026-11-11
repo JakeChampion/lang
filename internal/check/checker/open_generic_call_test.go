@@ -51,6 +51,7 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		"function column[M](kids: El[M][]): El[M] { return El { kids: kids, tap: None, pad: 0.0 }; }\n" +
 		"function button[M](s: string, m: M): El[M] { return El { kids: [], tap: Some(m), pad: 0.0 }; }\n" +
 		"function (e: El[M]) padded(v: f64): El[M] { return El { ...e, pad: v }; }\n" +
+		"function space[M](): El[M] { return El { kids: [], tap: None, pad: 0.0 }; }\n" +
 		"enum Msg { Inc, Dec }\n"
 	const end = "\nfunction main(): i32 { return 0; }\n"
 	good := []struct{ name, body string }{
@@ -60,6 +61,8 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		{"receivers in an array argument", "function view(): El[Msg] { return column([text(\"a\").padded(1.0), button(\"+\", Inc).padded(2.0)]).padded(3.0); }"},
 		{"struct update base", "function view(): El[Msg] { return El { ...text(\"a\"), pad: 1.0 }; }"},
 		{"struct update base in a generic function", "function wide[M](s: string): El[M] { return El { ...text(s), pad: 1.0 }; }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
+		{"call with no argument after the first element", "function view(): i32 { let xs = [button(\"+\", Inc), space()]; return xs.len(); }"},
+		{"call with no argument in an array argument", "function view(): i32 { let e = column([button(\"+\", Inc), space(), button(\"-\", Dec)]).padded(1.0); return 0; }"},
 		{"tuple element", "function view(): El[Msg] { let p: (El[Msg], i32) = (text(\"a\").padded(5.0), 1); return p.0; }"},
 	}
 	for _, c := range good {

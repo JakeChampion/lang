@@ -1,0 +1,3 @@
+import "./lib";
+trait T { function z(self: Self): i32; }
+function main(): i32 { return 0; }

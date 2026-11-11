@@ -1,17 +1,41 @@
 // What the player does on the device for the state of tune.fern: it reads
 // the file of a track, and gives its samples to a stream of sound. The
 // device is a set of functions, so a test gives one that plays nothing.
+import "core/cmp";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
 import "std/option";
 import "./engine";
+import "./library";
 import "./tune";
 
-// `read` gives the bytes of a file, or no bytes. `open` gives a stream at
+// `grant` asks the person for the permission to read the music of the
+// phone. `roots` has the directories of the music of the phone. `names`
+// gives the names in a directory, and `is_dir` tells that a path is a
+// directory. `demo` makes the tunes of the player and gives their paths.
+// `now` is the time in ns. `dirs` gives the names of the directories in a directory, and
+// `keep` keeps the folder of the library for the next start. `show` tells
+// Android the track that plays and its state. `wake` keeps the phone
+// awake until `sleep`. `size` gives the number of bytes of a
+// file, `part` gives at most a number of its bytes from an offset, and
+// `read` gives each byte of it, or no bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
 // tells how many it took.
 pub struct Device {
+  grant: () => void,
+  roots: string[],
+  names: (string) => string[],
+  is_dir: (string) => boolean,
+  demo: () => string[],
+  now: () => i64,
+  dirs: (string) => string[],
+  keep: (string) => void,
+  show: (tune.Now) => void,
+  wake: () => tune.Awake,
+  sleep: (tune.Awake) => void,
+  size: (string) => i64,
+  part: (string, i64, i32) => u8[],
   read: (string) => u8[],
   open: (i32, i32) => tune.Sound,
   start: (tune.Sound) => void,
@@ -49,7 +73,7 @@ function sought(dev: Device, own m: tune.Model, part: f64): tune.Model {
   }
   let moved = deck.seek(part);
   let at = moved.position_ms();
-  return tune.Model { ...m, deck: Some(moved), pending: [], at_ms: at };
+  return tune.Model { ...m, deck: Some(moved), pending: [], at_ms: at, told: "" };
 }
 
 function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
@@ -67,8 +91,75 @@ function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
     },
     tune.Seek(part) => {
       return sought(dev, m, part);
+    },
+    tune.Scan => {
+      if (m.folder.len() > 0) {
+        let folder = [m.folder];
+        return tune.update(m, tune.Files(folder));
+      }
+      return tune.update(m, tune.Files(dev.roots));
+    },
+    tune.List(dir) => {
+      return tune.update(m, tune.Dirs(dir, dev.dirs(dir)));
+    },
+    tune.Keep(folder) => {
+      dev.keep(folder);
+      return m;
+    },
+    tune.Grant => {
+      dev.grant();
+      return m;
     }
   }
+}
+
+// Reads the next path of the library. A file of sound is a track. A
+// directory gives its entries to the scan, with no entry whose name starts
+// with a dot. Each other path adds nothing.
+function scanned(dev: Device, own m: tune.Model): tune.Model {
+  let path = m.scan[0];
+  let left: string[] = [];
+  for i in 1..m.scan.len() {
+    left = left.append(m.scan[i]);
+  }
+  let roots = dev.roots;
+  if (m.folder.len() > 0) {
+    roots = [m.folder];
+  }
+  let next = tune.Model { ...m, scan: left };
+  if (library.format_of(path).len() > 0) {
+    if let Some(t) = library.track(roots, path, dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n)) {
+      return tune.update(next, tune.Found(t));
+    }
+    return next;
+  }
+  if (library.other_file(path) || path.len() > 1024 || !dev.is_dir(path)) {
+    return next;
+  }
+  let below: string[] = [];
+  for name in cmp.sort(dev.names(path)) {
+    if (!name.starts_with(".")) {
+      below = below.append(path + "/" + name);
+    }
+  }
+  return tune.update(next, tune.Files(below));
+}
+
+// The milliseconds of one step that the scan can use.
+const SCAN_MS: i64 = 8i64;
+
+// Reads paths of the library until the time `until`, in ns: one or more.
+// A library with no file of sound gets the tunes of the player one time.
+function scanned_until(dev: Device, own m: tune.Model, until: i64): tune.Model {
+  let state = scanned(dev, m);
+  while (state.scan.len() > 0 && dev.now() < until) {
+    state = scanned(dev, state);
+  }
+  if (state.scan.len() == 0 && state.tracks.len() == 0 && state.folder.len() == 0 && !state.made) {
+    let made = dev.demo();
+    return tune.update(tune.Model { ...state, made: true }, tune.Files(made));
+  }
+  return state;
 }
 
 // The samples of `all` from the sample `from`.
@@ -116,12 +207,16 @@ function pumped(dev: Device, own m: tune.Model): tune.Model {
 // sound got its next samples.
 pub function run(dev: Device, m: tune.Model): tune.Model {
   let turns = 0;
+  let until = dev.now() + SCAN_MS * 1000000i64;
   let state = tune.Model { ...m };
   while (turns < 4) {
     let wants = state.wants;
     state = tune.Model { ...state, wants: [] };
     for want in wants {
       state = done(dev, state, want);
+    }
+    if (state.scan.len() > 0) {
+      state = scanned_until(dev, state, until);
     }
     if (state.playing) {
       state = pumped(dev, state);
@@ -135,6 +230,25 @@ pub function run(dev: Device, m: tune.Model): tune.Model {
 }
 
 // The program of tune.fern on the device `dev`.
+// Tells Android the track and the state of the player when one of them is
+// new, and keeps the phone awake while a track plays.
+function shown(dev: Device, own m: tune.Model): tune.Model {
+  let key = m.current.to_string() + "|" + m.playing.to_string();
+  if (key == m.told || m.current < 0) {
+    return m;
+  }
+  let t = m.tracks[m.current];
+  dev.show(tune.Now { title: t.title, artist: t.artist, album: t.album, length_ms: m.length_ms, at_ms: m.at_ms, playing: m.playing });
+  let awake = m.awake;
+  if (m.playing && awake.wake == 0 as usize) {
+    awake = dev.wake();
+  } else if (!m.playing && awake.wake != 0 as usize) {
+    dev.sleep(awake);
+    awake = tune.Awake { wake: 0 as usize, wifi: 0 as usize };
+  }
+  return tune.Model { ...m, told: key, awake: awake };
+}
+
 pub function program(dev: Device): ui.Program[tune.Model, tune.Msg] {
-  return tune.program().with_effects((m: tune.Model): tune.Model => run(dev, m));
+  return tune.program().with_effects((m: tune.Model): tune.Model => shown(dev, run(dev, m)));
 }

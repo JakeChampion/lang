@@ -17,10 +17,12 @@ pub type Scalar = IntValue | FloatValue | BoolValue | StringValue | Aggregate;
 
 // A definite error is reported at once. Any other error waits for the type
 // check, because an ill-typed initializer is a type error.
-pub struct Value { data: Scalar, error: string, definite: boolean }
+// size is the number of scalars in the value: 1 for a scalar, and the sum of
+// the elements for an aggregate.
+pub struct Value { data: Scalar, error: string, definite: boolean, size: i32 }
 
 function empty(): Value {
-  return Value { data: Aggregate {  }, error: "", definite: false };
+  return Value { data: Aggregate {  }, error: "", definite: false, size: 1 };
 }
 
 function fail(message: string): Value {
@@ -63,15 +65,15 @@ function number(v: i64, ty: string): Value {
   if (ty == "u8") {
     n = (v as u8) as i64;
   }
-  return Value { data: IntValue { value: n }, error: "", definite: false };
+  return Value { data: IntValue { value: n }, error: "", definite: false, size: 1 };
 }
 
 function floating(v: f64): Value {
-  return Value { data: FloatValue { value: v }, error: "", definite: false };
+  return Value { data: FloatValue { value: v }, error: "", definite: false, size: 1 };
 }
 
 function logical(v: boolean): Value {
-  return Value { data: BoolValue { value: v }, error: "", definite: false };
+  return Value { data: BoolValue { value: v }, error: "", definite: false, size: 1 };
 }
 
 function unsigned(ty: string): boolean {
@@ -208,9 +210,25 @@ function bool_binary(op: string, a: boolean, b: boolean): Value {
   };
 }
 
+// The limit of a string that a constant expression makes. A chain of consts
+// that each join the one before with itself doubles the string at each step.
+pub const MAX_CONST_STRING: i32 = 1048576;
+
+// The limit of the scalars in an aggregate that a constant expression makes.
+// A chain of consts that each hold the one before two times doubles the
+// aggregate at each step.
+pub const MAX_CONST_ELEMENTS: i32 = 1048576;
+
+function joined(a: string, b: string): Value {
+  if (a.len() + b.len() > MAX_CONST_STRING) {
+    return refuse("string of more than " + util.i32_to_string(MAX_CONST_STRING) + " bytes in constant expression");
+  }
+  return Value { data: StringValue { value: a + b }, error: "", definite: false, size: 1 };
+}
+
 function string_binary(op: string, a: string, b: string): Value {
   return match (op) {
-    "+" => Value { data: StringValue { value: a + b }, error: "", definite: false },
+    "+" => joined(a, b),
     "==" => logical(a == b),
     "!=" => logical(a != b),
     "<" => logical(a < b),
@@ -301,6 +319,7 @@ function element_type(ty: parser.TypeRef, tuple: boolean, i: i32): parser.TypeRe
 
 function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values: Value[], tuple: boolean): Value {
   let out = empty();
+  let total = 0;
   for i in 0..elems.len() {
     let elem = element_type(ty, tuple, i);
     let v = evaluate(elems[i], elem, names, values);
@@ -310,8 +329,12 @@ function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values
     if (v.error.len() > 0) {
       out = first_error(out, v);
     }
+    total += v.size;
+    if (total > MAX_CONST_ELEMENTS) {
+      return refuse("aggregate of more than " + util.i32_to_string(MAX_CONST_ELEMENTS) + " elements in constant expression");
+    }
   }
-  return out;
+  return Value { ...out, size: total };
 }
 
 pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: Value[]): Value {
@@ -324,7 +347,7 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return logical(b.value);
     },
     ast.ExprString(s) => {
-      return Value { data: StringValue { value: s.value }, error: "", definite: false };
+      return Value { data: StringValue { value: s.value }, error: "", definite: false, size: 1 };
     },
     ast.ExprIdent(id) => {
       return earlier_value(id.name, names, values);

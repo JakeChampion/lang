@@ -1,0 +1,5 @@
+pub trait T { function a(self: Self): i32; }
+pub struct R { x: i32 }
+impl T for R { function a(self: R): i32 { return 1; } }
+impl T for R { function a(self: R): i32 { return 2; } }
+function main(): i32 { return 0; }

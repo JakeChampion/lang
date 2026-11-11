@@ -546,7 +546,8 @@ function moved_inst(ins: ssa.SInst, map: i32[], p: i32, extra: i32): ssa.SInst {
     args = args.append(moved(map, a));
   }
   let imm = ins.imm;
-  if (ins.kind_tag == ssa.PARAM && ins.imm > p) {
+  // A parameter and the slot phi of a self tail call name the slot in `imm`.
+  if ((ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI && ins.str != "") && ins.imm > p) {
     imm = ins.imm + extra;
   }
   let donor = ssasem.update_base(ins);

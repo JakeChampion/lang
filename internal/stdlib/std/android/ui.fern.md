@@ -32,6 +32,10 @@ An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`.
 
 `update` does nothing to the device. A program that plays a sound or reads a file puts that request in its state, and `with_effects` gives the function that does it.
 
+### The cost of a frame
+
+`with_meter` shows a line over the screen with the cost of the last frame in milliseconds: `view`, the layout, the painter, and the accessibility tree. `frame` is the longest frame and `step` is the longest step of the last 120 frames. A step is the work for one event, with `update` and the effects. Use the meter on a device to find the part that makes an app slow.
+
 ### What the module does
 
 `layout` gives each element its box and makes the nodes of `std/android/ui/scene`. The shell draws the nodes with `std/android/ui/painter`, and gives the items of the nodes to the accessibility service. It keeps the content out from under the status bar and the navigation bar. A touch on an element with an action shows it pressed. A drag on a list scrolls it, and a fast drag flings it. The field in focus loses the focus when a finger goes down on something else, when the back key goes down, and after `Submit`.
@@ -1747,12 +1751,13 @@ pub struct Program[S, M] {
   system: (android.Event) => Option[M],
   effects: (S) => S,
   theme: (boolean) => Theme,
+  meter: boolean,
 }
 
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (dark: boolean): Theme => theme(dark) };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -1772,6 +1777,14 @@ pub function (p: Program[S, M]) with_tick(wait: (S) => i32, m: M): Program[S, M]
 // frame.
 pub function (p: Program[S, M]) with_frames(animating: (S) => boolean, frame: (i64) => M): Program[S, M] {
   return Program { ...p, animating: animating, frame: Some(frame) };
+}
+
+// Each frame shows the cost of the last frame over the screen: the
+// milliseconds of `view`, of the layout, of the painter and of the
+// accessibility tree, then the longest frame and the longest step of the
+// last 120 frames.
+pub function (p: Program[S, M]) with_meter(): Program[S, M] {
+  return Program { ...p, meter: true };
 }
 
 pub function (p: Program[S, M]) with_back(back: (S) => Option[M]): Program[S, M] {
@@ -1825,7 +1838,31 @@ pub struct Device {
 // `focus` is the name of the field that has the focus, or "". `typed` is
 // the text that the keyboard holds for it, `caret` is the character that
 // its caret is before, and `area` tells that it has more than one line.
-pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean }
+// `cost` is the cost of the last frame.
+pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean, cost: Cost }
+
+// The milliseconds of the parts of the last frame: `view`, the layout, the
+// painter and the accessibility tree. `frame` is the longest frame and
+// `step` the longest step since the frame `since`.
+pub struct Cost { view: i32, layout: i32, paint: i32, access: i32, frame: i32, step: i32, since: i32 }
+
+function no_cost(): Cost {
+  return Cost { view: 0, layout: 0, paint: 0, access: 0, frame: 0, step: 0, since: 0 };
+}
+
+// The milliseconds from the time `a` to the time `b`, in ns.
+function ms_between(a: i64, b: i64): i32 {
+  return ((b - a) / 1000000i64) as i32;
+}
+
+// The nodes of the meter for the cost `c`: one line of text on a dark
+// rectangle, below the top inset of the screen.
+pub function meter(fonts: text.Fonts, sc: Screen, c: Cost): scene.Node[] {
+  let line = "view " + c.view.to_string() + "  layout " + c.layout.to_string() + "  paint " + c.paint.to_string() + "  access " + c.access.to_string() + "  frame " + c.frame.to_string() + "  step " + c.step.to_string() + " ms";
+  let size = (11.0 * sc.d) as i32;
+  let h = size + size / 2;
+  return [scene.node(0, sc.top, sc.w, h, scene.Fill(-872415232, 0)), scene.node(size / 2, sc.top + size / 4, text.width(fonts, 0, size, line), h, scene.Label(line, size, 0, 0, -1))];
+}
 
 // `said` has the messages of the layout of the last frame.
 pub struct Shell[S, M] { app: S, host: Host, said: Messages[M] }
@@ -1833,7 +1870,7 @@ pub struct Shell[S, M] { app: S, host: Host, said: Messages[M] }
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false }, said: no_messages() };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost() }, said: no_messages() };
 }
 
 function changed(h: Host): Host {
@@ -1909,14 +1946,32 @@ function advanced(h: Host, ns: i64): Host {
   return Host { ...h, input: advance(h.input, h.lay, ns) };
 }
 
-// Draws the layout `lay` on the screen `screen`.
-function painted(own h: Host, lay: Layout, screen: Screen, animating: boolean): Host {
-  let paint = h.dev.present(h.paint, h.window, shown(h.input, lay, screen.theme.pressed), screen.theme.background);
+// Draws the layout `lay` on the screen `screen`, with the nodes `over` on
+// top of it. `cost` has the costs of the frame before the painter.
+function painted(own h: Host, lay: Layout, over: scene.Node[], screen: Screen, animating: boolean, cost: Cost): Host {
+  let t0 = h.dev.now();
+  let nodes = shown(h.input, lay, screen.theme.pressed);
+  for n in over {
+    nodes = nodes.append(n);
+  }
+  let paint = h.dev.present(h.paint, h.window, nodes, screen.theme.background);
+  let t1 = h.dev.now();
   h.dev.publish(scene.access_items(lay.nodes));
   if (h.input.flinging() || animating) {
     h.dev.request_frame();
   }
-  return Host { ...h, paint: paint, screen: screen, lay: lay, frames: h.frames + 1 };
+  let done = Cost { ...cost, paint: ms_between(t0, t1), access: ms_between(t1, h.dev.now()) };
+  let whole = done.view + done.layout + done.paint + done.access;
+  return Host { ...h, paint: paint, screen: screen, lay: lay, frames: h.frames + 1, cost: Cost { ...done, frame: done.frame.max(whole) } };
+}
+
+// The cost with its longest frame and step from this frame on, when they
+// are from 120 frames or more before.
+function aged(c: Cost, frames: i32): Cost {
+  if (frames - c.since < 120) {
+    return c;
+  }
+  return Cost { ...c, frame: 0, step: 0, since: frames };
 }
 
 // Draws the frame of the time `ns`.
@@ -1925,11 +1980,18 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
     return s;
   }
   let screen = Screen { ...s.host.screen, theme: p.theme(s.host.screen.dark) };
+  let t0 = s.host.dev.now();
   let root = p.view(s.app, screen);
+  let t1 = s.host.dev.now();
   let animating = p.animating(s.app);
   let host = advanced(synced(s.host, root), ns);
   let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret });
-  return Shell { app: s.app, host: painted(host, built.layout(), screen, animating), said: built.messages() };
+  let cost = Cost { ...aged(host.cost, host.frames), view: ms_between(t0, t1), layout: ms_between(t1, host.dev.now()) };
+  let over: scene.Node[] = [];
+  if (p.meter) {
+    over = meter(host.fonts, screen, host.cost);
+  }
+  return Shell { app: s.app, host: painted(host, built.layout(), over, screen, animating, cost), said: built.messages() };
 }
 
 function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
@@ -2264,6 +2326,17 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
 
 // The shell after the event `e` of android.run.
 pub function step[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
+  let t0 = s.host.dev.now();
+  let out = handled(s, p, e);
+  let c = out.host.cost;
+  let ms = ms_between(t0, out.host.dev.now());
+  if (ms <= c.step) {
+    return out;
+  }
+  return Shell { app: out.app, host: Host { ...out.host, cost: Cost { ...c, step: ms } }, said: out.said };
+}
+
+function handled[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   if (s.host.focus.len() > 0 && types(e)) {
     return edited(s, p, e);
   }

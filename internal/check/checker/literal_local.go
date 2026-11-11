@@ -608,35 +608,64 @@ func (c *checker) linkLitNestedParts(r *ast.Var, value ast.Expr, pos ast.Positio
 	}
 }
 
-// settleLitArrayByIndex gives a literal array local the element type
-// of a typed destination of one of its elements, such as `let m: u8 = z[0];`.
-func (c *checker) settleLitArrayByIndex(ix *ast.Index, hint ast.Type) {
-	id, ok := ix.Array.(*ast.Ident)
-	if !ok || c.litCompositeReads[id] == nil {
+// settleLitPlace gives a literal composite local the type of a typed
+// destination of one of its parts, such as `let m: u8 = z[0];`,
+// `let y: u8 = t.0;` or `let k: u8 = rows[0][0];`.
+func (c *checker) settleLitPlace(e ast.Expr, hint ast.Type) {
+	if !settledNumeric(hint) {
 		return
 	}
-	if settledNumeric(hint) {
-		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: hint})
-	}
-}
-
-// settleLitTupleByField gives a literal tuple local the type of a typed
-// destination of one of its elements, such as `let y: u8 = t.0;`.
-func (c *checker) settleLitTupleByField(fa *ast.FieldAccess, hint ast.Type) {
-	id, ok := fa.Target.(*ast.Ident)
-	if !ok || !settledNumeric(hint) {
+	id, path := c.litPlacePath(e)
+	if id == nil || len(path) == 0 {
 		return
 	}
 	decl := c.litCompositeReads[id]
-	if decl == nil {
+	if decl == nil || !pathIn(decl.Type, path) {
 		return
 	}
-	tt, ok := decl.Type.(ast.TupleType)
-	i, err := strconv.Atoi(fa.Field)
-	if !ok || err != nil || i < 0 || i >= len(tt.Elems) {
-		return
+	c.settleLitCompositeLocal(id, withTypeAt(decl.Type, path, hint))
+}
+
+// litPlacePath is the local that e reads a part of, and the path of that
+// part in the type of the local. An array element has the step 0.
+func (c *checker) litPlacePath(e ast.Expr) (*ast.Ident, []int) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x, nil
+	case *ast.Index:
+		if x.IsString || x.IsSlice {
+			return nil, nil
+		}
+		id, path := c.litPlacePath(x.Array)
+		return id, append(path, 0)
+	case *ast.FieldAccess:
+		i, err := strconv.Atoi(x.Field)
+		if err != nil {
+			return nil, nil
+		}
+		id, path := c.litPlacePath(x.Target)
+		return id, append(path, i)
 	}
-	c.settleLitCompositeLocal(id, withTypeAt(decl.Type, []int{i}, hint))
+	return nil, nil
+}
+
+// pathIn is true when each step of path names an array element or a tuple
+// part of t.
+func pathIn(t ast.Type, path []int) bool {
+	for _, i := range path {
+		switch x := t.(type) {
+		case ast.ArrayType:
+			t = x.Elem
+		case ast.TupleType:
+			if i < 0 || i >= len(x.Elems) {
+				return false
+			}
+			t = x.Elems[i]
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // settledNumeric is true for an integer or float type that is not polymorphic.
