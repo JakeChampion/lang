@@ -1,3 +1,4 @@
+# 2026-11-11: integer_literal_in_an_append_on_a_float_array_is_a_float is clean under RC trace.
 # 2026-11-11: owned_field_match_data is clean under RC trace.
 # 2026-11-11: append_on_a_literal_array_local_takes_the_width_of_its_destination is clean under RC trace.
 # 2026-11-11: owned_field_match_data is clean under RC trace.
@@ -555,6 +556,7 @@ int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
 integer_conversion_boundaries                        0
+integer_literal_in_an_append_on_a_float_array_is_a_float 0
 integer_literals_beside_a_float                      0
 integer_literals_beside_an_f32                       0
 integer_widths_share_methods                         0

@@ -1,0 +1,4 @@
+main.fern:5:28: error[E038]: argument 1 to "append": expected i32, got f64
+main.fern:6:29: error[E038]: argument 2 to "with": expected i32, got f64
+main.fern:8:28: error[E038]: argument 1 to "append": expected i32, got f64
+main.fern:10:24: error[E038]: argument 1 to "append": expected i32, got f64

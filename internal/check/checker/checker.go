@@ -14866,10 +14866,20 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
-		invalid := false
-		for _, el := range n.Elems[1:] {
+		invalid, localMismatch := false, false
+		for i, el := range n.Elems[1:] {
 			t := checkElem(el)
 			if t == nil || elemT == nil {
+				continue
+			}
+			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil {
+				if !localMismatch {
+					want, got := elemT, t
+					c.afterLitFix(ll, func() {
+						c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
+					})
+				}
+				localMismatch = true
 				continue
 			}
 			if ast.Equal(t, elemT) {
@@ -14888,6 +14898,16 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if elemT == nil || invalid && elemExpected != nil && c.elemSettleable(elemT, elemExpected) {
 			return nil
+		}
+		if f, float := elemExpected.(ast.FloatType); float && !f.Polymorphic && !localMismatch {
+			for _, el := range n.Elems {
+				if ll := c.intLitLocalIn(el, elemExpected); ll != nil {
+					c.afterLitFix(ll, func() {
+						c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemExpected, ll.width)
+					})
+					return nil
+				}
+			}
 		}
 		n.ElemType = elemT
 		for _, el := range n.Elems {
@@ -15319,11 +15339,15 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if tt == nil {
 				return nil
 			}
-			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil && litArrayStepArg(n, fa) >= 0 {
+			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil {
 				for _, arg := range n.Args {
 					c.checkExpr(arg, s)
 				}
-				return tt
+				if litArrayStepArg(n, fa) >= 0 {
+					return tt
+				}
+				c.errfCode(litStepRoot(fa.Target).Pos(), "E020", "empty array literal needs a type annotation")
+				return nil
 			}
 			vlanes, isVec := c.genericVec(tt)
 			if pt, ok := tt.(ast.ParamType); ok || isVec {

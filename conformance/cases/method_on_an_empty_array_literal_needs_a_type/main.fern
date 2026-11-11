@@ -1,0 +1,11 @@
+// A method call on an empty array literal with no type is an E020 on the
+// literal. An `append` or a `with` call before the method does not give the
+// literal a type.
+function main(): i32 {
+    print([].len());
+    let n = [].len();
+    let m = [].append(2).len();
+    let xs: i64[] = [1];
+    let ys = [].concat(xs);
+    return 0;
+}
