@@ -38,6 +38,14 @@ function pack(values: [f64]): u8[] {
   return out;
 }
 
+@inline
+function store_splats(own bytes: u8[], at: i32, values: f64x2): u8[] {
+  let converted = __f32x4_pack(values, values);
+  let pair = __f32x4_zip_lo(converted, converted);
+  bytes = __f32x4_with_bytes(bytes, at, __f32x4_zip_lo(pair, pair));
+  return __f32x4_with_bytes(bytes, at + 16, __f32x4_zip_hi(pair, pair));
+}
+
 pub function plan(n: i32): Plan {
   let p = transform.plan(n);
   let quarter = n / 8;
@@ -45,13 +53,25 @@ pub function plan(n: i32): Plan {
   let sine = __alloc_u8((quarter - 1) * 16);
   let triple_cos = __alloc_u8((quarter - 1) * 16);
   let triple_sin = __alloc_u8((quarter - 1) * 16);
-  for k in 0..quarter - 1 {
+  let k = 0;
+  let three = __f64x2_splat(3.0);
+  while (k + 1 < quarter - 1) {
+    let c = __f64x2_load(p.fft_cos, k);
+    let t = __f64x2_load(p.fft_sin, k);
+    cosine = store_splats(cosine, 16 * k, c);
+    sine = store_splats(sine, 16 * k, t);
+    triple_cos = store_splats(triple_cos, 16 * k, c * (c * c - three * t * t));
+    triple_sin = store_splats(triple_sin, 16 * k, t * (three * c * c - t * t));
+    k += 2;
+  }
+  while (k < quarter - 1) {
     cosine = __f32x4_with_bytes(cosine, 16 * k, __f32x4_splat(p.fft_cos[k] as f32));
     sine = __f32x4_with_bytes(sine, 16 * k, __f32x4_splat(p.fft_sin[k] as f32));
     let c = p.fft_cos[k];
     let t = p.fft_sin[k];
     triple_cos = __f32x4_with_bytes(triple_cos, 16 * k, __f32x4_splat((c * (c * c - 3.0 * t * t)) as f32));
     triple_sin = __f32x4_with_bytes(triple_sin, 16 * k, __f32x4_splat((t * (3.0 * c * c - t * t)) as f32));
+    k += 1;
   }
   let merge_cos = __alloc_u8(quarter * 16);
   let merge_sin = __alloc_u8(quarter * 16);
