@@ -30,7 +30,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 
 | Target | Output |
 | --- | --- |
-| `arm64-linux` (default) | Static ELF. ARMv8.2-A with the crypto extensions. |
+| `arm64-linux` | Static ELF. ARMv8.2-A with the crypto extensions. |
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
 | `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
