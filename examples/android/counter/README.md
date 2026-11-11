@@ -11,7 +11,7 @@ drawing code and no layout arithmetic.
   on the phone: it draws on the GPU, uses the font of the system, follows
   the dark theme, and gives the screen to TalkBack.
 - `counter_test.fern` runs the program on the host with
-  `std/android/ui/sim`. It taps the buttons by the names of their actions,
+  `std/android/ui/sim`. It taps the buttons by the texts that they show,
   and reads the texts of the screen.
 
 Build and run it on a phone or an emulator:

@@ -15410,8 +15410,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if recvHint != nil {
 				c.setElemHintFor(fa.Target, recvHint)
 				c.expectedType = recvHint
+			} else if want := c.receiverExpected(n, fa, callExpected); want != nil {
+				c.expectedType = want
 			}
 			tt := c.receiverType(fa.Target, s)
+			c.expectedType = nil
 			if recvHint != nil {
 				c.expectedType = nil
 				c.elemHint = nil

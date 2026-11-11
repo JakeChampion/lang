@@ -44,3 +44,41 @@ func TestOpenGenericCallTakesTheTypeOfItsFirstUse(t *testing.T) {
 		}
 	}
 }
+
+func TestDestinationBindsACallInsideItsValue(t *testing.T) {
+	const decls = "struct El[M] { kids: El[M][], tap: Option[M], pad: f64 }\n" +
+		"function text[M](s: string): El[M] { return El { kids: [], tap: None, pad: 0.0 }; }\n" +
+		"function column[M](kids: El[M][]): El[M] { return El { kids: kids, tap: None, pad: 0.0 }; }\n" +
+		"function button[M](s: string, m: M): El[M] { return El { kids: [], tap: Some(m), pad: 0.0 }; }\n" +
+		"function (e: El[M]) padded(v: f64): El[M] { return El { ...e, pad: v }; }\n" +
+		"enum Msg { Inc, Dec }\n"
+	const end = "\nfunction main(): i32 { return 0; }\n"
+	good := []struct{ name, body string }{
+		{"receiver", "function view(): El[Msg] { let e: El[Msg] = text(\"a\").padded(2.0); return e; }"},
+		{"receiver of a receiver", "function view(): El[Msg] { return text(\"a\").padded(1.0).padded(2.0); }"},
+		{"receiver in a generic function", "function wide[M](s: string): El[M] { return column([text(s).padded(1.0)]).padded(6.0).padded(7.0); }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
+		{"receivers in an array argument", "function view(): El[Msg] { return column([text(\"a\").padded(1.0), button(\"+\", Inc).padded(2.0)]).padded(3.0); }"},
+		{"struct update base", "function view(): El[Msg] { return El { ...text(\"a\"), pad: 1.0 }; }"},
+		{"struct update base in a generic function", "function wide[M](s: string): El[M] { return El { ...text(s), pad: 1.0 }; }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
+		{"tuple element", "function view(): El[Msg] { let p: (El[Msg], i32) = (text(\"a\").padded(5.0), 1); return p.0; }"},
+	}
+	for _, c := range good {
+		if err := checkSource(t, decls+c.body+end); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	bad := []struct{ name, body, want string }{
+		{"receiver with no destination", "function view(): i32 { let e = text(\"a\").padded(1.0); return 0; }", "could not infer type parameter M for text"},
+		{"array with no destination", "function view(): i32 { let e = [text(\"a\")]; return 0; }", "could not infer type parameter M for text"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, decls+c.body+end)
+		if err == nil {
+			t.Errorf("%s: accepted", c.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want %q, got:\n%v", c.name, c.want, err)
+		}
+	}
+}
