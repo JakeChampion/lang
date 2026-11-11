@@ -1,0 +1,194 @@
+import "std/video/hevc/pps";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+import "video_hevc_pps_vectors" as vectors;
+import "video_hevc_pps_check" as check;
+
+function reference(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("PPS fixture hex");
+    };
+    let Ok(sps) = hex.decode(v.sps) else {
+      return test.fail("SPS fixture hex");
+    };
+    let result = pps.inspect(bytes, sps, frame.default_limits());
+    match (result) {
+      Err(error) => {
+        return test.fail(v.name + ": " + error.message());
+      },
+      Ok(value) => {
+        if (check.values(value) != v.values) {
+          return test.fail("independent PPS metadata: " + v.name);
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function error_name(result: Result[pps.PictureParameters, frame.VideoError]): string {
+  return match (result) {
+    Err(frame.Header) => "Header", Err(frame.Truncated) => "Truncated",
+    Err(frame.Limit) => "Limit", Err(frame.Unsupported) => "Unsupported",
+    _ => "unexpected success or error",
+  };
+}
+
+function prefixes(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("PPS hex");
+    };
+    let Ok(sps) = hex.decode(v.sps) else {
+      return test.fail("SPS hex");
+    };
+    for cut in 0..bytes.len() {
+      if ((bytes.len() <= 256 || cut % 128 == 0 || cut >= bytes.len() - 8) && pps.inspect(bytes[:cut], sps, frame.default_limits()).is_ok()) {
+        return test.fail("incomplete PPS " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function syntax_errors(): test.TestOutcome {
+  for v in vectors.invalid() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("PPS hex");
+    };
+    let Ok(sps) = hex.decode(v.sps) else {
+      return test.fail("SPS hex");
+    };
+    let actual = error_name(pps.inspect(bytes, sps, frame.default_limits()));
+    if (actual != v.error) {
+      return test.fail(v.name + ": " + actual);
+    }
+  }
+  return test.pass();
+}
+
+function envelope(): test.TestOutcome {
+  let v = vectors.vectors()[8];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("PPS hex");
+  };
+  let Ok(sps) = hex.decode(v.sps) else {
+    return test.fail("SPS hex");
+  };
+  let controls = [bytes.with(0, 196u8), bytes.with(1, 0u8), bytes.with(1, 2u8), bytes.with(0, 66u8), bytes.with(0, 69u8), bytes.with(1, 9u8)];
+  let errors = ["Header", "Header", "Header", "Unsupported", "Unsupported", "Unsupported"];
+  for i in 0..controls.len() {
+    if (error_name(pps.inspect(controls[i], sps, frame.default_limits())) != errors[i]) {
+      return test.fail("NAL envelope");
+    }
+  }
+  return test.pass();
+}
+
+function exact_limits(): test.TestOutcome {
+  let v = vectors.vectors()[8];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("PPS hex");
+  };
+  let Ok(sps) = hex.decode(v.sps) else {
+    return test.fail("SPS hex");
+  };
+  let maximum = if (bytes.len() > sps.len()) { bytes.len() } else { sps.len() };
+  let limits = frame.Limits { max_pixels: 49152, max_packet_bytes: maximum };
+  if (!pps.inspect(bytes, sps, limits).is_ok()) {
+    return test.fail("exact budgets");
+  }
+  if (error_name(pps.inspect(bytes, sps, frame.Limits { ...limits, max_packet_bytes: maximum - 1 })) != "Limit") {
+    return test.fail("SPS packet budget");
+  }
+  if (error_name(pps.inspect(bytes, sps, frame.Limits { ...limits, max_pixels: 49151 })) != "Limit") {
+    return test.fail("coded picture budget");
+  }
+  if (error_name(pps.inspect(bytes, sps, frame.Limits { ...limits, max_pixels: 46500 })) != "Limit") {
+    return test.fail("crop does not reduce the budget");
+  }
+  return test.pass();
+}
+
+function trailing(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("PPS hex");
+    };
+    let Ok(sps) = hex.decode(v.sps) else {
+      return test.fail("SPS hex");
+    };
+    for extra in [0u8, 255u8] {
+      if (error_name(pps.inspect(bytes.append(extra), sps, frame.default_limits())) != "Header") {
+        return test.fail("trailing PPS bytes " + v.name);
+      }
+    }
+    let last = bytes.len() - 1;
+    if ((bytes[last] & 1u8) == 0u8 && error_name(pps.inspect(bytes.with(last, bytes[last] | 1u8), sps, frame.default_limits())) != "Header") {
+      return test.fail("nonzero alignment " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function ceilings(): test.TestOutcome {
+  let v = vectors.vectors()[8];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("PPS hex");
+  };
+  let Ok(sps) = hex.decode(v.sps) else {
+    return test.fail("SPS hex");
+  };
+  while (bytes.len() < pps.MAX_PPS_BYTES) {
+    bytes = bytes.append(255u8);
+  }
+  if (error_name(pps.inspect(bytes, sps, frame.default_limits())) != "Header") {
+    return test.fail("ceiling is not an immediate size refusal");
+  }
+  if (error_name(pps.inspect(bytes.append(255u8), [], frame.default_limits())) != "Limit") {
+    return test.fail("PPS ceiling precedes SPS access");
+  }
+  if (error_name(pps.inspect([], [], frame.Limits { max_pixels: -1, max_packet_bytes: 0 })) != "Limit") {
+    return test.fail("invalid budget precedes NAL access");
+  }
+  return test.pass();
+}
+
+function context(): test.TestOutcome {
+  let v = vectors.vectors()[8];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("PPS hex");
+  };
+  let Ok(sps) = hex.decode(v.sps) else {
+    return test.fail("SPS hex");
+  };
+  for cut in 0..sps.len() {
+    if (pps.inspect(bytes, sps[:cut], frame.default_limits()).is_ok()) {
+      return test.fail("incomplete matching SPS");
+    }
+  }
+  for bad in [[68u8, 1, 0, 0, 0], [68u8, 1, 0, 0, 1], [68u8, 1, 0, 0, 2], [68u8, 1, 0, 0, 3, 4]] {
+    if (error_name(pps.inspect(bad, sps, frame.default_limits())) != "Header") {
+      return test.fail("emulation prevention");
+    }
+  }
+  if (error_name(pps.inspect([68u8, 1, 0, 0, 3], sps, frame.default_limits())) != "Truncated") {
+    return test.fail("incomplete escape byte");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded HEVC PPS metadata");
+  r = r.it("independent picture metadata", reference);
+  r = r.it("all compact prefixes and dense-list boundaries", prefixes);
+  r = r.it("syntax and normative context bounds", syntax_errors);
+  r = r.it("NAL envelope", envelope);
+  r = r.it("packet and coded-picture budgets", exact_limits);
+  r = r.it("exact trailing bits", trailing);
+  r = r.it("PPS ceiling and early limit checks", ceilings);
+  r = r.it("matching SPS prefixes and escaped bytes", context);
+  return r.finish();
+}
