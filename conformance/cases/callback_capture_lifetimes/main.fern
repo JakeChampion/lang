@@ -9,15 +9,15 @@ function (h: Handle) read(): i32 {
   return h.n;
 }
 
-function (own h: Handle) close(): void {
+function (own h: Handle) close(): i32 {
   h.closed.set(1);
+  return 0;
 }
 
 function reads(own h: Handle): i32 {
   let read = (): i32 => h.read();
-  let n = read() + read();
-  h.close();
-  return n;
+  let n = read();
+  return n + read() + h.close();
 }
 
 function change(own xs: i32[]): void {

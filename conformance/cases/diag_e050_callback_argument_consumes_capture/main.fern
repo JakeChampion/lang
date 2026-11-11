@@ -1,0 +1,20 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (h: Handle) read(): i32 {
+  return h.n;
+}
+
+function (own h: Handle) close(): i32 {
+  return 0;
+}
+
+function run(own h: Handle): i32 {
+  let read = (delta: i32): i32 => h.read() + delta;
+  return read(h.close());
+}
+
+function main(): i32 {
+  return run(Handle { n: 7 });
+}
