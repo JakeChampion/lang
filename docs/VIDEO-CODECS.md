@@ -328,6 +328,7 @@ AV1 temporal units can require further packet handling for a particular platform
 It checks header bits, extension identifiers, eight-byte size fields, and unsigned payload bounds within the packet budget.
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
+
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
