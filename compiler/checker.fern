@@ -23939,6 +23939,24 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // no_handle and handle hold the current declaration classification.
 struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex, copy_results: util.NameIndex }
 
+// Variant payloads use the type parameters of their enum declaration.
+function ow_data_structs(mod: parser.Module): parser.StructDecl[] {
+  let structs = mod.structs;
+  for i in 0..structs.len() {
+    let sd = structs[i];
+    if (sd.enum_owner.len() == 0) {
+      continue;
+    }
+    for ed in mod.enums {
+      if (ed.name == sd.enum_owner) {
+        structs = structs.with(i, parser.StructDecl { ...sd, type_params: ed.type_params });
+        break;
+      }
+    }
+  }
+  return structs;
+}
+
 function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
   let names: string[] = [];
   let obligations: string[] = [];
@@ -23975,7 +23993,7 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
     decl_names = decl_names.append(al.name);
   }
   let no: string[] = [];
-  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations), copy_results: util.name_index([]) };
+  let dx: OwnDecls = OwnDecls { structs: ow_data_structs(mod), aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations), copy_results: util.name_index([]) };
   return ow_classify_decls(dx, decl_names);
 }
 
