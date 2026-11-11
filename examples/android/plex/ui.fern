@@ -1,9 +1,10 @@
-// The look of Fern for Plex. `nodes` lays out a screen as a list of nodes:
-// a rectangle, what it shows, and the action that a tap on it starts.
-// `render` draws the nodes on a frame and `hit` finds the node under a
-// touch, so the drawing and the touches use one layout. Every function is
-// pure except `render`, which writes only into the frame.
+// The look of Fern for Plex. `nodes` lays out a screen as a list of nodes
+// of std/android/ui/scene: a rectangle, what it shows, and the action that
+// a tap on it starts. The drawing and the touches use that one layout.
+// Every function is pure: a paint writes only into the frame that it gets.
+import "core/map";
 import "std/android/draw";
+import "std/android/ui/scene";
 import "std/string";
 import "std/textwrap";
 import "./plex";
@@ -100,10 +101,12 @@ pub struct View {
   player: PlayerView,
   base: plex.Base,
   loading: boolean,
+  // The images that the app has, by their keys.
+  cache: Map[string, draw.Image],
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false };
+  return View { w: w, h: h, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
@@ -152,28 +155,42 @@ pub function card_height(m: Metrics, w: i32): i32 {
 
 // --- nodes
 
-pub enum Paint {
-  Fill(i32, i32),
-  Text(string, i32, i32),
-  Img(string, i32),
-  Bar(i32, i32, i32),
-  Blank,
+// The start of the key of the paint of an image that the app does not
+// have yet.
+const WANTED: string = "wanted|";
+
+function mk(x: i32, y: i32, w: i32, h: i32, paint: scene.Paint, act: string, group: string): scene.Node {
+  return scene.Node { ...scene.node(x, y, w, h, paint), tap: scene.Action { name: act, arg: 0 }, group: group };
 }
 
-// A rectangle of the screen, what it shows, and its action: "" for none.
-// `group` names a row that scrolls across, or is "".
-pub struct Node { x: i32, y: i32, w: i32, h: i32, paint: Paint, act: string, group: string }
-
-function fill(x: i32, y: i32, w: i32, h: i32, color: i32, r: i32): Node {
-  return Node { x: x, y: y, w: w, h: h, paint: Fill(color, r), act: "", group: "" };
+function fill(x: i32, y: i32, w: i32, h: i32, color: i32, r: i32): scene.Node {
+  return scene.node(x, y, w, h, scene.Fill(color, r));
 }
 
-function label(m: Metrics, x: i32, y: i32, s: string, scale: i32, color: i32): Node {
-  return Node { x: x, y: y, w: draw.text_width(s, scale), h: draw.text_height(scale), paint: Text(s, scale, color), act: "", group: "" };
+// Text in the dot font of std/android/draw, at `scale` pixels to the dot.
+function label(m: Metrics, x: i32, y: i32, s: string, scale: i32, color: i32): scene.Node {
+  let key = "text|" + scale.to_string() + "|" + color.to_string() + "|" + s;
+  let n = scene.node(x, y, draw.text_width(s, scale), draw.text_height(scale), scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => f.text(bx, by, s, scale, color)));
+  return scene.Node { ...n, say: s };
 }
 
-function tap(n: Node, act: string): Node {
-  return Node { ...n, act: act };
+function tap(n: scene.Node, act: string): scene.Node {
+  return scene.Node { ...n, tap: scene.Action { name: act, arg: 0 } };
+}
+
+// The image with `key` and round corners of `r`. Until the app has the
+// image, the node shows the surface colour.
+function img(v: View, x: i32, y: i32, w: i32, h: i32, key: string, r: i32, act: string, group: string): scene.Node {
+  if let Some(image) = v.cache.get(key) {
+    return mk(x, y, w, h, scene.Picture(key, image, r), act, group);
+  }
+  return mk(x, y, w, h, scene.Custom(WANTED + key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => f.round_rect(bx, by, bw, bh, r, surface())), act, group);
+}
+
+// A bar of the colour `back`, with its first `permille` thousandths in
+// the colour `fg`.
+function progress_bar(x: i32, y: i32, w: i32, h: i32, permille: i32, fg: i32, back: i32): scene.Node[] {
+  return [fill(x, y, w, h, back, 0), fill(x, y, w * permille / 1000, h, fg, 0)];
 }
 
 // `s` cut to `cells` cells, with an ellipsis when it is longer.
@@ -197,7 +214,7 @@ pub function fit(s: string, cells: i32): string {
 }
 
 // A button: a pill with its label in the middle.
-function button(m: Metrics, x: i32, y: i32, text: string, color: i32, fg: i32, act: string): Node[] {
+function button(m: Metrics, x: i32, y: i32, text: string, color: i32, fg: i32, act: string): scene.Node[] {
   let w = draw.text_width(text, m.ts) + 32 * m.u;
   let h = 44 * m.u;
   return [tap(fill(x, y, w, h, color, h / 2), act), label(m, x + 16 * m.u, y + (h - m.th) / 2, text, m.ts, fg)];
@@ -217,13 +234,13 @@ pub function image_key(base: plex.Base, path: string, w: i32, h: i32): string {
 
 // A card of an item: the poster, its progress, a mark when watched, and two
 // lines of text.
-function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: string, group: string): Node[] {
+function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: string, group: string): scene.Node[] {
   let ih = w * 3 / 2;
   let r = 6 * m.u;
-  let out: Node[] = [Node { x: x, y: y, w: w, h: ih, paint: Img(image_key(v.base, plex.poster(it), w, ih), r), act: act, group: group }];
+  let out: scene.Node[] = [img(v, x, y, w, ih, image_key(v.base, plex.poster(it), w, ih), r, act, group)];
   let p = plex.progress(it);
   if (p > 0) {
-    out = out.append(Node { x: x + 6 * m.u, y: y + ih - 10 * m.u, w: w - 12 * m.u, h: 4 * m.u, paint: Bar(p, accent(), draw.rgba(0, 0, 0, 170)), act: "", group: "" });
+    out = util_append(out, progress_bar(x + 6 * m.u, y + ih - 10 * m.u, w - 12 * m.u, 4 * m.u, p, accent(), draw.rgba(0, 0, 0, 170)));
   } else if (plex.watched(it)) {
     out = out.append(fill(x + w - 22 * m.u, y + 6 * m.u, 16 * m.u, 16 * m.u, accent(), 8 * m.u));
   }
@@ -233,9 +250,9 @@ function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: s
   return out;
 }
 
-function top_bar(m: Metrics, v: View, back: boolean): Node[] {
+function top_bar(m: Metrics, v: View, back: boolean): scene.Node[] {
   let h = top_height(m);
-  let out: Node[] = [fill(0, 0, m.w, h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, h, bg(), 0)];
   let x = 16 * m.u;
   if (back) {
     out = out.append(tap(fill(0, 0, 48 * m.u, h, bg(), 0), "back"));
@@ -250,10 +267,10 @@ function top_bar(m: Metrics, v: View, back: boolean): Node[] {
   return out;
 }
 
-function bottom_bar(m: Metrics, v: View): Node[] {
+function bottom_bar(m: Metrics, v: View): scene.Node[] {
   let h = bottom_height(m);
   let y = m.h - h;
-  let out: Node[] = [fill(0, y, m.w, h, surface(), 0)];
+  let out: scene.Node[] = [fill(0, y, m.w, h, surface(), 0)];
   let names = tab_names();
   let cell = m.w / names.len();
   for i in 0..names.len() {
@@ -283,8 +300,8 @@ pub function content_bottom(m: Metrics, screen: i32): i32 {
 
 // --- the screens
 
-function login(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function login(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let big = m.ts * 2;
   let cy = m.h / 3;
   let title = "Fern for Plex";
@@ -320,7 +337,7 @@ function spaced(code: string): string {
   return parts.join(" ");
 }
 
-function util_append(a: Node[], b: Node[]): Node[] {
+function util_append(a: scene.Node[], b: scene.Node[]): scene.Node[] {
   let out = a;
   for n in b {
     out = out.append(n);
@@ -329,8 +346,8 @@ function util_append(a: Node[], b: Node[]): Node[] {
 }
 
 // The lines of `text` wrapped to `w` pixels, from y down.
-function wrapped(m: Metrics, x: i32, y: i32, w: i32, text: string, color: i32): Node[] {
-  let out: Node[] = [];
+function wrapped(m: Metrics, x: i32, y: i32, w: i32, text: string, color: i32): scene.Node[] {
+  let out: scene.Node[] = [];
   let cells = w / m.cw;
   let at = y;
   for line in textwrap.word_wrap(text, cells).split("\n") {
@@ -347,8 +364,8 @@ pub function wrapped_height(m: Metrics, w: i32, text: string): i32 {
   return textwrap.word_wrap(text, w / m.cw).split("\n").len() * (m.th + 2 * m.u);
 }
 
-function servers(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function servers(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
   let row = 72 * m.u;
   let i = 0;
@@ -388,8 +405,8 @@ pub function hub_row_width(m: Metrics, n: i32): i32 {
   return 32 * m.u + n * (card_width(m) + 10 * m.u) - 10 * m.u;
 }
 
-function hubs(m: Metrics, v: View, top: i32): Node[] {
-  let out: Node[] = [];
+function hubs(m: Metrics, v: View, top: i32): scene.Node[] {
+  let out: scene.Node[] = [];
   let row_h = hub_row_height(m);
   let cw = card_width(m);
   let bottom = content_bottom(m, v.screen);
@@ -405,7 +422,7 @@ function hubs(m: Metrics, v: View, top: i32): Node[] {
       }
       let group = "row:" + i.to_string();
       let cy = y0 + m.th + 12 * m.u;
-      out = out.append(Node { x: 0, y: cy, w: m.w, h: card_height(m, cw), paint: Blank, act: "", group: group });
+      out = out.append(mk(0, cy, m.w, card_height(m, cw), scene.Blank, "", group));
       let j = 0;
       while (j < hub.items.len()) {
         let x = 16 * m.u + j * (cw + 10 * m.u) - dx;
@@ -424,8 +441,8 @@ pub function home_height(m: Metrics, v: View): i32 {
   return v.hubs.len() * hub_row_height(m) + 16 * m.u;
 }
 
-function home(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function home(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   out = util_append(out, hubs(m, v, top_height(m) + 12 * m.u));
   if (v.hubs.len() == 0) {
     let msg = "Nothing here yet";
@@ -440,8 +457,8 @@ function home(m: Metrics, v: View): Node[] {
   return out;
 }
 
-function sections(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function sections(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
   let row = 64 * m.u;
   let i = 0;
@@ -489,8 +506,8 @@ pub function grid_height(m: Metrics, n: i32): i32 {
   return rows * (card_height(m, w) + 12 * m.u) + 16 * m.u;
 }
 
-function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: string): Node[] {
-  let out: Node[] = [];
+function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: string): scene.Node[] {
+  let out: scene.Node[] = [];
   let (cols, w) = grid(m);
   let ch = card_height(m, w) + 12 * m.u;
   let bottom = content_bottom(m, v.screen);
@@ -506,8 +523,8 @@ function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: s
   return out;
 }
 
-function library(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function library(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   out = util_append(out, grid_nodes(m, v, v.items, top_height(m) + 12 * m.u, "grid:"));
   if (v.items.len() == 0) {
     let msg = "This library is empty";
@@ -536,21 +553,21 @@ pub function play_label(it: plex.Item): string {
   return "Play";
 }
 
-function detail(m: Metrics, v: View): Node[] {
+function detail(m: Metrics, v: View): scene.Node[] {
   let it = v.item;
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let s = v.scroll;
   let bh = backdrop_height(m);
   let art = it.art;
   if (art.len() == 0) {
     art = plex.poster(it);
   }
-  out = out.append(Node { x: 0, y: top_height(m) - s, w: m.w, h: bh, paint: Img(image_key(v.base, art, m.w, bh), 0), act: "", group: "" });
+  out = out.append(img(v, 0, top_height(m) - s, m.w, bh, image_key(v.base, art, m.w, bh), 0, "", ""));
   out = out.append(fill(0, top_height(m) - s + bh / 2, m.w, bh / 2, draw.rgba(14, 14, 17, 150), 0));
   let pw = 100 * m.u;
   let ph = pw * 3 / 2;
   let py = top_height(m) - s + bh - ph / 2;
-  out = out.append(Node { x: 16 * m.u, y: py, w: pw, h: ph, paint: Img(image_key(v.base, plex.poster(it), pw, ph), 6 * m.u), act: "", group: "" });
+  out = out.append(img(v, 16 * m.u, py, pw, ph, image_key(v.base, plex.poster(it), pw, ph), 6 * m.u, "", ""));
   let tx = 16 * m.u + pw + 16 * m.u;
   let tcells = (m.w - tx - 16 * m.u) / m.cw;
   let ty = top_height(m) - s + bh + 8 * m.u;
@@ -616,8 +633,8 @@ pub function episode_row_height(m: Metrics): i32 {
   return 84 * m.u;
 }
 
-function episode_rows(m: Metrics, v: View, top: i32): Node[] {
-  let out: Node[] = [];
+function episode_rows(m: Metrics, v: View, top: i32): scene.Node[] {
+  let out: scene.Node[] = [];
   let rh = episode_row_height(m);
   let tw = 128 * m.u;
   let th = tw * 9 / 16;
@@ -632,7 +649,7 @@ function episode_rows(m: Metrics, v: View, top: i32): Node[] {
         thumb = "";
       }
       if (thumb.len() > 0) {
-        out = out.append(Node { x: 16 * m.u, y: y, w: tw, h: th, paint: Img(image_key(v.base, thumb, tw, th), 6 * m.u), act: "", group: "" });
+        out = out.append(img(v, 16 * m.u, y, tw, th, image_key(v.base, thumb, tw, th), 6 * m.u, "", ""));
       }
       let x = 16 * m.u + 12 * m.u;
       if (thumb.len() > 0) {
@@ -653,7 +670,7 @@ function episode_rows(m: Metrics, v: View, top: i32): Node[] {
       out = out.append(label(m, x, y + 14 * m.u + m.th, fit(line, cells), m.ts, muted()));
       let p = plex.progress(e);
       if (p > 0) {
-        out = out.append(Node { x: x, y: y + rh - 18 * m.u, w: m.w - x - 32 * m.u, h: 4 * m.u, paint: Bar(p, accent(), raised()), act: "", group: "" });
+        out = util_append(out, progress_bar(x, y + rh - 18 * m.u, m.w - x - 32 * m.u, 4 * m.u, p, accent(), raised()));
       }
     }
     i += 1;
@@ -661,8 +678,8 @@ function episode_rows(m: Metrics, v: View, top: i32): Node[] {
   return out;
 }
 
-function search(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function search(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let fy = top_height(m) + 8 * m.u;
   let fh = 48 * m.u;
   let border = surface();
@@ -707,8 +724,8 @@ function tail(s: string, cells: i32): string {
   return out;
 }
 
-function settings(m: Metrics, v: View): Node[] {
-  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+function settings(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
   let rows: (string, string, string)[] = [
     ("Account", v.account, ""),
@@ -743,21 +760,21 @@ function settings(m: Metrics, v: View): Node[] {
 }
 
 // The progress bar of the player, as a node whose tap seeks.
-pub function seek_bar(m: Metrics): Node {
-  return Node { x: 24 * m.u, y: m.h - 72 * m.u, w: m.w - 48 * m.u, h: 24 * m.u, paint: Blank, act: "seek", group: "" };
+pub function seek_bar(m: Metrics): scene.Node {
+  return mk(24 * m.u, m.h - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
 }
 
-function player(m: Metrics, v: View): Node[] {
+function player(m: Metrics, v: View): scene.Node[] {
   let p = v.player;
   if (!p.overlay) {
-    return [Node { x: 0, y: 0, w: m.w, h: m.h, paint: Blank, act: "overlay", group: "" }];
+    return [mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")];
   }
-  let out: Node[] = [fill(0, 0, m.w, m.h, draw.rgb(0, 0, 0), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, draw.rgb(0, 0, 0), 0)];
   if (p.art.len() > 0) {
-    out = out.append(Node { x: 0, y: 0, w: m.w, h: m.h, paint: Img(image_key(v.base, p.art, m.w, m.h), 0), act: "", group: "" });
+    out = out.append(img(v, 0, 0, m.w, m.h, image_key(v.base, p.art, m.w, m.h), 0, "", ""));
     out = out.append(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 150), 0));
   }
-  out = out.append(Node { x: 0, y: 0, w: m.w, h: m.h, paint: Blank, act: "toggle", group: "" });
+  out = out.append(mk(0, 0, m.w, m.h, scene.Blank, "toggle", ""));
   out = out.append(tap(fill(0, 0, 64 * m.u, 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
   out = out.append(label(m, 16 * m.u, 16 * m.u, "<", m.ts, text_color()));
   let cells = (m.w - 64 * m.u) / m.cw;
@@ -789,7 +806,7 @@ function player(m: Metrics, v: View): Node[] {
     permille = (p.position_ms * 1000i64 / p.duration_ms) as i32;
   }
   out = out.append(bar);
-  out = out.append(Node { x: bar.x, y: bar.y + bar.h / 2 - 2 * m.u, w: bar.w, h: 4 * m.u, paint: Bar(permille, accent(), draw.rgba(255, 255, 255, 70)), act: "", group: "" });
+  out = util_append(out, progress_bar(bar.x, bar.y + bar.h / 2 - 2 * m.u, bar.w, 4 * m.u, permille, accent(), draw.rgba(255, 255, 255, 70)));
   out = out.append(label(m, bar.x, bar.y + bar.h + 4 * m.u, plex.clock_text(p.position_ms), m.ts, text_color()));
   let total = plex.clock_text(p.duration_ms);
   out = out.append(label(m, bar.x + bar.w - draw.text_width(total, m.ts), bar.y + bar.h + 4 * m.u, total, m.ts, text_color()));
@@ -797,7 +814,7 @@ function player(m: Metrics, v: View): Node[] {
 }
 
 // The nodes of the screen of `v`, in the order to draw them.
-pub function nodes(v: View): Node[] {
+pub function nodes(v: View): scene.Node[] {
   let m = metrics(v.w, v.h);
   if (v.screen == LOGIN) {
     return login(m, v);
@@ -808,7 +825,7 @@ pub function nodes(v: View): Node[] {
   if (v.screen == PLAYER) {
     return player(m, v);
   }
-  let body: Node[] = [];
+  let body: scene.Node[] = [];
   if (v.screen == HOME) {
     body = home(m, v);
   } else if (v.screen == SECTIONS) {
@@ -826,92 +843,42 @@ pub function nodes(v: View): Node[] {
   return util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
 }
 
+// The key of the image that the node `n` shows, or "".
+function image_of(n: scene.Node): string {
+  match (n.paint) {
+    scene.Picture(key, _, _) => {
+      return key;
+    },
+    scene.Custom(key, _, _) => {
+      if (key.starts_with(WANTED)) {
+        return key.drop(WANTED.len()).to_owned();
+      }
+      return "";
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
 // The keys of the images that the nodes show, each once.
-pub function images(ns: Node[]): string[] {
+pub function images(ns: scene.Node[]): string[] {
   let out: string[] = [];
   for n in ns {
-    if let Img(key, _) = n.paint {
-      if (key.len() > 0 && !out.contains(key)) {
-        out = out.append(key);
-      }
+    let key = image_of(n);
+    if (key.len() > 0 && !out.contains(key)) {
+      out = out.append(key);
     }
   }
   return out;
 }
 
 // The size of the image that a node with `key` shows.
-pub function image_size(ns: Node[], key: string): (i32, i32) {
+pub function image_size(ns: scene.Node[], key: string): (i32, i32) {
   for n in ns {
-    if let Img(k, _) = n.paint {
-      if (k == key) {
-        return (n.w, n.h);
-      }
+    if (image_of(n) == key) {
+      return (n.w, n.h);
     }
   }
   return (0, 0);
-}
-
-// The topmost node under x, y with an action, or None.
-pub function hit(ns: Node[], x: i32, y: i32): Option[Node] {
-  let i = ns.len();
-  while (i > 0) {
-    i -= 1;
-    let n = ns[i];
-    if (n.act.len() > 0 && x >= n.x && y >= n.y && x < n.x + n.w && y < n.y + n.h) {
-      return Some(n);
-    }
-  }
-  return None;
-}
-
-// The row that scrolls across under x, y, or "".
-pub function group_at(ns: Node[], x: i32, y: i32): string {
-  let i = ns.len();
-  while (i > 0) {
-    i -= 1;
-    let n = ns[i];
-    if (n.group.len() > 0 && x >= n.x && y >= n.y && x < n.x + n.w && y < n.y + n.h) {
-      return n.group;
-    }
-  }
-  return "";
-}
-
-// --- drawing
-
-function paint_image(f: draw.Frame, n: Node, key: string, r: i32, cache: Map[string, draw.Image]): void {
-  if let Some(img) = cache.get(key) {
-    f.image(n.x, n.y, n.w, n.h, img);
-    if (r > 0) {
-      f.clip_corners(n.x, n.y, n.w, n.h, r, bg());
-    }
-    return;
-  }
-  f.round_rect(n.x, n.y, n.w, n.h, r, surface());
-}
-
-// Draws the nodes on `f`, with the images in `cache`.
-pub function render(f: draw.Frame, ns: Node[], cache: Map[string, draw.Image]): void {
-  for n in ns {
-    match (n.paint) {
-      Fill(color, r) => {
-        if (r > 0) {
-          f.round_rect(n.x, n.y, n.w, n.h, r, color);
-        } else {
-          f.fill(n.x, n.y, n.w, n.h, color);
-        }
-      },
-      Text(s, scale, color) => {
-        f.text(n.x, n.y, s, scale, color);
-      },
-      Img(key, r) => {
-        paint_image(f, n, key, r, cache);
-      },
-      Bar(permille, fg, back) => {
-        f.fill(n.x, n.y, n.w, n.h, back);
-        f.fill(n.x, n.y, n.w * permille / 1000, n.h, fg);
-      },
-      Blank => {}
-    }
-  }
 }

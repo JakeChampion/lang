@@ -1,0 +1,82 @@
+// Tests of std/android/text. The test font has 1000 units to the em: "A" is
+// 600 units wide and "V" is 850 with its side bearings, so at 10 pixels to
+// the em "AAAA" is 24 pixels wide.
+import "std/android/text";
+import "std/test";
+import "std/truetype";
+import "./image_vectors";
+
+function fonts(): text.Fonts {
+  if let Some(f) = truetype.parse(image_vectors.font()) {
+    return text.Fonts { faces: [f, f, f], weights: [400, 500, 700] };
+  }
+  return text.Fonts { faces: [], weights: [] };
+}
+
+function test_width_and_line(): test.TestOutcome {
+  let f = fonts();
+  let none = text.Fonts { faces: [], weights: [] };
+  let got = text.width(f, 0, 10, "AAAA").to_string() + " " + text.line(f, 0, 10).to_string() + " " + text.width(f, 0, 10, "").to_string() + " " + text.width(none, 0, 10, "AAAA").to_string();
+  return test.assert_eq(got, "24 10 0 0");
+}
+
+function test_face_for_takes_the_nearest_weight(): test.TestOutcome {
+  let f = fonts();
+  let got = text.face_for(f, 400).to_string() + text.face_for(f, 430).to_string() + text.face_for(f, 460).to_string() + text.face_for(f, 600).to_string() + text.face_for(f, 900).to_string() + text.face_for(f, 100).to_string();
+  return test.assert_eq(got, "001120");
+}
+
+function test_fit_cuts_with_an_ellipsis(): test.TestOutcome {
+  let f = fonts();
+  let whole = text.fit(f, 0, 10, "AAAA", 24);
+  let cut = text.fit(f, 0, 10, "AAAAAAAA", 30);
+  let end = text.fit_end(f, 0, 10, "VAAAAAAA", 30);
+  let got = whole + " " + cut.ends_with("…").to_string() + " " + (text.width(f, 0, 10, cut) <= 30).to_string() + " " + end.starts_with("…").to_string() + " " + end.ends_with("A").to_string();
+  return test.assert_eq(got, "AAAA true true true true");
+}
+
+function test_wrap_breaks_at_spaces(): test.TestOutcome {
+  let f = fonts();
+  let space = text.width(f, 0, 10, "A A") - 12;
+  // Two words of 24 pixels and a space fit in 48 pixels plus the space.
+  let lines = text.wrap(f, 0, 10, "AAAA AAAA AAAA", 48 + space);
+  let fed = text.wrap(f, 0, 10, "A\nAA", 1000);
+  let long = text.wrap(f, 0, 10, "AAAAAAAAAA", 30);
+  return test.assert_eq(lines.join("|") + " " + fed.join("|") + " " + long.join("|"), "AAAA AAAA|AAAA A|AA AAAAA|AAAAA");
+}
+
+function ranges(rs: (i32, i32)[]): string {
+  let out: string[] = [];
+  for r in rs {
+    let (a, b) = r;
+    out = out.append(a.to_string() + "-" + b.to_string());
+  }
+  return out.join(" ");
+}
+
+function test_wrap_ranges_keeps_the_place_of_each_character(): test.TestOutcome {
+  let f = fonts();
+  let space = text.width(f, 0, 10, "A A") - 12;
+  // The space and the line feed at a break are in no line.
+  let words = text.wrap_ranges(f, 0, 10, "AAAA AAAA AAAA", 48 + space);
+  let fed = text.wrap_ranges(f, 0, 10, "A\n\nAA", 1000);
+  let long = text.wrap_ranges(f, 0, 10, "AAAAAAAAAA", 30);
+  let empty = text.wrap_ranges(f, 0, 10, "", 30);
+  return test.assert_eq(ranges(words) + " | " + ranges(fed) + " | " + ranges(long) + " | " + ranges(empty), "0-9 10-14 | 0-1 2-2 3-5 | 0-5 5-10 | 0-0");
+}
+
+function test_letters_and_span(): test.TestOutcome {
+  let cs = text.letters("aé…z");
+  return test.assert_eq(cs.len().to_string() + " " + text.span(cs, 1, 3) + " " + text.span(cs, 3, 1) + "|" + text.span(cs, 0, 4), "4 é… |aé…z");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/text");
+  r = r.it("width and line measure a text", test_width_and_line);
+  r = r.it("face_for takes the nearest weight", test_face_for_takes_the_nearest_weight);
+  r = r.it("fit cuts with an ellipsis", test_fit_cuts_with_an_ellipsis);
+  r = r.it("wrap breaks at spaces and line feeds", test_wrap_breaks_at_spaces);
+  r = r.it("wrap_ranges keeps the place of each character", test_wrap_ranges_keeps_the_place_of_each_character);
+  r = r.it("letters and span take characters", test_letters_and_span);
+  return r.finish();
+}
