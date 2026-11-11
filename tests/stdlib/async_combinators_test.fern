@@ -167,6 +167,38 @@ function test_deadline_some_and_none(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// A deadline 2^32 seconds ahead is not a deadline that passed.
+function test_far_deadline_does_not_fire(): test.TestOutcome {
+  // An engine with no task to park runs the body at the spawn, and waits there.
+  if (!async.parks()) {
+    return test.pass();
+  }
+  let seen = cell_new(0);
+  let far: async.Future[i32] = async.spawn((): i32 => {
+    let none: i32[] = [];
+    match (async.wait_any(none, Some(clock.instant().add(time.duration_seconds(4294967296))))) {
+      Cancelled => {
+        seen.set(seen.get() + 1);
+        return 0;
+      },
+      _ => {}
+    }
+    return 9;
+  });
+  match (async.block_on(async.with_deadline(clock.instant().add(ms(50)), [far]))) {
+    Some(slots) => {
+      if (slots[0].is_some()) {
+        return test.fail("the far deadline fired");
+      }
+      return test.assert_eq(seen.get(), 1);
+    },
+    None => {
+      return test.fail("with_deadline ended cancelled");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_wait_without_a_scheduler(): test.TestOutcome {
   let seen = cell_new(0);
   let ready = async.wait(Ready(3));
@@ -307,6 +339,7 @@ function main(): i32 {
   r = r.it("race cancels the losers", test_race_cancels_the_losers);
   r = r.it("race of nothing is cancelled", test_race_of_nothing_is_cancelled);
   r = r.it("with_deadline answers Some and None", test_deadline_some_and_none);
+  r = r.it("a deadline 2^32 seconds ahead does not fire", test_far_deadline_does_not_fire);
   r = r.it("wait without a scheduler", test_wait_without_a_scheduler);
   r = r.it("wait inside a task", test_wait_inside_a_task);
   r = r.it("a cancelled task cancels its children", test_cancel_reaches_the_children);

@@ -1,0 +1,29 @@
+// An integer literal local does not become a float. An array literal that
+// holds a float refuses the local as an element, as it refuses a local with
+// the annotation `i32`. The first element gives the array its element type,
+// and the E034 is on the first element that has another type. A typed float
+// destination refuses the local in the same way.
+function sf(xs: f64[]): f64 {
+    return xs[0];
+}
+
+function main(): i32 {
+    let a = 1;
+    let zs = [1.5, 2.5, a];
+    let b = 1;
+    let ws = [b, 1.5, 2.5];
+    let c = 1;
+    let ys: f64[] = [1.5, c];
+    let d = 1;
+    let xs: f64[] = [1, d];
+    let e = 1;
+    sf([1.5, e + 1]);
+    let f = 1;
+    let rs = [[1.5], [f]];
+    let g = 1;
+    let qs: f64[] = [1, g].append(2);
+    let h = 1;
+    let ps = [1.5, 2.5, h];
+    let wide: i64 = h;
+    return 0;
+}

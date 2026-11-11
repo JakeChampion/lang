@@ -14287,6 +14287,14 @@ function array_builtin_arity(method: string, view: boolean): i32 {
 
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
   out = util.append_diags(out, e032_call_check(c, s));
+  let (recv, stored, step) = array_step(c);
+  if let ast.ExprFieldAccess(efa) = c.callee {
+    if let ast.ExprArray(root) = array_step_root(efa.obj) {
+      if (!step && root.elements.len() == 0 && root.elem_ty.len() == 0) {
+        return out.append(dg_at("E020", "empty array literal needs a type annotation", root.line, root.col));
+      }
+    }
+  }
   match (c.callee) {
     ast.ExprFieldAccess(mfa) => {
       let cqen = qual_enum_name(mfa.obj, s);
@@ -30401,6 +30409,23 @@ function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   return e;
 }
 
+// settle_float_literals gives the number literals of e the float type of t.
+function settle_float_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+  if (is_float(t) && settled_number(t) && (int_literal_tree(e) || float_literal_tree(e))) {
+    return lit_float_read(e, parser.parse_type_ref(typeinfo.spelling(t)));
+  }
+  if let typeinfo.TypeArray(at) = t {
+    if let ast.ExprArray(ea) = e {
+      let ne: ast.Expr[] = [];
+      for el in ea.elements {
+        ne = ne.append(settle_float_literals(el, at.elem));
+      }
+      return ast.ExprArray { ...ea, elements: ne };
+    }
+  }
+  return e;
+}
+
 // settle_array_step gives the literals of an append or a with call on an
 // array literal the element type of t.
 function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
@@ -30423,8 +30448,8 @@ function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   if (!step || !lit_array_rooted(recv) && !empty_array_rooted(recv)) {
     return e;
   }
-  let obj = settle_array_step(settle_wide_literals(recv, t), t);
-  return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj }, args: c.args.with(c.args.len() - 1, settle_wide_literals(arg, at.elem)) };
+  let obj = settle_array_step(settle_float_literals(settle_wide_literals(recv, t), t), t);
+  return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj }, args: c.args.with(c.args.len() - 1, settle_float_literals(settle_wide_literals(arg, at.elem), at.elem)) };
 }
 
 function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
@@ -33285,7 +33310,7 @@ function lit_link(st: LitInfer, ids: i32[]): LitInfer {
     let rb = lit_find(out, ids[i]);
     let afixed = !is_unknown(out.width[ra]) && !is_poly_float(out.width[ra]);
     let bfixed = !is_unknown(out.width[rb]) && !is_poly_float(out.width[rb]);
-    if (ra != rb && !(afixed && bfixed)) {
+    if (ra != rb && !(afixed && bfixed) && !lit_local_beside_float(out, ra, rb) && !lit_local_beside_float(out, rb, ra)) {
       if (bfixed) {
         out = LitInfer { ...out, parent: out.parent.with(ra, rb) };
       } else {
@@ -33297,6 +33322,20 @@ function lit_link(st: LitInfer, ids: i32[]): LitInfer {
     }
   }
   return out;
+}
+
+// lit_local_beside_float is true when the group r holds an integer literal
+// local and the group f is a float. An integer local does not become a float.
+function lit_local_beside_float(st: LitInfer, r: i32, f: i32): boolean {
+  if (!is_float(st.width[f]) || !is_unknown(st.width[r])) {
+    return false;
+  }
+  for i in 0..st.parent.len() {
+    if (st.keys[i].len() > 0 && lit_find(st, i) == r) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function lit_is_cmp(op: string): boolean {
@@ -33452,7 +33491,7 @@ function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: Lit
   }
   if let ast.ExprCall(c) = e {
     let (recv, arg, step) = array_step(c);
-    if (step && (lit_array_rooted(recv) && is_integer(wa.elem) || empty_array_rooted(recv))) {
+    if (step && (lit_array_rooted(recv) && (is_integer(wa.elem) || is_float(wa.elem)) || empty_array_rooted(recv))) {
       let out = lit_demand(arg, wa.elem, s, lit_array_demand(recv, wa, s, lit_step_index(c, s, st)));
       return LitInfer { ...out, pargs: out.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: out.ptypes.append(wa) };
     }
@@ -33846,7 +33885,7 @@ function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   }
   let (seed, ids) = lit_tree(arg, s, []);
-  if (lit_int_local_in_float(a.elem, arg, s, st)) {
+  if (lit_float_in_int(a.elem, arg, st)) {
     return st;
   }
   if (seed || lit_composite(arg)) {
@@ -34189,7 +34228,7 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
     if (step && lit_array_rooted(recv)) {
       let (whole, next, any) = lit_composite_local(recv, s, lit_step_index(c, s, st));
       if let typeinfo.TypeArray(ra) = whole {
-        if (lit_int_local_in_float(ra.elem, arg, s, next)) {
+        if (lit_float_in_int(ra.elem, arg, next)) {
           return (whole, next, any);
         }
         let (part, more, found) = lit_composite_local(arg, s, next);
@@ -34201,20 +34240,12 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
   return (check_expr(e, lit_typed_scope(s, st)), st, false);
 }
 
-// lit_int_local_in_float is true when arg reads an integer literal local and
-// elem is a float literal element. An integer local does not become a float.
-function lit_int_local_in_float(elem: typeinfo.Type, arg: ast.Expr, s: Scope, st: LitInfer): boolean {
+// lit_float_in_int is true when arg is a float literal and elem is an
+// integer literal element. An append or a with call does not make the
+// integers of its receiver floats.
+function lit_float_in_int(elem: typeinfo.Type, arg: ast.Expr, st: LitInfer): boolean {
   let k = lit_id(elem);
-  if (k < 0 || !is_float(st.width[lit_find(st, k)])) {
-    return false;
-  }
-  let (seed, ids) = lit_tree(arg, s, []);
-  for id in lit_not_wide(ids) {
-    if (!is_float(st.width[lit_find(st, id)])) {
-      return seed;
-    }
-  }
-  return false;
+  return k >= 0 && is_unknown(st.width[lit_find(st, k)]) && float_literal_tree(arg);
 }
 
 function lit_composite(e: ast.Expr): boolean {
