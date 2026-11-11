@@ -318,6 +318,10 @@ Frame payloads, reference state, and separate frame timestamps remain the caller
 The same ranges can select individual keyframes for header inspection without a container or platform codec.
 
 AV1 temporal units can require further packet handling for a particular platform decoder.
+`std/video/av1.next_obu` reads self-delimited low-overhead OBU ranges without a payload copy.
+It checks header bits, extension identifiers, eight-byte size fields, and unsigned payload bounds within the packet budget.
+An absent size field or reserved OBU type returns `Unsupported`.
+Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
@@ -378,6 +382,11 @@ scripts/bench-video
 ```
 
 The checked-in vectors need no external codec during normal native or WASI tests.
+
+`scripts/check-video-av1-interop` compares native and real WASI OBU ranges with the FFmpeg coded-bitstream reader.
+Six fresh streams cover 8-, 10-, and 12-bit output across 4:2:0, 4:2:2, and 4:4:4 chroma.
+Both libaom and dav1d must decode identical planes before and after Fern identifies the padding for removal.
+These external decoders supply the pixel comparison. Fern supplies packet framing only.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 

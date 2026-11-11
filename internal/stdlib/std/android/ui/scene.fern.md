@@ -10,13 +10,13 @@ A node can have an action for a tap and an action for a long press. An `Action` 
 
 A node can be part of a group: a list that scrolls. The node draws only in the rows from `clip0` to `clip1`, which are the edges of its list. `group_at` gives the group under a point.
 
-`access_items` gives one item for each node with an action, and one for each text in no such node. The text of an item is the description of the node, or the texts that the node holds.
+`access_items` gives one item for each node with an action, and one for each text in no such node. The text of an item is the description of the node, or the texts that the node holds. A node with a description and no action counts as a text. A service reaches only the nodes after the last barrier.
 
 `render` draws the nodes on a frame on the CPU. `raster` draws one node alone on a transparent frame. `std/android/ui/painter` keeps that image on the GPU under the `paint_key` of the node, and draws it again in each frame.
 
 ## Contracts
 
-A color is a pixel word of `std/android/draw`. A `Label` has its text, its size in pixels to the em, its face in the `text.Fonts`, its letter spacing and its color. A `Picture` and a `Custom` paint have a key that names what they show: change the key when the pixels change. The function of a `Custom` paint draws in the box that it gets, as x, y, width and height, on a frame that can be larger than the box.
+A color is a pixel word of `std/android/draw`. A `Label` has its text, its size in pixels to the em, its face in the `text.Fonts`, its letter spacing and its color. A `Picture` and a `Custom` paint have a key that names what they show: change the key when the pixels change. The function of a `Custom` paint draws in the box that it gets, as x, y, width and height, on a frame that can be larger than the box. It can draw past the box by the margin of the paint, in pixels.
 
 ## Module assembly
 
@@ -53,14 +53,15 @@ import "std/option";
 <<nodes>>=
 // What a node shows. A Fill has a color and a corner radius. An Outline has
 // a color, a corner radius and a line width. A Picture has a key, an image
-// and a corner radius. A Custom has a key and a function that draws it.
+// and a corner radius. A Custom has a key, a margin and a function that
+// draws it.
 pub enum Paint {
   Blank,
   Fill(i32, i32),
   Outline(i32, i32, i32),
   Label(string, i32, i32, i32, i32),
   Picture(string, draw.Image, i32),
-  Custom(string, (draw.Frame, i32, i32, i32, i32) => void),
+  Custom(string, i32, (draw.Frame, i32, i32, i32, i32) => void),
 }
 
 // What a tap or a long press does: a name, and a number that tells one
@@ -167,14 +168,18 @@ An item gets an id from the hash of its actions or of its text, so the id of a b
 
 ```fern
 <<accessibility>>=
-// The text that a node shows, or "".
+// The text that a node shows, or "": the text of a label, or the
+// description of a node that does not act.
 function shown_text(n: Node): string {
   match (n.paint) {
     Label(s, _, _, _, _) => {
       return s;
     },
     _ => {
-      return "";
+      if (n.acts()) {
+        return "";
+      }
+      return n.say;
     }
   }
 }
@@ -194,12 +199,12 @@ function within(r: (i32, i32, i32, i32), n: Node): boolean {
   return cx >= x && cx < x + w && cy >= y && cy < y + h;
 }
 
-// The nodes that a service can reach: those from the last barrier on.
+// The nodes that a service can reach: those after the last barrier.
 function reachable(ns: Node[]): Node[] {
   let start = 0;
   for k in 0..ns.len() {
     if (ns[k].barrier) {
-      start = k;
+      start = k + 1;
     }
   }
   return ns.drop(start);
@@ -252,15 +257,6 @@ function actions_of(n: Node): i32 {
   return actions;
 }
 
-// What a service reads for the node `n` that does not act: its
-// description, or its text.
-function lone_text(n: Node): string {
-  if (n.say.len() > 0) {
-    return n.say;
-  }
-  return shown_text(n);
-}
-
 function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
   let reach = reachable(ns);
   let out: (android.AccessItem, Node)[] = [];
@@ -283,7 +279,7 @@ function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
   }
   for k in 0..reach.len() {
     let n = reach[k];
-    let t = lone_text(n);
+    let t = shown_text(n);
     let (x, y, w, h) = visible(n);
     if (t.len() == 0 || named[k] || n.acts() || h == 0) {
       continue;
@@ -339,18 +335,21 @@ pub function paint_key(n: Node): string {
     Picture(key, _, r) => {
       return "picture|" + key + "|" + r.to_string() + size;
     },
-    Custom(key, _) => {
+    Custom(key, _, _) => {
       return "custom|" + key + size;
     }
   }
 }
 
 // The pixels around node `n` that its image keeps, for the parts of glyphs
-// that go past the box of the node.
+// and of custom shapes that go past the box of the node.
 pub function margin(n: Node): i32 {
   match (n.paint) {
     Label(_, _, _, _, _) => {
       return 4;
+    },
+    Custom(_, m, _) => {
+      return m;
     },
     _ => {
       return 0;
@@ -467,7 +466,7 @@ function paint(fr: draw.Frame, f: text.Fonts, own c: text.Cache, n: Node): text.
       picture(fr, n, img, r);
       return c;
     },
-    Custom(_, f) => {
+    Custom(_, _, f) => {
       f(fr, n.x, n.y, n.w, n.h);
       return c;
     }

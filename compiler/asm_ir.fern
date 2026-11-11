@@ -1554,10 +1554,10 @@ function x86_aes_expand_key(): string {
     + x86_aes_view("%rdi", "%rsi", "%rcx", ".Laesk_key")
     + "    movq %rsi, -8(%rbp)\n    movq %rcx, -16(%rbp)\n    xorl %edi, %edi\n"
     + "    cmpq $16, %rcx\n    jne .Laesk_n32\n    movl $176, %edi\n.Laesk_n32:\n"
-    + "    cmpq $32, %rcx\n    jne .Laesk_box\n    movl $240, %edi\n.Laesk_box:\n"
+    + "    cmpq $32, %rcx\n    jne .Laesk_box\n    movl $240, %edi\n.Laesk_box:\n    testl %edi, %edi\n    jz __fern_slice_abort\n"
     + x86_aes_alloc()
     + "    movq -8(%rbp), %rsi\n    movq -16(%rbp), %rcx\n    leaq 8(%rax), %rdx\n"
-    + "    cmpq $16, %rcx\n    je .Laesk_128\n    cmpq $32, %rcx\n    je .Laesk_256\n    jmp .Laesk_ret\n"
+    + "    cmpq $32, %rcx\n    je .Laesk_256\n"
     + x86_aes_schedule128() + x86_aes_schedule256()
     + ".Laesk_ret:\n" + x86_aes_epilogue()
     + "    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
@@ -1616,9 +1616,9 @@ function x86_aes_ctr32(): string {
     + x86_aes_view("%rdx", "%r8", "%r9", ".Lctr_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
     + x86_aes_view("%rsi", "%r8", "%r10", ".Lctr_ctr") + "    movq %r8, -16(%rbp)\n"
     + x86_aes_view("%rdi", "%r8", "%r9", ".Lctr_rk") + "    movq %r8, -8(%rbp)\n";
-  o = o + "    xorl %ecx, %ecx\n    cmpq $176, %r9\n    jb .Lctr_rounds\n    movl $10, %ecx\n    cmpq $240, %r9\n    jb .Lctr_rounds\n    movl $14, %ecx\n.Lctr_rounds:\n"
-    + "    cmpq $16, %r10\n    jae .Lctr_ctrok\n    xorl %ecx, %ecx\n.Lctr_ctrok:\n    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n"
-    + "    testq %rcx, %rcx\n    jnz .Lctr_box\n    xorl %edi, %edi\n.Lctr_box:\n" + x86_aes_alloc()
+  o = o + "    cmpq $176, %r9\n    jb __fern_slice_abort\n    movl $10, %ecx\n    cmpq $240, %r9\n    jb .Lctr_rounds\n    movl $14, %ecx\n.Lctr_rounds:\n"
+    + "    cmpq $16, %r10\n    jb __fern_slice_abort\n    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n"
+    + x86_aes_alloc()
     + "    movq %rdi, %rdx\n    leaq 8(%rax), %rdi\n    movq -24(%rbp), %rsi\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n"
     + "    movq -16(%rbp), %r9\n    testq %rdx, %rdx\n    jz .Lctr_ret\n"
     + "    movdqu .Laes_ctr_swap(%rip), %xmm15\n    movdqu .Laes_ctr_one(%rip), %xmm14\n    movdqu (%r9), %xmm13\n    pshufb %xmm15, %xmm13\n";
@@ -1747,12 +1747,12 @@ function x86_ghash(): string {
     + x86_aes_view("%rdx", "%r8", "%r9", ".Lgh_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
     + x86_aes_view("%rsi", "%r8", "%r10", ".Lgh_y") + "    movq %r8, -16(%rbp)\n"
     + x86_aes_view("%rdi", "%r8", "%r9", ".Lgh_h") + "    movq %r8, -8(%rbp)\n"
-    + "    movl $16, %edi\n    cmpq $16, %r9\n    jae .Lgh_hok\n    xorl %edi, %edi\n.Lgh_hok:\n    cmpq $16, %r10\n    jae .Lgh_yok\n    xorl %edi, %edi\n.Lgh_yok:\n"
-    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Lgh_ret\n"
+    + "    cmpq $16, %r9\n    jb __fern_slice_abort\n    cmpq $16, %r10\n    jb __fern_slice_abort\n    movl $16, %edi\n"
+    + x86_aes_alloc()
     + "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -8(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n"
     + "    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm0\n    pshufb %xmm15, %xmm0\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
   o += x86_ghash_blocks_at(".Lgh", ".Lgh_out");
-  return o + ".Lgh_out:\n    pshufb %xmm15, %xmm0\n    movq -48(%rbp), %rax\n    movdqu %xmm0, 8(%rax)\n.Lgh_ret:\n" + x86_aes_epilogue()
+  return o + ".Lgh_out:\n    pshufb %xmm15, %xmm0\n    movq -48(%rbp), %rax\n    movdqu %xmm0, 8(%rax)\n" + x86_aes_epilogue()
     + x86_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
 }
 

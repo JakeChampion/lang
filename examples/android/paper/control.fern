@@ -6,10 +6,11 @@ import "std/android";
 import "std/android/draw";
 import "std/android/motion";
 import "std/android/trace";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
 import "std/option";
 import "std/worker";
 import "./face";
-import "./gpu";
 import "./paper";
 import "./ui";
 
@@ -39,7 +40,7 @@ const WEATHER_MAX_AGE_MS: i64 = 1800000;
 
 // The input and output of the app. `property` gives the value of a system
 // property, or "". `attach_gpu` puts the painter on a
-// window, `present` draws a frame of passes with it, `detach_gpu` takes it
+// window, `present` draws a frame of passes with it over a background colour, `detach_gpu` takes it
 // off the window with its images kept, and `close_gpu` frees it. `wallpaper` starts a worker that decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
@@ -75,10 +76,10 @@ pub struct Device {
   open_held: (string, string) => void,
   request_frame: () => void,
   property: (string) => string,
-  attach_gpu: (gpu.Painter, usize) => gpu.Painter,
-  present: (own gpu.Painter, ui.Pass[]) => gpu.Painter,
-  detach_gpu: (gpu.Painter) => gpu.Painter,
-  close_gpu: (gpu.Painter) => gpu.Painter,
+  attach_gpu: (painter.Painter, usize) => painter.Painter,
+  present: (own painter.Painter, scene.Pass[], i32) => painter.Painter,
+  detach_gpu: (painter.Painter) => painter.Painter,
+  close_gpu: (painter.Painter) => painter.Painter,
 }
 
 // A touch from its down event to its up event. `samples` are the last
@@ -102,7 +103,9 @@ pub struct App {
   d: f64,
   top: i32,
   bottom: i32,
-  painter: gpu.Painter,
+  painter: painter.Painter,
+  // The layer of the wallpaper at the width of the window.
+  wall: draw.Frame,
   slide: Slide,
   frame_ns: i64,
   // The gaps between the frames that drew, the time of the last one, and
@@ -136,7 +139,7 @@ pub struct App {
   note_until: i64,
   shown: boolean,
   minute: i64,
-  nodes: ui.Node[],
+  nodes: scene.Node[],
   dirty: boolean,
   bars: i32,
   dark: boolean,
@@ -162,7 +165,7 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, wall_job: None, wall_for: 0, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: painter.new(fonts), wall: draw.offscreen(0, 0), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, wall_job: None, wall_for: 0, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
@@ -259,7 +262,7 @@ function dimmed(s: App): string[] {
 
 // Opens app `key`, from the rectangle of its label when there is one. A
 // blocked app shows the block, and a mindful app the pause.
-function open_app(own s: App, key: string, n: Option[ui.Node]): App {
+function open_app(own s: App, key: string, n: Option[scene.Node]): App {
   let Some(a) = paper.find(s.apps, key) else {
     return s;
   };
@@ -275,7 +278,7 @@ function open_app(own s: App, key: string, n: Option[ui.Node]): App {
   return launch(s, a, n);
 }
 
-function launch(own s: App, a: paper.Entry, n: Option[ui.Node]): App {
+function launch(own s: App, a: paper.Entry, n: Option[scene.Node]): App {
   let (x, y, w, h) = (0, 0, 0, 0);
   if let Some(r) = n {
     x = r.x;
@@ -720,7 +723,7 @@ function reload_held(own s: App): App {
 
 // --- actions of a tap and a long press
 
-function act(own s: App, a: string, n: ui.Node): App {
+function act(own s: App, a: string, n: scene.Node): App {
   if (a.len() == 0 || a == "none") {
     return s;
   }
@@ -776,7 +779,7 @@ function act(own s: App, a: string, n: ui.Node): App {
   return s;
 }
 
-function open_music(own s: App, n: ui.Node): App {
+function open_music(own s: App, n: scene.Node): App {
   if let Some(a) = paper.find_package(s.apps, s.settings.music) {
     return open_app(s, a.key, Some(n));
   }
@@ -862,7 +865,7 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   }
   let sample = motion.Sample { t: now * 1000000i64, y: y as f64 };
   if (action == 0) {
-    let group = ui.group_at(s.nodes, x as i32, y as i32);
+    let group = scene.group_at(s.nodes, x as i32, y as i32);
     return App { ...s, fling: no_fling(), press: Press { active: true, x0: x, y0: y, x: x, y: y, at: now, moved: false, fired: false, group: group, scroll0: scroll_of(s, group), samples: [sample] } };
   }
   if (!p.active) {
@@ -904,10 +907,10 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     return index_drag(t, y as i32);
   }
   if (!p.moved) {
-    let Some(n) = ui.hit(t.nodes, x as i32, y as i32) else {
+    let Some(n) = scene.hit(t.nodes, x as i32, y as i32) else {
       return tapped_empty(t);
     };
-    return act(t, n.act, n);
+    return act(t, n.tap.name, n);
   }
   return swiped(t, p, x, y, motion.velocity(motion.track(p.samples, sample)));
 }
@@ -923,7 +926,7 @@ function jump(own s: App, letter: string): App {
 function index_drag(own s: App, y: i32): App {
   for n in s.nodes {
     if (n.group == "index" && y >= n.y && y < n.y + n.h) {
-      return jump(s, suffix(n.act, "jump:"));
+      return jump(s, suffix(n.tap.name, "jump:"));
     }
   }
   return s;
@@ -977,9 +980,9 @@ function long_press(own s: App, now: i64): App {
     return s;
   }
   let t = App { ...s, press: Press { ...p, fired: true } };
-  if let Some(n) = ui.hit(t.nodes, p.x as i32, p.y as i32) {
-    if (n.long.len() > 0) {
-      return act(t, n.long, n);
+  if let Some(n) = scene.hit(t.nodes, p.x as i32, p.y as i32) {
+    if (n.long.name.len() > 0) {
+      return act(t, n.long.name, n);
     }
     return t;
   }
@@ -1046,13 +1049,13 @@ function slide_frame(own s: App, ns: i64): App {
 // The action `action` of an accessibility service on the item `id`: a tap,
 // or a long press on a node that has one.
 function accessed(own s: App, id: i32, action: i32): App {
-  let Some(n) = ui.access_node(s.nodes, id) else {
+  let Some(n) = scene.access_node(s.nodes, id) else {
     return s;
   };
-  if (action == android.ACCESS_LONG_CLICK && n.long.len() > 0) {
-    return act(s, n.long, n);
+  if (action == android.ACCESS_LONG_CLICK && n.long.name.len() > 0) {
+    return act(s, n.long.name, n);
   }
-  return act(s, n.act, n);
+  return act(s, n.tap.name, n);
 }
 
 // --- keys and typing
@@ -1240,27 +1243,27 @@ function started(own s: App): App {
 function placed(own s: App, window: usize): App {
   let (w, h) = s.dev.size(window);
   let p = s.painter;
-  if (window != s.window || !gpu.attached(p)) {
+  if (window != s.window || !painter.attached(p)) {
     p = s.dev.attach_gpu(p, window);
   }
   if (w != s.w || h != s.h) {
-    p = gpu.with_size(p, w, h, s.d, ui.palette(s.dark));
+    p = painter.with_size(p, w, h);
   }
   return wanted_wall(App { ...s, window: window, w: w, h: h, painter: p, dirty: true });
 }
 
 // Starts a worker for the wallpaper at the width of the window, when the
 // app has no wallpaper of that width and no worker runs. Until the worker
-// ends, the painter has no wallpaper and a frame shows the paper.
+// ends, the app has no wallpaper and a frame shows the paper.
 function wanted_wall(own s: App): App {
   if (s.wall_for == s.w || s.w <= 0 || s.wall_job.is_some()) {
     return s;
   }
-  let p = gpu.with_screen(s.painter, draw.offscreen(0, 0), s.w, s.h, s.d, ui.palette(s.dark));
-  return App { ...s, painter: p, wall_job: Some(s.dev.wallpaper(s.w)), wall_for: s.w };
+  draw.release(s.wall);
+  return App { ...s, wall: draw.offscreen(0, 0), wall_job: Some(s.dev.wallpaper(s.w)), wall_for: s.w };
 }
 
-// Gives the painter the wallpaper when its worker ends. A wallpaper for a
+// Takes the wallpaper when its worker ends. A wallpaper for a
 // width that the window no longer has starts a new worker.
 function poll_wall(own s: App): App {
   let (job, done) = poll_job(s.wall_job);
@@ -1271,9 +1274,8 @@ function poll_wall(own s: App): App {
   if (img.width != t.w) {
     return wanted_wall(App { ...t, wall_for: 0 });
   }
-  let pal = ui.palette(t.dark);
-  let p = gpu.with_screen(t.painter, ui.wallpaper_layer(ui.themed(img, pal)), t.w, t.h, t.d, pal);
-  return App { ...t, painter: p, dirty: true };
+  draw.release(t.wall);
+  return App { ...t, wall: ui.wallpaper_layer(ui.themed(img, ui.palette(t.dark))), dirty: true };
 }
 
 function event(own s: App, e: android.Event): App {
@@ -1403,7 +1405,7 @@ pub function view(s: App, ns: i64): ui.View {
   if (s.weather.is_none() && s.dev.has_location()) {
     weather_note = "Loading…";
   }
-  return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note };
+  return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note, wall: s.wall };
 }
 
 // Dark icons on a bar over a light part of the screen. In the dark theme no
@@ -1433,8 +1435,8 @@ function draw_frame(own s: App, ns: i64): App {
     return s;
   }
   let v = view(s, ns);
-  let shown: ui.Node[] = [];
-  let passes: ui.Pass[] = [];
+  let shown: scene.Node[] = [];
+  let passes: scene.Pass[] = [];
   if (s.slide.active) {
     let part = motion.ease(slide_part(s, ns));
     if (!s.slide.opening) {
@@ -1443,16 +1445,16 @@ function draw_frame(own s: App, ns: i64): App {
     let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
     let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
     let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
-    passes = [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }];
+    passes = [scene.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, scene.Pass { nodes: list_nodes, dy: shift, alpha: part }];
   } else {
     shown = ui.nodes(s.fonts, v);
-    passes = [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }];
+    passes = [scene.Pass { nodes: shown, dy: 0, alpha: 1.0 }];
   }
   let framed = with_overlay(s, passes);
-  let p = s.dev.present(s.painter, framed);
+  let p = s.dev.present(s.painter, framed, ui.palette(s.dark).paper);
   // The list keeps its items while it slides.
   if (!s.slide.active) {
-    s.dev.access(ui.access_items(shown));
+    s.dev.access(scene.access_items(shown));
   }
   return App { ...s, painter: p, nodes: shown, dirty: false };
 }
@@ -1460,7 +1462,7 @@ function draw_frame(own s: App, ns: i64): App {
 // The passes with the frame overlay over them, when it shows: a bar for
 // the gap before each frame that drew, above the navigation bar. A bar is
 // red when its frame came late.
-function with_overlay(s: App, passes: ui.Pass[]): ui.Pass[] {
+function with_overlay(s: App, passes: scene.Pass[]): scene.Pass[] {
   if (!s.overlay) {
     return passes;
   }
@@ -1473,15 +1475,15 @@ function with_overlay(s: App, passes: ui.Pass[]): ui.Pass[] {
   }
   let h = (80.0 * s.d) as i32;
   let top = s.h - s.bottom - h;
-  let nodes: ui.Node[] = [];
+  let nodes: scene.Node[] = [];
   for b in trace.bars(s.frames, s.w, h, period) {
     let color = draw.rgba(40, 160, 90, 200);
     if (b.late) {
       color = draw.rgba(220, 50, 40, 220);
     }
-    nodes = nodes.append(ui.Node { x: b.x, y: top + b.y, w: b.w, h: b.h, paint: ui.Fill(color, 0), act: "", long: "", group: "", clip0: 0, clip1: s.h });
+    nodes = nodes.append(scene.Node { ...scene.node(b.x, top + b.y, b.w, b.h, scene.Fill(color, 0)), clip1: s.h });
   }
-  return passes.append(ui.Pass { nodes: nodes, dy: 0, alpha: 1.0 });
+  return passes.append(scene.Pass { nodes: nodes, dy: 0, alpha: 1.0 });
 }
 
 // Draws at once: the window needs its pixels before the call returns.

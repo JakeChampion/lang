@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Compare bounded AV1 OBU ranges with FFmpeg CBS and independent decoders."""
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('av1_fixtures', ROOT / 'scripts/gen-video-av1-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/av1-obu-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/av1.fern'], check=True)
+
+
+def run(directory, name, packet, error=None):
+    path = directory / (name + '.obu')
+    path.write_bytes(packet)
+    native = subprocess.run([str(binary), str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name],
+                          cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (name, native)
+    assert wasi.returncode == (1 if error else 0), (name, wasi)
+    assert 'live_bytes=0' in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, name
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error
+    return native.stdout.splitlines()
+
+
+def compare(directory, name, packet, units):
+    expected = []
+    for kind, offset, size, temporal, spatial, extension in units:
+        expected += [f'{kind} {offset} {size} {temporal} {spatial} {extension}', packet[offset:offset + size].hex()]
+    actual = run(directory, name, packet)
+    assert actual == expected, name
+    print(name + ': native/real-WASI OBU fields and every payload byte match FFmpeg CBS', flush=True)
+    return [tuple(map(int, actual[i].split())) for i in range(0, len(actual), 2)]
+
+
+def decode(path, decoder, pixel_format):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-c:v', decoder, '-i', str(path),
+                                    '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    vectors, streams = fixtures.generate(directory)
+    actual = {}
+    for name, packet, units in vectors:
+        actual[name] = compare(directory, name, packet, units)
+    for original, pixel_format, values, layouts in streams:
+        stripped = []
+        for index, (timestamp, packet) in enumerate(values):
+            units = actual[pixel_format + '-' + str(index)]
+            output = bytearray()
+            at = 0
+            for kind, offset, size, *_ in units:
+                if kind != 15:
+                    output += packet[at:offset + size]
+                at = offset + size
+            stripped.append((timestamp, output))
+        clean = directory / ('clean-' + original.name)
+        clean.write_bytes(fixtures.ivf(original.read_bytes(), stripped))
+        reference = decode(original, 'libaom-av1', pixel_format)
+        samples = 64 * 36 * (3 if '444' in pixel_format else 2 if '422' in pixel_format else 1.5)
+        expected_bytes = int(samples) * (1 if pixel_format.endswith('p') else 2) * 3
+        assert len(reference) == expected_bytes
+        assert decode(original, 'libdav1d', pixel_format) == reference
+        assert decode(clean, 'libaom-av1', pixel_format) == decode(clean, 'libdav1d', pixel_format) == reference
+        print(pixel_format + ': every 8/10/12-bit plane matches libaom and dav1d after padding removal', flush=True)
+    base = vectors[0][1]
+    for name, suffix, diagnostic, error in [
+            ('forbidden', bytes([0xfa, 0]), 'obu_forbidden_bit out of range', 'invalid video header or packet'),
+            ('reserved', bytes([0x7b, 0]), 'obu_reserved_1bit out of range', 'invalid video header or packet'),
+            ('extension-reserved', bytes([0x7e, 1, 0]), 'extension_header_reserved_3bits out of range', 'invalid video header or packet'),
+            ('truncated', bytes([0x7a, 0x7f]), 'Invalid OBU length', 'incomplete video packet')]:
+        packet = base + suffix
+        run(directory, name, packet, error)
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.ivf(streams[0][0].read_bytes(), [(0, packet)]))
+        result = subprocess.run(['ffmpeg', '-v', 'verbose', '-i', str(path), '-c:v', 'copy',
+                                 '-bsf:v', 'trace_headers', '-f', 'null', '-'], capture_output=True, text=True)
+        assert diagnostic in result.stderr and 'Failed to parse temporal unit' in result.stderr, result.stderr
+    # The AV1 leb128 conformance rule requires byte-eight termination. FFmpeg 7 accepts this violation.
+    run(directory, 'unterminated', base + bytes([0x7a]) + bytes([0x80] * 8), 'invalid video header or packet')
+    print('Four malformed controls fail the independent reader; the spec also requires eight-byte termination', flush=True)
