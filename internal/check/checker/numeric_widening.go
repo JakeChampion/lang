@@ -46,6 +46,60 @@ func scalarNumericJoin(a, b ast.Type) ast.Type {
 	return nil
 }
 
+// nestedArrayJoin is the array type that a and b share when their innermost
+// element types have a numeric join, or nil.
+func nestedArrayJoin(a, b ast.Type) ast.Type {
+	at, aOK := a.(ast.ArrayType)
+	bt, bOK := b.(ast.ArrayType)
+	if !aOK || !bOK {
+		return nil
+	}
+	inner := scalarNumericJoin(at.Elem, bt.Elem)
+	if inner == nil {
+		inner = nestedArrayJoin(at.Elem, bt.Elem)
+	}
+	if inner == nil {
+		return nil
+	}
+	return ast.ArrayType{Elem: inner}
+}
+
+// nestedArrayLiteralJoin is the type that the last element in types shares
+// with the element type so far, when both are array types. Each element that
+// gets another type must be an array literal, because only a literal can
+// take a wider element type. The result is nil when there is no such type.
+func nestedArrayLiteralJoin(elems []ast.Expr, types []ast.Type, so ast.Type) ast.Type {
+	joined := nestedArrayJoin(so, types[len(types)-1])
+	if joined == nil {
+		return nil
+	}
+	for i, t := range types {
+		if t != nil && !ast.Equal(t, joined) && !arrayLiteralTree(elems[i], joined) {
+			return nil
+		}
+	}
+	return joined
+}
+
+// arrayLiteralTree is true for an array literal whose elements are array
+// literals down to the innermost element type of want.
+func arrayLiteralTree(e ast.Expr, want ast.Type) bool {
+	lit, ok := e.(*ast.ArrayLit)
+	at, array := want.(ast.ArrayType)
+	if !ok || !array {
+		return false
+	}
+	if _, nested := at.Elem.(ast.ArrayType); !nested {
+		return true
+	}
+	for _, el := range lit.Elems {
+		if !arrayLiteralTree(el, at.Elem) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *checker) settleArrayLiteral(al *ast.ArrayLit, want ast.Type) {
 	if !c.elemSettleable(al.ElemType, want) {
 		return

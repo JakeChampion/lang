@@ -14866,9 +14866,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
+		elemTypes := []ast.Type{elemT}
 		invalid, localMismatch := false, false
 		for i, el := range n.Elems[1:] {
 			t := checkElem(el)
+			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
@@ -14883,6 +14885,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			if ast.Equal(t, elemT) {
+				continue
+			}
+			if unified := nestedArrayLiteralJoin(n.Elems, elemTypes, elemT); unified != nil {
+				elemT = unified
 				continue
 			}
 			if unified := scalarNumericJoin(elemT, t); unified != nil {

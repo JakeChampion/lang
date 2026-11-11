@@ -145,6 +145,41 @@ func TestAppendOnAnEmptyArrayLiteralIsOneDiagnostic(t *testing.T) {
 	}
 }
 
+// The inner literals of a nested array literal take the wider element type.
+// An inner array that is not a literal keeps its type.
+func TestNestedArrayLiteralsTakeTheWiderElementType(t *testing.T) {
+	const head = "function main(): i32 {\nlet i: i32 = 1; let j: i64 = 5000000000; let xs: i32[] = [i];\n"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"two inner literals", "let ns = [[i], [j]]; let k: i64 = ns[0][0];", ""},
+		{"a typed destination", "let ms: i64[][] = [[j], [i]];", ""},
+		{"three levels", "let ds = [[[i]], [[j, i]], [[i], [j]]]; let k: i64 = ds[0][0][0];", ""},
+		{"a wider literal after two narrower ones", "let ns = [[i], [i], [j]];", ""},
+		{"an array local before the wider literal", "let ns = [xs, [j]];", "expected i32[], got i64[]"},
+		{"an array local after the wider literal", "let ns = [[j], xs];", "expected i64[], got i32[]"},
+		{"an array local between two literals", "let ns = [[i], xs, [j]];", "expected i32[], got i64[]"},
+		{"an array local in an inner literal", "let ns = [[[i]], [xs], [[j]]];", "expected i32[][], got i64[][]"},
+		{"inner literals of another kind", "let ns = [[i], [\"a\"]];", "expected i32[], got string[]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, head+c.body+"\nreturn 0;\n}\n")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("rejected, want accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "array element: "+c.want) {
+				t.Fatalf("got %v, want an array element error with %q", err, c.want)
+			}
+		})
+	}
+}
+
 // The local retains its i32 storage and wrapping arithmetic. The later i64
 // use converts the stored result instead of changing its storage width.
 func TestLiteralLocalUseWidensWithoutChangingStorage(t *testing.T) {
