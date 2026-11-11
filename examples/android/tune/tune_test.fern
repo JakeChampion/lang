@@ -3,6 +3,7 @@
 // 20 ms at each write, as a stream of sound does in the time between two
 // writes. With TUNE_UI_PNG set to a directory, the test writes the screens
 // there as PNG files.
+import "core/cmp";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -248,7 +249,7 @@ function test_the_next_track_plays_at_the_end(): test.TestOutcome {
 
 function test_repeat_and_previous(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
-  s = sim.tap(s, "Repeat off");
+  s = sim.tap(sim.tap(s, "Repeat off"), "Repeat all");
   let length = s.shell.app.length_ms;
   s = sim.after(s, length + 300i64);
   let repeated = s.shell.app.current.to_string() + " " + near(s.shell.app.at_ms, 300i64, 250i64).to_string();
@@ -330,6 +331,48 @@ function test_the_audio_focus(): test.TestOutcome {
   return test.assert_eq(stopped.to_string() + " " + plays.to_string() + " " + held.shell.app.playing.to_string(), "false true false");
 }
 
+function order(m: tune.Model): string {
+  let out: string[] = [];
+  for i in m.queue {
+    out = out.append(i.to_string());
+  }
+  return out.join(",") + "@" + m.spot.to_string();
+}
+
+// A long press on a song shows its menu. The first song of the menu
+// plays, "Play next" puts a song after it, and "Add to queue" puts a song
+// at the end. The screen of the queue shows them. A song leaves the queue,
+// and the queue stops at its end with no repeat.
+function test_the_queue(): test.TestOutcome {
+  let s = sim.tap(sim.hold(started(), "Tagged Song"), "Add to queue");
+  let first = order(s.shell.app) + " " + s.shell.app.playing.to_string();
+  s = sim.tap(sim.hold(s, "Quick Light"), "Play next");
+  s = sim.tap(sim.hold(s, "Slow Water"), "Add to queue");
+  s = sim.tap(sim.hold(s, "Morning Fern"), "Play next");
+  let built = order(s.shell.app);
+  s = sim.tap(sim.tap(sim.tap(s, "Now playing, Tagged Song"), "Next"), "Queue");
+  saved(s, "tune-queue");
+  let shows = sim.shows(s, "4 songs · hold a song to take it out");
+  s = sim.send(s, tune.Drop(3));
+  let less = order(s.shell.app);
+  s = sim.send(sim.send(s, tune.Jump(2)), tune.Finished);
+  return test.assert_eq(first + " | " + built + " | " + shows.to_string() + " " + less + " | " + order(s.shell.app) + " " + s.shell.app.playing.to_string(), "0@0 true | 0,1,3,2@0 | true 0,1,3@1 | 0,1,3@2 false");
+}
+
+// A tap on a song of an album makes the album the queue. Shuffle puts the
+// songs after it in a new order, and the queue has each song one time.
+function test_a_list_is_the_queue(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Albums"), "First Light");
+  s = sim.tap(s, "1. Morning Fern");
+  let album = order(s.shell.app);
+  let all = sim.tap(started(), "Morning Fern");
+  let whole = order(all.shell.app);
+  let mixed = sim.send(all, tune.Shuffled);
+  let m = mixed.shell.app;
+  let back = sim.send(mixed, tune.Shuffled);
+  return test.assert_eq(album + " | " + whole + " | " + m.queue.len().to_string() + " " + m.queue[1].to_string() + " " + m.spot.to_string() + " " + cmp.sort(m.queue).len().to_string() + " | " + order(back.shell.app), "1,2@0 | 0,1,2,3@1 | 4 1 1 4 | 0,1,2,3@1");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -345,5 +388,7 @@ function main(): i32 {
   r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
   r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
   r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
+  r = r.it("the menu of a song puts it in the queue", test_the_queue);
+  r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   return r.finish();
 }

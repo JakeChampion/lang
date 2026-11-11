@@ -11,6 +11,14 @@ looks in the `Music` and `Download` directories of the phone, and in each
 directory below them. Android asks the person for the permission to read the music
 of the phone.
 
+A tap on a song makes the list that shows the queue of the player. A long
+press on a song shows its menu: "Play next" and "Add to queue". The screen
+of the track has the "Queue" button, which shows the queue.
+
+Shuffle puts
+the songs after the one that plays in a new order. Repeat has three
+states: off, the queue again, and the track again.
+
 The player has a media session of `std/android/session`. So Android shows
 its track with the media controls of the notification panel and of the
 lock screen. The buttons there play, stop, go to the next track and go to
@@ -78,7 +86,6 @@ has no service.
 
 The player keeps the whole file of the track that plays in memory. For
 the library, it reads one directory or the first 128 KB of one file at a
-time, for 8 ms of each tick,
-for its tags and its length. It reads more only for a tag that is longer,
+time, for 8 ms of each tick. A file gives its tags and its length. It reads more only for a tag that is longer,
 or for a tag after the sound. It keeps no list of the library between two
 starts.

@@ -2,6 +2,7 @@
 // Android code. `update` puts what the device must do in `wants`, and
 // player.fern does it. So tune_test.fern runs the player on the host.
 import "std/android/draw";
+import "core/cmp";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
@@ -23,6 +24,14 @@ pub function plain(path: string, title: string, format: string, ms: i64): Track 
 pub const UNKNOWN_ARTIST: string = "Unknown artist";
 
 pub const UNKNOWN_ALBUM: string = "Unknown album";
+
+// What the player does at the end of the queue or of a track: it stops,
+// it plays the queue again, or it plays the track again.
+pub const NO_REPEAT: i32 = 0;
+
+pub const REPEAT_ALL: i32 = 1;
+
+pub const REPEAT_ONE: i32 = 2;
 
 // The lists of the library.
 pub const SONGS: i32 = 0;
@@ -65,6 +74,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // track shows. `current` is the number of the track that plays, or -1.
 // `deck` reads its file, `sound` plays it, and `pending` has the samples
 // that the sound did not take yet.
+// `queue` has the numbers of the tracks that play, in their order, and
+// `spot` is the place of `current` in it, or -1. `menu` is the number of
+// the track whose menu shows, or -1. `lined` tells that the screen of the
+// queue shows.
 // `folder` is the directory that the library is in, or "" for the music of
 // the phone. `home` is the directory that the person chooses a folder
 // from. While `choosing` is true the screen shows the directories `dirs`
@@ -88,7 +101,11 @@ pub struct Model {
   at_ms: i64,
   length_ms: i64,
   shuffle: boolean,
-  repeat: boolean,
+  repeat: i32,
+  queue: i32[],
+  spot: i32,
+  menu: i32,
+  lined: boolean,
   error: string,
   wants: Want[],
   deck: Option[engine.Deck],
@@ -108,7 +125,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -129,7 +146,10 @@ pub function start_in(home: string, folder: string): Model {
 // library. `Play` and `SeekMs` come from the media buttons of Android:
 // play or stop, and go to a time in ms. `Focus` comes when a call or a
 // different app takes the sound of the phone, and when it gives it back.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean) }
+// `Menu` shows the menu of a track, and `PlayNext` and `Enqueue` put that
+// track in the queue. `Lined` shows the queue or not. `Jump` plays the
+// track at a place of the queue, and `Drop` takes that place out.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32) }
 
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
@@ -231,6 +251,14 @@ function before(a: Track, b: Track): boolean {
 
 // The player with the track `t` at its place in the library. A file that
 // the library has already adds nothing.
+// The number of a track after a new track took the number `at`.
+function moved(i: i32, at: i32): i32 {
+  if (i >= at) {
+    return i + 1;
+  }
+  return i;
+}
+
 function with_track(m: Model, t: Track): Model {
   let at = m.tracks.len();
   for i in 0..m.tracks.len() {
@@ -251,11 +279,7 @@ function with_track(m: Model, t: Track): Model {
   if (at == m.tracks.len()) {
     all = all.append(t);
   }
-  let current = m.current;
-  if (current >= at) {
-    current += 1;
-  }
-  return Model { ...m, tracks: all, current: current };
+  return Model { ...m, tracks: all, current: moved(m.current, at), menu: moved(m.menu, at), queue: m.queue.map((i: i32): i32 => moved(i, at)) };
 }
 
 // The player with the files and the directories that it did not read
@@ -318,7 +342,7 @@ function track_row(m: Model, i: i32): ui.El[Msg] {
       name = t.number.to_string() + ". " + t.title;
     }
   }
-  return lines(name, detail, color).on_tap(Pick(i));
+  return lines(name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
 }
 
 function count(n: i32, one: string): string {
@@ -415,7 +439,9 @@ function library(m: Model): ui.El[Msg] {
     kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Artists", ARTISTS), tab(m, "Albums", ALBUMS)]).spaced(8.0).padding_xy(16.0, 0.0));
   }
   kids = kids.append(list);
-  if (m.current >= 0) {
+  if (m.menu >= 0 && m.menu < m.tracks.len()) {
+    kids = kids.append(menu(m));
+  } else if (m.current >= 0) {
     kids = kids.append(mini(m));
   }
   return ui.column(kids).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
@@ -450,6 +476,38 @@ function toggle_label(name: string, on: boolean): string {
   return name + " off";
 }
 
+function repeat_label(repeat: i32): string {
+  if (repeat == REPEAT_ALL) {
+    return "Repeat all";
+  }
+  if (repeat == REPEAT_ONE) {
+    return "Repeat one";
+  }
+  return "Repeat off";
+}
+
+// The menu of the track `m.menu`, at the foot of the library.
+function menu(m: Model): ui.El[Msg] {
+  let t = m.tracks[m.menu];
+  return ui.column([ui.text(t.title).weighted(700).clamped(1), ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER)]).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
+}
+
+// The screen of the queue: a tap on a track plays it, and a long press
+// takes it out.
+function line(m: Model): ui.El[Msg] {
+  let queue = m.queue;
+  let rows = ui.list("queue", queue.len(), 64.0, (row: i32): ui.El[Msg] => {
+    let t = m.tracks[queue[row]];
+    let color = ui.INK;
+    if (row == m.spot) {
+      color = ui.PRIMARY;
+    }
+    return lines(t.title, t.artist + " · " + t.album, color).on_tap(Jump(row)).on_long(Drop(row));
+  });
+  let top: ui.El[Msg][] = [ui.text("Queue").sized(28.0).weighted(700), ui.text(count(queue.len(), "song") + " · hold a song to take it out").colored(ui.MUTED).clamped(1)];
+  return ui.column([ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Close", Lined(false))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
 function now_playing(m: Model): ui.El[Msg] {
   let name = title(m);
   let format = "";
@@ -464,7 +522,7 @@ function now_playing(m: Model): ui.El[Msg] {
       ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
-      ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(toggle_label("Repeat", m.repeat), Repeated)]).spaced(8.0).justified(ui.CENTER),
+      ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(repeat_label(m.repeat), Repeated), ui.text_button("Queue", Lined(true))]).spaced(8.0).justified(ui.CENTER),
     ],
   ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
 }
@@ -472,6 +530,9 @@ function now_playing(m: Model): ui.El[Msg] {
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.choosing) {
     return chooser(m);
+  }
+  if (m.lined) {
+    return line(m);
   }
   if (m.open && m.current >= 0) {
     return now_playing(m);
@@ -486,22 +547,140 @@ function picked(m: Model, i: i32): Model {
   return Model { ...m, current: i, playing: true, at_ms: 0i64, length_ms: m.tracks[i].ms, error: "", wants: m.wants.append(Load(i)) };
 }
 
-// The number of the track after `current`. With shuffle, the numbers go in
-// an order that reaches each track.
-function after(m: Model): i32 {
-  let n = m.tracks.len();
-  if (n == 0) {
-    return -1;
+// The queue `order` with each place after `keep` in a new order. The
+// order comes from the numbers, so it is the same each time.
+function mixed(order: i32[], keep: i32): i32[] {
+  let out: i32[] = [];
+  let rest: i32[] = [];
+  for i in 0..order.len() {
+    if (i <= keep) {
+      out = out.append(order[i]);
+    } else {
+      rest = rest.append(order[i]);
+    }
   }
-  if (m.shuffle && n > 2) {
-    return (m.current + n / 2 + 1) % n;
+  let seed = 7 + order.len() * 31 + keep * 17;
+  while (rest.len() > 0) {
+    seed = (seed * 1103 + 12345) % 65536;
+    let pick = seed % rest.len();
+    out = out.append(rest[pick]);
+    let left: i32[] = [];
+    for i in 0..rest.len() {
+      if (i != pick) {
+        left = left.append(rest[i]);
+      }
+    }
+    rest = left;
   }
-  return (m.current + 1) % n;
+  return out;
+}
+
+// The player with the track at the place `spot` of the queue.
+function played_at(m: Model, spot: i32): Model {
+  if (spot < 0 || spot >= m.queue.len()) {
+    return m;
+  }
+  return Model { ...picked(m, m.queue[spot]), spot: spot };
+}
+
+// The player with the songs of the list that shows as its queue, from the
+// track `i`. With shuffle, the songs after it are in a new order.
+function started_from(m: Model, i: i32): Model {
+  let queue = songs(m);
+  let Some(spot) = queue.index_of(i) else {
+    return played_at(Model { ...m, queue: [i], menu: -1 }, 0);
+  };
+  if (m.shuffle) {
+    let first: i32[] = [i];
+    for n in queue {
+      if (n != i) {
+        first = first.append(n);
+      }
+    }
+    return played_at(Model { ...m, queue: mixed(first, 0), menu: -1 }, 0);
+  }
+  return played_at(Model { ...m, queue: queue, menu: -1 }, spot);
+}
+
+// The player with shuffle on or off. On: the tracks after the one that
+// plays are in a new order. Off: the queue is in the order of the library.
+function shuffled(m: Model, on: boolean): Model {
+  if (on) {
+    return Model { ...m, shuffle: true, queue: mixed(m.queue, m.spot) };
+  }
+  let queue = cmp.sort(m.queue);
+  let spot = m.spot;
+  if let Some(at) = queue.index_of(m.current) {
+    spot = at;
+  }
+  return Model { ...m, shuffle: false, queue: queue, spot: spot };
+}
+
+// The player with the track of the menu at the place `at` of the queue. A
+// player with no queue plays that track.
+function queued(m: Model, at: i32): Model {
+  if (m.menu < 0) {
+    return m;
+  }
+  if (m.queue.len() == 0 || m.current < 0) {
+    return played_at(Model { ...m, queue: [m.menu], menu: -1 }, 0);
+  }
+  let queue: i32[] = [];
+  for i in 0..m.queue.len() {
+    if (i == at) {
+      queue = queue.append(m.menu);
+    }
+    queue = queue.append(m.queue[i]);
+  }
+  if (at >= m.queue.len()) {
+    queue = queue.append(m.menu);
+  }
+  return Model { ...m, queue: queue, menu: -1 };
+}
+
+// The player with no track at the place `spot` of the queue. The track
+// that plays stays in the queue.
+function dropped(m: Model, spot: i32): Model {
+  if (spot < 0 || spot >= m.queue.len() || spot == m.spot) {
+    return m;
+  }
+  let queue: i32[] = [];
+  for i in 0..m.queue.len() {
+    if (i != spot) {
+      queue = queue.append(m.queue[i]);
+    }
+  }
+  let now = m.spot;
+  if (spot < now) {
+    now -= 1;
+  }
+  return Model { ...m, queue: queue, spot: now };
+}
+
+// The player at the end of the queue with no repeat: it stops at the start
+// of its track.
+function stopped(m: Model): Model {
+  return Model { ...m, playing: false, at_ms: 0i64, wants: m.wants.append(Hold).append(Seek(0.0)) };
+}
+
+// The next track of the queue. At the end of the queue, the queue starts
+// again when `again` is set or the player repeats the queue.
+function went_on(m: Model, again: boolean): Model {
+  if (m.queue.len() == 0) {
+    return m;
+  }
+  if (m.spot + 1 < m.queue.len()) {
+    return played_at(m, m.spot + 1);
+  }
+  if (again || m.repeat == REPEAT_ALL) {
+    return played_at(m, 0);
+  }
+  return stopped(m);
 }
 
 function toggled(m: Model): Model {
   if (m.current < 0) {
-    return picked(m, 0);
+    return started_from(m, 0);
   }
   if (m.playing) {
     return Model { ...m, playing: false, lost: false, wants: m.wants.append(Hold) };
@@ -515,20 +694,17 @@ function went_back(m: Model): Model {
   if (m.current < 0) {
     return m;
   }
-  if (m.at_ms > 3000i64) {
+  if (m.at_ms > 3000i64 || m.queue.len() == 0) {
     return Model { ...m, at_ms: 0i64, wants: m.wants.append(Seek(0.0)) };
   }
-  return picked(m, (m.current + m.tracks.len() - 1) % m.tracks.len());
+  return played_at(m, (m.spot + m.queue.len() - 1) % m.queue.len());
 }
 
 function finished(m: Model): Model {
-  if (m.repeat) {
-    return picked(m, m.current);
+  if (m.repeat == REPEAT_ONE) {
+    return played_at(m, m.spot);
   }
-  if (!m.shuffle && m.current == m.tracks.len() - 1) {
-    return Model { ...m, playing: false, at_ms: 0i64, wants: m.wants.append(Hold).append(Seek(0.0)) };
-  }
-  return picked(m, after(m));
+  return went_on(m, false);
 }
 
 // The list above the album or the artist that shows: an album of the
@@ -573,7 +749,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], current: -1, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {
@@ -596,13 +772,13 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, query: text };
     },
     Pick(i) => {
-      return picked(m, i);
+      return started_from(m, i);
     },
     Toggle => {
       return toggled(m);
     },
     Next => {
-      return picked(m, after(m));
+      return went_on(m, true);
     },
     Previous => {
       return went_back(m);
@@ -618,10 +794,10 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, open: false };
     },
     Shuffled => {
-      return Model { ...m, shuffle: !m.shuffle };
+      return shuffled(m, !m.shuffle);
     },
     Repeated => {
-      return Model { ...m, repeat: !m.repeat };
+      return Model { ...m, repeat: (m.repeat + 1) % 3 };
     },
     Beat => {
       if (m.fresh) {
@@ -677,6 +853,27 @@ pub function update(own m: Model, msg: Msg): Model {
     Use => {
       return used(m);
     },
+    Menu(i) => {
+      return Model { ...m, menu: i };
+    },
+    MenuClosed => {
+      return Model { ...m, menu: -1 };
+    },
+    PlayNext => {
+      return queued(m, m.spot + 1);
+    },
+    Enqueue => {
+      return queued(m, m.queue.len());
+    },
+    Lined(on) => {
+      return Model { ...m, lined: on };
+    },
+    Jump(spot) => {
+      return played_at(m, spot);
+    },
+    Drop(spot) => {
+      return dropped(m, spot);
+    },
     Play(on) => {
       if (on == m.playing) {
         return Model { ...m, lost: false };
@@ -715,6 +912,12 @@ function beat(m: Model): i32 {
 }
 
 function back(m: Model): Option[Msg] {
+  if (m.lined) {
+    return Some(Lined(false));
+  }
+  if (m.menu >= 0) {
+    return Some(MenuClosed);
+  }
   if (m.open) {
     return Some(Closed);
   }
