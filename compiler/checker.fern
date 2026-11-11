@@ -18747,10 +18747,17 @@ function ow_ownable_type(type_name: string): boolean {
   return !util.has_str(scalars, type_name);
 }
 
-function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
+function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): OwnCtx {
   let params = lm.params;
   let names = ctx.owned;
   let borrowed = ctx.borrowed;
+  if (repeatable) {
+    for name in ctx.owned {
+      if (!ow_copyable_result(ctx.scope.lookup(name), ctx) && !util.has_str(borrowed, name)) {
+        borrowed = borrowed.append(name);
+      }
+    }
+  }
   if (lm.ret_own) {
     names = [];
     for name in ctx.bound {
@@ -19238,6 +19245,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return u.op == "try_" && ow_is_owned_expr(u.operand, ctx);
     },
     ast.ExprIdent(id) => {
+      if (ow_is_owned(ctx, id.name) && util.has_str(ctx.borrowed, id.name)) {
+        return false;
+      }
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
       }
@@ -22859,7 +22869,11 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
   let d = ow_guard_call(c, ctx);
   let oc = ow_own_call(c, ctx);
   let m = moved;
-  if (oc.args.len() == c.args.len()) {
+  let immediate = false;
+  if let ast.ExprLambda(_) = c.callee {
+    immediate = true;
+  }
+  if (!immediate && oc.args.len() == c.args.len()) {
     let rc = ru_borrow(c.callee, m, ctx);
     m = rc.moved;
     d = util.append_diags(d, rc.diags);
@@ -22871,6 +22885,11 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     }
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
+  }
+  if let ast.ExprLambda(lm) = c.callee {
+    let lctx = ow_nested_ctx(ctx, lm, false);
+    let inner = ow_stmts(lm.body, ow_nested_moved(m, lm.params), lctx);
+    return OwnWalk { moved: ow_lambda_moved_out(m, inner.moved, lm.params), diags: util.append_diags(d, inner.diags) };
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -23049,7 +23068,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: m, diags: d };
     },
     ast.ExprLambda(lm) => {
-      let lctx = ow_nested_ctx(ctx, lm);
+      let lctx = ow_nested_ctx(ctx, lm, true);
       let inner = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
       return OwnWalk { moved: ow_lambda_moved_out(moved, inner.moved, lm.params), diags: inner.diags };
     },
