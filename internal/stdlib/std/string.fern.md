@@ -126,7 +126,6 @@ import "core/cmp";
 import "std/number_parse";
 import "core/int";
 import "core/utf8_scalar";
-import "std/bigint";
 import "std/i32";
 import "std/array";
 ```
