@@ -15003,6 +15003,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				c.cellElemError(n.Args[0].Pos(), at)
 				n.TypeArgs = []ast.Type{at}
+				c.recordOwnedResult(n, c.copyableCallResult(at))
 				return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 			}
 		}

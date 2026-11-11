@@ -271,4 +271,9 @@ A helper that returns that cell retains the borrow through local aliases.
 The new slot does not turn a borrowed handle into an owned handle.
 A caller can read a snapshot while the external owner remains live.
 A fresh payload or an own helper input still permits an owned cell result.
+
+A resolved builtin constructor with immutable copyable data gives a fresh owned Cell directly.
+This proof does not copy a borrowed Cell or callback payload.
+Local and parameter names that shadow `cell_new` keep their resolved callable contracts.
+
 The `diag_e051_cell_constructor_*` cases and `cell_constructor_result_ownership` check these rules.
