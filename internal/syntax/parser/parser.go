@@ -101,6 +101,9 @@ func offsetPos(base, in ast.Position) ast.Position {
 }
 
 type parser struct {
+	// postfixLinks is the number of links in the postfix chain that parseCall
+	// read last. A cast chain continues that chain.
+	postfixLinks int
 	// strictSemi requires the ";" of a block's last expression statement.
 	strictSemi      bool
 	tokens          []lexer.Token
@@ -143,6 +146,17 @@ func (p *parser) enterUnits(n int) error {
 }
 
 func (p *parser) leave() { p.depth-- }
+
+// chainLink counts one more link of a chain of operators or postfix forms.
+// A parse loop makes the tree one level deeper for each link, with no call
+// of enter, so the links count against the nesting limit here.
+func (p *parser) chainLink(links *int) error {
+	*links++
+	if p.depth+*links > maxNestDepth {
+		return p.errorfCode(p.peek().Pos, "P005", "input nests deeper than %d levels", maxNestDepth)
+	}
+	return nil
+}
 
 func (p *parser) leaveUnits(n int) { p.depth -= n }
 
@@ -4792,6 +4806,7 @@ func (p *parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...string) (
 	if err != nil {
 		return nil, err
 	}
+	links := 0
 	for {
 		t := p.peek()
 		matched := ""
@@ -4803,6 +4818,9 @@ func (p *parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...string) (
 		}
 		if matched == "" {
 			return left, nil
+		}
+		if err := p.chainLink(&links); err != nil {
+			return nil, err
 		}
 		opTok := p.advance()
 		right, err := next()
@@ -4865,7 +4883,11 @@ func (p *parser) parseCast() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	links := p.postfixLinks
 	for p.match(lexer.Keyword, "as") {
+		if err := p.chainLink(&links); err != nil {
+			return nil, err
+		}
 		kw := p.advance()
 		if _, ok := p.accept(lexer.Punct, "?"); ok {
 			target, err := p.parseType()
@@ -4930,7 +4952,11 @@ func (p *parser) parseCall() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	links := 0
 	for {
+		if err := p.chainLink(&links); err != nil {
+			return nil, err
+		}
 		switch {
 		case p.match(lexer.Punct, "("):
 			open := p.advance()
@@ -5041,6 +5067,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			tok := p.advance()
 			expr = &ast.TryOp{P: tok.Pos, Inner: expr}
 		default:
+			p.postfixLinks = links
 			return expr, nil
 		}
 	}

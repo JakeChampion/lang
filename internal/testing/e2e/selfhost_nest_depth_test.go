@@ -19,6 +19,14 @@ func nestedBlocks(n int) string {
 	return "function main(): i32 " + strings.Repeat("{ ", n) + "return 0; " + strings.Repeat("} ", n) + "\n"
 }
 
+func operatorChain(n int) string {
+	return "function main(): i32 { return 0" + strings.Repeat(" + 0", n) + "; }\n"
+}
+
+func castChain(n int) string {
+	return "function main(): i32 { return 0" + strings.Repeat(" as i32", n) + "; }\n"
+}
+
 func nativeAcceptsNesting(shape func(int) string, n int) bool {
 	_, err := parser.Parse(shape(n))
 	return err == nil
@@ -81,7 +89,7 @@ func TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash(t *testing.T) {
 	for _, sh := range []struct {
 		name  string
 		shape func(int) string
-	}{{"parens", nestedParens}, {"blocks", nestedBlocks}} {
+	}{{"parens", nestedParens}, {"blocks", nestedBlocks}, {"operator chain", operatorChain}, {"cast chain", castChain}} {
 		t.Run(sh.name, func(t *testing.T) {
 			limit := nativeNestingLimit(t, sh.shape)
 			t.Logf("native accepts %d levels of %s nesting and refuses %d", limit, sh.name, limit+1)

@@ -12689,7 +12689,7 @@ function unsettled_int_literal(e: ast.Expr): boolean {
     },
     ast.ExprBinary(b) => {
       if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-        return unsettled_int_literal(b.left) && unsettled_int_literal(b.right);
+        return unsettled_int_literal(b.right) && unsettled_int_literal(b.left);
       }
       return false;
     },
