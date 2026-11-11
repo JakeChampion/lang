@@ -199,7 +199,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
