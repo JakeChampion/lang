@@ -6104,6 +6104,28 @@ function sysreg_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst)
   return emit(r, ir.op_sysreg(ir.K_SYSREG_WRITE, name));
 }
 
+struct LanePermutation { first: i32, second: i32, mode: i32 }
+
+function unzipped_lanes(f: ssasem.Func, ins: ssa.SInst): Option[LanePermutation] {
+  let outer = ins;
+  let reversed = false;
+  if (ins.str == "__f32x4_reverse" && ins.args.len() == 1) {
+    outer = defining(f, ins.args[0]);
+    reversed = true;
+  }
+  if (outer.kind_tag != ssasem.call() || outer.args.len() != 2 || outer.str != "__f32x4_zip_lo" && outer.str != "__f32x4_zip_hi") {
+    return None;
+  }
+  let low = defining(f, outer.args[0]);
+  let high = defining(f, outer.args[1]);
+  if (low.kind_tag != ssasem.call() || high.kind_tag != ssasem.call() || low.str != "__f32x4_zip_lo" || high.str != "__f32x4_zip_hi" || low.args.len() != 2 || high.args.len() != 2 || low.args[0] != high.args[0] || low.args[1] != high.args[1]) {
+    return None;
+  }
+  // Modes 4 and 5 extract even and odd lanes. Modes 6 and 7 reverse them.
+  let mode = 4 + (if (outer.str == "__f32x4_zip_hi") { 1 } else { 0 }) + (if (reversed) { 2 } else { 0 });
+  return Some(LanePermutation { first: low.args[0], second: low.args[1], mode: mode });
+}
+
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
@@ -6111,6 +6133,16 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     return emit(r, ir.op_lane("vload_f32", 64));
   }
   if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
+    if (w == 32) {
+      if let Some(p) = unzipped_lanes(f, ins) {
+        for a in ins.args {
+          r = emit(r, ir.op_drop());
+        }
+        r = emit(r, ir.op_load_local(p.first));
+        r = emit(r, ir.op_load_local(p.second));
+        return emit(r, ir.op_lane_at("vpermute", 32, p.mode));
+      }
+    }
     for a in ins.args {
       r = emit(r, ir.op_drop());
     }

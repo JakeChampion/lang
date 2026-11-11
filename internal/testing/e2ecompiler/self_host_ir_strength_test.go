@@ -174,7 +174,12 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"ds_frame: const_i32 5 ; store_local 2 ; load_local 0 ; const_i32 0 ; const_i32 1 ; str_slice frame:2 ; return\n" +
 		"ds_dyn: load_local 0 ; store_local 2 ; const_i32 9 ; store_local 3 ; dyn_dispatch ; return\n" +
 		"ds_copies: const_i32 0 ; return\n" +
-		"ds_read_again: const_i32 7 ; store_local 0 ; load_local 0 ; return\n"
+		"ds_read_again: const_i32 7 ; store_local 0 ; load_local 0 ; return\n" +
+		"ds_permute: \n" +
+		"ds_permute_nested: \n" +
+		"ds_permute_effect: call_direct first/0 ; call_direct second/0 ; drop ; drop\n" +
+		"ds_permute_trap: load_local 0 ; vload ; load_local 1 ; vload ; drop ; drop\n" +
+		"ds_permute_live: load_local 0 ; load_local 1 ; vpermute ; return\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()

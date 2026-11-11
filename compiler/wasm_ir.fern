@@ -4358,6 +4358,10 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     for i in 0..16 {
       let lane = i / bytes;
       let selected = if (o.i32_imm == 3) { (lane + lanes / 2) % lanes } else if (o.i32_imm == 0) { lanes - 1 - lane } else { (lane & 1) * lanes + lane / 2 + (if (o.i32_imm == 2) { lanes / 2 } else { 0 }) };
+      if (o.i32_imm >= 4) {
+        let position = if (o.i32_imm >= 6) { 3 - lane } else { lane };
+        selected = 2 * position + (o.i32_imm & 1);
+      }
       out += " " + util.i32_to_string(selected * bytes + i % bytes);
     }
     return out + "\n";

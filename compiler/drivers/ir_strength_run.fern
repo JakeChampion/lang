@@ -596,6 +596,17 @@ function main(): i32 {
   let ds_read_again: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(0), ir.op_return()];
   out = out + "ds_read_again: " + render(ir.eliminate_dead_stores(ds_read_again)) + "\n";
 
+  let ds_permute: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(1), ir.op_lane_at("vpermute", 32, 4), ir.op_drop()];
+  out += "ds_permute: " + render(ir.eliminate_dead_stores(ds_permute)) + "\n";
+  let ds_permute_nested: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(1), ir.op_lane_at("vpermute", 32, 1), ir.op_load_local(2), ir.op_load_local(3), ir.op_lane_at("vpermute", 32, 2), ir.op_lane_at("vpermute", 32, 4), ir.op_drop()];
+  out += "ds_permute_nested: " + render(ir.eliminate_dead_stores(ds_permute_nested)) + "\n";
+  let ds_permute_effect: ir.Op[] = [ir.op_call_direct("first", 0), ir.op_call_direct("second", 0), ir.op_lane_at("vpermute", 32, 4), ir.op_drop()];
+  out += "ds_permute_effect: " + render(ir.eliminate_dead_stores(ds_permute_effect)) + "\n";
+  let ds_permute_trap: ir.Op[] = [ir.op_load_local(0), ir.op_lane("vload", 32), ir.op_load_local(1), ir.op_lane("vload", 32), ir.op_lane_at("vpermute", 32, 4), ir.op_drop()];
+  out += "ds_permute_trap: " + render(ir.eliminate_dead_stores(ds_permute_trap)) + "\n";
+  let ds_permute_live: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(1), ir.op_lane_at("vpermute", 32, 4), ir.op_return()];
+  out += "ds_permute_live: " + render(ir.eliminate_dead_stores(ds_permute_live)) + "\n";
+
   write(out);
 
   return 1 - stable;
