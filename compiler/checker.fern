@@ -15805,6 +15805,9 @@ function fn_value_at(e: ast.Expr, dest: typeinfo.Type, s: Scope): typeinfo.Type 
           return check_expr(e, s);
         };
         let (names, types) = fn_value_binds(sig, want, s);
+        if (names.len() != sig.all_type_params.len()) {
+          return t_unknown("generic function value needs a complete instance");
+        }
         return fn_value_instance(sig, names, types, s);
       }
     }
@@ -17589,7 +17592,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
       ast.StmtVar(v) => {
         if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
           let declared = var_declared_type(v, cur);
-          let initt = check_expr(v.init, cur);
+          let initt = fn_value_at(v.init, declared, cur);
           if (!mlit_is_desugared(v.init)) {
             out = util.append_diags(out, e045_annot_diags(v.type_name, expr_line(v.init), expr_col(v.init), cur));
           }
@@ -17597,7 +17600,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !generic_fn_value_arg(v.init, cur) && !init_fits(v.init, initt, declared, cur)) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !init_fits(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {

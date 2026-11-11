@@ -1,0 +1,8 @@
+function id[T](x: T): T {
+  return x;
+}
+
+function main(): i32 {
+  let f: (i32) => string = id;
+  return 0;
+}
