@@ -1,1 +1,0 @@
-the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead

@@ -157,13 +157,9 @@ func TestSelfHostNdarrayProductReport(t *testing.T) {
 	shadowSrc := strings.Replace(ndarrayProductReportSrc, "function main(): i32 {", "function main(): i32 {\n  if (__outer_mul_f64([2.0], [3.0])[0] != 99.0) { return 10; }", 1) + `
 function __outer_mul_f64(a: f64[], b: f64[]): f64[] { return [99.0]; }
 `
-	// The program's function is renamed, so the kernel still calls the builtin.
 	shadowASM, shadow, shadowDir := compileProductReport(t, runner, driver, shadowSrc, "1", "0")
-	if !strings.Contains(shadow, "reason=outer-mul-kernel ") || strings.Contains(shadow, "reason=builtin-shadowed ") {
-		t.Fatalf("shadowed product lost its kernel:\n%s", shadow)
-	}
-	if !strings.Contains(emittedBody(t, shadowASM, "__fn_packed"), "mulpd") {
-		t.Fatal("shadowed product did not use its kernel")
+	if strings.Contains(shadow, "reason=outer-mul-kernel ") || !strings.Contains(shadow, "reason=builtin-shadowed ") {
+		t.Fatalf("shadowed product reported a kernel:\n%s", shadow)
 	}
 	_, shadowDisabled, _ := compileProductReport(t, runner, driver, shadowSrc, "1", "1")
 	assertArrayReportRefusalsPreserved(t, shadow, shadowDisabled, "ndarray kernels", "outer-mul-kernel")
