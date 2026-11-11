@@ -1,0 +1,106 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "measurement_date": "2026-11-10",
+  "bank_date": "2026-11-11",
+  "data_sha256": {
+    "alloc-ci-values.report": "47f7c17703b9610057bb959a282b82ac90e24838cb8bee3e7dcccb0dc08520fb",
+    "alloc-new-gate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "alloc-new-gate.stdout": "749b7ce1fbd1c56e2bbabdf47586e5c743742ebbafd3335584420f3cd81134e8",
+    "alloc-old-gate.stderr": "dd5ed97a2fb30ec6373516e7cd3f2acffe9bae953bd13dc22f76d661cf21e095",
+    "alloc-old-gate.stdout": "57ba0dc8a0914cbb81763da5f9b0bc392d49cfc40faff7154c71ba99afa9a4cc",
+    "before-alloc-baseline.txt.gz": "cc50e733afb33053aeb64b7a3fe2f3fb7e8c882e38c40bb227fd613855f8381d",
+    "before-cliff-baseline.txt.gz": "53602dcfd32f3783c76f765d618874430ae368ad4c7ee74e4f68135779a71c03",
+    "canonical-negative-controls.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "canonical-negative-controls.stdout": "fac48f8006780271d5443141d3244600227489f67d7b6f6f304e2febe53a00c9",
+    "ci/130211807691-origin.json": "b30f424a57fa3f44b2fd98cb078f8e18f07d169ee64ef8cfbe592032ea712668",
+    "ci/130211807691.log.gz": "8b1df23486fc3a6e6e1d44fec86fae14f3f4f05359f052011d88754b94da1a26",
+    "ci/130211808249-origin.json": "8ac899a42f31bd44347e148aeeed4ff52c41670f3ff19c6a1956dbd4739fcfc7",
+    "ci/130211808249.log.gz": "cc35e85b1775ffc9c6693d9cd447a8bebbca01f3392c6f724a09cb2610145486",
+    "ci/130211808285-origin.json": "5dc04b9dd8a39d2b63d4f87dd592b0c42c2144bf8b46314c2f2109f0331c7598",
+    "ci/130211808285.log.gz": "113afea1b0c325d77e59419faff50c96397444db586bf3069a4dceaed1f703bd",
+    "cliff-ci-values.report": "74b7025ab4867aec0afbcf9954d81760e99450daa6a3678aa26b46f4a76bb3ee",
+    "cliff-new-gate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "cliff-new-gate.stdout": "27d6b0b5373b5c163df4f0ebac73d4f99bb36eefc925b7cc835763925ca9e3f3",
+    "cliff-old-gate.stderr": "dd5ed97a2fb30ec6373516e7cd3f2acffe9bae953bd13dc22f76d661cf21e095",
+    "cliff-old-gate.stdout": "29d7ac8895f652ec89a654ae710ac6ae89e2518fed56362d68ba630c0d5d8812",
+    "fixture-repro.json": "8ebf3bdafd16254c247adab04333a10e835925ffa1d2a8a47c5c36345064321c",
+    "fixture-repro.jsonl.gz": "da082264e7eb5c93151b72f45b083335286acb8e6a06322d837549780aa9dad1",
+    "fixture-validation.json": "b513f62862da1c465287c189c712882bd3e4e5baab08cca7d73e8ef8894a8fb6",
+    "fixture-validation.jsonl.gz": "f9bc2bfafad1aea5803be598a7be7e66cd3fe5d98495fcc95ada055a20a26497",
+    "fixture.patch.gz": "61571f1c5f11409fdc0790287ba27ed69c946d29165ac3bf3bdd201c2c0c9488",
+    "negative-controls-members.json": "19bbc09e3bd2f8687ee071d23306b1ffd15405b83d3d8e5b1bce49688dfa881e",
+    "negative-controls.tar.gz": "c2c57b4ca1662f7ff35437dbc2c9dbdee5426d718f62c5097884f91b5e3a900a",
+    "preserve-controls.mjs.gz": "547449bc3b4d0520b2b0d2c6ea1923f0cb18a3d3895b301407bb370a50ec7942",
+    "row-moves.json": "74a6d496ee0bed7eb93cc8fe48bde0aeebcad1250c120ae3c77de2fc0aa118a5",
+    "source-identities.json": "e88608e55aee255b9d3ba4d0b376d3fa00b58706ea0bf75b9b985ac5f5f8506e",
+    "tool-log-identities.json": "1f983b84f7cfe0feb62c6d5e1339e7efc67978f06c51753c7e79ca51ec698b5e",
+    "validate.py.gz": "6b195e5993c4ade082114b96991ca02ddb4b5ca6d0ad21f690608293ec2461fa",
+    "validation.json": "2791a64925e12c0c067475ddfb551265a327bd04f122250274b8b8308551851c",
+    "verify-original.py.gz": "73820c7df718fbd3c57ccceab614fa8313bde885adb84706544064b5f0951cbc",
+    "verify.py": "0cca49f9200daa77c5a9dcfbf0f72d1044c0099a6836c7eedbab768b9a6d4bc0",
+    "whitespace.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "whitespace.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "gzip_raw_identities": {
+    "ci/130211807691.log.gz": {
+      "bytes": 103921,
+      "sha256": "4cc7b3f686d32955d6d77af647010aed708d4525e58fbc84ff26de58a1b84323"
+    },
+    "ci/130211808249.log.gz": {
+      "bytes": 123658,
+      "sha256": "f29a3f74a024ecbe3a7f8d8ae930ad471b3980373a84d703dce4da3942f1e010"
+    },
+    "ci/130211808285.log.gz": {
+      "bytes": 77724,
+      "sha256": "2e9912e74d41283c3fd069de2d962608b4348c913713fc0f5c9c035e188c01e1"
+    },
+    "before-alloc-baseline.txt.gz": {
+      "bytes": 9379,
+      "sha256": "cebb6fd11aeba031afa8373ece10fedd067115d1cb5c28e277fcb6fa23d9aef4"
+    },
+    "before-cliff-baseline.txt.gz": {
+      "bytes": 12082,
+      "sha256": "f8384f47dc44cf7dec515fdbcdc3048308001bdd7bc92f1583bc55223618d9da"
+    },
+    "fixture-repro.jsonl.gz": {
+      "bytes": 2848,
+      "sha256": "352fe6ea99c8a9280aba536eefa95d2e4d04bc5869dd717c5561e05db9a94de5"
+    },
+    "fixture-validation.jsonl.gz": {
+      "bytes": 17168,
+      "sha256": "639f911a46378d21d1a0124f97ed78dce72cbf9a2ee2fcddfffaca362ea4c4d5"
+    },
+    "fixture.patch.gz": {
+      "bytes": 1576,
+      "sha256": "370669dba4d7e935d8d04b8a3ad9619f88ac4c45af8272599a4659c1e5725589"
+    },
+    "negative-controls.tar.gz": {
+      "bytes": 235520,
+      "sha256": "12ca1fe35898567513a60fc31e9e77e4adce3528ebed4ed8643a846453f1df73"
+    },
+    "preserve-controls.mjs.gz": {
+      "bytes": 2109,
+      "sha256": "54945309d0c266c9ae9cf060933b0f64d2d7611630681d12c7608e25cf6254ed"
+    },
+    "validate.py.gz": {
+      "bytes": 5231,
+      "sha256": "d9ce44133d56f91c1d42b026d9d71535c7639e637af4442b840a8cc121ead5e4"
+    },
+    "verify-original.py.gz": {
+      "bytes": 3735,
+      "sha256": "4703c45727968fbc878ab18c0f1221a86153a1aadf052e06398fd14b97266a94"
+    }
+  },
+  "publication_files": {
+    ".github/alloc-baseline.txt": "3bbd0ce7b4b83f5e46aefb4c10151b55e8e4fa1717623524927bf6a4da68900c",
+    ".github/cliff-baseline.txt": "eba277d720104deac4c1f13926636ddc07d1f1987c5777e6ef83958c8c3b473c",
+    "internal/testing/e2ecompiler/self_host_indirect_own_test.go": "12f70300c92786429878a3643bd6c44dc08134fd7efe79d445ad533e65f645b8"
+  },
+  "publication_trees": {
+    "compiler": "376c089443d774624aa0d84465ee981c7be7930a",
+    "internal/stdlib": "4a2819de839f5979f42e4f0313a3594c818395d9",
+    "internal/check/checker": "fc340029728e6f752214071609757e7b8fdea611",
+    "internal/syntax": "7cdd589261dd042215d1953f36e46f2b584dd4e1",
+    ".github/workflows": "0bc64347c40e74cc40ea7e690229f809890f4463"
+  }
+}

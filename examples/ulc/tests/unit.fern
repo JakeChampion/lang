@@ -1037,7 +1037,30 @@ function pcm_output_tests(): void {
   }
 }
 
+function paired_twiddle_tests(): void {
+  let n = 16;
+  while (n <= 32768) {
+    let p = packed_transform.plan(n);
+    for k in 0..n / 8 - 1 {
+      let c = p.shape.fft_cos[k];
+      let t = p.shape.fft_sin[k];
+      let expected: f64[] = [c, t, c * (c * c - 3.0 * t * t), t * (3.0 * c * c - t * t)];
+      let tables: u8[][] = [p.cosine, p.sine, p.triple_cos, p.triple_sin];
+      for table in 0..4 {
+        for lane in 0..4 {
+          unsafe {
+            let bits = __load_i32(tables[table] as usize + 8 as usize + (16 * k + 4 * lane) as usize);
+            require(bits == f32_bits(expected[table] as f32), "paired plan tables preserve every scalar IEEE result");
+          }
+        }
+      }
+    }
+    n *= 2;
+  }
+}
+
 pub function run_tests(): i32 {
+  paired_twiddle_tests();
   plan_grid_tests();
   deferred_plan_tests();
   window_cache_tests();
