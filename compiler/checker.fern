@@ -3945,6 +3945,32 @@ function preregistered_methods(ns: string): string[] {
   };
 }
 
+// The runtime symbol of the preregistered method `name` of `ns`.
+function preregistered_symbol(ns: string, name: string): string {
+  let runtime = match (name) {
+    "append" => "push",
+    "with" => "set",
+    "insert" => "set",
+    "cleared" => "clear",
+    _ => name,
+  };
+  return "__method_" + ns + "_" + runtime;
+}
+
+function is_preregistered_symbol(symbol: string): boolean {
+  if (!symbol.starts_with("__method_")) {
+    return false;
+  }
+  for ns in ["Array", "slice", "string", "Map", "Cell"] {
+    for name in preregistered_methods(ns) {
+      if (preregistered_symbol(ns, name) == symbol) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function map_receiver_type(rt: string): boolean {
   if (rt == "Map") {
     return true;
@@ -18009,8 +18035,9 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it.
-  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
+  // A free function named like a builtin, an intrinsic or the symbol of a
+  // preregistered method redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || is_preregistered_symbol(f2.name))) {
     earlier = true;
   }
   return earlier;

@@ -2847,6 +2847,15 @@ function main(): i32 { return 0; }
 		{"builtin-method-name-reader-close", "function __method_Reader_close(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
 	}
+	// The symbol of each generic builtin method (#15210).
+	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {
+		fn := "__method_" + name
+		cases = append(cases, struct {
+			name string
+			src  string
+			want []string
+		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
