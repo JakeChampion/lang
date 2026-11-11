@@ -14,18 +14,14 @@ import (
 )
 
 func budgetFixture(mode string) *exec.Cmd {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestBudgetFixture$")
-	cmd.Env = append(os.Environ(), "FERN_BUDGET_FIXTURE="+mode)
+	cmd := exec.Command(os.Args[0], "--fern-budget-fixture", mode)
+	cmd.Env = os.Environ()
 	return cmd
 }
 
 // The parent control keeps its pages until the small target returns.
 // The memory control makes the target itself exceed the same 512 MiB limit.
-func TestBudgetFixture(t *testing.T) {
-	mode := os.Getenv("FERN_BUDGET_FIXTURE")
-	if mode == "" {
-		return
-	}
+func budgetFixtureMain(mode string) int {
 	switch mode {
 	case "parent", "memory":
 		pages := make([]byte, 576<<20)
@@ -39,15 +35,17 @@ func TestBudgetFixture(t *testing.T) {
 		runtime.KeepAlive(pages)
 	case "output":
 		input, _ := io.ReadAll(os.Stdin)
-		fmt.Print("target:", string(input), ":", os.Getenv("FERN_BUDGET_VALUE"))
+		fmt.Print("target:", string(input), ":", os.Getenv("LANG"))
 		fmt.Fprint(os.Stderr, "target-error")
-		os.Exit(7)
+		return 7
 	case "signal":
 		syscall.Kill(os.Getpid(), syscall.SIGKILL)
 	case "timeout":
 		time.Sleep(time.Minute)
+	default:
+		return 2
 	}
-	os.Exit(0)
+	return 0
 }
 
 func TestRunUnderBudget(t *testing.T) {
@@ -72,7 +70,7 @@ func TestRunUnderBudget(t *testing.T) {
 	})
 	t.Run("output and exit", func(t *testing.T) {
 		cmd := budgetFixture("output")
-		cmd.Env = append(cmd.Env, "FERN_BUDGET_VALUE=env")
+		cmd.Env = append(cmd.Env, "LANG=env")
 		cmd.Stdin = strings.NewReader("input")
 		r := runUnderBudget(cmd)
 		if !r.exited || r.code != 7 || r.stdout != "target:input:env" || r.stderr != "target-error" || budgetFault("control", r, nil) != "" {
