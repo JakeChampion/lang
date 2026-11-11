@@ -80,6 +80,7 @@ Each function takes the simulator and returns the next one.
 | `sim.settle(s)` | Waits for a fling to end |
 | `sim.type_in(s, field, text)` | Taps a field and types |
 | `sim.enter(s)` | The action key of the keyboard |
+| `sim.key(s, code)` | A key of a hardware keyboard, by its Android key code |
 | `sim.back(s)` | The back key |
 | `sim.after(s, ms)` | Lets time go by, with each `ui.Tick` on the way |
 | `sim.themed(s, dark)` | The dark theme or the light theme |

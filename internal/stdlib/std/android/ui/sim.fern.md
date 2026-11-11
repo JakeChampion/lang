@@ -4,7 +4,7 @@ This module runs a program of `std/android/ui` on the host with no phone, for th
 
 ## Model
 
-A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame. Each function then does what a person does: `tap` and `hold` find an element by the name of its action, `drag` moves a finger, `type_in` types a text into a field, `enter` presses the action key of the keyboard, `back` presses the back key, and `after` lets time go by.
+A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame. Each function then does what a person does: `tap` and `hold` find an element by the name of its action, `drag` moves a finger, `type_in` types a text into a field, `enter` presses the action key of the keyboard, `key` presses a key of a hardware keyboard, `back` presses the back key, and `after` lets time go by.
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
@@ -86,8 +86,8 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
     close: (p: painter.Painter): painter.Painter => p,
     present: (own p: painter.Painter, window: usize, nodes: scene.Node[], background: i32): painter.Painter => p,
     publish: (items: android.AccessItem[]): void => { let ok = write_file(dir + "/spoken", said(items)); },
-    show_keyboard: (text: string): void => note(dir, "calls", "keyboard " + text),
-    set_keyboard: (text: string): void => note(dir, "calls", "keyboard " + text),
+    show_keyboard: (text: string, lines: boolean): void => note(dir, "calls", "keyboard " + text.replace("\n", "↵")),
+    set_keyboard: (text: string, caret: i32): void => note(dir, "calls", "keyboard " + text.replace("\n", "↵")),
     hide_keyboard: (): void => note(dir, "calls", "no keyboard"),
   };
 }
@@ -254,6 +254,13 @@ pub function type_in[S](own s: Sim[S], name: string, text: string): Sim[S] {
 // The action key of the keyboard goes down.
 pub function enter[S](own s: Sim[S]): Sim[S] {
   return event(s, android.TextAction(android.ACTION_DONE));
+}
+
+// The key with the Android key code `code` goes down and up: 66 is the
+// enter key, 67 is the delete key, and 21 and 22 are the left and the right
+// arrow.
+pub function key[S](own s: Sim[S], code: i32): Sim[S] {
+  return event(event(s, android.Key(code, 0)), android.Key(code, 1));
 }
 
 // The back key goes down and up.
