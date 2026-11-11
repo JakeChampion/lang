@@ -49,11 +49,50 @@ function copied_value(own v: Value): i32 {
   return read();
 }
 
+function selected_read(own h: Handle, flag: boolean): i32 {
+  let get = (): i32 => h.read();
+  let read = if (flag) { get } else { (): i32 => h.read() + 1 };
+  let n = read();
+  h.close();
+  return n;
+}
+
+function condition_only(own h: Handle): i32 {
+  let read = if (h.read() > 0) { (): i32 => 5 } else { (): i32 => 0 };
+  h.close();
+  return read();
+}
+
+function selected_array(own xs: i32[], flag: boolean): i32 {
+  let read = if (flag) { (): i32 => xs[0] } else { (): i32 => 0 };
+  change(xs);
+  return read();
+}
+
+function selected_match(own h: Handle, flag: boolean): i32 {
+  let read = match (flag) { true => (): i32 => h.read(), false => (): i32 => h.read() + 2 };
+  let n = read();
+  h.close();
+  return n;
+}
+
+function statement_only(own h: Handle): i32 {
+  let read = { let n = h.read(); (): i32 => n };
+  h.close();
+  return read();
+}
+
 function main(): i32 {
   let closed = cell_new(0);
   print(reads(Handle { n: 7, closed: unsafe { share_unchecked(closed) } }));
   print(closed.get());
   print(copied_array([3]));
   print(copied_value(Value { n: 10 }));
+  print(selected_read(Handle { n: 7, closed: cell_new(0) }, true));
+  print(condition_only(Handle { n: 9, closed: cell_new(0) }));
+  print(selected_array([11], true));
+  print(selected_read(Handle { n: 7, closed: cell_new(0) }, false));
+  print(selected_match(Handle { n: 7, closed: cell_new(0) }, false));
+  print(statement_only(Handle { n: 6, closed: cell_new(0) }));
   return 0;
 }
