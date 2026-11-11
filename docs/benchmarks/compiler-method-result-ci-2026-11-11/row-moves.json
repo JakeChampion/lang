@@ -1,0 +1,37 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "run": 42916398671,
+  "job": 130211808249,
+  "measurement_date": "2026-11-10",
+  "bank_date": "2026-11-11",
+  "rows": [
+    {
+      "key": "x86_64/checker.cliff_bytes",
+      "old": 38416000,
+      "new": 39116232,
+      "tolerance_percent": 1.0
+    },
+    {
+      "key": "x86_64/checker.cliff_count",
+      "old": 369099,
+      "new": 373694,
+      "tolerance_percent": 1.0
+    },
+    {
+      "key": "x86_64/checker.allocs",
+      "old": 39556378,
+      "new": 40440085,
+      "tolerance_percent": 1.0
+    },
+    {
+      "key": "x86_64/checker.frees",
+      "old": 39556378,
+      "new": 40440085,
+      "tolerance_percent": 1.0
+    }
+  ],
+  "default_tolerance_percent": 1,
+  "unchanged_all_other_rows_and_tolerances": true,
+  "report_scope": "The .report files derive the exact corrective lines from the complete decoded CI log. They are not downloaded artifact reports.",
+  "protocol": "Original CI cliff and allocation scripts set FERN_RC_CERTIFY=0 for the lowering counters. Their source and flags remain unchanged. Allocation counts are balanced; live-byte and normal-compiler timing claims are outside this record."
+}

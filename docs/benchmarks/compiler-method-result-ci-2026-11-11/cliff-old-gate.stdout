@@ -1,0 +1,12 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.cliff_bytes | 39.1M | 38.4M | +1.82% |
+| x86_64/checker.cliff_count | 373.7k | 369.1k | +1.24% |
+SLOWER: x86_64/checker.cliff_bytes 38.4M -> 39.1M (+1.82%, tolerance 1%).
+SLOWER: x86_64/checker.cliff_count 369.1k -> 373.7k (+1.24%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    x86_64/checker.cliff_bytes 39116232
+    x86_64/checker.cliff_count 373694
+WARNING: x86_64/checker.cliff_bytes +1.82%: x86_64/checker.cliff_bytes measured 39116232 against a baseline of 38416000 — over its 1% tolerance
+WARNING: x86_64/checker.cliff_count +1.24%: x86_64/checker.cliff_count measured 373694 against a baseline of 369099 — over its 1% tolerance

@@ -1,0 +1,52 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "fixture_sha256": "12f70300c92786429878a3643bd6c44dc08134fd7efe79d445ad533e65f645b8",
+  "scope": "Test-fixture repair only. Preserve all existing E051/E050 expectations and checker parity. No compiler or standard-library code change.",
+  "runs": [
+    {
+      "label": "indirect-contracts",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHostIndirectOwnContracts$",
+        "-count=1",
+        "-timeout=28m",
+        "-json"
+      ],
+      "started": "2026-11-10T23:02:43.225935+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T23:03:15.892869+00:00",
+      "test_subtest_passes": 17,
+      "skips": 0,
+      "failures": [],
+      "original_cases": 15,
+      "all_original_cases_present": true
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-10T23:03:15.895135+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T23:03:22.270245+00:00"
+    },
+    {
+      "label": "whitespace",
+      "args": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "started": "2026-11-10T23:03:22.271493+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-10T23:03:22.309111+00:00"
+    }
+  ],
+  "exit_code": 0,
+  "finished": "2026-11-10T23:03:22.323568+00:00"
+}
