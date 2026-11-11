@@ -51,6 +51,12 @@ Each operation bounds its JNI references, so repeated position queries do not re
 A failed construction releases partial resources.
 Seek requests use the closest-frame mode and reject values above Android's signed 32-bit millisecond limit.
 
+The separate `std/android/audio.Stream.timestamp` query exposes the AAudio frame position and its monotonic time in nanoseconds.
+It returns `None` before the platform supplies a valid anchor, including the delay after an asynchronous start.
+The existing stream rate supplies the frame units. The query does not change playback state or assign media timestamps.
+This is an audio-clock primitive for future integration, without a decoder or a completed A/V synchronizer.
+The lower-level video controller remains video-only.
+
 ## Native MP4 video packets
 
 `std/video/mp4` indexes self-contained AVC, HEVC, and QTRLE video tracks without Android or an external codec library.
@@ -322,6 +328,7 @@ AV1 temporal units can require further packet handling for a particular platform
 It checks header bits, extension identifiers, eight-byte size fields, and unsigned payload bounds within the packet budget.
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
+
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
@@ -452,6 +459,9 @@ FFmpeg decodes the reconstructed IVF files and compares every RGB sample with th
 Native and WASI boundary tests cover partial input, invalid lengths, exact budgets, I/O failures, and source offsets beyond 4 GiB.
 
 Emulator results do not establish physical hardware throughput or battery consumption.
+
+The audio test APK also records whether AAudio supplies a timestamp before stream stop.
+An unavailable anchor remains an explicit diagnostic. It does not qualify timestamp availability or acoustic lip-sync accuracy.
 
 Run the same qualification on a connected API 29 or later phone.
 The check reads the clips with `adb run-as`, so build the APK with `-apk-debuggable`:
