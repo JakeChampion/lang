@@ -1,0 +1,28 @@
+// A typed destination of an `append` or a `with` call on a literal array
+// local gives the local its element type. A literal local in the call has one
+// type with that element. A literal that does not fit in i32 gives the array
+// the element type i64. A later use at another width is an E003.
+function s64(xs: i64[]): i64 {
+    return xs[0];
+}
+
+function main(): i32 {
+    let a = 1;
+    let xs = [1, 2];
+    s64(xs.append(a));
+    let u: u8 = a;
+    let b = 1;
+    let ys = [1, 2];
+    let ws: i64[] = ys.with(0, b);
+    let v: u8 = b;
+    let zs = [1, 2];
+    let ts = zs.append(5000000000);
+    let n: i32 = zs[0];
+    let rs = [1, 2].append(5000000000);
+    let m: i32 = rs[0];
+    let c = 1;
+    let es = [].append(c);
+    s64(es);
+    let w: u8 = c;
+    return 0;
+}

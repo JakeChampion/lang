@@ -1,0 +1,25 @@
+// An `append` call on an empty array literal is a literal array of its
+// argument: `[].append(2)` has the type of `[2]`. A typed destination of an
+// `append` or a `with` call on a literal array local gives the local its
+// element type.
+function sum(xs: i64[]): i64 {
+    let total: i64 = 0;
+    for x in xs {
+        total += x;
+    }
+    return total;
+}
+
+function main(): i32 {
+    let ys = [].append(2);
+    let n: i32 = ys[0];
+    print(n);
+    let zs = [].append(2).append(3);
+    print(sum(zs) + 5000000000);
+    let ws = [1, 2];
+    print(sum(ws.append(4)) + 5000000000);
+    let ts = [1, 2];
+    let rs: i64[] = ts.with(0, 5);
+    print(sum(rs) + sum(ts));
+    return 0;
+}

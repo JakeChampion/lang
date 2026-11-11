@@ -1,0 +1,5 @@
+main.fern:13:5: error[E003]: variable "u": expected u8, got i64
+main.fern:17:5: error[E003]: variable "v": expected u8, got i64
+main.fern:20:5: error[E003]: variable "n": expected i32, got i64
+main.fern:22:5: error[E003]: variable "m": expected i32, got i64
+main.fern:26:5: error[E003]: variable "w": expected u8, got i64

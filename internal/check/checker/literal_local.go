@@ -279,7 +279,12 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint
 	}
 	c.litCompositeReads[id] = decl
 	c.litArraySteps[call] = litArrayStep{from: decl}
-	if t := c.checkExpr(call.Args[at], s); settledNumeric(t) {
+	if want, ok := hint.(ast.ArrayType); ok {
+		if w, integer := want.Elem.(ast.NumberType); integer && !w.Polymorphic {
+			c.settleLitCompositeLocal(id, want)
+		}
+	}
+	if t := c.litArrayStepArgType(call.Args[at], s); t != nil {
 		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
 		return nil
 	}
@@ -298,12 +303,17 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint
 // neither gives a type.
 func (c *checker) settleLitArrayStepByHint(call *ast.Call, hint ast.Type, s *scope) ast.Type {
 	step := c.litArraySteps[call]
-	have, _ := c.checkExpr(step.arg, s).(ast.NumberType)
+	have := c.litArrayStepArgType(step.arg, s)
 	want, ok := hint.(ast.ArrayType)
 	w, integer := want.Elem.(ast.NumberType)
 	if !ok || !integer || w.Polymorphic {
-		if have.Width != 0 && !have.Polymorphic {
+		if _, typed := have.(ast.NumberType); typed {
 			return ast.ArrayType{Elem: have}
+		}
+		if lit, empty := step.recv.(*ast.ArrayLit); empty && len(lit.Elems) == 0 {
+			if open, integer := c.checkExpr(step.arg, s).(ast.NumberType); integer {
+				return ast.ArrayType{Elem: open}
+			}
 		}
 		return nil
 	}
@@ -327,6 +337,30 @@ func litArrayRooted(e ast.Expr) bool {
 		return ok && litArrayStepArg(x, fa) >= 0 && litArrayRooted(fa.Target)
 	}
 	return false
+}
+
+// litArrayStepArgType is the type that the stored argument of an append or a
+// with call gives the literal array: its settled numeric type, or i64 for a
+// literal that does not fit in i32. The result is nil when it gives no type.
+func (c *checker) litArrayStepArgType(arg ast.Expr, s *scope) ast.Type {
+	t := c.checkExpr(arg, s)
+	if settledNumeric(t) {
+		return t
+	}
+	if c.unsettledIntLitExceedsI32(arg, false) {
+		return ast.NumberType{Width: 64, Signed: true}
+	}
+	return nil
+}
+
+// litArrayStepCall is true for an append or a with call.
+func litArrayStepCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	fa, ok := call.Callee.(*ast.FieldAccess)
+	return ok && litArrayStepArg(call, fa) >= 0
 }
 
 // litArrayStepArg is the index of the argument that an append or a with call

@@ -15621,7 +15621,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt
 					} else if _, isArray := pt.(ast.ArrayType); isArray {
-						if litArrayRooted(n.Args[i]) {
+						if litArrayRooted(n.Args[i]) || litArrayStepCall(n.Args[i]) {
 							c.expectedType = pt
 						}
 					} else if _, isFn := pt.(*ast.FuncType); isFn {

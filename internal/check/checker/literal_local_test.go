@@ -69,6 +69,12 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"two widths through an element of an append in a typed destination", "let b = 1; let zs: i64[] = [b, 2].with(1, 3); let v: u8 = b;", "E003"},
 		{"append in a typed destination gives its argument the width", "let b = 1; let zs: i64[] = [1, 2].append(b); let v: i64 = b;", ""},
 		{"append on an array literal takes the width of a typed argument", "let x: i64 = 7i64; let zs = [1, 2].append(x); let ys: i64[] = zs;", ""},
+		{"typed destination of an append gives the array local its width", "let zs = [1, 2]; let ws: i64[] = zs.with(0, 4); let ys: i64[] = zs;", ""},
+		{"two widths through an append on an array local in a typed destination", "let b = 1; let zs = [1, 2]; let ws: i64[] = zs.append(b); let v: u8 = b;", "E003"},
+		{"wide literal appended to an array local", "let zs = [1, 2]; let ws = zs.append(5000000000); let n: i32 = zs[0];", "E003"},
+		{"wide literal appended to an array literal", "let zs = [1, 2].append(5000000000); let n: i32 = zs[0];", "E003"},
+		{"append on an empty array literal", "let ys = [].append(2); let n: i32 = ys[0]; let zs = [].append(3); let ws: i64[] = zs;", ""},
+		{"two widths through an append on an empty array literal", "let b = 1; let ys = [].append(b); let ws: i64[] = ys; let v: u8 = b;", "E003"},
 		{"append result gives the array its width", "let xs = [1, 2]; let ys = xs.append(3); let zs: i64[] = ys; let ws: i64[] = xs;", ""},
 		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
 	}
@@ -101,6 +107,10 @@ func TestLiteralLocalInAnAppendArgumentOfACall(t *testing.T) {
 	}
 	if err := checkSource(t, head+"let x: i64 = 7i64; s64([1, 2].append(x));\nreturn 0;\n}\n"); err != nil {
 		t.Fatal(err)
+	}
+	err = checkSource(t, head+"let b = 1; let zs = [1, 2]; s64(zs.append(b)); let v: u8 = b;\nreturn 0;\n}\n")
+	if err == nil || !strings.Contains(err.Error(), `variable "v": expected u8, got i64`) {
+		t.Fatalf("got %v, want E003 for v", err)
 	}
 }
 

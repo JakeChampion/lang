@@ -30325,7 +30325,8 @@ function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
 }
 
 // settle_array_step gives the literals of an append or a with call on an
-// array literal the element type of t.
+// array literal the element type of t. An append on an empty literal becomes
+// the literal of its argument.
 function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   let ast.ExprCall(c) = e else {
     return e;
@@ -30339,6 +30340,11 @@ function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   let (recv, arg, step) = array_step(c);
   if (!step || !lit_array_rooted(recv)) {
     return e;
+  }
+  if let ast.ExprArray(ea) = recv {
+    if (ea.elements.len() == 0 && fa.field == "append") {
+      return ast.ExprArray { ...ea, elements: [settle_wide_literals(arg, at.elem)] };
+    }
   }
   let obj = settle_array_step(settle_wide_literals(recv, t), t);
   return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj }, args: c.args.with(c.args.len() - 1, settle_wide_literals(arg, at.elem)) };
@@ -32646,7 +32652,8 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
 
 // lit_marked_read is true for a read of a local whose type holds an integer
 // literal, or of one of its elements, such as `bytes`, `bytes[0]` or `t.0`
-// after `let bytes = [1, 2];` or `let t = (1, 2);`.
+// after `let bytes = [1, 2];` or `let t = (1, 2);`. An append or a with call
+// on such a read is also one.
 function lit_marked_read(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
     return lit_marked(s.lookup(id.name));
@@ -32656,6 +32663,10 @@ function lit_marked_read(e: ast.Expr, s: Scope): boolean {
   }
   if let ast.ExprFieldAccess(fa) = e {
     return util.is_all_digits(fa.field) && lit_marked_read(fa.obj, s);
+  }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    return step && lit_marked_read(recv, s);
   }
   return false;
 }
@@ -33368,6 +33379,11 @@ function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: Lit
     if (step && lit_array_rooted(recv) && is_integer(wa.elem)) {
       let out = lit_demand(arg, wa.elem, s, lit_array_demand(recv, wa, s, lit_step_index(c, s, st)));
       return LitInfer { ...out, pargs: out.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: out.ptypes.append(wa) };
+    }
+    if let ast.ExprIdent(id) = recv {
+      if (step && is_integer(wa.elem) && lit_marked(s.lookup(id.name))) {
+        st = lit_type_demand(s.lookup(id.name), wa, st);
+      }
     }
   }
   return lit_other_demand(e, wa, s, st);
@@ -34093,6 +34109,11 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
   }
   if let ast.ExprCall(c) = e {
     let (recv, arg, step) = array_step(c);
+    if (step && empty_array_literal(recv)) {
+      let (part, more, found) = lit_composite_local(arg, s, st);
+      let made = t_array(part);
+      return (made, LitInfer { ...more, pargs: more.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: more.ptypes.append(made) }, found);
+    }
     if (step && lit_array_rooted(recv)) {
       let (whole, next, any) = lit_composite_local(recv, s, lit_step_index(c, s, st));
       if let typeinfo.TypeArray(ra) = whole {
@@ -34118,15 +34139,22 @@ function lit_composite(e: ast.Expr): boolean {
   return false;
 }
 
-// lit_array_rooted is true for an array literal that has elements, and for an
-// append or a with call on one.
+// lit_array_rooted is true for an array literal, and for an append or a with
+// call on one.
 function lit_array_rooted(e: ast.Expr): boolean {
-  if let ast.ExprArray(a) = e {
-    return a.elements.len() > 0;
+  if let ast.ExprArray(_) = e {
+    return true;
   }
   if let ast.ExprCall(c) = e {
     let (recv, arg, step) = array_step(c);
     return step && lit_array_rooted(recv);
+  }
+  return false;
+}
+
+function empty_array_literal(e: ast.Expr): boolean {
+  if let ast.ExprArray(a) = e {
+    return a.elements.len() == 0;
   }
   return false;
 }
