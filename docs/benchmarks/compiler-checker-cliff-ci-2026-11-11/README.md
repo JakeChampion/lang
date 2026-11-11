@@ -50,5 +50,7 @@ The later IR corpus repair changes its Go test harness.
 The counter evidence retains the exact compiler and protocol sources above.
 The verifier and all 31 data records stay unchanged.
 
-Use separate results for the later compiler integration from owner commit `e3bd8452c16add0ac0be07a553761dea1ba10567`.
+The later local compiler integration used owner commit `e3bd8452c16add0ac0be07a553761dea1ba10567`.
+Main `38399ecf` then reverted its prerequisite.
+The later integration restores main compiler code and records a separate reverse baseline move.
 The pinned counter record retains its original source.

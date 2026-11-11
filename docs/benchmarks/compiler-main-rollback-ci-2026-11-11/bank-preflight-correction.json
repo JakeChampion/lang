@@ -1,0 +1,8 @@
+{
+  "time": "2026-11-11T06:20:50.798427+00:00",
+  "first_exit": 1,
+  "reason": "The measured owner commit object was absent locally. The first attempt stopped before comparator or compiler commands.",
+  "comparator_commands_executed": 0,
+  "fetched_exact_commit": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+  "original_failure": "bank-validation-first-missing-object.json"
+}

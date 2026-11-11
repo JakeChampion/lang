@@ -163,4 +163,8 @@
 # 2026-11-11: main 2ca148c675 measured 378,075 checker append crossings in CI 42942829694, job 130273056431.
 # Record the exact corrective count. All tolerances stay unchanged.
 x86_64/checker.cliff_bytes	39116232
-x86_64/checker.cliff_count	378075
+x86_64/checker.cliff_count	373796
+
+# 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
+# Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
+# That source tree equals main 38399ecf. The 1% tolerance stays unchanged.

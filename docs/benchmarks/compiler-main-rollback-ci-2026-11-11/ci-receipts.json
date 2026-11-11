@@ -1,0 +1,1433 @@
+{
+  "owner_pr": {
+    "number": 15234,
+    "head": {
+      "label": "JakeChampion:ccr-8830b728-wnolaj",
+      "ref": "ccr-8830b728-wnolaj",
+      "repo": {
+        "id": 1230663420,
+        "node_id": "R_kgDOSVpu_A",
+        "name": "lang",
+        "full_name": "JakeChampion/lang",
+        "owner": {
+          "login": "JakeChampion",
+          "id": 1569131,
+          "node_id": "MDQ6VXNlcjE1NjkxMzE=",
+          "avatar_url": "https://avatars.githubusercontent.com/u/1569131?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/JakeChampion",
+          "html_url": "https://github.com/JakeChampion",
+          "followers_url": "https://api.github.com/users/JakeChampion/followers",
+          "following_url": "https://api.github.com/users/JakeChampion/following{/other_user}",
+          "gists_url": "https://api.github.com/users/JakeChampion/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/JakeChampion/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/JakeChampion/subscriptions",
+          "organizations_url": "https://api.github.com/users/JakeChampion/orgs",
+          "repos_url": "https://api.github.com/users/JakeChampion/repos",
+          "events_url": "https://api.github.com/users/JakeChampion/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/JakeChampion/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "private": false,
+        "fork": false,
+        "archived": false,
+        "disabled": false,
+        "description": null,
+        "homepage": null,
+        "language": "Rust",
+        "visibility": "public",
+        "is_template": false,
+        "topics": [],
+        "forks_count": 0,
+        "forks": 0,
+        "stargazers_count": 1,
+        "watchers_count": 1,
+        "watchers": 1,
+        "open_issues_count": 225,
+        "open_issues": 225,
+        "size": 428251,
+        "default_branch": "main",
+        "has_issues": true,
+        "has_projects": false,
+        "has_wiki": false,
+        "has_pages": true,
+        "has_downloads": false,
+        "has_discussions": false,
+        "has_pull_requests": true,
+        "pushed_at": "2026-11-11T06:02:01Z",
+        "created_at": "2026-05-06T07:50:20Z",
+        "updated_at": "2026-11-11T02:56:02Z",
+        "allow_forking": true,
+        "web_commit_signoff_required": false,
+        "pull_request_creation_policy": "collaborators_only",
+        "license": null,
+        "url": "https://api.github.com/repos/JakeChampion/lang",
+        "html_url": "https://github.com/JakeChampion/lang",
+        "archive_url": "https://api.github.com/repos/JakeChampion/lang/{archive_format}{/ref}",
+        "assignees_url": "https://api.github.com/repos/JakeChampion/lang/assignees{/user}",
+        "blobs_url": "https://api.github.com/repos/JakeChampion/lang/git/blobs{/sha}",
+        "branches_url": "https://api.github.com/repos/JakeChampion/lang/branches{/branch}",
+        "collaborators_url": "https://api.github.com/repos/JakeChampion/lang/collaborators{/collaborator}",
+        "comments_url": "https://api.github.com/repos/JakeChampion/lang/comments{/number}",
+        "commits_url": "https://api.github.com/repos/JakeChampion/lang/commits{/sha}",
+        "compare_url": "https://api.github.com/repos/JakeChampion/lang/compare/{base}...{head}",
+        "contents_url": "https://api.github.com/repos/JakeChampion/lang/contents/{+path}",
+        "contributors_url": "https://api.github.com/repos/JakeChampion/lang/contributors",
+        "deployments_url": "https://api.github.com/repos/JakeChampion/lang/deployments",
+        "downloads_url": "https://api.github.com/repos/JakeChampion/lang/downloads",
+        "events_url": "https://api.github.com/repos/JakeChampion/lang/events",
+        "forks_url": "https://api.github.com/repos/JakeChampion/lang/forks",
+        "git_commits_url": "https://api.github.com/repos/JakeChampion/lang/git/commits{/sha}",
+        "git_refs_url": "https://api.github.com/repos/JakeChampion/lang/git/refs{/sha}",
+        "git_tags_url": "https://api.github.com/repos/JakeChampion/lang/git/tags{/sha}",
+        "git_url": "git://github.com/JakeChampion/lang.git",
+        "issue_comment_url": "https://api.github.com/repos/JakeChampion/lang/issues/comments{/number}",
+        "issue_events_url": "https://api.github.com/repos/JakeChampion/lang/issues/events{/number}",
+        "issues_url": "https://api.github.com/repos/JakeChampion/lang/issues{/number}",
+        "keys_url": "https://api.github.com/repos/JakeChampion/lang/keys{/key_id}",
+        "labels_url": "https://api.github.com/repos/JakeChampion/lang/labels{/name}",
+        "languages_url": "https://api.github.com/repos/JakeChampion/lang/languages",
+        "merges_url": "https://api.github.com/repos/JakeChampion/lang/merges",
+        "milestones_url": "https://api.github.com/repos/JakeChampion/lang/milestones{/number}",
+        "notifications_url": "https://api.github.com/repos/JakeChampion/lang/notifications{?since,all,participating}",
+        "pulls_url": "https://api.github.com/repos/JakeChampion/lang/pulls{/number}",
+        "releases_url": "https://api.github.com/repos/JakeChampion/lang/releases{/id}",
+        "ssh_url": "git@github.com:JakeChampion/lang.git",
+        "stargazers_url": "https://api.github.com/repos/JakeChampion/lang/stargazers",
+        "statuses_url": "https://api.github.com/repos/JakeChampion/lang/statuses/{sha}",
+        "subscribers_url": "https://api.github.com/repos/JakeChampion/lang/subscribers",
+        "subscription_url": "https://api.github.com/repos/JakeChampion/lang/subscription",
+        "tags_url": "https://api.github.com/repos/JakeChampion/lang/tags",
+        "teams_url": "https://api.github.com/repos/JakeChampion/lang/teams",
+        "trees_url": "https://api.github.com/repos/JakeChampion/lang/git/trees{/sha}",
+        "clone_url": "https://github.com/JakeChampion/lang.git",
+        "mirror_url": null,
+        "hooks_url": "https://api.github.com/repos/JakeChampion/lang/hooks",
+        "svn_url": "https://github.com/JakeChampion/lang"
+      },
+      "sha": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+      "user": {
+        "login": "JakeChampion",
+        "id": 1569131,
+        "node_id": "MDQ6VXNlcjE1NjkxMzE=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1569131?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/JakeChampion",
+        "html_url": "https://github.com/JakeChampion",
+        "followers_url": "https://api.github.com/users/JakeChampion/followers",
+        "following_url": "https://api.github.com/users/JakeChampion/following{/other_user}",
+        "gists_url": "https://api.github.com/users/JakeChampion/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/JakeChampion/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/JakeChampion/subscriptions",
+        "organizations_url": "https://api.github.com/users/JakeChampion/orgs",
+        "repos_url": "https://api.github.com/users/JakeChampion/repos",
+        "events_url": "https://api.github.com/users/JakeChampion/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/JakeChampion/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      }
+    },
+    "merged": true,
+    "merged_at": "2026-11-11T05:55:52Z",
+    "merge_commit_sha": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb"
+  },
+  "run": {
+    "id": 42958185608,
+    "name": "CI",
+    "head_sha": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-11T04:16:48Z",
+    "updated_at": "2026-11-11T05:55:17Z",
+    "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608"
+  },
+  "pages": 2,
+  "total_jobs": 139,
+  "jobs": [
+    {
+      "id": 130318280647,
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T04:22:01Z",
+      "completed_at": "2026-11-11T04:22:29Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130318280647"
+    },
+    {
+      "id": 130320177141,
+      "name": "Lint / lint",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T04:24:30Z",
+      "completed_at": "2026-11-11T04:35:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320177141"
+    },
+    {
+      "id": 130320182983,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:48Z",
+      "completed_at": "2026-11-11T05:23:05Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320182983"
+    },
+    {
+      "id": 130320183227,
+      "name": "Full suite / Test units / test-units-aarch64-rest",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:18Z",
+      "completed_at": "2026-11-11T05:26:55Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183227"
+    },
+    {
+      "id": 130320183246,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard5",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:26Z",
+      "completed_at": "2026-11-11T05:21:46Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183246"
+    },
+    {
+      "id": 130320183276,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:58Z",
+      "completed_at": "2026-11-11T05:22:50Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183276"
+    },
+    {
+      "id": 130320183280,
+      "name": "Full suite / Test units / check-corpus-x86_64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:17Z",
+      "completed_at": "2026-11-11T05:24:40Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183280"
+    },
+    {
+      "id": 130320183313,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:31Z",
+      "completed_at": "2026-11-11T05:21:35Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183313"
+    },
+    {
+      "id": 130320183318,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:27Z",
+      "completed_at": "2026-11-11T05:25:27Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183318"
+    },
+    {
+      "id": 130320183328,
+      "name": "Full suite / Test units / check-corpus-x86_64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:37Z",
+      "completed_at": "2026-11-11T05:22:17Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183328"
+    },
+    {
+      "id": 130320183415,
+      "name": "Full suite / Test units / test-units-x86_64-rest",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:04Z",
+      "completed_at": "2026-11-11T05:26:51Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183415"
+    },
+    {
+      "id": 130320183789,
+      "name": "Full suite / Test units / test-units-x86_64-heavy-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:21Z",
+      "completed_at": "2026-11-11T05:25:35Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320183789"
+    },
+    {
+      "id": 130320185359,
+      "name": "Full suite / Test units / check-corpus-x86_64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:00Z",
+      "completed_at": "2026-11-11T05:16:46Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320185359"
+    },
+    {
+      "id": 130320185817,
+      "name": "Full suite / Test units / check-corpus-aarch64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:06Z",
+      "completed_at": "2026-11-11T05:22:51Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320185817"
+    },
+    {
+      "id": 130320185868,
+      "name": "Full suite / Test coreutils / test-coreutils-x86_64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:22Z",
+      "completed_at": "2026-11-11T05:22:50Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320185868"
+    },
+    {
+      "id": 130320185930,
+      "name": "Full suite / Test coreutils / test-coreutils-aarch64-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:17Z",
+      "completed_at": "2026-11-11T05:22:19Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320185930"
+    },
+    {
+      "id": 130320185952,
+      "name": "Full suite / Test units / check-corpus-aarch64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:42Z",
+      "completed_at": "2026-11-11T05:19:02Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320185952"
+    },
+    {
+      "id": 130320186066,
+      "name": "Full suite / Test units / check-corpus-aarch64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:58Z",
+      "completed_at": "2026-11-11T05:19:36Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320186066"
+    },
+    {
+      "id": 130320186100,
+      "name": "Full suite / Test coreutils / test-coreutils-x86_64-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:29Z",
+      "completed_at": "2026-11-11T05:21:43Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320186100"
+    },
+    {
+      "id": 130320186346,
+      "name": "Full suite / Test e2e x86_64 / security-smoke-x86-and-arm64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:23Z",
+      "completed_at": "2026-11-11T05:13:05Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320186346"
+    },
+    {
+      "id": 130320186782,
+      "name": "Full suite / Test coreutils / test-coreutils-aarch64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:08Z",
+      "completed_at": "2026-11-11T05:24:32Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320186782"
+    },
+    {
+      "id": 130320187620,
+      "name": "Full suite / Test e2e x86_64 / test-e2e-x86_64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:08Z",
+      "completed_at": "2026-11-11T05:15:55Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320187620"
+    },
+    {
+      "id": 130320187898,
+      "name": "Full suite / Test e2e x86_64 / seccomp-corpus-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:02Z",
+      "completed_at": "2026-11-11T05:21:06Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320187898"
+    },
+    {
+      "id": 130320188356,
+      "name": "Full suite / Test e2e other / test-e2e-other-x86_64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:41Z",
+      "completed_at": "2026-11-11T05:28:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188356"
+    },
+    {
+      "id": 130320188680,
+      "name": "Full suite / Test e2e other / test-e2e-other-x86_64-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:27Z",
+      "completed_at": "2026-11-11T05:25:56Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188680"
+    },
+    {
+      "id": 130320188744,
+      "name": "Full suite / Test e2e arm64 / seccomp-corpus-arm64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:39Z",
+      "completed_at": "2026-11-11T05:20:32Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188744"
+    },
+    {
+      "id": 130320188799,
+      "name": "Full suite / Test e2e arm64 / test-e2e-arm64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:39Z",
+      "completed_at": "2026-11-11T05:17:55Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188799"
+    },
+    {
+      "id": 130320188915,
+      "name": "Full suite / Test e2e wasm / test-e2e-wasm-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:07Z",
+      "completed_at": "2026-11-11T05:17:14Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188915"
+    },
+    {
+      "id": 130320188954,
+      "name": "Full suite / Test e2e other / test-e2e-other-x86_64-shard2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:46Z",
+      "completed_at": "2026-11-11T05:24:50Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320188954"
+    },
+    {
+      "id": 130320189006,
+      "name": "Full suite / Test e2e arm64 / test-e2e-arm64-cross-host",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:27Z",
+      "completed_at": "2026-11-11T05:13:40Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320189006"
+    },
+    {
+      "id": 130320189259,
+      "name": "Full suite / Test e2e other / test-e2e-other-x86_64-shard3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:13Z",
+      "completed_at": "2026-11-11T05:26:51Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320189259"
+    },
+    {
+      "id": 130320190311,
+      "name": "Full suite / Test e2e other / examples-census-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:11:10Z",
+      "completed_at": "2026-11-11T05:28:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320190311"
+    },
+    {
+      "id": 130320190686,
+      "name": "Full suite / Test e2e differential / test-e2e-differential-x86_64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:52Z",
+      "completed_at": "2026-11-11T05:21:15Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320190686"
+    },
+    {
+      "id": 130320191245,
+      "name": "Full suite / Perf / native-pair",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T04:22:32Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191245"
+    },
+    {
+      "id": 130320191564,
+      "name": "Full suite / Test e2e self-host / driver-sizes-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:14:29Z",
+      "completed_at": "2026-11-11T05:17:57Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191564"
+    },
+    {
+      "id": 130320191600,
+      "name": "Full suite / Fuzz / fuzz-diff-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:15:23Z",
+      "completed_at": "2026-11-11T05:50:23Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191600"
+    },
+    {
+      "id": 130320191607,
+      "name": "Full suite / Perf / perf-aarch64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:06Z",
+      "completed_at": "2026-11-11T05:17:02Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191607"
+    },
+    {
+      "id": 130320191632,
+      "name": "Full suite / Perf / perf-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:11:54Z",
+      "completed_at": "2026-11-11T05:17:24Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191632"
+    },
+    {
+      "id": 130320191809,
+      "name": "Full suite / Fuzz / fuzz-diff-aarch64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:09Z",
+      "completed_at": "2026-11-11T05:15:38Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191809"
+    },
+    {
+      "id": 130320191820,
+      "name": "Full suite / Examples / examples-aarch64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:11Z",
+      "completed_at": "2026-11-11T05:18:20Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191820"
+    },
+    {
+      "id": 130320191851,
+      "name": "Full suite / Bootstrap / verify-x86-64-linux",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:30Z",
+      "completed_at": "2026-11-11T05:19:44Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320191851"
+    },
+    {
+      "id": 130320193226,
+      "name": "Full suite / Bootstrap / verify-arm64-linux",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:44Z",
+      "completed_at": "2026-11-11T05:19:15Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320193226"
+    },
+    {
+      "id": 130320193411,
+      "name": "Full suite / Bootstrap / publish-${{ matrix.host }}",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T04:22:32Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320193411"
+    },
+    {
+      "id": 130320193482,
+      "name": "Full suite / Bootstrap / verify-arm64-darwin",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:13:12Z",
+      "completed_at": "2026-11-11T05:16:43Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320193482"
+    },
+    {
+      "id": 130320194029,
+      "name": "Full suite / macOS arm64 / profile-arm64-darwin",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:11:51Z",
+      "completed_at": "2026-11-11T05:16:40Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194029"
+    },
+    {
+      "id": 130320194215,
+      "name": "Full suite / Playground E2E / playground",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:10:08Z",
+      "completed_at": "2026-11-11T05:16:21Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194215"
+    },
+    {
+      "id": 130320194232,
+      "name": "Full suite / Android / android-seccomp-corpus",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:46Z",
+      "completed_at": "2026-11-11T05:19:57Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194232"
+    },
+    {
+      "id": 130320194315,
+      "name": "Full suite / Docs build / build",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:12:22Z",
+      "completed_at": "2026-11-11T05:22:38Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194315"
+    },
+    {
+      "id": 130320194397,
+      "name": "Full suite / Android / android-stopwatch-apk",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:14:51Z",
+      "completed_at": "2026-11-11T05:17:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194397"
+    },
+    {
+      "id": 130320194536,
+      "name": "Full suite / Fern image / image",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:16:45Z",
+      "completed_at": "2026-11-11T05:38:41Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194536"
+    },
+    {
+      "id": 130320194822,
+      "name": "Full suite / Showcase / browser",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:11:32Z",
+      "completed_at": "2026-11-11T05:19:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130320194822"
+    },
+    {
+      "id": 130324903809,
+      "name": "reap-lint",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T04:35:54Z",
+      "completed_at": "2026-11-11T04:35:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130324903809"
+    },
+    {
+      "id": 130336615363,
+      "name": "Full suite / VS Code Extension",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:53Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336615363"
+    },
+    {
+      "id": 130336615707,
+      "name": "Full suite / Test affected consumers",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:53Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336615707"
+    },
+    {
+      "id": 130336616009,
+      "name": "Full suite / reap-vscode-extension",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:53Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336616009"
+    },
+    {
+      "id": 130336616280,
+      "name": "Full suite / Test fernsmith",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:54Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336616280"
+    },
+    {
+      "id": 130336616966,
+      "name": "Full suite / Bootstrap / release",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:54Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336616966"
+    },
+    {
+      "id": 130336616994,
+      "name": "Full suite / reap-test-affected",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:54Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336616994"
+    },
+    {
+      "id": 130336617062,
+      "name": "Full suite / reap-test-fernsmith",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:09:54Z",
+      "completed_at": "2026-11-11T05:09:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130336617062"
+    },
+    {
+      "id": 130338971353,
+      "name": "Full suite / reap-playground-e2e",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:16:21Z",
+      "completed_at": "2026-11-11T05:16:21Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130338971353"
+    },
+    {
+      "id": 130339080321,
+      "name": "Full suite / macOS arm64 / test-arm64-darwin",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:56Z",
+      "completed_at": "2026-11-11T05:40:18Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339080321"
+    },
+    {
+      "id": 130339080373,
+      "name": "Full suite / macOS arm64 / test-arm64-darwin-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:18:26Z",
+      "completed_at": "2026-11-11T05:38:35Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339080373"
+    },
+    {
+      "id": 130339283964,
+      "name": "Full suite / reap-test-e2e-wasm",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:17:15Z",
+      "completed_at": "2026-11-11T05:17:14Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339283964"
+    },
+    {
+      "id": 130339343777,
+      "name": "Full suite / reap-perf",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:17:25Z",
+      "completed_at": "2026-11-11T05:17:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339343777"
+    },
+    {
+      "id": 130339504412,
+      "name": "Full suite / Android / android-stopwatch-emulator",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:17:56Z",
+      "completed_at": "2026-11-11T05:23:31Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339504412"
+    },
+    {
+      "id": 130339512671,
+      "name": "Full suite / Test e2e arm64 / test-e2e-arm64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:18:21Z",
+      "completed_at": "2026-11-11T05:18:24Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339512671"
+    },
+    {
+      "id": 130339522591,
+      "name": "Full suite / Test e2e self-host / kernel-boot",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:46Z",
+      "completed_at": "2026-11-11T05:25:02Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522591"
+    },
+    {
+      "id": 130339522667,
+      "name": "Full suite / Test e2e self-host / checker-mutants-x86_64-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:58Z",
+      "completed_at": "2026-11-11T05:26:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522667"
+    },
+    {
+      "id": 130339522687,
+      "name": "Full suite / Test e2e self-host / diff-selfhost-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:19:37Z",
+      "completed_at": "2026-11-11T05:23:26Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522687"
+    },
+    {
+      "id": 130339522713,
+      "name": "Full suite / Test e2e self-host / fixtures-selfhost-x86-64-linux-android",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:52Z",
+      "completed_at": "2026-11-11T05:30:11Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522713"
+    },
+    {
+      "id": 130339522716,
+      "name": "Full suite / Test e2e self-host / cli-driver-tests-x86_64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:21:37Z",
+      "completed_at": "2026-11-11T05:24:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522716"
+    },
+    {
+      "id": 130339522724,
+      "name": "Full suite / Test e2e self-host / fixtures-selfhost-arm64-linux-android",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:40Z",
+      "completed_at": "2026-11-11T05:29:29Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522724"
+    },
+    {
+      "id": 130339522733,
+      "name": "Full suite / Test e2e self-host / fixtures-selfhost-wasm-core-component-http",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:21:08Z",
+      "completed_at": "2026-11-11T05:26:37Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522733"
+    },
+    {
+      "id": 130339522758,
+      "name": "Full suite / Test e2e self-host / diff-selfhost-sanitize-arm64-wasm",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:20:05Z",
+      "completed_at": "2026-11-11T05:29:31Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522758"
+    },
+    {
+      "id": 130339522771,
+      "name": "Full suite / Test e2e self-host / fixtures-selfhost-x86-64-quarantine",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:21:16Z",
+      "completed_at": "2026-11-11T05:24:19Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522771"
+    },
+    {
+      "id": 130339522782,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-x86_64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:21:48Z",
+      "completed_at": "2026-11-11T05:27:34Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522782"
+    },
+    {
+      "id": 130339522791,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-x86_64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:21:45Z",
+      "completed_at": "2026-11-11T05:28:55Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522791"
+    },
+    {
+      "id": 130339522794,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-x86_64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:20:34Z",
+      "completed_at": "2026-11-11T05:27:30Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522794"
+    },
+    {
+      "id": 130339522798,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-x86_64-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:20:00Z",
+      "completed_at": "2026-11-11T05:25:27Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522798"
+    },
+    {
+      "id": 130339522851,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-aarch64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:23Z",
+      "completed_at": "2026-11-11T05:29:07Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522851"
+    },
+    {
+      "id": 130339522868,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-aarch64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:23:35Z",
+      "completed_at": "2026-11-11T05:29:47Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522868"
+    },
+    {
+      "id": 130339522869,
+      "name": "Full suite / Test e2e self-host / checker-mutants-x86_64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:23:10Z",
+      "completed_at": "2026-11-11T05:31:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522869"
+    },
+    {
+      "id": 130339522879,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-aarch64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:21Z",
+      "completed_at": "2026-11-11T05:26:29Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522879"
+    },
+    {
+      "id": 130339522916,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard6",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:53Z",
+      "completed_at": "2026-11-11T05:41:21Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522916"
+    },
+    {
+      "id": 130339522917,
+      "name": "Full suite / Test e2e self-host / checker-stdlib-aarch64-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:23:08Z",
+      "completed_at": "2026-11-11T05:29:32Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522917"
+    },
+    {
+      "id": 130339522954,
+      "name": "Full suite / Test e2e self-host / fixtures-selfhost-front-end",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:28:27Z",
+      "completed_at": "2026-11-11T05:32:54Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522954"
+    },
+    {
+      "id": 130339522996,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:23:27Z",
+      "completed_at": "2026-11-11T05:39:16Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522996"
+    },
+    {
+      "id": 130339522999,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:34Z",
+      "completed_at": "2026-11-11T05:45:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339522999"
+    },
+    {
+      "id": 130339523001,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard8",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:25:29Z",
+      "completed_at": "2026-11-11T05:45:44Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523001"
+    },
+    {
+      "id": 130339523004,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard5",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:25:03Z",
+      "completed_at": "2026-11-11T05:40:02Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523004"
+    },
+    {
+      "id": 130339523015,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-aarch64-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:54Z",
+      "completed_at": "2026-11-11T05:40:51Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523015"
+    },
+    {
+      "id": 130339523021,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-aarch64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:22:54Z",
+      "completed_at": "2026-11-11T05:41:30Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523021"
+    },
+    {
+      "id": 130339523029,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard7",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:21Z",
+      "completed_at": "2026-11-11T05:37:46Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523029"
+    },
+    {
+      "id": 130339523032,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:28:55Z",
+      "completed_at": "2026-11-11T05:39:21Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523032"
+    },
+    {
+      "id": 130339523058,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard9",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:41Z",
+      "completed_at": "2026-11-11T05:37:51Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523058"
+    },
+    {
+      "id": 130339523072,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:54Z",
+      "completed_at": "2026-11-11T05:48:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523072"
+    },
+    {
+      "id": 130339523084,
+      "name": "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:24:27Z",
+      "completed_at": "2026-11-11T05:40:59Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523084"
+    },
+    {
+      "id": 130339523171,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:25:29Z",
+      "completed_at": "2026-11-11T05:36:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523171"
+    },
+    {
+      "id": 130339523205,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-5",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:52Z",
+      "completed_at": "2026-11-11T05:38:40Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523205"
+    },
+    {
+      "id": 130339523230,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:27:35Z",
+      "completed_at": "2026-11-11T05:36:46Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523230"
+    },
+    {
+      "id": 130339523236,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-7",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:28:18Z",
+      "completed_at": "2026-11-11T05:35:45Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523236"
+    },
+    {
+      "id": 130339523238,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:25:37Z",
+      "completed_at": "2026-11-11T05:36:36Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523238"
+    },
+    {
+      "id": 130339523240,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:57Z",
+      "completed_at": "2026-11-11T05:34:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523240"
+    },
+    {
+      "id": 130339523248,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:55Z",
+      "completed_at": "2026-11-11T05:37:45Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523248"
+    },
+    {
+      "id": 130339523251,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-interp-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:53Z",
+      "completed_at": "2026-11-11T05:36:12Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523251"
+    },
+    {
+      "id": 130339523261,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:30:13Z",
+      "completed_at": "2026-11-11T05:42:58Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523261"
+    },
+    {
+      "id": 130339523267,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-2",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:28:56Z",
+      "completed_at": "2026-11-11T05:39:24Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523267"
+    },
+    {
+      "id": 130339523268,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-7",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:27:31Z",
+      "completed_at": "2026-11-11T05:34:56Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523268"
+    },
+    {
+      "id": 130339523290,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:09Z",
+      "completed_at": "2026-11-11T05:36:27Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523290"
+    },
+    {
+      "id": 130339523293,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-5",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:33:09Z",
+      "completed_at": "2026-11-11T05:55:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523293"
+    },
+    {
+      "id": 130339523294,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-interp-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:38Z",
+      "completed_at": "2026-11-11T05:37:31Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523294"
+    },
+    {
+      "id": 130339523304,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:34Z",
+      "completed_at": "2026-11-11T05:39:46Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523304"
+    },
+    {
+      "id": 130339523305,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-6",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:31:57Z",
+      "completed_at": "2026-11-11T05:40:07Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523305"
+    },
+    {
+      "id": 130339523311,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-interp-1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:27:27Z",
+      "completed_at": "2026-11-11T05:34:12Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523311"
+    },
+    {
+      "id": 130339523316,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-tls-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:25:57Z",
+      "completed_at": "2026-11-11T05:33:07Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523316"
+    },
+    {
+      "id": 130339523352,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-arm64-6",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:49Z",
+      "completed_at": "2026-11-11T05:40:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523352"
+    },
+    {
+      "id": 130339523356,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:26:30Z",
+      "completed_at": "2026-11-11T05:40:12Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523356"
+    },
+    {
+      "id": 130339523360,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-interp-3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:21Z",
+      "completed_at": "2026-11-11T05:35:18Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523360"
+    },
+    {
+      "id": 130339523400,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-crypto-wasm-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:49Z",
+      "completed_at": "2026-11-11T05:42:12Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523400"
+    },
+    {
+      "id": 130339523437,
+      "name": "Full suite / Test e2e self-host / selfhost-stdtest-x86-64-tls-0",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:29:33Z",
+      "completed_at": "2026-11-11T05:36:52Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339523437"
+    },
+    {
+      "id": 130339657367,
+      "name": "Full suite / reap-examples",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:18:20Z",
+      "completed_at": "2026-11-11T05:18:20Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130339657367"
+    },
+    {
+      "id": 130340044426,
+      "name": "Full suite / reap-showcase",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:19:25Z",
+      "completed_at": "2026-11-11T05:19:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130340044426"
+    },
+    {
+      "id": 130340161326,
+      "name": "Full suite / reap-bootstrap",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:19:45Z",
+      "completed_at": "2026-11-11T05:19:45Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130340161326"
+    },
+    {
+      "id": 130340452117,
+      "name": "Full suite / reap-test-e2e-arm64",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:20:33Z",
+      "completed_at": "2026-11-11T05:20:33Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130340452117"
+    },
+    {
+      "id": 130340650246,
+      "name": "Full suite / reap-test-e2e-x86_64",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:21:07Z",
+      "completed_at": "2026-11-11T05:21:06Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130340650246"
+    },
+    {
+      "id": 130340704275,
+      "name": "Full suite / reap-test-e2e-differential",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:21:15Z",
+      "completed_at": "2026-11-11T05:21:15Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130340704275"
+    },
+    {
+      "id": 130341199575,
+      "name": "Full suite / reap-docs-build",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:22:39Z",
+      "completed_at": "2026-11-11T05:22:39Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130341199575"
+    },
+    {
+      "id": 130341509580,
+      "name": "Full suite / reap-android",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:23:32Z",
+      "completed_at": "2026-11-11T05:23:32Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130341509580"
+    },
+    {
+      "id": 130341857075,
+      "name": "Full suite / reap-test-coreutils",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:24:32Z",
+      "completed_at": "2026-11-11T05:24:32Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130341857075"
+    },
+    {
+      "id": 130342683320,
+      "name": "Full suite / Test units / test-units-x86_64-heavy",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:27:23Z",
+      "completed_at": "2026-11-11T05:27:25Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130342683320"
+    },
+    {
+      "id": 130342855424,
+      "name": "Full suite / reap-test-units",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:27:26Z",
+      "completed_at": "2026-11-11T05:27:26Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130342855424"
+    },
+    {
+      "id": 130343352466,
+      "name": "Full suite / reap-test-e2e-other",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:28:54Z",
+      "completed_at": "2026-11-11T05:28:53Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130343352466"
+    },
+    {
+      "id": 130346740680,
+      "name": "Full suite / reap-fern-image",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:38:42Z",
+      "completed_at": "2026-11-11T05:38:41Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130346740680"
+    },
+    {
+      "id": 130347283868,
+      "name": "Full suite / macOS arm64 / darwin-ratchet",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:41:14Z",
+      "completed_at": "2026-11-11T05:41:30Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130347283868"
+    },
+    {
+      "id": 130347695069,
+      "name": "Full suite / reap-macos",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:41:30Z",
+      "completed_at": "2026-11-11T05:41:30Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130347695069"
+    },
+    {
+      "id": 130349971294,
+      "name": "Full suite / Test e2e self-host / verify",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:48:12Z",
+      "completed_at": "2026-11-11T05:48:27Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130349971294"
+    },
+    {
+      "id": 130350730434,
+      "name": "Full suite / reap-fuzz-diff",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:50:23Z",
+      "completed_at": "2026-11-11T05:50:23Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130350730434"
+    },
+    {
+      "id": 130352357859,
+      "name": "CI verdict",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-11T05:55:12Z",
+      "completed_at": "2026-11-11T05:55:16Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130352357859"
+    },
+    {
+      "id": 130352358777,
+      "name": "Full suite / reap-test-e2e-selfhost",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-11T05:55:11Z",
+      "completed_at": "2026-11-11T05:55:10Z",
+      "html_url": "https://github.com/JakeChampion/lang/actions/runs/42958185608/job/130352358777"
+    }
+  ],
+  "main_commit": {
+    "sha": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb",
+    "tree": {
+      "sha": "187b398684070660808d6d05db7d82b08d6e4e96",
+      "url": "https://api.github.com/repos/JakeChampion/lang/git/trees/187b398684070660808d6d05db7d82b08d6e4e96"
+    },
+    "parents": [
+      {
+        "sha": "197b186c0142e02c84f75fa1745198c17164a117",
+        "url": "https://api.github.com/repos/JakeChampion/lang/git/commits/197b186c0142e02c84f75fa1745198c17164a117",
+        "html_url": "https://github.com/JakeChampion/lang/commit/197b186c0142e02c84f75fa1745198c17164a117"
+      }
+    ],
+    "message": "Revert \"lowering: a build reports a view that escapes its source as E065, and the corpus records it\"\n\nThis reverts commit 0a48f9551d9924cab727183604e26e6aa2d133fb.\n\nThat commit added two conformance cases that the front end accepts and\nthe lowering refuses with E065, `diag_e065_array_reassigned` and\n`diag_e065_map_reassigned`. TestSelfHostIRVerifyProvidedCorpusClean\ntakes each case with no `expected.error` and requires it to lower, so\nboth cases fail it on main: the driver exits with 3 and no verdict.\n\nThe commit also made `semlower.substitution` give a view escape to its\ncaller as a refused claim and return with no bodies. The CLI reads the\nclaims. The driver of that test does not, and it stops with\n\"no typed body\".\n\nThe commit put three case names in one cell of the E065 row and of the\nML-04 row of the spec. Each index test reads that cell as one name, so\nTestDiagnosticsIndexIsAccurate and TestSemanticsIndexIsAccurate fail.\n\nI did not run these tests before #15205, which merged before its suite\nran. A correct repair of #14597 must first decide how a case that the\nlowering refuses enters the corpus sweep, and each driver that reads a\nsubstitution must read its refused claims. #14597 is open again with\nthat finding.\n\nRefs #14597.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01NrV89VQQo6NXEkhsEcXM4o"
+  },
+  "measured_commit": {
+    "sha": "ca80bd07aba3edc5b60f971ceb76ac3925cdb292",
+    "tree": {
+      "sha": "187b398684070660808d6d05db7d82b08d6e4e96",
+      "url": "https://api.github.com/repos/JakeChampion/lang/git/trees/187b398684070660808d6d05db7d82b08d6e4e96"
+    },
+    "parents": [
+      {
+        "sha": "348e09501a5ecd89df80151ab9199a82fff35cf6",
+        "url": "https://api.github.com/repos/JakeChampion/lang/git/commits/348e09501a5ecd89df80151ab9199a82fff35cf6",
+        "html_url": "https://github.com/JakeChampion/lang/commit/348e09501a5ecd89df80151ab9199a82fff35cf6"
+      }
+    ],
+    "message": "Revert \"lowering: a build reports a view that escapes its source as E065, and the corpus records it\"\n\nThis reverts commit 0a48f9551d9924cab727183604e26e6aa2d133fb.\n\nThat commit added two conformance cases that the front end accepts and\nthe lowering refuses with E065, `diag_e065_array_reassigned` and\n`diag_e065_map_reassigned`. TestSelfHostIRVerifyProvidedCorpusClean\ntakes each case with no `expected.error` and requires it to lower, so\nboth cases fail it on main: the driver exits with 3 and no verdict.\n\nThe commit also made `semlower.substitution` give a view escape to its\ncaller as a refused claim and return with no bodies. The CLI reads the\nclaims. The driver of that test does not, and it stops with\n\"no typed body\".\n\nThe commit put three case names in one cell of the E065 row and of the\nML-04 row of the spec. Each index test reads that cell as one name, so\nTestDiagnosticsIndexIsAccurate and TestSemanticsIndexIsAccurate fail.\n\nI did not run these tests before #15205, which merged before its suite\nran. A correct repair of #14597 must first decide how a case that the\nlowering refuses enters the corpus sweep, and each driver that reads a\nsubstitution must read its refused claims. #14597 is open again with\nthat finding.\n\nRefs #14597.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01NrV89VQQo6NXEkhsEcXM4o"
+  },
+  "agent_merged_owner_pr": false
+}
