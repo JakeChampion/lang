@@ -7607,6 +7607,61 @@ function (s: string) own_copy(): string { return s + ""; }
 	}
 }
 
+func TestSliceEscapeThroughPart(t *testing.T) {
+	const decls = `struct Own { items: i32[], n: i32 }
+struct H { v: [i32] }
+struct Deep { o: Own }
+function mk(n: i32): Own { return Own { items: [n, n], n: n }; }
+function get(h: H): [i32] { return h.v; }
+function id(o: Own): Own { return o; }
+`
+	for _, src := range []string{
+		`function f(n: i32): [i32] { let o: Own = Own { items: [n, n + 1], n: n }; return o.items[0:2]; }`,
+		`function f(n: i32): [i32] { let d: Deep = Deep { o: Own { items: [n, n], n: n } }; return d.o.items[0:1]; }`,
+		`function f(n: i32): [i32] { return Own { items: [n, n], n: n }.items[0:1]; }`,
+		`function f(n: i32): [i32] { return mk(n).items[0:1]; }`,
+		`function f(n: i32): [i32] { let t: (i32[], i32) = ([n, n], 1); return t.0[0:1]; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1]; let t: ([i32], i32) = (xs[0:2], 1); return t.0; }`,
+		`function f(n: i32): [i32] { let xs: i32[][] = [[n, n + 1]]; return xs[0][0:2]; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1]; let h: H = H { v: xs[0:2] }; return h.v; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1]; let h: H = H { v: xs[0:2] }; return h.v[0:1]; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1]; let hs: H[] = [H { v: xs[0:2] }]; return hs[0].v; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1]; let h: H = H { v: xs[0:2] }; return get(h); }`,
+		`function f(n: i32): H { let xs: i32[] = [n, n + 1]; let t: (H, i32) = (H { v: xs[0:2] }, 1); return t.0; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1, n + 2]; let v: [i32] = if (n > 0) { xs[0:2] } else { xs[1:3] }; return v; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n, n + 1, n + 2]; return if (n > 0) { xs[0:2] } else { xs[1:3] }; }`,
+		`function f(a: i32[], n: i32): [i32] { let r: i32[] = if (n > 0) { a } else { [1, 2] }; return r[0:1]; }`,
+		`function f(a: i32[]): [i32] { let r: i32[] = a; r = [1, 2]; return r[0:1]; }`,
+		`function f(n: i32): [i32] { let xs: i32[] = [n]; let r: i32[] = xs; return r[0:1]; }`,
+		`function f(o: Own): [i32] { let t: (Own, i32) = (o, 1); return t.0.items[0:1]; }`,
+	} {
+		if err := checkSource(t, decls+src); err == nil || !hasCode(err, "E063") {
+			t.Errorf("%q: want E063, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(o: Own): [i32] { return o.items[0:2]; }`,
+		`function f(d: Deep): [i32] { return d.o.items[0:1]; }`,
+		`function f(o: Own): [i32] { return id(o).items[0:1]; }`,
+		`function f(h: H): [i32] { return h.v; }`,
+		`function f(h: H): [i32] { return h.v[0:1]; }`,
+		`function f(hs: H[]): [i32] { return hs[0].v; }`,
+		`function f(xs: i32[][]): [i32] { return xs[0][0:2]; }`,
+		`function f(a: i32[]): [i32] { let h: H = H { v: a[0:2] }; return h.v; }`,
+		`function f(a: i32[]): [i32] { let h: H = H { v: a[0:2] }; return get(h); }`,
+		`function f(a: i32[]): [i32] { let t: ([i32], i32) = (a[0:2], 1); return t.0; }`,
+		`function f(a: i32[]): H { let t: (H, i32) = (H { v: a[0:2] }, 1); return t.0; }`,
+		`function f(a: i32[], b: i32[], n: i32): [i32] { let v: [i32] = if (n > 0) { a[0:2] } else { b[1:3] }; return v; }`,
+		`function f(a: i32[], b: i32[], n: i32): [i32] { let r: i32[] = if (n > 0) { a } else { b }; return r[0:1]; }`,
+		`function f(a: i32[]): [i32] { let r: i32[] = a; let s: i32[] = r; return s[0:1]; }`,
+		`function f(os: Own[]): [i32] { let o: Own = os[0]; return o.items[0:1]; }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 func TestSlicedTemporaryAllowed(t *testing.T) {
 	const decls = `function idarr(x: i32[]): i32[] { return x; }
 function idstr(s: string): string { return s; }
