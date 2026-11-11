@@ -1,0 +1,17 @@
+// A generic function gives its own type variable to a generic call, and
+// an empty array literal is an argument of that call.
+
+struct B[T] { xs: B[T][], n: i32, name: string }
+function mk[T](n: i32, xs: B[T][]): B[T] { return B { xs: xs, n: n, name: "" }; }
+function leaf[T](s: string): B[T] { return mk[T](3, []); }
+function pair[T](s: string): B[T] { return mk[T](2, [leaf[T](s), mk[T](1, [])]); }
+function main(): i32 {
+  let b: B[i32] = leaf("a");
+  let p: B[str] = pair("b");
+  print(b.n);
+  print(b.xs.len());
+  print(p.n);
+  print(p.xs.len());
+  print(p.xs[0].n + p.xs[1].n);
+  return 0;
+}
