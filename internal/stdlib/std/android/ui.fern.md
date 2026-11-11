@@ -951,7 +951,7 @@ function own_nodes[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
 // How far the list `name` scrolls: from 0 to `limit`, or as far as `room`
 // pixels past an end while a finger pulls it there.
 function offset_of(env: Env, name: string, limit: i32, room: i32): i32 {
-  return env.offsets.get(name).unwrap_or(0).max(0 - room).min(limit + room);
+  return env.offsets.get(name).unwrap_or(0).max(-room).min(limit + room);
 }
 
 function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, own out: Built[M]): Built[M] {
