@@ -2089,8 +2089,10 @@ function __serve_respond[D: async.Driver](drv: D, own c: __Conns, at: i32, metho
   c = __serve_count(c, at, method, resp.status);
   c = __stage_background(c, resp);
   let rest = __serve_tail_wire(c, at, method, version, resp, keep_alive, clk);
-  c = __Conns { ...c, tails: c.tails.with(at, rest), keep: c.keep.with(at, c.keep[at] && keep_alive && __tail_keeps(rest)) };
-  if (__corks(rest, c.keep[at], answered, behind)) {
+  let keeps = c.keep[at] && keep_alive && __tail_keeps(rest);
+  let corked = __corks(rest, keeps, answered, behind);
+  c = __Conns { ...c, tails: c.tails.with(at, rest), keep: c.keep.with(at, keeps) };
+  if (corked) {
     return (c, true);
   }
   let sent = __serve_send_out(drv, c, at, opts);
