@@ -1,0 +1,37 @@
+// A literal local that is the argument that `append` or `with` puts in a
+// literal array has one type with the element of that array. The use that
+// gives the array its element type gives the local the same type. A later use
+// of the local at another width is an E003. The array is a literal array
+// local, or an array literal that is the receiver of the call.
+function s64(xs: i64[]): i64 {
+    return xs[0];
+}
+
+function main(): i32 {
+    let a = 1;
+    let xs = [1, 2];
+    let ys = xs.append(a);
+    s64(ys);
+    let u: u8 = a;
+    let b = 1;
+    let zs = [1, 2];
+    let ws = zs.with(0, b);
+    s64(ws);
+    let v: u8 = b;
+    let c = 1;
+    let ts = [1, 2];
+    ts = ts.append(c);
+    s64(ts);
+    let w: u8 = c;
+    let d = 1;
+    let rs = [1, 2].append(d);
+    s64(rs);
+    let x: u8 = d;
+    let e = 1;
+    let qs: i64[] = [1, 2].append(e);
+    let y: u8 = e;
+    let f = 1;
+    s64([f, 2].with(1, 3));
+    let z: u8 = f;
+    return 0;
+}

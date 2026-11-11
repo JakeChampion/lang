@@ -37,5 +37,5 @@ pub function update(own m: Model, msg: ui.Msg): Model {
 }
 
 pub function program(): ui.Program[Model] {
-  return ui.program((m: Model, s: ui.Screen): ui.El => view(m, s), (own m: Model, msg: ui.Msg): Model => update(m, msg));
+  return ui.program(view, update);
 }

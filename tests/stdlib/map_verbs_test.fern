@@ -147,6 +147,60 @@ function test_contains_value_empty(): test.TestOutcome {
   return test.assert_eq(m.contains_value(0), false);
 }
 
+// A key of 15 words of 4 bytes. Each of the low 14 bits of `i` changes one
+// word, and the last word keeps the count of changed words even. When the
+// change is bit 31 of the word, a hash that multiplies 32-bit words gives
+// one value for all of the keys, for each seed. When the change is bit 0,
+// the keys are ordinary.
+function word_key(i: i32, bit: u8, at: i32): string {
+  let out = __alloc_u8(60);
+  let k = 0;
+  while (k < 60) {
+    out = out.with(k, (97 + k % 26) as u8);
+    k += 1;
+  }
+  let odd = false;
+  let w = 0;
+  while (w < 14) {
+    if ((i >> w & 1) != 0) {
+      out = out.with(4 * w + at, out[4 * w + at] ^ bit);
+      odd = !odd;
+    }
+    w += 1;
+  }
+  if (odd) {
+    out = out.with(56 + at, out[56 + at] ^ bit);
+  }
+  return unsafe { string_from_bytes_unchecked(out) };
+}
+
+function fill_time(n: i32, bit: u8, at: i32): i64 {
+  let t0 = monotonic_ns();
+  let m: Map[string, i32] = map_new(8);
+  for i in 0..n {
+    m = m.insert(word_key(i, bit, at), i);
+  }
+  if (m.len() != n) {
+    return 0 - 1 as i64;
+  }
+  return monotonic_ns() - t0;
+}
+
+// With keys that have one hash, 8000 inserts took 70 times the ordinary
+// time. The limit of 12 times leaves room for a busy machine.
+function test_no_hash_for_all_seeds(): test.TestOutcome {
+  let ordinary = fill_time(8000, 1 as u8, 0);
+  let hostile = fill_time(8000, 128 as u8, 3);
+  if (ordinary < 0 as i64 || hostile < 0 as i64) {
+    return test.fail("a key was lost");
+  }
+  let floor: i64 = 2000000;
+  if (ordinary < floor) {
+    ordinary = floor;
+  }
+  return test.assert_true(hostile <= 12 as i64 * ordinary);
+}
+
 function main(): i32 {
   let r = test.new("map verbs");
   r = r.it("entries sum k+v", test_entries_sum);
@@ -164,5 +218,6 @@ function main(): i32 {
   r = r.it("update present and absent", test_update_present_and_absent);
   r = r.it("contains_value", test_contains_value);
   r = r.it("contains_value empty", test_contains_value_empty);
+  r = r.it("string keys that differ in bit 31 of their words do not share a hash", test_no_hash_for_all_seeds);
   return r.finish();
 }

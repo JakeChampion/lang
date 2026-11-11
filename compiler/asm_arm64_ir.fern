@@ -10500,6 +10500,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x20, x1\n");
   s = s.write("    mov x21, x2\n");
+  s = s.write("    mov x27, #0\n");
   s = s.write("    ldr x22, [x19, #8]\n");
   s = s.write("    add x0, x22, #1\n");
   s = s.write("    bl __fern_alloc\n");
@@ -10510,6 +10511,9 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x10, x22\n");
   s = s.write("    b.ge .Lsp_ccmd_d\n");
   s = s.write("    ldrb w11, [x9, x10]\n");
+  s = s.write("    cbnz w11, .Lsp_ccmd_nz\n");
+  s = s.write("    mov x27, #1\n");
+  s = s.write(".Lsp_ccmd_nz:\n");
   s = s.write("    strb w11, [x23, x10]\n");
   s = s.write("    add x10, x10, #1\n");
   s = s.write("    b .Lsp_ccmd\n");
@@ -10539,6 +10543,9 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x11, x26\n");
   s = s.write("    b.ge .Lsp_acopy_d\n");
   s = s.write("    ldrb w12, [x9, x11]\n");
+  s = s.write("    cbnz w12, .Lsp_acopy_nz\n");
+  s = s.write("    mov x27, #1\n");
+  s = s.write(".Lsp_acopy_nz:\n");
   s = s.write("    strb w12, [x0, x11]\n");
   s = s.write("    add x11, x11, #1\n");
   s = s.write("    b .Lsp_acopy\n");
@@ -10592,6 +10599,11 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n").svc(57);
+  s = s.write("    cbz x27, .Lsp_exec\n");
+  s = s.write("    ldr x22, [x19, #8]\n");
+  s = s.write("    mov x26, #-22\n");
+  s = s.write("    b .Lsp_failed\n");
+  s = s.write(".Lsp_exec:\n");
   s = s.write("    mov x0, x23\n");
   s = s.write("    mov x1, x24\n");
   s = s.write("    adrp x9, __fern_envp\n");
@@ -10667,6 +10679,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x2, [x9]\n");
   s = s.write("    mov x8, #221\n");
   s = s.svc(221);
+  s = s.write(".Lsp_failed:\n");
   s = s.write("    sub sp, sp, #48\n");
   s = s.write("    str x23, [sp]\n");
   s = s.write("    str x22, [sp, #16]\n");

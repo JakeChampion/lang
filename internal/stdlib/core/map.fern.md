@@ -153,29 +153,52 @@ function __map_wang_mix(k: i32): i32 {
   return h;
 }
 
-function __map_fnv_str_seeded(s: string, seed: i32): i32 {
-  let h = 2166136261 as u32 ^ seed as u32;
-  let prime = 16777619 as u32;
-  let sLen = s.len();
+// Each 4-byte word goes into a 64-bit product, and the high half of the
+// product comes down into the low half before the next word. A change in one
+// word then makes a change of the state that depends on the seed, so no two
+// keys have the same hash for each seed. The length is in the first state,
+// so the last 1 to 3 bytes go in as one word.
+function __map_str_hash(s: string, seed: i32): i32 {
+  let n = s.len();
+  let k = 0x9e3779b97f4a7c15 as u64;
+  let h = (2166136261 as u32 ^ seed as u32) as u64 | n as u64 << 32 as u64;
   let i = 0;
-  while (i + 4 <= sLen) {
+  while (i + 8 <= n) {
+    let a: u32 = s[i] as u32
+      | s[i + 1] as u32 << 8 as u32
+      | s[i + 2] as u32 << 16 as u32
+      | s[i + 3] as u32 << 24 as u32;
+    let b: u32 = s[i + 4] as u32
+      | s[i + 5] as u32 << 8 as u32
+      | s[i + 6] as u32 << 16 as u32
+      | s[i + 7] as u32 << 24 as u32;
+    h = (h ^ a as u64) * k;
+    h ^= h >> 32 as u64;
+    h = (h ^ b as u64) * k;
+    h ^= h >> 32 as u64;
+    i += 8;
+  }
+  if (i + 4 <= n) {
     let w: u32 = s[i] as u32
       | s[i + 1] as u32 << 8 as u32
       | s[i + 2] as u32 << 16 as u32
       | s[i + 3] as u32 << 24 as u32;
-    h = (h ^ w) * prime;
+    h = (h ^ w as u64) * k;
+    h ^= h >> 32 as u64;
     i += 4;
   }
-  while (i < sLen) {
-    h = (h ^ s[i] as u32) * prime;
-    i += 1;
+  if (i < n) {
+    let w = s[i] as u32;
+    if (i + 1 < n) {
+      w |= s[i + 1] as u32 << 8 as u32;
+    }
+    if (i + 2 < n) {
+      w |= s[i + 2] as u32 << 16 as u32;
+    }
+    h = (h ^ w as u64) * k;
+    h ^= h >> 32 as u64;
   }
-  h ^= h >> 16 as u32;
-  h *= 2246822507 as u32;
-  h ^= h >> 13 as u32;
-  h *= 3266489909 as u32;
-  h ^= h >> 16 as u32;
-  return h as i32;
+  return (h as u32) as i32;
 }
 ```
 
@@ -360,7 +383,7 @@ function __map_eq_wide(a: usize, b: usize): boolean {
 
 function __map_hash_str(k: usize): i32 {
   unsafe {
-    return __map_fnv_str_seeded(k as string, 0);
+    return __map_str_hash(k as string, 0);
   }
 }
 
@@ -373,7 +396,7 @@ function __map_eq_str(a: usize, b: usize): boolean {
 function __map_bucket_hash(k: usize, hash_fn: (usize) => i32, seed: i32): i32 {
   if (seed != 0) {
     unsafe {
-      return __map_fnv_str_seeded(k as string, seed);
+      return __map_str_hash(k as string, seed);
     }
   }
   return hash_fn(k);
