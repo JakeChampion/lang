@@ -62,9 +62,13 @@ function test_structs(): test.TestOutcome {
       "pub struct ShapeClass { class: usize, id_area: usize }",
       "pub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
       "jni.find_class(e, \"dev/fern/Point\");",
-      "jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\");",
-      "jni.get_field_id(e, class, \"x\", \"I\");",
-      "jni.get_static_field_id(e, class, \"made\", \"J\");",
+      "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
+      "let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, \"x\", \"I\"))?;",
+      "let id_made = jni.checked_id(e, class, jni.get_static_field_id(e, class, \"made\", \"J\"))?;",
+      "pub function (c: PointClass) release(e: usize): void {",
+      "jni.delete_global_ref(e, c.class);",
+      // A Java method with the name `release` gets another name.
+      "pub function (c: PointClass) release_(e: usize, self: Point): Result[void, jni.JavaError] {",
     ]),
     "",
   );

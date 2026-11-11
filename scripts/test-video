@@ -14,7 +14,7 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/video
-for suite in video video_avc video_avc_pps video_hevc video_vp9 video_vp9_packet video_av1 video_av1_sequence video_annex_b video_annex_b_input video_annex_b_input_boundary video_ivf_input video_ivf_input_boundary video_mp4 video_mp4_boundary video_mp4_file video_mp4_file_boundary video_qtrle_mov android_video_policy android_video_source; do
+for suite in video video_avc video_avc_pps video_audio_clock video_hevc video_vp9 video_vp9_packet video_av1 video_av1_sequence video_annex_b video_annex_b_input video_annex_b_input_boundary video_ivf_input video_ivf_input_boundary video_mp4 video_mp4_boundary video_mp4_file video_mp4_file_boundary video_qtrle_mov android_video_policy android_video_source; do
   source="tests/stdlib/${suite}_test.fern"
   "$fern_video_compiler" -check "$source" internal/stdlib
   "$fern_video_compiler" -target "$target" -sanitize -o "build/video/${suite}-tests" "$source" internal/stdlib
@@ -26,12 +26,14 @@ done
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/hardware-api.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/android-api.so tests/stdlib/android_video_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
+  mkdir -p build/video/audio
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/audio/libaaudio.so scripts/audio-reference/aaudio-mock.c
   scripts/libandroid-stubs scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c > build/video/stubs.c
   cc -shared -fPIC -Wall -Wextra -Werror -o build/video/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c build/video/stubs.c
   ln -sf libmediandk.so build/video/libandroid.so
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/android-mock.so tests/stdlib/android_video_mock_test.fern internal/stdlib
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/hardware-mock.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
-  LD_LIBRARY_PATH="$PWD/build/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+  LD_LIBRARY_PATH="$PWD/build/video:$PWD/build/video/audio${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
 import ctypes
 for name in ('android', 'hardware'):
     library = ctypes.CDLL(f'./build/video/{name}-mock.so')
@@ -46,7 +48,6 @@ fi
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/audio-timestamp-api.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
   mkdir -p build/video/audio
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/audio/libaaudio.so scripts/audio-reference/aaudio-mock.c
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/audio/mock.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
   "$fern_video_compiler" -target "$android_target" -shared -sanitize -export main -o build/video/audio/mock-sanitize.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
   LD_LIBRARY_PATH="$PWD/build/video/audio${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
@@ -59,6 +60,25 @@ print('Android audio timestamp clock, ABI, and unavailable-result checks passed'
 PYTHON
 fi
 python3 -m unittest discover -s tests/android/audio -p test_emulator_check.py
+
+# Audio anchors update the existing video scheduler without audio transport control.
+"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/video-audio-sync-api.so tests/stdlib/android_video_audio_mock_test.fern internal/stdlib
+if [ -n "$android_target" ]; then
+  for variant in normal sanitize; do
+    flags=()
+    if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
+    "$fern_video_compiler" -target "$android_target" -shared "${flags[@]}" -export main -o "build/video/audio/sync-$variant.so" tests/stdlib/android_video_audio_mock_test.fern internal/stdlib
+  done
+  LD_LIBRARY_PATH="$PWD/build/video/audio:$PWD/build/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
+import ctypes
+for variant in ('normal', 'sanitize'):
+    result = ctypes.CDLL(f'./build/video/audio/sync-{variant}.so').main()
+    if result != 0:
+        raise SystemExit(f'Android audio/video anchor test failed at check {result}')
+print('Android audio anchors, pending video deadlines, unavailable results, and seek checks passed')
+PYTHON
+fi
+
 
 # Content assets use libc descriptors and a separate JNI test double.
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/source-api.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib

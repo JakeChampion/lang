@@ -16,6 +16,8 @@ static int live_muxers, muxer_started, muxer_writes, muxer_token;
 static int live_extractors, extractor_token, sample_position, sample_reads;
 static int format_token, codec_token;
 static int output_width = 16, output_height = 8, output_right, output_bottom, custom_output;
+static int custom_deadline;
+static int64_t expected_deadline, last_deadline;
 
 void mock_mode(int m) {
     assert(live_formats == 0 && live_codecs == 0);
@@ -24,7 +26,10 @@ void mock_mode(int m) {
     output_step = queued = released = active_encoder = named_hardware = parameter_calls = fail_queue = muxer_writes = 0;
     allow_hardware = 0; last_seek_time = -1;
     output_width = 16; output_height = 8; custom_output = 0;
+    custom_deadline = 0; last_deadline = -1;
 }
+void mock_expected_deadline(int64_t value) { custom_deadline = 1; expected_deadline = value; }
+int64_t mock_last_deadline(void) { return last_deadline; }
 void mock_output_format(int width, int height, int right, int bottom) {
     output_width = width; output_height = height; output_right = right; output_bottom = bottom;
     custom_output = 1; output_step = 1;
@@ -146,7 +151,10 @@ int AMediaCodec_releaseOutputBuffer(void *c, size_t index, bool render) {
     assert(c == &codec_token && index == 2 && !render); released++; return 0;
 }
 int AMediaCodec_releaseOutputBufferAtTime(void *c, size_t index, int64_t time) {
-    assert(c == &codec_token && index == 2 && (time == 9876543210LL || (mode == 17 && time == 10976543210LL))); released++; return 0;
+    assert(c == &codec_token && index == 2);
+    if (custom_deadline) assert(time == expected_deadline);
+    else assert(time == 9876543210LL || (mode == 17 && time == 10976543210LL));
+    last_deadline = time; released++; return 0;
 }
 uint8_t *AMediaCodec_getOutputBuffer(void *c, size_t index, size_t *capacity) {
     assert(c == &codec_token && index == 2); *capacity = sizeof(output_data); return output_data;

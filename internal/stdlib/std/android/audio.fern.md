@@ -30,8 +30,9 @@ An unavailable timestamp or invalid platform result returns `None`.
 Retry after an asynchronous start. Keep the stream open throughout the call.
 This query allocates memory. Call it outside a real-time audio callback.
 
-The anchor can support future audio/video synchronization.
-It does not assign media timestamps, synchronize the video controller, or measure acoustic lip-sync error.
+The video controller can use this anchor through `std/android/video/player.synchronize_audio`.
+The app supplies the matching media and frame origin and controls both streams.
+The timestamp query does not assign media timestamps or measure acoustic lip-sync error.
 
 ## Module assembly
 
