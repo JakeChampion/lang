@@ -7662,6 +7662,26 @@ function id(o: Own): Own { return o; }
 	}
 }
 
+func TestSlicedBuiltinResultRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(a: i32[]): [i32] { return a.append(1)[0:1]; }`,
+		`function f(a: i32[]): [i32] { return a.with(0, 1)[0:1]; }`,
+		`function f(a: i32[]): [i32] { let v: [i32] = a.append(1)[0:1]; return v; }`,
+	} {
+		if err := checkSource(t, src); err == nil || !hasCode(err, "E063") {
+			t.Errorf("%q: want E063, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(s: string): [u8] { return s.as_bytes()[0:1]; }`,
+		`function f(a: i32[], n: i32): i32 { let v: [i32] = a.append(n)[0:1]; return v[0]; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 func TestSlicedTemporaryAllowed(t *testing.T) {
 	const decls = `function idarr(x: i32[]): i32[] { return x; }
 function idstr(s: string): string { return s; }
