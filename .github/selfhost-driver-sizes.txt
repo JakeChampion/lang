@@ -616,9 +616,12 @@
 # 2026-11-11 (#15233): asm_modload_run measured 11387536 bytes in CI job
 # 130346696451 at 0bea6d21a9. The full report and source identity are in
 # docs/benchmarks/callback-modload-size-ci-2026-11-11/. The 5% tolerance is unchanged.
+# 2026-11-11 (#15226): runtime_run measured by the driver-sizes-x86_64 lane
+# after the lane-extraction shuffle fusion. Main at 38399ecf measured 16659696
+# (+4.97%). This change adds 12416 bytes.
 fern.fern/stage2 16710816
 fern.fern 16658288
-drivers/runtime_run.fern 16668464
+drivers/runtime_run.fern 16672112
 drivers/asm_load_run.fern 12721632
 drivers/asm_modload_run.fern 11387536
 drivers/asm_ir_run.fern 10449984

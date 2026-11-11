@@ -2503,6 +2503,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for name := range c.info.FuncSigs {
 		c.builtinFuncs[name] = true
 	}
+	// A reserved function name stops the check, as a reserved type name does.
+	if c.reservedFunctionNames(prog) {
+		sourceNamed(prog, c.errors)
+		return c.info, diag.Errors(c.errors)
+	}
 
 	for _, td := range prog.Traits {
 		if _, dup := c.info.Traits[td.Name]; dup {
@@ -9367,6 +9372,8 @@ type scope struct {
 	order  []string
 	vars   map[string]*ast.Var
 	consts map[string]bool
+	// rangeBody holds the range index whose loop body this scope is.
+	rangeBody string
 }
 
 func (s *scope) binder(name string) *scope {
@@ -11919,7 +11926,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if n.Label != "" {
 			c.loopLabels = append(c.loopLabels, n.Label)
 		}
-		n.Body = c.checkStmtLoweringForEach(n.Body, inner)
+		body := inner
+		if n.RangeIndex != "" {
+			body = newScope(inner)
+			body.rangeBody = n.RangeIndex
+		}
+		n.Body = c.checkStmtLoweringForEach(n.Body, body)
 		if n.Step != nil {
 			c.checkStmt(n.Step, inner)
 		}
@@ -14069,6 +14081,36 @@ func constArgOf(n *ast.NumberLit) ast.ConstArg {
 	return ast.ConstArg{Value: n.Value}
 }
 
+// isRangeIndex reports a name that a scope at or above s binds as the index
+// of a range `for` whose body s is in.
+func (c *checker) isRangeIndex(name string, s *scope) bool {
+	if found, ok := rangeIndexIn(name, s); ok {
+		return found
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if ent := c.captureChain[i]; ent.scope != nil {
+			if found, ok := rangeIndexIn(name, ent.scope); ok {
+				return found
+			}
+		}
+	}
+	return false
+}
+
+// rangeIndexIn walks up from s to the first scope that binds name or marks it
+// as its range index.
+func rangeIndexIn(name string, s *scope) (found, ok bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.rangeBody == name {
+			return true, true
+		}
+		if _, bound := cur.names[name]; bound {
+			return false, true
+		}
+	}
+	return false, false
+}
+
 func (c *checker) isConstParam(name string, s *scope) bool {
 	if b := s.binder(name); b != nil {
 		return b.consts[name]
@@ -16169,6 +16211,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Target.(*ast.Ident); ok && c.isConstParam(id.Name, s) {
 			c.errfCode(id.Pos(), "E091", "cannot assign to const parameter %s: it is the constant its instance is made for", id.Name)
+		} else if ok && c.isRangeIndex(id.Name, s) {
+			c.errfCode(id.Pos(), "E091", "cannot assign to range index %s: the loop sets it on each turn, so use a while loop to change it", id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok {
 			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
@@ -18323,6 +18367,21 @@ func declaredName(fn *ast.FuncDecl) string {
 		return fn.DeclName
 	}
 	return fn.Name
+}
+
+// reservedFunctionNames reports E010 for each free function that takes the
+// name of an unsafe intrinsic, and says whether it reported one. Any other
+// builtin can be shadowed.
+func (c *checker) reservedFunctionNames(prog *ast.Program) bool {
+	found := false
+	for _, fn := range prog.Funcs {
+		name := declaredName(fn)
+		if fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && UnsafeIntrinsics[name] {
+			c.report(fn.BodyModule(), fn.P, "E010", fmt.Sprintf("function %q is a reserved built-in name and cannot be redeclared", name))
+			found = true
+		}
+	}
+	return found
 }
 
 func (c *checker) checkMainSignature(fn *ast.FuncDecl) {

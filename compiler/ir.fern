@@ -4817,6 +4817,14 @@ function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
 struct Cancelled { ops: Op[], loads: i32[], emptied: boolean }
 
 function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
+  let expanded = false;
+  for i in 1..ops.len() {
+    if (ops[i].kind_tag == K_DROP && ops[i - 1].kind_tag == K_VPERMUTE) {
+      // A discarded permutation still evaluates both operands.
+      ops = ops.with(i - 1, op_drop());
+      expanded = true;
+    }
+  }
   let pushes: i32[] = [K_CONST_I32, K_CONST_I32_TEXT, K_CONST_I64, K_CONST_F64, K_CONST_STR, K_LOAD_LOCAL];
   let k_drop = K_DROP;
   let k_load = K_LOAD_LOCAL;
@@ -4824,7 +4832,7 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
   let kept = __alloc_i32(ops.len());
   let top = 0;
   let any = false;
-  let emptied = false;
+  let emptied = expanded;
   let i = 0;
   while (i < ops.len()) {
     let t = ops[i].kind_tag;
@@ -4850,7 +4858,7 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
     i += 1;
   }
   if (!any) {
-    return Cancelled { ops: ops, loads: loads, emptied: false };
+    return Cancelled { ops: ops, loads: loads, emptied: expanded };
   }
   let out: Op[] = [];
   for i in 0..ops.len() {

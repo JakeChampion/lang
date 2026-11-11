@@ -27,6 +27,8 @@ runs:
       shell: bash
       run: |
         dir="$RUNNER_TEMP/selfhost-unicache"
+        # A cache miss leaves no directory when no earlier step made one.
+        mkdir -p "$dir"
         stale=$(find "$dir" -maxdepth 1 -name '*.verdict' -mtime +7 -print -delete | wc -l)
         kept=$(find "$dir" -maxdepth 1 -name '*.verdict' | wc -l)
         echo "oracle verdict cache: $kept verdict(s) restored, $stale stale one(s) dropped"

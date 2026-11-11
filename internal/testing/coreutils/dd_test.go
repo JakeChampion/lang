@@ -248,6 +248,8 @@ func ddCases(t *testing.T) []invocation {
 
 	cases = append(cases,
 		invocation{name: "stdin-to-stdout", args: []string{"status=noxfer"}, stdin: "hello dd", seedTree: ddSeed},
+		invocation{name: "plain-partial-record-counts", args: []string{"bs=512", "count=3", "status=noxfer"}, stdin: strings.Repeat("X", 1025), seedTree: ddSeed},
+		invocation{name: "assembled-partial-record-counts", args: []string{"ibs=3", "obs=5", "status=noxfer"}, stdin: "abcdefg", seedTree: ddSeed},
 		invocation{name: "stdin-skip", args: []string{"bs=1", "skip=3", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
 		invocation{name: "stdin-skip-past-eof", args: []string{"bs=1", "skip=11", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
 		invocation{name: "stdin-fullblock", args: []string{"bs=4", "iflag=fullblock", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},

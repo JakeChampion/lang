@@ -41,6 +41,33 @@ func TestSelfHostCheckEntryShadowOfBuiltin(t *testing.T) {
 	}
 }
 
+// A function of an imported package under a raw builtin's name is E010 at its
+// own file in both checkers, as it is in the entry module (#15203).
+func TestSelfHostImportedRawBuiltinNameIsReserved(t *testing.T) {
+	cli := newStrictCLI(t)
+	fern := buildFernCLIBin(t)
+	dir := t.TempDir()
+	files := map[string]string{
+		"lib.fern":  "pub function __load_u8(x: i32): i32 { return x; }\npub function g(): i32 { return __load_u8(1); }\n",
+		"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.g(); }\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry := filepath.Join(dir, "main.fern")
+	const want = `lib.fern:1:5: error[E010]: function "__load_u8" is a reserved built-in name`
+	goOut, goErr := exec.Command(fern, "-check", entry).CombinedOutput()
+	if goErr == nil || !strings.Contains(string(goOut), want) || len(codeRE.FindAllString(string(goOut), -1)) != 1 {
+		t.Fatalf("Go checker = %v, want one diagnostic %q\n%s", goErr, want, goOut)
+	}
+	out, err := runX86_64Bin(cli.runner, cli.bin, "-check", entry, cli.stdlib).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), want) || len(codeRE.FindAllString(string(out), -1)) != 1 {
+		t.Fatalf("self-host checker = %v, want one diagnostic %q\n%s", err, want, out)
+	}
+}
+
 // A variant may take a built-in type's name. In a type, the name still means
 // the built-in, in the declaring module and in each importer, in both checkers.
 func TestSelfHostImportedVariantKeepsBuiltinType(t *testing.T) {

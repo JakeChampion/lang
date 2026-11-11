@@ -1,0 +1,27 @@
+// Emit packet ranges and bytes for independent VP9 split comparisons.
+import "std/video/vp9";
+import "std/video/frame";
+import "std/hex";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let value = match (vp9.split_packet(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  print(value.index_offset.to_string());
+  print(value.trailing_bytes.to_string());
+  print(value.frames.len().to_string());
+  for part in value.frames {
+    print(part.offset.to_string());
+    print(part.size.to_string());
+    print(hex.encode(bytes[part.offset:part.offset + part.size]));
+  }
+  return 0;
+}

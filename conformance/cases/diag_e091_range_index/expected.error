@@ -1,0 +1,1 @@
+cannot assign to range index i: the loop sets it on each turn, so use a while loop to change it

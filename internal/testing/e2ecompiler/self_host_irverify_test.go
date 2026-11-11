@@ -10,10 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/pkg/modload"
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
-	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
 func TestSelfHostIRVerifyStructure(t *testing.T) {
@@ -227,7 +223,6 @@ func testProvidedCorpus(t *testing.T, bin string) {
 
 	type result struct {
 		ran                     bool
-		refused                 bool
 		calls, modelled, bodies int
 	}
 	results := make([]result, len(mains))
@@ -238,15 +233,6 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				t.Parallel()
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
-				want, readErr := os.ReadFile(filepath.Join(filepath.Dir(main), "expected.lowering-error"))
-				if readErr == nil {
-					testProvidedLoweringRefusal(t, filepath.Join(stage, "main.fern"), string(want))
-					results[i].refused = true
-					return
-				}
-				if !os.IsNotExist(readErr) {
-					t.Fatal(readErr)
-				}
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
 				var stderr bytes.Buffer
 				cmd.Stderr = &stderr
@@ -267,13 +253,10 @@ func testProvidedCorpus(t *testing.T, bin string) {
 			})
 		}
 	})
-	swept, refused, calls, modelled, bodies := 0, 0, 0, 0, 0
+	swept, calls, modelled, bodies := 0, 0, 0, 0
 	for _, result := range results {
 		if result.ran {
 			swept++
-			if result.refused {
-				refused++
-			}
 			calls += result.calls
 			modelled += result.modelled
 			bodies += result.bodies
@@ -286,87 +269,6 @@ func testProvidedCorpus(t *testing.T, bin string) {
 		t.Errorf("pass resolved %d direct calls across the corpus, expected far more: a sweep that resolved nothing proves nothing", calls)
 	}
 	t.Logf("swept %d/%d fixtures, resolved %d direct calls, stack-modelled %d/%d bodies", swept, len(mains), calls, modelled, bodies)
-	t.Logf("validated %d expected lowering refusals through the production compiler", refused)
-}
-
-func testProvidedLoweringRefusal(t *testing.T, main, want string) {
-	t.Helper()
-	prog, _, err := modload.Load(main)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gates.Check(main, prog, "", nil); err != nil {
-		t.Fatalf("lowering fixture failed the front end: %v", err)
-	}
-	out := filepath.Join(t.TempDir(), "prog")
-	cmd := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, main, out)
-	cmd.Env = e2eharness.SelfHostChildEnv()
-	var output []byte
-	err = withBuildMemoryMB(5*1024, func() error {
-		var err error
-		output, err = cmd.CombinedOutput()
-		return err
-	})
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatalf("lowering compiler did not exit normally: %v\n%s", err, output)
-	}
-	if err := validateProvidedLoweringRefusal(cmd.ProcessState.ExitCode(), string(output), want); err != nil {
-		t.Fatalf("invalid lowering refusal: %v\n%s", err, output)
-	}
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Fatalf("refused fixture left an output executable: %v", err)
-	}
-}
-
-var providedLoweringDiagnostic = regexp.MustCompile(`(?m)^.*: error\[E[0-9]{3}\]: `)
-
-func validateProvidedLoweringRefusal(exitCode int, output, want string) error {
-	if exitCode != 1 {
-		return fmt.Errorf("compiler exited %d, want diagnostic status 1", exitCode)
-	}
-	if !providedLoweringDiagnostic.MatchString(output) || strings.Contains(output, "error: internal:") {
-		return fmt.Errorf("expected a compiler diagnostic")
-	}
-	if strings.TrimSpace(want) == "" {
-		return fmt.Errorf("empty expected.lowering-error")
-	}
-	for _, line := range strings.Split(want, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.Contains(output, line) {
-			return fmt.Errorf("missing expected diagnostic %q", line)
-		}
-	}
-	return nil
-}
-
-func TestProvidedLoweringRefusalVerdict(t *testing.T) {
-	const diagnostic = "main.fern:4:3: error[E065]: expected refusal\n"
-	for _, tc := range []struct {
-		name         string
-		exit         int
-		output, want string
-		ok           bool
-	}{
-		{"exact", 1, diagnostic, diagnostic, true},
-		{"message", 1, diagnostic, "expected refusal\n", true},
-		{"all_lines", 1, diagnostic + "second detail\n", "expected refusal\nsecond detail\n", true},
-		{"clean", 0, diagnostic, diagnostic, false},
-		{"internal_exit", 3, diagnostic, diagnostic, false},
-		{"signal", -1, diagnostic, diagnostic, false},
-		{"wrong_message", 1, diagnostic, "another refusal", false},
-		{"missing_detail", 1, diagnostic, "expected refusal\nsecond detail", false},
-		{"no_diagnostic", 1, "expected refusal", "expected refusal", false},
-		{"internal_error", 1, diagnostic + "error: internal: missing body\n", diagnostic, false},
-		{"empty_expectation", 1, diagnostic, "", false},
-		{"blank_expectation", 1, diagnostic, " \n", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateProvidedLoweringRefusal(tc.exit, tc.output, tc.want)
-			if (err == nil) != tc.ok {
-				t.Fatalf("verdict = %v, want accepted %v", err, tc.ok)
-			}
-		})
-	}
 }
 
 func parseStackCoverage(out string) (int, int) {

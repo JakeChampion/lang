@@ -1465,6 +1465,8 @@ type For struct {
 	Step  Stmt
 	Body  Stmt
 	Label string
+	// RangeIndex names the index of a range `for`, which only Step may assign.
+	RangeIndex string
 }
 
 type ForEach struct {
