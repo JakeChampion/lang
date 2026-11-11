@@ -165,6 +165,71 @@ function frame_text(f: frames.Frame): string {
   }
 }
 
+// Fragments in a mixed order, with overlaps and repeats, give the bytes of
+// the stream in order. The reads at different points take what is ready.
+function test_reassembly_mixed_order(): test.TestOutcome {
+  let size = 6000;
+  let r = streams.reassembly();
+  let got: u8[] = [];
+  let seed = 12345;
+  let round = 0;
+  while (r.delivered() < size as i64 && round < 20000) {
+    seed = seed * 1103515245 + 12345 & 0x7fffffff;
+    let at = seed >> 8 & 8191;
+    seed = seed * 1103515245 + 12345 & 0x7fffffff;
+    let n = 1 + (seed >> 8 & 63);
+    if (at < size) {
+      if (at + n > size) {
+        n = size - at;
+      }
+      r = r.add(at as i64, bytes(n, at));
+    }
+    if (round % 97 == 0) {
+      let (next, out) = r.take();
+      r = next;
+      got = got.concat(out);
+    }
+    round += 1;
+  }
+  let (last, out) = r.take();
+  got = got.concat(out);
+  let ordered = got.len() == size;
+  let i = 0;
+  while (ordered && i < size) {
+    ordered = got[i] == i as u8;
+    i += 1;
+  }
+  return test.assert_eq(ordered.to_string() + " " + last.held_bytes.to_string() + " " + last.overrun.to_string(), "true 0 false");
+}
+
+// One-byte fragments with a gap between each two. The count of ranges has a
+// limit, and the stream that goes past it fails the connection.
+function test_reassembly_gap_limit(): test.TestOutcome {
+  let one: u8[] = [7 as u8];
+  let r = streams.reassembly();
+  let i = 0;
+  while (i < streams.MAX_HELD_SPANS) {
+    r = r.add((2 * i + 1) as i64, one);
+    i += 1;
+  }
+  let full = r.overrun.to_string() + " " + r.held_bytes.to_string();
+  // A fragment that joins two ranges does not add a range.
+  r = r.add(2 as i64, one);
+  let joined = r.overrun.to_string() + " " + r.held_bytes.to_string();
+  r = r.add(4000 as i64, one).add(4002 as i64, one);
+  let s = streams.table(true, limits(4 as i64, 1 as i64, 100000 as i64, 100000 as i64)).with_peer(limits(2 as i64, 2 as i64, 50 as i64, 80 as i64));
+  i = 0;
+  while (i <= streams.MAX_HELD_SPANS) {
+    s = s.on_stream(0 as i64, (2 * i + 1) as i64, one, false);
+    i += 1;
+  }
+  let failed = "none";
+  if let Some(e) = s.failed {
+    failed = e.code.to_string() + "/" + e.frame_type.to_string();
+  }
+  return test.assert_eq(full + " | " + joined + " | " + r.overrun.to_string() + " | " + failed, "false 1000 | false 1001 | true | 1/8");
+}
+
 function test_reassembly(): test.TestOutcome {
   let r = streams.reassembly().add(10 as i64, bytes(10, 10)).add(10 as i64, bytes(10, 10)).add(15 as i64, bytes(10, 15));
   let held = r.held_bytes.to_string();
@@ -609,6 +674,8 @@ function test_late_fin_once(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/quic/streams");
   r = r.it("reassembly holds no byte twice", test_reassembly);
+  r = r.it("fragments in a mixed order give the stream in order", test_reassembly_mixed_order);
+  r = r.it("the ranges that a reassembly holds have a limit", test_reassembly_gap_limit);
   r = r.it("the peer opens streams up to the limit", test_peer_opens);
   r = r.it("each frame needs its half", test_directions);
   r = r.it("windows and final sizes", test_limits);

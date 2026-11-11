@@ -70,3 +70,6 @@ After another source change, pin this command to the original publication commit
 The later merge retains main `d775b3e9`, with the owner changes intact.
 The records above still qualify publication `ee490111` and its original source.
 The verifier and all 75 data records remain unchanged.
+
+A subsequent merge retains main `2999404d` and its owner changes.
+The source-specific controls above remain records of the original publication.

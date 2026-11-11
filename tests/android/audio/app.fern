@@ -61,8 +61,20 @@ function check(ctx: usize): void {
       }
       wrote += speaker.write(tone, 200);
     }
+    log_anchor(speaker);
     speaker.stop();
   }
   speaker.close();
   log.warn("audiotest: playback rate " + speaker.rate.to_string() + ", wrote " + wrote.to_string() + " samples");
+}
+
+function log_anchor(speaker: audio.Stream): void {
+  match (speaker.timestamp()) {
+    Some(value) => {
+      log.warn("audiotest: timestamp frames " + value.frame_position.to_string() + " monotonic_ns " + value.monotonic_ns.to_string());
+    },
+    None => {
+      log.warn("audiotest: timestamp unavailable");
+    }
+  }
 }

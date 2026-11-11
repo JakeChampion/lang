@@ -366,6 +366,90 @@ function test_qpack_blocked(): test.TestOutcome {
   return test.assert_eq(waits + " | " + int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "false true false | 0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
 }
 
+// A control stream that starts with a SETTINGS frame of `count` settings
+// with identifiers that this side does not know.
+function settings_stream(count: i32): u8[] {
+  let n = count * 3;
+  let out: u8[] = [0u8, 4u8, (64 + (n >> 8)) as u8, (n & 255) as u8];
+  let i = 0;
+  while (i < count) {
+    out = out.append(64u8).append((100 + i) as u8).append(0u8);
+    i += 1;
+  }
+  return out;
+}
+
+function test_settings_limit(): test.TestOutcome {
+  let server = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
+  let most = server.on_stream(2 as i64, settings_stream(h3.MAX_SETTINGS), false);
+  let over = server.on_stream(2 as i64, settings_stream(h3.MAX_SETTINGS + 1), false);
+  return test.assert_eq(closes(most) + closes(over), "open; 263 more settings than this side reads; ");
+}
+
+// A unidirectional stream of a type that this side does not know is
+// stopped. The session holds no record of it after it ends.
+function test_finished_uni_streams_are_forgotten(): test.TestOutcome {
+  let server = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
+  let before = server.unis.len();
+  let cur = server;
+  let stops = 0;
+  let k = 0;
+  while (k < 50) {
+    cur = cur.on_stream(k as i64 * 4 + 2, [33u8, 1u8, 2u8], true);
+    for a in cur.actions {
+      match (a) {
+        h3.Stop(id, code) => {
+          stops += 1;
+        },
+        _ => {}
+      }
+    }
+    cur = cur.taken();
+    k += 1;
+  }
+  let ended = cur.unis.len() - before;
+  // A stream that stays open has a record until it ends or is reset.
+  let open = cur.on_stream(402 as i64, [33u8], false).on_stream(406 as i64, [33u8], false).on_stream(410 as i64, [], false);
+  let held = open.unis.len() - before;
+  let closed = open.on_stream(402 as i64, [9u8], true).on_reset(406 as i64, 0 as i64).on_stream(410 as i64, [], true);
+  return test.assert_eq(stops.to_string() + " " + ended.to_string() + " " + held.to_string() + " " + (closed.unis.len() - before).to_string() + " " + closes(closed.taken()), "50 0 3 0 open; ");
+}
+
+// The bytes of a complete request on stream `id`, from a new client.
+function request_bytes(id: i64): u8[] {
+  let out: u8[] = [];
+  for a in h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64).send_headers(id, get("/again"), true).actions {
+    match (a) {
+      h3.Write(at, bytes, fin) => {
+        if (at == id) {
+          out = out.concat(bytes);
+        }
+      },
+      _ => {}
+    }
+  }
+  return out;
+}
+
+function test_finished_stream_stays_finished(): test.TestOutcome {
+  let bad: qpack.Field[] = [qpack.field(":method", "GET"), qpack.field(":scheme", "https")];
+  let p = linked();
+  p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, bad, true) });
+  let late = p.s.on_stream(0 as i64, request_bytes(0 as i64), true);
+  let out = noted("server", late.events) + "|";
+  // After the sweep of the request table, the streams that it removed are
+  // finished also, and a stream that has not started is not.
+  let k = 1;
+  while (k <= 40) {
+    p = flow(Link { ...p, log: "", c: p.c.send_headers(k as i64 * 4, bad, true) });
+    k += 1;
+  }
+  let swept = p.s.on_stream(0 as i64, request_bytes(0 as i64), true).on_stream(80 as i64, request_bytes(80 as i64), true);
+  out += noted("server", swept.events) + "|";
+  let next = p.s.on_stream(164 as i64, request_bytes(164 as i64), true);
+  return test.assert_eq(out + noted("server", next.events), "||server headers 164 [:method=GET :scheme=https :authority=example.com :path=/again ]; server end 164; ");
+}
+
 function test_slot_sharing(): test.TestOutcome {
   let headers = __codec_bytes(hex.decode("0106" + "03811011d1d7"));
   let s = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
@@ -399,6 +483,9 @@ function main(): i32 {
   r = r.it("GOAWAY", test_goaway);
   r = r.it("a field section blocked on QPACK", test_qpack_blocked);
   r = r.it("a request stream below the swept window is still answered", test_reordered_low_stream);
+  r = r.it("later bytes on a finished request stream do not start a request", test_finished_stream_stays_finished);
+  r = r.it("a SETTINGS frame has a limit on its settings", test_settings_limit);
+  r = r.it("a unidirectional stream that ended is forgotten", test_finished_uni_streams_are_forgotten);
   r = r.it("a stream is not taken for the request sharing its slot", test_slot_sharing);
   return r.finish();
 }

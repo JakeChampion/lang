@@ -1,0 +1,357 @@
+[
+  {
+    "name": "borrowed tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => (H, Mark)): own (H, Mark) { let p = make(); return (p.0, p.1); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed direct tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => H): own (H, i32) { return (make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed array",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => H): own H[] { return [make()]; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed record",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function f(make: () => H): own Wrap { return Wrap { h: make() }; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "callback field",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Holder { make: () => H } function f(x: Holder): own (H, i32) { return (x.make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "forwarded callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction forward(make: () => H): H { return make(); } function f(make: () => H): own (H, i32) { return (forward(make), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "forwarded holder",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Holder { make: () => H } function forward(x: Holder): H { return x.make(); } function f(x: Holder): own (H, i32) { return (forward(x), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "owned callback parameter",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction forward(own make: () => H): H { return make(); } function f(own make: () => H): own (H, i32) { return (forward(make), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "checked callback tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => own (H, Mark)): own (H, Mark) { let p = make(); return (p.0, p.1); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "checked callback resource",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => own H): own (H, i32) { return (make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "checked callback generic",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f[T](make: () => own T): own T { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed callback generic",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f[T](make: () => T): own T { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "copied string",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => string): own string { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied array",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => i32[]): own i32[] { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => (i32[], Mark)): own (i32[], Mark) { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied record",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Data { xs: i32[] } function f(make: () => Data): own Data { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed cell",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => Cell[i32]): own Cell[i32] { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed receiver method",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) get(): H { return w.h; } function f(w: Wrap): own (H, i32) { return (w.get(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "ordinary receiver needs contract",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) fresh(): H { return H { fd: 1 }; } function f(w: Wrap): own H { return w.fresh(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "checked receiver method",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) fresh(): own H { return H { fd: 1 }; } function f(w: Wrap): own H { return w.fresh(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed cell field",
+    "source": "struct Token { closed: Cell[i32] } function (own t: Token) close(): void { t.closed.set(t.closed.get() + 1); }\nfunction f(closed: Cell[i32]): own Token { let t = Token { closed: closed }; return t; } function main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "owned cell field",
+    "source": "struct Token { closed: Cell[i32] } function (own t: Token) close(): void { t.closed.set(t.closed.get() + 1); }\nfunction f(own closed: Cell[i32]): own Token { let t = Token { closed: closed }; return t; } function main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "background callback has no result loan",
+    "source": "struct H { fd: i32 } function (own h: H) close(): void {}\nstruct State { h: H, work: (() => void)[] } function append(own state: State, work: () => void): own State { return State { ...state, work: state.work.append(work) }; } function main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "deferred spread owner",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own s:S):own S{defer consume(s);return S{...s,n:1};} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred tuple payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own(H,i32){defer h.close();return(h,1);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred array payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own H[]{defer h.close();return[h];} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred variant payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nenum E {Have(H)} function f(own h:H):own E{defer h.close();return Have(h);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred map payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nimport \"core/map\"; function f(own h:H):own Map[i32,H]{defer h.close();return Map {1:h};} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred sibling copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nstruct Pair {a:H,b:H} function f(own p:Pair):own H{defer p.a.close();return p.b;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "deferred scalar copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own H{defer h.close();return H{fd:h.fd};} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "deferred data copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H,xs:i32[]):own i32[]{defer h.close();return xs;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested local field",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested scalar copy",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested owned parameter",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own p:(Wrap,i32)):void{let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested siblings",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function both(own a:H,own b:H):own(Wrap,Wrap){return(Wrap{h:a},Wrap{h:b});} function f(own a:H,own b:H):void{let p=both(a,b);let n=p.0.h.fd;let m=p.1.h.fd;p.0.h.close();p.1.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested field alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let alias=p.0.h;p.0.h.close();alias.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested holder alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let alias=p;p.0.h.close();alias.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested duplicate close",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);p.0.h.close();p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested later read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):i32{let p=pair(h);p.0.h.close();return p.0.h.fd;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested deferred close",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);defer p.0.h.close();p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested resource borrow",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function read(h:H):void{} function f(own h:H):void{let p=pair(h);read(p.0.h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested reassigned holder",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own a:H,own b:H):void{let p=pair(a);p=pair(b);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested borrowed result",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function lend(w:Wrap):(Wrap,i32){return(w,0);} function f(w:Wrap):void{let p=lend(w);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested callback parameter",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,make:(own H)=>own(Wrap,i32)):void{let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested generic callback",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f[T](own h:H,make:(own H)=>own(Wrap,T)):void{let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested callback shadows function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,pair:(H)=>(Wrap,i32)):void{let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested local shadows function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let pair=(x:H):(Wrap,i32)=>(Wrap{h:x},0);let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested callback alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,make:(own H)=>own(Wrap,i32)):void{let alias=make;let p=alias(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested function alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let alias=pair;let p=alias(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested local lambda",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let make=(own x:H):own(Wrap,i32)=>(Wrap{h:x},1);let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested weakened function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let alias:(own H)=>(Wrap,i32)=pair;let p=alias(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested ordinary generic after scalar",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Box[T]{value:T} function lend[T](box:Box[T]):(Box[T],i32){return(box,0);} function f(own h:H):void{let warm=lend(Box{value:1});let n=warm.0.value;let p=lend(Box{value:h});p.0.value.close();h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_bytes",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[]} function make():own(S,i32){return(S{h:H{n:7},data:[1 as u8]},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_nested_bytes",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]} function make():own(S,i32){return(S{h:H{n:7},data:[[1 as u8]]},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_wide",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:i64[]} function make():own(S,i32){return(S{h:H{n:7},data:[1 as i64]},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_floats",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:f64[]} function make():own(S,i32){return(S{h:H{n:7},data:[1.0]},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_bools",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:boolean[]} function make():own(S,i32){return(S{h:H{n:7},data:[true]},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_chars",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:char[]} function make():own(S,i32){return(S{h:H{n:7},data:['a']},3);}function main():i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_parameter",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(own p:(S,i32)):i32{let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_callback",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(make:()=>own(S,i32)):i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_generic_callback",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f[T](make:(T)=>own(S,i32),x:T):i32{let p=make(x);let kept=p.0.data;return p.0.h.close()+kept.len()+p.1;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked_array_field_copy_resource_alias",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(own p:(S,i32)):i32{let kept=p.0.data;let alias=p.0.h;return p.0.h.close()+alias.n+kept.len();}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_holder_alias",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(own p:(S,i32)):i32{let kept=p.0.data;let alias=p.0;return p.0.h.close()+alias.h.n+kept.len();}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_later_read",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(own p:(S,i32)):i32{let kept=p.0.data;let n=p.0.h.close();return n+p.0.h.n+kept.len();}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_deferred_owner",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function consume(own s:S):void{} function f(own p:(S,i32)):i32{let kept=p.0.data;defer consume(p.0);return p.0.h.close()+kept.len();}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_ordinary_callback",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} struct S{h:H,data:u8[][]}function f(make:()=>(S,i32)):i32{let p=make();let kept=p.0.data;return p.0.h.close()+kept.len();}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_refuses_resource",
+    "source": "struct H{n:i32} function(own h:H)close():void{} struct Many{items:H[]} function consume(own items:H[]):void{} function f(own p:(Many,i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_refuses_cell",
+    "source": "struct H{n:i32} function(own h:H)close():void{} struct Many{items:Cell[i32][]} function consume(own items:Cell[i32][]):void{} function f(own p:(Many,i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_refuses_view",
+    "source": "struct H{n:i32} function(own h:H)close():void{} struct Many{items:[u8][]} function consume(own items:[u8][]):void{} function f(own p:(Many,i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_refuses_callback",
+    "source": "struct H{n:i32} function(own h:H)close():void{} struct Many{items:(() => i32)[]} function consume(own items:(() => i32)[]):void{} function f(own p:(Many,i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked_array_field_copy_refuses_generic",
+    "source": "struct H{n:i32} function(own h:H)close():void{} struct Many[T]{items:T[]} function consume[T](own items:T[]):void{} function f[T](own p:(Many[T],i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
+    "want": "E051"
+  }
+]

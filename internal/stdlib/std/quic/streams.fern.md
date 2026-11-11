@@ -85,7 +85,15 @@ import "std/i64";
 
 ```fern
 <<3 pub struct Reassembly>>=
-pub struct Reassembly { taken: i64, ready: u8[], held_at: i64[], held: u8[][], held_bytes: i64 }
+// `held` has the bytes after the first gap: the byte of the stream offset
+// `held_from + i` is `held[i]`. `spans` has the ranges that are full, as
+// pairs of a start offset and an end offset, in order, with a gap between
+// each two. `held_bytes` is the total of the ranges. `overrun` is true when
+// a fragment made more than MAX_HELD_SPANS ranges, and that fragment is lost.
+pub struct Reassembly { taken: i64, ready: u8[], held: u8[], held_from: i64, spans: i64[], held_bytes: i64, overrun: boolean }
+
+// A sender that loses packets makes one range for each run of lost packets.
+pub const MAX_HELD_SPANS: i32 = 1000;
 ```
 
 ### `4 pub function reassembly(): Reassembly`
@@ -93,7 +101,7 @@ pub struct Reassembly { taken: i64, ready: u8[], held_at: i64[], held: u8[][], h
 ```fern
 <<4 pub function reassembly(): Reassembly>>=
 pub function reassembly(): Reassembly {
-  return Reassembly { taken: 0 as i64, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
+  return Reassembly { taken: 0 as i64, ready: [], held: [], held_from: 0 as i64, spans: [], held_bytes: 0 as i64, overrun: false };
 }
 
 pub function (r: Reassembly) delivered(): i64 {
@@ -126,52 +134,102 @@ pub function (r: Reassembly) take(): (Reassembly, u8[]) {
 ```fern
 <<5 function (r: Reassembly) __discard(): Reassembly>>=
 function (r: Reassembly) __discard(): Reassembly {
-  return Reassembly { ...r, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
+  return Reassembly { ...r, ready: [], held: [], spans: [], held_bytes: 0 as i64 };
 }
 
 function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
   let end = offset + data.len() as i64;
-  let cur = offset;
-  let at: i64[] = [];
-  let held: u8[][] = [];
+  let lo = offset;
+  let hi = end;
+  let spans: i64[] = [];
+  let total = 0 as i64;
+  let placed = false;
   let i = 0;
-  while (i < r.held.len()) {
-    let s = r.held_at[i];
-    let e = s + r.held[i].len() as i64;
-    if (cur < end && s > cur) {
-      let piece = __min(end, s);
-      at = at.append(cur);
-      held = held.append(__slice_range(data, (cur - offset) as i32, (piece - offset) as i32));
-      cur = piece;
+  while (i < r.spans.len()) {
+    let s = r.spans[i];
+    let e = r.spans[i + 1];
+    if (e < lo) {
+      spans = spans.append(s).append(e);
+      total += e - s;
+    } else if (s > hi) {
+      if (!placed) {
+        spans = spans.append(lo).append(hi);
+        total += hi - lo;
+        placed = true;
+      }
+      spans = spans.append(s).append(e);
+      total += e - s;
+    } else {
+      lo = __min(lo, s);
+      hi = __max(hi, e);
     }
-    if (s <= cur && e > cur) {
-      cur = e;
-    }
-    at = at.append(s);
-    held = held.append(r.held[i]);
-    i += 1;
+    i += 2;
   }
-  if (cur < end) {
-    at = at.append(cur);
-    held = held.append(__slice_range(data, (cur - offset) as i32, data.len()));
+  if (!placed) {
+    spans = spans.append(lo).append(hi);
+    total += hi - lo;
   }
-  return Reassembly { ...r, held_at: at, held: held, held_bytes: __total(held) };
+  if (spans.len() > 2 * MAX_HELD_SPANS) {
+    return Reassembly { ...r, overrun: true };
+  }
+  let from = r.held_from;
+  if (r.spans.len() == 0) {
+    from = r.delivered();
+  }
+  let at = (offset - from) as i32;
+  return Reassembly { ...r, held: __bytes_into(__room(r.held, at + data.len()), at, data, 0, data.len()), held_from: from, spans: spans, held_bytes: total };
+}
+
+// __room gives `held` a length of `n` or more. The length doubles, so the
+// bytes that it copies are in proportion to the bytes that arrive.
+function __room(held: u8[], n: i32): u8[] {
+  if (n <= held.len()) {
+    return held;
+  }
+  let size = held.len() * 2;
+  if (size < n) {
+    size = n;
+  }
+  return __bytes_into(__alloc_u8(size), 0, held, 0, held.len());
 }
 
 function __drain(r: Reassembly): Reassembly {
-  let cur = r;
-  while (cur.held.len() > 0 && cur.held_at[0] <= cur.delivered()) {
-    let front = cur.delivered();
-    let seg = cur.held[0];
-    let ready = cur.ready;
-    let skip = front - cur.held_at[0];
-    if (skip < seg.len() as i64) {
-      ready = __append_range(ready, seg, skip as i32, seg.len());
+  let front = r.delivered();
+  let ready = r.ready;
+  let total = r.held_bytes;
+  let i = 0;
+  while (i < r.spans.len() && r.spans[i] <= front) {
+    let e = r.spans[i + 1];
+    total -= e - r.spans[i];
+    if (e > front) {
+      ready = __append_range(ready, r.held, (front - r.held_from) as i32, (e - r.held_from) as i32);
+      front = e;
     }
-    let held = __rest(cur.held);
-    cur = Reassembly { ...cur, ready: ready, held_at: __rest_i64(cur.held_at), held: held, held_bytes: __total(held) };
+    i += 2;
   }
-  return cur;
+  if (i == 0) {
+    return r;
+  }
+  if (i == r.spans.len()) {
+    return Reassembly { ...r, ready: ready, held: [], spans: [], held_bytes: 0 as i64 };
+  }
+  let spans: i64[] = [];
+  while (i < r.spans.len()) {
+    spans = spans.append(r.spans[i]);
+    i += 1;
+  }
+  return __compact(Reassembly { ...r, ready: ready, spans: spans, held_bytes: total });
+}
+
+// __compact drops the start of `held` that is before the first range, when
+// that start is more than half of `held`.
+function __compact(r: Reassembly): Reassembly {
+  let dead = (r.spans[0] - r.held_from) as i32;
+  if (dead * 2 <= r.held.len()) {
+    return r;
+  }
+  let live = (r.spans[r.spans.len() - 1] - r.spans[0]) as i32;
+  return Reassembly { ...r, held: __bytes_into(__alloc_u8(live), 0, r.held, dead, live), held_from: r.spans[0] };
 }
 ```
 
@@ -649,6 +707,9 @@ pub function (s: Streams) on_stream(id: i64, offset: i64, data: [u8], fin: boole
   let before = st.data.delivered();
   let fin_read = st.fin_read;
   next = Streams { ...next, list: next.list.with(i, next.list[i].__received(offset, data, fin, more, true)) };
+  if (next.list[i].data.overrun) {
+    return next.__fail(__error(frames.INTERNAL_ERROR, frames.STREAM, "more ranges of stream data out of order than this side holds"));
+  }
   if (next.list[i].data.delivered() > before || fin && !fin_read && next.list[i].data.delivered() == next.list[i].final_size) {
     return Streams { ...next, events: next.events.append(Readable(id)) };
   }
@@ -1245,24 +1306,6 @@ function __send_done(st: Stream): boolean {
 
 function __recv_done(st: Stream): boolean {
   return !st.has_recv || st.fin_read || st.recv_reset >= 0;
-}
-
-function __total(held: u8[][]): i64 {
-  let n = 0;
-  for h in held {
-    n += h.len() as i64;
-  }
-  return n;
-}
-
-function __rest(xs: u8[][]): u8[][] {
-  let out: u8[][] = [];
-  let i = 1;
-  while (i < xs.len()) {
-    out = out.append(xs[i]);
-    i += 1;
-  }
-  return out;
 }
 ```
 

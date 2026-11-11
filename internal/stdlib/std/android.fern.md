@@ -197,7 +197,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
 
-`ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
+`ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it.
 
 `Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
 

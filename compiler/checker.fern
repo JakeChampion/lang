@@ -3945,6 +3945,32 @@ function preregistered_methods(ns: string): string[] {
   };
 }
 
+// The runtime symbol of the preregistered method `name` of `ns`.
+function preregistered_symbol(ns: string, name: string): string {
+  let runtime = match (name) {
+    "append" => "push",
+    "with" => "set",
+    "insert" => "set",
+    "cleared" => "clear",
+    _ => name,
+  };
+  return "__method_" + ns + "_" + runtime;
+}
+
+function is_preregistered_symbol(symbol: string): boolean {
+  if (!symbol.starts_with("__method_")) {
+    return false;
+  }
+  for ns in ["Array", "slice", "string", "Map", "Cell"] {
+    for name in preregistered_methods(ns) {
+      if (preregistered_symbol(ns, name) == symbol) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function map_receiver_type(rt: string): boolean {
   if (rt == "Map") {
     return true;
@@ -18009,8 +18035,9 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it.
-  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
+  // A free function named like a builtin, an intrinsic or the symbol of a
+  // preregistered method redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || is_preregistered_symbol(f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -18381,7 +18408,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 
 pub struct OwnFunc { name: string, flags: boolean[], send: boolean[] }
 
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
+pub struct OwnFuncs { owned_results: boolean[], rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32, mcol: i32 }
 
@@ -19220,11 +19247,11 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
 // entry per field the literal replaces.
-struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
+struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
@@ -19277,6 +19304,9 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }), assigns: f.assigns.append(LuVar { name: a.target, init: a.value }) };
     },
     ast.StmtVar(v) => {
+      if (v.type_name == "fn" && v.fn_ret.starts_with("own ")) {
+        f = LuFacts { ...f, checked_locals: f.checked_locals.append(v.name) };
+      }
       if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
@@ -19435,7 +19465,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
           return LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
         },
         _ => {
-          return f;
+          return lu_copy_selection(fa, f);
         }
       }
     },
@@ -19456,6 +19486,29 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
       return f;
     }
   }
+}
+
+function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+  let ty = fa.ty;
+  if (!lu_primitive_array_copy(ty) && (ty == "string" || ty == "str" || !typeinfo.is_primitive_type_name(ty))) {
+    return f;
+  }
+  let enclosing = ow_enclosing_field(fa);
+  if let ast.ExprIdent(id) = enclosing.obj {
+    return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
+  }
+  return f;
+}
+
+function lu_primitive_array_copy(ty: string): boolean {
+  if (!ty.ends_with("[]")) {
+    return false;
+  }
+  let leaf = ty;
+  while (leaf.ends_with("[]")) {
+    leaf = slice_unchecked(leaf, 0, leaf.len() - 2).to_owned();
+  }
+  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "void"], leaf);
 }
 
 function lu_occ_count(fx: LuFn, name: string): i32 {
@@ -19539,6 +19592,9 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprCall(c) = e {
+    if (lu_checked_result_call(fx, c)) {
+      return true;
+    }
     if let Some(tail) = ow_unsafe_value(c) {
       return lu_fresh_value(fx, tail);
     }
@@ -20616,7 +20672,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -21822,9 +21878,48 @@ function lu_holds_call(scope: ast.Expr, call: ast.Expr): boolean {
   return h.found;
 }
 
-// No earlier field read or whole-owner read can retain an alias here.
+function lu_checked_params(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    let ref = parser.ref_ungroup(parser.parse_type_ref(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types)));
+    if (ref.is_fn && ref.args.len() > 0 && parser.ref_is_own(parser.ref_fn_result(ref))) {
+      out = out.append(p.name);
+    }
+  }
+  return out;
+}
+
+function lu_checked_result_local(fx: LuFn, name: string): boolean {
+  let Some(init) = lu_init_of(fx, name) else {
+    return false;
+  };
+  if let ast.ExprCall(call) = init {
+    return lu_checked_result_call(fx, call);
+  }
+  return false;
+}
+
+function lu_checked_result_call(fx: LuFn, call: ast.ExprCall): boolean {
+  let ref = parser.ref_ungroup(parser.parse_type_ref(ast.expr_ty(call.callee)));
+  if (ref.is_fn && ref.args.len() > 0) {
+    return parser.ref_is_own(parser.ref_fn_result(ref));
+  }
+  if let ast.ExprIdent(id) = call.callee {
+    if (util.has_str(fx.params, id.name)) {
+      return util.has_str(fx.checked_params, id.name);
+    }
+    if (lu_decl_count(fx, id.name) > 0) {
+      return util.has_str(fx.facts.checked_locals, id.name);
+    }
+    let at = fx.ofuncs.funcs.find(id.name);
+    return at >= 0 && fx.ofuncs.owned_results[at];
+  }
+  return false;
+}
+
+// Scalar and primitive COW array copies cannot retain a resource alias.
 function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolean {
-  if (!lu_own_param(fx, name)) {
+  if (!lu_own_param(fx, name) && !(lu_decl_count(fx, name) == 1 && lu_checked_result_local(fx, name))) {
     return false;
   }
   for a in fx.facts.assigns {
@@ -21839,7 +21934,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field) {
+      if (selected == field && !util.has_str(fx.facts.copy_sels, lu_key(o.line, o.col))) {
         reads += 1;
       }
     }
@@ -22234,7 +22329,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
-  let fx0 = LuFn { ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
+  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
@@ -23042,23 +23137,55 @@ function ow_defer_local_moves(st: ast.Stmt, ctx: OwnCtx): MovedEntry[] {
   return astwalk.fold_stmt_pruned(st, [], collect, not_lambda);
 }
 
-function ow_result_pending_cleanup(value: ast.Expr, ctx: OwnCtx): boolean {
-  let seen = ctx.deferred.get();
-  for part in lu_arg_parts(value, []) {
-    let path = ow_ident_name(part);
-    if let ast.ExprFieldAccess(fa) = part {
-      let enclosing = ow_enclosing_field(fa);
-      let base = ow_ident_name(enclosing.obj);
-      if (ow_moved_has(seen, base)) {
-        return true;
+function ow_cleanup_parts(value: ast.Expr, ctx: OwnCtx): ast.Expr[] {
+  match (value) {
+    ast.ExprStructLit(sl) => {
+      return if (sl.has_base) { sl.field_values.append(sl.base) } else { sl.field_values };
+    },
+    ast.ExprTuple(t) => {
+      return t.elements;
+    },
+    ast.ExprArray(a) => {
+      return a.elements;
+    },
+    ast.ExprMapLit(m) => {
+      return util.append_all(m.keys, m.vals);
+    },
+    ast.ExprCall(c) => {
+      if (ow_qualified_ctor(c.callee, ctx)) {
+        return c.args;
       }
-      path = base + "." + enclosing.field;
-    }
-    if (path.len() > 0 && (ow_moved_has(seen, path) || ow_moved_prefix(seen, path).len() > 0)) {
+      if let ast.ExprIdent(id) = c.callee {
+        if (ctx.ofuncs.ctors.has(id.name) && !ow_ctor_name_taken(ctx, id.name) || ow_builtin_variant(ctx, id.name)) {
+          return c.args;
+        }
+      }
+    },
+    _ => {}
+  }
+  return [];
+}
+
+function ow_result_pending_cleanup(value: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_copyable_result(check_expr(value, ctx.scope), ctx)) {
+    return false;
+  }
+  for part in ow_cleanup_parts(value, ctx) {
+    if (ow_result_pending_cleanup(part, ctx)) {
       return true;
     }
   }
-  return false;
+  let seen = ctx.deferred.get();
+  let path = ow_ident_name(value);
+  if let ast.ExprFieldAccess(fa) = value {
+    let enclosing = ow_enclosing_field(fa);
+    let base = ow_ident_name(enclosing.obj);
+    if (ow_moved_has(seen, base)) {
+      return true;
+    }
+    path = base + "." + enclosing.field;
+  }
+  return path.len() > 0 && (ow_moved_has(seen, path) || ow_moved_prefix(seen, path).len() > 0);
 }
 
 function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
@@ -23066,11 +23193,19 @@ function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
     return false;
   }
   let lu = ctx.last_use.get();
-  let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope) };
+  let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope), value_proofs: Some(ctx.value_proofs) };
   let borrowed: string[] = [];
   for name in ctx.borrowed {
     if (typeinfo.ownable(ctx.scope.lookup(name))) {
       borrowed = borrowed.append(name);
+    }
+  }
+  // Owning a callback does not consume the resources its closure borrows.
+  for name in ctx.owned {
+    if let typeinfo.TypeFunc(ft) = ctx.scope.lookup(name) {
+      if (!ft.ret_own) {
+        borrowed = borrowed.append(name);
+      }
     }
   }
   let locals = ow_borrowed_locals(ow_spine_stmts(ctx.result_body), ctx.ofuncs, borrowed, [], lu.borrows, lu.builtins, lenders, false);
@@ -23599,9 +23734,12 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let methods: string[] = [];
   let all_methods: string[] = [];
   let funcs: string[] = [];
+  // Result flags use the same positions as the global function index.
+  let owned_results: boolean[] = [];
   for func in mod.funcs {
     if (func.receiver_name.len() == 0) {
       funcs = funcs.append(func.name);
+      owned_results = owned_results.append(func.ret_own);
     } else {
       all_methods = all_methods.append(func.name);
     }
@@ -23666,7 +23804,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs), all_methods: util.name_index(all_methods) };
+  return OwnFuncs { owned_results: owned_results, rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs), all_methods: util.name_index(all_methods) };
 }
 
 function ow_takes_own_self(m: parser.FuncDecl): boolean {
@@ -23884,14 +24022,17 @@ struct OwnDataProofs { types: string[], copyable: boolean[] }
 // The declarations stay fixed during this walk. A complete spelling retains
 // generic arguments; an erased or unresolved type has no copy contract.
 function ow_copyable_result(ty: typeinfo.Type, ctx: OwnCtx): boolean {
-  let spelling = typeinfo.spelling(ty);
-  let proofs = ctx.value_proofs.get();
+  return ow_cached_value_data(typeinfo.spelling(ty), ctx.decls, ctx.value_proofs);
+}
+
+function ow_cached_value_data(spelling: string, decls: OwnDecls, cache: Cell[OwnDataProofs]): boolean {
+  let proofs = cache.get();
   let i = util.index_of_str(proofs.types, spelling);
   if (i >= 0) {
     return proofs.copyable[i];
   }
-  let copyable = spelling.len() > 0 && ow_value_data(spelling, ctx.decls, []);
-  ctx.value_proofs.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
+  let copyable = spelling.len() > 0 && ow_value_data(spelling, decls, []);
+  cache.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
   return copyable;
 }
 
@@ -24312,10 +24453,10 @@ function ow_value_if_origin(origin: string): boolean {
   return origin == parser.ORIGIN_IF_EXPR || origin == parser.ORIGIN_IF_DEAD_THEN || origin == parser.ORIGIN_IF_DEAD_ELSE || origin == parser.ORIGIN_IF_DEAD_BOTH;
 }
 
-struct BorrowContext { lenders: OwnLenders, result_scope: Option[Scope] }
+struct BorrowContext { lenders: OwnLenders, result_scope: Option[Scope], value_proofs: Option[Cell[OwnDataProofs]] }
 
 function borrow_context(lenders: OwnLenders): BorrowContext {
-  return BorrowContext { lenders: lenders, result_scope: None };
+  return BorrowContext { lenders: lenders, result_scope: None, value_proofs: None };
 }
 
 function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
@@ -24434,14 +24575,25 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
   }
 }
 
+function ow_borrow_value_copy(ty: typeinfo.Type, lenders: BorrowContext): boolean {
+  let spelling = typeinfo.spelling(ty);
+  if let Some(cache) = lenders.value_proofs {
+    return ow_cached_value_data(spelling, lenders.lenders.decls, cache);
+  }
+  return ow_value_data(spelling, lenders.lenders.decls, []);
+}
+
 function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if let Some(scope) = lenders.result_scope {
     let ty = check_expr(e, scope);
     if (!typeinfo.ownable(ty)) {
       return false;
     }
-    if let typeinfo.TypeStruct(st) = ty {
-      if (ow_value_decl(st.name, lenders.lenders.decls.structs, lenders.lenders.decls.snames) && ow_value_data(typeinfo.spelling(ty), lenders.lenders.decls, [])) {
+    if (ow_borrow_value_copy(ty, lenders)) {
+      return false;
+    }
+    if let typeinfo.TypeFunc(ft) = ty {
+      if (ft.ret_own || ow_borrow_value_copy(ft.ret_type, lenders)) {
         return false;
       }
     }
@@ -24477,6 +24629,8 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
         for i in 0..c.args.len() {
           if (i >= flags.len() || !flags[i]) {
             children = children.append(c.args[i]);
+          } else if let typeinfo.TypeFunc(_) = check_expr(c.args[i], scope) {
+            children = children.append(c.args[i]);
           }
         }
       },
@@ -24484,9 +24638,6 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
     }
     if (children.len() > 0) {
       for child in children {
-        if (ow_holds_no_handle(typeinfo.spelling(check_expr(child, scope)), lenders.lenders.decls)) {
-          continue;
-        }
         if (ow_expr_borrows(child, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
           return true;
         }
@@ -25016,7 +25167,8 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let lenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = ow_value_diags(decls);
   let value_proofs = cell_new(OwnDataProofs { types: [], copyable: [] });
-  for fn in mod.funcs {
+  for i in 0..mod.funcs.len() {
+    let fn = mod.funcs[i];
     if (!in_focus(focus, fn)) {
       continue;
     }
@@ -25035,7 +25187,13 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let lu_fn = fn;
+    if (i < typed.len()) {
+      lu_fn = parser.FuncDecl { ...fn, body: ownmatch.source(typed[i].body) };
+    } else {
+      lu_fn = annotate_func(fn, env);
+    }
+    let ctx = OwnCtx { result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
