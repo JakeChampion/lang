@@ -109,6 +109,18 @@ function fresh_factory_reads(): i32 {
   return n;
 }
 
+function nested_factory(h: Handle): () => own () => i32 {
+  return (): own (() => i32) => factory(h);
+}
+
+function dynamic_factory_reads(own h: Handle): i32 {
+  let next = nested_factory(h);
+  let read = next();
+  let n = read();
+  h.close();
+  return n;
+}
+
 function main(): i32 {
   let closed = cell_new(0);
   print(reads(Handle { n: 7, closed: unsafe { share_unchecked(closed) } }));
@@ -123,5 +135,6 @@ function main(): i32 {
   print(statement_only(Handle { n: 6, closed: cell_new(0) }));
   print(factory_reads(Handle { n: 13, closed: cell_new(0) }));
   print(fresh_factory_reads());
+  print(dynamic_factory_reads(Handle { n: 19, closed: cell_new(0) }));
   return 0;
 }

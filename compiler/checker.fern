@@ -18782,7 +18782,7 @@ struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
 // Only single-definition local callbacks and aliases participate.
-struct OclDef { name: string, value: ast.Expr }
+struct OclDef { name: string, value: ast.Expr, spelling: string }
 
 struct OclCapture { name: string, type_name: string }
 
@@ -18792,18 +18792,22 @@ struct OclFactoryCache { known: boolean, factories: OclFactories }
 
 struct OclFactoryState { cache: Cell[OclFactoryCache], mod: parser.Module, env: ModuleEnv }
 
-struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[] }
+struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[], types: string[], tparams: string[] }
 
 struct OclInlineFacts { facts: OclFacts, captures: OclCapture[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "" };
+}
+
+function ocl_param(param: ast.ParamDecl): OclDef {
+  return OclDef { ...ocl_unknown(param.name), spelling: parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types) };
 }
 
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
   let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
-    return defs.append(OclDef { name: v.name, value: v.init });
+    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types) });
   }
   for name in names {
     defs = defs.append(ocl_unknown(name));
@@ -18817,7 +18821,7 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
       return ocl_var(v, defs);
     },
     ast.StmtAssign(a) => {
-      return defs.append(OclDef { name: a.target, value: a.value });
+      return defs.append(OclDef { name: a.target, value: a.value, spelling: "" });
     },
     ast.StmtFor(f) => {
       return defs.append(ocl_unknown(f.var_name));
@@ -18833,7 +18837,7 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
 function ocl_expr(e: ast.Expr, own defs: OclDef[]): OclDef[] {
   if let ast.ExprLambda(lm) = e {
     for param in lm.params {
-      defs = defs.append(ocl_unknown(param.name));
+      defs = defs.append(ocl_param(param));
     }
   }
   return defs;
@@ -18917,10 +18921,10 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
     return [];
   };
   let ast.ExprIdent(id) = c.callee else {
-    return [];
+    return ocl_dynamic_call(c, facts);
   };
   if (facts.names.has(id.name)) {
-    return [];
+    return ocl_dynamic_call(c, facts);
   }
   let at = facts.factories.names.find(id.name);
   if (at < 0) {
@@ -18934,6 +18938,65 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
       if (!fn.params[i].own) {
         if let ast.ExprIdent(arg) = c.args[i] {
           out = ocl_merge(out, [OclCapture { name: arg.name, type_name: fn.params[i].type_name }]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function ocl_signature(params: ast.ParamDecl[], ret: string, fn_ret: string, fn_params: string): string {
+  let inputs: string[] = [];
+  for p in params {
+    let spelling = parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types);
+    if (p.own) {
+      spelling = "own " + spelling;
+    }
+    inputs = inputs.append(spelling);
+  }
+  return "(" + inputs.join(",") + ") => " + parser.fn_tag_spelling(ret, fn_ret, fn_params);
+}
+
+function ocl_callable_spelling(value: ast.Expr, facts: OclFacts): string {
+  if let ast.ExprIdent(id) = value {
+    let local = facts.names.find(id.name);
+    if (local >= 0 && ocl_unique(facts.names, id.name)) {
+      return facts.types[local];
+    }
+    let at = facts.factories.names.find(id.name);
+    if (at >= 0) {
+      let fn = facts.factories.funcs[at];
+      return ocl_signature(fn.params, fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types);
+    }
+  } else if let ast.ExprLambda(lm) = value {
+    return ocl_signature(lm.params, lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types);
+  } else if let ast.ExprCall(c) = value {
+    let ref = parser.ref_ungroup(parser.parse_type_ref(ocl_callable_spelling(c.callee, facts)));
+    if (ref.is_fn && ref.args.len() > 0) {
+      return parser.render_type_ref(parser.ref_fn_result(ref));
+    }
+  }
+  return "";
+}
+
+function ocl_dynamic_call(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  let ref = parser.ref_ungroup(parser.parse_type_ref(ocl_callable_spelling(c.callee, facts)));
+  let result = "";
+  if (ref.is_fn && ref.args.len() > 0) {
+    result = parser.render_type_ref(parser.ref_fn_result(ref));
+  }
+  if (c.ty != "fn" && !util.has_str(facts.tparams, c.ty) && !parser.ref_is_fn_value(parser.parse_type_ref(result)) && !util.has_str(facts.tparams, result)) {
+    return [];
+  }
+  let out = ocl_value(c.callee, facts);
+  for i in 0..c.args.len() {
+    out = ocl_merge(out, ocl_value(c.args[i], facts));
+    let owned = ref.is_fn && i + 1 < ref.args.len() && parser.ref_is_own(ref.args[i]);
+    if (!owned) {
+      if let ast.ExprIdent(arg) = c.args[i] {
+        let at = facts.names.find(arg.name);
+        if (at >= 0 && ocl_unique(facts.names, arg.name) && !ow_value_data(facts.types[at], facts.factories.decls, [])) {
+          out = ocl_merge(out, [OclCapture { name: arg.name, type_name: facts.types[at] }]);
         }
       }
     }
@@ -19012,18 +19075,26 @@ function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
 function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: boolean): OclFacts {
   let defs: OclDef[] = [];
   for param in fn.params {
-    defs = defs.append(ocl_unknown(param.name));
+    defs = defs.append(ocl_param(param));
   }
   for st in fn.body {
     defs = astwalk.fold_stmt_nodes(st, defs, ocl_stmt, ocl_expr, astwalk.descend_all);
   }
   let names: string[] = [];
   let rows: OclCapture[][] = [];
+  let types: string[] = [];
   for def in defs {
     names = names.append(def.name);
     rows = rows.append([]);
+    types = types.append(def.spelling);
   }
-  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [] };
+  let tparams = fn.all_type_params;
+  for name in func_scope_tparams(fn) {
+    if (!util.has_str(tparams, name)) {
+      tparams = tparams.append(name);
+    }
+  }
+  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [], types: types, tparams: tparams };
   if (summarize) {
     for param in fn.params {
       let at = facts.names.find(param.name);
@@ -19060,11 +19131,11 @@ function ocl_inline_captures(e: ast.Expr, own state: OclInlineFacts): OclInlineF
 }
 
 // The last-use and capture facts are computed on their first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[] }
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
 
 function lu_pending(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [] });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
 }
 
 function ow_callback_facts(ctx: OwnCtx): OclFacts {
@@ -19076,10 +19147,10 @@ function ow_callback_facts(ctx: OwnCtx): OclFacts {
   }
   if (!lu.captures_known) {
     let facts = ocl_facts(lu.fn, state.factories, false);
-    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines };
+    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
     ctx.last_use.set(lu);
   }
-  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines };
+  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams };
 }
 
 function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {

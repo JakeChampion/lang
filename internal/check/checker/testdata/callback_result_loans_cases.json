@@ -963,5 +963,65 @@
     "name": "factory wrapper moves owned callback without losing loan",
     "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function wrap(own read: () => i32): own () => i32 { return (): i32 => read(); } function run(own h: H): i32 { let read = (): i32 => h.read(); let wrapped = wrap(read); h.close(); return wrapped(); }",
     "want": "E050"
+  },
+  {
+    "name": "dynamic factory retains nested callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => () => i32 { return (): () => i32 => { return (): i32 => h.read(); }; } function run(own h: H): i32 { let next = make(h); let read = next(); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory parameter retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function invoke(make: () => () => i32): () => i32 { return make(); } function run(own h: H): i32 { let read = invoke((): () => i32 => { return (): i32 => h.read(); }); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "generic dynamic factory retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function invoke[T](make: () => T): T { return make(); } function run(own h: H): i32 { let read = invoke((): () => i32 => { return (): i32 => h.read(); }); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory retains borrowed resource input",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, make: (H) => () => i32): i32 { let read = make(h); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory transfers owned resource input",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, make: (own H) => own () => i32): i32 { let read = make(h); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "dynamic factory retains owned callback input environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, make: (own () => i32) => own () => i32): i32 { let read = make((): i32 => h.read()); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory scalar result ends environment loan",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => () => i32 { return (): () => i32 => { return (): i32 => h.read(); }; } function run(own h: H): i32 { let next = make(h); let n = next()(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "dynamic factory runs before captured owner consumption",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => () => i32 { return (): () => i32 => { return (): i32 => h.read(); }; } function run(own h: H): i32 { let next = make(h); let read = next(); let n = read(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "dynamic factory preserves unrelated resource",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => () => i32 { return (): () => i32 => { return (): i32 => h.read(); }; } function run(own h: H, own other: H): i32 { let next = make(h); let read = next(); other.close(); let n = read(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "dynamic factory result retains fresh local environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => () => i32 { return (): () => i32 => { return (): i32 => h.read(); }; } function run(): i32 { let h = H { n: 7 }; let next = make(h); let read = next(); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory owned result retains environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(h: H): () => own () => i32 { return (): own () => i32 => { return (): i32 => h.read(); }; } function run(own h: H): i32 { let next = make(h); let read = next(); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "dynamic factory copied array input does not retain loan",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function drop(own xs: i32[]): void {} function run(own xs: i32[], make: (i32[]) => () => i32): i32 { let read = make(xs); drop(xs); return read(); }",
+    "want": ""
   }
 ]

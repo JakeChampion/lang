@@ -49,7 +49,8 @@ A copied immutable result does not retain an environment loan.
 
 A callback must finish its last use before a captured resource is consumed.
 The check follows single-definition local bindings and inputs of resolved named factories.
-Mutable bindings, dynamic callback factories, and resource paths inside aggregates still need a broader proof.
+A callback that returns another callback also retains these environment loans.
+Mutable bindings and resource paths inside aggregates still need a broader proof.
 
 The caller can copy immutable data results.
 This also applies to a call with an ordinary result type.

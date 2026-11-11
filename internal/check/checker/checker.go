@@ -5967,7 +5967,7 @@ type checker struct {
 	sendParamNames       map[string][]string
 	callbackFactoryFuncs map[string]*ast.FuncDecl
 	callbackFactories    map[string][]ast.Param
-	callbackCallCopies   map[*ast.Call]bool
+	callbackResultCalls  map[*ast.Call]bool
 	resultBorrows        map[string]bool
 	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
@@ -14783,14 +14783,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
-	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
-		c.recordOwnedResult(call, true)
-		if c.callbackCallCopies == nil {
-			c.callbackCallCopies = map[*ast.Call]bool{}
+	if call, ok := e.(*ast.Call); ok {
+		if c.copyableCallResult(t) {
+			c.recordOwnedResult(call, true)
 		}
-		c.callbackCallCopies[call] = true
-	} else if call, ok := e.(*ast.Call); ok {
-		delete(c.callbackCallCopies, call)
+		_, callback := t.(*ast.FuncType)
+		_, generic := t.(ast.ParamType)
+		if callback || generic {
+			if c.callbackResultCalls == nil {
+				c.callbackResultCalls = map[*ast.Call]bool{}
+			}
+			c.callbackResultCalls[call] = true
+		} else {
+			delete(c.callbackResultCalls, call)
+		}
 	}
 	if definitelyScalar(t) {
 		if c.scalarArgs == nil {

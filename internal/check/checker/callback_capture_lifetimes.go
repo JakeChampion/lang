@@ -55,6 +55,10 @@ func (c *checker) computeCallbackFactories() {
 
 func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
 	definitions := map[string][]ast.Expr{}
+	bindingTypes := map[string]ast.Type{}
+	for _, param := range fn.Params {
+		bindingTypes[param.Name] = param.Type
+	}
 	var values []ast.Expr
 	roots := map[string]ast.Param{}
 	if summarize {
@@ -81,6 +85,7 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			values = append(values, n)
 		case *ast.Var:
 			add(n.Name, n.Init)
+			bindingTypes[n.Name] = c.info.VarTypes[n]
 		case *ast.Assign:
 			if id, ok := n.Target.(*ast.Ident); ok {
 				add(id.Name, n.Value)
@@ -139,11 +144,22 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		case *ast.Ident:
 			return resolve(v.Name, active)
 		case *ast.Call:
-			if c.callbackCallCopies[v] {
+			if !c.callbackResultCalls[v] {
 				return nil
 			}
-			id, ok := v.Callee.(*ast.Ident)
-			if !ok || id.Local || c.callValueCallees[v] {
+			id, named := v.Callee.(*ast.Ident)
+			if c.callValueCallees[v] || named && id.Local {
+				out := valueCaptures(v.Callee, active)
+				flags := c.callOwnFlags[v]
+				for i, arg := range v.Args {
+					out = mergeCallbackCaptures(out, valueCaptures(arg, active))
+					if input, ok := arg.(*ast.Ident); ok && input.Local && (i >= len(flags) || !flags[i]) && !c.copyableCallResult(bindingTypes[input.Name]) {
+						out = mergeCallbackCaptures(out, []ast.Param{{Name: input.Name, Type: bindingTypes[input.Name]}})
+					}
+				}
+				return out
+			}
+			if !named {
 				return nil
 			}
 			factory := c.callbackFactoryFuncs[id.Name]
