@@ -153,6 +153,7 @@ function device(): player.Device {
     keep: (folder: string): void => {},
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
     show: (now: tune.Now): void => {},
+    quit: (): void => {},
     wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
     sleep: (a: tune.Awake): void => {},
     size: (path: string): i64 => read(path).len() as i64,
@@ -426,6 +427,16 @@ function test_the_picture_of_an_album(): test.TestOutcome {
   return test.assert_eq(titles(m) + " " + keys.join(",") + " " + m.pictures.len().to_string() + " " + art.to_string() + " | " + plain.covers.len().to_string() + " " + plain.bare.len().to_string(), "Tagged Song|Boxed|Morning Fern|Slow Water|Quick Light|Painted Unknown artist/extra:1,extra/Box:1 1 7 | 0 3");
 }
 
+// Android destroys the activity while a track plays: the player gives the
+// sound and the locks back, and keeps its track for the next state.
+function test_the_player_gives_the_device_back(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let before = (s.shell.app.model.sound.ptr != 0 as usize).to_string() + " " + (s.shell.app.model.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
+  let t = sim.after(sim.send(s, tune.Closing), 100i64);
+  let m = t.shell.app.model;
+  return test.assert_eq(before + " | " + (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + t.shell.app.deck.is_some().to_string() + " " + m.current.to_string() + " " + m.playing.to_string(), "true true true | false false false 2 true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -444,5 +455,6 @@ function main(): i32 {
   r = r.it("the menu of a song puts it in the queue", test_the_queue);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
+  r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
   return r.finish();
 }
