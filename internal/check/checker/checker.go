@@ -14895,13 +14895,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
 		toFloat = toFloat && !floatDest.Polymorphic
+		clean := map[string]int{}
 		for i, el := range n.Elems[1:] {
 			t := checkElem(el)
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
-			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
+			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t, clean); ll != nil && !toFloat {
 				want, got := elemT, t
 				c.afterLitFix(ll, func() {
 					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
