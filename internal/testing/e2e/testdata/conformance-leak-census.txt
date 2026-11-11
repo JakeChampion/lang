@@ -1,3 +1,4 @@
+# 2026-11-11: owned_field_match_data is clean under RC trace.
 # 2026-11-11: append_on_an_array_literal_takes_the_width_of_its_use is clean under RC trace.
 # 2026-11-11: remove the raw-builtin fixture row after main reverted that fixture.
 # 2026-11-11: hotp_digits_out_of_range_stops stops through exit(134) with one buffer live.
@@ -773,6 +774,7 @@ own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
+owned_field_match_data                               0
 owned_match_results_rebuild_literal                 0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
