@@ -10398,13 +10398,22 @@ function arg_wants_expected(a: ast.Expr, env: MEnv, funcs: MFns): boolean {
       if let ast.ExprIdent(m) = fa.obj {
         return bg_find(funcs, m.name + "." + fa.field) >= 0;
       }
+      return arg_wants_expected(fa.obj, env, funcs);
     }
   }
+  if let ast.ExprLambda(lm) = a {
+    return written_result(lm.ret_type).len() == 0;
+  }
+  let parts: ast.Expr[] = [];
   if let ast.ExprArray(arr) = a {
-    for x in arr.elements {
-      if (arg_wants_expected(x, env, funcs)) {
-        return true;
-      }
+    parts = arr.elements;
+  }
+  if let ast.ExprTuple(tup) = a {
+    parts = tup.elements;
+  }
+  for part in parts {
+    if (arg_wants_expected(part, env, funcs)) {
+      return true;
     }
   }
   return false;
@@ -11081,6 +11090,16 @@ function explicit_call_ret(c: ast.ExprCall, name: string, funcs: MFns): string {
   return subst_ty(funcs.decls[at].ret_type, funcs.decls[at].type_params, key_parts(funcs.decls[at], key));
 }
 
+// The result type of a call to the function that the field `cfa.field` of
+// a struct holds, or "" when the field is not a function.
+function field_call_type(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+  let owner = mono_infer(cfa.obj, env, funcs);
+  if (owner.len() == 0) {
+    return "";
+  }
+  return callable_ret_spelling(lit_field_spelling(funcs, owner, owner, cfa.field));
+}
+
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
   match (e) {
     ast.ExprNumber(n) => {
@@ -11271,6 +11290,10 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               }
             },
             _ => {}
+          }
+          let held = field_call_type(cfa, env, funcs);
+          if (held.len() > 0) {
+            return held;
           }
           return stamped_type(c.ty);
         },
@@ -11533,13 +11556,27 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return mono_struct_lit(s, literal_written(s, env, funcs), env, funcs, ins);
     },
     ast.ExprLambda(lm) => {
-      let bodyr = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
-      return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
+      return mono_lambda(lm, written_result(lm.ret_type), env, funcs, ins);
     },
     _ => {
       return RExpr { rexpr: e, rins: ins };
     }
   }
+}
+
+// The lambda with `result` as the expected type of each value that its
+// body returns.
+function mono_lambda(lm: ast.ExprLambda, result: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let bodyr = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, result);
+  return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
+}
+
+// The result type `t` when it names no type variable, or "".
+function written_result(t: string): string {
+  if (type_str_vars(t, []).len() > 0) {
+    return "";
+  }
+  return t;
 }
 
 // written is the literal's type with its type arguments, as the program writes it or as its destination gives it.
@@ -11551,7 +11588,7 @@ function mono_struct_lit(s: ast.ExprStructLit, written: string, env: MEnv, funcs
     cur = rv.rins;
     vals = vals.append(rv.rexpr);
   }
-  let rb = mono_expr(s.base, env, funcs, cur);
+  let rb = mono_call_expected(s.base, written, env, funcs, cur);
   return RExpr { rexpr: ast.ExprStructLit { ...s, field_values: vals, base: rb.rexpr, written: written }, rins: rb.rins };
 }
 
@@ -11665,10 +11702,33 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                   }
                 }
               },
-              _ => {}
+              _ => {
+                if let Some(chained) = mono_receiver_expected(c, fac, expected, env, funcs, ins) {
+                  return chained;
+                }
+              }
             }
           },
           _ => {}
+        }
+      },
+      ast.ExprLambda(lm) => {
+        let result = written_result(callable_ret_spelling(expected));
+        if (result.len() > 0 && written_result(lm.ret_type).len() == 0) {
+          return mono_lambda(lm, result, env, funcs, ins);
+        }
+      },
+      ast.ExprTuple(tup) => {
+        let want = parse_type_ref(expected);
+        if (want.is_tuple && want.array_depth == 0 && want.args.len() == tup.elements.len() && arg_wants_expected(e, env, funcs)) {
+          let els: ast.Expr[] = [];
+          let cur = ins;
+          for i in 0..tup.elements.len() {
+            let re = mono_call_expected(tup.elements[i], render_type_ref(want.args[i]), env, funcs, cur);
+            cur = re.rins;
+            els = els.append(re.rexpr);
+          }
+          return RExpr { rexpr: ast.ExprTuple { ...tup, elements: els }, rins: cur };
         }
       },
       ast.ExprStructLit(sl) => {
@@ -11696,6 +11756,41 @@ function mono_array_expected(a: ast.ExprArray, elem: string, env: MEnv, funcs: M
     els = els.append(re.rexpr);
   }
   return RExpr { rexpr: ast.ExprArray { ...a, elements: els }, rins: cur };
+}
+
+// A method call whose receiver is a call that needs an expected type. The
+// result type of the method binds the type variables of its receiver against
+// `expected`, and they give the type of the receiver.
+function mono_receiver_expected(c: ast.ExprCall, fac: ast.ExprFieldAccess, expected: string, env: MEnv, funcs: MFns, ins: Insts): Option[RExpr] {
+  if (!arg_wants_expected(fac.obj, env, funcs)) {
+    return None;
+  }
+  let wanted = receiver_spelling(fac.field, c.args.len(), expected, funcs);
+  if (wanted.len() == 0) {
+    return None;
+  }
+  let recv = mono_call_expected(fac.obj, wanted, env, funcs, ins);
+  let (nargs, cur) = mono_call_args(c, env, funcs, recv.rins);
+  return Some(RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fac, obj: recv.rexpr }, args: nargs }, rins: cur });
+}
+
+// The receiver type with which the method `field` of `argc` arguments gives
+// `expected`, or "" when the result type does not bind each type variable of
+// the receiver.
+function receiver_spelling(field: string, argc: i32, expected: string, funcs: MFns): string {
+  let base = strip_struct_base(expected);
+  for fd in funcs.decls {
+    if (fd.name == field && fd.receiver_name.len() > 0 && fd.params.len() == argc && strip_struct_base(fd.receiver_type) == base) {
+      let vars = type_str_vars(fd.receiver_type, []);
+      let binds = bind_unify(fd.ret_type, expected, vars, MEnv { mnames: [], mtypes: [] }, funcs);
+      let key = binds_to_key(vars, binds);
+      if (vars.len() == 0 || key.len() == 0) {
+        return "";
+      }
+      return subst_ty(fd.receiver_type, vars, util.split_char(key, b';'));
+    }
+  }
+  return "";
 }
 
 function inserted_map(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {

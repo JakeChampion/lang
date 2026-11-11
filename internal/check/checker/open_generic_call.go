@@ -261,3 +261,36 @@ func bindOpenParams(pattern, got ast.Type, tpSet map[string]bool, sub map[string
 		}
 	}
 }
+
+// receiverExpected gives the type that a call in receiver position must
+// have for its method to give expected: the result type of the method binds
+// the type parameters of its receiver. It is nil when they do not all bind.
+func (c *checker) receiverExpected(call *ast.Call, fa *ast.FieldAccess, expected ast.Type) ast.Type {
+	if _, ok := fa.Target.(*ast.Call); !ok || expected == nil {
+		return nil
+	}
+	name, _, ok := nominalParts(expected)
+	if !ok {
+		return nil
+	}
+	ft := c.info.FuncSigs[c.info.Methods[name+"."+fa.Field]]
+	if ft == nil || len(ft.Params) != len(call.Args)+1 {
+		return nil
+	}
+	recvName, recvArgs, ok := nominalParts(ft.Params[0])
+	if !ok || recvName != name {
+		return nil
+	}
+	tpSet := map[string]bool{}
+	for _, a := range recvArgs {
+		if p, ok := a.(ast.ParamType); ok {
+			tpSet[p.Name] = true
+		}
+	}
+	sub := map[string]ast.Type{}
+	bindOpenParams(ft.Result, expected, tpSet, sub)
+	if len(tpSet) == 0 || len(sub) != len(tpSet) {
+		return nil
+	}
+	return substituteType(ft.Params[0], sub)
+}

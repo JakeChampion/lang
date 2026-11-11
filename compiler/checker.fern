@@ -14337,7 +14337,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           return out;
         }
       }
-      out = call_diags(mfa.obj, s);
+      out = dest_call_diags(mfa.obj, receiver_dest(mfa, dest, s), s);
       match (check_expr(mfa.obj, s)) {
         typeinfo.TypeTuple(mtt) => {
           let tdg = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
@@ -15468,8 +15468,9 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
       }
     }
     if (sl.has_base && fsig.type_params.len() > 0) {
-      if let typeinfo.TypeStruct(bst) = check_expr(sl.base, s) {
-        if (bst.args.len() == fsig.type_params.len()) {
+      let bt = check_expr(sl.base, s);
+      if let typeinfo.TypeStruct(bst) = bt {
+        if (bst.args.len() == fsig.type_params.len() && (dest_args.len() == 0 || !type_contains_unknown(bt))) {
           args = bst.args;
         }
       }
@@ -15492,7 +15493,11 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
   }
   if (sl.has_base) {
-    out = util.append_diags(out, call_diags(sl.base, s));
+    let bdest = t_unknown("no destination");
+    if (dest_args.len() > 0) {
+      bdest = t_struct_g(sl.type_name, dest_args);
+    }
+    out = util.append_diags(out, dest_call_diags(sl.base, bdest, s));
     let bt = check_expr(sl.base, s);
     if (!is_unknown(bt) && !type_eq(bt, t_struct(sl.type_name))) {
       out = out.append(dg_at("E003", "struct-update base must be " + sl.type_name + ", got " + type_label(bt), expr_line(sl.base), expr_col(sl.base)));
@@ -15966,6 +15971,37 @@ function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type
   return type_from_ref_subst(member, u.type_params, du.args, s.type_names());
 }
 
+// The type that a call in receiver position must have for its method to
+// give `dest`: the result type of the method binds its type variables, and
+// they give the receiver type. A receiver with no type of its own has the
+// method of the struct that `dest` is.
+function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  let none = t_unknown("no destination");
+  let ast.ExprCall(_) = mfa.obj else {
+    return none;
+  };
+  let owner = "";
+  if let typeinfo.TypeStruct(wanted) = dest {
+    owner = wanted.name;
+  }
+  if let typeinfo.TypeStruct(found) = check_expr(mfa.obj, s) {
+    owner = found.name;
+  }
+  let Some(msig) = s.scoped_method(mfa.field, owner) else {
+    return none;
+  };
+  let rref = parser.parse_type_ref(msig.receiver_type);
+  let vars = ref_type_vars(rref, parser.type_str_vars(msig.receiver_type, []), s, []);
+  if (is_unknown(dest) || vars.len() == 0) {
+    return none;
+  }
+  let (names, types) = gc_bind_param(parser.parse_type_ref(msig.ret_type_name), dest, vars, s.type_names(), [], []);
+  if (names.len() != vars.len()) {
+    return none;
+  }
+  return type_from_ref_subst(rref, names, types, s.type_names());
+}
+
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
     return call_diags_call(c, s, [], dest);
@@ -15987,6 +16023,17 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
         return call_diags_struct_lit(sl, ds.args, s, []);
+      }
+    }
+  }
+  if let ast.ExprTuple(tup) = e {
+    if let typeinfo.TypeTuple(dt) = dest {
+      if (dt.elements.len() == tup.elements.len()) {
+        let out: util.Diag[] = [];
+        for i in 0..tup.elements.len() {
+          out = util.append_diags(out, dest_call_diags(tup.elements[i], dt.elements[i], s));
+        }
+        return out;
       }
     }
   }
