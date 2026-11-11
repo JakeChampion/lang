@@ -78,6 +78,17 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"an integer local in an append on a float array literal", "let b = 1; let zs = [1.5, 2.5].append(b);", "E038"},
 		{"an append on an empty array literal with no type", "let ys = [].append(2);", "E020"},
 		{"an append on an empty array literal in a typed destination", "let ys: i64[] = [].append(2).append(3);", ""},
+		{"an integer local in a float array literal", "let b = 1; let zs = [1.5, 2.5, b];", "E034"},
+		{"an integer local before a float in an array literal", "let b = 1; let zs = [b, 1.5];", "E034"},
+		{"an integer local in an array literal in a float destination", "let b = 1; let zs: f64[] = [1, b];", "E034"},
+		{"an integer local in a nested float array literal", "let b = 1; let zs = [[1.5], [b]];", "E034"},
+		{"an integer literal in an append on a float array literal", "let zs = [1.5, 2.5].append(1); let ws = [1.5, 2.5].with(0, 1 + 2);", ""},
+		{"an integer literal in an append on a float array local", "let ys = [1.5, 2.5]; let xs = ys.append(1); let q: f32[] = ys;", ""},
+		{"a float destination of an append on an array literal", "let zs: f32[] = [1.5, 2.5].append(3); let ws: f64[] = [1, 2].append(1.5);", ""},
+		{"a float argument of an append on a float array literal", "let x: f32 = 2.5f32; let zs = [1.5, 2].append(x); let ws: f32[] = zs;", ""},
+		{"a float literal in an append on an integer array literal", "let zs = [1, 2].append(1.5);", "E038"},
+		{"a method on an empty array literal", "let n = [].len();", "E020"},
+		{"a method after an append on an empty array literal", "let n = [].append(2).len();", "E020"},
 		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
 	}
 	for _, c := range cases {
