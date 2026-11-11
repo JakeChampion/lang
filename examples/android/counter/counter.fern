@@ -4,13 +4,16 @@ import "std/android/ui";
 
 pub struct Model { count: i32 }
 
-pub function view(m: Model, s: ui.Screen): ui.El {
+// What a person can do on the screen.
+pub enum Msg { Add, Reset }
+
+pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   return ui.column(
     [
       ui.text("You pressed the button").colored(ui.MUTED),
       ui.text(m.count.to_string()).sized(96.0).weighted(700),
       ui.text(times(m.count)).colored(ui.MUTED),
-      ui.row([ui.outlined_button("Reset", "reset"), ui.button("Add one", "add")]).spaced(12.0),
+      ui.row([ui.outlined_button("Reset", Reset), ui.button("Add one", Add)]).spaced(12.0),
     ],
   ).spaced(16.0).centered();
 }
@@ -22,20 +25,17 @@ function times(n: i32): string {
   return "times";
 }
 
-pub function update(own m: Model, msg: ui.Msg): Model {
+pub function update(own m: Model, msg: Msg): Model {
   match (msg) {
-    ui.Tap("add", _) => {
+    Add => {
       return Model { count: m.count + 1 };
     },
-    ui.Tap("reset", _) => {
+    Reset => {
       return Model { count: 0 };
-    },
-    _ => {
-      return m;
     }
   }
 }
 
-pub function program(): ui.Program[Model] {
+pub function program(): ui.Program[Model, Msg] {
   return ui.program(view, update);
 }

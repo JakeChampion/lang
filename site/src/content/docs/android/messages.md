@@ -1,44 +1,105 @@
 ---
 title: State and messages
-description: Every message that update can get in a std/android/ui app — taps, text, timers, animation frames, the back key and Android events.
+description: How a std/android/ui app declares its messages as its own type, and how taps, text, timers, animation frames, the back key and Android events give them to update.
 sidebar:
   order: 2
 ---
 
-`update` is the one place where the state of the app changes. This page
-lists the messages that it gets, and the settings of a program that
-send more of them.
+`update` is the one place where the state of the app changes. It gets a
+message, and it returns the next state. This page shows how to declare
+the messages, and what gives them to `update`.
 
-## The messages
+## Your own message type
 
-| Message | When it comes |
+The messages are an enum that you declare. Each variant is one thing
+that can occur:
+
+```fern
+enum Msg {
+  Add,
+  Open(i32),
+  Named(string),
+  Saved,
+}
+```
+
+A variant can hold values. `Open(i32)` holds the number of a row, and
+`Named(string)` holds the text of a field.
+
+`view` returns `ui.El[Msg]`: a tree whose elements give messages of the
+type `Msg`. The compiler finds the type from the result type of `view`,
+so the elements do not write it:
+
+```fern
+function view(m: Model, s: ui.Screen): ui.El[Msg] {
+  return ui.column([ui.text(m.title), ui.button("Add", Add)]);
+}
+```
+
+`update` is a `match` on the message:
+
+```fern
+function update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    Add => {
+      return Model { ...m, count: m.count + 1 };
+    },
+    Open(row) => {
+      return Model { ...m, open: row };
+    },
+    Named(text) => {
+      return Model { ...m, name: text };
+    },
+    Saved => {
+      return saved(m);
+    }
+  }
+}
+```
+
+The compiler checks that the `match` handles each variant. When you add
+a message, the compiler shows you each `match` that does not handle it.
+
+A function that makes a part of the screen has the same result type:
+
+```fern
+function row(item: Item, i: i32): ui.El[Msg] {
+  return ui.row([ui.text(item.title)]).on_tap(Open(i));
+}
+```
+
+When a variant has the name of a variant of another enum in scope,
+write the enum before it: `Msg.Tick`.
+
+## What gives a message
+
+| What occurs | How you give it a message |
 |---|---|
-| `ui.Tap(name, n)` | A tap on an element with `.on_tap(name)` or `.on_tap_with(name, n)` |
-| `ui.LongPress(name, n)` | A long press on an element with `.on_long(name, n)` |
-| `ui.Edit(field, text)` | The text of a field changed |
-| `ui.Submit(field)` | The action key of the keyboard, on a field |
-| `ui.Back` | The back key, when the program handles it |
-| `ui.Tick` | The time of `with_wait` went by |
-| `ui.Frame(ns)` | A frame of the display, while `with_animating` is true |
-| `ui.System(event)` | Each other event of Android, as an `android.Event` |
+| A tap on an element | `.on_tap(msg)`, or the message of `ui.button` |
+| A long press on an element | `.on_long(msg)` |
+| The text of a field changed | `.on_edit((text: string): Msg => Named(text))` |
+| The action key of the keyboard, on a field | `.on_submit(msg)` |
+| A time went by | `.with_tick(wait, msg)` on the program |
+| A frame of the display | `.with_frames(animating, frame)` on the program |
+| The back key | `.with_back(back)` on the program |
+| Each other event of Android | `.with_system(system)` on the program |
 
-`update` is a `match` on the message. End it with a `_` case that
-returns the state as it is, so a message that you do not use changes
-nothing.
+An element or a program with no message for something gives nothing to
+`update` when it occurs.
 
 ## Timers
 
-`with_wait` gives the milliseconds to the next `ui.Tick`, from the
-state. Return -1 for no tick. A stopwatch that draws ten times a second
-while it runs:
+`with_tick` takes a function that gives the milliseconds to the next
+tick, from the state, and the message of the tick. Return -1 for no
+tick. A stopwatch that draws ten times a second while it runs:
 
 ```fern
-ui.program(view, update).with_wait((m: Model): i32 => {
+ui.program(view, update).with_tick((m: Model): i32 => {
   if (m.running) {
     return 100;
   }
   return -1;
-})
+}, Ticked)
 ```
 
 A phone that waits uses no power. Return -1 when nothing on the screen
@@ -46,39 +107,45 @@ changes.
 
 ## Animation
 
-While `with_animating` returns true, `update` gets `ui.Frame(ns)` for
-each frame of the display. `ns` is the time of the frame in
-nanoseconds. `std/android/motion` has the curves of Android animations:
+`with_frames` takes a function that tells whether the app animates, and
+a function that makes a message from the time of a frame in
+nanoseconds. While the first one returns true, `update` gets a message
+for each frame of the display:
 
 ```fern
-ui.Frame(ns) => {
+ui.program(view, update).with_frames((m: Model): boolean => m.moving, (ns: i64): Msg => Frame(ns))
+```
+
+`std/android/motion` has the curves of Android animations:
+
+```fern
+Frame(ns) => {
   let part = ((ns - m.started) as f64 / 300.0e6).min(1.0);
   return Model { ...m, shown: motion.ease(part), moving: part < 1.0 };
 },
 ```
 
-```fern
-ui.program(view, update).with_animating((m: Model): boolean => m.moving)
-```
-
 ## The back key
 
 The back key closes the app. When the app has more than one screen, it
-must go back one screen:
+must go back one screen. `with_back` takes a function that gives the
+message of the back key, or `None` to let the back key close the app:
 
 ```fern
-ui.program(view, update).with_back((m: Model): boolean => m.screen != HOME)
+ui.program(view, update).with_back((m: Model): Option[Msg] => {
+  if (m.screen == HOME) {
+    return None;
+  }
+  return Some(WentBack);
+})
 ```
-
-While `with_back` returns true, the back key comes to `update` as
-`ui.Back`. While it returns false, the back key closes the app.
 
 ## More than one screen
 
 Keep the screen in the state, and choose the tree in `view`:
 
 ```fern
-function view(m: Model, s: ui.Screen): ui.El {
+function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.screen == DETAIL) {
     return detail(m);
   }
@@ -88,10 +155,25 @@ function view(m: Model, s: ui.Screen): ui.El {
 
 ## Android events
 
-`ui.System(event)` has the events that the module does not use itself:
-`android.Start`, `android.Resume`, `android.Pause`, `android.Stop`,
-`android.Destroy`, and `android.Posted` for the messages of other
-modules. Save the state to a file on `android.Pause`.
+`with_system` takes a function that makes a message from an event that
+the module does not use itself: `android.Start`, `android.Resume`,
+`android.Pause`, `android.Stop`, `android.Destroy`, and
+`android.Posted` for the messages of other modules. Return `None` for
+an event that you do not use. To save the state to a file when the app
+goes to the background:
+
+```fern
+ui.program(view, update).with_system((e: android.Event): Option[Msg] => {
+  match (e) {
+    android.Pause => {
+      return Some(Paused);
+    },
+    _ => {
+      return None;
+    }
+  }
+})
+```
 
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
