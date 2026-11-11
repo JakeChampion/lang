@@ -1,0 +1,14 @@
+// A mixed array literal reports each element that has another type, not
+// only the first one.
+struct P { x: i32 }
+struct Q { y: i32 }
+function main(): i32 {
+    let zs = ["a", 1, 2];
+    let c: i32 = 1;
+    let ws = [c, 1.5, 2.5];
+    let w: i32[] = [1];
+    let v: i64[] = [2];
+    let rows = [w, v, v];
+    let ps = [P { x: 1 }, Q { y: 2 }, Q { y: 3 }];
+    return zs.len() + ws.len() + rows.len() + ps.len();
+}
