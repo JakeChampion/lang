@@ -1,0 +1,179 @@
+import "std/video/av1";
+import "std/video/frame";
+import "std/test";
+import "std/hex";
+import "video_av1_vectors";
+
+function reference_fields(unit: av1.Unit, v: video_av1_vectors.Vector, i: i32): boolean {
+  return unit.kind == v.kinds[i] && unit.offset == v.offsets[i] && unit.size == v.sizes[i] && unit.temporal_id == v.temporal[i] && unit.spatial_id == v.spatial[i];
+}
+
+function ranges(): test.TestOutcome {
+  for v in video_av1_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let at = 0;
+    for i in 0..v.offsets.len() {
+      let Ok(Some(unit)) = av1.next_obu(bytes, at, frame.default_limits()) else {
+        return test.fail(v.name);
+      };
+      if (!reference_fields(unit, v, i)) {
+        return test.fail("independent OBU ranges " + v.name);
+      }
+      if (unit.next_offset != unit.offset + unit.size || unit.next_offset <= at) {
+        return test.fail("OBU cursor progress");
+      }
+      at = unit.next_offset;
+    }
+    if (at != bytes.len()) {
+      return test.fail("complete reference packet");
+    }
+    if let Ok(None()) = av1.next_obu(bytes, at, frame.default_limits()) {} else {
+      return test.fail("end cursor");
+    }
+  }
+  return test.pass();
+}
+
+function extensions(): test.TestOutcome {
+  for temporal in 0..8 {
+    for spatial in 0..4 {
+      let bytes: u8[] = [126, (temporal * 32 + spatial * 8) as u8, 1, 99];
+      let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+        return test.fail("extension header");
+      };
+      if (!unit.extension || unit.temporal_id != temporal || unit.spatial_id != spatial || unit.offset != 3 || unit.size != 1 || unit.kind != 15) {
+        return test.fail("all temporal and spatial IDs");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for v in video_av1_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let at = 0;
+    for i in 0..v.offsets.len() {
+      let end = v.offsets[i] + v.sizes[i];
+      for cut in at + 1..end {
+        if let Err(frame.Truncated) = av1.next_obu(bytes[:cut], at, frame.default_limits()) {} else {
+          return test.fail("every independently declared OBU prefix");
+        }
+      }
+      at = end;
+    }
+  }
+  return test.pass();
+}
+
+function extent(unit: av1.Unit, offset: i32, size: i32, end: i32): boolean {
+  return unit.offset == offset && unit.size == size && unit.next_offset == end;
+}
+
+function size_widths(): test.TestOutcome {
+  for width in 1..9 {
+    let bytes: u8[] = [122];
+    for i in 0..width {
+      bytes = bytes.append(if (i + 1 == width) { 0u8 } else { 128u8 });
+    }
+    let Ok(Some(empty)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+      return test.fail("zero-length padding and nonminimal leb128");
+    };
+    if (!extent(empty, width + 1, 0, bytes.len())) {
+      return test.fail("size width");
+    }
+    bytes = bytes.with(1, bytes[1] | 1u8).append(77u8);
+    let Ok(Some(one)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+      return test.fail("one byte through every size width");
+    };
+    if (one.size != 1 || one.offset != width + 1) {
+      return test.fail("size value");
+    }
+  }
+  return test.pass();
+}
+
+function header_errors(): test.TestOutcome {
+  for bad in [128, 1, 129] {
+    let bytes: u8[] = [(122 | bad) as u8, 0];
+    if let Err(frame.Header) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+      return test.fail("forbidden and reserved header bits");
+    }
+  }
+  for kind in [0, 9, 10, 11, 12, 13, 14] {
+    let bytes: u8[] = [(kind * 8 + 2) as u8, 0];
+    if let Err(frame.Unsupported) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+      return test.fail("reserved OBU types");
+    }
+  }
+  if let Err(frame.Unsupported) = av1.next_obu([120u8, 99], 0, frame.default_limits()) {} else {
+    return test.fail("external-length OBU requires another API");
+  }
+  for low in 1..8 {
+    if let Err(frame.Header) = av1.next_obu([126u8, low as u8, 0], 0, frame.default_limits()) {} else {
+      return test.fail("extension reserved bits");
+    }
+  }
+  return test.pass();
+}
+
+function size_errors(): test.TestOutcome {
+  for bytes in [[122u8, 128, 128, 128, 128, 16], [122u8, 128, 128, 128, 128, 128, 128, 128, 128]] {
+    if let Err(frame.Header) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+      return test.fail("32-bit size and eight-byte termination");
+    }
+  }
+  for bytes in [[122u8, 255, 255, 255, 255, 15], [122u8, 128, 128, 128, 128, 8], [122u8, 2, 1]] {
+    if let Err(frame.Truncated) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+      return test.fail("unsigned lengths before casts or additions");
+    }
+  }
+  let bytes: u8[] = [126, 248, 129, 128, 0, 99];
+  for cut in 1..bytes.len() {
+    if let Err(frame.Truncated) = av1.next_obu(bytes[:cut], 0, frame.default_limits()) {} else {
+      return test.fail("every header, length, and payload prefix");
+    }
+  }
+  return test.pass();
+}
+
+function boundaries(): test.TestOutcome {
+  let bytes: u8[] = [18, 0, 122, 1, 99];
+  for at in [-1, 6] {
+    if let Err(frame.Header) = av1.next_obu(bytes, at, frame.default_limits()) {} else {
+      return test.fail("cursor bounds");
+    }
+  }
+  for limits in [frame.Limits { max_pixels: -1, max_packet_bytes: 5 }, frame.Limits { max_pixels: 0, max_packet_bytes: 4 }] {
+    if let Err(frame.Limit) = av1.next_obu(bytes, 0, limits) {} else {
+      return test.fail("budget before access");
+    }
+  }
+  let exact = frame.Limits { max_pixels: 0, max_packet_bytes: 5 };
+  let Ok(Some(unit)) = av1.next_obu(bytes, 2, exact) else {
+    return test.fail("exact packet budget");
+  };
+  if (unit.offset != 4 || unit.size != 1 || unit.next_offset != 5) {
+    return test.fail("nonzero cursor");
+  }
+  if let Ok(None()) = av1.next_obu([], 0, exact) {} else {
+    return test.fail("empty packet end");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded AV1 low-overhead OBU ranges");
+  r = r.it("fresh reference packets preserve every OBU range", ranges);
+  r = r.it("all temporal and spatial extension IDs", extensions);
+  r = r.it("every independently declared OBU prefix", prefixes);
+  r = r.it("all eight size widths and nonminimal encodings", size_widths);
+  r = r.it("header bits, types, and external lengths", header_errors);
+  r = r.it("unsigned sizes and every required prefix", size_errors);
+  r = r.it("cursor and exact packet budgets", boundaries);
+  return r.finish();
+}
