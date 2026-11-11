@@ -1,0 +1,6 @@
+{
+  "FERN_CI_SIZE_GATE_STRICT": "1",
+  "FERN_SIZE_REPORT_COMPLETE": "1",
+  "FERN_SIZE_TOLERANCE_PERCENT": "5",
+  "origin": "Exact child settings from the retained executed replay script; no compiler benchmark commands."
+}

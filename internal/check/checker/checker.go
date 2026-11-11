@@ -10818,6 +10818,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
+			if owned[x.Name] && borrowedParam[x.Name] {
+				return false
+			}
 			return owned[x.Name] || selfMoveArgs[e] || !borrowedParam[x.Name] && atLastUse(e) && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
@@ -10930,9 +10933,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	resultOwn := fn.ReturnOwn
 	resultType := fn.ReturnType
 
-	walkNested := func(params []ast.Param, body *ast.Block, retOwn bool, retType ast.Type, moved movedSet) {
+	walkNested := func(params, captures []ast.Param, body *ast.Block, retOwn bool, retType ast.Type, moved movedSet) {
 		if body == nil {
 			return
+		}
+		captured := map[string]bool{}
+		for _, capture := range captures {
+			if owned[capture.Name] && !c.copyableCallResult(capture.Type) {
+				captured[capture.Name] = borrowedParam[capture.Name]
+				borrowedParam[capture.Name] = true
+			}
 		}
 		type binding struct {
 			wasOwned    bool
@@ -10979,6 +10989,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				moved[name] = b.wasMoved
 			} else {
 				delete(moved, name)
+			}
+		}
+		for name, wasBorrowed := range captured {
+			if wasBorrowed {
+				borrowedParam[name] = true
+			} else {
+				delete(borrowedParam, name)
 			}
 		}
 	}
@@ -11144,6 +11161,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		fieldTarget := map[*ast.Ident]bool{}
 		fieldMoves := map[*ast.FieldAccess]bool{}
 		var lambdas []*ast.Lambda
+		immediate := map[*ast.Lambda]bool{}
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Lambda:
@@ -11199,6 +11217,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					}
 				}
 			case *ast.Call:
+				if lm, ok := x.Callee.(*ast.Lambda); ok {
+					immediate[lm] = true
+				}
 				guardCallArgs(x)
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
@@ -11322,7 +11343,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					c.errfCode(lam.Pos(), "E051", "an `own` result must not borrow a closure capture or parameter")
 				}
 			}
-			walkNested(lam.Params, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
+			captures := lam.Captures
+			if immediate[lam] {
+				captures = nil
+			}
+			walkNested(lam.Params, captures, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
 		}
 	}
 
@@ -11395,7 +11420,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Block:
 			walkStmts(x.Stmts, moved)
 		case *ast.FuncDecl:
-			walkNested(x.Params, x.Body, x.ReturnOwn, x.ReturnType, moved)
+			walkNested(x.Params, x.Captures, x.Body, x.ReturnOwn, x.ReturnType, moved)
 		case *ast.Var:
 			// A for-each over an owned array takes it at its last use, and
 			// borrows it when the array is read again after the loop.
@@ -11536,7 +11561,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
 				if fd, ok := n.(*ast.FuncDecl); ok {
-					walkNested(fd.Params, fd.Body, fd.ReturnOwn, fd.ReturnType, moved)
+					walkNested(fd.Params, fd.Captures, fd.Body, fd.ReturnOwn, fd.ReturnType, moved)
 					return false
 				}
 				if e, ok := n.(ast.Expr); ok {
@@ -14866,13 +14891,28 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
+		elemTypes := []ast.Type{elemT}
 		invalid := false
-		for _, el := range n.Elems[1:] {
+		floatDest, toFloat := elemExpected.(ast.FloatType)
+		toFloat = toFloat && !floatDest.Polymorphic
+		for i, el := range n.Elems[1:] {
 			t := checkElem(el)
+			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
+			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
+				want, got := elemT, t
+				c.afterLitFix(ll, func() {
+					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
+				})
+				continue
+			}
 			if ast.Equal(t, elemT) {
+				continue
+			}
+			if unified := nestedArrayLiteralJoin(n.Elems, elemTypes, elemT); unified != nil {
+				elemT = unified
 				continue
 			}
 			if unified := scalarNumericJoin(elemT, t); unified != nil {
@@ -14888,6 +14928,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if elemT == nil || invalid && elemExpected != nil && c.elemSettleable(elemT, elemExpected) {
 			return nil
+		}
+		if toFloat {
+			if refused, ok := c.litLocalsInFloatDest(n, elemTypes, floatDest).(ast.ArrayType); ok {
+				n.ElemType = refused.Elem
+				return refused
+			}
 		}
 		n.ElemType = elemT
 		for _, el := range n.Elems {
@@ -15319,11 +15365,15 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if tt == nil {
 				return nil
 			}
-			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil && litArrayStepArg(n, fa) >= 0 {
+			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil {
 				for _, arg := range n.Args {
 					c.checkExpr(arg, s)
 				}
-				return tt
+				if litArrayStepArg(n, fa) >= 0 {
+					return tt
+				}
+				c.errfCode(litStepRoot(fa.Target).Pos(), "E020", "empty array literal needs a type annotation")
+				return nil
 			}
 			vlanes, isVec := c.genericVec(tt)
 			if pt, ok := tt.(ast.ParamType); ok || isVec {

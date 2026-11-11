@@ -78,6 +78,21 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"an integer local in an append on a float array literal", "let b = 1; let zs = [1.5, 2.5].append(b);", "E038"},
 		{"an append on an empty array literal with no type", "let ys = [].append(2);", "E020"},
 		{"an append on an empty array literal in a typed destination", "let ys: i64[] = [].append(2).append(3);", ""},
+		{"an integer local in a float array literal", "let b = 1; let zs = [1.5, 2.5, b];", "E034"},
+		{"an integer local before a float in an array literal", "let b = 1; let zs = [b, 1.5];", "E034"},
+		{"an integer local in an array literal in a float destination", "let b = 1; let zs: f64[] = [1, b];", "E034"},
+		{"an integer local in a nested float array literal", "let b = 1; let zs = [[1.5], [b]];", "E034"},
+		{"an integer local in a nested array literal in a float destination", "let b = 1; let zs: f64[][] = [[1.5], [b]];", "E034"},
+		{"an array literal of integer locals in a float destination", "let b = 1; let zs: f64[] = [b, b + 1];", "E003"},
+		{"a nested array literal of integer locals in a float destination", "let b = 1; let zs: f64[][] = [[b]];", "E003"},
+		{"an integer local before a literal in a float destination", "let b = 1; let zs: f64[] = [b, 1];", "E003,E034"},
+		{"an integer literal in an append on a float array literal", "let zs = [1.5, 2.5].append(1); let ws = [1.5, 2.5].with(0, 1 + 2);", ""},
+		{"an integer literal in an append on a float array local", "let ys = [1.5, 2.5]; let xs = ys.append(1); let q: f32[] = ys;", ""},
+		{"a float destination of an append on an array literal", "let zs: f32[] = [1.5, 2.5].append(3); let ws: f64[] = [1, 2].append(1.5);", ""},
+		{"a float argument of an append on a float array literal", "let x: f32 = 2.5f32; let zs = [1.5, 2].append(x); let ws: f32[] = zs;", ""},
+		{"a float literal in an append on an integer array literal", "let zs = [1, 2].append(1.5);", "E038"},
+		{"a method on an empty array literal", "let n = [].len();", "E020"},
+		{"a method after an append on an empty array literal", "let n = [].append(2).len();", "E020"},
 		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
 	}
 	for _, c := range cases {
@@ -131,6 +146,41 @@ func TestAppendOnAnEmptyArrayLiteralIsOneDiagnostic(t *testing.T) {
 	err := checkSource(t, "function main(): i32 {\nlet ys = [].append(2);\nreturn 0;\n}\n")
 	if err == nil || strings.Contains(err.Error(), "E043") || strings.Contains(err.Error(), "E038") {
 		t.Fatalf("got %v, want E020 only", err)
+	}
+}
+
+// The inner literals of a nested array literal take the wider element type.
+// An inner array that is not a literal keeps its type.
+func TestNestedArrayLiteralsTakeTheWiderElementType(t *testing.T) {
+	const head = "function main(): i32 {\nlet i: i32 = 1; let j: i64 = 5000000000; let xs: i32[] = [i];\n"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"two inner literals", "let ns = [[i], [j]]; let k: i64 = ns[0][0];", ""},
+		{"a typed destination", "let ms: i64[][] = [[j], [i]];", ""},
+		{"three levels", "let ds = [[[i]], [[j, i]], [[i], [j]]]; let k: i64 = ds[0][0][0];", ""},
+		{"a wider literal after two narrower ones", "let ns = [[i], [i], [j]];", ""},
+		{"an array local before the wider literal", "let ns = [xs, [j]];", "expected i32[], got i64[]"},
+		{"an array local after the wider literal", "let ns = [[j], xs];", "expected i64[], got i32[]"},
+		{"an array local between two literals", "let ns = [[i], xs, [j]];", "expected i32[], got i64[]"},
+		{"an array local in an inner literal", "let ns = [[[i]], [xs], [[j]]];", "expected i32[][], got i64[][]"},
+		{"inner literals of another kind", "let ns = [[i], [\"a\"]];", "expected i32[], got string[]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, head+c.body+"\nreturn 0;\n}\n")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("rejected, want accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "array element: "+c.want) {
+				t.Fatalf("got %v, want an array element error with %q", err, c.want)
+			}
+		})
 	}
 }
 

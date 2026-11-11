@@ -286,6 +286,10 @@ func TestSelfHostOwnedFieldMatchDataRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "owned_field_match_data")
 }
 
+func TestSelfHostRepeatableClosureOwnedInputsRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "repeatable_closure_owned_inputs")
+}
+
 func TestSelfHostCopiedCallResultsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "copied_call_results")
 }

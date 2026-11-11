@@ -1,0 +1,200 @@
+[
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/after-cliff-baseline.txt.gz",
+    "git_blob": "d176c5cb5cee3cc46e0e14065586b45648cee144",
+    "sha256": "d8fdb5d5bcea7d8ef25900bfd64e98f5056377b079819efac6dc003585a06b90",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/before-cliff-baseline.txt.gz",
+    "git_blob": "ef0d22bb97888a7e4e2e4f471709018135aa2757",
+    "sha256": "69c35159c64af4c0bca6c8d02289ee7623d02664a3591d00e5741839643a8b5c",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci-corrective.report",
+    "git_blob": "039a16c4fa5e44aa09a1f0187f1ce3a68eb5e249",
+    "sha256": "09b16641a67772475e3f02be937a324e41de12759a0afce2ec3e0b8511734349",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056323-origin.json",
+    "git_blob": "fa13c28fb97a9f1d3afefae7c0b4f0a5c7bf89a2",
+    "sha256": "a48acf1cb860d413dd2bf05663fe96b61d143271728ec852bf2a417ede7422d3",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056323.log.gz",
+    "git_blob": "7e9a9af703e6429708f9425637f433a66f01d12a",
+    "sha256": "f28ba4770c313ec726fadae4488ac2d5fd97f60cb71a10fd7cb9de384169e098",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056388-origin.json",
+    "git_blob": "89c7cd083fb5201b7b91c5c82fd2edd08bfdae05",
+    "sha256": "342a23e671de863fca59271ea912d47e1bccceb01f2f4a55ed3f4d7e260115c8",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056388.log.gz",
+    "git_blob": "6c590bb73d90bd10031a16d47e065f59524e510b",
+    "sha256": "52a2b33ad7ee9d02192c202b3d6bb18de2343ab1da4d31370a2689141aef8548",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056431-origin.json",
+    "git_blob": "7508ec21b02a52a5e3475b827333d732bc2b913a",
+    "sha256": "4095fdca4f891d539d250919cffe96e7b5237e9e4f82418295901aa539b7a7f8",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/ci/130273056431.log.gz",
+    "git_blob": "b0d0bcfc3d187b342285da405479e4e1b3c9d386",
+    "sha256": "0fd392b1c96dc4e987400c5e68c2a576c67003d520012d4a62f4cdcc85ca714b",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/full-new-partial-report.stderr.gz",
+    "git_blob": "1466f924e80df3418dfc519df16eb8fece3a5f1e",
+    "sha256": "400c3a84d16fa957b2d161d20a77f93015c1ced0e97722e8ae1b0d1d155f3eb6",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/full-new-partial-report.stdout.gz",
+    "git_blob": "f34f3042f6857bfd94d757fbb445be16deaff33a",
+    "sha256": "939728d1aa838af00e54707d68551f2a352a0756195cbe6205304b707b9efac0",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/full-old-partial-report.stderr.gz",
+    "git_blob": "2c5645ff8c676cbabb58d85fc1b85da05b20454d",
+    "sha256": "3e3bb0f930b76226de6e5f8983669c81b5baab42b1d8c87a2f31f072b29f7140",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/full-old-partial-report.stdout.gz",
+    "git_blob": "ffcc7fabe2a9ddec9cfa98473fd9d25e433de8ea",
+    "sha256": "521c04b658130c39ad0ad01ff1586336c04ac5f7bb23795a405c7a8108e575de",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/manifest.json",
+    "git_blob": "801d1e0c3d80e7b4b9bb7898499e80b7d91483c2",
+    "sha256": "4a6a03556c4cf074ac916e0f71961e464bf0f6a7aa499be98eda00ffdf8ccbd7",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/negative-controls-reuse.json",
+    "git_blob": "cffefd5e357ef7d53fedc208fb9981454a9002c3",
+    "sha256": "8a36a1f519b03155caf1cfe30559742379a1559a97a032409db1bc83c0536297",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-new-baseline.txt",
+    "git_blob": "039a16c4fa5e44aa09a1f0187f1ce3a68eb5e249",
+    "sha256": "09b16641a67772475e3f02be937a324e41de12759a0afce2ec3e0b8511734349",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-new-gate.stderr.gz",
+    "git_blob": "d4b9926df0b7defceb6caf0b474c4a190c5ca8f0",
+    "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-new-gate.stdout.gz",
+    "git_blob": "285060809d84726669c5e074c015c0c85b998137",
+    "sha256": "d70bb018fd887b8c86099171abdbd4839735e004c1e9329f606811da4cd56074",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-old-baseline.txt",
+    "git_blob": "c54880c8b36a97b5656087e631845d525ac37d60",
+    "sha256": "648adaf2a0ecfd583606b3313db72ac303aa47863e8a6365c5f0ea4687c6119e",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-old-gate.stderr.gz",
+    "git_blob": "1466f924e80df3418dfc519df16eb8fece3a5f1e",
+    "sha256": "400c3a84d16fa957b2d161d20a77f93015c1ced0e97722e8ae1b0d1d155f3eb6",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/projected-old-gate.stdout.gz",
+    "git_blob": "c4a1cd9883dc6796ebc85eb74585a92c3e8ab206",
+    "sha256": "a492402c28509802b6fff218cf10c2fa0f1b58ac5c2d6c2b974407edd876355e",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/.github/workflows/perf.yml.gz",
+    "git_blob": "879528625f74d1ca7434a89c842e809d240d1dfd",
+    "sha256": "3bc1259fb6c854434593f07e2287fd769693441b5be3829a91f8950f2ce3012c",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/bootstrap/stage0.lock.gz",
+    "git_blob": "19ce450b58b5d077c3b5dfed8b6a5c3346226427",
+    "sha256": "8d8685c50add4019b235202dd4fcac4e029225df032f6730250ca92f25b2872c",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/scripts/ci-check-perf.gz",
+    "git_blob": "8bd207a5e2bcd27a3bac2d5ac3a33fc0d3b8bbc1",
+    "sha256": "90615ea76b12e6cc012fb83e91736ed4b744aa86c683070fa19017a1abac3e93",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/scripts/cliff-bench.gz",
+    "git_blob": "0903a5f83b43f7f5ab8de08f60755b11153f10a4",
+    "sha256": "f04558baee0fa4e7ba46a6995e2ec0e68ab02c43161b8330002e2869e106da0f",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/scripts/flag-lib.gz",
+    "git_blob": "54095e8396842a624a6344ba45084c2485793df3",
+    "sha256": "466e9e22e5ced0289b12b8e5be8482dd645cbad9041f672d1c82ff619a42f6f4",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/protocol/scripts/perf-gate-selftest.mjs.gz",
+    "git_blob": "aac55f96005e5da6235e82b1da6a481e550dbc1a",
+    "sha256": "a03aba64f319114a342f37e8f35cf8559477e38498a451a889d684f2a7512d43",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/row-move.json",
+    "git_blob": "3235a1453081096ee031715326686c889c899e7a",
+    "sha256": "182a25e4974672e3c7458d91bb44c7dc49b6cd37ad96b71e0db5b71ae9013dcd",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/run-and-job-receipts.json",
+    "git_blob": "a29afa47a3b490bf3da26e97a04942d1cb08fdb6",
+    "sha256": "fbb998f4a8a77f839c99be3fcf4b78e861a7bb4201030dd24dfb21256e6a8d40",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/source-identities.json",
+    "git_blob": "bd4c3d3439306c0edbef90916726697827d53186",
+    "sha256": "4c9d41516824f780123403e31b97a558acd4962c8d4f25004cec58cbe86bea8d",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/validate.py.gz",
+    "git_blob": "775aa99b168cf49939060931ad2bb8317b554cb1",
+    "sha256": "9585dacfe93750ae48d5676fa8d4d5dc9c61401d2edeb3560c92e89f6522f8f2",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/validation.json",
+    "git_blob": "c39bd98ae7d8709026870bcfe65b601975b2d3c3",
+    "sha256": "0b80e5f272856d6893f9208349943382a5976fac6d1f88255153b14d680a9054",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  },
+  {
+    "path": "docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/verify.py",
+    "git_blob": "a490c644ddc126138a021e18157a30f34133197e",
+    "sha256": "5dcfc2ef8f33fec1005746872c38b99db161279420481a91e5167ab1684141ab",
+    "source": "34229724c031302b5147b5132333de7e2397579e"
+  }
+]

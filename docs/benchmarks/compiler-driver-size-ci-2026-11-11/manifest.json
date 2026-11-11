@@ -1,0 +1,28 @@
+{
+  "data_sha256": {
+    "ci-driver.log.gz": "391d9c8c596441ac02c0aafe37fd84276a7f31dc283373da4e54ee39fa5ae4f8",
+    "old-baseline.txt.gz": "8ab92efd7e5d4a00a5523c73996a3160feeca4d53af2852cd4d02c9b7e69943b",
+    "updated-baseline.txt.gz": "064720d22718a76cbad72d3c2e88a31fc966881fb8f1c2713e5e274489dedeef",
+    "strict-old.stdout.gz": "c636d375cd240d54c5c35497f2301bcc112d81d2183a7095f78bd99822b25a9b",
+    "strict-old.stderr.gz": "d20d1dfd0ca981cb85a6e02292bdb74451c9e8b2e9e7689279ade605c17eca1d",
+    "strict-updated.stdout.gz": "d8836d8aaa028108e23c557c9dff0fa0bf57f3ca3ec339cd51e28f6e0456ca14",
+    "strict-updated.stderr.gz": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "ci-selftest.stdout.gz": "b8ea29d73b59360dea1d0a30d7d39d19416f77ec637e7e7b3d30af108d63bf22",
+    "ci-selftest.stderr.gz": "d21897697fddc6097da67bba3f6c3d2a9a7834a2d5bf66f75453258fe055cbee",
+    "feature-census.stdout.gz": "e92e59c9968f71f4fab2980f9cada3d73f2730486691b43f269a3f9f5880c80c",
+    "resource-census.stdout.gz": "e68d5544b80d5fff258c4b4b0ac114e2498a22d0e6eaa012d720dc1b73bdbc3f",
+    "census-row.stdout.gz": "a9eb5676868c2fec23f96e3b8b513c9b86a04abf4e6d57c1badddda0921a2686",
+    "protocol-scripts_ci-check-driver-sizes.gz": "8d11d29a345617e1a3b3655051f74660cc2503fb770e4cba4d762600ea8bbf4a",
+    "protocol-scripts_flag-lib.gz": "466e9e22e5ced0289b12b8e5be8482dd645cbad9041f672d1c82ff619a42f6f4",
+    "protocol-scripts_perf-gate-selftest.mjs.gz": "a03aba64f319114a342f37e8f35cf8559477e38498a451a889d684f2a7512d43",
+    "protocol-internal_testing_e2ecompiler_self_host_warm_stock_test.go.gz": "9a48ddadd06126ce6eb830ee03c0040e6319b3c50d6ceeae6f7ec17f8f493001",
+    "protocol-bootstrap_stage0.lock.gz": "8d8685c50add4019b235202dd4fcac4e029225df032f6730250ca92f25b2872c",
+    "report.tsv": "bba7dbfb540f968b1e29301bf2042ee24601187a0098dbac41ace14f2009883d",
+    "strict-replay.json": "39883685a77aca810b97f00c103c730ebae1c33e06d9ab8f1dedee73193edd12",
+    "job-origin.json": "2ccab90a095a1da159294de042ff755aca64d7ef988461d8d9d4b8809b887cd9",
+    "local-controls.json": "89af9147f7db4de5c2cfa7f1db8ee2a257a323e8fb8419084a3ecb51f40a5a3f",
+    "source-identities.json": "5c45e36f00b0460fe1ec68cdde2b1cf258c62630f74af95970e16853cca2689b",
+    "replay-driver-bank.py.gz": "203274668cad37dd09057bae3e0ad9fdceb73350e27a76c43eb1c27992d9ad53",
+    "replay-environment.json": "e1641a05f1ae12e29366758efca0eae85075efdbfa5224960f95c9c5d9602790"
+  }
+}

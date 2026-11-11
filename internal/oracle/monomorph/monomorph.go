@@ -563,6 +563,9 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			}
 			return true
 		})
+		ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+			return unqualifiedClonedVariant(e, clonedEnumNames, info)
+		})
 	}
 
 	info.GenericFuncs = map[string]*ast.FuncDecl{}
@@ -809,6 +812,25 @@ func typeRefsGenericNominal(t ast.Type, info *checker.Info) bool {
 		return false
 	}
 	return false
+}
+
+// A payload-free `Enum.Variant` of a cloned enum as the bare variant, which the
+// expected type resolves to the clone.
+func unqualifiedClonedVariant(e ast.Expr, cloned map[string]bool, info *checker.Info) ast.Expr {
+	fa, ok := e.(*ast.FieldAccess)
+	if !ok {
+		return e
+	}
+	tid, ok := fa.Target.(*ast.Ident)
+	if !ok || tid.Local || !cloned[tid.Name] {
+		return e
+	}
+	for _, v := range info.Enums[tid.Name].Variants {
+		if v.Name == fa.Field && len(v.Payloads) == 0 {
+			return &ast.Ident{P: fa.P, Name: fa.Field}
+		}
+	}
+	return e
 }
 
 func enumNeedsClone(ed *ast.EnumDecl, info *checker.Info) bool {

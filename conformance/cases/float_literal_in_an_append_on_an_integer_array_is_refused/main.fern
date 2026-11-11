@@ -1,0 +1,12 @@
+// An `append` or a `with` call does not make the integers of its receiver
+// floats. With no typed destination, an integer literal array refuses a float
+// literal as the argument, as an integer literal array local does.
+function main(): i32 {
+    let zs = [1, 2].append(1.5);
+    let ws = [1, 2].with(0, 1.5);
+    let b = 1;
+    let ys = [b, 2].append(2.5);
+    let xs = [1, 2];
+    let rs = xs.append(1.5);
+    return 0;
+}

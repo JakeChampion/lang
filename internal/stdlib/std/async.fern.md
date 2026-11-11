@@ -458,132 +458,234 @@ their deadlines. A wake goes to the input that owns the pair, and a timeout
 goes to each input whose deadline is that soonest one. So a combinator never
 reads a clock, and the code that waits on its future supplies the time.
 
+A combinator keeps its inputs in a balanced tree. Each node holds the number
+of pairs and the soonest deadline of the pending inputs below it. A wake thus
+reaches its input in a number of steps that grows as the logarithm of the
+input count, and a wake builds new nodes only on that path.
+
 ```fern
 <<14 future combinators>>=
 // Ready with every value, in input order, when all of `fs` are ready.
 // Cancelled when one of them ends cancelled: the others are cancelled with it.
 pub function gather[T](fs: Future[T][]): Future[T[]] {
-  if (__any_cancelled(fs)) {
-    let dropped = __cancel_all(fs);
-    return Future.Cancelled;
-  }
-  if (__any_pending(fs)) {
-    return Pending(__union(fs, None), (wake: Wake): Future[T[]] => __gather_woken(fs, wake));
-  }
-  let out: T[] = [];
-  for f in fs {
-    if let Ready(v) = f {
-      out = out.append(v);
-    }
-  }
-  return Ready(out);
+  return __gather(__tree(fs, 0, fs.len()));
 }
 
-function __gather_woken[T](fs: Future[T][], wake: Wake): Future[T[]] {
-  if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(fs);
+function __gather[T](t: __Tree[T]): Future[T[]] {
+  let s = __sum(t);
+  if (s.count > s.pending + s.ready) {
+    let dropped = __cancel_all(t);
     return Future.Cancelled;
   }
-  return gather(__step(fs, wake));
+  if (s.pending > 0) {
+    return Pending(__union(t, None), (wake: Wake): Future[T[]] => __gather_woken(t, wake));
+  }
+  let none: T[] = [];
+  return Ready(__values_into(t, none));
+}
+
+function __gather_woken[T](t: __Tree[T], wake: Wake): Future[T[]] {
+  if let Wake.Cancelled = wake {
+    let dropped = __cancel_all(t);
+    return Future.Cancelled;
+  }
+  return __gather(__step(t, wake));
 }
 
 // Ready with the index and value of the first of `fs` to be ready; a tie goes
 // to the lower index. The others are cancelled. Cancelled when every one of
 // them ends cancelled, and so when `fs` is empty.
 pub function race[T](fs: Future[T][]): Future[(i32, T)] {
-  for i in 0..fs.len() {
-    if let Ready(v) = fs[i] {
-      let dropped = __cancel_all(fs);
-      return Ready((i, v));
-    }
-  }
-  if (!__any_pending(fs)) {
-    return Future.Cancelled;
-  }
-  return Pending(__union(fs, None), (wake: Wake): Future[(i32, T)] => __race_woken(fs, wake));
+  return __race(__tree(fs, 0, fs.len()));
 }
 
-function __race_woken[T](fs: Future[T][], wake: Wake): Future[(i32, T)] {
-  if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(fs);
+function __race[T](t: __Tree[T]): Future[(i32, T)] {
+  if let Some(won) = __first_ready(t, 0) {
+    let dropped = __cancel_all(t);
+    return Ready(won);
+  }
+  if (__sum(t).pending == 0) {
     return Future.Cancelled;
   }
-  return race(__step(fs, wake));
+  return Pending(__union(t, None), (wake: Wake): Future[(i32, T)] => __race_woken(t, wake));
+}
+
+function __race_woken[T](t: __Tree[T], wake: Wake): Future[(i32, T)] {
+  if let Wake.Cancelled = wake {
+    let dropped = __cancel_all(t);
+    return Future.Cancelled;
+  }
+  return __race(__step(t, wake));
 }
 
 // Ready with `Some(value)` for each of `fs` that is ready by `until`, and None
 // for each that is cancelled or still pending then. The pending ones are
 // cancelled at `until`. A deadline equal to an input's own deadline wins.
 pub function with_deadline[T](until: Instant, fs: Future[T][]): Future[Option[T][]] {
-  if (!__any_pending(fs)) {
-    return Ready(__slots(fs));
-  }
-  return Pending(__union(fs, Some(until)), (wake: Wake): Future[Option[T][]] => __deadline_woken(until, fs, wake));
+  return __deadline(until, __tree(fs, 0, fs.len()));
 }
 
-function __deadline_woken[T](until: Instant, fs: Future[T][], wake: Wake): Future[Option[T][]] {
+function __deadline[T](until: Instant, t: __Tree[T]): Future[Option[T][]] {
+  if (__sum(t).pending == 0) {
+    return Ready(__slots(t));
+  }
+  return Pending(__union(t, Some(until)), (wake: Wake): Future[Option[T][]] => __deadline_woken(until, t, wake));
+}
+
+function __deadline_woken[T](until: Instant, t: __Tree[T], wake: Wake): Future[Option[T][]] {
   if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(fs);
+    let dropped = __cancel_all(t);
     return Future.Cancelled;
   }
   if let TimedOut = wake {
     let passed = true;
-    if let Some(due) = __soonest(fs) {
+    if let Some(due) = __sum(t).until {
       passed = until.cmp(due) <= 0;
     }
     if (passed) {
-      let slots = __slots(fs);
-      let dropped = __cancel_all(fs);
+      let slots = __slots(t);
+      let dropped = __cancel_all(t);
       return Ready(slots);
     }
   }
-  return with_deadline(until, __step(fs, wake));
+  return __deadline(until, __step(t, wake));
 }
 
-function __any_pending[T](fs: Future[T][]): boolean {
-  for f in fs {
-    if let Pending(w, k) = f {
-      return true;
-    }
+// The inputs of a combinator, in input order. A wake reaches its input in a
+// number of steps that grows as the logarithm of the input count.
+enum __Tree[T] {
+  Hollow,
+  Leaf(Future[T]),
+  Fork(__Sum, __Tree[T], __Tree[T]),
+}
+
+// `pairs` and `until` count the pending inputs only.
+struct __Sum { count: i32, pairs: i32, pending: i32, ready: i32, until: Option[Instant] }
+
+function __tree[T](fs: Future[T][], lo: i32, hi: i32): __Tree[T] {
+  if (hi <= lo) {
+    return __Tree.Hollow;
   }
-  return false;
-}
-
-function __any_cancelled[T](fs: Future[T][]): boolean {
-  for f in fs {
-    if let Future.Cancelled = f {
-      return true;
-    }
+  if (hi - lo == 1) {
+    return Leaf(fs[lo]);
   }
-  return false;
+  let mid = lo + (hi - lo) / 2;
+  return __join(__tree(fs, lo, mid), __tree(fs, mid, hi));
 }
 
-function __slots[T](fs: Future[T][]): Option[T][] {
-  let out: Option[T][] = [];
-  for f in fs {
-    match (f) {
-      Ready(v) => {
-        out = out.append(Some(v));
-      },
-      _ => {
-        out = out.append(None);
+function __join[T](l: __Tree[T], r: __Tree[T]): __Tree[T] {
+  let a = __sum(l);
+  let b = __sum(r);
+  let s = __Sum {
+    count: a.count + b.count,
+    pairs: a.pairs + b.pairs,
+    pending: a.pending + b.pending,
+    ready: a.ready + b.ready,
+    until: __sooner(a.until, b.until),
+  };
+  return Fork(s, l, r);
+}
+
+function __sum[T](t: __Tree[T]): __Sum {
+  match (t) {
+    Fork(s, l, r) => {
+      return s;
+    },
+    Leaf(f) => {
+      match (f) {
+        Ready(v) => {
+          return __Sum { count: 1, pairs: 0, pending: 0, ready: 1, until: None };
+        },
+        Pending(w, k) => {
+          return __Sum { count: 1, pairs: w.set.len() / 2, pending: 1, ready: 0, until: w.until };
+        },
+        Cancelled => {}
       }
-    }
+      return __Sum { count: 1, pairs: 0, pending: 0, ready: 0, until: None };
+    },
+    Hollow => {}
+  }
+  return __Sum { count: 0, pairs: 0, pending: 0, ready: 0, until: None };
+}
+
+function __values_into[T](t: __Tree[T], own out: T[]): T[] {
+  match (t) {
+    Fork(s, l, r) => {
+      return __values_into(r, __values_into(l, out));
+    },
+    Leaf(f) => {
+      if let Ready(v) = f {
+        return out.append(v);
+      }
+    },
+    Hollow => {}
   }
   return out;
 }
 
+function __slots[T](t: __Tree[T]): Option[T][] {
+  let none: Option[T][] = [];
+  return __slots_into(t, none);
+}
+
+function __slots_into[T](t: __Tree[T], own out: Option[T][]): Option[T][] {
+  match (t) {
+    Fork(s, l, r) => {
+      return __slots_into(r, __slots_into(l, out));
+    },
+    Leaf(f) => {
+      if let Ready(v) = f {
+        return out.append(Some(v));
+      }
+      return out.append(None);
+    },
+    Hollow => {}
+  }
+  return out;
+}
+
+function __first_ready[T](t: __Tree[T], base: i32): Option[(i32, T)] {
+  match (t) {
+    Fork(s, l, r) => {
+      if (s.ready == 0) {
+        return None;
+      }
+      let left = __sum(l);
+      if (left.ready > 0) {
+        return __first_ready(l, base);
+      }
+      return __first_ready(r, base + left.count);
+    },
+    Leaf(f) => {
+      if let Ready(v) = f {
+        return Some((base, v));
+      }
+    },
+    Hollow => {}
+  }
+  return None;
+}
+
 // A future resumed with Cancelled releases what it holds. What it answers is
 // not used.
-function __cancel_all[T](fs: Future[T][]): i32 {
-  let n = 0;
-  for f in fs {
-    if let Pending(w, k) = f {
-      let gone = k(Wake.Cancelled);
-      n += 1;
-    }
+function __cancel_all[T](t: __Tree[T]): i32 {
+  match (t) {
+    Fork(s, l, r) => {
+      if (s.pending == 0) {
+        return 0;
+      }
+      let before = __cancel_all(l);
+      return before + __cancel_all(r);
+    },
+    Leaf(f) => {
+      if let Pending(w, k) = f {
+        let gone = k(Wake.Cancelled);
+        return 1;
+      }
+    },
+    Hollow => {}
   }
-  return n;
+  return 0;
 }
 
 function __sooner(a: Option[Instant], b: Option[Instant]): Option[Instant] {
@@ -599,66 +701,98 @@ function __sooner(a: Option[Instant], b: Option[Instant]): Option[Instant] {
   return a;
 }
 
-function __soonest[T](fs: Future[T][]): Option[Instant] {
-  let due: Option[Instant] = None;
-  for f in fs {
-    if let Pending(w, k) = f {
-      due = __sooner(due, w.until);
-    }
+function __is_due(at: Option[Instant], due: Instant): boolean {
+  if let Some(x) = at {
+    return x.cmp(due) == 0;
   }
-  return due;
+  return false;
 }
 
-function __union[T](fs: Future[T][], until: Option[Instant]): Wait {
-  let set: i32[] = [];
-  let due = until;
-  for f in fs {
-    if let Pending(w, k) = f {
-      for x in w.set {
-        set = set.append(x);
+function __union[T](t: __Tree[T], until: Option[Instant]): Wait {
+  let none: i32[] = [];
+  return Wait { set: __pairs_into(t, none), until: __sooner(until, __sum(t).until) };
+}
+
+function __pairs_into[T](t: __Tree[T], own set: i32[]): i32[] {
+  match (t) {
+    Fork(s, l, r) => {
+      if (s.pairs == 0) {
+        return set;
       }
-      due = __sooner(due, w.until);
-    }
+      return __pairs_into(r, __pairs_into(l, set));
+    },
+    Leaf(f) => {
+      if let Pending(w, k) = f {
+        let out = set;
+        for x in w.set {
+          out = out.append(x);
+        }
+        return out;
+      }
+    },
+    Hollow => {}
   }
-  return Wait { set: set, until: due };
+  return set;
 }
 
-// Hands `wake`, a wake of `__union(fs, …)`, to the inputs it concerns.
-function __step[T](fs: Future[T][], wake: Wake): Future[T][] {
+// Hands `wake`, a wake of `__union(t, …)`, to the inputs it concerns.
+function __step[T](t: __Tree[T], wake: Wake): __Tree[T] {
   match (wake) {
     Woke(at) => {
-      let base = 0;
-      for i in 0..fs.len() {
-        if let Pending(w, k) = fs[i] {
-          let pairs = w.set.len() / 2;
-          if (at < base + pairs) {
-            return fs.with(i, k(Woke(at - base)));
-          }
-          base += pairs;
-        }
+      if (at >= 0 && at < __sum(t).pairs) {
+        return __woke(t, at);
       }
     },
     TimedOut => {
-      let Some(due) = __soonest(fs) else {
-        return fs;
-      };
-      let out = fs;
-      for i in 0..fs.len() {
-        if let Pending(w, k) = fs[i] {
-          if let Some(at) = w.until {
-            if (at.cmp(due) == 0) {
-              out = out.with(i, k(TimedOut));
-            }
-          }
-        }
+      if let Some(due) = __sum(t).until {
+        return __timed(t, due);
       }
-      return out;
     },
     Cancelled => {
-      let dropped = __cancel_all(fs);
+      let dropped = __cancel_all(t);
     }
   }
-  return fs;
+  return t;
+}
+
+function __woke[T](t: __Tree[T], at: i32): __Tree[T] {
+  match (t) {
+    Fork(s, l, r) => {
+      let left = __sum(l).pairs;
+      if (at < left) {
+        return __join(__woke(l, at), r);
+      }
+      return __join(l, __woke(r, at - left));
+    },
+    Leaf(f) => {
+      if let Pending(w, k) = f {
+        return Leaf(k(Woke(at)));
+      }
+    },
+    Hollow => {}
+  }
+  return t;
+}
+
+// Each input whose deadline is `due`, the soonest one, gets the timeout.
+function __timed[T](t: __Tree[T], due: Instant): __Tree[T] {
+  match (t) {
+    Fork(s, l, r) => {
+      if (!__is_due(s.until, due)) {
+        return t;
+      }
+      return __join(__timed(l, due), __timed(r, due));
+    },
+    Leaf(f) => {
+      if let Pending(w, k) = f {
+        if (__is_due(w.until, due)) {
+          return Leaf(k(TimedOut));
+        }
+      }
+    },
+    Hollow => {}
+  }
+  return t;
 }
 ```
 
@@ -1003,12 +1137,18 @@ pub function wait_any(set: i32[], until: Option[Instant]): Wake {
 
 function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
   let timeout_ms = -1;
+  let left: i64 = 0;
   if let Some(at) = until {
-    timeout_ms = __ms_until(time.instant_nanos(at) - monotonic_ns());
+    left = time.instant_nanos(at) - monotonic_ns();
+    timeout_ms = __ms_until(left);
   }
   let woke = __block(set, timeout_ms);
   if (woke >= 0) {
     return Woke(woke);
+  }
+  // A wait has 2^31-1 ms at most. A deadline past that waits again.
+  if (left > 2147483647 as i64 * 1000000) {
+    return __host_wait_any(set, until);
   }
   return TimedOut;
 }
@@ -1021,7 +1161,7 @@ function __park(set: i32[], until: Option[Instant]): Wake {
     let stored = set;
     let marked: i32 = 0 - 1;
     if let Some(at) = until {
-      stored = set.append(at.sec as i32).append(at.nsec);
+      stored = set.append(__sec_word(at.sec)).append(at.nsec);
       marked = 1;
     }
     let word = __task_park(stored, marked);
@@ -1033,6 +1173,15 @@ function __park(set: i32[], until: Option[Instant]): Wake {
     }
     return TimedOut;
   }
+}
+
+// The seconds of a deadline as one word of a wait set. An instant past the
+// range of the word is the last instant of the range, which no clock reaches.
+function __sec_word(sec: i64): i32 {
+  if (sec > 2147483647) {
+    return 2147483647;
+  }
+  return sec as i32;
 }
 
 // `ns` in whole milliseconds for a wait: a partial millisecond rounds up, and a

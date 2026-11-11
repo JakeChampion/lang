@@ -279,6 +279,10 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint
 		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
 		return nil
 	}
+	if elem, ok := decl.Type.(ast.ArrayType).Elem.(ast.FloatType); ok && elem.Polymorphic && c.intLiteralTree(call.Args[at]) {
+		c.settleNumeric(call.Args[at], ast.FloatType{Width: 64})
+		return nil
+	}
 	for _, ll := range c.litNestedOf[decl] {
 		for _, e := range c.litInitParts(call.Args[at], ll.path[1:]) {
 			c.linkLitPart(ll, e, call.P)
@@ -296,9 +300,18 @@ func (c *checker) settleLitArrayStepByHint(call *ast.Call, hint ast.Type, s *sco
 	step := c.litArraySteps[call]
 	want, ok := hint.(ast.ArrayType)
 	w, integer := want.Elem.(ast.NumberType)
+	if f, float := want.Elem.(ast.FloatType); ok && float && !f.Polymorphic {
+		return want
+	}
 	if !ok || !integer || w.Polymorphic {
-		if have, ok := c.litStepArgType(step.arg, s).(ast.NumberType); ok {
+		lit, _ := litStepRoot(step.recv).(*ast.ArrayLit)
+		floats := lit != nil && holdsFloatLiteral(lit)
+		have := c.litStepArgType(step.arg, s)
+		if _, float := have.(ast.FloatType); have != nil && (!float || floats) {
 			return ast.ArrayType{Elem: have}
+		}
+		if floats && c.intLiteralTree(step.arg) {
+			c.settleNumeric(step.arg, ast.FloatType{Width: 64})
 		}
 		return nil
 	}
@@ -326,6 +339,138 @@ func (c *checker) litStepArgType(arg ast.Expr, s *scope) ast.Type {
 		}
 	}
 	return nil
+}
+
+// litStepRoot is the receiver that a chain of append and with calls starts from.
+func litStepRoot(e ast.Expr) ast.Expr {
+	for {
+		call, ok := e.(*ast.Call)
+		if !ok {
+			return e
+		}
+		fa, ok := call.Callee.(*ast.FieldAccess)
+		if !ok || litArrayStepArg(call, fa) < 0 {
+			return e
+		}
+		e = fa.Target
+	}
+}
+
+// holdsFloatLiteral is true when an element of lit is a float literal.
+func holdsFloatLiteral(lit *ast.ArrayLit) bool {
+	for _, el := range lit.Elems {
+		if u, ok := el.(*ast.Unary); ok {
+			el = u.Operand
+		}
+		if _, ok := el.(*ast.FloatLit); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// intLiteralTree is true when e is an integer literal tree that reads no
+// literal local.
+func (c *checker) intLiteralTree(e ast.Expr) bool {
+	locals, open := c.litTreeLocals(e, nil)
+	return open && len(locals) == 0
+}
+
+// intLitLocalIn is the first literal local that e reads as an integer where
+// want has a float, or nil. An integer local does not become a float.
+func (c *checker) intLitLocalIn(e ast.Expr, want ast.Type) *litLocal {
+	switch w := want.(type) {
+	case ast.FloatType:
+		if locals, open := c.litTreeLocals(e, nil); open && len(locals) > 0 {
+			return locals[0]
+		}
+	case ast.ArrayType:
+		if lit, ok := e.(*ast.ArrayLit); ok {
+			for _, el := range lit.Elems {
+				if ll := c.intLitLocalIn(el, w.Elem); ll != nil {
+					return ll
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// intLitLocalBesideFloat is the literal local that makes the element el
+// differ from the elements before it: el reads it as an integer where they
+// have a float, or one of them reads it where el has a float.
+func (c *checker) intLitLocalBesideFloat(before []ast.Expr, el ast.Expr, elemT, t ast.Type) *litLocal {
+	if ll := c.intLitLocalIn(el, elemT); ll != nil {
+		return ll
+	}
+	for _, prev := range before {
+		if ll := c.intLitLocalIn(prev, t); ll != nil {
+			return ll
+		}
+	}
+	return nil
+}
+
+// litWidthIn is t with each open integer type replaced by w.
+func litWidthIn(t ast.Type, w ast.NumberType) ast.Type {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.Polymorphic {
+			return w
+		}
+	case ast.ArrayType:
+		if x.Elem != nil {
+			x.Elem = litWidthIn(x.Elem, w)
+		}
+		return x
+	}
+	return t
+}
+
+// litLocalsInFloatDest reports the elements of lit that have another type
+// than its first element, when an element reads an integer literal local in
+// the float destination want. The first element gives the array its type, as
+// it does when the local has the annotation i32. The result is the type of
+// the array, or nil when no element reads such a local.
+func (c *checker) litLocalsInFloatDest(lit *ast.ArrayLit, types []ast.Type, want ast.FloatType) ast.Type {
+	first := c.intLitLocalIn(lit.Elems[0], want)
+	mixed := false
+	for i, el := range lit.Elems[1:] {
+		ll := c.intLitLocalIn(el, want)
+		switch {
+		case first == nil && ll != nil:
+			c.afterLitFix(ll, func() {
+				c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", want, ll.width)
+			})
+			mixed = true
+		case first != nil && ll == nil:
+			got := ast.Type(ast.FloatType{Width: 64})
+			if f, ok := types[i+1].(ast.FloatType); ok && !f.Polymorphic {
+				got = f
+			}
+			c.afterLitFix(first, func() {
+				c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", first.width, got)
+			})
+		}
+	}
+	switch {
+	case first != nil && first.fixed:
+		return ast.ArrayType{Elem: first.width}
+	case first != nil:
+		return ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}
+	case mixed:
+		return ast.ArrayType{Elem: want}
+	}
+	return nil
+}
+
+// afterLitFix runs f when ll has its width.
+func (c *checker) afterLitFix(ll *litLocal, f func()) {
+	if ll.fixed {
+		f()
+		return
+	}
+	ll.onFix = append(ll.onFix, func(ast.NumberType) { f() })
 }
 
 // litStepRootLocal is the literal array local that a chain of append and

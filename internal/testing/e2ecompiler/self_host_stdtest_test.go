@@ -527,6 +527,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"android_trace", langSrcAbs(t, "tests/stdlib/android_trace_test.fern"), ""},
 		{"android_fonts", langSrcAbs(t, "tests/stdlib/android_fonts_test.fern"), ""},
 		{"android_testkit", langSrcAbs(t, "tests/stdlib/android_testkit_test.fern"), ""},
+		{"android_text", langSrcAbs(t, "tests/stdlib/android_text_test.fern"), ""},
 		{"android_ui_scene", langSrcAbs(t, "tests/stdlib/android_ui_scene_test.fern"), ""},
 		{"android_ui", langSrcAbs(t, "tests/stdlib/android_ui_test.fern"), ""},
 		{"jpeg", langSrcAbs(t, "tests/stdlib/jpeg_test.fern"), ""},

@@ -1,0 +1,125 @@
+{
+  "started": "2026-11-11T06:19:08.498760+00:00",
+  "parent": "ae541bcfb04b763b00d1b526cc3c02c2dbe9d0fd",
+  "owner_commit": "38399ecf5c363e3ef9a2981fa63cef01ff5401cb",
+  "runs": [
+    {
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "started": "2026-11-11T06:19:08.602706+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:19:26.176635+00:00"
+    },
+    {
+      "label": "gofmt",
+      "args": [
+        "gofmt",
+        "-l",
+        "internal/testing/e2ecompiler/self_host_ndarray_inner_plan_test.go",
+        "internal/testing/e2ecompiler/self_host_ndarray_product_test.go"
+      ],
+      "started": "2026-11-11T06:19:26.177043+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:19:26.193926+00:00"
+    },
+    {
+      "label": "targeted",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(Ndarray.*|InnerMulAdd.*|OuterMul.*|ScaleReuse.*)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-11T06:19:26.194232+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:22:43.881620+00:00",
+      "passes": 199,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "refusal-controls",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestProvidedLoweringRefusalVerdict$",
+        "-count=1",
+        "-timeout=5m",
+        "-json"
+      ],
+      "started": "2026-11-11T06:22:43.891708+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:22:46.288469+00:00",
+      "passes": 13,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "metadata",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "./internal/testing/sourcelint",
+        "-run",
+        "^(TestDiagnosticsIndexIsAccurate|TestSemanticsIndexIsAccurate|TestConformanceCensusHasARowPerFixture)$",
+        "-count=1",
+        "-timeout=12m",
+        "-json"
+      ],
+      "started": "2026-11-11T06:22:46.290824+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:24:18.549421+00:00",
+      "passes": 3,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "vet",
+      "args": [
+        "go",
+        "vet",
+        "./internal/testing/e2ecompiler"
+      ],
+      "started": "2026-11-11T06:24:18.551760+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:24:26.393216+00:00"
+    },
+    {
+      "label": "ci-selftest",
+      "args": [
+        "make",
+        "ci-selftest"
+      ],
+      "started": "2026-11-11T06:24:26.393707+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:25:39.465083+00:00"
+    },
+    {
+      "label": "whitespace",
+      "args": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "started": "2026-11-11T06:25:39.466979+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T06:25:39.584403+00:00"
+    }
+  ],
+  "tree": "f6f4c598e0d88aa27ea7f31ff3c208b527deaf9a",
+  "exit_code": 0,
+  "finished": "2026-11-11T06:25:39.585240+00:00"
+}

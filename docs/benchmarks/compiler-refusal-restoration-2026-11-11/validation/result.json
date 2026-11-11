@@ -1,0 +1,98 @@
+{
+  "source": "eb264b32a2775d534109f244b83dabe57258949e",
+  "concurrent_parent": "4e8cbe42176f1be18790297ea0dc83ae5aafb1ad",
+  "started": "2026-11-11T07:58:15.551927+00:00",
+  "scope": "Current-source correctness after preservation of the concurrent merge and restoration of committed records and refusal validation. No performance claim.",
+  "runs": [
+    {
+      "label": "source-check",
+      "args": [
+        "/workspace/lang-interpreter-timeout-20261109/build/bootstrap/stage0/stage0-20261109-a19e872/fern-selfhost-x86-64-linux",
+        "-check",
+        "compiler/fern.fern",
+        "internal/stdlib"
+      ],
+      "started": "2026-11-11T07:58:15.686768+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T07:59:03.193438+00:00"
+    },
+    {
+      "label": "go-frontend",
+      "args": [
+        "go",
+        "test",
+        "./internal/check/checker",
+        "./internal/syntax/parser",
+        "-count=1",
+        "-timeout=10m",
+        "-json"
+      ],
+      "started": "2026-11-11T07:59:03.196180+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T07:59:36.550539+00:00",
+      "passes": 2933,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "current-native",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(CheckerCodesX86_64|CheckEntryShadowOfBuiltin|ImportedRawBuiltinNameIsReserved|ImportedVariantKeepsBuiltinType|SIMDUnzipFusion|IRStrength.*|X86RIP.*|X86GasRIPConstants|X86ShuffleFormsMatchGas|X86VEXRejectsMixedWidths)$",
+        "-count=1",
+        "-timeout=25m",
+        "-json"
+      ],
+      "started": "2026-11-11T07:59:36.609446+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:03:46.088795+00:00",
+      "passes": 4873,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "refusal-controls",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestProvidedLoweringRefusalVerdict$",
+        "-count=1",
+        "-timeout=5m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:03:46.161995+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:03:47.687250+00:00",
+      "passes": 13,
+      "skips": 0,
+      "failures": []
+    },
+    {
+      "label": "fixtures",
+      "args": [
+        "go",
+        "test",
+        "./internal/testing/e2e",
+        "-run",
+        "^TestFernFixtures(SelfHost(Check|X86_64|Arm64|Wasm))?$/^(diag_e010_raw_builtin_function|diag_e091_range_index|for_loop_continue_steps)$",
+        "-count=1",
+        "-timeout=12m",
+        "-json"
+      ],
+      "started": "2026-11-11T08:03:47.694039+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T08:04:02.729191+00:00",
+      "passes": 16,
+      "skips": 0,
+      "failures": []
+    }
+  ],
+  "exit_code": 1,
+  "error": "AssertionError(('TestFernFixturesSelfHostCheck', 'for_loop_continue_steps'))",
+  "traceback": "Traceback (most recent call last):\n  File \"/workspace/lang-checker-union-index-20261110-1540/build/concurrent-pr15236-20261111-0745/validation/collect.py\", line 24, in <module>\n    for case in ['diag_e010_raw_builtin_function','diag_e091_range_index','for_loop_continue_steps']:assert family+'/'+case in names,(family,case)\n                                                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('TestFernFixturesSelfHostCheck', 'for_loop_continue_steps')\n"
+}

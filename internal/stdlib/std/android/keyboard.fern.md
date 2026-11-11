@@ -37,7 +37,9 @@ import "std/android";
 
 ### `field`
 
-The input type and the action code are the values of `InputType` and `EditorInfo`, such as `android.INPUT_TEXT` and `android.ACTION_GO`.
+The input type and the action code are the values of `InputType` and `EditorInfo`, such as `android.INPUT_TEXT` and `android.ACTION_GO`. With `android.INPUT_LINES` the field holds more than one line, and the enter key of the keyboard starts a new line.
+
+The field counts its cursor in UTF-16 code units. `set_text_at` takes a count of characters and gives the field the count of code units.
 
 ```fern
 <<field>>=
@@ -50,6 +52,24 @@ pub function show(ctx: usize, text: string, input: i32, action: i32): void {
 // Gives the field the text `text`, for a change that the app made.
 pub function set_text(ctx: usize, text: string): void {
   android.set_field(ctx, text);
+}
+
+// Gives the field the text `text` with the cursor before the character
+// `cursor`, for a change that the app made.
+pub function set_text_at(ctx: usize, text: string, cursor: i32): void {
+  let units = 0;
+  let k = 0;
+  for c in text.chars() {
+    if (k >= cursor) {
+      break;
+    }
+    units += 1;
+    if (c as i32 > 65535) {
+      units += 1;
+    }
+    k += 1;
+  }
+  android.set_field_at(ctx, text, units);
 }
 
 // Hides the keyboard and takes the focus from the field.

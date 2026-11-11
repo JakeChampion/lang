@@ -246,9 +246,15 @@ Keep the annotation in these cases:
   destination of an `append` or a `with` call on a literal array local gives
   the local its element type. An integer literal that does not fit `i32`
   gives the array the element type `i64`. An integer literal local does not
-  become a float, so a float literal array refuses it as the argument. An
-  `append` on an empty array literal takes its element type from a typed
-  destination only: `let ys = [].append(2);` is an E020.
+  become a float, so a float array literal refuses it as an element and as
+  the argument. In an array literal, the local has the rule of a
+  local with the annotation `i32`: the first element gives the literal its
+  type. An integer literal is a float there: `[1.5, 2.5].append(1)`
+  has the element type of `[1.5, 2.5, 1]`. A call does not make the integers
+  of its receiver floats, so `[1, 2].append(1.5)` needs a typed float
+  destination. An `append` on an empty array literal takes its element type
+  from a typed destination only: `let ys = [].append(2);` is an E020, and so
+  is another method on the literal, such as `[].len()`.
 - The local holds a member struct of a `type A | B` union, and the code uses
   it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
   annotation, the local has the struct type, and a later assignment of

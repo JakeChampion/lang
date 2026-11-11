@@ -1,0 +1,45 @@
+// An integer literal is a float when `append` or `with` puts it in a float
+// literal array, as it is a float in `[1.5, 2.5, 1]`. A typed float
+// destination or a typed float argument gives the literal array its element
+// type. The array is an array literal that is the receiver of the call, or a
+// literal array local.
+function sum(xs: f64[]): f64 {
+    let total = 0.0;
+    for x in xs {
+        total += x;
+    }
+    return total;
+}
+
+function sum32(xs: f32[]): f32 {
+    let total: f32 = 0.0;
+    for x in xs {
+        total += x;
+    }
+    return total;
+}
+
+function main(): i32 {
+    let zs = [1.5, 2.5].append(1);
+    print(sum(zs));
+    let ws = [1.5, 2.5].with(0, 1 + 2);
+    print(sum(ws));
+    let ys = [1.5, 2.5];
+    let xs = ys.append(1);
+    print(sum(xs));
+    print(sum(ys));
+    let rs: f32[] = [1.5, 2.5].append(3);
+    print(sum32(rs));
+    print(sum32([1.5].with(0, 2)));
+    let qs = [1.5, 2.5].append(3.5);
+    print(sum32(qs));
+    let ps = [1.5, 2.5];
+    print(sum32(ps.append(1)));
+    let ts: f64[] = [1, 2].append(1.5);
+    print(sum(ts));
+    print(sum([1, 2].append(3)));
+    let x: f32 = 2.5;
+    let us = [1.5, 2].append(x);
+    print(sum32(us));
+    return 0;
+}

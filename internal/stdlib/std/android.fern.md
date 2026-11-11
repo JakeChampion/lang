@@ -1136,6 +1136,10 @@ const FIELD_HIDE: i32 = 3;
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
+// InputType.TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_MULTI_LINE: text of more than
+// one line. The enter key of the keyboard starts a new line.
+pub const INPUT_LINES: i32 = 131073;
+
 // InputType.TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS: text with no
 // suggestions, such as a host name.
 pub const INPUT_PLAIN: i32 = 524289;
@@ -1165,9 +1169,16 @@ pub(package) function show_field(ctx: usize, text: string, input: i32, action: i
   ui_request(ctx, UiRequest { op: FIELD_SHOW, a: input, b: action, data: text_buffer(text) });
 }
 
-// Asks the UI thread to give the field the text `text`.
+// Asks the UI thread to give the field the text `text`, with the cursor at
+// its end.
 pub(package) function set_field(ctx: usize, text: string): void {
   ui_request(ctx, UiRequest { op: FIELD_SET, a: 0, b: 0, data: text_buffer(text) });
+}
+
+// Asks the UI thread to give the field the text `text`, with the cursor
+// before the UTF-16 code unit `cursor`.
+pub(package) function set_field_at(ctx: usize, text: string, cursor: i32): void {
+  ui_request(ctx, UiRequest { op: FIELD_SET, a: 0, b: cursor.max(0) + 1, data: text_buffer(text) });
 }
 
 // Asks the UI thread to hide the keyboard and take the focus from the field.
@@ -1242,11 +1253,18 @@ function field_request(ctx: usize, r: UiRequest): void {
       return;
     }
     if (r.op == FIELD_SHOW) {
+      // TYPE_TEXT_FLAG_MULTI_LINE is 131072.
+      let lines = 1 - (r.a >> 17 & 1);
+      let single = jni.call_void(e, field, "setSingleLine", "(Z)V", [lines as usize]);
       let typed = jni.call_void(e, field, "setInputType", "(I)V", [r.a as usize]);
       let options = jni.call_void(e, field, "setImeOptions", "(I)V", [(r.b | NO_EXTRACT_UI) as usize]);
     }
     if (r.data != 0 as usize) {
-      field_text(ctx, e, field, text_of_buffer(r.data));
+      let cursor = -1;
+      if (r.op == FIELD_SET) {
+        cursor = r.b - 1;
+      }
+      field_text(ctx, e, field, text_of_buffer(r.data), cursor);
     }
     if (r.op == FIELD_SHOW) {
       let focused = call_bool(e, field, "requestFocus", "()Z", []);
@@ -1313,9 +1331,10 @@ function new_field(ctx: usize, e: usize, obj: usize): usize {
   return out;
 }
 
-// Gives the field the text `text` with the cursor at its end. The field does
-// not report a change that it makes.
-function field_text(ctx: usize, e: usize, field: usize, text: string): void {
+// Gives the field the text `text` with the cursor before the UTF-16 code
+// unit `cursor`, or at the end of the text for a cursor below 0. The field
+// does not report a change that it makes.
+function field_text(ctx: usize, e: usize, field: usize, text: string, cursor: i32): void {
   unsafe {
     Context.c_store_quiet(ctx, 1);
     let s: usize = jni.new_string(e, text);
@@ -1324,7 +1343,11 @@ function field_text(ctx: usize, e: usize, field: usize, text: string): void {
     let none: usize = jni.jvalue_alloc(0);
     let n: i32 = jni.call_int_method_a(e, field, jni.get_method_id(e, class, "length", "()I"), none);
     jni.free_buffer(none);
-    let moved = jni.call_void(e, field, "setSelection", "(I)V", [n as usize]);
+    let at = n;
+    if (cursor >= 0 && cursor < n) {
+      at = cursor;
+    }
+    let moved = jni.call_void(e, field, "setSelection", "(I)V", [at as usize]);
     let a: usize = jni.delete_local_ref(e, class);
     let b: usize = jni.delete_local_ref(e, s);
     Context.c_store_quiet(ctx, 0);

@@ -1,0 +1,16 @@
+// spec: RH-01
+
+struct Handle { n: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.n;
+}
+
+function make(own h: Handle): own () => i32 {
+  return (): i32 => h.close();
+}
+
+function main(): i32 {
+  let cb = make(Handle { n: 7 });
+  return cb() + cb();
+}
