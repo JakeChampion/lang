@@ -248,6 +248,11 @@ pub function capability_of(name: string): string {
   return "";
 }
 
+// internal/pkg/caps's IsBuiltin is the same test.
+pub function is_builtin(name: string): boolean {
+  return capability_of(name).len() > 0 || util.has_str(direct_privileged(), name) || util.has_str(ungated(), name);
+}
+
 pub function classified(name: string): boolean {
   if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {
     return true;
