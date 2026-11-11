@@ -1,3 +1,4 @@
+# 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_an_append_receiver is clean under RC trace.
 # 2026-11-11: array_literal_takes_the_join_of_its_typed_values is clean under RC trace.
@@ -98,6 +99,7 @@ a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_returned_value_match_returns_from_each_arm         0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
+a_struct_name_call_wraps_a_union_member_across_modules 0
 a_three_trait_bound_in_an_imported_module            0
 a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_value_if_of_literals_takes_the_type_of_its_first_use 0
