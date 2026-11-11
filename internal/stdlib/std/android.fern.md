@@ -6,7 +6,11 @@ This module runs an Android app with no Java code, through `android.app.NativeAc
 
 NativeActivity loads the app library and calls its `ANativeActivity_onCreate` export on the UI thread. That export calls `start`. `start` sets the activity callbacks and starts a loop thread. The callbacks run on the UI thread. Each callback sends an event to the loop thread through a pipe. Then it waits for the reply of the loop thread.
 
-The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`. The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
+The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`.
+
+When `timeout` gives 0, `run` gives `Tick` after the event that is ready, if one is. So an app that gives the time that is left to its next Tick gets that Tick while events come all the time.
+
+The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
@@ -677,14 +681,17 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     let added: i32 = c_looper_add_fd(lp.looper, Context.c_load_message_read(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
   }
   while (!lp.done) {
-    let ident: i32 = c_looper_poll_once(timeout(state), 0 as usize, 0 as usize, 0 as usize);
+    let wait: i32 = timeout(state);
+    let ident: i32 = c_looper_poll_once(wait, 0 as usize, 0 as usize, 0 as usize);
     if (ident == IDENT_MESSAGE) {
       let (next_lp, next_state) = message(lp, state, step);
       lp = next_lp;
       state = next_state;
     } else if (ident == IDENT_INPUT) {
       state = input(lp, state, step);
-    } else if (ident == POLL_TIMEOUT) {
+    }
+    // A Tick that is due comes also when an event is ready at each poll.
+    if (ident == POLL_TIMEOUT || wait == 0) {
       state = step(state, Tick);
     }
     // The frame callback can run in the same poll as another source.
