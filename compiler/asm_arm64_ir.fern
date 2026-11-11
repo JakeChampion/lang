@@ -5780,7 +5780,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string, suffix: string): st
   if (at + prefix.len() > text.len()) {
     return "";
   }
-  if (slice_unchecked(text, at, at + prefix.len()) != prefix) {
+  if (!util.str_eq_at(text, at, prefix)) {
     return "";
   }
   let end = at + prefix.len();
@@ -5790,7 +5790,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string, suffix: string): st
   if (end == at + prefix.len() || end + suffix.len() > text.len()) {
     return "";
   }
-  if (slice_unchecked(text, end, end + suffix.len()) != suffix) {
+  if (!util.str_eq_at(text, end, suffix)) {
     return "";
   }
   return "x" + slice_unchecked(text, at + prefix.len(), end);
@@ -12749,7 +12749,7 @@ function darwin_index_of_unquoted(s: string, sub: string): i32 {
   while (i < n) {
     if (s[i] == 34) {
       i = darwin_skip_quoted(s, i);
-    } else if (i + m <= n && slice_unchecked(s, i, i + m) == sub) {
+    } else if (i + m <= n && util.str_eq_at(s, i, sub)) {
       return i;
     } else {
       i += 1;

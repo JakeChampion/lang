@@ -163,7 +163,7 @@ pub function (t: TokNumber) is_float(): boolean {
 }
 
 function suffix_end(src: string, i: i32, n: i32): i32 {
-  if (i + 5 <= n && slice_unchecked(src, i, i + 5) == "usize") {
+  if (i + 5 <= n && util.str_eq_at(src, i, "usize")) {
     return i + 5;
   }
   let e = i + 1;

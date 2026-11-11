@@ -155,7 +155,7 @@ function verb_end(n: string, tag: string): i32 {
   let at = 6;
   while (at + tag.len() <= n.len()) {
     let end = at + tag.len();
-    if (slice_unchecked(n, at, end) == tag && (end == n.len() || end + 1 < n.len() && n[end] == b'_' && n[end + 1] == b'_')) {
+    if (util.str_range_eq(n, at, end, tag) && (end == n.len() || end + 1 < n.len() && n[end] == b'_' && n[end + 1] == b'_')) {
       return at;
     }
     at += 1;
