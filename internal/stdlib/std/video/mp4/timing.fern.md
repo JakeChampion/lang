@@ -3,11 +3,14 @@
 This module validates composition offsets and sync-sample tables for MP4 video packets.
 Version-zero composition offsets are unsigned. Version-one offsets are signed.
 Run counts must cover exactly the declared samples.
+
 A missing sync table means that every sample is a sync sample.
 An empty sync table means that no sample is a sync sample.
+
 The public readers return one value for each sample.
 The packet indexer applies absent-table defaults directly.
 Explicit sync tables use a validated source view without a per-sample temporary array.
+Explicit composition tables use validated runs through the same source view.
 
 ```fern
 <<*>>=
@@ -29,18 +32,29 @@ function rows(input: [u8], box: boxes.Box, width: i32, maximum: i32): Result[(i3
 }
 
 pub function composition(input: [u8], children: [boxes.Box], samples: i32): Result[i64[], pcm.AudioError] {
-  let output = indexed_composition(input, children, samples)?;
-  if (output.len() != 0) {
-    return Ok(output);
-  }
-  for _ in 0..samples {
-    output = output.append(0i64);
+  let table = indexed_composition(input, children, samples)?;
+  let output: i64[] = [];
+  if (table.count == 0) {
+    for _ in 0..samples {
+      output = output.append(0i64);
+    }
+  } else {
+    for i in 0..table.count {
+      let run = wire.be(input, table.data + 8 * i, 8);
+      let count = (run >> 32u64) as i32;
+      let offset = composition_offset(run, table.version);
+      for _ in 0..count {
+        output = output.append(offset);
+      }
+    }
   }
   return Ok(output);
 }
 
-// An empty array denotes the absent table for a nonempty packet index.
-pub(package) function indexed_composition(input: [u8], children: [boxes.Box], samples: i32): Result[i64[], pcm.AudioError] {
+pub(package) struct CompositionTable { data: i32, count: i32, version: i32, first: u64 }
+
+// The complete run coverage is checked before a packet reads an offset.
+pub(package) function indexed_composition(input: [u8], children: [boxes.Box], samples: i32): Result[CompositionTable, pcm.AudioError] {
   if (samples < 0) {
     return Err(pcm.Limit);
   }
@@ -48,31 +62,33 @@ pub(package) function indexed_composition(input: [u8], children: [boxes.Box], sa
   if let Some(box) = found {
     return offsets(input, box, samples);
   }
-  return Ok([]);
+  return Ok(CompositionTable { data: 0, count: 0, version: 0, first: samples as u64 << 32u64 });
 }
 
-function offsets(input: [u8], box: boxes.Box, samples: i32): Result[i64[], pcm.AudioError] {
+function offsets(input: [u8], box: boxes.Box, samples: i32): Result[CompositionTable, pcm.AudioError] {
   let (version, count) = rows(input, box, 8, samples)?;
   if (version != 0 && version != 1) {
     return Err(pcm.Unsupported);
   }
-  let output: i64[] = [];
+  let covered = 0;
   for i in 0..count {
     let at = box.data + 8 + 8 * i;
     let run = wire.be(input, at, 4);
-    let raw = wire.be(input, at + 4, 4);
-    if (run == 0u64 || run > (samples - output.len()) as u64) {
+    if (run == 0u64 || run > (samples - covered) as u64) {
       return Err(pcm.Header);
     }
-    let offset = if (version == 0) { raw as i64 } else { (raw as i32) as i64 };
-    for _ in 0..run as i32 {
-      output = output.append(offset);
-    }
+    covered += run as i32;
   }
-  if (output.len() != samples) {
+  if (covered != samples) {
     return Err(pcm.Header);
   }
-  return Ok(output);
+  let first = if (count == 0) { 0u64 } else { wire.be(input, box.data + 8, 8) };
+  return Ok(CompositionTable { data: box.data + 8, count: count, version: version, first: first });
+}
+
+// The source row packs the sample count above the raw offset.
+pub(package) function composition_offset(run: u64, version: i32): i64 {
+  return if (version == 0) { (run as u32) as i64 } else { (run as i32) as i64 };
 }
 
 pub function sync_samples(input: [u8], children: [boxes.Box], samples: i32): Result[boolean[], pcm.AudioError] {
