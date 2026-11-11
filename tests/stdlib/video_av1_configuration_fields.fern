@@ -1,0 +1,11 @@
+import "std/video/av1/configuration";
+
+pub function values(h: configuration.Header): i32[] {
+  let width = 0;
+  let height = 0;
+  if let Some(maximum) = h.maximum {
+    width = maximum.width;
+    height = maximum.height;
+  }
+  return [h.profile, h.level, h.tier, h.bit_depth, if (h.monochrome) { 1 } else { 0 }, h.subsampling_x, h.subsampling_y, h.chroma_sample_position, h.presentation_delay, width, height];
+}
