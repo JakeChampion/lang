@@ -1,0 +1,10 @@
+{
+  "commit": "7ed25d7e1c1c94d73cae445d61852197c4c4e6aa",
+  "archive": "docs/benchmarks/compiler-method-result-ci-2026-11-11",
+  "verified_data_hashes": 37,
+  "manifest_sha256": "47b2475c8251d7d852dc80f11776edeee9eda4f55c6ab468459631372517449e",
+  "canonical_control_results": 22,
+  "canonical_control_commands_executed": 0,
+  "comparator_flag_helper_and_selftest_sources_unchanged": true,
+  "reason": "Reuse the unchanged canonical comparator controls by exact source and archive identity. The four replay commands above separately check this new measured row and preserve missing-row refusal."
+}
