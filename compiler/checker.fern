@@ -15979,6 +15979,30 @@ function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type
   return type_from_ref_subst(member, u.type_params, du.args, s.type_names());
 }
 
+// A type argument that the destination leaves open comes from the fields of the literal.
+function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  let Some(ssig) = s.lookup_struct(sl.type_name) else {
+    return dest_args;
+  };
+  let open = false;
+  for a in dest_args {
+    open = open || type_contains_unknown(a);
+  }
+  if (!open || dest_args.len() != ssig.type_params.len()) {
+    return dest_args;
+  }
+  let own = struct_lit_args(sl, ssig, s);
+  let out: typeinfo.Type[] = [];
+  for i in 0..dest_args.len() {
+    if (type_contains_unknown(dest_args[i])) {
+      out = out.append(own[i]);
+    } else {
+      out = out.append(dest_args[i]);
+    }
+  }
+  return out;
+}
+
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
     return call_diags_call(c, s, [], dest);
@@ -15999,7 +16023,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
-        return call_diags_struct_lit(sl, ds.args, s, []);
+        return call_diags_struct_lit(sl, lit_dest_args(sl, ds.args, s), s, []);
       }
     }
   }

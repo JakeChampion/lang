@@ -11559,8 +11559,12 @@ function mono_struct_lit(s: ast.ExprStructLit, written: string, env: MEnv, funcs
 // function spells the whole function type, which mono_infer gives as `fn`.
 function literal_field_type(e: ast.Expr, env: MEnv, funcs: MFns): string {
   let t = mono_infer(e, env, funcs);
-  if (t != "fn") {
+  if (t.len() > 0 && t != "fn") {
     return t;
+  }
+  let named = fn_name_spelling(e, env, funcs);
+  if (named.len() > 0) {
+    return named;
   }
   let ast.ExprCall(c) = e else {
     return t;
@@ -11577,6 +11581,30 @@ function literal_field_type(e: ast.Expr, env: MEnv, funcs: MFns): string {
     return t;
   }
   return fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+}
+
+// fn_name_spelling spells the function type of a value that names a function
+// with no type parameters.
+function fn_name_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
+  let ast.ExprIdent(id) = e else {
+    return "";
+  };
+  let k = funcs.pix.find(id.name);
+  if (k < 0 || env.elook(id.name).len() > 0) {
+    return "";
+  }
+  let fd = funcs.decls[funcs.pat[k]];
+  if (fd.type_params.len() > 0 || fd.receiver_type.len() > 0) {
+    return "";
+  }
+  let ps = "";
+  for i in 0..fd.params.len() {
+    if (i > 0) {
+      ps += ", ";
+    }
+    ps += param_spelling(fd.params[i]);
+  }
+  return "(" + ps + ") => " + fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
 }
 
 // literal_written is the type of a generic struct literal with its type

@@ -1,3 +1,4 @@
+# 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: generic_call_written_type_variable_empty_array is clean under RC trace.
 # 2026-11-11: array_literal_wide_integer_literal_widens_the_value_beside_it is clean under RC trace.
 # 2026-11-11: generic_call_gives_its_expected_type_to_an_array_argument is clean under RC trace.
@@ -480,6 +481,7 @@ generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
 generic_struct_infers_concrete_local                0
 generic_struct_literal_in_append                     0
+generic_struct_literal_with_a_function_field_is_an_argument 0
 generic_struct_method_at_tuple_type                  0
 generic_struct_method_map_arg                        0
 generic_view_methods                                 0

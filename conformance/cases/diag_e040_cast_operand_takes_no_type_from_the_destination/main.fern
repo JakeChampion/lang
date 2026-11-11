@@ -1,0 +1,9 @@
+// The destination of a cast is not a destination of its operand, so it
+// gives no type argument to a generic call under the cast.
+
+function first[T](xs: T[]): T { return xs[0]; }
+
+function main(): i32 {
+    let k: i32 = first([]) as i32;
+    return k;
+}

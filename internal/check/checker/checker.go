@@ -14674,7 +14674,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
+		// The destination of the cast is not a destination of its operand.
+		savedExpected := c.expectedType
+		c.expectedType = nil
 		inner := c.checkExpr(n.Inner, s)
+		c.expectedType = savedExpected
 		if !c.checkCastTarget(n.Target, n.P) {
 			return nil
 		}
